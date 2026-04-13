@@ -29,6 +29,12 @@ export const deleteCustomer = async (id) => {
   await api.delete(`${BASE_URL}/${id}`);
 };
 
+// ✅ GET opening invoices for a customer by customer code (QA-002)
+export const getOpeningInvoicesByCustomerCode = async (customerCode) => {
+  const res = await api.get(`${BASE_URL}/by-code/${encodeURIComponent(customerCode)}/opening-invoices`);
+  return res.data;
+};
+
 /* ===========================
    STATIC DROPDOWNS (TEMP)
    =========================== */

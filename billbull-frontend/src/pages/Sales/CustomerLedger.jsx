@@ -7,7 +7,7 @@ import {
 import SearchableDropdown from '../../components/SearchableDropdown'; // ✅ Import Searchable Dropdown
 
 // --- API IMPORTS ---
-import { getAllCustomers, getCustomerById, createCustomer, deleteCustomer } from '../../api/customerledgerApi';
+import { getAllCustomers, getCustomerById, createCustomer, deleteCustomer, getOpeningInvoicesByCustomerCode } from '../../api/customerledgerApi';
 import { fetchStatementOfAccount } from '../../api/financialsApi';
 // ✅ Import Warehouse API
 import { getWarehouses } from '../../api/warehouseApi';
@@ -1155,6 +1155,9 @@ const ReceiveMoneyView = () => {
     const [selectedInvoices, setSelectedInvoices] = useState({}); // Map: invoiceNo -> boolean
     const [settleAmounts, setSettleAmounts] = useState({}); // Map: invoiceNo -> amount
 
+    // QA-002: opening invoices for the selected customer
+    const [openingInvoices, setOpeningInvoices] = useState([]);
+
     // Load Data
     useEffect(() => {
         loadData();
@@ -1184,11 +1187,39 @@ const ReceiveMoneyView = () => {
     // Filtered Data
     const customerInvoices = useMemo(() => {
         if (!selectedCustomer) return [];
-        return invoices.filter(inv =>
-            inv.customerCode === selectedCustomer.code &&
-            (inv.balance > 0 || !inv.amountPaid || inv.amountPaid < inv.invoiceTotal)
-        );
-    }, [selectedCustomer, invoices]);
+
+        // Regular sales invoices with outstanding balance
+        const salesInvs = invoices
+            .filter(inv =>
+                inv.customerCode === selectedCustomer.code &&
+                (inv.balance > 0 || !inv.amountPaid || inv.amountPaid < inv.invoiceTotal)
+            )
+            .map(inv => ({ ...inv, _isOpening: false }));
+
+        // QA-002: opening invoices mapped to the same shape as sales invoices
+        const openingInvs = openingInvoices
+            .filter(oi => {
+                const outstanding = oi.outstanding != null ? Number(oi.outstanding) : Number(oi.amount || 0);
+                return outstanding > 0;
+            })
+            .map(oi => {
+                const amount = Number(oi.amount || 0);
+                const outstanding = oi.outstanding != null ? Number(oi.outstanding) : amount;
+                return {
+                    id: `opening-${oi.id}`,
+                    invoiceNumber: oi.number,
+                    invoiceDate: oi.date,
+                    customerCode: selectedCustomer.code,
+                    invoiceTotal: amount,
+                    amountPaid: amount - outstanding,
+                    balance: outstanding,
+                    status: 'OPENING',
+                    _isOpening: true,
+                };
+            });
+
+        return [...openingInvs, ...salesInvs];
+    }, [selectedCustomer, invoices, openingInvoices]);
 
     const customerPayments = useMemo(() => {
         if (!selectedCustomer) return payments.slice(0, 10);
@@ -1209,11 +1240,23 @@ const ReceiveMoneyView = () => {
     }, [selectedInvoices, settleAmounts]);
 
     // Handlers
-    const handleSelectCustomer = (custCode) => { // ✅ Modified to accept value directly
+    const handleSelectCustomer = async (custCode) => {
         const cust = customers.find(c => c.code === custCode);
         setSelectedCustomer(cust || null);
         setSelectedInvoices({});
         setSettleAmounts({});
+        setOpeningInvoices([]);
+
+        // QA-002: fetch opening invoices for this customer so they appear in the outstanding list
+        if (cust) {
+            try {
+                const data = await getOpeningInvoicesByCustomerCode(cust.code);
+                setOpeningInvoices(data || []);
+            } catch (err) {
+                console.error('Failed to load opening invoices:', err);
+                setOpeningInvoices([]);
+            }
+        }
     };
 
     const handleInvoiceSelection = (inv, isSelected) => {
@@ -1457,9 +1500,11 @@ const ReceiveMoneyView = () => {
                                                     <td className="px-4 py-3 text-right text-slate-600 font-medium">AED {inv.invoiceTotal.toLocaleString()}</td>
                                                     <td className="px-4 py-3 text-right font-bold text-orange-600">AED {balance.toLocaleString()}</td>
                                                     <td className="px-4 py-3 text-center">
-                                                        {isOverdue
-                                                            ? <span className="px-2 py-0.5 rounded bg-orange-100 text-orange-700 text-[10px] font-bold">Overdue</span>
-                                                            : <span className="px-2 py-0.5 rounded bg-green-100 text-green-700 text-[10px] font-bold">Current</span>
+                                                        {inv._isOpening
+                                                            ? <span className="px-2 py-0.5 rounded bg-blue-100 text-blue-700 text-[10px] font-bold">Opening</span>
+                                                            : isOverdue
+                                                                ? <span className="px-2 py-0.5 rounded bg-orange-100 text-orange-700 text-[10px] font-bold">Overdue</span>
+                                                                : <span className="px-2 py-0.5 rounded bg-green-100 text-green-700 text-[10px] font-bold">Current</span>
                                                         }
                                                     </td>
                                                     <td className="px-4 py-2 text-right">
