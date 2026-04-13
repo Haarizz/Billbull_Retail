@@ -95,6 +95,17 @@ public class CustomerService {
         // -------------------------
         // DEFAULT VALUES
         // -------------------------
+
+        // QA-004: auto-generate code when not provided (quick-create from selector)
+        if (customer.getCode() == null || customer.getCode().isBlank()) {
+            String candidate;
+            long seq = repository.count() + 1;
+            do {
+                candidate = String.format("CUST-%04d", seq++);
+            } while (repository.existsByCode(candidate));
+            customer.setCode(candidate);
+        }
+
         if (customer.getStatus() == null)
             customer.setStatus("Active");
 

@@ -18,11 +18,13 @@ public class LocatorController {
     }
 
     @GetMapping
+    @PreAuthorize("hasAnyRole('ADMIN','INVENTORY','INVENTORY_MANAGER','ACCOUNTANT')")
     public ResponseEntity<List<LocatorResponse>> getLocators(@PathVariable Long zoneId) {
         return ResponseEntity.ok(locatorService.getLocatorResponsesByZone(zoneId));
     }
 
     @GetMapping("/{id}")
+    @PreAuthorize("hasAnyRole('ADMIN','INVENTORY','INVENTORY_MANAGER','ACCOUNTANT')")
     public ResponseEntity<LocatorResponse> getLocator(@PathVariable Long zoneId, @PathVariable Long id) {
         return ResponseEntity.ok(locatorService.getLocatorResponseById(id));
     }

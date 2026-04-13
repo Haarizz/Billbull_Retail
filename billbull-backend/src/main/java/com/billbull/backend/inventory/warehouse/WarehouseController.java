@@ -27,7 +27,7 @@ public class WarehouseController {
     }
 
     @GetMapping
-    @PreAuthorize("hasAnyRole('ADMIN','INVENTORY_MANAGER')")
+    @PreAuthorize("hasAnyRole('ADMIN','INVENTORY_MANAGER','ACCOUNTANT')")
     public List<WarehouseResponse> list() {
         return service.list();
     }
@@ -55,7 +55,7 @@ public class WarehouseController {
     }
 
     @GetMapping("/{id}/bins")
-    @PreAuthorize("hasAnyRole('ADMIN','INVENTORY_MANAGER')")
+    @PreAuthorize("hasAnyRole('ADMIN','INVENTORY_MANAGER','ACCOUNTANT')")
     public List<BinResponse> getBins(@PathVariable Long id) {
         return binService.getBinResponsesByWarehouse(id);
     }
