@@ -31,8 +31,11 @@ const StockValuationReport = () => {
         { header: 'Department', key: 'department', width: 20 },
         { header: 'Brand', key: 'brand', width: 20 },
         { header: 'Warehouse', key: 'warehouse', width: 25 },
+        { header: 'Cost Method', key: 'costMethod', width: 18 },
         { header: 'Qty', key: 'onHand', width: 15 },
         { header: 'Unit Cost', key: 'unitCost', width: 15 },
+        { header: 'FIFO Cost', key: 'fifoUnitCost', width: 15 },
+        { header: 'LIFO Cost', key: 'lifoUnitCost', width: 15 },
         { header: 'Stock Value', key: 'stockValue', width: 20 }
     ];
 
@@ -82,6 +85,14 @@ const StockValuationReport = () => {
     // Computed summary metrics from filtered data
     const totalValuation = useMemo(() =>
         data.reduce((sum, r) => sum + (Number(r.onHand ?? 0) * Number(r.unitCost ?? 0)), 0),
+        [data]);
+
+    const fifoValuation = useMemo(() =>
+        data.reduce((sum, r) => sum + (Number(r.onHand ?? 0) * Number(r.fifoUnitCost ?? r.unitCost ?? 0)), 0),
+        [data]);
+
+    const lifoValuation = useMemo(() =>
+        data.reduce((sum, r) => sum + (Number(r.onHand ?? 0) * Number(r.lifoUnitCost ?? r.unitCost ?? 0)), 0),
         [data]);
 
     const categoryTotals = useMemo(() => {
@@ -255,10 +266,9 @@ const StockValuationReport = () => {
 
                 {/* Summary Cards */}
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
-                    <SummaryCard label="Average Cost Valuation" value={totalValuation} sub={`${data.length} items`} color="#F5C742" sortKey="stockValue" />
-                    <SummaryCard label="FIFO Estimate" value={totalValuation * 0.98} sub="Approximate first-in first-out" color="#5E5CE6" sortKey="unitCost" />
-                    {/* BB-009: LIFO estimate — typically slightly higher than average cost */}
-                    <SummaryCard label="LIFO Estimate" value={totalValuation * 1.02} sub="Approximate last-in first-out" color="#f97316" sortKey="unitCost" />
+                    <SummaryCard label="Cost Valuation (Method)" value={totalValuation} sub={`${data.length} items — by configured cost method`} color="#F5C742" sortKey="stockValue" />
+                    <SummaryCard label="FIFO Valuation" value={fifoValuation} sub="First-in first-out (oldest purchase cost)" color="#5E5CE6" sortKey="fifoUnitCost" />
+                    <SummaryCard label="LIFO Valuation" value={lifoValuation} sub="Last-in first-out (latest purchase cost)" color="#f97316" sortKey="lifoUnitCost" />
                     <SummaryCard label="Retail Value" value={data.reduce((s, r) => s + (Number(r.onHand ?? 0) * Number(r.retailPrice ?? 0)), 0)} sub="Based on retail price" color="#34d399" sortKey="retailValue" />
                 </div>
 
@@ -338,8 +348,8 @@ const StockValuationReport = () => {
                             <table style={{ width: '100%', minWidth: 900, borderCollapse: 'collapse', fontSize: 13 }}>
                                 <thead style={{ background: '#f9fafb' }}>
                                     <tr>
-                                        {['SKU', 'Item', 'Category', 'Department', 'Brand', 'Warehouse', 'Qty', 'Unit Cost', 'Stock Value'].map(h => (
-                                            <th key={h} style={{ padding: '8px 12px', textAlign: ['Qty', 'Unit Cost', 'Stock Value'].includes(h) ? 'right' : 'left', fontSize: 11, fontWeight: 600, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.05em', borderBottom: '1px solid #e5e7eb', whiteSpace: 'nowrap' }}>{h}</th>
+                                        {['SKU', 'Item', 'Category', 'Department', 'Brand', 'Warehouse', 'Cost Method', 'Qty', 'Unit Cost', 'FIFO Cost', 'LIFO Cost', 'Stock Value'].map(h => (
+                                            <th key={h} style={{ padding: '8px 12px', textAlign: ['Qty', 'Unit Cost', 'FIFO Cost', 'LIFO Cost', 'Stock Value'].includes(h) ? 'right' : 'left', fontSize: 11, fontWeight: 600, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.05em', borderBottom: '1px solid #e5e7eb', whiteSpace: 'nowrap' }}>{h}</th>
                                         ))}
                                     </tr>
                                 </thead>
@@ -356,8 +366,15 @@ const StockValuationReport = () => {
                                                 <td style={{ padding: '10px 12px', color: '#6b7280' }}>{row.department || '-'}</td>
                                                 <td style={{ padding: '10px 12px', color: '#6b7280' }}>{row.brand || '-'}</td>
                                                 <td style={{ padding: '10px 12px', color: '#6b7280' }}>{row.warehouse}</td>
+                                                <td style={{ padding: '10px 12px' }}>
+                                                    <span style={{ background: '#eff6ff', borderRadius: 4, padding: '2px 7px', fontSize: 11, color: '#3b82f6', fontWeight: 600 }}>
+                                                        {row.costMethod ? row.costMethod.replace('_', ' ') : 'STANDARD'}
+                                                    </span>
+                                                </td>
                                                 <td style={{ padding: '10px 12px', textAlign: 'right', fontWeight: 600, color: '#111827' }}>{qty.toFixed(0)}</td>
                                                 <td style={{ padding: '10px 12px', textAlign: 'right', color: '#6b7280' }}>AED {cost.toFixed(2)}</td>
+                                                <td style={{ padding: '10px 12px', textAlign: 'right', color: '#6b7280', fontSize: 12 }}>AED {Number(row.fifoUnitCost ?? cost).toFixed(2)}</td>
+                                                <td style={{ padding: '10px 12px', textAlign: 'right', color: '#6b7280', fontSize: 12 }}>AED {Number(row.lifoUnitCost ?? cost).toFixed(2)}</td>
                                                 <td style={{ padding: '10px 12px', textAlign: 'right', fontWeight: 700, color: '#F5A742' }}>AED {val.toLocaleString('en-AE', { minimumFractionDigits: 2 })}</td>
                                             </tr>
                                         );
@@ -373,7 +390,7 @@ const StockValuationReport = () => {
                             <p style={{ margin: 0, fontSize: 11, fontWeight: 600, color: '#78350f', textTransform: 'uppercase' }}>Total Stock Valuation</p>
                             <p style={{ margin: 0, fontSize: 22, fontWeight: 800, color: '#1c1917' }}>AED {totalValuation.toLocaleString('en-AE', { minimumFractionDigits: 2 })}</p>
                         </div>
-                        <span style={{ background: 'rgba(0,0,0,0.08)', borderRadius: 8, padding: '4px 12px', fontSize: 12, fontWeight: 600, color: '#1c1917' }}>Average Cost</span>
+                        <span style={{ background: 'rgba(0,0,0,0.08)', borderRadius: 8, padding: '4px 12px', fontSize: 12, fontWeight: 600, color: '#1c1917' }}>Per Configured Cost Method</span>
                     </div>
                 </div>
             </div>

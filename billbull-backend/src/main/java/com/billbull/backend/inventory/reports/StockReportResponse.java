@@ -31,6 +31,11 @@ public class StockReportResponse {
     private BigDecimal retailValue = BigDecimal.ZERO;
     private BigDecimal potentialMargin = BigDecimal.ZERO;
 
+    // Cost-method fields (populated by /stock-valuation only)
+    private String costMethod;
+    private BigDecimal fifoUnitCost;
+    private BigDecimal lifoUnitCost;
+
     public Long getProductId() { return productId; }
     public void setProductId(Long productId) { this.productId = productId; }
 
@@ -87,4 +92,13 @@ public class StockReportResponse {
 
     public BigDecimal getPotentialMargin() { return potentialMargin; }
     public void setPotentialMargin(BigDecimal potentialMargin) { this.potentialMargin = potentialMargin; }
+
+    public String getCostMethod() { return costMethod; }
+    public void setCostMethod(String costMethod) { this.costMethod = costMethod; }
+
+    public BigDecimal getFifoUnitCost() { return fifoUnitCost; }
+    public void setFifoUnitCost(BigDecimal fifoUnitCost) { this.fifoUnitCost = fifoUnitCost; }
+
+    public BigDecimal getLifoUnitCost() { return lifoUnitCost; }
+    public void setLifoUnitCost(BigDecimal lifoUnitCost) { this.lifoUnitCost = lifoUnitCost; }
 }

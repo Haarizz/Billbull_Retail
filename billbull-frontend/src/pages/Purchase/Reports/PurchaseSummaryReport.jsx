@@ -59,7 +59,7 @@ const PurchaseSummaryReport = () => {
     const statuses = ['All', 'CONFIRMED', 'POSTED', 'PAID', 'PARTIALLY_PAID', 'CANCELLED', 'DRAFT'];
 
     const totalPurchases = filtered.reduce((s, i) => s + parseFloat(i.grandTotal || i.totalAmount || 0), 0);
-    const totalTax = filtered.reduce((s, i) => s + parseFloat(i.taxAmount || 0), 0);
+    const totalTax = filtered.reduce((s, i) => s + parseFloat(i.taxTotal || 0), 0);
     const totalPaid = filtered.filter(i => (i.status || '').toUpperCase() === 'PAID').reduce((s, i) => s + parseFloat(i.grandTotal || i.totalAmount || 0), 0);
     const totalOutstanding = filtered.filter(i => ['CONFIRMED', 'PARTIALLY_PAID', 'POSTED'].includes((i.status || '').toUpperCase())).reduce((s, i) => s + parseFloat(i.grandTotal || i.totalAmount || 0), 0);
 
@@ -81,7 +81,7 @@ const PurchaseSummaryReport = () => {
         const headers = ['Invoice No', 'Date', 'Vendor', 'Status', 'Grand Total', 'Tax'];
         const rows = filtered.map(i => [
             i.invoiceNumber || i.referenceNumber || '', i.invoiceDate || i.date || '', i.vendorName || '',
-            i.status || '', i.grandTotal || i.totalAmount || 0, i.taxAmount || 0
+            i.status || '', i.grandTotal || i.totalAmount || 0, i.taxTotal || 0
         ]);
         const csv = [headers, ...rows].map(r => r.join(',')).join('\n');
         const blob = new Blob([csv], { type: 'text/csv' });

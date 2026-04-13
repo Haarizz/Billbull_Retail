@@ -166,6 +166,64 @@ public interface StockMovementRepository
                         @Param("productId") Long productId,
                         @Param("warehouseId") Long warehouseId);
 
+        // ✅ Batch weighted-average cost per product for a specific warehouse
+        // Returns rows: [productId, avgCost]
+        @Query("""
+                            SELECT sm.productId,
+                                   CASE WHEN COALESCE(SUM(sm.quantity), 0) = 0 THEN null
+                                        ELSE SUM(sm.unitCost * sm.quantity) / SUM(sm.quantity)
+                                   END
+                            FROM StockMovement sm
+                            WHERE sm.warehouseId = :warehouseId
+                              AND sm.quantity > 0
+                              AND sm.unitCost IS NOT NULL
+                              AND sm.unitCost > 0
+                            GROUP BY sm.productId
+                        """)
+        List<Object[]> getBatchWeightedAvgCostByWarehouse(@Param("warehouseId") Long warehouseId);
+
+        // ✅ Batch LIFO cost per product for a specific warehouse
+        // "Last-In" = unit cost of the most recently received inbound movement (by movement_date DESC, id DESC)
+        // Returns rows: [productId, lifoCost]
+        @Query(value = """
+                            SELECT t.product_id, t.unit_cost
+                            FROM (
+                                SELECT product_id, unit_cost,
+                                       ROW_NUMBER() OVER (
+                                           PARTITION BY product_id
+                                           ORDER BY movement_date DESC, id DESC
+                                       ) AS rn
+                                FROM stock_movements
+                                WHERE warehouse_id = :warehouseId
+                                  AND quantity > 0
+                                  AND unit_cost IS NOT NULL
+                                  AND unit_cost > 0
+                            ) t
+                            WHERE t.rn = 1
+                        """, nativeQuery = true)
+        List<Object[]> getBatchLifoCostByWarehouse(@Param("warehouseId") Long warehouseId);
+
+        // ✅ Batch FIFO cost per product for a specific warehouse
+        // "First-In" = unit cost of the oldest received inbound movement (by movement_date ASC, id ASC)
+        // Returns rows: [productId, fifoCost]
+        @Query(value = """
+                            SELECT t.product_id, t.unit_cost
+                            FROM (
+                                SELECT product_id, unit_cost,
+                                       ROW_NUMBER() OVER (
+                                           PARTITION BY product_id
+                                           ORDER BY movement_date ASC, id ASC
+                                       ) AS rn
+                                FROM stock_movements
+                                WHERE warehouse_id = :warehouseId
+                                  AND quantity > 0
+                                  AND unit_cost IS NOT NULL
+                                  AND unit_cost > 0
+                            ) t
+                            WHERE t.rn = 1
+                        """, nativeQuery = true)
+        List<Object[]> getBatchFifoCostByWarehouse(@Param("warehouseId") Long warehouseId);
+
         // ✅ Unlocated stock (no bin assigned) for a product in a warehouse
         @Query("""
                             SELECT COALESCE(SUM(sm.quantity), 0)
