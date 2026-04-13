@@ -244,13 +244,22 @@ const Sidebar = ({ children }) => {
       --body-bg: #F7F7FA;
     }
 
-    body, html { margin: 0; padding: 0; font-family: var(--font-main); background: var(--body-bg); }
+    body, html {
+      margin: 0;
+      padding: 0;
+      width: 100%;
+      height: 100%;
+      overflow-x: hidden;
+      font-family: var(--font-main);
+      background: var(--body-bg);
+    }
     * { box-sizing: border-box; }
 
     .app-shell {
       display: flex;
-      height: 100vh;
-      width: 100vw;
+      height: 100%;
+      min-height: 100%;
+      width: 100%;
       background: var(--body-bg);
       overflow: hidden;
     }
@@ -556,13 +565,10 @@ const Sidebar = ({ children }) => {
     .main-content {
       flex: 1;
       overflow-y: auto;
+      overflow-x: hidden;
       position: relative;
-      height: 100vh;
-      width: calc(100vw - 256px); /* Desktop width calculation */
-    }
-
-    .sidebar.collapsed + .main-content {
-      width: calc(100vw - 70px);
+      height: 100%;
+      min-width: 0;
     }
 
     @media (max-width: 1024px) {
@@ -579,8 +585,8 @@ const Sidebar = ({ children }) => {
       
       /* Mobile Main Content Override */
       .main-content { 
-        width: 100vw !important; 
-        height: calc(100vh - 60px) !important; 
+        width: 100% !important; 
+        height: calc(100% - 60px) !important; 
         margin-top: 60px !important; 
         padding-top: 0 !important;
       }

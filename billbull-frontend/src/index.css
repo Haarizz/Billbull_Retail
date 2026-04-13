@@ -1,5 +1,84 @@
 @import "tailwindcss";
 
+/* App-wide compact mode that mimics ~90% browser zoom on desktop. */
+:root {
+  --bb-ui-scale: 0.9;
+  --bb-scaled-vw: calc(100vw / var(--bb-ui-scale));
+  --bb-scaled-vh: calc(100vh / var(--bb-ui-scale));
+}
+
+html, body {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+}
+
+#root {
+  zoom: var(--bb-ui-scale);
+  width: var(--bb-scaled-vw);
+  height: var(--bb-scaled-vh);
+  overflow: hidden;
+}
+
+/* Compensate Tailwind viewport utilities so they still fit the full screen. */
+.min-h-screen {
+  min-height: var(--bb-scaled-vh) !important;
+}
+
+.h-screen {
+  height: var(--bb-scaled-vh) !important;
+}
+
+.w-screen {
+  width: var(--bb-scaled-vw) !important;
+}
+
+[class~="max-w-[100vw]"] {
+  max-width: var(--bb-scaled-vw) !important;
+}
+
+/* Keep mobile at 100% to avoid tiny tap targets. */
+@media (max-width: 768px) {
+  :root {
+    --bb-ui-scale: 1;
+    --bb-scaled-vw: 100vw;
+    --bb-scaled-vh: 100vh;
+  }
+
+  html, body {
+    overflow-x: hidden;
+    overflow-y: auto;
+  }
+
+  #root {
+    width: 100%;
+    height: auto;
+    min-height: 100%;
+  }
+}
+
+/* Don't shrink printouts (invoices/receipts) due to UI scaling. */
+@media print {
+  :root {
+    --bb-ui-scale: 1;
+    --bb-scaled-vw: 100vw;
+    --bb-scaled-vh: 100vh;
+  }
+
+  html, body {
+    overflow: visible;
+  }
+
+  #root {
+    zoom: 1 !important;
+    width: 100% !important;
+    height: auto !important;
+    min-height: 100% !important;
+    overflow: visible !important;
+  }
+}
+
 /* ── Inter font: loaded via <link> in index.html ── */
 
 @theme {
