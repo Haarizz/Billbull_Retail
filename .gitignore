@@ -11,9 +11,6 @@ billbull-backend/.mvn/
 billbull-backend/mvnw
 billbull-backend/mvnw.cmd
 
-# Sensitive config — do NOT commit real credentials
-billbull-backend/src/main/resources/application.properties
-billbull-backend/src/main/resources/application-*.properties
 
 # IntelliJ / IDE
 .idea/
