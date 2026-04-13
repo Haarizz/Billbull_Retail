@@ -15,17 +15,18 @@ public class VendorListResponse {
     private String leadTime;
     private BigDecimal rating;
     private BigDecimal balance;
+    private BigDecimal openingBalance;
     private String status;
     private Boolean isPreferred;
-    
-    
+
+
 	public VendorListResponse() {
-		
+
 	}
-	
-	
+
+
 	public VendorListResponse(Long id, String code, String name, String email, String category, String contact,
-			String leadTime, BigDecimal rating, BigDecimal balance, String status, Boolean isPreferred) {
+			String leadTime, BigDecimal rating, BigDecimal balance, BigDecimal openingBalance, String status, Boolean isPreferred) {
 		super();
 		this.id = id;
 		this.code = code;
@@ -36,6 +37,7 @@ public class VendorListResponse {
 		this.leadTime = leadTime;
 		this.rating = rating;
 		this.balance = balance;
+		this.openingBalance = openingBalance;
 		this.status = status;
 		this.isPreferred = isPreferred;
 	}
@@ -94,6 +96,12 @@ public class VendorListResponse {
 	}
 	public void setBalance(BigDecimal balance) {
 		this.balance = balance;
+	}
+	public BigDecimal getOpeningBalance() {
+		return openingBalance;
+	}
+	public void setOpeningBalance(BigDecimal openingBalance) {
+		this.openingBalance = openingBalance;
 	}
 	public String getStatus() {
 		return status;

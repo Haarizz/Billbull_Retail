@@ -62,6 +62,7 @@ public class VendorService {
                         v.getLeadTime(),
                         v.getRating(),
                         v.getBalance(),
+                        v.getOpeningBalance(),
                         v.getStatus(),
                         v.getIsPreferred()))
                 .toList();

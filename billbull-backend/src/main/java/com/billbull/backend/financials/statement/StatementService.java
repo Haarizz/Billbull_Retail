@@ -2,6 +2,10 @@ package com.billbull.backend.financials.statement;
 
 import com.billbull.backend.purchase.invoice.PurchaseInvoiceRepository;
 import com.billbull.backend.purchase.payment.PaymentVoucherRepository;
+import com.billbull.backend.purchase.vendor.Vendor;
+import com.billbull.backend.purchase.vendor.VendorRepository;
+import com.billbull.backend.sales.customerledger.OpeningInvoice;
+import com.billbull.backend.sales.customerledger.OpeningInvoiceRepository;
 import com.billbull.backend.sales.invoice.SalesInvoiceRepository;
 import com.billbull.backend.sales.payment.PaymentRepository;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -28,18 +32,39 @@ public class StatementService {
     @Autowired
     private PaymentVoucherRepository paymentVoucherRepository;
 
+    @Autowired
+    private OpeningInvoiceRepository openingInvoiceRepository;
+
+    @Autowired
+    private VendorRepository vendorRepository;
+
     public StatementResponse getCustomerStatement(String customerCode, LocalDate startDate, LocalDate endDate) {
         StatementResponse resp = new StatementResponse();
         resp.setAccountCode(customerCode);
 
         // 1. Calculate Opening Balance
+        // QA-002 fix: also include the customer's opening invoice outstanding amounts,
+        // which represent pre-system historical balances not captured in SalesInvoice table.
         Double invBefore = salesInvoiceRepository.calculateOpeningBalance(customerCode, startDate);
         Double payBefore = paymentRepository.calculateOpeningBalance(customerCode, startDate);
 
         BigDecimal dInvBefore = invBefore != null ? BigDecimal.valueOf(invBefore) : BigDecimal.ZERO;
         BigDecimal dPayBefore = payBefore != null ? BigDecimal.valueOf(payBefore) : BigDecimal.ZERO;
 
-        BigDecimal openingBalance = dInvBefore.subtract(dPayBefore);
+        // Sum opening invoice outstanding amounts (use amount as fallback when outstanding is null)
+        BigDecimal dOpeningInvBalance = openingInvoiceRepository.findByCustomer_Code(customerCode)
+                .stream()
+                .map(inv -> {
+                    java.math.BigDecimal outstanding = inv.getOutstanding();
+                    java.math.BigDecimal amount = inv.getAmount();
+                    if (outstanding != null && outstanding.compareTo(java.math.BigDecimal.ZERO) > 0) {
+                        return outstanding;
+                    }
+                    return amount != null ? amount : java.math.BigDecimal.ZERO;
+                })
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+
+        BigDecimal openingBalance = dOpeningInvBalance.add(dInvBefore).subtract(dPayBefore);
         resp.setOpeningBalance(openingBalance);
 
         // 2. Fetch Entries
@@ -95,8 +120,13 @@ public class StatementService {
         if (payBefore == null)
             payBefore = BigDecimal.ZERO;
 
-        // AP formula: Balance = Credits (Invoices) - Debits (Payments)
-        BigDecimal openingBalance = invBefore.subtract(payBefore);
+        // QA-013 fix: include vendor's migration opening balance (pre-system historical AP)
+        BigDecimal vendorOpeningBal = vendorRepository.findByName(vendorName)
+                .map(v -> v.getOpeningBalance() != null ? v.getOpeningBalance() : BigDecimal.ZERO)
+                .orElse(BigDecimal.ZERO);
+
+        // AP formula: Balance = VendorOpeningBalance + Credits (Invoices) - Debits (Payments)
+        BigDecimal openingBalance = vendorOpeningBal.add(invBefore).subtract(payBefore);
         resp.setOpeningBalance(openingBalance);
 
         // 2. Fetch Entries
