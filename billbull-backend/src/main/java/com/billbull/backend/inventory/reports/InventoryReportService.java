@@ -14,6 +14,8 @@ import com.billbull.backend.inventory.warehouse.Warehouse;
 import com.billbull.backend.inventory.warehouse.WarehouseRepository;
 import com.billbull.backend.purchase.stockmovement.StockMovementRepository;
 
+import java.math.RoundingMode;
+
 @Service
 @Transactional(readOnly = true)
 public class InventoryReportService {
@@ -228,10 +230,214 @@ public class InventoryReportService {
     }
 
     // ─────────────────────────────────────────────────────────────────────────
-    // STOCK VALUATION — same as SOH; frontend computes valuation from cost×qty
+    // STOCK VALUATION
+    // Unit cost is derived from the product's configured costMethod:
+    //   WEIGHTED_AVERAGE  → SUM(unitCost * qty) / SUM(qty) from inbound movements
+    //   LIFO              → unitCost of the most recent inbound movement (date DESC, id DESC)
+    //   LAST_PURCHASE_COST→ same as LIFO (most recent purchase price)
+    //   FIFO              → unitCost of the oldest inbound movement (date ASC, id ASC)
+    //   null / other      → falls back to product_pricing.cost
+    // fifoUnitCost and lifoUnitCost are always populated so the frontend can
+    // display method-specific comparison totals in the summary cards.
     // ─────────────────────────────────────────────────────────────────────────
     public List<StockReportResponse> getStockValuation(Long warehouseId) {
-        return getStockOnHand(warehouseId);
+
+        // 1. Fetch stock movements aggregated by product (and warehouse)
+        List<Object[]> stockRows = (warehouseId != null)
+                ? stockRepo.findStockByWarehouse(warehouseId)
+                : stockRepo.findAllStockGroupedByProductAndWarehouse();
+
+        if (stockRows == null || stockRows.isEmpty())
+            return Collections.emptyList();
+
+        // 2. Collect product IDs with non-zero stock; also collect unique warehouse IDs
+        Set<Long> productIdSet = new LinkedHashSet<>();
+        Set<Long> warehouseIdSet = new LinkedHashSet<>();
+        for (Object[] row : stockRows) {
+            Number qtyNum = (Number) row[warehouseId != null ? 1 : 2];
+            if (qtyNum != null && qtyNum.longValue() != 0) {
+                productIdSet.add(((Number) row[0]).longValue());
+                if (warehouseId == null && row[1] != null) {
+                    warehouseIdSet.add(((Number) row[1]).longValue());
+                }
+            }
+        }
+        if (productIdSet.isEmpty())
+            return Collections.emptyList();
+
+        if (warehouseId != null)
+            warehouseIdSet.add(warehouseId);
+
+        List<Long> productIds = new ArrayList<>(productIdSet);
+
+        // 3. Batch-load product data
+        Map<Long, Product> productMap = productRepo.findAllById(productIds)
+                .stream().collect(Collectors.toMap(Product::getId, p -> p));
+
+        Map<Long, ProductPricing> pricingMap = pricingRepo.findByProductIdIn(productIds)
+                .stream().collect(Collectors.toMap(
+                        pp -> pp.getProduct().getId(), pp -> pp, (a, b) -> a));
+
+        Map<Long, ProductInventoryPolicy> invMap = inventoryRepo.findByProductIdIn(productIds)
+                .stream().collect(Collectors.toMap(
+                        pi -> pi.getProduct().getId(), pi -> pi, (a, b) -> a));
+
+        Map<Long, String> warehouseNameMap = getWarehouseNameMap();
+
+        // 4. Load LIFO / FIFO / WAC cost maps per warehouse (one batch query each per wh)
+        //    Structure: warehouseId → { productId → cost }
+        Map<Long, Map<Long, BigDecimal>> wacByWh  = new HashMap<>();
+        Map<Long, Map<Long, BigDecimal>> lifoByWh = new HashMap<>();
+        Map<Long, Map<Long, BigDecimal>> fifoByWh = new HashMap<>();
+
+        for (Long wId : warehouseIdSet) {
+            wacByWh.put(wId,  toProductCostMap(stockRepo.getBatchWeightedAvgCostByWarehouse(wId)));
+            lifoByWh.put(wId, toProductCostMap(stockRepo.getBatchLifoCostByWarehouse(wId)));
+            fifoByWh.put(wId, toProductCostMap(stockRepo.getBatchFifoCostByWarehouse(wId)));
+        }
+
+        // 5. Build valuation responses
+        List<StockReportResponse> result = new ArrayList<>();
+
+        if (warehouseId != null) {
+            String wName = warehouseNameMap.getOrDefault(warehouseId, "Warehouse");
+            Map<Long, BigDecimal> wacMap  = wacByWh.getOrDefault(warehouseId, Collections.emptyMap());
+            Map<Long, BigDecimal> lifoMap = lifoByWh.getOrDefault(warehouseId, Collections.emptyMap());
+            Map<Long, BigDecimal> fifoMap = fifoByWh.getOrDefault(warehouseId, Collections.emptyMap());
+
+            for (Object[] row : stockRows) {
+                Long pId = ((Number) row[0]).longValue();
+                Number qtyNum = (Number) row[1];
+                BigDecimal qty = qtyNum == null ? BigDecimal.ZERO : new BigDecimal(qtyNum.toString());
+                if (qty.compareTo(BigDecimal.ZERO) == 0) continue;
+                Product p = productMap.get(pId);
+                if (p == null) continue;
+                result.add(buildValuationResponse(p, wName, qty,
+                        pricingMap.get(pId), invMap.get(pId),
+                        wacMap.get(pId), lifoMap.get(pId), fifoMap.get(pId)));
+            }
+        } else {
+            for (Object[] row : stockRows) {
+                Long pId = ((Number) row[0]).longValue();
+                Number wIdNum = (Number) row[1];
+                Number qtyNum = (Number) row[2];
+                Long wId = wIdNum != null ? wIdNum.longValue() : null;
+                BigDecimal qty = qtyNum == null ? BigDecimal.ZERO : new BigDecimal(qtyNum.toString());
+                if (qty.compareTo(BigDecimal.ZERO) == 0) continue;
+                Product p = productMap.get(pId);
+                if (p == null) continue;
+
+                Map<Long, BigDecimal> wacMap  = wId != null ? wacByWh.getOrDefault(wId, Collections.emptyMap()) : Collections.emptyMap();
+                Map<Long, BigDecimal> lifoMap = wId != null ? lifoByWh.getOrDefault(wId, Collections.emptyMap()) : Collections.emptyMap();
+                Map<Long, BigDecimal> fifoMap = wId != null ? fifoByWh.getOrDefault(wId, Collections.emptyMap()) : Collections.emptyMap();
+                String wName = wId != null ? warehouseNameMap.getOrDefault(wId, "Warehouse") : "Warehouse";
+
+                result.add(buildValuationResponse(p, wName, qty,
+                        pricingMap.get(pId), invMap.get(pId),
+                        wacMap.get(pId), lifoMap.get(pId), fifoMap.get(pId)));
+            }
+        }
+
+        return result;
+    }
+
+    /**
+     * Convert a List<Object[]> { [productId, cost], ... } to a Map<Long, BigDecimal>.
+     * Handles both JPQL results (Number columns) and native query results.
+     */
+    private Map<Long, BigDecimal> toProductCostMap(List<Object[]> rows) {
+        Map<Long, BigDecimal> map = new HashMap<>();
+        if (rows == null) return map;
+        for (Object[] row : rows) {
+            if (row[0] == null || row[1] == null) continue;
+            Long productId = ((Number) row[0]).longValue();
+            BigDecimal cost = new BigDecimal(row[1].toString()).setScale(4, RoundingMode.HALF_UP);
+            if (cost.compareTo(BigDecimal.ZERO) > 0)
+                map.put(productId, cost);
+        }
+        return map;
+    }
+
+    /**
+     * Build a valuation-specific response where unitCost is derived from the
+     * product's configured costMethod rather than the static pricing.cost field.
+     */
+    private StockReportResponse buildValuationResponse(
+            Product p, String wName, BigDecimal qty,
+            ProductPricing pricing, ProductInventoryPolicy inv,
+            BigDecimal wacCost, BigDecimal lifoCost, BigDecimal fifoCost) {
+
+        StockReportResponse res = new StockReportResponse();
+        res.setProductId(p.getId());
+        res.setSku(p.getSku() != null ? p.getSku() : p.getCode());
+        res.setItem(p.getName());
+        res.setCategory(p.getCategory());
+        res.setWarehouse(wName);
+        res.setOnHand(qty);
+
+        if (p.getDepartment() != null) res.setDepartment(p.getDepartment().getName());
+        if (p.getBrand() != null)      res.setBrand(p.getBrand().getName());
+
+        // Inventory policy
+        if (inv != null) {
+            res.setUom(inv.getDefaultUnit() != null ? inv.getDefaultUnit().getName() : "PCS");
+            res.setMinStock(inv.getMinStock() != null ? new BigDecimal(inv.getMinStock()) : BigDecimal.ZERO);
+            BigDecimal maxStock    = inv.getMaxStock()    != null ? new BigDecimal(inv.getMaxStock())    : BigDecimal.ZERO;
+            BigDecimal reorderQty  = inv.getReorderQty()  != null ? new BigDecimal(inv.getReorderQty())  : BigDecimal.ZERO;
+            res.setSuggestedPoQty(maxStock.compareTo(BigDecimal.ZERO) > 0
+                    ? maxStock.subtract(qty).max(BigDecimal.ZERO) : reorderQty);
+            res.setDefaultVendor(inv.getDefaultVendor() != null ? inv.getDefaultVendor().getName() : "N/A");
+        } else {
+            res.setUom("PCS");
+            res.setMinStock(BigDecimal.ZERO);
+            res.setSuggestedPoQty(BigDecimal.ZERO);
+            res.setDefaultVendor("N/A");
+        }
+
+        // Static fallback cost from product_pricing
+        BigDecimal baseCost = (pricing != null && pricing.getCost() != null)
+                ? pricing.getCost() : BigDecimal.ZERO;
+        BigDecimal retail   = (pricing != null && pricing.getRetailPrice() != null)
+                ? pricing.getRetailPrice() : BigDecimal.ZERO;
+        CostMethod method   = pricing != null ? pricing.getCostMethod() : null;
+
+        // Resolve unit cost based on the product's configured costing method.
+        // Falls back to baseCost (product_pricing.cost) when movement data is absent.
+        BigDecimal unitCost;
+        if (method == null) {
+            unitCost = baseCost;
+        } else {
+            switch (method) {
+                case WEIGHTED_AVERAGE:
+                    unitCost = (wacCost != null && wacCost.compareTo(BigDecimal.ZERO) > 0)
+                            ? wacCost : baseCost;
+                    break;
+                case LIFO:
+                case LAST_PURCHASE_COST:
+                    unitCost = (lifoCost != null && lifoCost.compareTo(BigDecimal.ZERO) > 0)
+                            ? lifoCost : baseCost;
+                    break;
+                case FIFO:
+                    unitCost = (fifoCost != null && fifoCost.compareTo(BigDecimal.ZERO) > 0)
+                            ? fifoCost : baseCost;
+                    break;
+                default:
+                    unitCost = baseCost;
+            }
+        }
+
+        // Always expose FIFO and LIFO costs for frontend summary card computation
+        res.setFifoUnitCost(fifoCost != null && fifoCost.compareTo(BigDecimal.ZERO) > 0 ? fifoCost : baseCost);
+        res.setLifoUnitCost(lifoCost != null && lifoCost.compareTo(BigDecimal.ZERO) > 0 ? lifoCost : baseCost);
+        res.setCostMethod(method != null ? method.name() : "STANDARD");
+
+        res.setUnitCost(unitCost);
+        res.setValue(unitCost.multiply(qty));
+        res.setRetailPrice(retail);
+        res.setRetailValue(retail.multiply(qty));
+        res.setPotentialMargin(retail.subtract(unitCost).multiply(qty));
+
+        return res;
     }
 
     // ─────────────────────────────────────────────────────────────────────────
