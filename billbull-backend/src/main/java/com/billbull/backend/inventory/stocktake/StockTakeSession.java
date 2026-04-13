@@ -1,9 +1,13 @@
 package com.billbull.backend.inventory.stocktake;
 
+import java.time.LocalDateTime;
+import java.time.ZoneId;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
 
 import com.billbull.backend.common.BaseEntity;
+import com.fasterxml.jackson.annotation.JsonProperty;
 
 import jakarta.persistence.CascadeType;
 import jakarta.persistence.Entity;
@@ -15,6 +19,8 @@ import jakarta.persistence.Table;
 @Entity
 @Table(name = "stock_take_sessions")
 public class StockTakeSession extends BaseEntity {
+
+    private static final DateTimeFormatter ISO_OFFSET_DATE_TIME = DateTimeFormatter.ISO_OFFSET_DATE_TIME;
 
     private String sessionId; // STK-XXXXX
     private Long warehouseId;
@@ -86,4 +92,19 @@ public class StockTakeSession extends BaseEntity {
 
     public List<StockTakeItem> getItems() { return items; }
     public void setItems(List<StockTakeItem> items) { this.items = items; }
+
+    @JsonProperty("createdAtIso")
+    public String getCreatedAtIso() {
+        return toOffsetDateTimeString(getCreatedAt());
+    }
+
+    @JsonProperty("reconciledAtIso")
+    public String getReconciledAtIso() {
+        return toOffsetDateTimeString(reconciledAt);
+    }
+
+    private String toOffsetDateTimeString(LocalDateTime value) {
+        if (value == null) return null;
+        return value.atZone(ZoneId.systemDefault()).format(ISO_OFFSET_DATE_TIME);
+    }
 }
