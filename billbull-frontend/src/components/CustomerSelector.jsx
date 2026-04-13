@@ -161,14 +161,13 @@ const CustomerSelector = ({
             const payload = {
                 code: newCust.code.trim() || undefined, // Let backend auto-generate if empty
                 name: newCust.name.trim(),
-                groupType: newCust.groupType,
-                address: newCust.address.trim(),
+                group: newCust.groupType,        // QA-004: CustomerDTO field is 'group', not 'groupType'
+                billingAddress: newCust.address.trim(), // QA-004: CustomerDTO field is 'billingAddress'
                 mobile: newCust.mobile.trim(),
                 email: newCust.email.trim(),
                 trn: newCust.trn.trim(),
                 payTerms: 'Cash',
                 creditStatus: 'Good',
-                creditLimit: 0,
                 balance: 0
             };
 

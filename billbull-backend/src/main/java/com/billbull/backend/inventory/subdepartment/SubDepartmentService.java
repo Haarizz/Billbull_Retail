@@ -35,10 +35,6 @@ public class SubDepartmentService {
     // ---------------------------
     public SubDepartmentResponse create(SubDepartmentRequest req) {
 
-        if (repo.existsByCodeAndActiveTrue(req.code)) {
-            throw new RuntimeException("Sub-Department code already exists");
-        }
-
         Department dept = departmentRepo.findById(req.departmentId)
                 .orElseThrow(() -> new RuntimeException("Department not found"));
 
@@ -46,12 +42,28 @@ public class SubDepartmentService {
             throw new RuntimeException("Sub-Department already exists in this department");
         }
 
+        // QA-001: auto-generate code from name when not provided by quick-add
+        if (req.code == null || req.code.isBlank()) {
+            String raw = req.name.toUpperCase().replaceAll("[^A-Z0-9]", "");
+            String base = raw.isEmpty() ? "SD" : raw.substring(0, Math.min(raw.length(), 10));
+            String candidate = base;
+            int suffix = 1;
+            while (repo.existsByCodeAndActiveTrue(candidate)) {
+                String s = String.valueOf(suffix++);
+                candidate = base.substring(0, Math.min(base.length(), 10 - s.length())) + s;
+            }
+            req.code = candidate;
+        } else if (repo.existsByCodeAndActiveTrue(req.code)) {
+            throw new RuntimeException("Sub-Department code already exists");
+        }
+
         SubDepartment sd = new SubDepartment();
         sd.setName(req.name);
         sd.setCode(req.code);
         sd.setDepartment(dept);
         sd.setDescription(req.description);
-        sd.setActive(req.active);
+        // QA-001: default to active=true when not explicitly set (Boolean null check)
+        sd.setActive(req.active == null ? true : req.active);
         sd.setAllowOverride(req.allowOverride);
         sd.setAutoCreateGroups(req.autoCreateGroups);
         sd.setRestrictTerminals(req.restrictTerminals);
@@ -74,7 +86,7 @@ public class SubDepartmentService {
         sd.setCode(req.code);
         sd.setDepartment(dept);
         sd.setDescription(req.description);
-        sd.setActive(req.active);
+        sd.setActive(req.active == null ? sd.isActive() : req.active);
         sd.setAllowOverride(req.allowOverride);
         sd.setAutoCreateGroups(req.autoCreateGroups);
         sd.setRestrictTerminals(req.restrictTerminals);

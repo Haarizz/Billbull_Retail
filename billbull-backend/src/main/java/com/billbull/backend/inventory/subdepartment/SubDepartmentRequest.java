@@ -8,7 +8,7 @@ public class SubDepartmentRequest {
     @NotBlank
     public String name;
 
-    @NotBlank
+    // Optional on quick-add — service auto-generates when blank
     public String code;
 
     @NotNull
@@ -16,7 +16,8 @@ public class SubDepartmentRequest {
 
     public String description;
 
-    public boolean active;
+    // Use Boolean (not primitive) so null means "default to active"
+    public Boolean active;
     public boolean allowOverride;
     public boolean autoCreateGroups;
     public boolean restrictTerminals;

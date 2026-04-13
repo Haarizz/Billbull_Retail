@@ -31,6 +31,20 @@ public class DepartmentService {
 
     public DepartmentResponse create(DepartmentRequest request) {
 
+        // QA-001: auto-generate code from name when not provided by quick-add
+        if (request.getCode() == null || request.getCode().isBlank()) {
+            String raw = request.getName().toUpperCase().replaceAll("[^A-Z0-9]", "");
+            String base = raw.isEmpty() ? "DEPT" : raw.substring(0, Math.min(raw.length(), 10));
+            // Ensure uniqueness by appending a counter if needed
+            String candidate = base;
+            int suffix = 1;
+            while (repository.existsByCode(candidate)) {
+                String s = String.valueOf(suffix++);
+                candidate = base.substring(0, Math.min(base.length(), 10 - s.length())) + s;
+            }
+            request.setCode(candidate);
+        }
+
         java.util.Optional<Department> existingOpt = repository.findByCode(request.getCode());
         if (existingOpt.isPresent()) {
             Department existing = existingOpt.get();

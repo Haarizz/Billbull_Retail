@@ -7,7 +7,7 @@ public class DepartmentRequest {
 	@NotBlank
 	private String name;
 
-	@NotBlank
+	// Optional on quick-add — service auto-generates when blank
 	private String code;
 
 	private String desc;
