@@ -1,0 +1,19 @@
+package com.billbull.backend.purchase.grn;
+
+import java.math.BigDecimal;
+
+public record GrnItemRequest(
+                Long productId,
+                String code,
+                String name,
+                String uom,
+                Integer lpoQty,
+                Integer received,
+                Integer accepted,
+                Integer rejected,
+                BigDecimal unitCost,
+                BigDecimal netCost,
+                BigDecimal total,
+                boolean batch,
+                Integer focQty) {
+}

@@ -1,0 +1,567 @@
+
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { Search, Plus, X, Box, Loader2, ChevronLeft, ChevronRight, Clock, Folder, Package, Tag } from 'lucide-react';
+import { getImageUrl } from '../utils/urlUtils';
+import { getProductsList, createProduct } from '../api/productsApi';
+import { getBrands } from '../api/brandsApi';
+import { getUnits } from '../api/unitsApi';
+const PAGE_SIZE = 15;
+const RECENT_KEY = 'billbull_recent_products';
+const MAX_RECENT = 5;
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+const getRecent = () => {
+    try { return JSON.parse(localStorage.getItem(RECENT_KEY) || '[]'); }
+    catch { return []; }
+};
+
+const saveRecent = (product) => {
+    const prev = getRecent().filter(p => p.id !== product.id);
+    // Store the complete product object to retain necessary fields (price, discount, etc.) later
+    const next = [product, ...prev].slice(0, MAX_RECENT);
+    localStorage.setItem(RECENT_KEY, JSON.stringify(next));
+};
+
+const StockBadge = ({ stock }) => {
+    if (stock > 10) return <span className="text-emerald-600 font-bold">{stock}</span>;
+    if (stock > 0) return <span className="text-orange-500 font-bold">{stock}</span>;
+    return <span className="text-red-500 font-bold">Out of stock</span>;
+};
+
+// ── Skeleton ──────────────────────────────────────────────────────────────────
+
+const SkeletonCard = () => (
+    <div className="bg-white border border-slate-200 rounded-lg p-4 shadow-sm flex justify-between items-center animate-pulse">
+        <div className="flex gap-4 flex-1">
+            <div className="w-12 h-12 shrink-0 bg-slate-200 rounded-md" />
+            <div className="flex-1 space-y-2 pt-1">
+                <div className="h-3 bg-slate-200 rounded w-1/3" />
+                <div className="h-4 bg-slate-200 rounded w-2/3" />
+                <div className="h-3 bg-slate-200 rounded w-1/2" />
+            </div>
+        </div>
+        <div className="ml-4 shrink-0 space-y-2 text-right">
+            <div className="h-5 bg-slate-200 rounded w-20 ml-auto" />
+            <div className="h-7 bg-slate-200 rounded w-24 ml-auto" />
+        </div>
+    </div>
+);
+
+// ── Quick Add Modal ──────────────────────────────────────────────────────────
+
+const QuickAddModal = ({ isOpen, onClose, onSuccess }) => {
+    const [formData, setFormData] = useState({
+        name: '',
+        code: `PRD${Math.floor(Math.random() * 100000)}`,
+        retailPrice: '',
+        cost: '',
+        brandId: '',
+        unitId: ''
+    });
+    const [brands, setBrands] = useState([]);
+    const [units, setUnits] = useState([]);
+    const [loading, setLoading] = useState(false);
+
+    useEffect(() => {
+        if (isOpen) {
+            Promise.all([getBrands(), getUnits()])
+                .then(([b, u]) => {
+                    setBrands(b);
+                    setUnits(u);
+                    if (b.length > 0) setFormData(prev => ({ ...prev, brandId: b[0].id }));
+                    if (u.length > 0) setFormData(prev => ({ ...prev, unitId: u[0].id }));
+                })
+                .catch(console.error);
+        }
+    }, [isOpen]);
+
+    if (!isOpen) return null;
+
+    const handleSubmit = async (e) => {
+        e.preventDefault();
+        setLoading(true);
+        try {
+            const payload = {
+                product: {
+                    name: formData.name,
+                    code: formData.code,
+                    productType: 'STOCK',
+                    status: 'ACTIVE',
+                    brand: { id: parseInt(formData.brandId) }
+                },
+                pricing: {
+                    cost: parseFloat(formData.cost) || 0,
+                    retailPrice: parseFloat(formData.retailPrice) || 0
+                },
+                inventory: {
+                    defaultUnit: { id: parseInt(formData.unitId) },
+                    packings: [{ unit: parseInt(formData.unitId), qty: 1, level: 1 }]
+                },
+                tax: { salesTax: 5, purchaseTax: 5 }
+            };
+
+            const fData = new FormData();
+            fData.append("data", JSON.stringify(payload));
+
+            const res = await createProduct(fData);
+            onSuccess(res.product); // Returning the newly created product
+        } catch (err) {
+            console.error("Failed to create product:", err);
+            alert("Failed to create product. Check console.");
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    return (
+        <div className="fixed inset-0 z-[120] flex items-center justify-center bg-black/60 p-4 animate-in fade-in duration-200">
+            <div className="bg-white rounded-xl shadow-2xl w-full max-w-lg overflow-hidden flex flex-col">
+                <div className="p-4 border-b border-slate-100 flex justify-between items-center bg-slate-50">
+                    <h3 className="text-lg font-bold text-slate-800 flex items-center gap-2">
+                        <Plus size={18} className="text-emerald-500" /> Quick Add Product
+                    </h3>
+                    <button onClick={onClose} disabled={loading} className="text-slate-400 hover:text-slate-600">
+                        <X size={18} />
+                    </button>
+                </div>
+                <form onSubmit={handleSubmit} className="p-5 space-y-4">
+                    <div className="grid grid-cols-2 gap-4">
+                        <div className="space-y-1 col-span-2">
+                            <label className="text-xs font-bold text-slate-500">Product Name *</label>
+                            <input autoFocus required type="text" value={formData.name} onChange={e => setFormData({ ...formData, name: e.target.value })} className="w-full text-sm border-2 border-slate-200 rounded-lg px-3 py-2 outline-none focus:border-emerald-500" placeholder="E.g. Wireless Mouse" />
+                        </div>
+                        <div className="space-y-1">
+                            <label className="text-xs font-bold text-slate-500">Item Code *</label>
+                            <input required type="text" value={formData.code} onChange={e => setFormData({ ...formData, code: e.target.value })} className="w-full text-sm border-2 border-slate-200 rounded-lg px-3 py-2 outline-none focus:border-emerald-500" />
+                        </div>
+                        <div className="space-y-1">
+                            <label className="text-xs font-bold text-slate-500">Brand *</label>
+                            <select required value={formData.brandId} onChange={e => setFormData({ ...formData, brandId: e.target.value })} className="w-full text-sm border-2 border-slate-200 rounded-lg px-3 py-2 outline-none focus:border-emerald-500 bg-white">
+                                {brands.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
+                            </select>
+                        </div>
+                        <div className="space-y-1">
+                            <label className="text-xs font-bold text-slate-500">Cost Price</label>
+                            <input type="number" step="0.01" value={formData.cost} onChange={e => setFormData({ ...formData, cost: e.target.value })} className="w-full text-sm border-2 border-slate-200 rounded-lg px-3 py-2 outline-none focus:border-emerald-500" placeholder="0.00" />
+                        </div>
+                        <div className="space-y-1">
+                            <label className="text-xs font-bold text-slate-500">Retail Price *</label>
+                            <input required type="number" step="0.01" value={formData.retailPrice} onChange={e => setFormData({ ...formData, retailPrice: e.target.value })} className="w-full text-sm border-2 border-slate-200 rounded-lg px-3 py-2 outline-none focus:border-emerald-500" placeholder="0.00" />
+                        </div>
+                        <div className="space-y-1 col-span-2">
+                            <label className="text-xs font-bold text-slate-500">Default Unit *</label>
+                            <select required value={formData.unitId} onChange={e => setFormData({ ...formData, unitId: e.target.value })} className="w-full text-sm border-2 border-slate-200 rounded-lg px-3 py-2 outline-none focus:border-emerald-500 bg-white">
+                                {units.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
+                            </select>
+                        </div>
+                    </div>
+                    <div className="pt-4 flex gap-3">
+                        <button type="button" onClick={onClose} disabled={loading} className="flex-1 px-4 py-2.5 border border-slate-200 text-slate-600 rounded-lg text-sm font-bold hover:bg-slate-50 transition-colors">Cancel</button>
+                        <button type="submit" disabled={loading} className="flex-1 px-4 py-2.5 bg-slate-900 text-white rounded-lg text-sm font-bold hover:bg-slate-800 transition-colors flex justify-center items-center gap-2">
+                            {loading ? <Loader2 size={16} className="animate-spin" /> : <><Plus size={16} /> Save Product</>}
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    );
+};
+
+// ── Main Component ────────────────────────────────────────────────────────────
+
+/**
+ * ProductSelector — ERP-grade server-side search + pagination.
+ *
+ * Features:
+ *  • Self-fetching (no products prop needed)
+ *  • AbortController — cancels stale requests, prevents race-condition overwrites
+ *  • Debounced search (350 ms), page auto-resets to 0 on every new search
+ *  • Keyboard nav: ↑↓ arrows, Enter to add highlighted item, Esc to close
+ *  • Stock-aware badges: green > 10, orange > 0, red = out-of-stock
+ *  • Out-of-stock cards dimmed but still selectable
+ *  • Recently-selected memory (last 5, via localStorage), shown on empty search
+ *  • Skeleton cards on first load; spinner overlay on subsequent fetches
+ *  • Stable min-height + always-rendered footer — no layout shift
+ */
+const ProductSelector = ({
+    isOpen,
+    onClose,
+    onSelect,
+    title = 'Select Items from Products / Services',
+    actionLabel = 'Add to Quotation',
+    warehouseId = null,
+    customFetchFn = null,  // (search, page, pageSize, signal) => Promise<{ content, totalPages, totalElements }>
+}) => {
+    const [searchQuery, setSearchQuery] = useState('');
+    const [products, setProducts] = useState([]);
+    const [totalFound, setTotalFound] = useState(0);
+    const [loading, setLoading] = useState(false);
+    const [initialLoad, setInitialLoad] = useState(true);
+    const [page, setPage] = useState(0);
+    const [totalPages, setTotalPages] = useState(0);
+    const [focusedIdx, setFocusedIdx] = useState(-1);   // keyboard nav index
+    const [recentProducts, setRecentProducts] = useState([]);
+    const [showQuickAdd, setShowQuickAdd] = useState(false);
+
+    const debounceRef = useRef(null);
+    const abortRef = useRef(null);   // AbortController for current in-flight request
+    const searchInputRef = useRef(null);
+    const listRef = useRef(null);
+
+    // ── Fetch (with AbortController) ─────────────────────────────────────────
+    const fetchProducts = useCallback(async (query, pageNum, whId) => {
+        if (abortRef.current) abortRef.current.abort();
+        const controller = new AbortController();
+        abortRef.current = controller;
+
+        setLoading(true);
+        try {
+            const data = customFetchFn
+                ? await customFetchFn(query, pageNum, PAGE_SIZE, controller.signal)
+                : await getProductsList(pageNum, PAGE_SIZE, query, controller.signal, whId);
+            setProducts(data.content || []);
+            setTotalFound(data.totalElements || 0);
+            setTotalPages(data.totalPages || 0);
+            setPage(data.page ?? pageNum);
+            setFocusedIdx(-1);
+        } catch (err) {
+            if (err.name !== 'AbortError' && err.name !== 'CanceledError') {
+                console.error('ProductSelector fetch error:', err);
+            }
+        } finally {
+            if (abortRef.current === controller) {
+                setLoading(false);
+                setInitialLoad(false);
+            }
+        }
+    }, [customFetchFn]);
+
+    // Reset + load when modal opens; clean up on close
+    useEffect(() => {
+        if (isOpen) {
+            setSearchQuery('');
+            setPage(0);
+            setInitialLoad(true);
+            setProducts([]);
+            setFocusedIdx(-1);
+            setRecentProducts(getRecent());
+            fetchProducts('', 0, warehouseId);
+            setTimeout(() => searchInputRef.current?.focus(), 50);
+        } else {
+            // Cancel any in-flight request when modal is closed
+            if (abortRef.current) abortRef.current.abort();
+            setProducts([]);
+            setTotalFound(0);
+            setTotalPages(0);
+            setInitialLoad(true);
+        }
+    }, [isOpen, warehouseId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+    // Debounce search → always reset to page 0
+    useEffect(() => {
+        if (!isOpen) return;
+        clearTimeout(debounceRef.current);
+        debounceRef.current = setTimeout(() => {
+            setPage(0);
+            fetchProducts(searchQuery, 0, warehouseId);
+        }, 350);
+        return () => clearTimeout(debounceRef.current);
+    }, [searchQuery, isOpen]); // eslint-disable-line react-hooks/exhaustive-deps
+
+    // ── Keyboard navigation ──────────────────────────────────────────────────
+    const handleKeyDown = (e) => {
+        if (!isOpen) return;
+
+        switch (e.key) {
+            case 'ArrowDown':
+                e.preventDefault();
+                setFocusedIdx(prev => {
+                    const next = Math.min(prev + 1, products.length - 1);
+                    // Scroll focused card into view
+                    listRef.current?.children[next]?.scrollIntoView({ block: 'nearest' });
+                    return next;
+                });
+                break;
+            case 'ArrowUp':
+                e.preventDefault();
+                setFocusedIdx(prev => {
+                    const next = Math.max(prev - 1, -1);
+                    if (next >= 0) listRef.current?.children[next]?.scrollIntoView({ block: 'nearest' });
+                    return next;
+                });
+                break;
+            case 'Enter':
+                e.preventDefault();
+                if (focusedIdx >= 0 && products[focusedIdx]) {
+                    handleSelect(products[focusedIdx]);
+                }
+                break;
+            case 'Escape':
+                e.preventDefault();
+                onClose();
+                break;
+            default:
+                break;
+        }
+    };
+
+    const handlePageChange = (newPage) => {
+        if (newPage < 0 || newPage >= totalPages) return;
+        setPage(newPage);
+        fetchProducts(searchQuery, newPage, warehouseId);
+    };
+
+    const handleSelect = (product) => {
+        saveRecent(product);
+        onSelect(product);
+    };
+
+    if (!isOpen) return null;
+
+    // Show recently-selected section only when search is empty and we have recents
+    const showRecent = !searchQuery && recentProducts.length > 0 && !initialLoad;
+
+    // ── Render ────────────────────────────────────────────────────────────────
+    return (
+        <div
+            className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 p-4 animate-in fade-in duration-200"
+            onKeyDown={handleKeyDown}
+        >
+            <div className="bg-white rounded-lg shadow-2xl w-full max-w-3xl overflow-hidden flex flex-col max-h-[90vh]">
+
+                {/* ── Header ── */}
+                <div className="p-5 border-b border-slate-100 bg-white space-y-4 flex-shrink-0 rounded-t-xl">
+                    <div className="flex justify-between items-start">
+                        <div>
+                            <h2 className="text-[17px] font-bold text-slate-800 mb-1">{title}</h2>
+                            <p className="text-[12px] text-slate-500">
+                                Search below or use <kbd className="px-1 py-0.5 border rounded bg-slate-50 text-[10px] font-sans">↑</kbd> <kbd className="px-1 py-0.5 border rounded bg-slate-50 text-[10px] font-sans">↓</kbd> <kbd className="px-1 py-0.5 border rounded bg-slate-50 text-[10px] font-sans">Enter</kbd> <kbd className="px-1 py-0.5 border rounded bg-slate-50 text-[10px] font-sans">Esc</kbd> to navigate.
+                            </p>
+                        </div>
+                        <button onClick={onClose} className="text-slate-400 hover:text-slate-600 p-1">
+                            <X size={18} />
+                        </button>
+                    </div>
+
+                    <div className="flex items-center gap-3">
+                        <div className="relative flex-1">
+                            <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-emerald-500/80" size={16} />
+                            <input
+                                ref={searchInputRef}
+                                type="text"
+                                placeholder="Search by item code, name, SKU, barcode..."
+                                value={searchQuery}
+                                onChange={(e) => setSearchQuery(e.target.value)}
+                                className="w-full pl-9 pr-4 py-2 text-sm border-2 border-emerald-500 rounded-lg focus:outline-none focus:ring-4 focus:ring-emerald-50 focus:border-emerald-500 transition-all text-slate-700 font-medium"
+                            />
+                            {loading && (
+                                <div className="absolute right-3 top-1/2 -translate-y-1/2">
+                                    <Loader2 size={16} className="animate-spin text-emerald-500" />
+                                </div>
+                            )}
+                        </div>
+                        <button
+                            onClick={() => setShowQuickAdd(true)}
+                            className="shrink-0 flex items-center justify-center gap-1.5 px-4 py-2 bg-slate-900 text-white rounded-lg text-[13px] font-bold shadow-sm hover:bg-slate-800 transition-all"
+                        >
+                            <Plus size={16} /> New Product
+                        </button>
+                    </div>
+                </div>
+
+                {/* ── Quick Add Modal Overlay ── */}
+                <QuickAddModal
+                    isOpen={showQuickAdd}
+                    onClose={() => setShowQuickAdd(false)}
+                    onSuccess={(newProduct) => {
+                        setShowQuickAdd(false);
+                        handleSelect(newProduct);
+                    }}
+                />
+
+                {/* ── List ── */}
+                <div className="flex-1 overflow-y-auto p-4 bg-white min-h-[300px] relative">
+
+                    {/* Dimming overlay while refreshing (not first load) */}
+                    {loading && !initialLoad && (
+                        <div className="absolute inset-0 bg-white/60 z-10 flex items-center justify-center rounded pointer-events-none">
+                            <Loader2 size={28} className="animate-spin text-emerald-500" />
+                        </div>
+                    )}
+
+                    {/* Recently Selected */}
+                    {showRecent && (
+                        <div className="mb-6 animate-in fade-in slide-in-from-top-2 duration-300">
+                            <div className="flex items-center gap-2 mb-3">
+                                <Clock size={12} className="text-slate-400" />
+                                <h3 className="text-[11px] font-semibold text-slate-500">Recently Selected</h3>
+                            </div>
+                            <div className="flex gap-2 flex-wrap">
+                                {recentProducts.map(rp => (
+                                    <button
+                                        key={rp.id}
+                                        onClick={() => handleSelect(rp)}
+                                        className="flex items-center gap-2 px-3 py-1.5 bg-white border border-slate-200 rounded-full hover:border-emerald-400 hover:shadow-sm transition-all group"
+                                    >
+                                        {rp.image ? (
+                                            <img src={getImageUrl(rp.image)} alt="" className="w-4 h-4 rounded-sm object-cover" />
+                                        ) : (
+                                            <Package size={12} className="text-slate-400 group-hover:text-emerald-500" />
+                                        )}
+                                        <span className="text-[11px] font-bold text-slate-700">{rp.code}</span>
+                                        <span className="text-[11px] text-slate-500 max-w-[120px] truncate" title={rp.description || rp.name}>{rp.name}</span>
+                                    </button>
+                                ))}
+                            </div>
+                        </div>
+                    )}
+
+                    {!loading && !initialLoad && (
+                        <div className="text-[11px] font-medium text-slate-400 mb-3 ml-1">
+                            {searchQuery ? `Search Results for "${searchQuery}"` : 'All Products (A - Z)'}
+                        </div>
+                    )}
+
+                    {/* Skeleton — first load */}
+                    {initialLoad && loading && (
+                        <div className="space-y-3">
+                            {Array.from({ length: 5 }).map((_, i) => <SkeletonCard key={i} />)}
+                        </div>
+                    )}
+
+                    {/* Empty state */}
+                    {!loading && !initialLoad && products.length === 0 && (
+                        <div className="text-center py-10 text-slate-400">
+                            <Box size={32} className="mx-auto mb-2 text-slate-300" />
+                            {searchQuery
+                                ? <>No products match <strong>"{searchQuery}"</strong>.</>
+                                : 'No active products found.'}
+                        </div>
+                    )}
+
+                    {/* Product cards */}
+                    <div className="space-y-3" ref={listRef}>
+                        {products.map((product, idx) => {
+                            const rawRetail = product.retailPrice != null ? parseFloat(product.retailPrice) : NaN;
+                            const rawSelling = product.sellingPrice != null ? parseFloat(product.sellingPrice) : NaN;
+                            const salesPrice = !isNaN(rawRetail) ? rawRetail : (!isNaN(rawSelling) ? rawSelling : 0);
+                            const cost = (product.cost != null && !isNaN(parseFloat(product.cost))) ? parseFloat(product.cost) : null;
+                            const gpRaw = salesPrice > 0 && cost != null ? ((salesPrice - cost) / salesPrice) * 100 : null;
+                            const gp = product.gp ?? (gpRaw != null ? `${gpRaw.toFixed(1)}%` : null);
+                            const category = product.category ?? product.departmentName ?? 'General';
+                            const stock = product.stock ?? 0;
+                            const unit = product.unitName ?? product.unit ?? '';
+                            const outOfStock = stock <= 0;
+                            const isFocused = idx === focusedIdx;
+
+                            return (
+                                <div
+                                    key={product.id}
+                                    onClick={() => handleSelect(product)}
+                                    className={`
+                                        bg-white border rounded p-4 flex justify-between items-start shadow-sm
+                                        cursor-pointer transition-all duration-200
+                                        ${outOfStock ? 'opacity-80' : 'hover:shadow-md hover:border-emerald-200'}
+                                        ${isFocused
+                                            ? 'border-emerald-500 ring-2 ring-emerald-500/20 shadow-md bg-emerald-50/10'
+                                            : 'border-slate-200'}
+                                        mb-3
+                                    `}
+                                >
+                                    {/* Left: Product Info */}
+                                    <div className="flex gap-4 flex-1">
+                                        <div className="w-12 h-12 rounded bg-slate-50 border border-slate-100 flex items-center justify-center shrink-0 overflow-hidden">
+                                            {product.image ? (
+                                                <img src={getImageUrl(product.image)} alt={product.name} className="w-full h-full object-cover" />
+                                            ) : (
+                                                <Package size={20} className="text-slate-300" />
+                                            )}
+                                        </div>
+                                        <div>
+                                            <div className="flex items-center gap-2 mb-1">
+                                                <span className="text-[11px] font-bold text-slate-500 tracking-wider font-mono">{product.code}</span>
+                                                <span className="text-[10px] px-2 py-0.5 text-blue-600 bg-blue-50/50 rounded font-medium">{category}</span>
+                                                {outOfStock ? (
+                                                    <span className="text-[10px] px-2 py-0.5 text-red-500 bg-red-50/50 rounded font-medium border border-red-100">out of stock</span>
+                                                ) : (
+                                                    <span className="text-[10px] px-2 py-0.5 text-emerald-600 bg-emerald-50/50 rounded font-medium">active</span>
+                                                )}
+                                            </div>
+                                            <h3 className="font-bold text-slate-800 text-[15px] mb-0.5">{product.name}</h3>
+                                            <p className="text-[11px] text-slate-500 mb-2">{product.description || 'Premium quality item.'}</p>
+
+                                            <div className="flex items-center gap-4 text-[11px]">
+                                                <span className="flex items-center gap-1.5 text-slate-500">
+                                                    <Package size={12} className="text-slate-400" /> Stock: <StockBadge stock={stock} />
+                                                </span>
+                                                <span className="text-slate-400">SKU: {product.sku || '-'}</span>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    {/* Right: Price & Action */}
+                                    <div className="text-right shrink-0 ml-4 flex flex-col items-end">
+                                        <div className="text-[15px] font-bold text-slate-800 flex items-baseline gap-1 mb-1.5">
+                                            <span className="text-[9px] text-slate-400 font-normal uppercase">AED</span>
+                                            {salesPrice.toFixed(2)}
+                                        </div>
+                                        <div className="flex gap-2 mb-3">
+                                            {cost != null && <div className="text-[9px] text-slate-400">Cost: AED {cost.toFixed(2)}</div>}
+                                            {gp != null && <div className="text-[9px] text-slate-400">GP: {gp}</div>}
+                                        </div>
+                                        <button
+                                            onClick={(e) => { e.stopPropagation(); handleSelect(product); }}
+                                            className="bg-[#FFD700] text-slate-800 px-4 py-1.5 rounded-md text-[11px] font-bold flex items-center gap-1.5 hover:bg-[#FACC15] transition-colors shadow-sm"
+                                        >
+                                            <Plus size={12} strokeWidth={2.5} /> {actionLabel}
+                                        </button>
+                                    </div>
+                                </div>
+                            );
+                        })}
+                    </div>
+                </div>
+
+                {/* ── Footer — stable height, always rendered ── */}
+                <div className="p-4 border-t border-slate-100 bg-white flex justify-between items-center gap-3 flex-shrink-0">
+                    <span className="text-xs text-slate-500 min-w-[120px]">
+                        {loading ? 'Searching…' : `${totalFound} product(s) found`}
+                    </span>
+
+                    {/* Pagination — always rendered, just disabled when N/A */}
+                    <div className="flex items-center gap-1">
+                        <button
+                            disabled={page === 0 || loading}
+                            onClick={() => handlePageChange(page - 1)}
+                            className="p-1.5 rounded border border-slate-200 disabled:opacity-30 hover:bg-slate-50 disabled:cursor-not-allowed transition-colors"
+                            title="Previous page"
+                        >
+                            <ChevronLeft size={14} />
+                        </button>
+                        <span className="text-xs text-slate-500 px-3 min-w-[70px] text-center">
+                            {totalPages > 0 ? `${page + 1} / ${totalPages}` : '—'}
+                        </span>
+                        <button
+                            disabled={page >= totalPages - 1 || loading}
+                            onClick={() => handlePageChange(page + 1)}
+                            className="p-1.5 rounded border border-slate-200 disabled:opacity-30 hover:bg-slate-50 disabled:cursor-not-allowed transition-colors"
+                            title="Next page"
+                        >
+                            <ChevronRight size={14} />
+                        </button>
+                    </div>
+
+                    <button
+                        onClick={onClose}
+                        className="px-4 py-2 border border-slate-200 rounded text-xs font-bold hover:bg-slate-50 transition-colors"
+                    >
+                        Close
+                    </button>
+                </div>
+            </div>
+        </div>
+    );
+};
+
+export default ProductSelector;

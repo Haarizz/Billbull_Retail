@@ -1,0 +1,48 @@
+@import "tailwindcss";
+
+/* ── Inter font: loaded via <link> in index.html ── */
+
+@theme {
+  --font-sans: 'Inter', sans-serif;
+}
+
+/* ── Global base styles ── */
+*, *::before, *::after {
+  box-sizing: border-box;
+}
+
+html, body {
+  font-family: 'Inter', sans-serif;
+  font-weight: 400;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Page titles — Inter ExtraBold */
+h1 {
+  font-family: 'Inter', sans-serif;
+  font-weight: 800;
+}
+
+/* Section / screen headings — Inter Bold */
+h2, h3 {
+  font-family: 'Inter', sans-serif;
+  font-weight: 700;
+}
+
+/* Card titles & labels — Inter SemiBold */
+h4, h5, h6,
+label,
+.card-title {
+  font-family: 'Inter', sans-serif;
+  font-weight: 600;
+}
+
+/* Body text — Inter Regular (already set via html/body) */
+
+/* KPI / stats values — Inter Bold */
+.stat-value,
+.kpi-value {
+  font-family: 'Inter', sans-serif;
+  font-weight: 700;
+}

@@ -1,0 +1,1800 @@
+import React, { useState, useRef, useEffect, useMemo } from 'react';
+import {
+  Search,
+  Filter,
+  Download,
+  Upload,
+  Settings,
+  Plus,
+  MoreHorizontal,
+  ChevronDown,
+  Users,
+  User,
+  Activity,
+  DollarSign,
+  Target,
+  Trophy,
+  Store,
+  Warehouse,
+  Smartphone,
+  Monitor,
+  BarChart3,
+  Clock,
+  ShieldCheck,
+  X,
+  Camera,
+  CheckCircle2,
+  Briefcase,
+  FileText,
+  Box,
+  ClipboardList,
+  Eye,
+  Trash2,
+  AlertCircle,
+  Save,
+  Lock,
+  Image as ImageIcon,
+  File,
+  XCircle,
+  Check,
+  X as XIcon,
+  Edit,
+  UserX,
+  UserCheck
+} from 'lucide-react';
+
+// Import the API helper
+import { employeesApi } from '../../../api/employeesApi';
+
+// Configuration for Image Base URL
+const SERVER_URL = window.location.origin;
+
+// ==========================================
+// 0. CONSTANTS & UTILS
+// ==========================================
+
+const STAT_COLORS = {
+  neutral: 'bg-slate-100 text-slate-600',
+  success: 'bg-emerald-50 text-emerald-600',
+  warning: 'bg-amber-50 text-amber-600',
+  danger: 'bg-red-50 text-red-600',
+  primary: 'bg-[#F5C742]/20 text-yellow-700', // Adjusted to match theme
+  purple: 'bg-purple-50 text-purple-600'
+};
+
+// ==========================================
+// 1. ADD / EDIT EMPLOYEE MODAL COMPONENT
+// ==========================================
+
+const AddEmployeeModal = ({ isOpen, onClose, onWorkflowStart, employeeToEdit }) => {
+  const [activeTab, setActiveTab] = useState('personal');
+  const [completedSteps, setCompletedSteps] = useState(new Set());
+
+  // --- Checklist State ---
+  const [checklist, setChecklist] = useState([
+    { id: 1, label: "Personal info completed", checked: false },
+    { id: 2, label: "Role assigned", checked: false },
+    { id: 3, label: "Permissions set", checked: false },
+    { id: 4, label: "Bank details added", checked: false },
+    { id: 5, label: "Mandatory docs uploaded", checked: false },
+  ]);
+
+  // --- Media & File Refs ---
+  const [avatarPreview, setAvatarPreview] = useState(null);
+  const [avatarFile, setAvatarFile] = useState(null); // The actual file/blob to send
+  const [isCameraOpen, setIsCameraOpen] = useState(false);
+  const [cameraError, setCameraError] = useState('');
+
+  const fileInputRef = useRef(null);
+  const videoRef = useRef(null);
+  const canvasRef = useRef(null);
+  const docInputRef = useRef(null);
+
+  // --- Document State ---
+  const [emiratesIdFile, setEmiratesIdFile] = useState(null);
+
+  // --- Form Data State (Captures all inputs) ---
+  const initialFormState = {
+    firstName: '',
+    middleName: '',
+    lastName: '',
+    employeeCode: 'EMP' + Math.floor(Math.random() * 10000),
+    gender: 'Male',
+    dateOfBirth: '',
+    phone: '',
+    email: '',
+    currentAddress: '',
+    nationality: '',
+    role: 'Sales Executive',
+    department: 'Store Team',
+    branch: 'Downtown Store',
+    reportingManager: '',
+    workLocation: '',
+    employmentType: 'Full Time',
+    joinDate: new Date().toISOString().split('T')[0],
+    probationPeriod: '3',
+    confirmationDate: '',
+    salaryType: 'Monthly',
+    basicSalary: '',
+    posAccess: true,
+    posPin: '',
+    permissionProfile: 'Role-based (Auto)',
+    emiratesId: '',
+    expiryDate: ''
+  };
+
+  const [formData, setFormData] = useState(initialFormState);
+
+  // --- POPULATE DATA FOR EDIT MODE ---
+  useEffect(() => {
+    if (employeeToEdit) {
+      setFormData({
+        firstName: employeeToEdit.firstName || "",
+        middleName: employeeToEdit.middleName || "",
+        lastName: employeeToEdit.lastName || "",
+        employeeCode: employeeToEdit.employeeCode || "",
+        gender: employeeToEdit.gender || "Male",
+        dateOfBirth: employeeToEdit.dateOfBirth || "",
+        phone: employeeToEdit.phone || "",
+        email: employeeToEdit.email || "",
+        currentAddress: employeeToEdit.currentAddress || "",
+        nationality: employeeToEdit.nationality || "",
+        role: employeeToEdit.role || "",
+        department: employeeToEdit.department || "",
+        branch: employeeToEdit.branch || "",
+        reportingManager: employeeToEdit.reportingManager || "",
+        workLocation: employeeToEdit.workLocation || "",
+        employmentType: employeeToEdit.employmentType || "Full Time",
+        joinDate: employeeToEdit.joinDate || "",
+        probationPeriod: employeeToEdit.probationPeriod || "",
+        confirmationDate: employeeToEdit.confirmationDate || "",
+        salaryType: employeeToEdit.salaryType || "Monthly",
+        basicSalary: employeeToEdit.basicSalary || "",
+        posAccess: employeeToEdit.posAccess ?? true,
+        posPin: employeeToEdit.posPin || "",
+        permissionProfile: employeeToEdit.permissionProfile || "",
+        emiratesId: employeeToEdit.emiratesId || "",
+        expiryDate: employeeToEdit.emiratesIdExpiry || ""
+      });
+
+      if (employeeToEdit.avatarUrl) {
+        setAvatarPreview(`${SERVER_URL}${employeeToEdit.avatarUrl}`);
+      }
+    }
+  }, [employeeToEdit]);
+
+  // --- Computed Values ---
+  const checklistProgress = useMemo(() => {
+    const completed = checklist.filter(i => i.checked).length;
+    return (completed / checklist.length) * 100;
+  }, [checklist]);
+
+  // --- Navigation Data ---
+  const navItems = [
+    { id: 'personal', label: 'Personal Information', icon: User },
+    { id: 'job', label: 'Job & Organization', icon: Briefcase },
+    { id: 'access', label: 'Access & Permissions', icon: ShieldCheck },
+    { id: 'payroll', label: 'Payroll & Benefits', icon: DollarSign },
+    { id: 'attendance', label: 'Attendance & Leave', icon: Clock },
+    { id: 'docs', label: 'Documents & Compliance', icon: FileText },
+    { id: 'assets', label: 'Assets & Loans', icon: Box },
+    { id: 'notes', label: 'Notes & History', icon: ClipboardList },
+    { id: 'review', label: 'Review & Confirm', icon: Eye },
+  ];
+
+  const steps = [
+    { id: 'draft', label: 'Draft', status: 'current' },
+    { id: 'hr', label: 'HR Review', status: 'upcoming' },
+    { id: 'manager', label: 'Manager Approval', status: 'upcoming' },
+    { id: 'accounts', label: 'Accounts Approval', status: 'upcoming' },
+    { id: 'active', label: 'Active', status: 'upcoming' },
+  ];
+
+  // --- Handlers ---
+
+  const handleInputChange = (e) => {
+    const { name, value, type, checked } = e.target;
+    setFormData(prev => ({
+      ...prev,
+      [name]: type === 'checkbox' ? checked : value
+    }));
+  };
+
+  const handleNext = () => {
+    const newCompleted = new Set(completedSteps);
+    newCompleted.add(activeTab);
+    setCompletedSteps(newCompleted);
+
+    const currentIndex = navItems.findIndex(item => item.id === activeTab);
+    if (currentIndex < navItems.length - 1) {
+      setActiveTab(navItems[currentIndex + 1].id);
+    }
+  };
+
+  const handleBack = () => {
+    const currentIndex = navItems.findIndex(item => item.id === activeTab);
+    if (currentIndex > 0) {
+      setActiveTab(navItems[currentIndex - 1].id);
+    } else {
+      onClose();
+    }
+  };
+
+  const handleSaveDraft = () => {
+    alert("Employee details saved locally as draft.");
+    onClose();
+  };
+
+  const handleFormSubmit = () => {
+    const submissionData = { ...formData };
+    if (employeeToEdit) {
+      submissionData.id = employeeToEdit.id;
+    }
+
+    onWorkflowStart(submissionData, avatarFile, !!employeeToEdit);
+    onClose();
+  };
+
+  const toggleChecklist = (id) => {
+    setChecklist(checklist.map(item =>
+      item.id === id ? { ...item, checked: !item.checked } : item
+    ));
+  };
+
+  // --- Avatar Logic ---
+  const handleAvatarFile = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+
+    if (file.size > 2 * 1024 * 1024) {
+      alert("File size must be under 2MB");
+      return;
+    }
+
+    if (!['image/jpeg', 'image/png', 'image/jpg', 'image/svg+xml'].includes(file.type)) {
+      alert("Only PNG, JPG, and SVG files are allowed");
+      return;
+    }
+
+    setAvatarFile(file);
+
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      setAvatarPreview(reader.result);
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const startCamera = async () => {
+    setIsCameraOpen(true);
+    setCameraError('');
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+      }
+    } catch (err) {
+      console.error("Camera Error:", err);
+      setCameraError("Could not access camera. Please ensure permissions are granted.");
+    }
+  };
+
+  const capturePhoto = () => {
+    if (videoRef.current && canvasRef.current) {
+      const context = canvasRef.current.getContext('2d');
+      canvasRef.current.width = videoRef.current.videoWidth;
+      canvasRef.current.height = videoRef.current.videoHeight;
+      context.drawImage(videoRef.current, 0, 0);
+
+      const dataUrl = canvasRef.current.toDataURL('image/jpeg');
+      setAvatarPreview(dataUrl);
+
+      canvasRef.current.toBlob((blob) => {
+        setAvatarFile(blob);
+      }, 'image/jpeg');
+
+      stopCamera();
+    }
+  };
+
+  const stopCamera = () => {
+    if (videoRef.current && videoRef.current.srcObject) {
+      const tracks = videoRef.current.srcObject.getTracks();
+      tracks.forEach(track => track.stop());
+      videoRef.current.srcObject = null;
+    }
+    setIsCameraOpen(false);
+  };
+
+  // --- Document Logic ---
+  const handleDocUpload = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    if (file.type !== 'application/pdf') {
+      alert("Only PDF files are allowed");
+      return;
+    }
+    setEmiratesIdFile(file);
+  };
+
+  if (!isOpen) return null;
+
+  const renderContent = () => {
+    switch (activeTab) {
+      case 'personal':
+        return (
+          <div className="space-y-6 animate-in fade-in zoom-in-95 duration-200">
+            {/* Identity Section */}
+            <div className="bg-white border border-slate-200 rounded-lg p-6 shadow-sm">
+              <h3 className="text-sm font-semibold text-slate-700 mb-6">Identity</h3>
+              <div className="flex flex-col md:flex-row gap-8">
+
+                {/* Avatar Area */}
+                <div className="flex flex-col items-center gap-3">
+                  <div className="relative group">
+                    {isCameraOpen ? (
+                      <div className="w-32 h-32 rounded-full overflow-hidden bg-black relative border-2 border-[#F5C742]">
+                        <video ref={videoRef} autoPlay playsInline className="w-full h-full object-cover"></video>
+                        <canvas ref={canvasRef} className="hidden"></canvas>
+                      </div>
+                    ) : (
+                      <div
+                        className="w-32 h-32 rounded-full bg-slate-50 border-2 border-dashed border-slate-300 flex items-center justify-center text-slate-400 overflow-hidden relative"
+                        style={{ backgroundImage: avatarPreview ? `url(${avatarPreview})` : 'none', backgroundSize: 'cover', backgroundPosition: 'center' }}
+                      >
+                        {!avatarPreview && <Camera size={32} />}
+                        {avatarPreview && (
+                          <button
+                            onClick={() => { setAvatarPreview(null); setAvatarFile(null); }}
+                            className="absolute inset-0 bg-black/40 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity text-white"
+                          >
+                            <XCircle size={24} />
+                          </button>
+                        )}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Camera Controls */}
+                  {isCameraOpen ? (
+                    <div className="flex gap-2">
+                      <button onClick={capturePhoto} className="px-3 py-1 bg-red-500 text-white text-xs rounded-full hover:bg-red-600">Capture</button>
+                      <button onClick={stopCamera} className="px-3 py-1 bg-slate-200 text-slate-700 text-xs rounded-full hover:bg-slate-300">Cancel</button>
+                    </div>
+                  ) : (
+                    <div className="flex flex-col gap-2 w-full">
+                      <input
+                        type="file"
+                        ref={fileInputRef}
+                        className="hidden"
+                        accept="image/png, image/jpeg, image/jpg, image/svg+xml"
+                        onChange={handleAvatarFile}
+                      />
+                      <button
+                        onClick={() => fileInputRef.current?.click()}
+                        className="text-xs font-medium text-slate-600 border border-slate-200 px-3 py-1.5 rounded hover:bg-slate-50 flex items-center justify-center gap-1 w-32"
+                      >
+                        <Upload size={12} /> Upload Image
+                      </button>
+                      <button
+                        onClick={startCamera}
+                        className="text-xs font-medium text-slate-600 border border-slate-200 px-3 py-1.5 rounded hover:bg-slate-50 flex items-center justify-center gap-1 w-32"
+                      >
+                        <Camera size={12} /> Take Photo
+                      </button>
+                      <p className="text-[10px] text-slate-400 text-center">Max 2MB (PNG, JPG)</p>
+                    </div>
+                  )}
+                  {cameraError && <p className="text-[10px] text-red-500 max-w-[150px] text-center">{cameraError}</p>}
+                </div>
+
+                <div className="flex-1 grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-xs font-medium text-slate-500 mb-1">Employee Code *</label>
+                    <div className="flex">
+                      <input type="text" name="employeeCode" value={formData.employeeCode} className="flex-1 text-sm border border-slate-200 rounded-l-md px-3 py-2 bg-slate-50 text-slate-500" readOnly />
+                      <button className="px-3 py-2 bg-slate-100 border border-l-0 border-slate-200 rounded-r-md text-xs font-medium text-slate-600 hover:bg-slate-200">Auto</button>
+                    </div>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-slate-500 mb-1">First Name *</label>
+                    <input name="firstName" value={formData.firstName} onChange={handleInputChange} type="text" placeholder="Enter first name" className="w-full text-sm border border-slate-200 rounded-md px-3 py-2 focus:outline-none focus:border-[#F5C742]" />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-slate-500 mb-1">Middle Name</label>
+                    <input name="middleName" value={formData.middleName} onChange={handleInputChange} type="text" placeholder="Optional" className="w-full text-sm border border-slate-200 rounded-md px-3 py-2 focus:outline-none focus:border-[#F5C742]" />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-slate-500 mb-1">Last Name *</label>
+                    <input name="lastName" value={formData.lastName} onChange={handleInputChange} type="text" placeholder="Enter last name" className="w-full text-sm border border-slate-200 rounded-md px-3 py-2 focus:outline-none focus:border-[#F5C742]" />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-slate-500 mb-1">Gender</label>
+                    <div className="relative">
+                      <select name="gender" value={formData.gender} onChange={handleInputChange} className="w-full text-sm border border-slate-200 rounded-md px-3 py-2 appearance-none bg-white focus:outline-none focus:border-[#F5C742] text-slate-600">
+                        <option value="Male">Male</option>
+                        <option value="Female">Female</option>
+                      </select>
+                      <ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
+                    </div>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-slate-500 mb-1">Date of Birth</label>
+                    <input name="dateOfBirth" value={formData.dateOfBirth} onChange={handleInputChange} type="date" className="w-full text-sm border border-slate-200 rounded-md px-3 py-2 text-slate-600 focus:outline-none focus:border-[#F5C742]" />
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Contact Details */}
+            <div className="bg-white border border-slate-200 rounded-lg p-6 shadow-sm">
+              <h3 className="text-sm font-semibold text-slate-700 mb-6">Contact Details</h3>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs font-medium text-slate-500 mb-1">Phone *</label>
+                  <input name="phone" value={formData.phone} onChange={handleInputChange} type="text" placeholder="+971 50 123 4567" className="w-full text-sm border border-slate-200 rounded-md px-3 py-2 focus:outline-none focus:border-[#F5C742]" />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-slate-500 mb-1">Email *</label>
+                  <input name="email" value={formData.email} onChange={handleInputChange} type="email" placeholder="employee@billbull.app" className="w-full text-sm border border-slate-200 rounded-md px-3 py-2 focus:outline-none focus:border-[#F5C742]" />
+                </div>
+                <div className="md:col-span-2">
+                  <label className="block text-xs font-medium text-slate-500 mb-1">Current Address</label>
+                  <textarea name="currentAddress" value={formData.currentAddress} onChange={handleInputChange} placeholder="Enter current address" className="w-full text-sm border border-slate-200 rounded-md px-3 py-2 focus:outline-none focus:border-[#F5C742] h-20 resize-none"></textarea>
+                </div>
+                <div className="md:col-span-2">
+                  <label className="block text-xs font-medium text-slate-500 mb-1">Nationality</label>
+                  <input name="nationality" value={formData.nationality} onChange={handleInputChange} type="text" placeholder="Enter nationality" className="w-full text-sm border border-slate-200 rounded-md px-3 py-2 focus:outline-none focus:border-[#F5C742]" />
+                </div>
+              </div>
+            </div>
+
+            {/* Emergency Contact (Visual Only for now) */}
+            <div className="bg-white border border-slate-200 rounded-lg p-6 shadow-sm">
+              <h3 className="text-sm font-semibold text-slate-700 mb-6">Emergency Contact</h3>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div>
+                  <label className="block text-xs font-medium text-slate-500 mb-1">Contact Name</label>
+                  <input type="text" placeholder="Full name" className="w-full text-sm border border-slate-200 rounded-md px-3 py-2 focus:outline-none focus:border-[#F5C742]" />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-slate-500 mb-1">Relation</label>
+                  <input type="text" placeholder="e.g., Spouse, Parent" className="w-full text-sm border border-slate-200 rounded-md px-3 py-2 focus:outline-none focus:border-[#F5C742]" />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-slate-500 mb-1">Phone</label>
+                  <input type="text" placeholder="+971 50 XXX XXXX" className="w-full text-sm border border-slate-200 rounded-md px-3 py-2 focus:outline-none focus:border-[#F5C742]" />
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+
+      case 'job':
+        return (
+          <div className="space-y-6 animate-in fade-in zoom-in-95 duration-200">
+            <div className="bg-white border border-slate-200 rounded-lg p-6 shadow-sm">
+              <h3 className="text-sm font-semibold text-slate-700 mb-6">Role Assignment</h3>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs font-medium text-slate-500 mb-1">Role / Designation *</label>
+                  <div className="relative">
+                    <select name="role" value={formData.role} onChange={handleInputChange} className="w-full text-sm border border-slate-200 rounded-md px-3 py-2 appearance-none bg-white focus:outline-none focus:border-[#F5C742] text-slate-600">
+                      <option value="Cashier">Cashier</option>
+                      <option value="Sales Executive">Sales Executive</option>
+                      <option value="Manager">Manager</option>
+                      <option value="Warehouse Supervisor">Warehouse Supervisor</option>
+                    </select>
+                    <ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
+                  </div>
+                  <p className="text-[10px] text-slate-400 mt-1">Select to auto-fill permissions & KPIs</p>
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-slate-500 mb-1">Department *</label>
+                  <div className="relative">
+                    <select name="department" value={formData.department} onChange={handleInputChange} className="w-full text-sm border border-slate-200 rounded-md px-3 py-2 appearance-none bg-white focus:outline-none focus:border-[#F5C742] text-slate-600">
+                      <option value="Store Team">Store Team</option>
+                      <option value="Warehouse Team">Warehouse Team</option>
+                      <option value="Management">Management</option>
+                      <option value="Back Office">Back Office</option>
+                    </select>
+                    <ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div className="bg-white border border-slate-200 rounded-lg p-6 shadow-sm">
+              <h3 className="text-sm font-semibold text-slate-700 mb-6">Organization Mapping</h3>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs font-medium text-slate-500 mb-1">Branch (Default) *</label>
+                  <div className="relative">
+                    <select name="branch" value={formData.branch} onChange={handleInputChange} className="w-full text-sm border border-slate-200 rounded-md px-3 py-2 appearance-none bg-white focus:outline-none focus:border-[#F5C742] text-slate-600">
+                      <option value="Downtown Store">Downtown Store</option>
+                      <option value="Mall Branch">Mall Branch</option>
+                      <option value="Main Warehouse">Main Warehouse</option>
+                    </select>
+                    <ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-slate-500 mb-1">Reporting Manager</label>
+                  <div className="relative">
+                    <select name="reportingManager" value={formData.reportingManager} onChange={handleInputChange} className="w-full text-sm border border-slate-200 rounded-md px-3 py-2 appearance-none bg-white focus:outline-none focus:border-[#F5C742] text-slate-600">
+                      <option value="">Select manager</option>
+                      <option value="Mohammed Hassan">Mohammed Hassan</option>
+                    </select>
+                    <ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-slate-500 mb-1">Work Location</label>
+                  <input name="workLocation" value={formData.workLocation} onChange={handleInputChange} type="text" placeholder="Optional" className="w-full text-sm border border-slate-200 rounded-md px-3 py-2 focus:outline-none focus:border-[#F5C742]" />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-slate-500 mb-1">Employment Type *</label>
+                  <div className="relative">
+                    <select name="employmentType" value={formData.employmentType} onChange={handleInputChange} className="w-full text-sm border border-slate-200 rounded-md px-3 py-2 appearance-none bg-white focus:outline-none focus:border-[#F5C742] text-slate-600">
+                      <option value="Full Time">Full Time</option>
+                      <option value="Part Time">Part Time</option>
+                    </select>
+                    <ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div className="bg-white border border-slate-200 rounded-lg p-6 shadow-sm">
+              <h3 className="text-sm font-semibold text-slate-700 mb-6">Employment Details</h3>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs font-medium text-slate-500 mb-1">Join Date *</label>
+                  <input name="joinDate" value={formData.joinDate} onChange={handleInputChange} type="date" className="w-full text-sm border border-slate-200 rounded-md px-3 py-2 focus:outline-none focus:border-[#F5C742]" />
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-xs font-medium text-slate-500 mb-1">Probation Period (Months)</label>
+                    <input name="probationPeriod" value={formData.probationPeriod} onChange={handleInputChange} type="number" placeholder="3" className="w-full text-sm border border-slate-200 rounded-md px-3 py-2 focus:outline-none focus:border-[#F5C742]" />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-slate-500 mb-1">Confirmation Date (Auto)</label>
+                    <input type="text" placeholder="dd-mm-yyyy" className="w-full text-sm border border-slate-200 rounded-md px-3 py-2 bg-slate-50" readOnly />
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-slate-500 mb-1">Status *</label>
+                  <div className="relative">
+                    <select className="w-full text-sm border border-slate-200 rounded-md px-3 py-2 appearance-none bg-white focus:outline-none focus:border-[#F5C742] text-slate-600">
+                      <option>Draft</option>
+                      <option>Active</option>
+                    </select>
+                    <ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+
+      case 'access':
+        return (
+          <div className="space-y-6 animate-in fade-in zoom-in-95 duration-200">
+            <div className="bg-white border border-slate-200 rounded-lg p-6 shadow-sm">
+              <div className="flex justify-between items-center mb-6">
+                <div className="flex items-center gap-2">
+                  <h3 className="text-sm font-semibold text-slate-700">POS Access</h3>
+                  <Lock size={14} className="text-slate-400" />
+                </div>
+                <div className="flex items-center gap-2">
+                  <input name="posAccess" checked={formData.posAccess} onChange={handleInputChange} type="checkbox" className="w-4 h-4 text-[#F5C742] rounded focus:ring-[#F5C742]" />
+                  <label className="text-xs text-slate-600 font-medium">Enable POS Login</label>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+                <div>
+                  <label className="block text-xs font-medium text-slate-500 mb-1">POS PIN</label>
+                  <div className="flex">
+                    <input name="posPin" value={formData.posPin} onChange={handleInputChange} type="password" placeholder="Set 4-digit PIN" className="flex-1 text-sm border border-slate-200 rounded-l-md px-3 py-2 focus:outline-none focus:border-[#F5C742]" />
+                    <button className="px-3 py-2 bg-slate-100 border border-l-0 border-slate-200 rounded-r-md text-xs font-medium text-slate-600 hover:bg-slate-200">Auto</button>
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-slate-500 mb-1">Permission Profile</label>
+                  <div className="relative">
+                    <select name="permissionProfile" value={formData.permissionProfile} onChange={handleInputChange} className="w-full text-sm border border-slate-200 rounded-md px-3 py-2 appearance-none bg-white focus:outline-none focus:border-[#F5C742] text-slate-600">
+                      <option>Role-based (Auto)</option>
+                      <option>Custom</option>
+                    </select>
+                    <ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
+                  </div>
+                </div>
+              </div>
+
+              {/* Permissions Checkboxes */}
+              <div className="space-y-3 bg-slate-50 p-4 rounded-md border border-slate-100">
+                <div className="flex items-center justify-between">
+                  <label className="text-xs text-slate-600">Discount Allowed</label>
+                  <div className="flex items-center gap-2">
+                    <input type="checkbox" className="w-4 h-4 text-[#F5C742] rounded focus:ring-[#F5C742]" />
+                    <input type="text" placeholder="Max %" className="w-16 text-xs border border-slate-200 rounded px-2 py-1" />
+                  </div>
+                </div>
+                <div className="flex items-center justify-between">
+                  <label className="text-xs text-slate-600">Void Bills</label>
+                  <input type="checkbox" className="w-4 h-4 text-[#F5C742] rounded focus:ring-[#F5C742]" />
+                </div>
+                <div className="flex items-center justify-between">
+                  <label className="text-xs text-slate-600">Edit Price</label>
+                  <input type="checkbox" className="w-4 h-4 text-[#F5C742] rounded focus:ring-[#F5C742]" />
+                </div>
+                <div className="flex items-center justify-between">
+                  <label className="text-xs text-slate-600">Manager Override Required</label>
+                  <input type="checkbox" className="w-4 h-4 text-[#F5C742] rounded focus:ring-[#F5C742]" defaultChecked />
+                </div>
+              </div>
+            </div>
+
+            <div className="bg-white border border-slate-200 rounded-lg p-6 shadow-sm">
+              <h3 className="text-sm font-semibold text-slate-700 mb-4">Branch & Warehouse Access</h3>
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-xs font-medium text-slate-500 mb-2">Allowed Branches (Multi-select)</label>
+                  <div className="space-y-2">
+                    <label className="flex items-center gap-2">
+                      <input type="checkbox" className="w-4 h-4 text-[#F5C742] rounded focus:ring-[#F5C742]" defaultChecked />
+                      <span className="text-sm text-slate-700">Downtown Store</span>
+                    </label>
+                    <label className="flex items-center gap-2">
+                      <input type="checkbox" className="w-4 h-4 text-[#F5C742] rounded focus:ring-[#F5C742]" />
+                      <span className="text-sm text-slate-700">Mall Branch</span>
+                    </label>
+                    <label className="flex items-center gap-2">
+                      <input type="checkbox" className="w-4 h-4 text-[#F5C742] rounded focus:ring-[#F5C742]" />
+                      <span className="text-sm text-slate-700">Airport Outlet</span>
+                    </label>
+                  </div>
+                </div>
+                <div className="pt-2 border-t border-slate-100">
+                  <label className="block text-xs font-medium text-slate-500 mb-2">Allowed Warehouses</label>
+                  <div className="space-y-2">
+                    <label className="flex items-center gap-2">
+                      <input type="checkbox" className="w-4 h-4 text-[#F5C742] rounded focus:ring-[#F5C742]" defaultChecked />
+                      <span className="text-sm text-slate-700">Main Warehouse</span>
+                    </label>
+                    <label className="flex items-center gap-2">
+                      <input type="checkbox" className="w-4 h-4 text-[#F5C742] rounded focus:ring-[#F5C742]" />
+                      <span className="text-sm text-slate-700">Distribution Center</span>
+                    </label>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+
+      case 'payroll':
+        return (
+          <div className="space-y-6 animate-in fade-in zoom-in-95 duration-200">
+            <div className="bg-yellow-50 border border-yellow-100 rounded-lg p-4 flex items-start gap-3">
+              <AlertCircle size={18} className="text-yellow-600 mt-0.5" />
+              <div>
+                <h4 className="text-xs font-bold text-yellow-800">Optional: Payroll & Benefits</h4>
+                <p className="text-xs text-yellow-700">This section can be completed later if payroll module is not enabled yet.</p>
+              </div>
+            </div>
+
+            <div className="bg-white border border-slate-200 rounded-lg p-6 shadow-sm">
+              <h3 className="text-sm font-semibold text-slate-700 mb-6">Salary Structure</h3>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs font-medium text-slate-500 mb-1">Salary Type</label>
+                  <div className="relative">
+                    <select name="salaryType" value={formData.salaryType} onChange={handleInputChange} className="w-full text-sm border border-slate-200 rounded-md px-3 py-2 appearance-none bg-white focus:outline-none focus:border-[#F5C742] text-slate-600">
+                      <option value="Monthly">Monthly</option>
+                      <option value="Hourly">Hourly</option>
+                    </select>
+                    <ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-slate-500 mb-1">Basic Salary</label>
+                  <input name="basicSalary" value={formData.basicSalary} onChange={handleInputChange} type="number" placeholder="0.00" className="w-full text-sm border border-slate-200 rounded-md px-3 py-2 focus:outline-none focus:border-[#F5C742]" />
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+
+      case 'attendance':
+        return (
+          <div className="bg-white border border-slate-200 rounded-lg p-6 shadow-sm h-64 flex flex-col animate-in fade-in zoom-in-95 duration-200">
+            <h3 className="text-sm font-semibold text-slate-700 mb-4">Attendance Rules</h3>
+            <div className="flex-1 flex items-center justify-center text-slate-400 text-xs">
+              Attendance configuration coming soon
+            </div>
+          </div>
+        );
+
+      case 'docs':
+        return (
+          <div className="space-y-6 animate-in fade-in zoom-in-95 duration-200">
+            <div className="bg-white border border-slate-200 rounded-lg p-6 shadow-sm">
+              <h3 className="text-sm font-semibold text-slate-700 mb-6">Identity Documents</h3>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+                <div>
+                  <label className="block text-xs font-medium text-slate-500 mb-1">Emirates ID Number</label>
+                  <input name="emiratesId" value={formData.emiratesId} onChange={handleInputChange} type="text" placeholder="784-XXXX-XXXXXXX-X" className="w-full text-sm border border-slate-200 rounded-md px-3 py-2 focus:outline-none focus:border-[#F5C742]" />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-slate-500 mb-1">Expiry Date</label>
+                  <input name="expiryDate" value={formData.expiryDate} onChange={handleInputChange} type="text" placeholder="dd-mm-yyyy" className="w-full text-sm border border-slate-200 rounded-md px-3 py-2 focus:outline-none focus:border-[#F5C742]" />
+                </div>
+              </div>
+
+              {/* File Upload Section */}
+              <input
+                type="file"
+                ref={docInputRef}
+                className="hidden"
+                accept="application/pdf"
+                onChange={handleDocUpload}
+              />
+
+              <div
+                onClick={() => docInputRef.current?.click()}
+                className={`border-2 border-dashed rounded-lg p-6 flex flex-col items-center justify-center transition-colors cursor-pointer ${emiratesIdFile ? 'border-green-300 bg-green-50' : 'border-slate-200 hover:border-[#F5C742] hover:bg-yellow-50/10'}`}
+              >
+                {emiratesIdFile ? (
+                  <div className="flex flex-col items-center text-green-700">
+                    <FileText size={24} className="mb-2" />
+                    <span className="text-xs font-bold">{emiratesIdFile.name}</span>
+                    <span className="text-[10px] opacity-70">{(emiratesIdFile.size / 1024).toFixed(1)} KB</span>
+                  </div>
+                ) : (
+                  <>
+                    <Upload size={20} className="mb-2 text-slate-400" />
+                    <span className="text-xs font-medium text-slate-500">Upload Emirates ID Copy</span>
+                    <span className="text-[10px] text-slate-400 mt-1">PDF, Max 2MB</span>
+                  </>
+                )}
+              </div>
+            </div>
+          </div>
+        );
+
+      case 'assets':
+        return (
+          <div className="space-y-6 animate-in fade-in zoom-in-95 duration-200">
+            <div className="bg-blue-50 border border-blue-100 rounded-lg p-3 flex items-start gap-2">
+              <Box size={16} className="text-blue-600 mt-0.5" />
+              <div>
+                <h4 className="text-xs font-bold text-blue-700">Auto-rule enabled</h4>
+                <p className="text-[10px] text-blue-600">On Exit → Auto-unassign assets + Block POS access</p>
+              </div>
+            </div>
+
+            <div className="bg-white border border-slate-200 rounded-lg p-6 shadow-sm min-h-[200px]">
+              <h3 className="text-sm font-semibold text-slate-700 mb-6">Assigned Assets</h3>
+              <div className="flex items-center justify-center h-32 text-slate-400 text-xs">
+                No assets assigned yet. Assets can be assigned after employee creation.
+              </div>
+            </div>
+          </div>
+        );
+
+      case 'notes':
+        return (
+          <div className="space-y-6 animate-in fade-in zoom-in-95 duration-200">
+            <div className="bg-white border border-slate-200 rounded-lg p-6 shadow-sm">
+              <h3 className="text-sm font-semibold text-slate-700 mb-4">HR Notes (Private)</h3>
+              <textarea placeholder="Internal notes visible only to HR" className="w-full text-sm border border-slate-200 rounded-md px-3 py-2 h-32 resize-none focus:outline-none focus:border-[#F5C742]"></textarea>
+            </div>
+
+            <div className="bg-white border border-slate-200 rounded-lg p-6 shadow-sm">
+              <h3 className="text-sm font-semibold text-slate-700 mb-4">Tags</h3>
+              <div className="flex flex-wrap gap-2">
+                {['Keyholder', 'Night Shift', 'Cash Handling', 'Driver'].map(tag => (
+                  <label key={tag} className="flex items-center gap-2 px-3 py-1.5 border border-slate-200 rounded-full text-xs cursor-pointer hover:bg-slate-50">
+                    <input type="checkbox" className="w-3 h-3 text-[#F5C742] rounded focus:ring-[#F5C742]" />
+                    <span className="text-slate-600">{tag}</span>
+                  </label>
+                ))}
+              </div>
+            </div>
+          </div>
+        );
+
+      case 'review':
+        // Check completions for review
+        const isComplete = navItems.slice(0, 8).every(item => completedSteps.has(item.id));
+        return (
+          <div className="space-y-6 animate-in fade-in zoom-in-95 duration-200">
+            <div className="bg-yellow-50 border border-yellow-100 rounded-lg p-4 flex items-start gap-3">
+              <Eye size={18} className="text-yellow-600 mt-0.5" />
+              <div>
+                <h4 className="text-xs font-bold text-yellow-800">Review all information before submission</h4>
+                <p className="text-xs text-yellow-700">Ensure all mandatory fields are completed and verified</p>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {navItems.slice(0, 8).map((step) => (
+                <div key={step.id} className="bg-white border border-slate-200 rounded-lg p-4 h-24 flex flex-col justify-center">
+                  <div className="text-xs text-slate-500 mb-1">{step.label}</div>
+                  <div className={`text-sm font-medium ${completedSteps.has(step.id) ? 'text-green-600' : 'text-slate-800'}`}>
+                    {completedSteps.has(step.id) ? 'Completed' : 'Not Completed'}
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            <div className="bg-white border border-slate-200 rounded-lg p-6">
+              <h3 className="text-sm font-semibold text-slate-700 mb-4">Validation Status</h3>
+              <div className="space-y-2">
+                {!isComplete ? (
+                  <div className="flex items-center gap-2 text-red-500 text-xs">
+                    <AlertCircle size={14} />
+                    <span>You must complete all 8 sections before creating the employee.</span>
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-2 text-green-600 text-xs">
+                    <CheckCircle2 size={14} />
+                    <span>All sections completed. Ready to submit for approval.</span>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        );
+
+      default:
+        return null;
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm animate-in fade-in duration-200">
+      <div className="bg-[#F7F7FA] w-full h-full md:w-[98%] md:h-[98%] md:rounded-lg shadow-2xl flex flex-col overflow-hidden">
+
+        {/* --- Header --- */}
+        <div className="bg-white px-6 py-4 border-b border-slate-200 flex flex-col gap-4 flex-shrink-0">
+          <div className="flex justify-between items-start">
+            <div>
+              <div className="text-xs text-slate-500 mb-1">HR & Workforce / Employees & Roles / {employeeToEdit ? 'Edit Employee' : 'Add New Employee'}</div>
+              <h2 className="text-xl font-bold text-slate-800">{employeeToEdit ? 'Edit Employee' : 'Add New Employee'}</h2>
+              <p className="text-xs text-slate-500">Create and onboard employees with approvals, compliance, and access control</p>
+            </div>
+            <div className="flex items-center gap-3">
+              <span className="hidden sm:flex px-2 py-1 bg-yellow-50 border border-yellow-200 rounded text-xs font-bold text-yellow-700 items-center gap-1">
+                <div className="w-2 h-2 rounded-full bg-yellow-500"></div> Draft
+              </span>
+              <div className="hidden sm:block h-4 w-px bg-slate-300 mx-1"></div>
+
+              {/* Responsive Action Buttons */}
+              <div className="flex items-center gap-2">
+                <button onClick={handleSaveDraft} className="hidden sm:block px-3 py-1.5 bg-white border border-slate-200 text-slate-600 rounded text-xs font-medium hover:bg-slate-50">Save Draft</button>
+                <button onClick={onClose} className="px-3 py-1.5 bg-white border border-red-200 text-red-600 rounded text-xs font-medium hover:bg-red-50">Discard</button>
+                <button onClick={onClose} className="text-slate-400 hover:text-slate-600 ml-2">
+                  <X size={20} />
+                </button>
+              </div>
+            </div>
+          </div>
+
+          {/* Workflow Stepper - Scrollable on mobile */}
+          <div className="flex items-center gap-2 overflow-x-auto no-scrollbar pb-1">
+            {steps.map((step, idx) => (
+              <div key={step.id} className="flex items-center flex-shrink-0">
+                <div className={`flex items-center gap-2 px-3 py-1.5 rounded-full border text-xs font-medium whitespace-nowrap ${step.status === 'current'
+                    ? 'bg-yellow-50 border-[#F5C742] text-yellow-700'
+                    : 'bg-white border-slate-200 text-slate-400'
+                  }`}>
+                  <div className={`w-2 h-2 rounded-full ${step.status === 'current' ? 'bg-[#F5C742]' : 'bg-slate-300'}`}></div>
+                  {step.label}
+                </div>
+                {idx < steps.length - 1 && <div className="w-4 h-[1px] bg-slate-200 mx-1"></div>}
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* --- Main Content Body (Responsive Layout) --- */}
+        <div className="flex-1 flex flex-col lg:flex-row overflow-hidden">
+
+          {/* Left Sidebar Navigation - Scrollable Top Bar on Mobile */}
+          <div className="w-full lg:w-64 bg-white border-b lg:border-b-0 lg:border-r border-slate-200 flex-shrink-0 overflow-x-auto lg:overflow-y-auto lg:py-4 no-scrollbar">
+            <div className="flex lg:flex-col px-4 lg:space-y-1 py-2 lg:py-0 gap-2 lg:gap-0">
+              {navItems.map((item) => (
+                <button
+                  key={item.id}
+                  onClick={() => setActiveTab(item.id)}
+                  className={`flex-shrink-0 w-auto lg:w-full flex items-center gap-2 lg:gap-3 px-3 py-2 lg:py-2.5 text-xs font-medium rounded-md transition-colors whitespace-nowrap ${activeTab === item.id
+                      ? 'bg-[#F5C742] text-slate-900 shadow-sm'
+                      : 'text-slate-500 hover:bg-slate-50 hover:text-slate-800'
+                    }`}
+                >
+                  <item.icon size={14} className={activeTab === item.id ? 'text-slate-900' : 'text-slate-400'} />
+                  {item.label}
+                  {completedSteps.has(item.id) && item.id !== activeTab && (
+                    <span className="hidden lg:block ml-auto text-green-500"><CheckCircle2 size={12} /></span>
+                  )}
+                  {item.id !== activeTab && !completedSteps.has(item.id) && <span className="hidden lg:block ml-auto w-1.5 h-1.5 rounded-full bg-slate-200"></span>}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Center Form Area */}
+          <div className="flex-1 overflow-y-auto p-4 md:p-6 bg-[#F7F7FA]">
+            <div className="max-w-4xl mx-auto">
+              {renderContent()}
+            </div>
+          </div>
+
+          {/* Right Sidebar Info - Hidden on very small screens, displayed below on medium, sidebar on large */}
+          <div className="hidden xl:block w-72 bg-white border-l border-slate-200 flex-shrink-0 overflow-y-auto p-4 space-y-6">
+
+            {/* Employee Snapshot */}
+            <div className="bg-slate-50 border border-slate-200 rounded-lg p-4">
+              <div className="text-xs font-semibold text-slate-500 mb-2">Employee Snapshot</div>
+              <div className="flex items-center justify-between mb-1">
+                <span className="text-sm font-bold text-slate-800">
+                  {formData.firstName || 'New'} {formData.lastName || 'Employee'}
+                </span>
+                <div className="w-2 h-2 rounded-full bg-slate-400"></div>
+              </div>
+              <div className="text-xs text-slate-500">{employeeToEdit ? 'Editing' : 'Draft'}</div>
+            </div>
+
+            {/* Onboarding Checklist (Functional) */}
+            <div>
+              <h4 className="text-xs font-semibold text-slate-700 mb-3">Onboarding Checklist</h4>
+              <div className="space-y-2">
+                {checklist.map((item) => (
+                  <label key={item.id} className="flex items-center gap-2 cursor-pointer group select-none">
+                    <div
+                      onClick={() => toggleChecklist(item.id)}
+                      className={`w-4 h-4 rounded border flex items-center justify-center transition-colors ${item.checked ? 'bg-slate-800 border-slate-800' : 'border-slate-300 bg-white'}`}
+                    >
+                      {item.checked && <CheckCircle2 size={10} className="text-white" />}
+                    </div>
+                    <span
+                      onClick={() => toggleChecklist(item.id)}
+                      className={`text-xs ${item.checked ? 'text-slate-800 font-medium' : 'text-slate-500'}`}
+                    >
+                      {item.label}
+                    </span>
+                  </label>
+                ))}
+              </div>
+
+              {/* Progress Bar (Dynamic) */}
+              <div className="mt-4">
+                <div className="flex justify-between text-[10px] text-slate-500 mb-1">
+                  <span>Progress</span>
+                  <span>{checklist.filter(i => i.checked).length} / {checklist.length}</span>
+                </div>
+                <div className="w-full bg-slate-100 rounded-full h-1.5">
+                  <div
+                    className="bg-slate-800 h-1.5 rounded-full transition-all duration-300"
+                    style={{ width: `${checklistProgress}%` }}
+                  ></div>
+                </div>
+              </div>
+            </div>
+
+            {/* Approval Status */}
+            <div>
+              <h4 className="text-xs font-semibold text-slate-700 mb-3">Approval Status</h4>
+              <div className="space-y-2">
+                {['HR Review', 'Manager Approval', 'Accounts Approval'].map((label, idx) => (
+                  <div key={idx} className="flex items-center gap-2">
+                    <div className="w-3 h-3 rounded-full border border-slate-300 bg-white"></div>
+                    <span className="text-xs text-slate-500">{label}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+          </div>
+        </div>
+
+        {/* --- Footer --- */}
+        <div className="bg-white px-6 py-4 border-t border-slate-200 flex justify-between items-center flex-shrink-0">
+          <button className="px-4 py-2 border border-slate-300 rounded-md text-sm font-medium text-slate-600 hover:bg-slate-50" onClick={handleBack}>Back</button>
+          <div className="flex gap-3">
+            <button onClick={handleSaveDraft} className="hidden sm:block px-4 py-2 bg-white border border-slate-300 rounded-md text-sm font-medium text-slate-700 hover:bg-slate-50 shadow-sm">Save Draft</button>
+
+            {activeTab === 'review' ? (
+              <button
+                onClick={handleFormSubmit}
+                className="px-6 py-2 bg-[#F5C742] rounded-md text-sm font-bold text-slate-900 hover:bg-yellow-400 shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                disabled={!navItems.slice(0, 8).every(i => completedSteps.has(i.id))}
+              >
+                {employeeToEdit ? 'Update Employee' : 'Create Employee'}
+              </button>
+            ) : (
+              <button
+                onClick={handleNext}
+                className="px-6 py-2 bg-[#F5C742] rounded-md text-sm font-bold text-slate-900 hover:bg-yellow-400 shadow-sm"
+              >
+                Next
+              </button>
+            )}
+          </div>
+        </div>
+
+      </div>
+    </div>
+  );
+};
+
+
+// ==========================================
+// 2. SUB-COMPONENTS
+// ==========================================
+
+const StatCard = ({
+  label,
+  value,
+  subValue,
+  trend,
+  icon: Icon,
+  color
+}) => (
+  <div className="bg-white p-4 rounded-lg border border-slate-200 shadow-sm flex flex-col justify-between h-24 group hover:shadow-md transition-shadow">
+
+    {/* Header */}
+    <div className="flex justify-between items-start mb-2">
+      <div className="text-sm text-slate-500 font-medium">
+        {label}
+      </div>
+      <div className={`p-1.5 rounded-full ${color}`}>
+        <Icon className="h-4 w-4" />
+      </div>
+    </div>
+
+    {/* Value */}
+    <div className="flex items-end justify-between">
+      <div className="text-2xl font-bold text-slate-900">
+        {value}
+      </div>
+
+      {subValue && (
+        <div
+          className={`text-xs font-medium ${trend === 'up'
+              ? 'text-emerald-600'
+              : trend === 'down'
+                ? 'text-red-600'
+                : 'text-slate-500'
+            }`}
+        >
+          {subValue}
+        </div>
+      )}
+    </div>
+  </div>
+);
+
+const TopPerformerCard = ({ name, score }) => (
+  <div className="bg-white p-4 rounded-lg border border-yellow-400 shadow-sm h-24 flex flex-col justify-between hover:shadow-md transition-shadow">
+    <div className="flex justify-between items-start mb-2">
+      <div className="text-sm font-semibold text-slate-800">Top Performer</div>
+      <div className="p-1.5 rounded-full bg-yellow-100 text-yellow-600">
+        <Trophy className="w-4 h-4" />
+      </div>
+    </div>
+    <div className="flex items-end justify-between">
+      <div className="text-lg font-bold text-slate-800 truncate pr-2">{name}</div>
+      <div className="text-xs font-medium text-yellow-600">{score}% Achieved</div>
+    </div>
+  </div>
+);
+
+// ==========================================
+// 3. ACTION MODAL COMPONENT (New)
+// ==========================================
+
+const ActionModal = ({ employee, onClose, onDeactivate, onActivate, onEdit }) => {
+  if (!employee) return null;
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm animate-in fade-in duration-200"
+      onClick={onClose}
+    >
+      <div
+        className="bg-white rounded-lg shadow-xl w-80 overflow-hidden animate-in zoom-in-95 duration-200 relative"
+        onClick={(e) => e.stopPropagation()}
+      >
+        {/* Header */}
+        <div className="p-4 border-b border-slate-100 flex justify-between items-center bg-slate-50">
+          <h3 className="text-sm font-semibold text-slate-700">Actions</h3>
+          <button onClick={onClose} className="text-slate-400 hover:text-slate-600">
+            <XIcon size={16} />
+          </button>
+        </div>
+
+        {/* Content */}
+        <div className="p-4">
+          <div className="flex items-center gap-3 mb-4">
+            <div className={`w-10 h-10 rounded-full flex items-center justify-center text-xs font-bold overflow-hidden ${employee.color}`}>
+              {employee.avatar ? <img src={employee.avatar} alt="Avatar" className="w-full h-full object-cover" /> : employee.initials}
+            </div>
+            <div>
+              <div className="text-sm font-medium text-slate-800">{employee.name}</div>
+              <div className="text-xs text-slate-500">{employee.role}</div>
+            </div>
+          </div>
+
+          <div className="space-y-2">
+            <button
+              onClick={() => onEdit(employee)}
+              className="w-full text-left px-3 py-2 text-xs font-medium text-slate-700 hover:bg-slate-50 rounded flex items-center gap-2 transition-colors"
+            >
+              <Edit size={14} className="text-slate-400" /> Edit Profile
+            </button>
+
+            <button
+              onClick={() => alert(`Set Target for ${employee.name}`)}
+              className="w-full text-left px-3 py-2 text-xs font-medium text-slate-700 hover:bg-slate-50 rounded flex items-center gap-2 transition-colors"
+            >
+              <Target size={14} className="text-slate-400" /> Set Target
+            </button>
+
+            <div className="h-px bg-slate-100 my-1"></div>
+
+            {employee.status === 'Active' ? (
+              <button
+                onClick={() => onDeactivate(employee.id)}
+                className="w-full text-left px-3 py-2 text-xs font-medium text-red-600 hover:bg-red-50 rounded flex items-center gap-2 transition-colors"
+              >
+                <UserX size={14} className="text-red-500" /> Deactivate
+              </button>
+            ) : (
+              <button
+                onClick={() => onActivate(employee.id)}
+                className="w-full text-left px-3 py-2 text-xs font-medium text-green-600 hover:bg-green-50 rounded flex items-center gap-2 transition-colors"
+              >
+                <UserCheck size={14} className="text-green-500" /> Activate
+              </button>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// ==========================================
+// 4. MAIN COMPONENT (API INTEGRATED)
+// ==========================================
+
+const Employees = () => {
+  const [isAddModalOpen, setIsAddModalOpen] = useState(false);
+  const [activeCategory, setActiveCategory] = useState("All Employees");
+
+  // --- REAL STATES ---
+  const [employeeData, setEmployeeData] = useState([]);
+  const [pendingRequests, setPendingRequests] = useState([]);
+
+  // Image Viewer State
+  const [viewingPhoto, setViewingPhoto] = useState(null);
+
+  // Action Modal State
+  const [selectedEmployeeForAction, setSelectedEmployeeForAction] = useState(null);
+
+  // Edit State
+  const [employeeToEdit, setEmployeeToEdit] = useState(null);
+
+  // --- FILTER & SORT STATE ---
+  const [searchTerm, setSearchTerm] = useState("");
+  const [filterRole, setFilterRole] = useState("All Roles");
+  const [filterBranch, setFilterBranch] = useState("All Branches");
+
+  // --- 1. Fetch Data on Mount ---
+  useEffect(() => {
+    fetchData();
+  }, []);
+
+  const fetchData = async () => {
+    try {
+      // Parallel Fetch
+      const [active, pending] = await Promise.all([
+        employeesApi.getActiveEmployees(),
+        employeesApi.getPendingApprovals()
+      ]);
+
+      setEmployeeData(active.map(mapBackendToFrontend));
+      setPendingRequests(pending.map(mapBackendToFrontend));
+    } catch (err) {
+      console.error("Failed to load employees", err);
+    }
+  };
+
+  // --- 2. Workflow Logic ---
+
+  const handleWorkflowStart = async (formData, avatarFile, isEditMode) => {
+    // API call expects a specific structure + file
+    const backendPayload = {
+      ...formData,
+      status: 'Pending',
+      workflowStage: 'HR Review'
+    };
+
+    try {
+      if (isEditMode) {
+        // UPDATE LOGIC
+        await employeesApi.updateEmployee(formData.id, backendPayload, avatarFile);
+        alert("Employee updated successfully.");
+      } else {
+        // CREATE LOGIC
+        await employeesApi.createEmployee(backendPayload, avatarFile);
+        alert("Employee creation initiated. Approval workflow started.");
+        setActiveCategory("Access & Permissions"); // Auto-switch to view request
+      }
+
+      // Refresh UI
+      fetchData();
+    } catch (e) {
+      console.error(e);
+      alert("Error saving employee. Check console.");
+    }
+  };
+
+  const handleApproveStep = async (id) => {
+    try {
+      await employeesApi.approveEmployee(id);
+      fetchData();
+    } catch (e) {
+      alert("Error approving request");
+    }
+  };
+
+  const handleReject = async (id) => {
+    if (window.confirm("Are you sure you want to reject this request?")) {
+      try {
+        await employeesApi.rejectEmployee(id);
+        fetchData();
+      } catch (e) {
+        alert("Error rejecting request");
+      }
+    }
+  };
+
+  const handleDeactivateEmployee = async (id) => {
+    if (window.confirm("Are you sure you want to deactivate this employee?")) {
+      try {
+        // Call API to deactivate
+        await employeesApi.deactivateEmployee(id);
+        setSelectedEmployeeForAction(null); // Close modal
+        fetchData(); // Refresh list
+      } catch (e) {
+        console.error("Deactivation failed", e);
+        alert("Failed to deactivate employee");
+      }
+    }
+  };
+
+  const handleActivateEmployee = async (id) => {
+    if (window.confirm("Are you sure you want to re-activate this employee?")) {
+      try {
+        // Call API to activate
+        await employeesApi.activateEmployee(id);
+        setSelectedEmployeeForAction(null); // Close modal
+        fetchData(); // Refresh list
+      } catch (e) {
+        console.error("Activation failed", e);
+        alert("Failed to activate employee");
+      }
+    }
+  };
+
+  const handleEditProfile = async (employee) => {
+    try {
+      const fullEmployee = await employeesApi.getEmployeeById(employee.id);
+      setEmployeeToEdit(fullEmployee); // backend object ✅
+      setIsAddModalOpen(true);
+    } catch (e) {
+      alert("Failed to load employee details");
+    }
+  };
+
+  const openAddModal = () => {
+    setEmployeeToEdit(null); // Ensure clean state for adding
+    setIsAddModalOpen(true);
+  };
+
+  // --- 3. Mapper Helper ---
+  const mapBackendToFrontend = (emp) => ({
+    id: emp.id,
+    name: `${emp.firstName} ${emp.lastName}`,
+    code: emp.employeeCode,
+    role: emp.role,
+    dept: emp.department,
+    branch: emp.branch,
+    sales: "₹0", // No sales backend yet
+    avg: "Avg: ₹0",
+    bills: 0,
+    disc: "Disc: ₹0",
+    ret: "Ret: ₹0",
+    target: null,
+    status: emp.status,
+    stage: emp.workflowStage,
+    submittedAt: emp.submittedAt || new Date().toLocaleDateString(),
+    initials: (emp.firstName?.[0] || "") + (emp.lastName?.[0] || ""),
+    color: emp.status === 'Active' ? "bg-blue-100 text-blue-600" : "bg-slate-100 text-slate-600",
+    // Construct Full Image URL
+    avatar: emp.avatarUrl ? `${SERVER_URL}${emp.avatarUrl}` : null
+  });
+
+  // --- 4. Filtering Logic (New) ---
+
+  // Extract unique roles/branches for dropdowns from active employees
+  const availableRoles = useMemo(() => ["All Roles", ...new Set(employeeData.map(e => e.role))], [employeeData]);
+  const availableBranches = useMemo(() => ["All Branches", ...new Set(employeeData.map(e => e.branch))], [employeeData]);
+
+  const filteredEmployees = useMemo(() => {
+    // Determine source data
+    let data = activeCategory === "Access & Permissions" ? pendingRequests : employeeData;
+
+    // 1. Category Filter (If not "Access" or "All")
+    if (activeCategory !== "All Employees" && activeCategory !== "Access & Permissions") {
+      // Special logic for Dept filtering
+      data = data.filter(e => e.dept === activeCategory);
+    }
+
+    // 2. Search Filter (Search by Name, Code, or Role)
+    if (searchTerm.trim() !== "") {
+      const lowerSearch = searchTerm.toLowerCase();
+      data = data.filter(e =>
+        e.name.toLowerCase().includes(lowerSearch) ||
+        e.code.toLowerCase().includes(lowerSearch) ||
+        e.role.toLowerCase().includes(lowerSearch)
+      );
+    }
+
+    // 3. Role Filter
+    if (filterRole !== "All Roles") {
+      data = data.filter(e => e.role === filterRole);
+    }
+
+    // 4. Branch Filter
+    if (filterBranch !== "All Branches") {
+      data = data.filter(e => e.branch === filterBranch);
+    }
+
+    return data;
+  }, [employeeData, pendingRequests, activeCategory, searchTerm, filterRole, filterBranch]);
+
+
+  // --- 5. Dynamic Stats & Categories ---
+  const categories = [
+    { name: "All Employees", count: employeeData.length, icon: Users },
+    { name: "Store Team", count: employeeData.filter(e => e.dept === 'Store Team').length, icon: Store },
+    { name: "Warehouse Team", count: employeeData.filter(e => e.dept === 'Warehouse Team').length, icon: Warehouse },
+    { name: "Management", count: employeeData.filter(e => e.dept === 'Management').length, icon: Smartphone },
+    { name: "Back Office", count: employeeData.filter(e => e.dept === 'Back Office').length, icon: Monitor },
+    { name: "Performance & Targets", count: null, icon: BarChart3 },
+    { name: "Attendance & Shifts", count: null, icon: Clock },
+    { name: "Access & Permissions", count: pendingRequests.length > 0 ? pendingRequests.length : null, icon: ShieldCheck },
+  ];
+
+  const totalEmployees = employeeData.length;
+  const activeOnShift = employeeData.filter(e => e.status === "Active").length;
+
+  const statsData = [
+    {
+      label: "Total Employees",
+      value: totalEmployees.toString(),
+      subValue: "+2 this month",
+      trend: 'up',
+      icon: Users,
+      color: STAT_COLORS.primary
+    },
+    {
+      label: "Active on Shift",
+      value: activeOnShift.toString(),
+      subValue: "Currently online",
+      trend: 'neutral',
+      icon: Activity,
+      color: STAT_COLORS.success
+    },
+    {
+      label: "Sales MTD",
+      value: "₹0",
+      subValue: "No data yet",
+      trend: 'neutral',
+      icon: DollarSign,
+      color: STAT_COLORS.purple
+    },
+    {
+      label: "Avg Achievement",
+      value: "0%",
+      subValue: "Target pending",
+      trend: 'warning',
+      icon: Target,
+      color: STAT_COLORS.warning
+    },
+  ];
+
+  const renderStageBadge = (stage) => {
+    const stages = ["HR Review", "Manager Approval", "Accounts Approval", "Admin Finalization"];
+    const index = stages.indexOf(stage);
+    return (
+      <div className="flex flex-col gap-1">
+        <span className="text-xs font-semibold text-slate-700">{stage}</span>
+        <div className="flex gap-1">
+          {stages.map((s, i) => (
+            <div key={s} className={`h-1.5 w-6 rounded-full ${i <= index ? 'bg-green-500' : 'bg-slate-200'}`}></div>
+          ))}
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <div className="flex min-h-screen bg-[#F7F7FA] font-sans relative">
+
+      {/* ACTION MODAL */}
+      <ActionModal
+        employee={selectedEmployeeForAction}
+        onClose={() => setSelectedEmployeeForAction(null)}
+        onDeactivate={handleDeactivateEmployee}
+        onActivate={handleActivateEmployee}
+        onEdit={handleEditProfile}
+      />
+
+      {/* IMAGE VIEWER MODAL OVERLAY */}
+      {viewingPhoto && (
+        <div
+          className="fixed inset-0 z-[60] flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 animate-in fade-in duration-200"
+          onClick={() => setViewingPhoto(null)}
+        >
+          <div className="relative max-w-full max-h-full">
+            <img
+              src={viewingPhoto}
+              alt="Employee Full View"
+              className="max-w-full max-h-[85vh] rounded-lg shadow-2xl object-contain"
+              onClick={(e) => e.stopPropagation()}
+            />
+            <button
+              className="absolute -top-12 right-0 text-white/70 hover:text-white transition-colors"
+              onClick={() => setViewingPhoto(null)}
+            >
+              <X size={32} />
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* ADD / EDIT EMPLOYEE MODAL */}
+      <AddEmployeeModal
+        isOpen={isAddModalOpen}
+        onClose={() => setIsAddModalOpen(false)}
+        onWorkflowStart={handleWorkflowStart}
+        employeeToEdit={employeeToEdit}
+      />
+
+      {/* MAIN CONTENT */}
+      <main className="flex-1 flex flex-col w-full">
+        <div className="p-4 md:p-6 space-y-6">
+
+          {/* Header */}
+          <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4">
+            <div>
+              <div className="text-xs text-slate-500 mb-1">HR & Workforce &rarr; Employees & Roles</div>
+              <h1 className="text-2xl font-bold text-slate-800 flex items-center gap-2"><Users className="text-[#F5C742]" size={28} /> Employees & Roles</h1>
+              <p className="text-sm text-slate-500">Central workforce control for retail operations, POS access, performance, and compliance</p>
+            </div>
+
+            <div className="flex flex-wrap gap-2 w-full lg:w-auto">
+              <button className="flex-1 lg:flex-none flex items-center justify-center gap-2 px-3 py-2 bg-white border border-slate-200 rounded-md text-sm text-slate-600 hover:bg-slate-50 whitespace-nowrap transition-colors">
+                <Upload size={16} /> Import
+              </button>
+              <button className="flex-1 lg:flex-none flex items-center justify-center gap-2 px-3 py-2 bg-white border border-slate-200 rounded-md text-sm text-slate-600 hover:bg-slate-50 whitespace-nowrap transition-colors">
+                <Download size={16} /> Export
+              </button>
+              <button className="flex-1 lg:flex-none flex items-center justify-center gap-2 px-3 py-2 bg-white border border-slate-200 rounded-md text-sm text-slate-600 hover:bg-slate-50 whitespace-nowrap transition-colors">
+                <Target size={16} /> Set Targets
+              </button>
+              <button className="p-2 bg-white border border-slate-200 rounded-md text-slate-600 hover:bg-slate-50 transition-colors">
+                <Settings size={16} />
+              </button>
+
+              {/* Desktop Add Button */}
+              <button
+                onClick={openAddModal}
+                className="hidden sm:flex items-center justify-center gap-2 px-4 py-2 bg-[#F5C742] rounded-md text-sm font-semibold text-slate-900 hover:bg-yellow-400 whitespace-nowrap shadow-sm transition-colors"
+              >
+                <Plus size={16} /> Add Employee
+              </button>
+
+              {/* Mobile Add Button */}
+              <button
+                onClick={openAddModal}
+                className="sm:hidden flex-1 flex items-center justify-center gap-2 px-4 py-2 bg-[#F5C742] rounded-md text-sm font-semibold text-slate-900 hover:bg-yellow-400 whitespace-nowrap shadow-sm transition-colors"
+              >
+                <Plus size={16} />
+              </button>
+            </div>
+          </div>
+
+          {/* Stats */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
+            {statsData.map((stat, idx) => (
+              <StatCard
+                key={idx}
+                label={stat.label}
+                value={stat.value}
+                subValue={stat.subValue}
+                trend={stat.trend}
+                icon={stat.icon}
+                color={stat.color}
+              />
+            ))}
+            <TopPerformerCard name="N/A" score={0} />
+          </div>
+
+          {/* Filters */}
+          <div className="flex flex-col md:flex-row gap-3">
+            <div className="relative flex-1">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
+              <input
+                type="text"
+                placeholder="Search by name, code, or role"
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                className="w-full pl-10 pr-4 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-yellow-400 placeholder:text-slate-400"
+              />
+            </div>
+            <div className="flex flex-wrap gap-2">
+              {/* Role Filter Dropdown */}
+              <div className="relative flex-1 md:flex-none">
+                <div className="flex items-center justify-center gap-2 px-4 py-2 bg-white border border-slate-200 rounded-lg text-sm text-slate-600 hover:bg-slate-50 whitespace-nowrap transition-colors cursor-pointer">
+                  {filterRole} <ChevronDown size={14} />
+                </div>
+                <select
+                  value={filterRole}
+                  onChange={(e) => setFilterRole(e.target.value)}
+                  className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+                >
+                  {availableRoles.map(role => (
+                    <option key={role} value={role}>{role}</option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Branch Filter Dropdown */}
+              <div className="relative flex-1 md:flex-none">
+                <div className="flex items-center justify-center gap-2 px-4 py-2 bg-white border border-slate-200 rounded-lg text-sm text-slate-600 hover:bg-slate-50 whitespace-nowrap transition-colors cursor-pointer">
+                  {filterBranch} <ChevronDown size={14} />
+                </div>
+                <select
+                  value={filterBranch}
+                  onChange={(e) => setFilterBranch(e.target.value)}
+                  className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+                >
+                  {availableBranches.map(branch => (
+                    <option key={branch} value={branch}>{branch}</option>
+                  ))}
+                </select>
+              </div>
+
+              <button className="flex-1 md:flex-none flex items-center justify-center gap-2 px-4 py-2 bg-white border border-slate-200 rounded-lg text-sm text-slate-600 hover:bg-slate-50 whitespace-nowrap transition-colors">
+                <Filter size={14} /> More Filters
+              </button>
+            </div>
+          </div>
+
+          {/* Content Split */}
+          <div className="flex flex-col lg:flex-row gap-6">
+
+            {/* Sidebar Categories */}
+            <div className="w-full lg:w-64 flex-shrink-0">
+              <div className="flex lg:flex-col overflow-x-auto lg:overflow-visible gap-2 pb-4 lg:pb-0 no-scrollbar">
+                {categories.map((cat, idx) => (
+                  <div
+                    key={idx}
+                    onClick={() => setActiveCategory(cat.name)}
+                    className={`flex items-center justify-between px-4 py-3 rounded-lg text-sm cursor-pointer whitespace-nowrap flex-shrink-0 min-w-max transition-colors ${activeCategory === cat.name ? 'bg-[#F5C742] font-semibold text-slate-900 shadow-sm' : 'bg-white lg:bg-transparent border lg:border-transparent border-slate-200 text-slate-600 hover:bg-white'}`}
+                  >
+                    <div className="flex items-center gap-3">
+                      <cat.icon size={16} className={activeCategory === cat.name ? "text-slate-900" : "text-slate-500"} />
+                      {cat.name}
+                    </div>
+                    {cat.count !== null && (
+                      <span className={`text-xs px-2 py-0.5 rounded-full ml-3 ${activeCategory === cat.name ? 'bg-black/10' : 'bg-slate-200 text-slate-500'}`}>
+                        {cat.count}
+                      </span>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Table Area */}
+            <div className="flex-1 bg-white border border-slate-200 rounded-lg shadow-sm overflow-hidden min-w-0">
+              <div className="overflow-x-auto">
+
+                {activeCategory === "Access & Permissions" ? (
+                  /* ==================================== */
+                  /* APPROVAL WORKFLOW TABLE VIEW         */
+                  /* ==================================== */
+                  <table className="w-full text-sm text-left">
+                    <thead className="bg-[#F7F7FA] text-slate-500 border-b border-slate-200">
+                      <tr>
+                        <th className="px-6 py-4 font-semibold text-xs uppercase whitespace-nowrap">Pending Employee</th>
+                        <th className="px-6 py-4 font-semibold text-xs uppercase whitespace-nowrap">Role / Dept</th>
+                        <th className="px-6 py-4 font-semibold text-xs uppercase whitespace-nowrap">Workflow Stage</th>
+                        <th className="px-6 py-4 font-semibold text-xs uppercase whitespace-nowrap">Submission Date</th>
+                        <th className="px-6 py-4 font-semibold text-xs uppercase text-right whitespace-nowrap">Decision</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {filteredEmployees.length === 0 ? (
+                        <tr>
+                          <td colSpan="5" className="px-6 py-12 text-center text-slate-400">
+                            <div className="flex flex-col items-center gap-2">
+                              <CheckCircle2 size={32} className="text-slate-200" />
+                              <p>No pending approvals found matching filters.</p>
+                            </div>
+                          </td>
+                        </tr>
+                      ) : (
+                        filteredEmployees.map((req) => (
+                          <tr key={req.id} className="hover:bg-slate-50 transition-colors group">
+                            <td className="px-6 py-4 whitespace-nowrap">
+                              <div className="flex items-center gap-3">
+                                <button
+                                  className={`w-10 h-10 rounded-full flex items-center justify-center text-xs font-bold overflow-hidden ${req.color} ${req.avatar ? 'cursor-pointer ring-2 ring-transparent hover:ring-offset-1 hover:ring-slate-300' : ''}`}
+                                  onClick={() => req.avatar && setViewingPhoto(req.avatar)}
+                                >
+                                  {req.avatar ? <img src={req.avatar} alt="Avatar" className="w-full h-full object-cover" /> : req.initials}
+                                </button>
+                                <div>
+                                  <div className="font-medium text-slate-800">{req.name}</div>
+                                  <div className="text-xs text-slate-400 font-mono">{req.code}</div>
+                                </div>
+                              </div>
+                            </td>
+                            <td className="px-6 py-4 whitespace-nowrap">
+                              <div className="text-slate-800">{req.role}</div>
+                              <div className="text-xs text-slate-500">{req.dept}</div>
+                            </td>
+                            <td className="px-6 py-4 whitespace-nowrap">
+                              {renderStageBadge(req.stage)}
+                            </td>
+                            <td className="px-6 py-4 text-slate-600 whitespace-nowrap">
+                              {req.submittedAt}
+                            </td>
+                            <td className="px-6 py-4 text-right whitespace-nowrap">
+                              <div className="flex items-center justify-end gap-2">
+                                <button
+                                  onClick={() => handleReject(req.id)}
+                                  className="p-1.5 rounded-full text-red-600 hover:bg-red-50 border border-transparent hover:border-red-100 transition-colors" title="Reject"
+                                >
+                                  <XIcon size={16} />
+                                </button>
+                                <button
+                                  onClick={() => handleApproveStep(req.id)}
+                                  className="flex items-center gap-1.5 px-3 py-1.5 bg-green-600 text-white rounded text-xs font-medium hover:bg-green-700 shadow-sm transition-colors"
+                                >
+                                  <Check size={14} /> Approve
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        ))
+                      )}
+                    </tbody>
+                  </table>
+
+                ) : (
+                  /* ==================================== */
+                  /* STANDARD EMPLOYEE TABLE VIEW         */
+                  /* ==================================== */
+                  <table className="w-full text-sm text-left">
+                    <thead className="bg-[#F7F7FA] text-slate-500 border-b border-slate-200">
+                      <tr>
+                        <th className="px-6 py-4 font-semibold text-xs uppercase whitespace-nowrap">Employee</th>
+                        <th className="px-6 py-4 font-semibold text-xs uppercase whitespace-nowrap">Role / Dept</th>
+                        <th className="px-6 py-4 font-semibold text-xs uppercase whitespace-nowrap">Branch</th>
+                        <th className="px-6 py-4 font-semibold text-xs uppercase whitespace-nowrap">Sales (MTD)</th>
+                        <th className="px-6 py-4 font-semibold text-xs uppercase whitespace-nowrap">Bills</th>
+                        <th className="px-6 py-4 font-semibold text-xs uppercase whitespace-nowrap">Discount / Returns</th>
+                        <th className="px-6 py-4 font-semibold text-xs uppercase whitespace-nowrap">Target</th>
+                        <th className="px-6 py-4 font-semibold text-xs uppercase whitespace-nowrap">Status</th>
+                        <th className="px-6 py-4 font-semibold text-xs uppercase text-right whitespace-nowrap">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {filteredEmployees.length === 0 ? (
+                        <tr><td colSpan="9" className="px-6 py-12 text-center text-slate-400">No employees found matching filters.</td></tr>
+                      ) : (
+                        filteredEmployees.map((emp) => (
+                          <tr key={emp.id} className="hover:bg-slate-50 transition-colors group">
+                            <td className="px-6 py-4 whitespace-nowrap">
+                              <div className="flex items-center gap-3">
+                                <button
+                                  className={`w-10 h-10 rounded-full flex items-center justify-center text-xs font-bold overflow-hidden ${emp.color} ${emp.avatar ? 'cursor-pointer ring-2 ring-transparent hover:ring-offset-1 hover:ring-slate-300' : ''}`}
+                                  onClick={() => emp.avatar && setViewingPhoto(emp.avatar)}
+                                >
+                                  {emp.avatar ? <img src={emp.avatar} alt="Avatar" className="w-full h-full object-cover" /> : emp.initials}
+                                </button>
+                                <div>
+                                  <div className="font-medium text-slate-800">{emp.name}</div>
+                                  <div className="text-xs text-slate-400 font-mono">{emp.code}</div>
+                                </div>
+                              </div>
+                            </td>
+                            <td className="px-6 py-4 whitespace-nowrap">
+                              <div className="text-slate-800">{emp.role}</div>
+                              <div className="text-xs text-slate-500">{emp.dept}</div>
+                            </td>
+                            <td className="px-6 py-4 text-slate-600 whitespace-nowrap">
+                              <div className="flex items-center gap-1 text-xs">
+                                <Store size={12} className="text-slate-400" />
+                                {emp.branch}
+                              </div>
+                            </td>
+                            <td className="px-6 py-4 whitespace-nowrap">
+                              <div className="font-medium text-slate-800">{emp.sales}</div>
+                              <div className="text-xs text-slate-400">{emp.avg}</div>
+                            </td>
+                            <td className="px-6 py-4 text-slate-600 whitespace-nowrap">
+                              {emp.bills}
+                            </td>
+                            <td className="px-6 py-4 whitespace-nowrap">
+                              <div className="text-xs text-orange-600">{emp.disc}</div>
+                              <div className="text-xs text-red-500">{emp.ret}</div>
+                            </td>
+                            <td className="px-6 py-4 whitespace-nowrap">
+                              {emp.target ? (
+                                <div className="flex items-center gap-2">
+                                  <span className="text-xs font-medium">{emp.target}%</span>
+                                  <div className="flex-1 w-16 bg-slate-100 rounded-full h-1.5">
+                                    <div className="bg-[#F5C742] h-1.5 rounded-full" style={{ width: `${emp.target}%` }}></div>
+                                  </div>
+                                  <span className="text-[10px] bg-yellow-100 text-yellow-700 px-1 rounded">Pending</span>
+                                </div>
+                              ) : (
+                                <span className="text-xs text-slate-400">N/A</span>
+                              )}
+                            </td>
+                            <td className="px-6 py-4 whitespace-nowrap">
+                              <span className={`text-xs px-2 py-1 rounded-full font-medium border ${emp.status === 'Active' ? 'bg-green-100 text-green-700 border-green-200' : 'bg-slate-100 text-slate-600 border-slate-200'}`}>
+                                {emp.status}
+                              </span>
+                            </td>
+                            <td className="px-6 py-4 text-right whitespace-nowrap relative">
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setSelectedEmployeeForAction(emp);
+                                }}
+                                className="text-slate-400 hover:text-slate-600 p-1 rounded hover:bg-slate-100 transition-colors"
+                              >
+                                <MoreHorizontal size={18} />
+                              </button>
+                            </td>
+                          </tr>
+                        ))
+                      )}
+                    </tbody>
+                  </table>
+                )}
+              </div>
+            </div>
+
+          </div>
+
+        </div>
+      </main>
+    </div>
+  );
+};
+
+export default Employees;

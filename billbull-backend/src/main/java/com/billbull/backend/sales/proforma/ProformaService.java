@@ -1,0 +1,193 @@
+package com.billbull.backend.sales.proforma;
+
+import java.math.BigDecimal;
+import java.util.ArrayList;
+import java.util.List;
+
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+@Service
+@Transactional
+public class ProformaService {
+
+    private final ProformaRepository repo;
+
+    public ProformaService(ProformaRepository repo) {
+        this.repo = repo;
+    }
+
+    /* ================= CREATE ================= */
+
+    public ProformaResponse create(ProformaRequest req) {
+        ProformaInvoice pi = buildEntity(req, new ProformaInvoice());
+        return toResponse(repo.save(pi));
+    }
+
+    /* ================= UPDATE ================= */
+
+    public ProformaResponse update(Long id, ProformaRequest req) {
+
+        ProformaInvoice pi = repo.findById(id)
+                .orElseThrow(() -> new RuntimeException("Proforma not found"));
+
+        if (pi.getStatus() == ProformaStatus.ISSUED) {
+            throw new IllegalStateException("Issued Proforma cannot be edited");
+        }
+
+        pi.getItems().clear(); // orphanRemoval handles delete
+
+        buildEntity(req, pi);
+        return toResponse(repo.save(pi));
+    }
+
+    /* ================= READ ================= */
+
+    @Transactional(readOnly = true)
+    public List<ProformaResponse> list() {
+        return repo.findAll().stream()
+                .map(this::toResponse) // mapping happens INSIDE TX
+                .toList();
+    }
+
+    @Transactional(readOnly = true)
+    public ProformaResponse get(Long id) {
+        ProformaInvoice pi = repo.findById(id)
+                .orElseThrow(() -> new RuntimeException("Proforma not found"));
+        return toResponse(pi);
+    }
+
+    /* ================= DELETE ================= */
+
+    public void delete(Long id) {
+        repo.deleteById(id);
+    }
+
+    /* ================= ISSUE ================= */
+
+    public ProformaResponse issue(Long id) {
+
+        ProformaInvoice pi = repo.findById(id)
+                .orElseThrow(() -> new RuntimeException("Proforma not found"));
+
+        if (pi.getBalanceDue().compareTo(BigDecimal.ZERO) > 0) {
+            throw new IllegalStateException("Full payment required");
+        }
+
+        pi.setStatus(ProformaStatus.ISSUED);
+        pi.setIssuedAt(java.time.LocalDateTime.now());
+
+        return toResponse(repo.save(pi));
+    }
+
+    /* ================= ENTITY BUILDER ================= */
+
+    private ProformaInvoice buildEntity(ProformaRequest req, ProformaInvoice pi) {
+
+        pi.setPiNumber(req.piNumber);
+        pi.setPiDate(req.piDate);
+        pi.setValidUntil(req.validUntil);
+
+        pi.setCustomerId(req.customerId);
+        pi.setCustomerCode(req.customerCode);
+        pi.setCustomerName(req.customerName);
+        pi.setCustomerTrn(req.customerTrn);
+
+        pi.setQuotationNo(req.quotationNo);
+        pi.setSalesOrderNo(req.salesOrderNo);
+
+        pi.setPaymentMethod(req.paymentMethod);
+        pi.setAdvancePaid(req.advancePaid != null ? req.advancePaid : BigDecimal.ZERO);
+        pi.setPaymentReference(req.paymentReference);
+        pi.setPaymentNotes(req.paymentNotes);
+
+        BigDecimal sub = BigDecimal.ZERO;
+        BigDecimal tax = BigDecimal.ZERO;
+
+        if (pi.getItems() == null) {
+            pi.setItems(new ArrayList<>());
+        }
+
+        for (ProformaItemRequest i : req.items) {
+
+            BigDecimal base = i.quantity.multiply(i.price);
+            BigDecimal taxAmt = base.multiply(i.taxPercent).divide(BigDecimal.valueOf(100));
+            BigDecimal total = base.add(taxAmt);
+
+            ProformaInvoiceItem item = new ProformaInvoiceItem();
+            item.setProforma(pi);
+            item.setItemCode(i.itemCode);
+            item.setBarcode(i.barcode);
+            item.setDescription(i.description);
+            item.setUnit(i.unit);
+            item.setQuantity(i.quantity);
+            item.setPrice(i.price);
+            item.setTaxPercent(i.taxPercent);
+            item.setFoc(i.foc);
+            item.setLineTotal(total);
+
+            pi.getItems().add(item);
+
+            sub = sub.add(base);
+            tax = tax.add(taxAmt);
+        }
+
+        pi.setSubTotal(sub);
+        pi.setTaxTotal(tax);
+        pi.setGrandTotal(sub.add(tax));
+        pi.setBalanceDue(pi.getGrandTotal().subtract(pi.getAdvancePaid()));
+
+        return pi;
+    }
+
+    /* ================= DTO MAPPER ================= */
+
+    public ProformaResponse toResponse(ProformaInvoice pi) {
+
+        ProformaResponse res = new ProformaResponse();
+
+        res.setId(pi.getId());
+        res.setPiNumber(pi.getPiNumber());
+        res.setPiDate(pi.getPiDate());
+        res.setValidUntil(pi.getValidUntil());
+
+        res.setCustomerId(pi.getCustomerId());
+        res.setCustomerCode(pi.getCustomerCode());
+        res.setCustomerName(pi.getCustomerName());
+        res.setCustomerTrn(pi.getCustomerTrn());
+
+        res.setQuotationNo(pi.getQuotationNo());
+        res.setSalesOrderNo(pi.getSalesOrderNo());
+
+        res.setSubTotal(pi.getSubTotal());
+        res.setTaxTotal(pi.getTaxTotal());
+        res.setGrandTotal(pi.getGrandTotal());
+
+        res.setAdvancePaid(pi.getAdvancePaid());
+        res.setBalanceDue(pi.getBalanceDue());
+
+        res.setPaymentMethod(pi.getPaymentMethod());
+        res.setPaymentNotes(pi.getPaymentNotes());
+
+        res.setStatus(pi.getStatus());
+        res.setRevisionNo(pi.getRevisionNo());
+
+        res.setItems(
+                pi.getItems().stream().map(item -> {
+                    ProformaItemResponse ir = new ProformaItemResponse();
+                    ir.setId(item.getId());
+                    ir.setItemCode(item.getItemCode());
+                    ir.setBarcode(item.getBarcode());
+                    ir.setDescription(item.getDescription());
+                    ir.setUnit(item.getUnit());
+                    ir.setQuantity(item.getQuantity().intValue());
+                    ir.setPrice(item.getPrice());
+                    ir.setTaxPercent(item.getTaxPercent());
+                    ir.setFoc(item.getFoc());
+                    ir.setLineTotal(item.getLineTotal());
+                    return ir;
+                }).toList());
+
+        return res;
+    }
+}

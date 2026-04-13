@@ -1,0 +1,80 @@
+package com.billbull.backend.financials.tax;
+
+import com.billbull.backend.security.AuditLogService;
+import jakarta.servlet.http.HttpServletRequest;
+import lombok.RequiredArgsConstructor;
+import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.web.bind.annotation.*;
+
+import java.util.List;
+
+@RestController
+@RequestMapping("/api/financials/tax")
+@RequiredArgsConstructor
+@PreAuthorize("isAuthenticated()")
+public class TaxController {
+
+    private final TaxService taxService;
+    private final AuditLogService auditLogService;
+
+    // --- Configurations ---
+
+    @GetMapping("/configs")
+    public List<TaxConfiguration> getAllConfigs() {
+        return taxService.getAllConfigs();
+    }
+
+    @PostMapping("/configs")
+    public TaxConfiguration createConfig(@RequestBody TaxConfiguration config) {
+        return taxService.saveConfig(config);
+    }
+
+    @PutMapping("/configs/{id}")
+    public ResponseEntity<TaxConfiguration> updateConfig(@PathVariable Long id, @RequestBody TaxConfiguration config) {
+        config.setId(id);
+        return ResponseEntity.ok(taxService.saveConfig(config));
+    }
+
+    @DeleteMapping("/configs/{id}")
+    public ResponseEntity<Void> deleteConfig(@PathVariable Long id) {
+        taxService.deleteConfig(id);
+        return ResponseEntity.ok().build();
+    }
+
+    // --- Filings ---
+
+    @GetMapping("/filings")
+    public List<TaxFilingDTO> getAllFilings() {
+        return taxService.getAllFilings();
+    }
+
+    @PutMapping("/filings/{id}")
+    public ResponseEntity<TaxFiling> updateFiling(@PathVariable Long id, @RequestBody TaxFiling filing) {
+        return ResponseEntity.ok(taxService.updateFiling(id, filing));
+    }
+
+    @PostMapping(value = "/filings/{id}/upload", consumes = org.springframework.http.MediaType.MULTIPART_FORM_DATA_VALUE)
+    public ResponseEntity<TaxFilingDTO> uploadDocument(
+            @PathVariable Long id,
+            @org.springframework.web.bind.annotation.RequestParam("file") org.springframework.web.multipart.MultipartFile file) {
+        return ResponseEntity.ok(taxService.uploadDocument(id, file));
+    }
+
+    @DeleteMapping("/filings/{id}/document")
+    public ResponseEntity<TaxFilingDTO> deleteDocument(@PathVariable Long id) {
+        return ResponseEntity.ok(taxService.removeDocument(id));
+    }
+
+    @GetMapping("/filings/{id}/document")
+    public ResponseEntity<org.springframework.core.io.Resource> downloadDocument(@PathVariable Long id) {
+        org.springframework.core.io.Resource resource = taxService.loadDocument(id);
+
+        // Try to determine filename, fallback if needed
+        String filename = resource.getFilename();
+        return ResponseEntity.ok()
+                .header(org.springframework.http.HttpHeaders.CONTENT_DISPOSITION,
+                        "attachment; filename=\"" + filename + "\"")
+                .body(resource);
+    }
+}
