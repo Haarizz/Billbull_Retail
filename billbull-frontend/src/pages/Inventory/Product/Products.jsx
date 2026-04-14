@@ -13,7 +13,7 @@ import {
 
 // Import API Methods
 import { useNavigate } from 'react-router-dom';
-import api from "../../../api/axiosConfig";
+import { getImageUrl } from "../../../utils/urlUtils";
 import {
   getProductsList,
   getProductById,
@@ -1821,7 +1821,7 @@ const Products = () => {
         department: d.departmentId || '',
         cost: d.cost ?? 0,
         retailPrice: d.retailPrice ?? 0,
-        image: d.image ? (d.image.startsWith('http') ? d.image : `${api.defaults.baseURL}${d.image}`) : null,
+        image: d.image ? getImageUrl(d.image) : null,
         packings: d.packings || [],
       }));
       setProducts(mapped);
@@ -1943,7 +1943,7 @@ const Products = () => {
         maxDiscount: product?.maxDiscount || 0,
         status: product?.status || 'Active',
 
-        image: primaryImage ? (primaryImage.startsWith('http') ? primaryImage : `${api.defaults.baseURL}${primaryImage}`) : null,
+        image: primaryImage ? getImageUrl(primaryImage) : null,
 
         cost: pricing?.cost || '',
         landingCost: pricing?.landingCost || 0,
