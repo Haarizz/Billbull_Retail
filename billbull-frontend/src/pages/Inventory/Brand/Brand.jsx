@@ -8,7 +8,7 @@ import {
 } from 'lucide-react';
 
 // --- API IMPORTS ---
-import api from "../../../api/axiosConfig";
+import { getImageUrl } from "../../../utils/urlUtils";
 import {
   getBrands,
   createBrand,
@@ -84,7 +84,7 @@ const Brand = () => {
         country: b.country || "—",
         region: b.region || "—",
         // Handle images robustly using the API base URL
-        logo: b.logoUrl ? (b.logoUrl.startsWith('http') ? b.logoUrl : `${api.defaults.baseURL}${b.logoUrl}`) : null,
+        logo: b.logoUrl ? getImageUrl(b.logoUrl) : null,
         initials: b.name.substring(0, 2).toUpperCase(),
         status: b.active ? "Active" : "Inactive",
         tags: b.tags || [],
