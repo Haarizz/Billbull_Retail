@@ -729,6 +729,7 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
         code: item.itemCode,
         barcode: resolveBarcode(item),
         name: item.itemName,
+        image: item.image,
         uom: item.uom,
         qty: Number(item.qty),
         cost: Number(item.unitCost),
