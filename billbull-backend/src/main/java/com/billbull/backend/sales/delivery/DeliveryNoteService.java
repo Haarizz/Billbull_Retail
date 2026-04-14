@@ -14,6 +14,7 @@ import com.billbull.backend.inventory.warehouse.Warehouse;
 import com.billbull.backend.inventory.warehouse.WarehouseRepository;
 import com.billbull.backend.inventory.warehouse.WarehouseStockService;
 import com.billbull.backend.inventory.warehouse.BinRepository;
+import com.billbull.backend.purchase.stockmovement.StockMovementRepository;
 import com.billbull.backend.purchase.stockmovement.StockMovementService;
 import com.billbull.backend.purchase.stockmovement.StockSourceType;
 import com.billbull.backend.sales.invoice.SalesInvoice;
@@ -35,6 +36,7 @@ public class DeliveryNoteService {
     private final ProductRepository productRepo;
     private final WarehouseRepository warehouseRepo;
     private final StockMovementService stockMovementService;
+    private final StockMovementRepository stockMovementRepo;
     private final com.billbull.backend.sales.salesorder.SalesOrderService salesOrderService;
     private final BinRepository binRepo;
     private final StockDeductionStrategyService stockStrategy;
@@ -47,6 +49,7 @@ public class DeliveryNoteService {
             ProductRepository productRepo,
             WarehouseRepository warehouseRepo,
             StockMovementService stockMovementService,
+            StockMovementRepository stockMovementRepo,
             com.billbull.backend.sales.salesorder.SalesOrderService salesOrderService,
             BinRepository binRepo,
             StockDeductionStrategyService stockStrategy,
@@ -57,6 +60,7 @@ public class DeliveryNoteService {
         this.productRepo = productRepo;
         this.warehouseRepo = warehouseRepo;
         this.stockMovementService = stockMovementService;
+        this.stockMovementRepo = stockMovementRepo;
         this.salesOrderService = salesOrderService;
         this.binRepo = binRepo;
         this.stockStrategy = stockStrategy;
@@ -266,6 +270,19 @@ public class DeliveryNoteService {
                 }
 
                 Long binId = item.getBinId();
+
+                // AUTO-RESOLVE BIN: if the DN item has no bin, pick the bin with the most
+                // stock for this product so the outbound movement is recorded at bin level.
+                // Without this, outbound movements land with binId=null and the warehouse
+                // bin page shows inflated on-hand that never decreases on sales.
+                if (binId == null) {
+                    List<Object[]> activeBins = stockMovementRepo.findActiveBinsByWarehouseAndProduct(
+                            dn.getWarehouse().getId(), item.getProduct().getId());
+                    if (!activeBins.isEmpty()) {
+                        binId = (Long) activeBins.get(0)[0]; // bin with highest stock first
+                    }
+                }
+
                 Long zoneId = null;
                 Long locatorId = null;
 

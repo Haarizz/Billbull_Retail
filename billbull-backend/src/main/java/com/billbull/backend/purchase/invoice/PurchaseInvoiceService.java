@@ -9,6 +9,7 @@ import org.springframework.cache.annotation.CacheEvict;
 import org.springframework.stereotype.Service;
 
 import com.billbull.backend.financials.generalledger.postingengine.PostingEngineService;
+import com.billbull.backend.inventory.product.ProductMediaRepository;
 import com.billbull.backend.inventory.product.ProductPricingRepository;
 import com.billbull.backend.inventory.product.ProductRepository;
 import com.billbull.backend.inventory.warehouse.BinRepository;
@@ -46,13 +47,15 @@ public class PurchaseInvoiceService {
     private final BinRepository binRepository;
     private final LpoRepository lpoRepository;
     private final PaymentVoucherService paymentVoucherService;
+    private final ProductMediaRepository productMediaRepository;
 
     public PurchaseInvoiceService(PurchaseInvoiceRepository repository, GrnRepository grnRepo,
             PostingEngineService postingEngineService, StockMovementService stockService,
             ProductRepository productRepository, ProductPricingRepository productPricingRepository,
             BinStockRepository binStockRepository, WarehouseRepository warehouseRepository,
             ZoneRepository zoneRepository, LocatorRepository locatorRepository, BinRepository binRepository,
-            LpoRepository lpoRepository, PaymentVoucherService paymentVoucherService) {
+            LpoRepository lpoRepository, PaymentVoucherService paymentVoucherService,
+            ProductMediaRepository productMediaRepository) {
         super();
         this.repository = repository;
         this.grnRepo = grnRepo;
@@ -67,6 +70,7 @@ public class PurchaseInvoiceService {
         this.binRepository = binRepository;
         this.lpoRepository = lpoRepository;
         this.paymentVoucherService = paymentVoucherService;
+        this.productMediaRepository = productMediaRepository;
     }
 
     /* ================= CREATE (DRAFT) ================= */
@@ -510,10 +514,21 @@ public class PurchaseInvoiceService {
         dto.setPaymentStatus(resolvedPaymentStatus);
 
         if (invoice.getItems() != null) {
+            // Bulk-fetch primary images by item code
+            java.util.List<String> codes = invoice.getItems().stream()
+                    .map(i -> i.getItemCode())
+                    .filter(c -> c != null)
+                    .distinct()
+                    .toList();
+            java.util.Map<String, String> imageMap = new java.util.HashMap<>();
+            productMediaRepository.findPrimaryByProductCodesIn(codes)
+                    .forEach(m -> imageMap.put(m.getProduct().getCode(), m.getImageUrl()));
+
             dto.setItems(invoice.getItems().stream().map(i -> {
                 InvoiceItemDraft d = new InvoiceItemDraft();
                 d.setItemCode(i.getItemCode());
                 d.setItemName(i.getItemName());
+                d.setImage(imageMap.get(i.getItemCode()));
                 d.setUom(i.getUom());
                 d.setQty(i.getQty());
                 d.setFocQty(i.getFocQty());

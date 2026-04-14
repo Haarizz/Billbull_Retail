@@ -39,6 +39,7 @@ public class GrnService {
     private final LocatorRepository locatorRepo;
     private final com.billbull.backend.purchase.invoice.PurchaseInvoiceRepository invoiceRepo;
     private final com.billbull.backend.financials.generalledger.postingengine.PostingEngineService postingEngineService;
+    private final ProductMediaRepository productMediaRepo;
 
     public GrnService(
             StockMovementService stockMovementService,
@@ -50,7 +51,8 @@ public class GrnService {
             ZoneRepository zoneRepo,
             LocatorRepository locatorRepo,
             com.billbull.backend.purchase.invoice.PurchaseInvoiceRepository invoiceRepo,
-            com.billbull.backend.financials.generalledger.postingengine.PostingEngineService postingEngineService) {
+            com.billbull.backend.financials.generalledger.postingengine.PostingEngineService postingEngineService,
+            ProductMediaRepository productMediaRepo) {
         this.stockMovementService = stockMovementService;
         this.grnRepo = grnRepo;
         this.warehouseRepo = warehouseRepo;
@@ -62,6 +64,7 @@ public class GrnService {
         this.locatorRepo = locatorRepo;
         this.invoiceRepo = invoiceRepo;
         this.postingEngineService = postingEngineService;
+        this.productMediaRepo = productMediaRepo;
     }
 
     /* ================= CREATE / UPDATE ================= */
@@ -386,6 +389,13 @@ public class GrnService {
     /* ================= MAPPER ================= */
 
     private GrnDetailResponse mapDetail(GrnEntity g) {
+        // Bulk-fetch primary images for all items in one query
+        java.util.List<Long> productIds = g.getItems().stream()
+                .map(i -> i.getProduct().getId()).toList();
+        java.util.Map<Long, String> imageMap = new java.util.HashMap<>();
+        productMediaRepo.findByProductIdInAndIsPrimaryTrue(productIds)
+                .forEach(m -> imageMap.put(m.getProduct().getId(), m.getImageUrl()));
+
         return new GrnDetailResponse(
                 g.getId(),
                 g.getGrnNo(),
@@ -405,9 +415,10 @@ public class GrnService {
                 g.getBin() != null ? g.getBin().getName() : null,
                 g.getItems().stream().map(i -> new GrnItemResponse(
                         i.getId(),
-                        i.getProduct().getId(), // Add productId
+                        i.getProduct().getId(),
                         i.getProductCode(),
                         i.getProductName(),
+                        imageMap.get(i.getProduct().getId()),
                         i.getUom(),
                         i.getLpoQty(),
                         i.getReceivedQty(),

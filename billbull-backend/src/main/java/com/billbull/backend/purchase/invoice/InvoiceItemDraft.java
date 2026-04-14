@@ -6,6 +6,7 @@ public class InvoiceItemDraft {
 
     private String itemCode;
     private String itemName;
+    private String image;
     private String uom;
     private Integer qty;
     private Integer focQty; // Added
@@ -37,6 +38,14 @@ public class InvoiceItemDraft {
 
     public void setItemName(String itemName) {
         this.itemName = itemName;
+    }
+
+    public String getImage() {
+        return image;
+    }
+
+    public void setImage(String image) {
+        this.image = image;
     }
 
     public String getUom() {
