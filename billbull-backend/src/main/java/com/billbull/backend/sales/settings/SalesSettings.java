@@ -28,6 +28,19 @@ public class SalesSettings {
     @Column(nullable = false, length = 20)
     private CreditLimitPolicy creditLimitPolicy = CreditLimitPolicy.NO_IMPACT;
 
+    /**
+     * Controls the global sales execution mode.
+     *
+     * WORKFLOW_DRIVEN (default): full pipeline with manual Delivery Note lifecycle.
+     * FAST_SALE: invoice creation auto-completes delivery and stock deduction instantly.
+     *
+     * columnDefinition ensures Hibernate generates a DB-level DEFAULT so that the
+     * existing singleton row receives WORKFLOW_DRIVEN when the column is first added.
+     */
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false, length = 20, columnDefinition = "varchar(20) default 'WORKFLOW_DRIVEN'")
+    private SalesMode salesMode = SalesMode.WORKFLOW_DRIVEN;
+
     // ------------------------------------------------
     // Getters & Setters
     // ------------------------------------------------
@@ -54,5 +67,13 @@ public class SalesSettings {
 
     public void setCreditLimitPolicy(CreditLimitPolicy creditLimitPolicy) {
         this.creditLimitPolicy = creditLimitPolicy;
+    }
+
+    public SalesMode getSalesMode() {
+        return salesMode;
+    }
+
+    public void setSalesMode(SalesMode salesMode) {
+        this.salesMode = salesMode;
     }
 }

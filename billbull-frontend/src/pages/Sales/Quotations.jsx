@@ -2254,8 +2254,8 @@ const Quotations = () => {
                                                         />
                                                     </th>
                                                     <th className="p-2 w-16 text-center">Unit</th>
-                                                    <th className="p-2 w-20 text-center">Sale qty</th>
-                                                    <th className="p-2 w-20 text-center">Unit price</th>
+                                                    <th className="p-2 w-24 text-center">Sale qty</th>
+                                                    <th className="p-2 w-28 text-center">Unit price</th>
                                                     <th className="p-2 w-24 text-center text-slate-800">Amount</th>
                                                     <th className="p-2 w-16 text-center text-slate-500">Actions</th>
                                                 </tr>
@@ -2309,7 +2309,7 @@ const Quotations = () => {
 
                                                             {/* Qty */}
                                                             <td className="p-2 text-center align-middle">
-                                                                <div className="rounded-md border border-slate-200 bg-white inline-flex items-center px-2 py-1 sm:w-14 mx-auto">
+                                                                <div className="rounded-md border border-slate-200 bg-white flex items-center px-2 py-1 w-full max-w-[88px] mx-auto">
                                                                     <input
                                                                         id={`qty-${item.id}`}
                                                                         type="number"
@@ -2325,7 +2325,7 @@ const Quotations = () => {
 
                                                             {/* Unit Price */}
                                                             <td className="p-2 text-center align-middle">
-                                                                <div className="rounded-md border border-slate-200 bg-white inline-flex items-center px-2 py-1 sm:w-16 mx-auto">
+                                                                <div className="rounded-md border border-slate-200 bg-white flex items-center px-2 py-1 w-full max-w-[104px] mx-auto">
                                                                     <input
                                                                         type="number"
                                                                         className="w-full bg-transparent text-center outline-none font-semibold text-sm text-slate-700"

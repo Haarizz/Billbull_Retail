@@ -301,7 +301,7 @@ public class PurchaseInvoiceService {
 
     /* ================= PAYMENT ================= */
 
-    public PurchaseInvoice recordPayment(Long id, BigDecimal amount) {
+    public PurchaseInvoice recordPayment(Long id, BigDecimal amount, String paymentModeStr) {
         PurchaseInvoice invoice = getEntity(id);
 
         if (invoice.getStatus() != InvoiceStatus.POSTED) {
@@ -324,7 +324,13 @@ public class PurchaseInvoiceService {
         PaymentVoucher pv = new PaymentVoucher();
         pv.setVendorName(invoice.getVendorName() != null ? invoice.getVendorName() : "Unknown Vendor");
         pv.setPaymentDate(LocalDate.now());
-        pv.setPaymentMode(PaymentMode.BANK_TRANSFER); // Default assumption for auto-payment
+        PaymentMode resolvedMode;
+        try {
+            resolvedMode = PaymentMode.valueOf(paymentModeStr != null ? paymentModeStr.toUpperCase() : "BANK_TRANSFER");
+        } catch (IllegalArgumentException e) {
+            resolvedMode = PaymentMode.BANK_TRANSFER;
+        }
+        pv.setPaymentMode(resolvedMode);
         pv.setAmount(amount);
         pv.setReferenceNumber("Auto-PV for INV: " + invoice.getInvoiceNumber());
         pv.setInvoiceId(invoice.getId());

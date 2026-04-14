@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Settings, Package, CreditCard, Save, CheckCircle, AlertTriangle, Ban, Info } from 'lucide-react';
+import { Settings, Package, CreditCard, Save, CheckCircle, AlertTriangle, Ban, Info, Zap } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { getSalesSettings, saveSalesSettings } from '../../api/salesSettingsApi';
 
@@ -14,6 +14,7 @@ const SalesSettings = () => {
     // Settings state
     const [stockCheckRequired, setStockCheckRequired] = useState(false);
     const [creditLimitPolicy, setCreditLimitPolicy] = useState('NO_IMPACT');
+    const [salesMode, setSalesMode] = useState('WORKFLOW_DRIVEN');
 
     // Load settings on mount
     useEffect(() => {
@@ -22,6 +23,7 @@ const SalesSettings = () => {
                 const data = await getSalesSettings();
                 setStockCheckRequired(data.stockCheckRequired ?? false);
                 setCreditLimitPolicy(data.creditLimitPolicy ?? 'NO_IMPACT');
+                setSalesMode(data.salesMode ?? 'WORKFLOW_DRIVEN');
             } catch (err) {
                 console.error('Failed to load sales settings', err);
                 toast.error('Failed to load settings');
@@ -38,6 +40,7 @@ const SalesSettings = () => {
             await saveSalesSettings({
                 stockCheckRequired,
                 creditLimitPolicy,
+                salesMode,
             });
             toast.success('Sales settings saved successfully');
         } catch (err) {
@@ -188,7 +191,7 @@ const SalesSettings = () => {
                                 </p>
                                 {stockCheckRequired && (
                                     <div className="mt-3 flex items-start gap-2 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2.5">
-                                        <AlertTriangle size={13} className="text-amber-500 mt-0.5 flex-shrink-0" />
+                                        <AlertTriangle size={13} className="text-amber-500 mt-0.5 shrink-0" />
                                         <p className="text-[11px] text-amber-700 leading-relaxed">
                                             <strong>Active:</strong> Invoices with insufficient stock will be blocked at posting.
                                             Ensure warehouse quantities are up to date before processing invoices.
@@ -197,7 +200,7 @@ const SalesSettings = () => {
                                 )}
                                 {!stockCheckRequired && (
                                     <div className="mt-3 flex items-start gap-2 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2.5">
-                                        <Info size={13} className="text-slate-400 mt-0.5 flex-shrink-0" />
+                                        <Info size={13} className="text-slate-400 mt-0.5 shrink-0" />
                                         <p className="text-[11px] text-slate-500 leading-relaxed">
                                             <strong>Inactive:</strong> Invoices can be posted even if warehouse stock is zero or negative.
                                             Useful when stock is managed separately via Delivery Notes.
@@ -236,7 +239,7 @@ const SalesSettings = () => {
                                 >
                                     <div className="flex items-start gap-3">
                                         {/* Radio dot */}
-                                        <div className={`mt-0.5 w-4 h-4 rounded-full border-2 flex-shrink-0 flex items-center justify-center transition-all ${isSelected ? 'border-current bg-current' : 'border-slate-300'}`}
+                                        <div className={`mt-0.5 w-4 h-4 rounded-full border-2 shrink-0 flex items-center justify-center transition-all ${isSelected ? 'border-current bg-current' : 'border-slate-300'}`}
                                             style={isSelected ? { borderColor: policy.color === 'slate' ? '#64748b' : policy.color === 'amber' ? '#f59e0b' : '#ef4444' } : {}}>
                                             {isSelected && <div className="w-1.5 h-1.5 rounded-full bg-white" />}
                                         </div>
@@ -262,11 +265,96 @@ const SalesSettings = () => {
                     {/* Context note */}
                     <div className="px-6 pb-5">
                         <div className="flex items-start gap-2 bg-blue-50 border border-blue-100 rounded-xl px-4 py-3">
-                            <Info size={13} className="text-blue-400 mt-0.5 flex-shrink-0" />
+                            <Info size={13} className="text-blue-400 mt-0.5 shrink-0" />
                             <p className="text-[11px] text-blue-600 leading-relaxed">
                                 The credit limit per customer is set on each Sales Invoice in the "Credit Limit" field.
                                 The policy above controls the system-wide behaviour when that limit is breached.
                                 Customers without a credit limit set (0 or blank) are always unaffected.
+                            </p>
+                        </div>
+                    </div>
+                </div>
+
+                {/* ==============================
+                    SECTION 3 — SALES EXECUTION MODE
+                ============================== */}
+                <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden mb-5">
+                    {/* Section Header */}
+                    <div className="flex items-center gap-3 px-6 py-5 border-b border-slate-100">
+                        <div className="w-8 h-8 rounded-lg bg-amber-50 flex items-center justify-center">
+                            <Zap size={16} className="text-amber-500" />
+                        </div>
+                        <div>
+                            <h2 className="text-sm font-bold text-slate-800">Sales Execution Mode</h2>
+                            <p className="text-xs text-slate-400 mt-0.5">Control how invoices complete the delivery and stock deduction cycle</p>
+                        </div>
+                    </div>
+
+                    {/* Mode Options */}
+                    <div className="px-6 py-5 space-y-3">
+
+                        {/* WORKFLOW_DRIVEN */}
+                        <button
+                            onClick={() => setSalesMode('WORKFLOW_DRIVEN')}
+                            className={`w-full text-left border-2 rounded-xl p-4 transition-all duration-200 ${salesMode === 'WORKFLOW_DRIVEN' ? 'border-slate-400 bg-slate-50 ring-1 ring-slate-400' : 'border-slate-200 hover:border-slate-300 bg-white'}`}
+                        >
+                            <div className="flex items-start gap-3">
+                                <div className={`mt-0.5 w-4 h-4 rounded-full border-2 shrink-0 flex items-center justify-center transition-all ${salesMode === 'WORKFLOW_DRIVEN' ? 'border-slate-500 bg-slate-500' : 'border-slate-300'}`}>
+                                    {salesMode === 'WORKFLOW_DRIVEN' && <div className="w-1.5 h-1.5 rounded-full bg-white" />}
+                                </div>
+                                <div className="flex-1">
+                                    <div className="flex items-center gap-2 mb-1">
+                                        <span className="text-sm font-bold text-slate-800">Workflow Driven</span>
+                                        {salesMode === 'WORKFLOW_DRIVEN' && (
+                                            <span className="text-[9px] font-bold px-2 py-0.5 rounded-full bg-[#F5C742] text-[#1E1E1E] uppercase tracking-wider">Active</span>
+                                        )}
+                                    </div>
+                                    <p className="text-xs text-slate-500 leading-relaxed">
+                                        Full pipeline with manual steps. Delivery Notes are created in Draft and must be dispatched then delivered manually. Stock is deducted and revenue is recognised only when the Delivery Note is marked Delivered.
+                                    </p>
+                                </div>
+                            </div>
+                        </button>
+
+                        {/* FAST_SALE */}
+                        <button
+                            onClick={() => setSalesMode('FAST_SALE')}
+                            className={`w-full text-left border-2 rounded-xl p-4 transition-all duration-200 ${salesMode === 'FAST_SALE' ? 'border-amber-400 bg-amber-50 ring-1 ring-amber-400' : 'border-slate-200 hover:border-amber-200 bg-white'}`}
+                        >
+                            <div className="flex items-start gap-3">
+                                <div className={`mt-0.5 w-4 h-4 rounded-full border-2 shrink-0 flex items-center justify-center transition-all ${salesMode === 'FAST_SALE' ? 'border-amber-500 bg-amber-500' : 'border-slate-300'}`}>
+                                    {salesMode === 'FAST_SALE' && <div className="w-1.5 h-1.5 rounded-full bg-white" />}
+                                </div>
+                                <div className="flex-1">
+                                    <div className="flex items-center gap-2 mb-1">
+                                        <Zap size={14} className="text-amber-500" />
+                                        <span className="text-sm font-bold text-slate-800">Fast Sale</span>
+                                        {salesMode === 'FAST_SALE' && (
+                                            <span className="text-[9px] font-bold px-2 py-0.5 rounded-full bg-[#F5C742] text-[#1E1E1E] uppercase tracking-wider">Active</span>
+                                        )}
+                                    </div>
+                                    <p className="text-xs text-slate-500 leading-relaxed">
+                                        Instant sale mode. When a Sales Invoice is created and posted, the system automatically creates, dispatches, and delivers the Delivery Note in one atomic step — deducting stock and recognising revenue immediately.
+                                    </p>
+                                    {salesMode === 'FAST_SALE' && (
+                                        <div className="mt-2 flex items-start gap-2 bg-amber-100 border border-amber-200 rounded-lg px-3 py-2">
+                                            <AlertTriangle size={12} className="text-amber-600 mt-0.5 shrink-0" />
+                                            <p className="text-[11px] text-amber-700 leading-relaxed">
+                                                <strong>Active:</strong> Every new invoice will auto-complete delivery on posting. Ensure each line item has a warehouse assigned and sufficient stock. Invoices with missing warehouses or insufficient stock will be blocked.
+                                            </p>
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+                        </button>
+                    </div>
+
+                    {/* Context note */}
+                    <div className="px-6 pb-5">
+                        <div className="flex items-start gap-2 bg-blue-50 border border-blue-100 rounded-xl px-4 py-3">
+                            <Info size={13} className="text-blue-400 mt-0.5 shrink-0" />
+                            <p className="text-[11px] text-blue-600 leading-relaxed">
+                                Fast Sale applies globally to all new invoices. Invoices linked to a pre-existing Delivery Note (Before-Sale flow) are not affected — their delivery lifecycle is always respected as-is.
                             </p>
                         </div>
                     </div>

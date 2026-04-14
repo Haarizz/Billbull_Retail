@@ -87,9 +87,10 @@ public class PurchaseInvoiceController {
     @PreAuthorize("hasAnyRole('ADMIN','ACCOUNTANT')")
     public ResponseEntity<PurchaseInvoiceResponse> recordPayment(
             @PathVariable Long id,
-            @RequestParam BigDecimal amount) {
+            @RequestParam BigDecimal amount,
+            @RequestParam(defaultValue = "BANK_TRANSFER") String paymentMode) {
         return ResponseEntity.ok(
-                service.getResponse(service.recordPayment(id, amount).getId()));
+                service.getResponse(service.recordPayment(id, amount, paymentMode).getId()));
     }
 
     @GetMapping

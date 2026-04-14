@@ -1333,8 +1333,8 @@ const DeliveryNote = () => {
                                                     {dn.receivedBy && <div className="text-[10px] text-slate-400 mt-1">By: {dn.receivedBy}</div>}
                                                 </td>
                                                 <td className="px-4 py-3 text-center">
-                                                    {dn.type === 'After Sale' ? (
-                                                        <span className="text-xs font-semibold text-blue-600 bg-blue-50 px-2 py-1 rounded">After Sale</span>
+                                                    {dn.type === 'Picking' ? (
+                                                        <span className="text-xs font-semibold text-blue-600 bg-blue-50 px-2 py-1 rounded">Picking</span>
                                                     ) : dn.type === 'Before Sale' ? (
                                                         <span className="text-xs font-semibold text-purple-600 bg-purple-50 px-2 py-1 rounded">Before Sale</span>
                                                     ) : (

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useLocation } from "react-router-dom";
 import {
   ArrowLeft,
   Upload,
@@ -260,14 +260,22 @@ const ViewInvoiceModal = ({ invoice, onClose }) => {
   );
 };
 
+const PAYMENT_MODES = [
+  { value: 'BANK_TRANSFER', label: 'Bank Transfer', icon: '🏦' },
+  { value: 'CASH',          label: 'Cash',          icon: '💵' },
+  { value: 'CHEQUE',        label: 'Cheque',        icon: '📄' },
+  { value: 'CARD',          label: 'Card',          icon: '💳' },
+];
+
 const PaymentModal = ({ invoice, onClose, onConfirm }) => {
+  const [paymentMode, setPaymentMode] = useState('BANK_TRANSFER');
   if (!invoice) return null;
 
   return (
     <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm animate-in fade-in duration-200">
       <div className="bg-white rounded-lg shadow-xl w-full max-w-md overflow-hidden animate-in zoom-in-95 duration-200">
         {/* Header */}
-        <div className="px-6 py-4 flex justify-between items-center">
+        <div className="px-6 py-4 flex justify-between items-center border-b border-slate-100">
           <div className="flex items-center gap-2">
             <div className="bg-[#FFF8E1] p-1.5 rounded-md">
               <CreditCard className="h-4 w-4 text-[#F5C742]" />
@@ -280,20 +288,43 @@ const PaymentModal = ({ invoice, onClose, onConfirm }) => {
         </div>
 
         {/* Body */}
-        <div className="px-6 py-2">
+        <div className="px-6 py-5 space-y-5">
           <p className="text-sm text-slate-500">Record vendor payment for purchase invoice</p>
-          <div className="mt-4 p-3 bg-slate-50 rounded border border-slate-100 mb-6">
+
+          {/* Outstanding amount */}
+          <div className="p-3 bg-slate-50 rounded-lg border border-slate-100">
             <div className="flex justify-between items-center">
-              <span className="text-xs font-semibold text-slate-500 uppercase">Outstanding Amount</span>
+              <span className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Outstanding Amount</span>
               <span className="text-lg font-bold text-slate-800">{invoice.outstanding.toLocaleString()} AED</span>
+            </div>
+          </div>
+
+          {/* Payment mode selection */}
+          <div>
+            <label className="block text-xs font-semibold text-slate-600 uppercase tracking-wide mb-2">Payment Mode</label>
+            <div className="grid grid-cols-2 gap-2">
+              {PAYMENT_MODES.map(mode => (
+                <button
+                  key={mode.value}
+                  onClick={() => setPaymentMode(mode.value)}
+                  className={`flex items-center gap-2.5 px-3 py-2.5 rounded-lg border-2 text-sm font-medium transition-all duration-150 ${
+                    paymentMode === mode.value
+                      ? 'border-[#F5C742] bg-[#FFF8E1] text-slate-800'
+                      : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300'
+                  }`}
+                >
+                  <span className="text-base leading-none">{mode.icon}</span>
+                  <span>{mode.label}</span>
+                </button>
+              ))}
             </div>
           </div>
         </div>
 
         {/* Footer */}
-        <div className="px-6 py-4 flex justify-end gap-3">
+        <div className="px-6 py-4 border-t border-slate-100 flex justify-end gap-3">
           <button onClick={onClose} className="px-4 py-2 rounded border border-slate-200 text-sm font-medium text-slate-600 hover:bg-slate-50 transition-colors">Cancel</button>
-          <button onClick={() => onConfirm(invoice)} className="px-4 py-2 rounded bg-[#F5C742] text-sm font-bold text-slate-900 hover:bg-[#E5B732] shadow-sm flex items-center gap-2 transition-colors">
+          <button onClick={() => onConfirm(invoice, paymentMode)} className="px-4 py-2 rounded bg-[#F5C742] text-sm font-bold text-slate-900 hover:bg-[#E5B732] shadow-sm flex items-center gap-2 transition-colors">
             <Check className="h-4 w-4" /> Record Payment
           </button>
         </div>
@@ -2275,6 +2306,7 @@ const DraftInvoicesView = ({ drafts, onEdit, onDelete }) => {
 
 const PurchaseInvoices = () => {
   const navigate = useNavigate();
+  const location = useLocation();
   const [activeNavTab, setActiveNavTab] = useState("list");
   const [editInvoice, setEditInvoice] = useState(null); // Add State
   const [editorMode, setEditorMode] = useState("edit");
@@ -2300,6 +2332,18 @@ const PurchaseInvoices = () => {
 
   useEffect(() => {
     loadInvoices();
+  }, []);
+
+  // Pre-fill editor when navigated from GRN "Proceed to Invoice"
+  useEffect(() => {
+    const fromGrn = location.state?.fromGrn;
+    if (fromGrn) {
+      setEditInvoice(mapInvoiceFromApi(fromGrn));
+      setEditorMode("edit");
+      setActiveNavTab("editor");
+      // Clear state so a page refresh doesn't re-trigger
+      navigate(location.pathname, { replace: true, state: {} });
+    }
   }, []);
 
   const loadInvoices = async () => {
@@ -2463,16 +2507,16 @@ const PurchaseInvoices = () => {
     setPaymentInvoice(invoice);
   };
 
-  const handleConfirmPayment = async (invoice) => {
+  const handleConfirmPayment = async (invoice, paymentMode) => {
     try {
-      // Logic assumes full payment or manual partial handling in backend
-      await recordPayment(invoice.dbId, invoice.outstanding);
+      await recordPayment(invoice.dbId, invoice.outstanding, paymentMode);
       await loadInvoices();
       setPaymentInvoice(null);
-      alert("Payment recorded successfully.");
+      toast.success("Payment recorded successfully.");
     } catch (err) {
       console.error(err);
-      alert("Failed to record payment.");
+      const msg = err?.response?.data?.message || err?.message || "Unknown error";
+      toast.error(`Failed to record payment: ${msg}`);
     }
   };
 

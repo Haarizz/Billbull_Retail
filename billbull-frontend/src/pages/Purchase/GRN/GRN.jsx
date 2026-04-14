@@ -52,6 +52,7 @@ import {
   postGrn
 } from '../../../api/grnApi';
 import { getVendors } from '../../../api/vendorsApi';
+import { createDraftFromGrn } from '../../../api/purchaseInvoiceApi';
 import {
   getWarehouses,
   getWarehouseZones,
@@ -116,7 +117,7 @@ const getStatusColor = (status) => {
 // ==========================================
 
 // --- LIST VIEW ---
-const GRNListView = ({ data, onView, onEdit, onDelete, onPost, onPrint, activeFilter, setActiveFilter }) => {
+const GRNListView = ({ data, onView, onEdit, onDelete, onPost, onPrint, onProceedToInvoice, activeFilter, setActiveFilter }) => {
   const filteredData = data.filter(item => {
     if (activeFilter === "All GRNs") return true;
     if (activeFilter === "Today") {
@@ -241,6 +242,17 @@ const GRNListView = ({ data, onView, onEdit, onDelete, onPost, onPrint, activeFi
                           className="p-1.5 bg-amber-50 hover:bg-amber-100 rounded text-amber-600 hover:text-amber-700 flex items-center gap-1 font-medium text-[10px]"
                         >
                           <Zap className="h-3 w-3" /> Post
+                        </button>
+                      )}
+
+                      {/* ✅ Proceed to Invoice for POSTED GRNs not fully invoiced */}
+                      {row.status === GRN_STATUS.POSTED && row.invStatus !== 'Fully Invoiced' && (
+                        <button
+                          onClick={(e) => { e.stopPropagation(); onProceedToInvoice && onProceedToInvoice(row.id); }}
+                          title="Proceed to Invoice"
+                          className="p-1.5 bg-blue-50 hover:bg-blue-100 rounded text-blue-600 hover:text-blue-700 flex items-center gap-1 font-medium text-[10px]"
+                        >
+                          <FileText className="h-3 w-3" /> Invoice
                         </button>
                       )}
 
@@ -1997,6 +2009,17 @@ const GRN = () => {
   };
 
 
+  const handleProceedToInvoice = async (grnId) => {
+    try {
+      const draft = await createDraftFromGrn(grnId);
+      navigate('/purchases/invoice', { state: { fromGrn: draft } });
+    } catch (error) {
+      const msg = error?.response?.data?.message || error?.message || "Unknown error";
+      toast.error(`Failed to prepare invoice: ${msg}`);
+      console.error("Proceed to Invoice Error:", error);
+    }
+  };
+
   // View/Edit Handlers
   const handleEdit = async (grn) => {
     try {
@@ -2115,6 +2138,7 @@ const GRN = () => {
           onDelete={handleDelete}
           onPost={handlePost}
           onPrint={handlePrint}
+          onProceedToInvoice={handleProceedToInvoice}
           activeFilter={activeFilter}
           setActiveFilter={setActiveFilter}
         />;
@@ -2142,6 +2166,8 @@ const GRN = () => {
         onEdit={handleEdit}
         onDelete={handleDelete}
         onPost={handlePost}
+        onPrint={handlePrint}
+        onProceedToInvoice={handleProceedToInvoice}
         activeFilter={activeFilter}
         setActiveFilter={setActiveFilter}
       />;
