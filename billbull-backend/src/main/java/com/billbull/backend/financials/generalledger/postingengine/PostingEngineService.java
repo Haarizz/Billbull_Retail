@@ -27,28 +27,46 @@ import com.billbull.backend.financials.pdc.PdcStatus;
 
 /**
  * Central engine for auto-generating journal entries from business documents.
- * Renamed from JournalEntryGeneratorService and moved to GL module.
+ *
+ * IDEMPOTENCY RULE: Every posting method checks whether a journal with the
+ * same reference already exists before creating a new one.  If it does, the
+ * method logs a warning and returns without creating a duplicate entry.
+ * This ensures that retries (network timeouts, UI double-clicks, etc.)
+ * never produce duplicate GL postings.
+ *
+ * REFERENCE KEY CONVENTIONS:
+ *   Purchase Invoice  → invoice.getInvoiceNumber()
+ *   Sales Invoice     → invoice.getInvoiceNumber()
+ *   GRN               → grn.getGrnNo()
+ *   Delivery Note     → "DN-{dnNumber}"   (caller provides full key)
+ *   Payment Voucher   → voucher.getVoucherNumber()
+ *   Receipt Voucher   → receipt.getVoucherId()
+ *   Expense           → "EXP-{expense.getId()}"
+ *   Sales Return      → salesReturn.getReturnNumber()
+ *   Card Settlement   → "SETTLE-{settlement.getId()}"
+ *   Cancellations     → "CANCEL-{invoiceNumber}"
+ *   DN Reversals      → "REV-DN-{dnNumber}"
  */
 @Service
 @Slf4j
 public class PostingEngineService {
 
-        public static final String ACC_CASH = "1101";
-        public static final String ACC_BANK = "1102";
-        public static final String ACC_PETTY_CASH = "1103";
-        public static final String ACC_MERCHANT_CLEARING = "1104";
+        public static final String ACC_CASH                = "1101";
+        public static final String ACC_BANK                = "1102";
+        public static final String ACC_PETTY_CASH          = "1103";
+        public static final String ACC_MERCHANT_CLEARING   = "1104";
         public static final String ACC_ACCOUNTS_RECEIVABLE = "1110";
-        public static final String ACC_INVENTORY = "1120";
-        public static final String ACC_VAT_INPUT = "1130";
-        public static final String ACC_ACCOUNTS_PAYABLE = "2101";
-        public static final String ACC_VAT_OUTPUT = "2102";
-        public static final String ACC_GRN_CLEARING = "2103";
-        public static final String ACC_CUSTOMER_ADVANCE = "2104";
-        public static final String ACC_DEFERRED_REVENUE = "2107";
-        public static final String ACC_SALES_REVENUE = "4101";
-        public static final String ACC_SALES_RETURNS = "4102";
-        public static final String ACC_COGS = "5101";
-        public static final String ACC_EXPENSE_GENERAL = "5403";
+        public static final String ACC_INVENTORY           = "1120";
+        public static final String ACC_VAT_INPUT           = "1130";
+        public static final String ACC_ACCOUNTS_PAYABLE    = "2101";
+        public static final String ACC_VAT_OUTPUT          = "2102";
+        public static final String ACC_GRN_CLEARING        = "2103";
+        public static final String ACC_CUSTOMER_ADVANCE    = "2104";
+        public static final String ACC_DEFERRED_REVENUE    = "2107";
+        public static final String ACC_SALES_REVENUE       = "4101";
+        public static final String ACC_SALES_RETURNS       = "4102";
+        public static final String ACC_COGS                = "5101";
+        public static final String ACC_EXPENSE_GENERAL     = "5403";
 
         public static final List<String> CONTROL_ACCOUNTS = java.util.Arrays.asList(
                         ACC_ACCOUNTS_RECEIVABLE,
@@ -58,104 +76,131 @@ public class PostingEngineService {
                         ACC_VAT_INPUT);
 
         private final JournalEntryRepository journalEntryRepository;
-        private final JournalEntryService journalEntryService;
+        private final JournalEntryService    journalEntryService;
 
         public PostingEngineService(
                         JournalEntryRepository journalEntryRepository,
-                        JournalEntryService journalEntryService) {
+                        JournalEntryService    journalEntryService) {
                 this.journalEntryRepository = journalEntryRepository;
-                this.journalEntryService = journalEntryService;
+                this.journalEntryService    = journalEntryService;
         }
 
+        // =========================================================
+        // PURCHASE INVOICE
+        // =========================================================
+
+        /**
+         * Purchase Invoice posting.
+         *
+         * AGAINST_GRN scenario (invoice received after GRN):
+         *   Dr GRN Clearing (2103) [grandTotal] — clears the GRN accrual
+         *   Cr Accounts Payable (2101) [grandTotal]
+         *
+         * DIRECT / AGAINST_LPO scenario:
+         *   Dr Inventory (1120) [subTotal + landedCost]
+         *   Dr VAT Input (1130) [taxTotal]  (if > 0)
+         *   Cr Accounts Payable (2101) [grandTotal]
+         */
         @Transactional
         public JournalEntry createJournalFromPurchaseInvoice(PurchaseInvoice invoice) {
-                JournalEntry entry = createBaseEntry(invoice.getInvoiceDate(), invoice.getInvoiceNumber(),
-                                "Purchase Invoice " + invoice.getInvoiceNumber());
+                String ref = invoice.getInvoiceNumber();
+                if (isDuplicate(ref)) return null;
 
-                BigDecimal subTotal = invoice.getSubTotal() != null ? invoice.getSubTotal() : BigDecimal.ZERO;
-                BigDecimal taxTotal = invoice.getTaxTotal() != null ? invoice.getTaxTotal() : BigDecimal.ZERO;
-                BigDecimal landedCost = invoice.getLandedCost() != null ? invoice.getLandedCost() : BigDecimal.ZERO;
+                JournalEntry entry = createBaseEntry(invoice.getInvoiceDate(), ref,
+                                "Purchase Invoice " + ref);
+
+                BigDecimal subTotal   = nvl(invoice.getSubTotal());
+                BigDecimal taxTotal   = nvl(invoice.getTaxTotal());
+                BigDecimal landedCost = nvl(invoice.getLandedCost());
+                BigDecimal grandTotal = nvl(invoice.getGrandTotal());
 
                 boolean isAgainstGrn = "AGAINST_GRN".equalsIgnoreCase(invoice.getSourceType())
                                 && invoice.getGrnId() != null;
 
-                BigDecimal grandTotal = invoice.getGrandTotal() != null ? invoice.getGrandTotal() : BigDecimal.ZERO;
-
                 if (isAgainstGrn) {
-                        // AGAINST_GRN: Dr. GRN Clearing (grandTotal) — matches what was posted at GRN
-                        // No VAT Input line here: VAT was not in the GRN Clearing accrual
                         addLine(entry, "GRN Clearing", ACC_GRN_CLEARING,
-                                        "Clear GRN Liability - " + invoice.getInvoiceNumber(),
+                                        "Clear GRN Liability - " + ref,
                                         grandTotal, BigDecimal.ZERO);
                 } else {
-                        // DIRECT / AGAINST_LPO: Dr. Inventory (subTotal + landedCost) + Dr. VAT Input
                         addLine(entry, "Inventory", ACC_INVENTORY,
-                                        "Direct inventory purchase - " + invoice.getInvoiceNumber(),
+                                        "Direct inventory purchase - " + ref,
                                         subTotal.add(landedCost), BigDecimal.ZERO);
                         if (taxTotal.compareTo(BigDecimal.ZERO) > 0) {
                                 addLine(entry, "VAT Input", ACC_VAT_INPUT,
-                                                "VAT - " + invoice.getInvoiceNumber(),
+                                                "VAT - " + ref,
                                                 taxTotal, BigDecimal.ZERO);
                         }
                 }
 
                 addLine(entry, "Accounts Payable - " + invoice.getVendorName(), ACC_ACCOUNTS_PAYABLE,
-                                "Payable - " + invoice.getInvoiceNumber(), BigDecimal.ZERO, grandTotal);
+                                "Payable - " + ref, BigDecimal.ZERO, grandTotal);
 
                 return post(entry);
         }
 
+        // =========================================================
+        // SALES INVOICE  (IFRS 15 — revenue deferred)
+        // =========================================================
+
         /**
-         * Invoice Posting (IFRS 15 compliant).
-         * Revenue is DEFERRED — recognized only when goods are physically delivered.
+         * Dr Accounts Receivable (1110) [invoiceTotal]
+         * Cr Deferred Revenue (2107)    [subTotal]
+         * Cr VAT Output (2102)          [taxTotal]  (if > 0)
          *
-         * Entry: Dr Accounts Receivable / Cr Deferred Revenue / Cr VAT Output
-         *
-         * Cash / bank movement is handled only by Receipt Voucher posting so we do not
-         * double-count immediate-mode invoices.
-         *
-         * Note: VAT stays at invoice date per UAE VAT law (tax point = invoice date).
+         * Revenue is recognized only upon physical delivery.
          */
         @Transactional
         public JournalEntry createJournalFromInvoicePosting(SalesInvoice invoice) {
-                JournalEntry entry = createBaseEntry(invoice.getInvoiceDate(), invoice.getInvoiceNumber(),
-                                "Sales Invoice " + invoice.getInvoiceNumber());
+                String ref = invoice.getInvoiceNumber();
+                if (isDuplicate(ref)) return null;
+
+                JournalEntry entry = createBaseEntry(invoice.getInvoiceDate(), ref,
+                                "Sales Invoice " + ref);
 
                 addLine(entry, "Accounts Receivable", ACC_ACCOUNTS_RECEIVABLE,
-                                "Sales - " + invoice.getInvoiceNumber(),
+                                "Sales - " + ref,
                                 BigDecimal.valueOf(invoice.getInvoiceTotal()), BigDecimal.ZERO);
                 addLine(entry, "Deferred Revenue", ACC_DEFERRED_REVENUE,
-                                "Deferred - " + invoice.getInvoiceNumber(),
+                                "Deferred - " + ref,
                                 BigDecimal.ZERO, BigDecimal.valueOf(invoice.getSubTotal()));
                 if (invoice.getTaxTotal() != null && invoice.getTaxTotal() > 0) {
-                        addLine(entry, "VAT Output", ACC_VAT_OUTPUT, "VAT - " + invoice.getInvoiceNumber(),
+                        addLine(entry, "VAT Output", ACC_VAT_OUTPUT, "VAT - " + ref,
                                         BigDecimal.ZERO, BigDecimal.valueOf(invoice.getTaxTotal()));
                 }
 
                 return post(entry);
         }
 
+        // =========================================================
+        // DELIVERY NOTE — revenue + COGS recognition
+        // =========================================================
+
         /**
-         * Revenue + COGS recognition at physical delivery.
          * Called by DeliveryNoteService.markDelivered() and by SalesInvoiceService
-         * for Before-Sale invoices where delivery precedes invoice posting.
+         * for Before-Sale invoices.
          *
-         * Entry 1: Dr Deferred Revenue / Cr Sales Revenue = recognizedRevenue
-         * Entry 2: Dr COGS / Cr Inventory = cogs  (only if cogs > 0)
+         * Entry 1 (Revenue recognition):
+         *   Dr Deferred Revenue (2107) / Cr Sales Revenue (4101)
          *
-         * Idempotent: throws if a journal for this reference already exists.
+         * Entry 2 (COGS recognition, only if cogs > 0):
+         *   Dr COGS (5101) / Cr Inventory (1120)
+         *
+         * IDEMPOTENCY: If the reference already exists, logs a warning and
+         * returns without throwing — the financialPosted flag in DeliveryNoteService
+         * is the primary guard; this is the backstop for race conditions.
          */
         @Transactional
         public void createJournalFromDeliveryNoteDelivered(
                         String referenceKey,
-                        java.time.LocalDate date,
+                        LocalDate date,
                         String narration,
                         BigDecimal recognizedRevenue,
                         BigDecimal cogs) {
 
                 if (journalEntryRepository.existsByReference(referenceKey)) {
-                        throw new IllegalStateException(
-                                        "Journal already posted for: " + referenceKey + ". Duplicate posting blocked.");
+                        log.warn("[PostingEngine] Duplicate DN posting blocked — reference '{}' already exists. " +
+                                         "No journal created.", referenceKey);
+                        return;
                 }
 
                 if (recognizedRevenue != null && recognizedRevenue.compareTo(BigDecimal.ZERO) > 0) {
@@ -179,32 +224,34 @@ public class PostingEngineService {
                                         BigDecimal.ZERO, cogs);
                         post(cogsEntry);
                 }
+
+                log.info("[PostingEngine] DN delivery journals posted — ref='{}', revenue={}, cogs={}",
+                                referenceKey, recognizedRevenue, cogs);
         }
+
+        // =========================================================
+        // SALES INVOICE CANCELLATION REVERSAL
+        // =========================================================
 
         /**
          * Reverses the invoice posting journal when an invoice is cancelled
-         * before delivery has occurred (Deferred Revenue still outstanding).
+         * before delivery (Deferred Revenue outstanding).
          *
-         * Entry: Dr Deferred Revenue + Dr VAT Output / Cr Accounts Receivable
+         * Dr Deferred Revenue (2107) [subTotal]
+         * Dr VAT Output (2102)       [taxTotal] (if > 0)
+         * Cr Accounts Receivable (1110) [invoiceTotal]
          */
         @Transactional
         public void reverseJournalFromInvoiceCancellation(SalesInvoice invoice) {
                 String refKey = "CANCEL-" + invoice.getInvoiceNumber();
-                if (journalEntryRepository.existsByReference(refKey)) {
-                        return; // Already reversed, skip
-                }
+                if (isDuplicate(refKey)) return;
 
-                JournalEntry entry = createBaseEntry(
-                                java.time.LocalDate.now(),
-                                refKey,
+                JournalEntry entry = createBaseEntry(LocalDate.now(), refKey,
                                 "Cancellation reversal - " + invoice.getInvoiceNumber());
 
-                BigDecimal subTotal = invoice.getSubTotal() != null
-                                ? BigDecimal.valueOf(invoice.getSubTotal()) : BigDecimal.ZERO;
-                BigDecimal taxTotal = invoice.getTaxTotal() != null
-                                ? BigDecimal.valueOf(invoice.getTaxTotal()) : BigDecimal.ZERO;
-                BigDecimal invoiceTotal = invoice.getInvoiceTotal() != null
-                                ? BigDecimal.valueOf(invoice.getInvoiceTotal()) : BigDecimal.ZERO;
+                BigDecimal subTotal    = invoice.getSubTotal()    != null ? BigDecimal.valueOf(invoice.getSubTotal())    : BigDecimal.ZERO;
+                BigDecimal taxTotal    = invoice.getTaxTotal()    != null ? BigDecimal.valueOf(invoice.getTaxTotal())    : BigDecimal.ZERO;
+                BigDecimal invoiceTotal = invoice.getInvoiceTotal() != null ? BigDecimal.valueOf(invoice.getInvoiceTotal()) : BigDecimal.ZERO;
 
                 if (subTotal.compareTo(BigDecimal.ZERO) > 0) {
                         addLine(entry, "Deferred Revenue", ACC_DEFERRED_REVENUE,
@@ -216,7 +263,6 @@ public class PostingEngineService {
                                         "Cancel VAT - " + invoice.getInvoiceNumber(),
                                         taxTotal, BigDecimal.ZERO);
                 }
-
                 addLine(entry, "Accounts Receivable", ACC_ACCOUNTS_RECEIVABLE,
                                 "Cancel AR - " + invoice.getInvoiceNumber(),
                                 BigDecimal.ZERO, invoiceTotal);
@@ -226,23 +272,25 @@ public class PostingEngineService {
                 }
         }
 
+        // =========================================================
+        // DELIVERY NOTE CANCELLATION REVERSAL
+        // =========================================================
+
         /**
          * Reverses the revenue + COGS recognized when a delivered DN is cancelled.
          *
-         * Entry 1: Dr Sales Revenue / Cr Deferred Revenue = recognizedRevenue
-         * Entry 2: Dr Inventory / Cr COGS = cogs  (if cogs > 0)
+         * Entry 1: Dr Sales Revenue (4101) / Cr Deferred Revenue (2107)
+         * Entry 2: Dr Inventory (1120)     / Cr COGS (5101)   (if cogs > 0)
          */
         @Transactional
         public void reverseJournalFromDeliveryNoteCancellation(
                         String dnNumber,
-                        java.time.LocalDate date,
+                        LocalDate date,
                         BigDecimal recognizedRevenue,
                         BigDecimal cogs) {
 
                 String refKey = "REV-DN-" + dnNumber;
-                if (journalEntryRepository.existsByReference(refKey)) {
-                        return; // Already reversed
-                }
+                if (isDuplicate(refKey)) return;
 
                 if (recognizedRevenue != null && recognizedRevenue.compareTo(BigDecimal.ZERO) > 0) {
                         JournalEntry revenueRev = createBaseEntry(date, refKey,
@@ -269,127 +317,238 @@ public class PostingEngineService {
                 }
         }
 
+        // =========================================================
+        // GRN
+        // =========================================================
+
+        /**
+         * Dr Inventory (1120)     [grandTotal or subTotal]
+         * Cr GRN Clearing (2103)  [same amount]
+         *
+         * The GRN Clearing accrual is cleared when the purchase invoice
+         * is received against this GRN.
+         */
         @Transactional
         public JournalEntry createJournalFromGRN(GrnEntity grn) {
-                JournalEntry entry = createBaseEntry(grn.getGrnDate(), grn.getGrnNo(), "GRN Receipt " + grn.getGrnNo());
-                BigDecimal amount = grn.getGrandTotal() != null ? grn.getGrandTotal() : grn.getSubtotal();
+                String ref = grn.getGrnNo();
+                if (isDuplicate(ref)) return null;
 
-                addLine(entry, "Inventory", ACC_INVENTORY, "GRN Receipt - " + grn.getGrnNo(), amount, BigDecimal.ZERO);
-                addLine(entry, "GRN Clearing", ACC_GRN_CLEARING, "GRN Clearing - " + grn.getGrnNo(), BigDecimal.ZERO,
-                                amount);
+                BigDecimal amount = grn.getGrandTotal() != null ? grn.getGrandTotal() : grn.getSubtotal();
+                if (amount == null || amount.compareTo(BigDecimal.ZERO) == 0) {
+                        log.warn("[PostingEngine] GRN {} has zero/null amount — no journal created.", ref);
+                        return null;
+                }
+
+                JournalEntry entry = createBaseEntry(grn.getGrnDate(), ref, "GRN Receipt " + ref);
+                addLine(entry, "Inventory",    ACC_INVENTORY,    "GRN Receipt - "  + ref, amount,        BigDecimal.ZERO);
+                addLine(entry, "GRN Clearing", ACC_GRN_CLEARING, "GRN Clearing - " + ref, BigDecimal.ZERO, amount);
 
                 return post(entry);
         }
 
+        // =========================================================
+        // EXPENSE
+        // =========================================================
+
+        /**
+         * Dr Expense (5403)   [amount]
+         * Dr VAT Input (1130) [taxAmount]  (if > 0)
+         * Cr Bank (1102)      [total]
+         */
         @Transactional
         public JournalEntry createJournalFromExpense(Expense expense) {
-                JournalEntry entry = createBaseEntry(expense.getDate(), "EXP-" + expense.getId(),
+                String ref = "EXP-" + expense.getId();
+                if (isDuplicate(ref)) return null;
+
+                JournalEntry entry = createBaseEntry(expense.getDate(), ref,
                                 "Expense - " + expense.getCategory());
                 addLine(entry, expense.getCategory(), ACC_EXPENSE_GENERAL, expense.getNotes(),
                                 BigDecimal.valueOf(expense.getAmount()), BigDecimal.ZERO);
                 if (expense.getTaxAmount() > 0) {
                         addLine(entry, "VAT Input", ACC_VAT_INPUT, "VAT on expense",
-                                        BigDecimal.valueOf(expense.getTaxAmount()),
-                                        BigDecimal.ZERO);
+                                        BigDecimal.valueOf(expense.getTaxAmount()), BigDecimal.ZERO);
                 }
-                addLine(entry, "Bank/Cash", ACC_BANK, "Payment for expense", BigDecimal.ZERO,
-                                BigDecimal.valueOf(expense.getTotal()));
+                addLine(entry, "Bank/Cash", ACC_BANK, "Payment for expense",
+                                BigDecimal.ZERO, BigDecimal.valueOf(expense.getTotal()));
                 return post(entry);
         }
 
+        // =========================================================
+        // PAYMENT VOUCHER (outgoing vendor payment)
+        // =========================================================
+
+        /**
+         * Dr Accounts Payable (2101) [amount]
+         * Cr Cash / Bank             [amount]   (based on payment mode)
+         */
         @Transactional
         public JournalEntry createJournalFromPaymentVoucher(PaymentVoucher voucher, String vendorName) {
+                String ref = voucher.getVoucherNumber();
+                if (isDuplicate(ref)) return null;
+
                 AccountSelection settlementAccount = resolveOutgoingPaymentAccount(
                                 voucher.getPaymentMode() != null ? voucher.getPaymentMode().name() : null);
-                JournalEntry entry = createBaseEntry(voucher.getPaymentDate(), voucher.getVoucherNumber(),
+                JournalEntry entry = createBaseEntry(voucher.getPaymentDate(), ref,
                                 "Payment to " + vendorName);
-                addLine(entry, "Accounts Payable", ACC_ACCOUNTS_PAYABLE, "Payment - " + voucher.getVoucherNumber(),
-                                voucher.getAmount(), BigDecimal.ZERO);
+                addLine(entry, "Accounts Payable", ACC_ACCOUNTS_PAYABLE,
+                                "Payment - " + ref, voucher.getAmount(), BigDecimal.ZERO);
                 addLine(entry, settlementAccount.name, settlementAccount.code,
                                 settlementAccount.name + " payment", BigDecimal.ZERO, voucher.getAmount());
                 return post(entry);
         }
 
+        // =========================================================
+        // RECEIPT VOUCHER (incoming customer payment)
+        // =========================================================
+
+        /**
+         * Dr Cash / Bank / Merchant Clearing  [amount]  (based on payment mode)
+         * Cr Accounts Receivable (1110)        [amount]
+         */
         @Transactional
         public JournalEntry createJournalFromReceiptVoucher(ReceiptVoucher receipt) {
+                String ref = receipt.getVoucherId();
+                if (isDuplicate(ref)) return null;
+
                 AccountSelection settlementAccount = resolveIncomingPaymentAccount(receipt.getPaymentMode());
-                JournalEntry entry = createBaseEntry(receipt.getDate(), receipt.getVoucherId(),
+                JournalEntry entry = createBaseEntry(receipt.getDate(), ref,
                                 "Receipt from " + receipt.getMemberName());
                 addLine(entry, settlementAccount.name, settlementAccount.code,
-                                "Receipt - " + receipt.getVoucherId(), receipt.getAmount(),
-                                BigDecimal.ZERO);
-                addLine(entry, "Accounts Receivable", ACC_ACCOUNTS_RECEIVABLE, "Customer payment", BigDecimal.ZERO,
-                                receipt.getAmount());
+                                "Receipt - " + ref, receipt.getAmount(), BigDecimal.ZERO);
+                addLine(entry, "Accounts Receivable", ACC_ACCOUNTS_RECEIVABLE,
+                                "Customer payment", BigDecimal.ZERO, receipt.getAmount());
                 return post(entry);
         }
 
+        // =========================================================
+        // SALES RETURN
+        // =========================================================
+
+        /**
+         * Generates the accounting entry for an approved sales return.
+         *
+         * The revenue account to reverse depends on whether revenue was
+         * already recognized (DN was delivered) or is still deferred:
+         *
+         *   revenueWasRecognized = true  (DN already delivered):
+         *     Dr Sales Revenue (4101) [subTotal]
+         *     Dr VAT Output (2102)    [taxAmount]  (if > 0)
+         *     Cr Accounts Receivable (1110) [totalAmount]
+         *
+         *   revenueWasRecognized = false (DN not yet delivered / revenue deferred):
+         *     Dr Deferred Revenue (2107) [subTotal]
+         *     Dr VAT Output (2102)       [taxAmount]  (if > 0)
+         *     Cr Accounts Receivable (1110) [totalAmount]
+         *
+         * COGS reversal (only if costOfGoodsReturned > 0):
+         *   Dr Inventory (1120) / Cr COGS (5101)
+         *
+         * @param salesReturn           the approved sales return entity
+         * @param costOfGoodsReturned   actual cost from product master (0 if unknown)
+         * @param revenueWasRecognized  true if revenue was already recognized at DN delivery
+         */
         @Transactional
-        public JournalEntry createJournalFromSalesReturn(SalesReturn salesReturn, BigDecimal costOfGoodsReturned) {
-                JournalEntry entry = createBaseEntry(salesReturn.getReturnDate(), salesReturn.getReturnNumber(),
-                                "Sales Return " + salesReturn.getReturnNumber());
+        public JournalEntry createJournalFromSalesReturn(
+                        SalesReturn salesReturn,
+                        BigDecimal costOfGoodsReturned,
+                        boolean revenueWasRecognized) {
 
-                BigDecimal subTotal = salesReturn.getSubTotal() != null ? BigDecimal.valueOf(salesReturn.getSubTotal())
-                                : BigDecimal.ZERO;
-                BigDecimal taxAmount = salesReturn.getTaxAmount() != null
-                                ? BigDecimal.valueOf(salesReturn.getTaxAmount())
-                                : BigDecimal.ZERO;
-                BigDecimal totalAmount = salesReturn.getTotalAmount() != null
-                                ? BigDecimal.valueOf(salesReturn.getTotalAmount())
-                                : BigDecimal.ZERO;
+                String ref = salesReturn.getReturnNumber();
+                if (isDuplicate(ref)) return null;
 
-                addLine(entry, "Sales Revenue", ACC_SALES_REVENUE, "Return Revenue Reversal", subTotal,
-                                BigDecimal.ZERO);
+                JournalEntry entry = createBaseEntry(salesReturn.getReturnDate(), ref,
+                                "Sales Return " + ref);
+
+                BigDecimal subTotal   = salesReturn.getSubTotal()   != null ? BigDecimal.valueOf(salesReturn.getSubTotal())   : BigDecimal.ZERO;
+                BigDecimal taxAmount  = salesReturn.getTaxAmount()  != null ? BigDecimal.valueOf(salesReturn.getTaxAmount())  : BigDecimal.ZERO;
+                BigDecimal totalAmount = salesReturn.getTotalAmount() != null ? BigDecimal.valueOf(salesReturn.getTotalAmount()) : BigDecimal.ZERO;
+
+                // Debit the correct revenue account
+                String revenueAccount     = revenueWasRecognized ? ACC_SALES_REVENUE     : ACC_DEFERRED_REVENUE;
+                String revenueAccountName = revenueWasRecognized ? "Sales Revenue"        : "Deferred Revenue";
+                addLine(entry, revenueAccountName, revenueAccount, "Return Revenue Reversal", subTotal, BigDecimal.ZERO);
+
                 if (taxAmount.compareTo(BigDecimal.ZERO) > 0) {
                         addLine(entry, "VAT Output", ACC_VAT_OUTPUT, "VAT Refund", taxAmount, BigDecimal.ZERO);
                 }
-                addLine(entry, "Accounts Receivable", ACC_ACCOUNTS_RECEIVABLE, "Return Credit Note", BigDecimal.ZERO,
-                                totalAmount);
+                addLine(entry, "Accounts Receivable", ACC_ACCOUNTS_RECEIVABLE,
+                                "Return Credit Note", BigDecimal.ZERO, totalAmount);
 
+                // COGS reversal — only if we have an actual cost
                 if (costOfGoodsReturned != null && costOfGoodsReturned.compareTo(BigDecimal.ZERO) > 0) {
                         JournalEntry invEntry = createBaseEntry(salesReturn.getReturnDate(),
-                                        salesReturn.getReturnNumber() + "-INV",
-                                        "Stock return for " + salesReturn.getReturnNumber());
-                        addLine(invEntry, "Inventory", ACC_INVENTORY, "Inventory increase", costOfGoodsReturned,
-                                        BigDecimal.ZERO);
-                        addLine(invEntry, "COGS", ACC_COGS, "COGS reversal", BigDecimal.ZERO, costOfGoodsReturned);
+                                        ref + "-INV",
+                                        "Stock return - " + ref);
+                        addLine(invEntry, "Inventory", ACC_INVENTORY, "Inventory increase", costOfGoodsReturned, BigDecimal.ZERO);
+                        addLine(invEntry, "COGS",      ACC_COGS,      "COGS reversal",      BigDecimal.ZERO, costOfGoodsReturned);
                         post(invEntry);
+                } else {
+                        log.warn("[PostingEngine] Sales Return {}: COGS reversal skipped — no product cost available. " +
+                                         "Post a manual journal to adjust COGS and Inventory.", ref);
                 }
+
                 return post(entry);
         }
 
+        // =========================================================
+        // CARD SETTLEMENT
+        // =========================================================
+
+        /**
+         * Dr Bank (1102)              [netAmount]
+         * Dr Bank Charges (5403)      [feeAmount]  (if > 0)
+         * Cr Merchant Clearing (1104) [grossAmount]
+         */
         @Transactional
         public JournalEntry createJournalFromCardSettlement(CardSettlement settlement) {
-                JournalEntry entry = createBaseEntry(settlement.getSettlementDate(), "SETTLE-" + settlement.getId(),
+                String ref = "SETTLE-" + settlement.getId();
+                if (isDuplicate(ref)) return null;
+
+                JournalEntry entry = createBaseEntry(settlement.getSettlementDate(), ref,
                                 "Card Settlement");
-                addLine(entry, "Bank", ACC_BANK, "Settled funds", settlement.getNetAmount(), BigDecimal.ZERO);
-                addLine(entry, "Merchant Clearing", ACC_MERCHANT_CLEARING, "Clear merchant suspense", BigDecimal.ZERO,
-                                settlement.getGrossAmount());
+                addLine(entry, "Bank",              ACC_BANK,               "Settled funds",          settlement.getNetAmount(),   BigDecimal.ZERO);
+                addLine(entry, "Merchant Clearing", ACC_MERCHANT_CLEARING,  "Clear merchant suspense", BigDecimal.ZERO,            settlement.getGrossAmount());
                 if (settlement.getFeeAmount() != null && settlement.getFeeAmount().compareTo(BigDecimal.ZERO) > 0) {
-                        addLine(entry, "Bank Charges", ACC_EXPENSE_GENERAL, "Merchant fees", settlement.getFeeAmount(),
-                                        BigDecimal.ZERO);
+                        addLine(entry, "Bank Charges", ACC_EXPENSE_GENERAL, "Merchant fees", settlement.getFeeAmount(), BigDecimal.ZERO);
                 }
                 return post(entry);
         }
 
+        // =========================================================
+        // PDC (Post-Dated Cheque)
+        // =========================================================
+
+        /**
+         * PDC transitions are informational events — no GL posting occurs
+         * until the cheque actually clears or bounces.
+         *
+         * RECEIVED   → no posting (not yet a financial event)
+         * PRESENTED  → no posting (in-flight)
+         * CLEARED    → same as bank receipt: Dr Bank / Cr AR
+         * BOUNCED    → reverse any posting if CLEARED entry was made
+         */
         @Transactional
-        public JournalEntry createJournalFromPdcTransition(PdcEntry pdcl, PdcStatus oldStatus, PdcStatus newStatus) {
-                JournalEntry entry = createBaseEntry(LocalDate.now(), "PDC-" + pdcl.getId(),
-                                "PDC Transition: " + oldStatus + " -> " + newStatus);
-                // Minimal implementation for now to satisfy calls
-                return post(entry);
+        public void createJournalFromPdcTransition(PdcEntry pdc, PdcStatus oldStatus, PdcStatus newStatus) {
+                log.info("[PostingEngine] PDC {} transitioned {} → {}. No automated journal posted at this stage.",
+                                pdc.getId(), oldStatus, newStatus);
+                // CLEARED and BOUNCED handling to be implemented per business rules.
+                // Do NOT post empty journals — that creates unbalanced phantom entries in GL.
         }
 
-        // --- Reconciliation Helpers ---
+        // =========================================================
+        // Reconciliation helpers
+        // =========================================================
 
         /**
          * Returns true if a GL journal exists for the given reference key.
-         * Used by reconciliation to detect DNs delivered without accounting.
          */
         public boolean hasJournalForReference(String reference) {
                 return journalEntryRepository.existsByReference(reference);
         }
 
-        // --- Helpers ---
+        // =========================================================
+        // Manual entry validation
+        // =========================================================
 
         public void validateManualEntry(JournalEntry entry) {
                 if (entry.getEntryType() == EntryType.MANUAL) {
@@ -402,13 +561,29 @@ public class PostingEngineService {
                 }
         }
 
+        // =========================================================
+        // Private helpers
+        // =========================================================
+
+        /**
+         * Returns true and logs a warning when the reference already has a journal.
+         * Callers should return early without creating a new entry.
+         */
+        private boolean isDuplicate(String reference) {
+                if (journalEntryRepository.existsByReference(reference)) {
+                        log.warn("[PostingEngine] Duplicate posting blocked — reference '{}' already exists in GL. " +
+                                         "No new journal created.", reference);
+                        return true;
+                }
+                return false;
+        }
+
         private boolean isControlAccount(String accountCode) {
                 return CONTROL_ACCOUNTS.contains(accountCode);
         }
 
         private JournalEntry createBaseEntry(LocalDate date, String reference, String narration) {
                 JournalEntry entry = new JournalEntry();
-                // Discriminator handles EntryType.SYSTEM automatically
                 entry.setDate(date != null ? date : LocalDate.now());
                 entry.setReference(reference);
                 entry.setNarration(narration);
@@ -418,14 +593,14 @@ public class PostingEngineService {
                 return entry;
         }
 
-        private void addLine(JournalEntry entry, String accountName, String accountCode, String description,
-                        BigDecimal debit, BigDecimal credit) {
+        private void addLine(JournalEntry entry, String accountName, String accountCode,
+                        String description, BigDecimal debit, BigDecimal credit) {
                 JournalLine line = new JournalLine();
                 line.setAccount(accountName);
                 line.setAccountCode(accountCode);
                 line.setDescription(description);
-                line.setDebit(debit != null ? debit : BigDecimal.ZERO);
-                line.setCredit(credit != null ? credit : BigDecimal.ZERO);
+                line.setDebit(debit   != null ? debit   : BigDecimal.ZERO);
+                line.setCredit(credit != null ? credit  : BigDecimal.ZERO);
                 entry.addLine(line);
         }
 
@@ -435,28 +610,32 @@ public class PostingEngineService {
                 return saved;
         }
 
+        /** Null-safe BigDecimal — returns ZERO when source is null. */
+        private static BigDecimal nvl(BigDecimal value) {
+                return value != null ? value : BigDecimal.ZERO;
+        }
+
         private AccountSelection resolveIncomingPaymentAccount(String paymentMode) {
-                String normalizedMode = normalizePaymentMode(paymentMode);
-                return switch (normalizedMode) {
-                        case "CASH" -> new AccountSelection("Cash", ACC_CASH);
-                        case "CARD", "CREDIT_CARD" -> new AccountSelection("Merchant Clearing",
-                                        ACC_MERCHANT_CLEARING);
-                        default -> new AccountSelection("Bank", ACC_BANK);
+                String mode = normalizePaymentMode(paymentMode);
+                return switch (mode) {
+                        case "CASH"                    -> new AccountSelection("Cash",              ACC_CASH);
+                        case "CARD", "CREDIT_CARD"     -> new AccountSelection("Merchant Clearing", ACC_MERCHANT_CLEARING);
+                        default                        -> new AccountSelection("Bank",              ACC_BANK);
                 };
         }
 
         private AccountSelection resolveOutgoingPaymentAccount(String paymentMode) {
-                String normalizedMode = normalizePaymentMode(paymentMode);
-                return switch (normalizedMode) {
-                        case "CASH" -> new AccountSelection("Cash", ACC_CASH);
-                        default -> new AccountSelection("Bank", ACC_BANK);
+                String mode = normalizePaymentMode(paymentMode);
+                return switch (mode) {
+                        case "CASH"    -> new AccountSelection("Cash",  ACC_CASH);
+                        case "CHEQUE"  -> new AccountSelection("Bank",  ACC_BANK); // Cheque clears via bank
+                        case "CARD"    -> new AccountSelection("Bank",  ACC_BANK); // Card payment debits bank
+                        default        -> new AccountSelection("Bank",  ACC_BANK);
                 };
         }
 
         private String normalizePaymentMode(String paymentMode) {
-                if (paymentMode == null) {
-                        return "";
-                }
+                if (paymentMode == null) return "";
                 return paymentMode.trim()
                                 .toUpperCase(java.util.Locale.ROOT)
                                 .replace(' ', '_')

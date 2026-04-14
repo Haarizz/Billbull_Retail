@@ -29,7 +29,8 @@ import {
     ArrowUp,
     Package,
     TrendingUp,
-    History
+    History,
+    Zap
 } from 'lucide-react';
 
 // ✅ DYNAMIC UI COMPONENTS
@@ -1623,6 +1624,17 @@ const SalesInvoice = () => {
                     {/* ================= VIEW: CREATE ================= */}
                     {activeTab === 'create' && (
                         <div className="space-y-6 flex-1 flex flex-col pb-24 animate-in fade-in duration-300">
+
+                            {/* FAST SALE MODE INDICATOR */}
+                            {salesSettings?.salesMode === 'FAST_SALE' && (
+                                <div className="flex items-center gap-2.5 px-4 py-3 rounded-xl bg-amber-50 border border-amber-200">
+                                    <Zap size={14} className="text-amber-500 shrink-0" />
+                                    <p className="text-xs text-amber-700">
+                                        <strong>Fast Sale Mode is active.</strong> Saving this invoice will automatically create the Delivery Note, deduct stock, and recognise revenue in one step. Ensure every line item has a warehouse assigned.
+                                    </p>
+                                </div>
+                            )}
+
                             <div className="grid grid-cols-1 xl:grid-cols-4 gap-6 flex-1">
                                 {/* LEFT COLUMN */}
                                 <div className="xl:col-span-1 space-y-4 min-w-0">
@@ -2214,11 +2226,14 @@ const SalesInvoice = () => {
                                         <div className="text-center py-6 text-white/30 text-xs italic flex flex-col items-center gap-2">
                                             Focus an item row to view real-time pricing analysis and warehouse-level stock reservations.
                                         </div>
-                                    ) : (
+                                    ) : (() => {
+                                        const _locs = focusedItemStock?.locations || [];
+                                        const _totalAvailable = _locs.reduce((s, l) => s + (l.available || 0), 0);
+                                        return (
                                         <div className="mt-4 grid grid-cols-1 md:grid-cols-3 gap-6 text-white">
                                             <div className="bg-white/5 p-3 rounded-md border border-white/5">
                                                 <div className="text-[10px] text-white/40 font-bold uppercase mb-1">Stock Position</div>
-                                                <div className="text-lg font-black">{focusedItemStock?.totalAvailable || 0} <span className="text-[10px] font-normal text-white/40 ml-1">Available</span></div>
+                                                <div className="text-lg font-black">{_totalAvailable} <span className="text-[10px] font-normal text-white/40 ml-1">Available</span></div>
                                             </div>
                                             <div className="bg-white/5 p-3 rounded-md border border-white/5">
                                                 <div className="text-[10px] text-white/40 font-bold uppercase mb-1">Pricing Trend</div>
@@ -2231,12 +2246,13 @@ const SalesInvoice = () => {
                                             <div className="bg-white/5 p-3 rounded-md border border-white/5">
                                                 <div className="text-[10px] text-white/40 font-bold uppercase mb-1">Status</div>
                                                 <div className="flex items-center gap-2 mt-1">
-                                                    <div className={`w-2 h-2 rounded-full ${(focusedItemStock?.totalAvailable || 0) > 0 ? 'bg-emerald-500' : 'bg-red-500'}`}></div>
-                                                    <span className="text-sm font-bold">{(focusedItemStock?.totalAvailable || 0) > 0 ? 'In Stock' : 'Out of Stock'}</span>
+                                                    <div className={`w-2 h-2 rounded-full ${_totalAvailable > 0 ? 'bg-emerald-500' : 'bg-red-500'}`}></div>
+                                                    <span className="text-sm font-bold">{_totalAvailable > 0 ? 'In Stock' : 'Out of Stock'}</span>
                                                 </div>
                                             </div>
                                         </div>
-                                    )}
+                                        );
+                                    })()}
                                 </div>
 
                                 {/* SIDEBAR - INTELLIGENCE PANELS */}

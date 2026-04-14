@@ -22,6 +22,7 @@ import com.billbull.backend.purchase.stockmovement.StockSourceType;
 import com.billbull.backend.inventory.warehouse.BinRepository;
 import com.billbull.backend.inventory.warehouse.ZoneRepository;
 import com.billbull.backend.inventory.warehouse.LocatorRepository;
+import com.billbull.backend.inventory.product.ProductMediaRepository;
 
 @Service
 @Transactional

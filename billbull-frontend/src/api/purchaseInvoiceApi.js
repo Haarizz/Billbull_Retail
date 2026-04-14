@@ -61,12 +61,22 @@ export const approveInvoice = async (id) => {
   }
 };
 
-export const recordPayment = async (id, amount) => {
+export const recordPayment = async (id, amount, paymentMode = 'BANK_TRANSFER') => {
   try {
-    const response = await api.post(`/api/purchase-invoices/${id}/payment?amount=${amount}`);
+    const response = await api.post(`/api/purchase-invoices/${id}/payment?amount=${amount}&paymentMode=${paymentMode}`);
     return response.data;
   } catch (error) {
     console.error("Error recording payment", error);
+    throw error;
+  }
+};
+
+export const createDraftFromGrn = async (grnId) => {
+  try {
+    const response = await api.get(`/api/purchase-invoices/draft/from-grn/${grnId}`);
+    return response.data;
+  } catch (error) {
+    console.error("Error creating draft invoice from GRN", error);
     throw error;
   }
 };

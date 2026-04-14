@@ -82,9 +82,22 @@ const ItemAddOnsModal = ({ item, onClose, onSave }) => {
                     <p className="text-xs text-slate-500 mb-4">Configure discounts, taxes, FOC items, and view detailed calculations</p>
 
                     <div className="bg-slate-50 border border-slate-100 rounded-lg p-3 mb-4">
-                        <div className="font-bold text-slate-800 text-sm mb-1">{current.desc || current.name || 'Unknown Item'}</div>
-                        <div className="text-xs text-slate-500">Code: {current.code}</div>
-                        <div className="text-xs text-slate-500">Qty: {current.qty} {current.unit}</div>
+                        <div className="font-bold text-slate-800 text-sm mb-1 leading-snug">
+                            {current.desc || current.name || (current.code ? current.code : '—')}
+                        </div>
+                        {(current.desc || current.name) && current.code && (
+                            <div className="text-[10px] font-mono text-slate-400 mb-1">{current.code}</div>
+                        )}
+                        <div className="flex items-center gap-4 mt-1.5">
+                            <div className="flex items-center gap-1.5">
+                                <span className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide">Qty</span>
+                                <span className="text-xs font-bold text-slate-700">{current.qty ?? 0} {current.unit || ''}</span>
+                            </div>
+                            <div className="flex items-center gap-1.5">
+                                <span className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide">Unit Price</span>
+                                <span className="text-xs font-bold text-slate-700">AED {(current.price || 0).toFixed(2)}</span>
+                            </div>
+                        </div>
                     </div>
 
                     <div className="space-y-4">
@@ -108,7 +121,7 @@ const ItemAddOnsModal = ({ item, onClose, onSave }) => {
 
                         {/* Free of Charge */}
                         <div>
-                            <label className="block text-xs font-bold text-slate-700 mb-1 text-emerald-600">Free of Charge (FOC)</label>
+                            <label className="block text-xs font-bold text-emerald-600 mb-1">Free of Charge (FOC)</label>
                             <div className="grid grid-cols-2 gap-2">
                                 <div>
                                     <label className="text-[10px] text-slate-400 block mb-0.5">FOC Qty</label>

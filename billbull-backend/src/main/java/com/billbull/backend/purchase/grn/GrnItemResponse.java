@@ -7,6 +7,7 @@ public record GrnItemResponse(
         Long productId, // Added productId for bin mapping
         String code,
         String name,
+        String image,
         String uom,
         Integer lpoQty,
         Integer received,
