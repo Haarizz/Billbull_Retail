@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo } from "react";
+import api from "../../../api/axiosConfig";
 import { useNavigate, useLocation } from "react-router-dom";
 import {
   ArrowLeft,
@@ -267,9 +268,24 @@ const PAYMENT_MODES = [
   { value: 'CARD',          label: 'Card',          icon: '💳' },
 ];
 
+const BANK_REQUIRED_MODES = ['BANK_TRANSFER', 'CHEQUE', 'CARD'];
+
 const PaymentModal = ({ invoice, onClose, onConfirm }) => {
   const [paymentMode, setPaymentMode] = useState('BANK_TRANSFER');
+  const [bankAccount, setBankAccount] = useState('');
+  const [bankAccounts, setBankAccounts] = useState([]);
+  const [chequeDate, setChequeDate] = useState(new Date().toISOString().split('T')[0]);
+
+  useEffect(() => {
+    api.get('/api/ledger/accounts/bank-accounts')
+      .then(r => setBankAccounts(r.data || []))
+      .catch(() => setBankAccounts([]));
+  }, []);
+
   if (!invoice) return null;
+
+  const needsBankAccount = BANK_REQUIRED_MODES.includes(paymentMode);
+  const canConfirm = !needsBankAccount || bankAccount;
 
   return (
     <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm animate-in fade-in duration-200">
@@ -306,7 +322,7 @@ const PaymentModal = ({ invoice, onClose, onConfirm }) => {
               {PAYMENT_MODES.map(mode => (
                 <button
                   key={mode.value}
-                  onClick={() => setPaymentMode(mode.value)}
+                  onClick={() => { setPaymentMode(mode.value); setBankAccount(''); }}
                   className={`flex items-center gap-2.5 px-3 py-2.5 rounded-lg border-2 text-sm font-medium transition-all duration-150 ${
                     paymentMode === mode.value
                       ? 'border-[#F5C742] bg-[#FFF8E1] text-slate-800'
@@ -319,12 +335,46 @@ const PaymentModal = ({ invoice, onClose, onConfirm }) => {
               ))}
             </div>
           </div>
+
+          {/* Bank Account selector — shown for Card, Cheque, Bank Transfer */}
+          {needsBankAccount && (
+            <div>
+              <label className="block text-xs font-semibold text-slate-600 uppercase tracking-wide mb-2">Bank Account</label>
+              <select
+                value={bankAccount}
+                onChange={e => setBankAccount(e.target.value)}
+                className="w-full border border-slate-200 rounded-lg px-3 py-2.5 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-[#F5C742] bg-white"
+              >
+                <option value="">Select bank account...</option>
+                {bankAccounts.map(acc => (
+                  <option key={acc.id} value={acc.name}>{acc.code} — {acc.name}</option>
+                ))}
+              </select>
+            </div>
+          )}
+
+          {/* Cheque Date — shown only when mode is CHEQUE */}
+          {paymentMode === 'CHEQUE' && (
+            <div>
+              <label className="block text-xs font-semibold text-slate-600 uppercase tracking-wide mb-2">Cheque Date</label>
+              <input
+                type="date"
+                value={chequeDate}
+                onChange={e => setChequeDate(e.target.value)}
+                className="w-full border border-slate-200 rounded-lg px-3 py-2.5 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-[#F5C742] bg-white"
+              />
+            </div>
+          )}
         </div>
 
         {/* Footer */}
         <div className="px-6 py-4 border-t border-slate-100 flex justify-end gap-3">
           <button onClick={onClose} className="px-4 py-2 rounded border border-slate-200 text-sm font-medium text-slate-600 hover:bg-slate-50 transition-colors">Cancel</button>
-          <button onClick={() => onConfirm(invoice, paymentMode)} className="px-4 py-2 rounded bg-[#F5C742] text-sm font-bold text-slate-900 hover:bg-[#E5B732] shadow-sm flex items-center gap-2 transition-colors">
+          <button
+            onClick={() => canConfirm && onConfirm(invoice, paymentMode, bankAccount || null, paymentMode === 'CHEQUE' ? chequeDate : null)}
+            disabled={!canConfirm}
+            className={`px-4 py-2 rounded text-sm font-bold shadow-sm flex items-center gap-2 transition-colors ${canConfirm ? 'bg-[#F5C742] text-slate-900 hover:bg-[#E5B732]' : 'bg-slate-200 text-slate-400 cursor-not-allowed'}`}
+          >
             <Check className="h-4 w-4" /> Record Payment
           </button>
         </div>
@@ -2508,9 +2558,9 @@ const PurchaseInvoices = () => {
     setPaymentInvoice(invoice);
   };
 
-  const handleConfirmPayment = async (invoice, paymentMode) => {
+  const handleConfirmPayment = async (invoice, paymentMode, bankAccount, chequeDate) => {
     try {
-      await recordPayment(invoice.dbId, invoice.outstanding, paymentMode);
+      await recordPayment(invoice.dbId, invoice.outstanding, paymentMode, bankAccount, chequeDate);
       await loadInvoices();
       setPaymentInvoice(null);
       toast.success("Payment recorded successfully.");

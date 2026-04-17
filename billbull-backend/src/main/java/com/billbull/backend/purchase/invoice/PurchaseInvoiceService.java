@@ -305,7 +305,7 @@ public class PurchaseInvoiceService {
 
     /* ================= PAYMENT ================= */
 
-    public PurchaseInvoice recordPayment(Long id, BigDecimal amount, String paymentModeStr) {
+    public PurchaseInvoice recordPayment(Long id, BigDecimal amount, String paymentModeStr, String bankAccount, String chequeDateStr) {
         PurchaseInvoice invoice = getEntity(id);
 
         if (invoice.getStatus() != InvoiceStatus.POSTED) {
@@ -338,6 +338,12 @@ public class PurchaseInvoiceService {
         pv.setAmount(amount);
         pv.setReferenceNumber("Auto-PV for INV: " + invoice.getInvoiceNumber());
         pv.setInvoiceId(invoice.getId());
+        if (bankAccount != null && !bankAccount.isBlank()) {
+            pv.setBankAccount(bankAccount);
+        }
+        if (chequeDateStr != null && !chequeDateStr.isBlank()) {
+            try { pv.setChequeDate(java.time.LocalDate.parse(chequeDateStr)); } catch (Exception ignored) {}
+        }
 
         PaymentVoucher savedPv = paymentVoucherService.createVoucher(pv);
 

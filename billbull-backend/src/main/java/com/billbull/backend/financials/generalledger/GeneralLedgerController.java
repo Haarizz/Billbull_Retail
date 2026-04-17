@@ -36,6 +36,12 @@ public class GeneralLedgerController {
         return ledgerService.getAllAccounts();
     }
 
+    @GetMapping("/accounts/bank-accounts")
+    @PreAuthorize("isAuthenticated()")
+    public List<Account> getBankAccounts() {
+        return ledgerService.getBankAccounts();
+    }
+
     @GetMapping("/accounts/tree")
     public List<Map<String, Object>> getAccountTree() {
         return ledgerService.getAccountTree();

@@ -370,19 +370,29 @@ public class SalesInvoiceService {
     @Transactional
     public SalesInvoice recordPayment(Long id, Double paymentAmount, String paymentMode,
             String paymentReference, LocalDate paymentDate) {
+        return recordPayment(id, paymentAmount, paymentMode, paymentReference, paymentDate, null);
+    }
+
+    public SalesInvoice recordPayment(Long id, Double paymentAmount, String paymentMode,
+            String paymentReference, LocalDate paymentDate, String bankAccount) {
+        return recordPayment(id, paymentAmount, paymentMode, paymentReference, paymentDate, bankAccount, null);
+    }
+
+    public SalesInvoice recordPayment(Long id, Double paymentAmount, String paymentMode,
+            String paymentReference, LocalDate paymentDate, String bankAccount, LocalDate chequeDate) {
         SalesInvoice invoice = getById(id);
 
         if (paymentAmount == null || paymentAmount <= 0) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Payment amount must be greater than zero.");
         }
 
-        createReceiptForInvoicePayment(invoice, paymentAmount, paymentMode, paymentReference, paymentDate);
+        createReceiptForInvoicePayment(invoice, paymentAmount, paymentMode, paymentReference, paymentDate, bankAccount, chequeDate);
 
         return getById(id);
     }
 
     private void createReceiptForInvoicePayment(SalesInvoice invoice, double paymentAmount, String paymentMode,
-            String paymentReference, LocalDate paymentDate) {
+            String paymentReference, LocalDate paymentDate, String bankAccount, LocalDate chequeDate) {
         ReceiptVoucher rv = new ReceiptVoucher();
         rv.setDate(paymentDate != null ? paymentDate : LocalDate.now());
         rv.setPaymentMode((paymentMode != null && !paymentMode.isBlank()) ? paymentMode : "Bank Transfer");
@@ -394,6 +404,12 @@ public class SalesInvoiceService {
         rv.setStatus("Completed");
         rv.setPurpose(ReceiptPurpose.AGAINST_INVOICE);
         rv.setSalesInvoiceId(invoice.getId());
+        if (bankAccount != null && !bankAccount.isBlank()) {
+            rv.setBankAccount(bankAccount);
+        }
+        if (chequeDate != null) {
+            rv.setChequeDate(chequeDate);
+        }
 
         receiptVoucherService.createReceipt(rv, null);
     }
