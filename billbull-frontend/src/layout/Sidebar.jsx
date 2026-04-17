@@ -14,14 +14,16 @@ import {
   File, FileSpreadsheet, Truck, Undo2, CreditCard,
   Printer, Settings, FilePlus, Inbox, BookOpen,
   Receipt, PenTool, TrendingDown, Landmark, Percent,
-  PieChart, Users, Wallet, Banknote
+  PieChart, Users, Wallet, Banknote, ShieldCheck
 } from "lucide-react";
 import { hasRole, logout, getUsernameFromToken } from "../api/auth";
+import { usePermissions } from "../context/PermissionContext";
 
 const Sidebar = ({ children }) => {
   // --- STATE ---
   const [collapsed, setCollapsed] = useState(false);
   const username = getUsernameFromToken() || "BillBull Admin";
+  const { canView, permissionsLoaded } = usePermissions();
   const userEmail = "admin@billbull.app";
 
   const [mobileOpen, setMobileOpen] = useState(false);
@@ -36,6 +38,7 @@ const Sidebar = ({ children }) => {
   const [tallyOpen, setTallyOpen] = useState(false);
   const [payrollOpen, setPayrollOpen] = useState(false);
   const [stockOpen, setStockOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const location = useLocation();
   const navigate = useNavigate();
 
@@ -67,6 +70,7 @@ const Sidebar = ({ children }) => {
     if (path.startsWith("/finance")) setFinOpen(true);
     if (path.startsWith("/tally")) setTallyOpen(true);
     if (path.startsWith("/payroll")) setPayrollOpen(true);
+    if (path.startsWith("/settings")) setSettingsOpen(true);
   }, [location.pathname, collapsed]);
 
   // Toggle Handler
@@ -85,6 +89,7 @@ const Sidebar = ({ children }) => {
       path: "/",
       label: "Dashboard",
       icon: <FaTachometerAlt />,
+      module: "dashboard",
       roles: ["ADMIN", "SALES", "INVENTORY_MANAGER", "ACCOUNTANT", "HR", "SALES"],
     },
     {
@@ -94,6 +99,7 @@ const Sidebar = ({ children }) => {
       isDropdown: true,
       isOpen: connectOpen,
       onToggle: () => handleToggle(connectOpen, setConnectOpen),
+      module: "customer",
       roles: ["ADMIN", "SALES"],
       subItems: [
         { path: "/customer/inquiries", label: "Inquiries", icon: <HelpCircle size={14} /> },
@@ -109,6 +115,7 @@ const Sidebar = ({ children }) => {
       isDropdown: true,
       isOpen: invOpen,
       onToggle: () => handleToggle(invOpen, setInvOpen),
+      module: "inventory",
       roles: ["ADMIN", "INVENTORY_MANAGER"],
       subItems: [
         { path: "/inventory/departments", label: "Departments", icon: <Building2 size={14} /> },
@@ -130,6 +137,7 @@ const Sidebar = ({ children }) => {
       isDropdown: true,
       isOpen: salesOpen,
       onToggle: () => handleToggle(salesOpen, setSalesOpen),
+      module: "sales",
       roles: ["ADMIN", "SALES", "ACCOUNTANT"],
       subItems: [
         { path: "/sales/customers", label: "Customer Ledger", icon: <BookUser size={14} /> },
@@ -152,6 +160,7 @@ const Sidebar = ({ children }) => {
       isDropdown: true,
       isOpen: purchOpen,
       onToggle: () => handleToggle(purchOpen, setPurchOpen),
+      module: "purchases",
       roles: ["ADMIN", "INVENTORY_MANAGER", "ACCOUNTANT"],
       subItems: [
         { path: "/purchases/vendors", label: "Vendor Ledger", icon: <BookUser size={14} /> },
@@ -172,6 +181,7 @@ const Sidebar = ({ children }) => {
       isDropdown: true,
       isOpen: finOpen,
       onToggle: () => handleToggle(finOpen, setFinOpen),
+      module: "finance",
       roles: ["ADMIN", "ACCOUNTANT"],
       subItems: [
         { path: "/finance/ledger", label: "Ledger", icon: <BookOpen size={14} /> },
@@ -191,6 +201,7 @@ const Sidebar = ({ children }) => {
       isDropdown: true,
       isOpen: payrollOpen,
       onToggle: () => handleToggle(payrollOpen, setPayrollOpen),
+      module: "hr",
       roles: ["ADMIN", "HR"],
       subItems: [
         { path: "/payroll/employees", label: "Employees & Roles", icon: <Users size={14} /> },
@@ -213,15 +224,24 @@ const Sidebar = ({ children }) => {
     //   ],
     // },
     {
-      path: "/settings/company",
-      label: "Company Profile",
-      icon: <Building2 size={16} />,
+      id: "settings-group",
+      label: "Settings",
+      icon: <Settings size={16} />,
+      isDropdown: true,
+      isOpen: settingsOpen,
+      onToggle: () => handleToggle(settingsOpen, setSettingsOpen),
+      module: "userManagement",
       roles: ["ADMIN"],
+      subItems: [
+        { path: "/settings/company", label: "Company Profile",       icon: <Building2 size={14} /> },
+        { path: "/settings/roles",   label: "User & Role Config",    icon: <ShieldCheck size={14} /> },
+      ],
     },
     {
       path: "/myprofile",
       label: "My Profile",
       icon: <FaUser />,
+      module: null, // always visible to any authenticated user
       roles: ["ADMIN", "SALES", "INVENTORY_MANAGER", "ACCOUNTANT", "HR", "SALES"],
     },
   ];
@@ -656,7 +676,18 @@ const Sidebar = ({ children }) => {
         {/* NAVIGATION */}
         <nav className="nav-list">
           {menuItems
-            .filter(item => !item.roles || item.roles.some(r => hasRole(r)))
+            .filter(item => {
+              // Items with no module (My Profile) are always visible
+              if (!item.module) return true;
+              // While permissions are loading, fall back to role-based check so
+              // the sidebar isn't blank during the brief API fetch
+              if (!permissionsLoaded) {
+                return !item.roles || item.roles.some(r => hasRole(r));
+              }
+              // ── HORIZONTAL ACCESS ──
+              // canView(module) is the single source of truth once loaded
+              return canView(item.module);
+            })
             .map((item, index) => {
 
               const isActiveParent = item.isDropdown && item.subItems.some(sub => location.pathname === sub.path);

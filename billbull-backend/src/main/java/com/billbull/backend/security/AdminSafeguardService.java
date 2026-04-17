@@ -18,7 +18,8 @@ public class AdminSafeguardService {
     }
 
     /**
-     * Check if user is the last ADMIN in the system.
+     * Check if user is the last ACTIVE ADMIN in the system.
+     * Frozen (inactive) admins do not count — they cannot perform admin operations.
      */
     public boolean isLastAdmin(User user) {
         boolean isAdmin = user.getRoles().stream()
@@ -28,13 +29,14 @@ public class AdminSafeguardService {
             return false;
         }
 
-        // Count total ADMIN users
-        long adminCount = userRepository.findAll().stream()
+        // Count only ACTIVE ADMIN users (frozen admins must not count)
+        long activeAdminCount = userRepository.findAll().stream()
+                .filter(u -> u.isActive())
                 .filter(u -> u.getRoles().stream()
                         .anyMatch(role -> role.getName().equals("ADMIN")))
                 .count();
 
-        return adminCount <= 1;
+        return activeAdminCount <= 1;
     }
 
     /**
@@ -61,6 +63,13 @@ public class AdminSafeguardService {
      */
     public void validateDeleteUser(User user) {
         validateNotLastAdmin(user, "delete user");
+    }
+
+    /**
+     * Check if freezing user is safe (would not remove last active ADMIN).
+     */
+    public void validateFreezeUser(User user) {
+        validateNotLastAdmin(user, "freeze user");
     }
 
     /**

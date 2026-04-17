@@ -61,6 +61,7 @@ import PurchasePrintEmailTemplates from "./pages/Purchase/PurchasePrintEmailTemp
 import StockTaking from "./pages/Inventory/StockTaking/StockTaking";
 import InventoryReports from "./pages/Inventory/Reports/InventoryReports";
 import CompanySettings from "./pages/Settings/CompanySettings";
+import UserRoleConfig from "./pages/Settings/UserRoleConfig";
 import SalesSummaryReport from "./pages/Sales/Reports/SalesSummaryReport";
 import PurchaseSummaryReport from "./pages/Purchase/Reports/PurchaseSummaryReport";
 // import Products from "./pages/Inventory/Product/Products";
@@ -119,7 +120,6 @@ function App() {
   return (
     <BrowserRouter>
       <CompanyProvider>
-      <PermissionProvider>
         <Toaster position="top-right" reverseOrder={false} />
         <Routes>
           {/* 🔓 Public Route */}
@@ -130,6 +130,10 @@ function App() {
             path="/*"
             element={
               <PrivateRoute>
+                {/* PermissionProvider is inside PrivateRoute so it mounts
+                    only when authenticated — useEffect fires with a valid
+                    token and permissions load correctly on every login */}
+                <PermissionProvider>
                 <ErrorBoundary>
                 <Sidebar>
                   <Routes>
@@ -548,14 +552,23 @@ function App() {
                       }
                     />
 
+                    <Route
+                      path="/settings/roles"
+                      element={
+                        <RoleRoute role="ADMIN">
+                          <UserRoleConfig />
+                        </RoleRoute>
+                      }
+                    />
+
                   </Routes>
                 </Sidebar>
                 </ErrorBoundary>
+                </PermissionProvider>
               </PrivateRoute>
             }
           />
         </Routes>
-      </PermissionProvider>
       </CompanyProvider>
     </BrowserRouter>
   );

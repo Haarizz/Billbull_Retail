@@ -7,6 +7,7 @@ import com.billbull.backend.user.UserRepository;
 import org.springframework.boot.CommandLineRunner;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.core.annotation.Order;
 import org.springframework.security.crypto.password.PasswordEncoder;
 
 import java.util.HashSet;
@@ -20,6 +21,7 @@ import java.util.Set;
 public class RBACInitializer {
 
     @Bean
+    @Order(1)   // must run before RolePermissionInitializer (@Order 2)
     CommandLineRunner initRBAC(
             RoleRepository roleRepository,
             UserRepository userRepository,

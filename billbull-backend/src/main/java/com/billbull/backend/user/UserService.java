@@ -3,16 +3,21 @@ package com.billbull.backend.user;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.security.crypto.password.PasswordEncoder;
+import com.billbull.backend.hr.employees.Employee;
+import com.billbull.backend.hr.employees.EmployeeRepository;
 import com.billbull.backend.role.Role;
 import com.billbull.backend.role.RoleRepository;
 import com.billbull.backend.security.AdminSafeguardService;
 
 import java.util.List;
+import java.util.Optional;
 import java.util.Set;
 import java.util.HashSet;
+import java.util.stream.Collectors;
 
 /**
  * Service for user management operations.
+ * All public methods return UserSafeDto — never exposes password.
  */
 @Service
 public class UserService {
@@ -21,35 +26,40 @@ public class UserService {
     private final RoleRepository roleRepository;
     private final PasswordEncoder passwordEncoder;
     private final AdminSafeguardService adminSafeguardService;
+    private final EmployeeRepository employeeRepository;
 
     public UserService(
             UserRepository userRepository,
             RoleRepository roleRepository,
             PasswordEncoder passwordEncoder,
-            AdminSafeguardService adminSafeguardService) {
+            AdminSafeguardService adminSafeguardService,
+            EmployeeRepository employeeRepository) {
         this.userRepository = userRepository;
         this.roleRepository = roleRepository;
         this.passwordEncoder = passwordEncoder;
         this.adminSafeguardService = adminSafeguardService;
+        this.employeeRepository = employeeRepository;
     }
 
     /**
-     * Get all users.
+     * Get all users as safe DTOs.
      */
-    public List<User> getAllUsers() {
-        return userRepository.findAll();
+    public List<UserSafeDto> getAllUsers() {
+        return userRepository.findAll().stream()
+                .map(UserSafeDto::new)
+                .collect(Collectors.toList());
     }
 
     /**
-     * Get user by ID.
+     * Get user by ID as safe DTO.
      */
-    public User getUserById(Long id) {
-        return userRepository.findById(id)
-                .orElseThrow(() -> new RuntimeException("User not found with id: " + id));
+    public UserSafeDto getUserById(Long id) {
+        User user = findUserById(id);
+        return new UserSafeDto(user);
     }
 
     /**
-     * Get user by username.
+     * Get user entity by username (internal use only).
      */
     public User getUserByUsername(String username) {
         return userRepository.findByUsername(username)
@@ -57,11 +67,19 @@ public class UserService {
     }
 
     /**
-     * Create new user.
+     * Get linked user for an employee.
+     */
+    public Optional<UserSafeDto> getLinkedUserByEmployeeId(Long employeeId) {
+        return userRepository.findByLinkedEmployee_Id(employeeId)
+                .map(UserSafeDto::new);
+    }
+
+    /**
+     * Create new user with optional employee linkage.
      */
     @Transactional
-    public User createUser(UserCreateRequest request) {
-        // Check if username already exists
+    public UserSafeDto createUser(UserCreateRequest request) {
+        // Username must be unique
         if (userRepository.findByUsername(request.getUsername()).isPresent()) {
             throw new RuntimeException("Username already exists: " + request.getUsername());
         }
@@ -84,15 +102,37 @@ public class UserService {
             user.setRoles(roles);
         }
 
-        return userRepository.save(user);
+        // Link employee if provided
+        if (request.getLinkedEmployeeId() != null) {
+            Employee employee = employeeRepository.findById(request.getLinkedEmployeeId())
+                    .orElseThrow(() -> new RuntimeException(
+                            "Employee not found with id: " + request.getLinkedEmployeeId()));
+
+            // Ensure employee is active (per business rule)
+            if (!"Active".equals(employee.getStatus())) {
+                throw new RuntimeException(
+                        "Cannot create access for employee with status: " + employee.getStatus() +
+                        ". Employee must be Active.");
+            }
+
+            // Ensure employee is not already linked to another user
+            if (userRepository.findByLinkedEmployee_Id(request.getLinkedEmployeeId()).isPresent()) {
+                throw new RuntimeException(
+                        "Employee is already linked to a user account.");
+            }
+
+            user.setLinkedEmployee(employee);
+        }
+
+        return new UserSafeDto(userRepository.save(user));
     }
 
     /**
-     * Update user.
+     * Update user (safe fields only).
      */
     @Transactional
-    public User updateUser(Long id, UserUpdateRequest request) {
-        User user = getUserById(id);
+    public UserSafeDto updateUser(Long id, UserUpdateRequest request) {
+        User user = findUserById(id);
 
         if (request.getFullName() != null) {
             user.setFullName(request.getFullName());
@@ -107,17 +147,16 @@ public class UserService {
             user.setPassword(passwordEncoder.encode(request.getPassword()));
         }
 
-        return userRepository.save(user);
+        return new UserSafeDto(userRepository.save(user));
     }
 
     /**
-     * Assign roles to user (CRITICAL for privilege escalation prevention).
+     * Assign roles to user (prevents privilege escalation and last-admin removal).
      */
     @Transactional
-    public User assignRoles(Long userId, Set<Long> roleIds) {
-        User user = getUserById(userId);
+    public UserSafeDto assignRoles(Long userId, Set<Long> roleIds) {
+        User user = findUserById(userId);
 
-        // Check if removing ADMIN role from last admin
         boolean hadAdminRole = user.getRoles().stream()
                 .anyMatch(r -> r.getName().equals("ADMIN"));
 
@@ -131,25 +170,65 @@ public class UserService {
         boolean hasAdminRoleInNew = newRoles.stream()
                 .anyMatch(r -> r.getName().equals("ADMIN"));
 
-        // If user had ADMIN but new roles don't include it, validate not last admin
+        // If removing ADMIN role, validate not last admin
         if (hadAdminRole && !hasAdminRoleInNew) {
             adminSafeguardService.validateRemoveAdminRole(user);
         }
 
         user.setRoles(newRoles);
-        return userRepository.save(user);
+        return new UserSafeDto(userRepository.save(user));
     }
 
     /**
-     * Delete user with admin safeguard.
+     * Freeze user (set isActive=false). Blocked if last active ADMIN.
+     */
+    @Transactional
+    public UserSafeDto freezeUser(Long id) {
+        User user = findUserById(id);
+        adminSafeguardService.validateFreezeUser(user);
+        user.setActive(false);
+        return new UserSafeDto(userRepository.save(user));
+    }
+
+    /**
+     * Unfreeze user (set isActive=true). Always allowed.
+     */
+    @Transactional
+    public UserSafeDto unfreezeUser(Long id) {
+        User user = findUserById(id);
+        user.setActive(true);
+        return new UserSafeDto(userRepository.save(user));
+    }
+
+    /**
+     * Reset password for a user (admin action).
+     */
+    @Transactional
+    public void resetPassword(Long id, String newRawPassword) {
+        if (newRawPassword == null || newRawPassword.isBlank()) {
+            throw new RuntimeException("New password must not be empty.");
+        }
+        User user = findUserById(id);
+        user.setPassword(passwordEncoder.encode(newRawPassword));
+        userRepository.save(user);
+    }
+
+    /**
+     * Delete user with admin safeguard. Does NOT delete the linked employee.
      */
     @Transactional
     public void deleteUser(Long id) {
-        User user = getUserById(id);
-
-        // Check if deleting last admin
+        User user = findUserById(id);
         adminSafeguardService.validateDeleteUser(user);
-
+        // Detach employee link before delete to avoid constraint violations
+        user.setLinkedEmployee(null);
+        userRepository.save(user);
         userRepository.delete(user);
+    }
+
+    // Internal helper — returns entity (not DTO)
+    private User findUserById(Long id) {
+        return userRepository.findById(id)
+                .orElseThrow(() -> new RuntimeException("User not found with id: " + id));
     }
 }

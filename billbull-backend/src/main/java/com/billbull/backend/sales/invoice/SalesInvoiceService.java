@@ -184,7 +184,9 @@ public class SalesInvoiceService {
                     paid,
                     refreshed.getPaymentMode(),
                     "Initial receipt for INV: " + refreshed.getInvoiceNumber(),
-                    refreshed.getInvoiceDate());
+                    refreshed.getInvoiceDate(),
+                    null,   // bankAccount — not applicable for initial receipt
+                    null);  // chequeDate  — not applicable for initial receipt
         }
 
         // Handle Linking "Before Sale" Delivery Notes

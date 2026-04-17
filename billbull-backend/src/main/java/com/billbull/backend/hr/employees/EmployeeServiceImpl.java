@@ -1,7 +1,11 @@
 package com.billbull.backend.hr.employees;
 
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
+
+import com.billbull.backend.security.AdminSafeguardService;
+import com.billbull.backend.user.UserRepository;
 
 import java.io.File;
 import java.nio.file.Files;
@@ -12,10 +16,16 @@ import java.util.List;
 public class EmployeeServiceImpl implements EmployeeService {
 
     private final EmployeeRepository repository;
+    private final UserRepository userRepository;
+    private final AdminSafeguardService adminSafeguardService;
 
-    // ✅ MANUAL CONSTRUCTOR (FIXES ERROR)
-    public EmployeeServiceImpl(EmployeeRepository repository) {
+    public EmployeeServiceImpl(
+            EmployeeRepository repository,
+            UserRepository userRepository,
+            AdminSafeguardService adminSafeguardService) {
         this.repository = repository;
+        this.userRepository = userRepository;
+        this.adminSafeguardService = adminSafeguardService;
     }
 
     @Override
@@ -49,8 +59,12 @@ public class EmployeeServiceImpl implements EmployeeService {
     }
 
     @Override
+    @Transactional
     public Employee updateEmployee(Long id, Employee updated, MultipartFile avatar) {
         Employee existing = getById(id);
+
+        // Capture old email BEFORE field updates (needed for linked user email sync)
+        String oldEmail = existing.getEmail();
 
         existing.setFirstName(updated.getFirstName());
         existing.setMiddleName(updated.getMiddleName());
@@ -79,16 +93,53 @@ public class EmployeeServiceImpl implements EmployeeService {
         existing.setEmiratesIdExpiry(updated.getEmiratesIdExpiry());
 
         handleAvatarUpload(existing, avatar);
-        return repository.save(existing);
+        Employee saved = repository.save(existing);
+
+        // Sync linked user email if employee email changed
+        String newEmail = updated.getEmail();
+        if (newEmail != null && !newEmail.equals(oldEmail)) {
+            userRepository.findByLinkedEmployee_Id(id).ifPresent(user -> {
+                // Only sync username if it was originally derived from the old email
+                if (oldEmail != null && oldEmail.equals(user.getUsername())) {
+                    boolean usernameConflict = userRepository.findByUsername(newEmail).isPresent();
+                    if (!usernameConflict) {
+                        user.setUsername(newEmail);
+                    }
+                }
+                user.setEmail(newEmail);
+                userRepository.save(user);
+            });
+        }
+
+        return saved;
     }
 
     @Override
+    @Transactional
     public Employee deactivateEmployee(Long id) {
         Employee emp = getById(id);
+
+        // BLOCK deactivation if the linked user is the last active ADMIN
+        userRepository.findByLinkedEmployee_Id(id).ifPresent(user -> {
+            if (adminSafeguardService.isLastAdmin(user)) {
+                throw new IllegalStateException(
+                        "Cannot deactivate employee: linked user is the last active ADMIN. " +
+                        "Reassign the ADMIN role to another user first.");
+            }
+        });
+
         emp.setStatus("Inactive");
         emp.setWorkflowStage("Deactivated");
         emp.setPosAccess(false);
-        return repository.save(emp);
+        Employee saved = repository.save(emp);
+
+        // Freeze linked user — safe because the last-admin check already passed
+        userRepository.findByLinkedEmployee_Id(id).ifPresent(user -> {
+            user.setActive(false);
+            userRepository.save(user);
+        });
+
+        return saved;
     }
 
     @Override
@@ -96,6 +147,7 @@ public class EmployeeServiceImpl implements EmployeeService {
         Employee emp = getById(id);
         emp.setStatus("Active");
         emp.setWorkflowStage("Completed");
+        // DO NOT auto-unfreeze linked user (per spec)
         return repository.save(emp);
     }
 
