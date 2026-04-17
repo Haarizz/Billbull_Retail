@@ -38,6 +38,8 @@ public class User extends BaseEntity {
     private String avatarUrl;
     private String employeeId;
     private java.time.LocalDate joinDate;
+    @Column(nullable = false)
+    private boolean pendingEmployeeActivation = false;
 
     @OneToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "linked_employee_id", unique = true)
@@ -139,6 +141,14 @@ public class User extends BaseEntity {
 
     public void setJoinDate(java.time.LocalDate joinDate) {
         this.joinDate = joinDate;
+    }
+
+    public boolean isPendingEmployeeActivation() {
+        return pendingEmployeeActivation;
+    }
+
+    public void setPendingEmployeeActivation(boolean pendingEmployeeActivation) {
+        this.pendingEmployeeActivation = pendingEmployeeActivation;
     }
 
     public Set<Role> getRoles() {

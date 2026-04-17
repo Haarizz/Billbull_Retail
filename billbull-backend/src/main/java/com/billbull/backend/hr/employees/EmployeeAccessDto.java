@@ -17,6 +17,7 @@ public class EmployeeAccessDto {
     private String linkedUsername;
     private String linkedEmail;
     private boolean userActive;
+    private boolean pendingEmployeeActivation;
     private List<String> assignedRoles;
 
     // --- Getters & Setters ---
@@ -44,6 +45,11 @@ public class EmployeeAccessDto {
 
     public boolean isUserActive() { return userActive; }
     public void setUserActive(boolean userActive) { this.userActive = userActive; }
+
+    public boolean isPendingEmployeeActivation() { return pendingEmployeeActivation; }
+    public void setPendingEmployeeActivation(boolean pendingEmployeeActivation) {
+        this.pendingEmployeeActivation = pendingEmployeeActivation;
+    }
 
     public List<String> getAssignedRoles() { return assignedRoles; }
     public void setAssignedRoles(List<String> assignedRoles) { this.assignedRoles = assignedRoles; }
