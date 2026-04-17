@@ -41,6 +41,12 @@ public class ReceiptVoucher {
     // Settlement link — set when this receipt is created against a specific Sales Invoice
     private Long salesInvoiceId;
 
+    @Column(name = "bank_account")
+    private String bankAccount;
+
+    @Column(name = "cheque_date")
+    private LocalDate chequeDate;
+
     public ReceiptVoucher() {
     }
 
@@ -163,5 +169,21 @@ public class ReceiptVoucher {
 
     public void setSalesInvoiceId(Long salesInvoiceId) {
         this.salesInvoiceId = salesInvoiceId;
+    }
+
+    public String getBankAccount() {
+        return bankAccount;
+    }
+
+    public void setBankAccount(String bankAccount) {
+        this.bankAccount = bankAccount;
+    }
+
+    public LocalDate getChequeDate() {
+        return chequeDate;
+    }
+
+    public void setChequeDate(LocalDate chequeDate) {
+        this.chequeDate = chequeDate;
     }
 }

@@ -50,6 +50,12 @@ public class PaymentVoucher {
     @Column(name = "invoice_id")
     private Long invoiceId; 
     
+    @Column(name = "bank_account")
+    private String bankAccount;
+
+    @Column(name = "cheque_date")
+    private LocalDate chequeDate;
+
     @Column(length = 500)
     private String notes;
 
@@ -157,6 +163,22 @@ public class PaymentVoucher {
 
 	public void setInvoiceId(Long invoiceId) {
 		this.invoiceId = invoiceId;
+	}
+
+	public String getBankAccount() {
+		return bankAccount;
+	}
+
+	public void setBankAccount(String bankAccount) {
+		this.bankAccount = bankAccount;
+	}
+
+	public LocalDate getChequeDate() {
+		return chequeDate;
+	}
+
+	public void setChequeDate(LocalDate chequeDate) {
+		this.chequeDate = chequeDate;
 	}
 
 	public String getNotes() {

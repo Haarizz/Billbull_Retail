@@ -43,8 +43,10 @@ public class SystemAccountSeeder implements ApplicationRunner {
         );
 
         int seeded = 0;
+        int patched = 0;
         for (AccountSeed s : seeds) {
-            if (accountRepository.findByCode(s.code) == null) {
+            Account existing = accountRepository.findByCode(s.code);
+            if (existing == null) {
                 Account a = new Account();
                 a.setId(s.id);
                 a.setCode(s.code);
@@ -61,11 +63,16 @@ public class SystemAccountSeeder implements ApplicationRunner {
                 a.setCostCenterRequired(false);
                 accountRepository.save(a);
                 seeded++;
+            } else if (s.cashFlag && !Boolean.TRUE.equals(existing.getCashFlag())) {
+                // Patch cashFlag on pre-existing cash/bank accounts
+                existing.setCashFlag(true);
+                accountRepository.save(existing);
+                patched++;
             }
         }
 
-        if (seeded > 0) {
-            System.out.println("[SystemAccountSeeder] Seeded " + seeded + " system account(s) into Chart of Accounts.");
+        if (seeded > 0 || patched > 0) {
+            System.out.println("[SystemAccountSeeder] Seeded " + seeded + " account(s), patched " + patched + " cashFlag(s).");
         } else {
             System.out.println("[SystemAccountSeeder] All system accounts already present — no seeding required.");
         }

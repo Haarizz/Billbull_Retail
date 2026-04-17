@@ -61,9 +61,12 @@ export const approveInvoice = async (id) => {
   }
 };
 
-export const recordPayment = async (id, amount, paymentMode = 'BANK_TRANSFER') => {
+export const recordPayment = async (id, amount, paymentMode = 'BANK_TRANSFER', bankAccount = null, chequeDate = null) => {
   try {
-    const response = await api.post(`/api/purchase-invoices/${id}/payment?amount=${amount}&paymentMode=${paymentMode}`);
+    let url = `/api/purchase-invoices/${id}/payment?amount=${amount}&paymentMode=${paymentMode}`;
+    if (bankAccount) url += `&bankAccount=${encodeURIComponent(bankAccount)}`;
+    if (chequeDate) url += `&chequeDate=${encodeURIComponent(chequeDate)}`;
+    const response = await api.post(url);
     return response.data;
   } catch (error) {
     console.error("Error recording payment", error);

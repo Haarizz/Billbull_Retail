@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { useLocation } from 'react-router-dom';
+import api from '../../api/axiosConfig';
 import {
     ShoppingCart,
     Search,
@@ -211,7 +212,10 @@ const SalesInvoice = () => {
     const [modalPaymentAmount, setModalPaymentAmount] = useState(0);
     const [modalPaymentRef, setModalPaymentRef] = useState('');
     const [modalPaymentMode, setModalPaymentMode] = useState('Cash');
+    const [modalBankAccount, setModalBankAccount] = useState('');
+    const [modalChequeDate, setModalChequeDate] = useState(new Date().toISOString().split('T')[0]);
     const [modalNotes, setModalNotes] = useState('');
+    const [bankAccountOptions, setBankAccountOptions] = useState([]);
 
     // Stock Check Modal
     const [selectedStockItem, setSelectedStockItem] = useState(null);
@@ -392,15 +396,17 @@ const SalesInvoice = () => {
     useEffect(() => {
         const loadData = async () => {
             try {
-                const [custData, soData, piData, dnData, invData, whsData, settingsData] = await Promise.all([
+                const [custData, soData, piData, dnData, invData, whsData, settingsData, bankAccData] = await Promise.all([
                     getAllCustomers(),
                     getAllSalesOrders(),
                     getAllProformas(),
                     getDeliveryNotes(),
                     getAllSalesInvoices(),
                     getWarehouses(),
-                    getSalesSettings().catch(() => null)
+                    getSalesSettings().catch(() => null),
+                    api.get('/api/ledger/accounts/bank-accounts').then(r => r.data).catch(() => [])
                 ]);
+                setBankAccountOptions(Array.isArray(bankAccData) ? bankAccData : []);
 
                 let validCustomers = Array.isArray(custData) ? custData : [];
                 const hasWalkin = validCustomers.some(c =>
@@ -1129,12 +1135,18 @@ const SalesInvoice = () => {
     };
 
     // ✅ MODAL HANDLERS
-    const handleOpenPaymentModal = () => {
+    const handleOpenPaymentModal = (invRow) => {
+        // Support being called from the list (with invRow) or from the editor (no arg)
+        if (invRow) {
+            handleLoadInvoice(invRow);
+        }
         // Use server-side balance if available (authoritative), otherwise compute locally
         const outstanding = invoiceBalance != null
             ? invoiceBalance
             : Math.max(netTotal - amountCollected, 0);
         setModalPaymentAmount(outstanding > 0 ? outstanding.toFixed(2) : 0);
+        setModalBankAccount('');
+        setModalChequeDate(new Date().toISOString().split('T')[0]);
         setIsPaymentModalOpen(true);
     };
 
@@ -1151,7 +1163,9 @@ const SalesInvoice = () => {
                     amount: Number(modalPaymentAmount),
                     paymentMode: modalPaymentMode,
                     paymentReference: modalPaymentRef,
-                    paymentDate: modalPaymentDate
+                    paymentDate: modalPaymentDate,
+                    ...(modalBankAccount ? { bankAccount: modalBankAccount } : {}),
+                    ...(modalPaymentMode === 'Cheque' && modalChequeDate ? { chequeDate: modalChequeDate } : {})
                 });
                 await fetchInvoices();
                 alert("Payment recorded successfully!");
@@ -1288,6 +1302,13 @@ const SalesInvoice = () => {
         if (s === 'PARTIALLY_PAID') return <span className="bg-orange-100 text-orange-700 px-2 py-0.5 rounded text-[10px] font-bold">Partially Paid</span>;
         if (s === 'CONFIRMED') return <span className="bg-blue-100 text-blue-700 px-2 py-0.5 rounded text-[10px] font-bold">Confirmed</span>;
         return <span className="bg-slate-100 text-slate-600 px-2 py-0.5 rounded text-[10px] font-bold">{statusVal || 'Draft'}</span>;
+    };
+
+    const resolveSourceType = (inv) => {
+        if (inv.linkedDeliveryNote) return { label: 'Against DN', ref: inv.linkedDeliveryNote, color: 'bg-green-100 text-green-700 border-green-200' };
+        if (inv.linkedSalesOrder)   return { label: 'Against SO', ref: inv.linkedSalesOrder,   color: 'bg-blue-100 text-blue-700 border-blue-200' };
+        if (inv.linkedProforma)     return { label: 'Against PI', ref: inv.linkedProforma,      color: 'bg-purple-100 text-purple-700 border-purple-200' };
+        return { label: 'Direct Sale', ref: null, color: 'bg-orange-100 text-orange-700 border-orange-200' };
     };
 
     const renderTypeBadge = (type) => {
@@ -1556,7 +1577,7 @@ const SalesInvoice = () => {
                                             <th className="px-4 py-3 cursor-pointer hover:bg-slate-100 select-none" onClick={() => handleSort('customerName')}>
                                                 <div className="flex items-center gap-1">Customer {sortConfig.key === 'customerName' && (sortConfig.direction === 'asc' ? <ArrowUp size={12} /> : <ArrowDown size={12} />)}</div>
                                             </th>
-                                            <th className="px-4 py-3">From SO/PI/DN</th>
+                                            <th className="px-4 py-3">Source Type</th>
                                             <th className="px-4 py-3">Pay Mode</th>
                                             <th className="px-4 py-3 cursor-pointer hover:bg-slate-100 select-none" onClick={() => handleSort('invoiceTotal')}>
                                                 <div className="flex items-center gap-1">Net Amount {sortConfig.key === 'invoiceTotal' && (sortConfig.direction === 'asc' ? <ArrowUp size={12} /> : <ArrowDown size={12} />)}</div>
@@ -1585,11 +1606,18 @@ const SalesInvoice = () => {
                                                     <div className="font-medium text-slate-700">{inv.customerName}</div>
                                                     <div className="text-[10px] text-slate-400">{inv.customerCode}</div>
                                                 </td>
-                                                <td className="px-4 py-3 text-[10px]">
-                                                    {inv.linkedSalesOrder && <div className="text-blue-500 block">{inv.linkedSalesOrder}</div>}
-                                                    {inv.linkedDeliveryNote && <div className="text-green-600 block">{inv.linkedDeliveryNote}</div>}
-                                                    {inv.linkedProforma && <div className="text-purple-600 block">{inv.linkedProforma}</div>}
-                                                    {!inv.linkedSalesOrder && !inv.linkedDeliveryNote && !inv.linkedProforma && <span className="text-slate-400">Direct</span>}
+                                                <td className="px-4 py-3">
+                                                    {(() => {
+                                                        const src = resolveSourceType(inv);
+                                                        return (
+                                                            <div className="flex flex-col gap-0.5">
+                                                                <span className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold border w-fit ${src.color}`}>
+                                                                    {src.label}
+                                                                </span>
+                                                                {src.ref && <span className="text-[10px] text-slate-400">{src.ref}</span>}
+                                                            </div>
+                                                        );
+                                                    })()}
                                                 </td>
                                                 <td className="px-4 py-3">
                                                     <span className="border border-slate-200 px-2 py-0.5 rounded text-[10px] bg-white text-slate-600">{inv.paymentMode || 'Cash'}</span>
@@ -1605,7 +1633,17 @@ const SalesInvoice = () => {
                                                     <div className="flex justify-end gap-2" onClick={(e) => e.stopPropagation()}>
                                                         <button onClick={() => handleLoadInvoice(inv)} className="p-1 hover:bg-slate-200 rounded text-slate-500"><Edit size={14} /></button>
                                                         <button onClick={() => handlePrintClick(inv)} disabled={isPrinting} className="p-1 hover:bg-slate-200 rounded text-slate-500 disabled:opacity-50"><Printer size={14} /></button>
-                                                        <button className="p-1 hover:bg-slate-200 rounded text-slate-500"><Mail size={14} /></button>
+                                                        <button
+                                                            onClick={() => {
+                                                                handleLoadInvoice(inv);
+                                                                const bal = inv.balance != null ? inv.balance : Math.max((inv.netTotal || 0) - (inv.amountPaid || 0), 0);
+                                                                setModalPaymentAmount(bal > 0 ? bal.toFixed(2) : 0);
+                                                                setModalBankAccount('');
+                                                                setIsPaymentModalOpen(true);
+                                                            }}
+                                                            className="p-1 hover:bg-green-100 rounded text-green-600"
+                                                            title="Record Payment"
+                                                        ><DollarSign size={14} /></button>
                                                     </div>
                                                 </td>
                                             </tr>
@@ -2351,7 +2389,7 @@ const SalesInvoice = () => {
                                     <label className="block text-xs font-bold text-slate-700 mb-1">Payment Mode</label>
                                     <select
                                         value={modalPaymentMode}
-                                        onChange={(e) => setModalPaymentMode(e.target.value)}
+                                        onChange={(e) => { setModalPaymentMode(e.target.value); setModalBankAccount(''); setModalChequeDate(new Date().toISOString().split('T')[0]); }}
                                         className="w-full text-sm p-2 border border-slate-300 rounded focus:border-[#F5C742] focus:ring-1 focus:ring-[#F5C742] outline-none bg-white"
                                     >
                                         <option>Cash</option>
@@ -2360,6 +2398,36 @@ const SalesInvoice = () => {
                                         <option>Credit Card</option>
                                     </select>
                                 </div>
+
+                                {/* Bank Account — shown for non-Cash modes */}
+                                {modalPaymentMode !== 'Cash' && (
+                                    <div>
+                                        <label className="block text-xs font-bold text-slate-700 mb-1">Bank Account</label>
+                                        <select
+                                            value={modalBankAccount}
+                                            onChange={(e) => setModalBankAccount(e.target.value)}
+                                            className="w-full text-sm p-2 border border-slate-300 rounded focus:border-[#F5C742] focus:ring-1 focus:ring-[#F5C742] outline-none bg-white"
+                                        >
+                                            <option value="">Select bank account...</option>
+                                            {bankAccountOptions.map(acc => (
+                                                <option key={acc.id} value={acc.name}>{acc.code} — {acc.name}</option>
+                                            ))}
+                                        </select>
+                                    </div>
+                                )}
+
+                                {/* Cheque Date — shown only when mode is Cheque */}
+                                {modalPaymentMode === 'Cheque' && (
+                                    <div>
+                                        <label className="block text-xs font-bold text-slate-700 mb-1">Cheque Date</label>
+                                        <input
+                                            type="date"
+                                            value={modalChequeDate}
+                                            onChange={(e) => setModalChequeDate(e.target.value)}
+                                            className="w-full text-sm p-2 border border-slate-300 rounded focus:border-[#F5C742] focus:ring-1 focus:ring-[#F5C742] outline-none"
+                                        />
+                                    </div>
+                                )}
 
                                 {/* Amount */}
                                 <div>

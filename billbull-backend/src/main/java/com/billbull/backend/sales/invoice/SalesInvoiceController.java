@@ -79,11 +79,17 @@ public class SalesInvoiceController {
         String paymentReference = payload.get("paymentReference") != null
                 ? payload.get("paymentReference").toString()
                 : null;
+        String bankAccount = payload.get("bankAccount") != null ? payload.get("bankAccount").toString() : null;
+        String chequeDateStr = payload.get("chequeDate") != null ? payload.get("chequeDate").toString() : null;
         LocalDate paymentDate = null;
         if (payload.get("paymentDate") != null && !payload.get("paymentDate").toString().isBlank()) {
             paymentDate = LocalDate.parse(payload.get("paymentDate").toString());
         }
-        return service.recordPayment(id, amount, paymentMode, paymentReference, paymentDate);
+        LocalDate chequeDate = null;
+        if (chequeDateStr != null && !chequeDateStr.isBlank()) {
+            try { chequeDate = LocalDate.parse(chequeDateStr); } catch (Exception ignored) {}
+        }
+        return service.recordPayment(id, amount, paymentMode, paymentReference, paymentDate, bankAccount, chequeDate);
     }
 
     @GetMapping("/price-history/{itemCode}")

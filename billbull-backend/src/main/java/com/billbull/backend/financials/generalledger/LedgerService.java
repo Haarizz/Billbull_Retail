@@ -36,6 +36,12 @@ public class LedgerService {
         return accountRepo.findAll();
     }
 
+    public List<Account> getBankAccounts() {
+        return accountRepo.findAll().stream()
+                .filter(a -> Boolean.TRUE.equals(a.getCashFlag()) && !"archived".equals(a.getStatus()))
+                .toList();
+    }
+
     public Account saveAccount(Account account) {
         if (account.getId() == null || account.getId().isEmpty()) {
             account.setId(UUID.randomUUID().toString());

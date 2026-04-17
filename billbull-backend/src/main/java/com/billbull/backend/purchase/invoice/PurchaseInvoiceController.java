@@ -88,9 +88,11 @@ public class PurchaseInvoiceController {
     public ResponseEntity<PurchaseInvoiceResponse> recordPayment(
             @PathVariable Long id,
             @RequestParam BigDecimal amount,
-            @RequestParam(defaultValue = "BANK_TRANSFER") String paymentMode) {
+            @RequestParam(defaultValue = "BANK_TRANSFER") String paymentMode,
+            @RequestParam(required = false) String bankAccount,
+            @RequestParam(required = false) String chequeDate) {
         return ResponseEntity.ok(
-                service.getResponse(service.recordPayment(id, amount, paymentMode).getId()));
+                service.getResponse(service.recordPayment(id, amount, paymentMode, bankAccount, chequeDate).getId()));
     }
 
     @GetMapping
