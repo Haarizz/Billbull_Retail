@@ -21,10 +21,12 @@ public class PurchaseInvoiceItem {
 
     private String itemCode;
     private String itemName;
+    private String barcode;
     private String uom;
 
     private Integer qty;
     private Integer focQty;
+    private String focUnit;
 
     private BigDecimal unitCost;
 
@@ -37,6 +39,7 @@ public class PurchaseInvoiceItem {
     private BigDecimal lineTotal;
 
     private String warehouseName;
+    private String remarks;
 
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "invoice_id", nullable = false)
@@ -66,6 +69,14 @@ public class PurchaseInvoiceItem {
 		this.itemName = itemName;
 	}
 
+	public String getBarcode() {
+		return barcode;
+	}
+
+	public void setBarcode(String barcode) {
+		this.barcode = barcode;
+	}
+
 	public String getUom() {
 		return uom;
 	}
@@ -88,6 +99,14 @@ public class PurchaseInvoiceItem {
 
 	public void setFocQty(Integer focQty) {
 		this.focQty = focQty;
+	}
+
+	public String getFocUnit() {
+		return focUnit;
+	}
+
+	public void setFocUnit(String focUnit) {
+		this.focUnit = focUnit;
 	}
 
 	public BigDecimal getUnitCost() {
@@ -144,6 +163,14 @@ public class PurchaseInvoiceItem {
 
 	public void setWarehouseName(String warehouseName) {
 		this.warehouseName = warehouseName;
+	}
+
+	public String getRemarks() {
+		return remarks;
+	}
+
+	public void setRemarks(String remarks) {
+		this.remarks = remarks;
 	}
 
 	public PurchaseInvoice getInvoice() {

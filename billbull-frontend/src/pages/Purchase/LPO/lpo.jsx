@@ -49,6 +49,7 @@ import {
 import { getImageUrl } from "../../../utils/urlUtils";
 import { ItemDescriptionCell, ItemDescriptionHeader } from '../../../components/ItemDescriptionCell';
 import ItemAddOnsModal from '../../../components/ItemAddOnsModal';
+import StockAvailabilityModal from '../../../components/StockAvailabilityModal';
 import toast from 'react-hot-toast';
 
 // Printing Utilities
@@ -901,7 +902,7 @@ const EditorView = ({ initialData, vendors, warehouses, onSave, onSubmit, onPrin
     buyerAssigned: "SYSTEM",
     referenceDocument: "",
     items: [
-      { id: Date.now(), productId: null, code: '', name: '', uom: '', lastPrice: 0, currentCost: 0, qty: 1, unitPrice: 0, disc: 0, foc: 0, focUnit: '', remarks: '', image: null, availableUnits: [], unitConversions: {}, unitPrices: {} }
+      { id: Date.now(), productId: null, code: '', barcode: '', name: '', uom: '', lastPrice: 0, currentCost: 0, qty: 1, unitPrice: 0, disc: 0, foc: 0, focUnit: '', tax: 5, taxAmt: 0, remarks: '', image: null, availableUnits: [], unitConversions: {}, unitPrices: {} }
     ]
   };
 
@@ -911,6 +912,8 @@ const EditorView = ({ initialData, vendors, warehouses, onSave, onSubmit, onPrin
   const [isProductSelectionOpen, setIsProductSelectionOpen] = useState(false);
   const [expandedRows, setExpandedRows] = useState({});
   const [selectedAddonItem, setSelectedAddonItem] = useState(null);
+  const [selectedStockItem, setSelectedStockItem] = useState(null);
+  const [isItemStockModalOpen, setIsItemStockModalOpen] = useState(false);
   const [approvalRemarks, setApprovalRemarks] = useState('');
 
   // ✅ GLOBAL SHORTCUTS
@@ -963,6 +966,7 @@ const EditorView = ({ initialData, vendors, warehouses, onSave, onSubmit, onPrin
             id: i.id || `item-${Date.now()}-${Math.random().toString(36).slice(2)}`,
             productId: i.productId,
             code: i.itemCode,
+            barcode: i.barcode || '',
             name: i.itemName,
             uom: i.uom,
             lastPrice: i.lastPrice || 0,
@@ -970,8 +974,10 @@ const EditorView = ({ initialData, vendors, warehouses, onSave, onSubmit, onPrin
             qty: i.quantity,
             unitPrice: i.unitPrice,
             disc: i.discountPercent || 0,
-            foc: i.foc || 0,
+            foc: i.focQty || i.foc || 0,
             focUnit: i.focUnit || i.uom || 'PCS',
+            tax: typeof i.tax === 'number' ? i.tax : 5,
+            taxAmt: Number(i.taxAmt || 0),
             remarks: i.remarks || '',
             image: i.image || i.imageUrl || null,
             availableUnits: i.availableUnits || [i.uom || 'PCS'],
@@ -1037,6 +1043,7 @@ const EditorView = ({ initialData, vendors, warehouses, onSave, onSubmit, onPrin
       id: Date.now(),
       productId: null,
       code: '',
+      barcode: '',
       name: '',
       uom: '',
       lastPrice: 0,
@@ -1046,6 +1053,8 @@ const EditorView = ({ initialData, vendors, warehouses, onSave, onSubmit, onPrin
       disc: 0,
       foc: 0,
       focUnit: '',
+      tax: 5,
+      taxAmt: 0,
       remarks: '',
       image: null,
       availableUnits: [],
@@ -1072,6 +1081,8 @@ const EditorView = ({ initialData, vendors, warehouses, onSave, onSubmit, onPrin
       disc: product.maxDiscount || 0,
       foc: 0,
       focUnit: defaultUnit,
+      tax: product.taxRate || 5,
+      taxAmt: 0,
       remarks: product.description || '',
       image: product.primaryImage || product.image || product.thumbnailUrl || product.imageUrl || null,
       availableUnits: product.availableUnits || [defaultUnit],
@@ -1091,7 +1102,7 @@ const EditorView = ({ initialData, vendors, warehouses, onSave, onSubmit, onPrin
     const resolvedUnit = item.uom || item.unit || 'PCS';
     return {
       ...item,
-      desc: item.remarks || item.name || item.desc,
+      desc: item.name || item.desc,
       unit: resolvedUnit,
       price: Number(item.unitPrice) || 0,
       disc: Number(item.disc) || 0,
@@ -1099,6 +1110,7 @@ const EditorView = ({ initialData, vendors, warehouses, onSave, onSubmit, onPrin
       focUnit: item.focUnit || resolvedUnit,
       tax: Number(item.tax) || 0,
       cost: Number(item.unitPrice) || 0,
+      remarks: item.remarks || '',
       availableUnits: item.availableUnits || [resolvedUnit]
     };
   };
@@ -1116,12 +1128,15 @@ const EditorView = ({ initialData, vendors, warehouses, onSave, onSubmit, onPrin
         const resolvedUnit = updated.unit || item.uom || item.unit || 'PCS';
         return {
           ...item,
+          barcode: updated.barcode || item.barcode || '',
           unitPrice: resolvedPrice,
           disc: resolvedDiscount,
           foc: resolvedFoc,
           focUnit: updated.focUnit || item.focUnit || resolvedUnit,
           uom: resolvedUnit,
-          tax: Number(updated.tax) || 0
+          tax: Number(updated.tax) || 0,
+          taxAmt: Number(updated.taxAmt) || 0,
+          remarks: updated.remarks || ''
         };
       })
     }));
@@ -1173,7 +1188,8 @@ const EditorView = ({ initialData, vendors, warehouses, onSave, onSubmit, onPrin
       totalTaxable += lineTotal;
       totalQty += qty;
 
-      return { ...item, lineTotal };
+      const taxAmt = lineTotal * ((Number(item.tax) || 5) / 100);
+      return { ...item, tax: Number(item.tax) || 5, taxAmt, lineTotal, total: lineTotal + taxAmt };
     });
 
     const tax = totalTaxable * 0.05;
@@ -1199,8 +1215,9 @@ const EditorView = ({ initialData, vendors, warehouses, onSave, onSubmit, onPrin
       quantity: i.qty,
       unitPrice: i.unitPrice,
       discountPercent: i.disc || 0,
-      remarks: "",
-      foc: Number(i.foc) || 0,
+      lineTotal: Number(i.lineTotal) || 0,
+      barcode: i.barcode || '',
+      remarks: i.remarks || "",
       focQty: Number(i.foc) || 0,
       focUnit: i.focUnit || i.uom || 'PCS',
       availableUnits: i.availableUnits || [],
@@ -1477,6 +1494,8 @@ const EditorView = ({ initialData, vendors, warehouses, onSave, onSubmit, onPrin
                   onChange={handleWarehouseChange}
                   placeholder="Select Warehouse"
                   disabled={isReadOnly}
+                  menuPlacement="auto"
+                  menuZIndexClass="z-[120]"
                   className="w-full"
                 />
               </div>
@@ -1492,6 +1511,8 @@ const EditorView = ({ initialData, vendors, warehouses, onSave, onSubmit, onPrin
                       onChange={handleZoneChange}
                       placeholder="Zone"
                       disabled={isReadOnly}
+                      menuPlacement="auto"
+                      menuZIndexClass="z-[120]"
                       className="w-full"
                     />
                   </div>
@@ -1503,6 +1524,8 @@ const EditorView = ({ initialData, vendors, warehouses, onSave, onSubmit, onPrin
                       onChange={handleLocatorChange}
                       placeholder="Locator"
                       disabled={isReadOnly || !formData.zoneId}
+                      menuPlacement="auto"
+                      menuZIndexClass="z-[120]"
                       className="w-full"
                     />
                   </div>
@@ -1514,6 +1537,8 @@ const EditorView = ({ initialData, vendors, warehouses, onSave, onSubmit, onPrin
                       onChange={handleBinChange}
                       placeholder="Bin"
                       disabled={isReadOnly || !formData.locatorId}
+                      menuPlacement="auto"
+                      menuZIndexClass="z-[120]"
                       className="w-full"
                     />
                   </div>
@@ -1563,8 +1588,8 @@ const EditorView = ({ initialData, vendors, warehouses, onSave, onSubmit, onPrin
           <div className="bg-white border border-slate-200 rounded-lg shadow-sm flex flex-col h-full min-h-[200px]">
             <div className="px-4 py-3 border-b border-slate-100 flex justify-between items-center">
               <div className="flex items-center gap-2">
-                <Package className="h-4 w-4 text-slate-400" />
-                <h3 className="font-semibold text-sm text-slate-700">Item Details</h3>
+                <ShoppingCart className="h-4 w-4 text-yellow-500" />
+                <h3 className="font-semibold text-sm text-slate-700">LPO Items</h3>
               </div>
               <div className="flex items-center gap-2">
                 {!isReadOnly && (
@@ -1573,7 +1598,7 @@ const EditorView = ({ initialData, vendors, warehouses, onSave, onSubmit, onPrin
                       onClick={() => setIsProductSelectionOpen(true)}
                       className="px-3 py-1.5 bg-yellow-400 text-slate-900 text-xs font-medium rounded hover:bg-yellow-500 flex items-center gap-1"
                     >
-                      <Plus className="h-3 w-3" /> Select Product
+                      <Plus className="h-3 w-3" /> Select from Products
                     </button>
                     <button onClick={handleAddItem} className="px-3 py-1.5 border border-slate-200 rounded text-xs font-medium text-slate-600 hover:bg-slate-50 flex items-center gap-1">
                       <Plus className="h-3 w-3" /> Add Row
@@ -1586,6 +1611,7 @@ const EditorView = ({ initialData, vendors, warehouses, onSave, onSubmit, onPrin
               <table className="w-full text-xs text-left min-w-[800px]">
                 <thead className="bg-slate-50 border-b border-slate-100 text-slate-500">
                   <tr>
+                    <th className="p-3 font-medium w-10 text-center text-slate-400">#</th>
                     <th className="p-3 font-medium min-w-[280px]">
                       <ItemDescriptionHeader
                         itemCount={formData.items.length}
@@ -1593,20 +1619,20 @@ const EditorView = ({ initialData, vendors, warehouses, onSave, onSubmit, onPrin
                         onToggleAll={toggleAllDescriptions}
                       />
                     </th>
-                    <th className="p-3 font-medium text-center w-16">UOM</th>
+                    <th className="p-3 font-medium text-center w-16">Unit</th>
                     <th className="p-3 font-medium text-right w-20">Last Price</th>
-                    <th className="p-3 font-medium text-center w-16">Qty</th>
-                    <th className="p-3 font-medium text-center w-20">FOC</th>
+                    <th className="p-3 font-medium text-center w-16">Order Qty</th>
                     <th className="p-3 font-medium text-center w-20">Unit Price</th>
                     <th className="p-3 font-medium text-center w-16">Disc %</th>
-                    <th className="p-3 font-medium text-right">Line Total</th>
+                    <th className="p-3 font-medium text-right">Amount</th>
                     <th className="p-3 font-medium text-center">Actions</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-50">
-                  {calculations.calculatedItems.map((item) => (
+                  {calculations.calculatedItems.map((item, index) => (
                     <React.Fragment key={item.id}>
                       <tr className="group hover:bg-slate-50">
+                        <td className="p-3 text-center text-slate-400 text-xs font-medium">{index + 1}</td>
                         <td className="p-3">
                           <ItemDescriptionCell
                             item={item}
@@ -1615,11 +1641,11 @@ const EditorView = ({ initialData, vendors, warehouses, onSave, onSubmit, onPrin
                             onItemChange={handleItemChange}
                             onFocusCode={() => { }}
                             onOpenProductSelection={!isReadOnly ? () => setIsProductSelectionOpen(true) : undefined}
-                            onCheckStock={() => { }}
+                            onCheckStock={(selectedItem) => { setSelectedStockItem(selectedItem); setIsItemStockModalOpen(true); }}
                             onOpenSettings={() => setSelectedAddonItem(getAddonModalItem(item))}
-                            showSettings={true}
+                            showSettings={Boolean(item.code || item.name || item.remarks || item.barcode)}
                             isReadOnly={isReadOnly}
-                            showTaxDiscount={false}
+                            showTaxDiscount={true}
                           />
                         </td>
                         <td className="p-3 text-center">
@@ -1647,26 +1673,6 @@ const EditorView = ({ initialData, vendors, warehouses, onSave, onSubmit, onPrin
                             disabled={isReadOnly}
                             className={`w-12 text-center border border-slate-200 rounded p-1 text-xs disabled:bg-slate-50 disabled:text-slate-500`}
                           />
-                        </td>
-                        <td className="p-3 text-center align-top">
-                          <div className="flex flex-col gap-1">
-                            <input
-                              disabled={isReadOnly}
-                              type="number"
-                              className="w-full bg-transparent border-b border-transparent hover:border-slate-200 focus:border-yellow-400/50 text-center outline-none font-semibold text-xs text-slate-700 transition-colors py-1 disabled:opacity-50"
-                              value={item.foc === 0 ? '' : (item.foc || '')}
-                              onChange={(e) => handleItemChange(item.id, 'foc', e.target.value)}
-                              placeholder="—"
-                            />
-                            <select
-                              disabled={isReadOnly}
-                              className="w-full bg-transparent outline-none text-center text-[10px] text-slate-500 appearance-none font-medium cursor-pointer opacity-70 hover:opacity-100 transition-opacity disabled:opacity-50"
-                              value={item.focUnit || item.uom || 'PCS'}
-                              onChange={(e) => handleItemChange(item.id, 'focUnit', e.target.value)}
-                            >
-                              {(item.availableUnits || [item.uom || 'PCS']).map(u => <option key={u} value={u}>{u}</option>)}
-                            </select>
-                          </div>
                         </td>
                         <td className="p-3">
                           <div className="relative group/price">
@@ -2104,6 +2110,12 @@ const EditorView = ({ initialData, vendors, warehouses, onSave, onSubmit, onPrin
         item={selectedAddonItem}
         onClose={() => setSelectedAddonItem(null)}
         onSave={handleAddonSave}
+      />
+
+      <StockAvailabilityModal
+        isOpen={isItemStockModalOpen}
+        onClose={() => setIsItemStockModalOpen(false)}
+        selectedStockItem={selectedStockItem}
       />
     </div>
   );
@@ -2880,3 +2892,4 @@ const LPOList = () => {
 };
 
 export default LPOList;
+

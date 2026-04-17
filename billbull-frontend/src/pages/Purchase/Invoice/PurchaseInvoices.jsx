@@ -41,6 +41,7 @@ import VendorSelector from "../../../components/VendorSelector";
 import { getImageUrl } from "../../../utils/urlUtils";
 import { ItemDescriptionCell, ItemDescriptionHeader } from '../../../components/ItemDescriptionCell';
 import ItemAddOnsModal from '../../../components/ItemAddOnsModal'; // BB-026
+import StockAvailabilityModal from '../../../components/StockAvailabilityModal';
 
 // Printing Utilities
 import { getTemplatesByCategory } from '../../../api/printTemplateApi';
@@ -609,6 +610,8 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
   // UI State
   const [isProductSelectorOpen, setIsProductSelectorOpen] = useState(false);
   const [selectedAddonItem, setSelectedAddonItem] = useState(null); // BB-026
+  const [selectedStockItem, setSelectedStockItem] = useState(null);
+  const [isItemStockModalOpen, setIsItemStockModalOpen] = useState(false);
   const isViewMode = mode === "view";
 
   // Expanded rows state
@@ -734,9 +737,13 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
         qty: Number(item.qty),
         cost: Number(item.unitCost),
         tax: Number(item.taxPercent),
+        taxAmt: Number(item.taxAmount || 0),
+        taxAmount: Number(item.taxAmount || 0),
+        disc: Number(item.discountPercent || 0),
         discount: Number(item.discountPercent || 0),
         discountAmount: Number(item.discountAmount || 0),
         foc: Number(item.focQty || 0),
+        focUnit: item.focUnit || item.uom || 'PCS',
         lineTotal: Number(item.lineTotal),
         remarks: item.remarks || ""
       }));
@@ -909,9 +916,14 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
             uom: item.uom,
             qty: item.quantity,
             cost: item.unitPrice,
-            tax: 0,
+            tax: 5,
+            taxAmt: Number(item.taxAmount || 0),
+            taxAmount: Number(item.taxAmount || 0),
+            disc: item.discountPercent || 0,
             discount: item.discountPercent || 0,
-            foc: item.focQty || 0
+            foc: item.focQty || 0,
+            focUnit: item.focUnit || item.uom || 'PCS',
+            remarks: item.remarks || ""
           }))
         }));
 
@@ -1003,11 +1015,15 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
           qty: qty,
           cost: cost,
           // 🔒 BACKEND-TRUTH FIELDS
-          tax: 0, // Visual % (optional)
+          tax: finalTax > 0 ? 5 : 0,
+          taxAmt: itemTaxAmt,
           taxAmount: itemTaxAmt,     // ✅ Distributed Tax
           lineTotal: lineGross + itemTaxAmt,
+          disc: 0,
           discount: 0,
-          foc: 0
+          foc: Number(item.focQty || 0),
+          focUnit: item.focUnit || item.uom || 'PCS',
+          remarks: item.remarks || ""
         };
       });
 
@@ -1075,6 +1091,9 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
       qty: 1,
       cost: product.cost || 0,
       tax: product.taxRate || 5, // Default tax
+      taxAmt: 0,
+      taxAmount: 0,
+      disc: 0,
       discount: 0,
       foc: 0,
       focUnit: defaultUnit,
@@ -1172,7 +1191,7 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
       return {
         gross: item.qty * item.cost,
         discAmt: 0,
-        taxAmt: item.taxAmount ?? 0,
+        taxAmt: item.taxAmount ?? item.taxAmt ?? 0,
         total: item.lineTotal ?? (item.qty * item.cost),
         net: item.qty * item.cost
       };
@@ -1182,7 +1201,7 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
     const qty = Number(item.qty) || 0;
     const cost = Number(item.cost) || 0;
     const focQty = Number(item.foc) || 0;
-    const discPercent = Number(item.discount) || 0;
+    const discPercent = Number(item.discount ?? item.disc) || 0;
     const taxPercent = Number(item.tax) || 0;
 
     const gross = cost * qty;
@@ -1321,20 +1340,23 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
     // Mapped Items
     items: formData.items.map(i => ({
       itemCode: i.code,
+      barcode: i.barcode || '',
       itemName: i.name,
       uom: i.uom,
       qty: i.qty,
       focQty: i.foc,
+      focUnit: i.focUnit || i.uom || 'PCS',
       unitCost: i.cost,
 
-      discountPercent: invoiceType === SOURCE.GRN ? 0 : i.discount,
+      discountPercent: invoiceType === SOURCE.GRN ? 0 : Number(i.discount ?? i.disc ?? 0),
       discountAmount: invoiceType === SOURCE.GRN ? 0 : calculateRow(i).discAmt,
 
       taxPercent: invoiceType === SOURCE.GRN ? 0 : i.tax,
-      taxAmount: invoiceType === SOURCE.GRN ? i.taxAmount : calculateRow(i).taxAmt,
+      taxAmount: invoiceType === SOURCE.GRN ? Number(i.taxAmount ?? i.taxAmt ?? 0) : calculateRow(i).taxAmt,
 
       lineTotal: invoiceType === SOURCE.GRN ? i.lineTotal : calculateRow(i).total,
-      warehouseName: formData.warehouse
+      warehouseName: formData.warehouse,
+      remarks: i.remarks || ''
     })),
 
     // Mapped Costs - Empty array for GRN
@@ -1603,6 +1625,8 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
                     }}
                     placeholder="Select Warehouse..."
                     disabled={isFormLocked}
+                    menuPlacement="auto"
+                    menuZIndexClass="z-[120]"
                     className="w-full"
                   />
                 </div>
@@ -1621,6 +1645,8 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
                       }}
                       placeholder="Select Zone..."
                       disabled={isInvoiceLocked}
+                      menuPlacement="auto"
+                      menuZIndexClass="z-[120]"
                       className="w-full"
                     />
                   </div>
@@ -1640,6 +1666,8 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
                       }}
                       placeholder="Select Locator..."
                       disabled={isInvoiceLocked}
+                      menuPlacement="auto"
+                      menuZIndexClass="z-[120]"
                       className="w-full"
                     />
                   </div>
@@ -1655,6 +1683,8 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
                       onChange={(bId) => setFormData({ ...formData, binId: bId })}
                       placeholder="Select Bin..."
                       disabled={isInvoiceLocked}
+                      menuPlacement="auto"
+                      menuZIndexClass="z-[120]"
                       className="w-full"
                     />
                   </div>
@@ -1670,15 +1700,15 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
             {/* Table Toolbar */}
             <div className="px-4 py-3 border-b border-slate-100 flex flex-col sm:flex-row sm:justify-between items-start sm:items-center bg-slate-50/50 gap-3">
               <div className="flex items-center gap-2">
-                <LayoutDashboard className="h-4 w-4 text-slate-400" />
-                <h3 className="font-semibold text-sm text-slate-700">Invoice Items <span className="bg-slate-100 text-slate-600 text-[10px] px-1.5 py-0.5 rounded-full ml-1 border border-slate-200">{formData.items.length} items</span></h3>
+                <LayoutDashboard className="h-4 w-4 text-yellow-500" />
+                <h3 className="font-semibold text-sm text-slate-700">Purchase Invoice Items <span className="bg-slate-100 text-slate-600 text-[10px] px-1.5 py-0.5 rounded-full ml-1 border border-slate-200">{formData.items.length} items</span></h3>
               </div>
               <div className="flex flex-wrap gap-2 w-full sm:w-auto">
                 <button
                   onClick={handleAddItem}
                   disabled={isFormLocked}
                   className={`flex-1 sm:flex-none px-3 py-1.5 bg-yellow-400 text-slate-900 rounded text-xs font-bold hover:bg-yellow-500 flex items-center justify-center gap-1 shadow-sm ${isFormLocked ? 'opacity-50 cursor-not-allowed' : ''}`}>
-                  <Plus className="h-3 w-3" /> Select Products
+                  <Plus className="h-3 w-3" /> Select from Products
                 </button>
                 <button
                   onClick={() => setIsProductSelectorOpen(true)}
@@ -1693,6 +1723,7 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
               <table className="w-full text-xs text-left min-w-[800px]">
                 <thead className="bg-slate-50 border-b border-slate-100 text-slate-500">
                   <tr>
+                    <th className="p-3 font-medium w-10 text-center text-slate-400">#</th>
                     <th className="p-3 font-medium min-w-[280px]">
                       <ItemDescriptionHeader
                         itemCount={formData.items.length}
@@ -1700,37 +1731,49 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
                         onToggleAll={toggleAllDescriptions}
                       />
                     </th>
-                    <th className="p-3 font-medium text-center w-16">UOM</th>
+                    <th className="p-3 font-medium text-center w-16">Unit</th>
                     <th className="p-3 font-medium text-center w-16">Qty</th>
-                    <th className="p-3 font-medium text-center w-16">FOC</th>
                     <th className="p-3 font-medium text-right">Unit Cost</th>
                     <th className="p-3 font-medium text-center w-10">Disc %</th>
                     <th className="p-3 font-medium text-right text-green-600">Disc Amt</th>
                     <th className="p-3 font-medium text-center w-10">Tax %</th>
                     <th className="p-3 font-medium text-right">Tax Amt</th>
-                    <th className="p-3 font-medium text-right">Line Total</th>
+                    <th className="p-3 font-medium text-right">Amount</th>
                     <th className="p-3 font-medium text-center">Actions</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-50">
-                  {formData.items.map((item) => {
+                  {formData.items.map((item, index) => {
                     const calc = calculateRow(item);
                     return (
                       <React.Fragment key={item.id}>
                         <tr className="hover:bg-slate-50 group">
+                          <td className="p-3 text-center text-slate-400 text-xs font-medium">{index + 1}</td>
                           <td className="p-3">
                             <ItemDescriptionCell
-                              item={item}
+                              item={{
+                                ...item,
+                                disc: Number(item.disc ?? item.discount ?? 0),
+                                taxAmt: Number(item.taxAmt ?? item.taxAmount ?? 0)
+                              }}
                               isExpanded={expandedRows[item.id]}
                               onToggleExpand={toggleRowDescription}
                               onItemChange={(id, field, val) => setFormData(prev => ({ ...prev, items: prev.items.map(i => i.id === id ? { ...i, [field]: val } : i) }))}
                               onFocusCode={() => { }}
                               onOpenProductSelection={!isFormLocked ? () => setIsProductSelectorOpen(true) : undefined}
-                              onCheckStock={() => { }}
-                              onOpenSettings={() => setSelectedAddonItem({ ...item, price: item.cost, disc: item.discount ?? 0, unit: item.uom || item.unit, desc: item.name || item.desc })}
-                              showSettings={true}
+                              onCheckStock={(selectedItem) => { setSelectedStockItem(selectedItem); setIsItemStockModalOpen(true); }}
+                              onOpenSettings={() => setSelectedAddonItem({
+                                ...item,
+                                price: item.cost,
+                                disc: Number(item.disc ?? item.discount ?? 0),
+                                taxAmt: Number(item.taxAmt ?? item.taxAmount ?? 0),
+                                unit: item.uom || item.unit,
+                                desc: item.name || item.desc,
+                                remarks: item.remarks || ''
+                              })}
+                              showSettings={Boolean(item.code || item.name || item.remarks || item.barcode)}
                               isReadOnly={isFormLocked}
-                              showTaxDiscount={false}
+                              showTaxDiscount={true}
                             />
                           </td>
                           {/* UOM Dropdown */}
@@ -1756,27 +1799,6 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
                               className={`w-12 text-center border border-slate-200 rounded bg-white ${isFormLocked ? 'bg-slate-50' : ''}`}
                             />
                           </td>
-                          {/* FOC with unit dropdown */}
-                          <td className="p-3 text-center align-top">
-                            <div className="flex flex-col gap-1">
-                              <input
-                                disabled={isFormLocked}
-                                type="number"
-                                className="w-full bg-transparent border-b border-transparent hover:border-slate-200 focus:border-yellow-400/50 text-center outline-none font-semibold text-xs text-slate-700 transition-colors py-1 disabled:opacity-50"
-                                value={item.foc === 0 ? '' : item.foc || ''}
-                                onChange={(e) => handleInputChange(item.id, 'foc', e.target.value)}
-                                placeholder="—"
-                              />
-                              <select
-                                disabled={isFormLocked}
-                                className="w-full bg-transparent outline-none text-center text-[10px] text-slate-500 appearance-none font-medium cursor-pointer disabled:opacity-50"
-                                value={item.focUnit || item.uom || 'PCS'}
-                                onChange={(e) => handleInputChange(item.id, 'focUnit', e.target.value)}
-                              >
-                                {(item.availableUnits || [item.uom || 'PCS']).map(u => <option key={u} value={u}>{u}</option>)}
-                              </select>
-                            </div>
-                          </td>
                           <td className="p-3 text-right">
                             <input
                               type="number"
@@ -1789,7 +1811,7 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
                               className={`w-16 text-right border border-slate-200 rounded bg-white ${isFormLocked ? 'bg-slate-50' : ''}`}
                             />
                           </td>
-                          <td className="p-3 text-center">{item.discount}</td>
+                          <td className="p-3 text-center">{Number(item.disc ?? item.discount ?? 0)}</td>
                           <td className="p-3 text-right text-green-600">{calc.discAmt.toFixed(2)}</td>
                           <td className="p-3 text-center">{item.tax}</td>
                           <td className="p-3 text-right">{calc.taxAmt.toFixed(2)}</td>
@@ -1807,7 +1829,7 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
                         {/* Expanded Description Row */}
                         {expandedRows[item.id] && (
                           <tr className="bg-white">
-                            <td colSpan={10} className="px-0 pb-4 pt-1">
+                            <td colSpan={11} className="px-0 pb-4 pt-1">
                               <div className="ml-0 mr-4 p-3 rounded-r-[10px] border-l-[3px] border-[#FFD700] bg-[#FFFDE7]/60 shadow-[inset_0_1px_4px_rgba(0,0,0,0.02)]">
                                 <div className="flex justify-between items-center mb-1.5">
                                   <div className="flex items-center gap-1.5 text-[9px] font-bold text-[#B8860B] tracking-widest uppercase">
@@ -2074,9 +2096,33 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
         item={selectedAddonItem}
         onClose={() => setSelectedAddonItem(null)}
         onSave={(updated) => {
-          setFormData(prev => ({ ...prev, items: prev.items.map(i => i.id === updated.id ? { ...updated, barcode: i.barcode || updated.barcode || "", cost: updated.price, discount: updated.disc } : i) }));
+          setFormData(prev => ({
+            ...prev,
+            items: prev.items.map(i => {
+              if (i.id !== updated.id) return i;
+              return {
+                ...i,
+                barcode: updated.barcode || i.barcode || "",
+                cost: Number(updated.price) || 0,
+                disc: Number(updated.disc) || 0,
+                discount: Number(updated.disc) || 0,
+                tax: Number(updated.tax) || 0,
+                taxAmt: Number(updated.taxAmt) || 0,
+                taxAmount: Number(updated.taxAmt) || 0,
+                foc: Number(updated.foc) || 0,
+                focUnit: updated.focUnit || i.focUnit || i.uom || 'PCS',
+                uom: updated.unit || i.uom,
+                remarks: updated.remarks || ''
+              };
+            })
+          }));
           setSelectedAddonItem(null);
         }}
+      />
+      <StockAvailabilityModal
+        isOpen={isItemStockModalOpen}
+        onClose={() => setIsItemStockModalOpen(false)}
+        selectedStockItem={selectedStockItem}
       />
     </div>
   );
@@ -2733,3 +2779,5 @@ const PurchaseInvoices = () => {
 };
 
 export default PurchaseInvoices;
+
+

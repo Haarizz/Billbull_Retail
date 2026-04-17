@@ -7,6 +7,7 @@ public class LpoItemResponse {
     private Long productId;
     private String itemCode;
     private String itemName;
+    private String barcode;
     private String uom;
     private Integer quantity;
     private BigDecimal unitPrice;
@@ -14,12 +15,15 @@ public class LpoItemResponse {
     private BigDecimal lineTotal;
     private Integer receivedQuantity;
     private Integer focQty;
+    private String focUnit;
+    private String remarks;
     private String image;
 
     public LpoItemResponse(LpoItem item) {
         this.productId = item.getProduct().getId();
         this.itemCode = item.getItemCode();
         this.itemName = item.getItemName();
+        this.barcode = item.getBarcode();
         this.uom = item.getUom();
         this.quantity = item.getQuantity();
         this.unitPrice = item.getUnitPrice();
@@ -27,6 +31,8 @@ public class LpoItemResponse {
         this.lineTotal = item.getLineTotal();
         this.receivedQuantity = 0; // Default to 0, will be populated by service
         this.focQty = item.getFocQty();
+        this.focUnit = item.getFocUnit();
+        this.remarks = item.getRemarks();
         this.image = null; // Will be populated in service if needed, or by constructor if we change the
                            // signature
     }
@@ -41,6 +47,14 @@ public class LpoItemResponse {
 
     public String getItemName() {
         return itemName;
+    }
+
+    public String getBarcode() {
+        return barcode;
+    }
+
+    public void setBarcode(String barcode) {
+        this.barcode = barcode;
     }
 
     public String getUom() {
@@ -73,6 +87,14 @@ public class LpoItemResponse {
 
     public Integer getFocQty() {
         return focQty;
+    }
+
+    public String getFocUnit() {
+        return focUnit;
+    }
+
+    public String getRemarks() {
+        return remarks;
     }
 
     public String getImage() {

@@ -10,6 +10,7 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.cache.annotation.CacheEvict;
 
 import com.billbull.backend.inventory.product.Product;
+import com.billbull.backend.inventory.product.ProductBarcodeRepository;
 import com.billbull.backend.inventory.product.ProductRepository;
 import com.billbull.backend.inventory.warehouse.Warehouse;
 import com.billbull.backend.inventory.warehouse.WarehouseRepository;
@@ -40,6 +41,7 @@ public class GrnService {
     private final com.billbull.backend.purchase.invoice.PurchaseInvoiceRepository invoiceRepo;
     private final com.billbull.backend.financials.generalledger.postingengine.PostingEngineService postingEngineService;
     private final ProductMediaRepository productMediaRepo;
+    private final ProductBarcodeRepository productBarcodeRepo;
 
     public GrnService(
             StockMovementService stockMovementService,
@@ -52,7 +54,8 @@ public class GrnService {
             LocatorRepository locatorRepo,
             com.billbull.backend.purchase.invoice.PurchaseInvoiceRepository invoiceRepo,
             com.billbull.backend.financials.generalledger.postingengine.PostingEngineService postingEngineService,
-            ProductMediaRepository productMediaRepo) {
+            ProductMediaRepository productMediaRepo,
+            ProductBarcodeRepository productBarcodeRepo) {
         this.stockMovementService = stockMovementService;
         this.grnRepo = grnRepo;
         this.warehouseRepo = warehouseRepo;
@@ -65,6 +68,7 @@ public class GrnService {
         this.invoiceRepo = invoiceRepo;
         this.postingEngineService = postingEngineService;
         this.productMediaRepo = productMediaRepo;
+        this.productBarcodeRepo = productBarcodeRepo;
     }
 
     /* ================= CREATE / UPDATE ================= */
@@ -187,6 +191,7 @@ public class GrnService {
 
             item.setProductCode(i.code());
             item.setProductName(i.name());
+            item.setBarcode(i.barcode());
             item.setUom(i.uom());
 
             item.setLpoQty(i.lpoQty());
@@ -199,6 +204,8 @@ public class GrnService {
             item.setLineTotal(i.total());
             item.setBatchManaged(i.batch());
             item.setFocQty(i.focQty());
+            item.setFocUnit(i.focUnit());
+            item.setRemarks(i.remarks());
 
             subtotal = subtotal.add(i.total());
             grn.getItems().add(item);
@@ -418,6 +425,13 @@ public class GrnService {
                         i.getProduct().getId(),
                         i.getProductCode(),
                         i.getProductName(),
+                        i.getBarcode() != null && !i.getBarcode().isBlank()
+                                ? i.getBarcode()
+                                : productBarcodeRepo.findByProductId(i.getProduct().getId()).stream()
+                                        .map(b -> b.getBarcode())
+                                        .filter(b -> b != null && !b.isBlank())
+                                        .findFirst()
+                                        .orElse(null),
                         imageMap.get(i.getProduct().getId()),
                         i.getUom(),
                         i.getLpoQty(),
@@ -428,7 +442,9 @@ public class GrnService {
                         i.getNetCost(),
                         i.getLineTotal(),
                         i.isBatchManaged(),
-                        i.getFocQty())).toList());
+                        i.getFocQty(),
+                        i.getFocUnit(),
+                        i.getRemarks())).toList());
     }
 
     private String generateGrnNo() {
