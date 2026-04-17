@@ -43,7 +43,7 @@ export const PermissionProvider = ({ children }) => {
                 // Merge: ALLOW wins (union across all roles)
                 const merged = {};
                 allRolePerms.flat().forEach((rp) => {
-                    const mod = rp.module;
+                    const mod = rp.module?.toLowerCase();
                     if (!merged[mod]) {
                         merged[mod] = {
                             canView: false,
@@ -63,6 +63,7 @@ export const PermissionProvider = ({ children }) => {
                 setGranularPermissions(merged);
 
                 // Enable featureToggles only for modules where canView is true
+                // Keys in merged are already lowercased
                 const toggles = {};
                 Object.keys(merged).forEach((mod) => {
                     toggles[mod] = merged[mod].canView;
