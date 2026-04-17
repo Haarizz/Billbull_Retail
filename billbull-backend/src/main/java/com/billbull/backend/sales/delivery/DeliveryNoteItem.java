@@ -1,4 +1,4 @@
-﻿package com.billbull.backend.sales.delivery;
+package com.billbull.backend.sales.delivery;
 
 import com.billbull.backend.inventory.product.Product;
 

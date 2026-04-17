@@ -1,17 +1,20 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
-import { getRoles } from '../api/auth';
+import { getRoles, isAuthenticated } from '../api/auth';
+import { rolePermissionsApi } from '../api/rolePermissionsApi';
 
 /**
  * Permission Context for RBAC throughout the application.
- * Provides permission checking functionality to all components.
+ *
+ * Permissions are loaded from the backend (role_permissions table) on mount.
+ * Default = DENY: if no permission row exists for a role+module, access is false.
+ * Merge rule = ALLOW wins (union): if any of the user's roles grants access, access is granted.
  */
 const PermissionContext = createContext(null);
 
 export const PermissionProvider = ({ children }) => {
     const [userRoles, setUserRoles] = useState([]);
-    const [permissions, setPermissions] = useState(new Set());
-
-    // Feature toggle states (read from backend or config)
+    const [granularPermissions, setGranularPermissions] = useState({});
+    const [permissionsLoaded, setPermissionsLoaded] = useState(false);
     const [featureToggles, setFeatureToggles] = useState({
         userManagement: false,
         hr: false,
@@ -25,109 +28,132 @@ export const PermissionProvider = ({ children }) => {
     });
 
     useEffect(() => {
-        // Load user roles from JWT
         const roles = getRoles();
         setUserRoles(roles);
 
-        // Calculate permissions based on roles
-        const perms = new Set();
+        if (!isAuthenticated() || roles.length === 0) return;
 
-        if (roles.includes('ADMIN')) {
-            // ADMIN has all permissions
-            perms.add('ALL');
-        }
+        const fetchPermissions = async () => {
+            try {
+                // Fetch granular permissions for ALL roles the user has (including ADMIN)
+                const allRolePerms = await Promise.all(
+                    roles.map((roleName) => rolePermissionsApi.getByRole(roleName))
+                );
 
-        if (roles.includes('SALES')) {
-            perms.add('SALES_READ');
-            perms.add('SALES_WRITE');
-            perms.add('CUSTOMER_READ');
-            perms.add('CUSTOMER_WRITE');
-            perms.add('PRODUCT_READ');
-            perms.add('BARCODE_PRINT');
-        }
+                // Merge: ALLOW wins (union across all roles)
+                const merged = {};
+                allRolePerms.flat().forEach((rp) => {
+                    const mod = rp.module;
+                    if (!merged[mod]) {
+                        merged[mod] = {
+                            canView: false,
+                            canCreate: false,
+                            canEdit: false,
+                            canApprove: false,
+                            canExport: false,
+                        };
+                    }
+                    merged[mod].canView    = merged[mod].canView    || rp.canView;
+                    merged[mod].canCreate  = merged[mod].canCreate  || rp.canCreate;
+                    merged[mod].canEdit    = merged[mod].canEdit    || rp.canEdit;
+                    merged[mod].canApprove = merged[mod].canApprove || rp.canApprove;
+                    merged[mod].canExport  = merged[mod].canExport  || rp.canExport;
+                });
 
-        if (roles.includes('INVENTORY_MANAGER')) {
-            perms.add('INVENTORY_READ');
-            perms.add('INVENTORY_WRITE');
-            perms.add('PURCHASE_READ');
-            perms.add('PURCHASE_WRITE');
-            perms.add('STOCK_TRANSFER');
-        }
+                setGranularPermissions(merged);
 
-        if (roles.includes('ACCOUNTANT')) {
-            perms.add('FINANCE_READ');
-            perms.add('FINANCE_WRITE');
-            perms.add('PURCHASE_PAYMENT');
-            perms.add('SALES_PAYMENT');
-            perms.add('VENDOR_LEDGER_VIEW');
-            perms.add('SALARY_SUMMARY_VIEW');
-        }
+                // Enable featureToggles only for modules where canView is true
+                const toggles = {};
+                Object.keys(merged).forEach((mod) => {
+                    toggles[mod] = merged[mod].canView;
+                });
+                setFeatureToggles((prev) => ({ ...prev, ...toggles }));
+                setPermissionsLoaded(true);
 
-        if (roles.includes('HR')) {
-            perms.add('EMPLOYEE_READ');
-            perms.add('EMPLOYEE_WRITE');
-            perms.add('SALARY_READ');
-            perms.add('SALARY_WRITE');
-        }
+            } catch (e) {
+                console.warn('Could not load role permissions from API:', e);
+                // Do NOT set permissionsLoaded = true on error.
+                // Sidebar will keep using the role-based fallback so users
+                // are never locked out due to a transient API failure.
+            }
+        };
 
-        setPermissions(perms);
+        fetchPermissions();
     }, []);
 
     /**
-     * Check if user has a specific permission.
+     * Check if user can VIEW a module.
+     * Default = false (DENY) if no permission row exists.
      */
-    const hasPermission = (permission) => {
-        if (permissions.has('ALL')) return true;
-        return permissions.has(permission);
-    };
+    const canView = (module) =>
+        granularPermissions[module?.toLowerCase()]?.canView ?? false;
+
+    /**
+     * Check if user can CREATE in a module.
+     */
+    const canCreate = (module) =>
+        granularPermissions[module?.toLowerCase()]?.canCreate ?? false;
+
+    /**
+     * Check if user can EDIT in a module.
+     */
+    const canEdit = (module) =>
+        granularPermissions[module?.toLowerCase()]?.canEdit ?? false;
+
+    /**
+     * Check if user can DELETE in a module (maps to canEdit in the permission model).
+     */
+    const canDelete = (module) =>
+        granularPermissions[module?.toLowerCase()]?.canEdit ?? false;
+
+    /**
+     * Check if user can APPROVE in a module.
+     */
+    const canApprove = (module) =>
+        granularPermissions[module?.toLowerCase()]?.canApprove ?? false;
+
+    /**
+     * Check if user can EXPORT from a module.
+     */
+    const canExport = (module) =>
+        granularPermissions[module?.toLowerCase()]?.canExport ?? false;
 
     /**
      * Check if user has any of the specified roles.
      */
-    const hasAnyRole = (...roles) => {
-        return roles.some(role => userRoles.includes(role));
-    };
+    const hasAnyRole = (...roles) =>
+        roles.some((role) => userRoles.includes(role));
 
     /**
-     * Check if RBAC is enabled for a specific module.
+     * Legacy permission check for code using string-based permission names.
+     * Falls back to role-based check if no granular data available.
      */
-    const isModuleRBACEnabled = (module) => {
-        return featureToggles[module] || false;
-    };
-
-    /**
-     * Generic permission checks for CRUD operations.
-     */
-    const canView = (module) => {
-        if (!isModuleRBACEnabled(module)) return true;
-        return hasPermission(`${module.toUpperCase()}_READ`) || hasPermission('ALL');
-    };
-
-    const canCreate = (module) => {
-        if (!isModuleRBACEnabled(module)) return true;
-        return hasPermission(`${module.toUpperCase()}_WRITE`) || hasPermission('ALL');
-    };
-
-    const canEdit = (module) => {
-        if (!isModuleRBACEnabled(module)) return true;
-        return hasPermission(`${module.toUpperCase()}_WRITE`) || hasPermission('ALL');
-    };
-
-    const canDelete = (module) => {
-        if (!isModuleRBACEnabled(module)) return true;
-        return hasPermission(`${module.toUpperCase()}_WRITE`) || hasPermission('ALL');
+    const hasPermission = (permission) => {
+        if (!permission) return false;
+        // Legacy: check if any module grants the derived action
+        const [modulePart] = permission.split('_');
+        const mod = modulePart?.toLowerCase();
+        if (granularPermissions[mod]) {
+            const lower = permission.toLowerCase();
+            if (lower.includes('_write') || lower.includes('_create')) return canCreate(mod);
+            if (lower.includes('_read'))  return canView(mod);
+        }
+        return false;
     };
 
     const value = {
         userRoles,
-        permissions,
+        granularPermissions,
+        featureToggles,
+        permissionsLoaded,
         hasPermission,
         hasAnyRole,
-        isModuleRBACEnabled,
         canView,
         canCreate,
         canEdit,
         canDelete,
+        canApprove,
+        canExport,
     };
 
     return (

@@ -1,0 +1,87 @@
+package com.billbull.backend.security;
+
+import com.billbull.backend.role.Role;
+import com.billbull.backend.role.RoleRepository;
+import org.springframework.boot.ApplicationArguments;
+import org.springframework.boot.ApplicationRunner;
+import org.springframework.core.annotation.Order;
+import org.springframework.stereotype.Component;
+
+/**
+ * Seeds default role_permissions rows on startup.
+ * Idempotent: skips rows that already exist.
+ * @Order(2) ensures this runs after RBACInitializer which seeds roles and the admin user.
+ */
+@Component
+@Order(2)
+public class RolePermissionInitializer implements ApplicationRunner {
+
+    private final RolePermissionRepository rolePermissionRepository;
+    private final RoleRepository roleRepository;
+
+    public RolePermissionInitializer(
+            RolePermissionRepository rolePermissionRepository,
+            RoleRepository roleRepository) {
+        this.rolePermissionRepository = rolePermissionRepository;
+        this.roleRepository = roleRepository;
+    }
+
+    @Override
+    public void run(ApplicationArguments args) {
+        // ADMIN: full access to all modules
+        roleRepository.findByName("ADMIN").ifPresent(role -> {
+            String[] allModules = {"sales", "inventory", "purchases", "finance",
+                                   "hr", "customer", "dashboard", "userManagement"};
+            for (String module : allModules) {
+                seedIfAbsent(role, module, true, true, true, true, true);
+            }
+        });
+
+        // SALES: sales operations, customer, read-only inventory, dashboard
+        roleRepository.findByName("SALES").ifPresent(role -> {
+            seedIfAbsent(role, "sales",      true,  true,  true,  false, true);
+            seedIfAbsent(role, "customer",   true,  true,  true,  false, false);
+            seedIfAbsent(role, "inventory",  true,  false, false, false, false);
+            seedIfAbsent(role, "dashboard",  true,  false, false, false, false);
+        });
+
+        // INVENTORY_MANAGER: full inventory + purchases, dashboard
+        roleRepository.findByName("INVENTORY_MANAGER").ifPresent(role -> {
+            seedIfAbsent(role, "inventory",  true,  true,  true,  false, true);
+            seedIfAbsent(role, "purchases",  true,  true,  true,  false, true);
+            seedIfAbsent(role, "dashboard",  true,  false, false, false, false);
+        });
+
+        // ACCOUNTANT: full finance, read/export purchases+sales, dashboard
+        roleRepository.findByName("ACCOUNTANT").ifPresent(role -> {
+            seedIfAbsent(role, "finance",    true,  true,  true,  true,  true);
+            seedIfAbsent(role, "purchases",  true,  false, false, false, true);
+            seedIfAbsent(role, "sales",      true,  false, false, false, true);
+            seedIfAbsent(role, "dashboard",  true,  false, false, false, false);
+        });
+
+        // HR: employee management, dashboard
+        roleRepository.findByName("HR").ifPresent(role -> {
+            seedIfAbsent(role, "hr",         true,  true,  true,  false, true);
+            seedIfAbsent(role, "dashboard",  true,  false, false, false, false);
+        });
+    }
+
+    private void seedIfAbsent(
+            Role role, String module,
+            boolean view, boolean create, boolean edit,
+            boolean approve, boolean export) {
+
+        if (!rolePermissionRepository.existsByRoleAndModule(role, module)) {
+            RolePermission rp = new RolePermission();
+            rp.setRole(role);
+            rp.setModule(module);
+            rp.setCanView(view);
+            rp.setCanCreate(create);
+            rp.setCanEdit(edit);
+            rp.setCanApprove(approve);
+            rp.setCanExport(export);
+            rolePermissionRepository.save(rp);
+        }
+    }
+}

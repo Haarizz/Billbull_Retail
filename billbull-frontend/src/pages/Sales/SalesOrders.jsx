@@ -58,6 +58,9 @@ import StockAvailabilityModal from '../../components/StockAvailabilityModal';
 // ✅ SHORTCUTS HOOK
 import useShortcuts from '../../hooks/useShortcuts';
 
+// ✅ PERMISSIONS
+import { usePermissions } from '../../context/PermissionContext';
+
 // ✅ MOBILE CARD COMPONENT
 const MobileCard = ({ order, onClick, getStatusBadge }) => (
   <div onClick={() => onClick(order)} className="bg-white p-4 rounded-lg shadow-sm border border-slate-200 mb-3 active:scale-[0.98] transition-transform">
@@ -118,6 +121,7 @@ const MobileFloatingActions = ({ status, onConfirm, onMarkInvoiced, onSave, onPr
 
 const SalesOrders = () => {
   const { company } = useCompany();
+  const { canCreate, canEdit, canApprove, canExport } = usePermissions();
   const [activeTab, setActiveTab] = useState('list');
 
   // ✅ FIX 1: ADD ORDER ID STATE
@@ -828,17 +832,20 @@ const SalesOrders = () => {
           <h1 className="text-2xl font-bold text-slate-800 flex items-center gap-2"><FileText className="text-[#F5C742]" size={28} /> Sales Orders</h1>
           <p className="text-xs text-slate-500">Approved quotations & proforma invoices converted into sales orders.</p>
         </div>
-        <div className="flex flex-wrap gap-2">
-          {['Email', 'WhatsApp', 'SMS', 'Print'].map((label) => (
-            <button key={label} onClick={label === 'Print' ? handlePrintClick : undefined} disabled={label === 'Print' && isPrinting} className="flex items-center gap-1 px-3 py-1.5 bg-white border border-slate-200 rounded text-xs font-medium text-slate-600 hover:bg-slate-50 shadow-sm disabled:opacity-50">
-              {label === 'Email' && <Mail size={14} />}
-              {label === 'WhatsApp' && <MessageCircle size={14} />}
-              {label === 'SMS' && <Smartphone size={14} />}
-              {label === 'Print' && <Printer size={14} />}
-              {label === 'Print' && isPrinting ? 'Printing...' : label}
-            </button>
-          ))}
-        </div>
+        {/* ── VERTICAL: canExport('sales') for Print/Email/WhatsApp/SMS ── */}
+        {canExport('sales') && (
+          <div className="flex flex-wrap gap-2">
+            {['Email', 'WhatsApp', 'SMS', 'Print'].map((label) => (
+              <button key={label} onClick={label === 'Print' ? handlePrintClick : undefined} disabled={label === 'Print' && isPrinting} className="flex items-center gap-1 px-3 py-1.5 bg-white border border-slate-200 rounded text-xs font-medium text-slate-600 hover:bg-slate-50 shadow-sm disabled:opacity-50">
+                {label === 'Email' && <Mail size={14} />}
+                {label === 'WhatsApp' && <MessageCircle size={14} />}
+                {label === 'SMS' && <Smartphone size={14} />}
+                {label === 'Print' && <Printer size={14} />}
+                {label === 'Print' && isPrinting ? 'Printing...' : label}
+              </button>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* TABS */}
@@ -849,12 +856,15 @@ const SalesOrders = () => {
         >
           Sales Order List
         </button>
-        <button
-          onClick={handleCreateNew}
-          className={`px-4 py-1.5 text-xs font-bold rounded-md transition-colors ${activeTab === 'create' ? 'bg-white shadow-sm border border-slate-200 text-slate-900' : 'text-slate-500 hover:text-slate-700'}`}
-        >
-          Create New Sales Order
-        </button>
+        {/* ── VERTICAL: canCreate('sales') ── */}
+        {canCreate('sales') && (
+          <button
+            onClick={handleCreateNew}
+            className={`px-4 py-1.5 text-xs font-bold rounded-md transition-colors ${activeTab === 'create' ? 'bg-white shadow-sm border border-slate-200 text-slate-900' : 'text-slate-500 hover:text-slate-700'}`}
+          >
+            Create New Sales Order
+          </button>
+        )}
       </div>
 
       {/* ======================= VIEW: LIST ======================= */}
@@ -873,9 +883,12 @@ const SalesOrders = () => {
                   <option>Confirmed</option>
                   <option>Partially Paid</option>
                 </select>
-                <button onClick={handleCreateNew} className="flex items-center justify-center gap-1 px-3 py-1.5 bg-yellow-400 text-slate-900 text-xs font-bold rounded hover:bg-yellow-500 whitespace-nowrap flex-1 md:flex-none">
-                  <Plus size={14} /> New Sales Order
-                </button>
+                {/* ── VERTICAL: canCreate('sales') ── */}
+                {canCreate('sales') && (
+                  <button onClick={handleCreateNew} className="flex items-center justify-center gap-1 px-3 py-1.5 bg-yellow-400 text-slate-900 text-xs font-bold rounded hover:bg-yellow-500 whitespace-nowrap flex-1 md:flex-none">
+                    <Plus size={14} /> New Sales Order
+                  </button>
+                )}
               </div>
             </div>
           </div>
@@ -1256,7 +1269,8 @@ const SalesOrders = () => {
                           {/* Actions */}
                           <td className="p-2 text-center align-middle">
                             <div className="flex items-center justify-center gap-1.5">
-                              {!isLocked && (
+                              {/* ── VERTICAL: canEdit('sales') for delete line item ── */}
+                              {!isLocked && canEdit('sales') && (
                                 <button onClick={() => handleDeleteItem(item.id)} className="p-1.5 text-red-500 border border-red-100 hover:bg-red-50 rounded transition-colors group">
                                   <Trash2 size={14} className="group-hover:scale-110 transition-transform" />
                                 </button>
@@ -1523,22 +1537,32 @@ const SalesOrders = () => {
             </div>
 
             <div className="flex gap-2">
-              <button onClick={handlePrintClick} className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-slate-300 text-slate-700 rounded text-xs font-bold hover:bg-slate-50 transition-colors shadow-sm">
-                <Printer size={14} /> Print
-              </button>
+              {/* ── VERTICAL: canExport('sales') for Print ── */}
+              {canExport('sales') && (
+                <button onClick={handlePrintClick} className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-slate-300 text-slate-700 rounded text-xs font-bold hover:bg-slate-50 transition-colors shadow-sm">
+                  <Printer size={14} /> Print
+                </button>
+              )}
 
               {status === 'DRAFT' && (
                 <>
-                  <button onClick={saveOrUpdateOrder} className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-slate-300 text-slate-700 rounded text-xs font-bold hover:bg-slate-50 transition-colors shadow-sm">
-                    <Save size={14} /> Save Draft
-                  </button>
-                  <button onClick={handleConfirmOrder} className="flex items-center gap-1.5 px-5 py-1.5 bg-gradient-to-r from-emerald-600 to-emerald-500 text-white rounded text-xs font-bold hover:from-emerald-700 hover:to-emerald-600 transition-all shadow-md transform hover:-translate-y-0.5">
-                    Confirm Order <ChevronRight size={14} />
-                  </button>
+                  {/* ── VERTICAL: canEdit('sales') for Save Draft ── */}
+                  {canEdit('sales') && (
+                    <button onClick={saveOrUpdateOrder} className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-slate-300 text-slate-700 rounded text-xs font-bold hover:bg-slate-50 transition-colors shadow-sm">
+                      <Save size={14} /> Save Draft
+                    </button>
+                  )}
+                  {/* ── VERTICAL: canApprove('sales') for Confirm Order ── */}
+                  {canApprove('sales') && (
+                    <button onClick={handleConfirmOrder} className="flex items-center gap-1.5 px-5 py-1.5 bg-gradient-to-r from-emerald-600 to-emerald-500 text-white rounded text-xs font-bold hover:from-emerald-700 hover:to-emerald-600 transition-all shadow-md transform hover:-translate-y-0.5">
+                      Confirm Order <ChevronRight size={14} />
+                    </button>
+                  )}
                 </>
               )}
 
-              {(status === 'CONFIRMED' || status === 'PARTIALLY_PAID') && (
+              {/* ── VERTICAL: canApprove('sales') for Mark Invoiced ── */}
+              {(status === 'CONFIRMED' || status === 'PARTIALLY_PAID') && canApprove('sales') && (
                 <button onClick={handleMarkAsInvoiced} className="flex items-center gap-1.5 px-5 py-1.5 bg-blue-600 text-white rounded text-xs font-bold hover:bg-blue-700 transition-all shadow-md transform hover:-translate-y-0.5">
                   <CheckCircle2 size={14} /> Mark Invoiced
                 </button>

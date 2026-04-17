@@ -4,14 +4,19 @@ import java.util.HashSet;
 import java.util.Set;
 
 import com.billbull.backend.common.BaseEntity;
+import com.billbull.backend.hr.employees.Employee;
 import com.billbull.backend.role.Role;
 
 import jakarta.persistence.*;
 
 @Entity
-@Table(name = "users", uniqueConstraints = {
-        @UniqueConstraint(columnNames = "username")
-})
+@Table(name = "users",
+        uniqueConstraints = {
+                @UniqueConstraint(columnNames = "username")
+        },
+        indexes = {
+                @Index(name = "idx_user_linked_employee", columnList = "linked_employee_id")
+        })
 public class User extends BaseEntity {
 
     @Id
@@ -33,6 +38,10 @@ public class User extends BaseEntity {
     private String avatarUrl;
     private String employeeId;
     private java.time.LocalDate joinDate;
+
+    @OneToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "linked_employee_id", unique = true)
+    private Employee linkedEmployee;
 
     @ManyToMany(fetch = FetchType.EAGER)
     @JoinTable(name = "user_roles", joinColumns = @JoinColumn(name = "user_id"), inverseJoinColumns = @JoinColumn(name = "role_id"))
@@ -138,5 +147,13 @@ public class User extends BaseEntity {
 
     public void setRoles(Set<Role> roles) {
         this.roles = roles;
+    }
+
+    public Employee getLinkedEmployee() {
+        return linkedEmployee;
+    }
+
+    public void setLinkedEmployee(Employee linkedEmployee) {
+        this.linkedEmployee = linkedEmployee;
     }
 }
