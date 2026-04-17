@@ -10,6 +10,7 @@ import java.util.HashMap;
 import org.springframework.stereotype.Service;
 
 import com.billbull.backend.inventory.product.Product;
+import com.billbull.backend.inventory.product.ProductBarcodeRepository;
 import com.billbull.backend.inventory.product.ProductRepository;
 import com.billbull.backend.inventory.product.ProductMediaRepository;
 import com.billbull.backend.inventory.warehouse.Warehouse;
@@ -48,6 +49,7 @@ public class LpoService {
     private final ApprovalWorkflowService approvalWorkflowService;
     private final ApprovalHistoryRepository approvalHistoryRepository;
     private final ProductMediaRepository productMediaRepository;
+    private final ProductBarcodeRepository productBarcodeRepository;
 
     public LpoService(
             LpoRepository repository,
@@ -61,7 +63,8 @@ public class LpoService {
             PurchaseInvoiceRepository invoiceRepository,
             ApprovalWorkflowService approvalWorkflowService,
             ApprovalHistoryRepository approvalHistoryRepository,
-            ProductMediaRepository productMediaRepository) {
+            ProductMediaRepository productMediaRepository,
+            ProductBarcodeRepository productBarcodeRepository) {
         this.repository = repository;
         this.productRepository = productRepository;
         this.warehouseRepository = warehouseRepository;
@@ -74,6 +77,7 @@ public class LpoService {
         this.approvalWorkflowService = approvalWorkflowService;
         this.approvalHistoryRepository = approvalHistoryRepository;
         this.productMediaRepository = productMediaRepository;
+        this.productBarcodeRepository = productBarcodeRepository;
     }
 
     /* ================= CREATE ================= */
@@ -270,7 +274,8 @@ public class LpoService {
             item.setLpo(lpo);
             item.setProduct(product);
             item.setItemCode(product.getCode());
-            item.setItemName(product.getName());
+            item.setItemName(r.getItemName() != null && !r.getItemName().isBlank() ? r.getItemName() : product.getName());
+            item.setBarcode(r.getBarcode());
             item.setUom(r.getUom());
             item.setQuantity(r.getQuantity());
             item.setUnitPrice(r.getUnitPrice());
@@ -279,9 +284,10 @@ public class LpoService {
             item.setCurrentCost(r.getCurrentCost());
             item.setRemarks(r.getRemarks());
             item.setFocQty(r.getFocQty());
+            item.setFocUnit(r.getFocUnit());
 
-            BigDecimal qty = BigDecimal.valueOf(r.getQuantity());
-            item.setLineTotal(r.getUnitPrice().multiply(qty));
+            BigDecimal fallbackLineTotal = r.getUnitPrice().multiply(BigDecimal.valueOf(r.getQuantity()));
+            item.setLineTotal(r.getLineTotal() != null ? r.getLineTotal() : fallbackLineTotal);
 
             lpo.getItems().add(item);
         }
@@ -365,6 +371,14 @@ public class LpoService {
                     LpoItemResponse itemDto = new LpoItemResponse(item);
                     itemDto.setReceivedQuantity(fulfilledMap.getOrDefault(itemDto.getProductId(), 0));
                     itemDto.setImage(imageMap.get(itemDto.getProductId()));
+                    if (itemDto.getBarcode() == null || itemDto.getBarcode().isBlank()) {
+                        String barcode = productBarcodeRepository.findByProductId(itemDto.getProductId()).stream()
+                                .map(b -> b.getBarcode())
+                                .filter(b -> b != null && !b.isBlank())
+                                .findFirst()
+                                .orElse(null);
+                        itemDto.setBarcode(barcode);
+                    }
                     return itemDto;
                 })
                 .toList();

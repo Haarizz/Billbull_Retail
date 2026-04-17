@@ -8,10 +8,13 @@ const SearchableDropdown = ({
     placeholder = "Select...",
     className = "",
     disabled = false,
-    label // Optional label to display inside the selected state if needed
+    label, // Optional label to display inside the selected state if needed
+    menuPlacement = "bottom",
+    menuZIndexClass = "z-50"
 }) => {
     const [isOpen, setIsOpen] = useState(false);
     const [searchTerm, setSearchTerm] = useState('');
+    const [openUpward, setOpenUpward] = useState(false);
     const dropdownRef = useRef(null);
     const inputRef = useRef(null);
 
@@ -28,6 +31,36 @@ const SearchableDropdown = ({
             document.removeEventListener('mousedown', handleClickOutside);
         };
     }, []);
+
+    useEffect(() => {
+        if (!isOpen) return;
+
+        if (menuPlacement === "top") {
+            setOpenUpward(true);
+            return;
+        }
+
+        if (menuPlacement !== "auto" || !dropdownRef.current) {
+            setOpenUpward(false);
+            return;
+        }
+
+        const updateDirection = () => {
+            const rect = dropdownRef.current.getBoundingClientRect();
+            const estimatedMenuHeight = 280;
+            const spaceBelow = window.innerHeight - rect.bottom;
+            const spaceAbove = rect.top;
+
+            setOpenUpward(spaceBelow < estimatedMenuHeight && spaceAbove > spaceBelow);
+        };
+
+        updateDirection();
+        window.addEventListener('resize', updateDirection);
+
+        return () => {
+            window.removeEventListener('resize', updateDirection);
+        };
+    }, [isOpen, menuPlacement]);
 
     // Filter options based on search term
     const filteredOptions = options.filter(option => {
@@ -56,7 +89,7 @@ const SearchableDropdown = ({
     };
 
     return (
-        <div className={`relative ${className}`} ref={dropdownRef}>
+        <div className={`relative overflow-visible ${className}`} ref={dropdownRef}>
             <div
                 className={`w-full border rounded-md py-2 px-3 bg-white flex items-center justify-between cursor-pointer ${disabled ? 'bg-slate-50 cursor-not-allowed text-slate-500' : 'hover:border-slate-300'
                     } ${isOpen ? 'ring-1 ring-[#F5C742] border-[#F5C742]' : 'border-slate-200'}`}
@@ -79,7 +112,7 @@ const SearchableDropdown = ({
             </div>
 
             {isOpen && !disabled && (
-                <div className="absolute z-50 min-w-[320px] mt-1 bg-white border border-slate-200 rounded-md shadow-lg max-h-60 overflow-hidden flex flex-col animate-in fade-in zoom-in-95 duration-100">
+                <div className={`absolute left-0 ${menuZIndexClass} w-full min-w-[280px] bg-white border border-slate-200 rounded-md shadow-lg max-h-60 overflow-hidden flex flex-col animate-in fade-in zoom-in-95 duration-100 ${openUpward ? 'bottom-full mb-1' : 'top-full mt-1'}`}>
                     <div className="p-2 border-b border-slate-100 sticky top-0 bg-white">
                         <div className="relative">
                             <Search size={14} className="absolute left-2.5 top-2.5 text-slate-400" />

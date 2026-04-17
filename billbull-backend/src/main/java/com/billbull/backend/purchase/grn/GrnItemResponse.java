@@ -7,6 +7,7 @@ public record GrnItemResponse(
         Long productId, // Added productId for bin mapping
         String code,
         String name,
+        String barcode,
         String image,
         String uom,
         Integer lpoQty,
@@ -17,5 +18,7 @@ public record GrnItemResponse(
         BigDecimal netCost,
         BigDecimal total,
         boolean batch,
-        Integer focQty) {
+        Integer focQty,
+        String focUnit,
+        String remarks) {
 }

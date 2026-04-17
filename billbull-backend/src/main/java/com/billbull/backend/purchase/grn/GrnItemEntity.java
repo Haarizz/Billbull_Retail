@@ -17,6 +17,7 @@ public class GrnItemEntity extends BaseEntity {
 
 	private String productCode;
 	private String productName;
+	private String barcode;
 	private String uom;
 
 	private Integer lpoQty;
@@ -28,6 +29,8 @@ public class GrnItemEntity extends BaseEntity {
 	private BigDecimal netCost;
 	private BigDecimal lineTotal;
 	private Integer focQty;
+	private String focUnit;
+	private String remarks;
 
 	private boolean batchManaged;
 
@@ -65,6 +68,14 @@ public class GrnItemEntity extends BaseEntity {
 
 	public void setProductName(String productName) {
 		this.productName = productName;
+	}
+
+	public String getBarcode() {
+		return barcode;
+	}
+
+	public void setBarcode(String barcode) {
+		this.barcode = barcode;
 	}
 
 	public String getUom() {
@@ -145,5 +156,21 @@ public class GrnItemEntity extends BaseEntity {
 
 	public void setFocQty(Integer focQty) {
 		this.focQty = focQty;
+	}
+
+	public String getFocUnit() {
+		return focUnit;
+	}
+
+	public void setFocUnit(String focUnit) {
+		this.focUnit = focUnit;
+	}
+
+	public String getRemarks() {
+		return remarks;
+	}
+
+	public void setRemarks(String remarks) {
+		this.remarks = remarks;
 	}
 }

@@ -10,6 +10,7 @@ import org.springframework.stereotype.Service;
 
 import com.billbull.backend.financials.generalledger.postingengine.PostingEngineService;
 import com.billbull.backend.inventory.product.ProductMediaRepository;
+import com.billbull.backend.inventory.product.ProductBarcodeRepository;
 import com.billbull.backend.inventory.product.ProductPricingRepository;
 import com.billbull.backend.inventory.product.ProductRepository;
 import com.billbull.backend.inventory.warehouse.BinRepository;
@@ -48,6 +49,7 @@ public class PurchaseInvoiceService {
     private final LpoRepository lpoRepository;
     private final PaymentVoucherService paymentVoucherService;
     private final ProductMediaRepository productMediaRepository;
+    private final ProductBarcodeRepository productBarcodeRepository;
 
     public PurchaseInvoiceService(PurchaseInvoiceRepository repository, GrnRepository grnRepo,
             PostingEngineService postingEngineService, StockMovementService stockService,
@@ -55,7 +57,8 @@ public class PurchaseInvoiceService {
             BinStockRepository binStockRepository, WarehouseRepository warehouseRepository,
             ZoneRepository zoneRepository, LocatorRepository locatorRepository, BinRepository binRepository,
             LpoRepository lpoRepository, PaymentVoucherService paymentVoucherService,
-            ProductMediaRepository productMediaRepository) {
+            ProductMediaRepository productMediaRepository,
+            ProductBarcodeRepository productBarcodeRepository) {
         super();
         this.repository = repository;
         this.grnRepo = grnRepo;
@@ -71,6 +74,7 @@ public class PurchaseInvoiceService {
         this.lpoRepository = lpoRepository;
         this.paymentVoucherService = paymentVoucherService;
         this.productMediaRepository = productMediaRepository;
+        this.productBarcodeRepository = productBarcodeRepository;
     }
 
     /* ================= CREATE (DRAFT) ================= */
@@ -442,9 +446,11 @@ public class PurchaseInvoiceService {
             PurchaseInvoiceItem item = new PurchaseInvoiceItem();
             item.setItemCode(i.getItemCode());
             item.setItemName(i.getItemName());
+            item.setBarcode(i.getBarcode());
             item.setUom(i.getUom());
             item.setQty(i.getQty());
             item.setFocQty(i.getFocQty());
+            item.setFocUnit(i.getFocUnit());
             item.setUnitCost(i.getUnitCost());
             item.setDiscountPercent(i.getDiscountPercent());
             item.setDiscountAmount(i.getDiscountAmount());
@@ -452,6 +458,7 @@ public class PurchaseInvoiceService {
             item.setTaxAmount(i.getTaxAmount());
             item.setLineTotal(i.getLineTotal());
             item.setWarehouseName(i.getWarehouseName());
+            item.setRemarks(i.getRemarks());
             item.setInvoice(invoice);
             invoice.getItems().add(item);
         });
@@ -534,16 +541,29 @@ public class PurchaseInvoiceService {
                 InvoiceItemDraft d = new InvoiceItemDraft();
                 d.setItemCode(i.getItemCode());
                 d.setItemName(i.getItemName());
+                d.setBarcode(i.getBarcode());
                 d.setImage(imageMap.get(i.getItemCode()));
                 d.setUom(i.getUom());
                 d.setQty(i.getQty());
                 d.setFocQty(i.getFocQty());
+                d.setFocUnit(i.getFocUnit());
                 d.setUnitCost(i.getUnitCost());
                 d.setDiscountPercent(i.getDiscountPercent());
                 d.setDiscountAmount(i.getDiscountAmount());
                 d.setTaxPercent(i.getTaxPercent());
                 d.setTaxAmount(i.getTaxAmount());
                 d.setLineTotal(i.getLineTotal());
+                d.setRemarks(i.getRemarks());
+                if ((d.getBarcode() == null || d.getBarcode().isBlank()) && i.getItemCode() != null) {
+                    productRepository.findByCodeAndIsActiveTrue(i.getItemCode()).ifPresent(product -> {
+                        String barcode = productBarcodeRepository.findByProductId(product.getId()).stream()
+                                .map(b -> b.getBarcode())
+                                .filter(b -> b != null && !b.isBlank())
+                                .findFirst()
+                                .orElse(null);
+                        d.setBarcode(barcode);
+                    });
+                }
                 return d;
             }).toList());
         }
