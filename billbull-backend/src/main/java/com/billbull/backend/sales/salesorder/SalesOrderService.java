@@ -4,7 +4,10 @@ import org.hibernate.Hibernate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.ArrayList;
 import java.util.List;
+
+import com.billbull.backend.util.DocumentOrderingUtil;
 
 @Service
 public class SalesOrderService {
@@ -125,7 +128,12 @@ public class SalesOrderService {
     @Transactional(readOnly = true)
     public List<SalesOrder> getAll() {
 
-        List<SalesOrder> orders = orderRepo.findAll();
+        List<SalesOrder> orders = new ArrayList<>(orderRepo.findAll());
+        DocumentOrderingUtil.sortByDocumentDateAndNumberDesc(
+                orders,
+                SalesOrder::getOrderDate,
+                SalesOrder::getSoNumber,
+                SalesOrder::getId);
 
         // ✅ FORCE LAZY INITIALIZATION
         orders.forEach(order -> {

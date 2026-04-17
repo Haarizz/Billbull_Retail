@@ -3,6 +3,7 @@ package com.billbull.backend.purchase.invoice;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.List;
 
 import org.springframework.cache.annotation.CacheEvict;
@@ -28,6 +29,7 @@ import com.billbull.backend.purchase.payment.PaymentVoucher;
 import com.billbull.backend.purchase.payment.PaymentVoucherService;
 import com.billbull.backend.purchase.stockmovement.StockMovementService;
 import com.billbull.backend.purchase.stockmovement.StockSourceType;
+import com.billbull.backend.util.DocumentOrderingUtil;
 
 import jakarta.transaction.Transactional;
 
@@ -373,8 +375,14 @@ public class PurchaseInvoiceService {
     /* ================= READ ================= */
 
     public List<PurchaseInvoiceResponse> listAll() {
-        return repository.findAll()
-                .stream()
+        List<PurchaseInvoice> invoices = new ArrayList<>(repository.findAll());
+        DocumentOrderingUtil.sortByDocumentDateAndNumberDesc(
+                invoices,
+                PurchaseInvoice::getInvoiceDate,
+                PurchaseInvoice::getInvoiceNumber,
+                PurchaseInvoice::getId);
+
+        return invoices.stream()
                 .map(this::toResponse)
                 .toList();
     }
@@ -607,8 +615,14 @@ public class PurchaseInvoiceService {
 
     @Transactional
     public List<PurchaseInvoiceResponse> getPostedInvoicesForPayment() {
-        return repository.findByStatus(InvoiceStatus.POSTED)
-                .stream()
+        List<PurchaseInvoice> invoices = new ArrayList<>(repository.findByStatus(InvoiceStatus.POSTED));
+        DocumentOrderingUtil.sortByDocumentDateAndNumberDesc(
+                invoices,
+                PurchaseInvoice::getInvoiceDate,
+                PurchaseInvoice::getInvoiceNumber,
+                PurchaseInvoice::getId);
+
+        return invoices.stream()
                 .map(this::toResponse)
                 .toList();
     }

@@ -15,10 +15,12 @@ import org.springframework.transaction.annotation.Transactional;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.YearMonth;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import com.billbull.backend.util.DocumentOrderingUtil;
 
 @Service
 @Slf4j
@@ -41,7 +43,13 @@ public class SalesReturnService {
 
     @Transactional(readOnly = true)
     public List<SalesReturn> getAllReturns() {
-        return salesReturnRepository.findAll();
+        List<SalesReturn> returns = new ArrayList<>(salesReturnRepository.findAll());
+        DocumentOrderingUtil.sortByDocumentDateAndNumberDesc(
+                returns,
+                SalesReturn::getReturnDate,
+                SalesReturn::getReturnNumber,
+                SalesReturn::getId);
+        return returns;
     }
 
     public SalesReturn getReturnById(Long id) {

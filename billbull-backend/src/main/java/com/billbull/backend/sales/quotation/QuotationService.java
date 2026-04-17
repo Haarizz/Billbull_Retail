@@ -27,6 +27,7 @@ import com.billbull.backend.inventory.product.ProductPricingRepository;
 import com.billbull.backend.inventory.product.ProductRepository;
 import com.billbull.backend.inventory.product.ProductTaxRepository;
 import com.billbull.backend.purchase.stockmovement.StockMovementRepository;
+import com.billbull.backend.util.DocumentOrderingUtil;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
@@ -82,7 +83,12 @@ public class QuotationService {
     // -------------------------------------------------
     @Transactional(readOnly = true)
     public List<Quotation> getAllQuotations() {
-        List<Quotation> quotations = quotationRepo.findAll();
+        List<Quotation> quotations = new ArrayList<>(quotationRepo.findAll());
+        DocumentOrderingUtil.sortByDocumentDateAndNumberDesc(
+                quotations,
+                Quotation::getDate,
+                Quotation::getQtnNo,
+                Quotation::getId);
         quotations.forEach(this::initialize);
         return quotations;
     }

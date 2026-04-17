@@ -3,6 +3,7 @@ package com.billbull.backend.purchase.grn;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.LocalDate;
+import java.util.ArrayList;
 import java.util.List;
 
 import org.springframework.stereotype.Service;
@@ -24,6 +25,7 @@ import com.billbull.backend.inventory.warehouse.BinRepository;
 import com.billbull.backend.inventory.warehouse.ZoneRepository;
 import com.billbull.backend.inventory.warehouse.LocatorRepository;
 import com.billbull.backend.inventory.product.ProductMediaRepository;
+import com.billbull.backend.util.DocumentOrderingUtil;
 
 @Service
 @Transactional
@@ -249,7 +251,14 @@ public class GrnService {
 
     @Transactional(readOnly = true)
     public List<GrnListResponse> list() {
-        return grnRepo.findAll().stream().map(g -> {
+        List<GrnEntity> grns = new ArrayList<>(grnRepo.findAll());
+        DocumentOrderingUtil.sortByDocumentDateAndNumberDesc(
+                grns,
+                GrnEntity::getGrnDate,
+                GrnEntity::getGrnNo,
+                GrnEntity::getId);
+
+        return grns.stream().map(g -> {
             return new GrnListResponse(
                     g.getId(),
                     g.getGrnNo(),
