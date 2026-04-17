@@ -16,4 +16,8 @@ public class DeliveryNoteItemRequest {
     public String image;
     public Long binId;
     public Long salesOrderItemId;
+    public Double price;
+    public Double disc;
+    public Double tax;
+    public Double cost;
 }

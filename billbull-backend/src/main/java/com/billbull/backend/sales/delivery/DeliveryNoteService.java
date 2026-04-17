@@ -139,6 +139,10 @@ public class DeliveryNoteService {
             ir.boxes = item.getBoxes();
             ir.binId = item.getBinId();
             ir.salesOrderItemId = item.getSalesOrderItemId();
+            ir.price = item.getPrice();
+            ir.disc = item.getDisc();
+            ir.tax = item.getTax();
+            ir.cost = item.getCost();
             return ir;
         }).toList();
 
@@ -641,6 +645,22 @@ public class DeliveryNoteService {
         if (item.getRemarks() == null || item.getRemarks().isBlank()) {
             item.setRemarks(item.getDescription());
         }
+
+        // Populate price/cost from product pricing when not stored on the item
+        // (covers DNs created before price fields were added to the schema)
+        if (item.getPrice() == null && product.getPricing() != null) {
+            java.math.BigDecimal retail = product.getPricing().getRetailPrice();
+            if (retail != null) {
+                item.setPrice(retail.doubleValue());
+            }
+        }
+
+        if (item.getCost() == null && product.getPricing() != null) {
+            java.math.BigDecimal cost = product.getPricing().getCost();
+            if (cost != null) {
+                item.setCost(cost.doubleValue());
+            }
+        }
     }
 
     public DeliveryNote getEntity(Long id) {
@@ -707,6 +727,10 @@ public class DeliveryNoteService {
             item.setImage(i.image);
             item.setBinId(i.binId);
             item.setSalesOrderItemId(i.salesOrderItemId);
+            item.setPrice(i.price);
+            item.setDisc(i.disc);
+            item.setTax(i.tax);
+            item.setCost(i.cost);
             hydrateDeliveryItemDisplayData(item);
 
             dn.getItems().add(item);
