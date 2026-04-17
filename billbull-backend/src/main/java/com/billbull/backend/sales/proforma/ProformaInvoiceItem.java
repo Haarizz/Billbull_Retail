@@ -28,6 +28,9 @@ public class ProformaInvoiceItem {
 	private BigDecimal taxPercent;
 	private BigDecimal lineTotal;
 	private Integer foc;
+	private String focUnit;
+	@Column(length = 500)
+	private String remarks;
 
 	public Long getId() {
 		return id;
@@ -113,8 +116,24 @@ public class ProformaInvoiceItem {
 		return foc;
 	}
 
+	public String getFocUnit() {
+		return focUnit;
+	}
+
+	public String getRemarks() {
+		return remarks;
+	}
+
 	public void setFoc(Integer foc) {
 		this.foc = foc;
+	}
+
+	public void setFocUnit(String focUnit) {
+		this.focUnit = focUnit;
+	}
+
+	public void setRemarks(String remarks) {
+		this.remarks = remarks;
 	}
 
 	// getters & setters

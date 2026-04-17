@@ -13,16 +13,19 @@ public class SalesOrderService {
     private final com.billbull.backend.sales.quotation.QuotationRepository quotationRepo;
     private final com.billbull.backend.inventory.warehouse.WarehouseStockService warehouseStockService;
     private final com.billbull.backend.inventory.product.ProductRepository productRepo;
+    private final com.billbull.backend.inventory.product.ProductBarcodeRepository barcodeRepo;
 
     public SalesOrderService(
             SalesOrderRepository orderRepo,
             com.billbull.backend.sales.quotation.QuotationRepository quotationRepo,
             com.billbull.backend.inventory.warehouse.WarehouseStockService warehouseStockService,
-            com.billbull.backend.inventory.product.ProductRepository productRepo) {
+            com.billbull.backend.inventory.product.ProductRepository productRepo,
+            com.billbull.backend.inventory.product.ProductBarcodeRepository barcodeRepo) {
         this.orderRepo = orderRepo;
         this.quotationRepo = quotationRepo;
         this.warehouseStockService = warehouseStockService;
         this.productRepo = productRepo;
+        this.barcodeRepo = barcodeRepo;
     }
 
     // ----------------------------
@@ -38,6 +41,7 @@ public class SalesOrderService {
         if (order.getItems() != null) {
             for (SalesOrderItem item : order.getItems()) {
                 item.setSalesOrder(order);
+                hydrateOrderItemDisplayData(item);
 
                 // 🏗️ HARD VALIDATION: Sales Orders are Hard Reservations
                 // Check if the business has enough available stock (which deducts previous SOs)
@@ -111,6 +115,7 @@ public class SalesOrderService {
                 .orElseThrow(() -> new RuntimeException("Sales Order not found: " + id));
 
         Hibernate.initialize(order.getItems());
+        hydrateOrderItemDisplayData(order);
         return order;
     }
 
@@ -123,7 +128,10 @@ public class SalesOrderService {
         List<SalesOrder> orders = orderRepo.findAll();
 
         // ✅ FORCE LAZY INITIALIZATION
-        orders.forEach(order -> Hibernate.initialize(order.getItems()));
+        orders.forEach(order -> {
+            Hibernate.initialize(order.getItems());
+            hydrateOrderItemDisplayData(order);
+        });
 
         return orders;
     }
@@ -182,5 +190,39 @@ public class SalesOrderService {
 
             orderRepo.save(order);
         });
+    }
+
+    private void hydrateOrderItemDisplayData(SalesOrder order) {
+        if (order == null || order.getItems() == null) {
+            return;
+        }
+
+        order.getItems().forEach(this::hydrateOrderItemDisplayData);
+    }
+
+    private void hydrateOrderItemDisplayData(SalesOrderItem item) {
+        if (item == null || item.getItemCode() == null || item.getItemCode().isBlank()) {
+            return;
+        }
+
+        com.billbull.backend.inventory.product.Product product = productRepo
+                .findByCodeAndIsActiveTrue(item.getItemCode())
+                .orElse(null);
+
+        if (product == null) {
+            return;
+        }
+
+        if (item.getBarcode() == null || item.getBarcode().isBlank()) {
+            String barcode = barcodeRepo.findByProductId(product.getId()).stream()
+                    .map(com.billbull.backend.inventory.product.ProductBarcode::getBarcode)
+                    .filter(code -> code != null && !code.isBlank())
+                    .findFirst()
+                    .orElse(null);
+
+            if (barcode != null) {
+                item.setBarcode(barcode);
+            }
+        }
     }
 }

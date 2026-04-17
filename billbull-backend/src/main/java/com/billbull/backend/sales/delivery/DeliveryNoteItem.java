@@ -1,4 +1,4 @@
-package com.billbull.backend.sales.delivery;
+﻿package com.billbull.backend.sales.delivery;
 
 import com.billbull.backend.inventory.product.Product;
 
@@ -13,6 +13,7 @@ public class DeliveryNoteItem {
 	private Long id;
 
 	private String itemCode;
+	private String barcode;
 	private String description;
 	private String unit;
 
@@ -21,6 +22,9 @@ public class DeliveryNoteItem {
 	private Integer currentQty;
 	private Integer boxes;
 	private Integer foc;
+	private String focUnit;
+	@Column(length = 500)
+	private String remarks;
 	private String image;
 	private Long binId;
 	private Long salesOrderItemId;
@@ -39,6 +43,10 @@ public class DeliveryNoteItem {
 
 	public String getItemCode() {
 		return itemCode;
+	}
+
+	public String getBarcode() {
+		return barcode;
 	}
 
 	public String getDescription() {
@@ -75,6 +83,10 @@ public class DeliveryNoteItem {
 
 	public void setItemCode(String itemCode) {
 		this.itemCode = itemCode;
+	}
+
+	public void setBarcode(String barcode) {
+		this.barcode = barcode;
 	}
 
 	public void setDescription(String description) {
@@ -119,6 +131,22 @@ public class DeliveryNoteItem {
 
 	public void setFoc(Integer foc) {
 		this.foc = foc;
+	}
+
+	public String getFocUnit() {
+		return focUnit;
+	}
+
+	public void setFocUnit(String focUnit) {
+		this.focUnit = focUnit;
+	}
+
+	public String getRemarks() {
+		return remarks;
+	}
+
+	public void setRemarks(String remarks) {
+		this.remarks = remarks;
 	}
 
 	public String getImage() {

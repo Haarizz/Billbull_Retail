@@ -14,6 +14,7 @@ import {
   Calendar,
   CreditCard,
   Truck,
+  ShoppingCart,
   Box,
   X,
   Search,
@@ -23,8 +24,7 @@ import {
   Trash2,
   Paperclip,
   Save,
-  ChevronRight,
-  SlidersHorizontal
+  ChevronRight
 } from 'lucide-react';
 
 // ✅ API IMPORTS
@@ -50,6 +50,7 @@ import CustomerSelector from '../../components/CustomerSelector';
 
 // ✅ GLOBAL COMPONENTS
 import { ItemDescriptionCell, ItemDescriptionHeader } from '../../components/ItemDescriptionCell';
+import ItemAddOnsModal from '../../components/ItemAddOnsModal';
 
 // ✅ STOCK AVAILABILITY MODAL
 import StockAvailabilityModal from '../../components/StockAvailabilityModal';
@@ -172,7 +173,7 @@ const SalesOrders = () => {
 
   // Items
   const [items, setItems] = useState([
-    { id: Date.now(), code: '', image: '', desc: '', unit: 'PCS', qty: 0, price: 0, cost: 0, disc: 0, tax: 5, taxAmt: 0, total: 0 }
+    { id: Date.now(), code: '', barcode: '', image: '', desc: '', remarks: '', unit: 'PCS', qty: 0, price: 0, cost: 0, foc: 0, focUnit: 'PCS', availableUnits: ['PCS'], disc: 0, tax: 5, taxAmt: 0, total: 0 }
   ]);
 
   // ✅ GLOBAL SHORTCUTS
@@ -239,7 +240,6 @@ const SalesOrders = () => {
   useEffect(() => {
     fetchAllData();
     fetchSalesOrders();
-    fetchSalesOrders();
   }, []);
 
   // ✅ HANDLE INCOMING QUOTATION
@@ -252,17 +252,7 @@ const SalesOrders = () => {
       handleSelectQuotation({
         qtnNo: qtn.qtnNo,
         customer: qtn.customer,
-        items: qtn.items ? qtn.items.map(i => ({
-          itemCode: i.code,
-          description: i.desc,
-          unit: i.unit,
-          quantity: i.qty,
-          price: i.price,
-          discount: i.disc,
-          taxRate: i.tax,
-          taxAmount: i.taxAmt,
-          lineTotal: i.total
-        })) : []
+        items: qtn.items || []
       });
       setActiveTab('create');
       // Clear state
@@ -380,6 +370,35 @@ const SalesOrders = () => {
     };
   };
 
+  const normalizeOrderItem = (item = {}, fallbackId = Date.now() + Math.random()) => {
+    const resolvedUnit = item.unit || item.focUnit || 'PCS';
+    const normalized = {
+      id: item.id || fallbackId,
+      code: item.code || item.itemCode || '',
+      barcode: item.barcode || item.itemBarcode || '',
+      image: item.primaryImage || item.image || item.thumbnailUrl || item.imageUrl || '',
+      desc: item.desc || item.description || item.name || '',
+      remarks: item.remarks || item.description || item.desc || '',
+      unit: resolvedUnit,
+      qty: Number(item.qty ?? item.quantity) || 0,
+      price: Number(item.price) || 0,
+      cost: Number(item.cost) || ((Number(item.price) || 0) * 0.75),
+      foc: Number(item.foc) || 0,
+      focUnit: item.focUnit || resolvedUnit,
+      availableUnits: Array.isArray(item.availableUnits) && item.availableUnits.length > 0
+        ? item.availableUnits
+        : [resolvedUnit],
+      unitConversions: item.unitConversions || {},
+      unitPrices: item.unitPrices || {},
+      disc: Number(item.disc ?? item.discount) || 0,
+      tax: Number(item.tax ?? item.taxRate) || 5,
+      taxAmt: Number(item.taxAmt ?? item.taxAmount) || 0,
+      total: Number(item.total ?? item.lineTotal) || 0
+    };
+
+    return calculateRow(normalized);
+  };
+
   // ✅ PRODUCT SELECTOR HANDLER
   const handleAddSingleProduct = (product) => {
     const price = parseFloat(product.retailPrice) || parseFloat(product.sellingPrice) || 0;
@@ -461,6 +480,7 @@ const SalesOrders = () => {
             desc: i.desc || '',
             sku: i.sku || '',
             localName: i.localName || '',
+            barcode: i.barcode || '',
             unit: i.unit,
             qty: Number(i.qty),
             price: Number(i.price),
@@ -540,6 +560,8 @@ const SalesOrders = () => {
         // If ID is small (database generated), send it so backend updates existing item
         id: (i.id > 1000000000000) ? null : i.id,
         itemCode: i.code,
+        barcode: i.barcode || '',
+        image: i.image || '',
         description: i.desc,
         remarks: i.remarks || '',
         unit: i.unit,
@@ -550,7 +572,8 @@ const SalesOrders = () => {
         taxRate: Number(i.tax),
         taxAmount: Number(i.taxAmt),
         lineTotal: Number(i.total),
-        foc: Number(i.foc) || 0
+        foc: Number(i.foc) || 0,
+        focUnit: i.focUnit || i.unit || 'PCS'
       }))
     };
 
@@ -609,25 +632,9 @@ const SalesOrders = () => {
     }
 
     if (qtn.items && qtn.items.length > 0) {
-      const mappedItems = qtn.items.map(i => ({
-        id: Date.now() + Math.random(),
-        code: i.itemCode || '',
-        desc: i.description || '',
-        remarks: i.remarks || i.description || '',
-        unit: i.unit || 'PCS',
-        qty: i.quantity || 0,
-        price: i.price || 0,
-        cost: i.cost || (i.price * 0.75),
-        disc: i.discount || 0,
-        tax: i.taxRate || 5,
-        taxAmt: i.taxAmount || 0,
-        total: i.lineTotal || 0,
-        // Mock stock data for imported items
-        stockHand: Math.floor(Math.random() * 100),
-        stockReserved: Math.floor(Math.random() * 20),
-        stockIncoming: 0
-      }));
+      const mappedItems = qtn.items.map((item, index) => normalizeOrderItem(item, Date.now() + index));
       setItems(mappedItems);
+      setFocusedItem(mappedItems[0] || null);
     }
 
     setIsQuotationOpen(false);
@@ -651,27 +658,12 @@ const SalesOrders = () => {
 
     // Map items back
     if (order.items) {
-      setItems(order.items.map(i => ({
-        id: i.id || Date.now() + Math.random(),
-        code: i.itemCode,
-        image: i.image || '',
-        desc: i.description,
-        remarks: i.remarks || i.description || '',
-        unit: i.unit,
-        qty: i.quantity,
-        price: i.price,
-        cost: i.cost,
-        disc: i.discount,
-        tax: i.taxRate,
-        taxAmt: i.taxAmount,
-        total: i.lineTotal,
-        // Mock stock data since backend doesn't send it yet
-        stockHand: i.stockHand || Math.floor(Math.random() * 50),
-        stockReserved: i.stockReserved || 0,
-        stockIncoming: 0
-      })));
+      const mappedItems = order.items.map((item, index) => normalizeOrderItem(item, Date.now() + index));
+      setItems(mappedItems);
+      setFocusedItem(mappedItems[0] || null);
     } else {
       setItems([]);
+      setFocusedItem(null);
     }
 
     setAdvanceAmount(order.advanceAmount || 0);
@@ -698,7 +690,7 @@ const SalesOrders = () => {
     setSelectedCustomer(walkIn || null);
 
     setLinkedQtn('');
-    setItems([{ id: Date.now(), code: '', desc: '', unit: 'PCS', qty: 0, price: 0, cost: 0, disc: 0, tax: 5, taxAmt: 0, total: 0 }]);
+    setItems([{ id: Date.now(), code: '', barcode: '', image: '', desc: '', remarks: '', unit: 'PCS', qty: 0, price: 0, cost: 0, foc: 0, focUnit: 'PCS', availableUnits: ['PCS'], disc: 0, tax: 5, taxAmt: 0, total: 0 }]);
     setAdvanceAmount(0);
     setStatus('DRAFT');
     setAttachmentName('No file chosen');
@@ -714,7 +706,8 @@ const SalesOrders = () => {
 
     setItems(items.map(item => {
       if (item.id === id) {
-        let newItem = { ...item, [field]: value };
+        const stringFields = new Set(['desc', 'remarks', 'unit', 'code', 'image', 'focUnit', 'barcode']);
+        let newItem = { ...item, [field]: stringFields.has(field) ? value : Number(value) };
 
         if (field === 'price') {
           const price = Number(value) || 0;
@@ -758,23 +751,9 @@ const SalesOrders = () => {
     }));
   };
 
-  const handleModalItemChange = (field, value) => {
-    if (!selectedAddonItem) return;
-    const val = (field === 'focUnit') ? value : Number(value);
-    let updatedItem = { ...selectedAddonItem, [field]: val };
-    updatedItem = calculateRow(updatedItem);
-    setSelectedAddonItem(updatedItem);
-  };
-
-  const saveModalItem = () => {
-    if (!selectedAddonItem) return;
-    setItems(items.map(item => item.id === selectedAddonItem.id ? selectedAddonItem : item));
-    setSelectedAddonItem(null);
-  };
-
   const handleAddItem = () => {
     if (isLocked) return;
-    setItems([...items, { id: Date.now(), code: '', desc: '', unit: 'PCS', qty: 0, price: 0, cost: 0, disc: 0, tax: 5, taxAmt: 0, total: 0 }]);
+    setItems([...items, { id: Date.now(), code: '', barcode: '', image: '', desc: '', remarks: '', unit: 'PCS', qty: 0, price: 0, cost: 0, foc: 0, focUnit: 'PCS', availableUnits: ['PCS'], disc: 0, tax: 5, taxAmt: 0, total: 0 }]);
   };
 
   const handleDeleteItem = (id) => {
@@ -833,148 +812,15 @@ const SalesOrders = () => {
         selectedStockItem={selectedStockItem}
       />
 
-      {/* ITEM ADD-ONS MODAL */}
-      {selectedAddonItem && (
-        <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm flex items-center justify-center z-[110] p-4">
-          <div className="bg-white rounded-xl shadow-2xl max-w-md w-full flex flex-col max-h-[90vh] overflow-hidden">
-            <div className="px-4 py-3 border-b border-slate-100 flex justify-between items-center bg-slate-50/50">
-              <h2 className="text-sm font-bold text-slate-800 flex items-center gap-2">
-                <SlidersHorizontal size={16} className="text-yellow-600" /> Item Add-Ons & Details
-              </h2>
-              <button onClick={() => setSelectedAddonItem(null)} className="text-slate-400 hover:text-red-500 transition-colors">
-                <X size={18} />
-              </button>
-            </div>
-            <div className="p-4 overflow-y-auto">
-              <p className="text-xs text-slate-500 mb-4">Configure discounts, taxes, FOC items, and view detailed calculations</p>
-
-              <div className="bg-slate-50 border border-slate-100 rounded-lg p-3 mb-4">
-                <div className="font-bold text-slate-800 text-sm mb-1">{selectedAddonItem.desc || selectedAddonItem.name || 'Unknown Item'}</div>
-                <div className="text-xs text-slate-500">Code: {selectedAddonItem.code}</div>
-                <div className="text-xs text-slate-500">Qty: {selectedAddonItem.qty} {selectedAddonItem.unit}</div>
-              </div>
-
-              <div className="space-y-4">
-                {/* Discount */}
-                <div>
-                  <div className="flex justify-between items-center mb-1">
-                    <label className="text-xs font-bold text-slate-700">Discount</label>
-                    <div className="flex bg-slate-100 rounded p-0.5">
-                      <button className="px-2 py-0.5 text-[10px] font-bold rounded bg-yellow-400 text-slate-900">%</button>
-                    </div>
-                  </div>
-                  <input
-                    type="number"
-                    className="w-full p-2 border border-slate-200 rounded text-sm focus:border-yellow-400 outline-none transition-colors"
-                    value={selectedAddonItem.disc || ''}
-                    onChange={(e) => handleModalItemChange('disc', e.target.value)}
-                    placeholder="0"
-                  />
-                  <div className="text-[10px] text-slate-500 mt-1">Discount %: {(selectedAddonItem.disc || 0).toFixed(2)}%</div>
-                </div>
-
-                {/* Free of Charge (FOC) */}
-                <div>
-                  <label className="block text-xs font-bold text-slate-700 mb-1 text-emerald-600">Free of Charge (FOC)</label>
-                  <div className="grid grid-cols-2 gap-2">
-                    <div>
-                      <label className="text-[10px] text-slate-400 block mb-0.5">FOC Qty</label>
-                      <input
-                        type="number"
-                        className="w-full p-2 border border-slate-200 rounded text-sm focus:border-yellow-400 outline-none transition-colors"
-                        value={selectedAddonItem.foc || ''}
-                        onChange={(e) => handleModalItemChange('foc', e.target.value)}
-                        placeholder="0"
-                      />
-                    </div>
-                    <div>
-                      <label className="text-[10px] text-slate-400 block mb-0.5">FOC Unit</label>
-                      <select
-                        className="w-full p-2 border border-slate-200 rounded text-sm appearance-none outline-none focus:border-yellow-400 bg-white"
-                        value={selectedAddonItem.focUnit || 'PCS'}
-                        onChange={(e) => handleModalItemChange('focUnit', e.target.value)}
-                      >
-                        {(selectedAddonItem.availableUnits || ['PCS']).map(u => <option key={u} value={u}>{u}</option>)}
-                      </select>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Tax */}
-                <div>
-                  <label className="block text-xs font-bold text-slate-700 mb-1">Tax % (VAT)</label>
-                  <input
-                    type="number"
-                    className="w-full p-2 border border-slate-200 rounded text-sm focus:border-yellow-400 outline-none transition-colors"
-                    value={selectedAddonItem.tax || ''}
-                    onChange={(e) => handleModalItemChange('tax', e.target.value)}
-                    placeholder="5"
-                  />
-                  <div className="text-[10px] text-slate-500 mt-1">Tax Amount: AED {(selectedAddonItem.taxAmt || 0).toFixed(2)}</div>
-                </div>
-
-                {/* Calculation Breakdown */}
-                <div className="border border-slate-200 rounded-lg p-3 bg-white shadow-sm mt-4">
-                  <h4 className="text-[11px] font-bold text-slate-500 uppercase tracking-wider mb-2">Calculation Breakdown</h4>
-
-                  <div className="space-y-1.5 text-xs">
-                    <div className="flex justify-between text-slate-600">
-                      <span>Base Amount</span>
-                      <span>AED {((selectedAddonItem.qty || 0) * (selectedAddonItem.price || 0)).toFixed(2)}</span>
-                    </div>
-                    {(selectedAddonItem.disc > 0) && (
-                      <div className="flex justify-between text-red-500">
-                        <span>Discount ({selectedAddonItem.disc}%)</span>
-                        <span>- AED {(((selectedAddonItem.qty || 0) * (selectedAddonItem.price || 0)) * (selectedAddonItem.disc / 100)).toFixed(2)}</span>
-                      </div>
-                    )}
-                    <div className="flex justify-between text-slate-600">
-                      <span>After Discount (Gross)</span>
-                      <span>AED {(((selectedAddonItem.qty || 0) * (selectedAddonItem.price || 0)) * (1 - (selectedAddonItem.disc || 0) / 100)).toFixed(2)}</span>
-                    </div>
-                    <div className="flex justify-between text-emerald-600">
-                      <span>Tax ({(selectedAddonItem.tax || 0)}%)</span>
-                      <span>+ AED {(selectedAddonItem.taxAmt || 0).toFixed(2)}</span>
-                    </div>
-                    <div className="h-px bg-slate-200 my-2 w-full"></div>
-                    <div className="flex justify-between font-bold text-yellow-600 text-sm">
-                      <span>Net Amount</span>
-                      <span>AED {(selectedAddonItem.total || 0).toFixed(2)}</span>
-                    </div>
-
-                    {/* Internal Margin */}
-                    <div className="h-px bg-slate-100 my-2 w-full"></div>
-                    <div className="flex justify-between text-[10px] text-slate-400">
-                      <span>Cost Price</span>
-                      <span>AED {((selectedAddonItem.cost || 0) * (selectedAddonItem.qty || 0)).toFixed(2)}</span>
-                    </div>
-                    <div className="flex justify-between text-[10px] text-slate-400">
-                      <span>Gross Profit %</span>
-                      <span className={(((selectedAddonItem.qty || 0) * (selectedAddonItem.price || 0)) * (1 - (selectedAddonItem.disc || 0) / 100) > 0 ? ((((((selectedAddonItem.qty || 0) * (selectedAddonItem.price || 0)) * (1 - (selectedAddonItem.disc || 0) / 100)) - ((selectedAddonItem.cost || 0) * (selectedAddonItem.qty || 0))) / (((selectedAddonItem.qty || 0) * (selectedAddonItem.price || 0)) * (1 - (selectedAddonItem.disc || 0) / 100))) * 100) : 0) < 10 ? 'text-red-400' : 'text-emerald-500'}>
-                        {((((selectedAddonItem.qty || 0) * (selectedAddonItem.price || 0)) * (1 - (selectedAddonItem.disc || 0) / 100)) > 0 ? ((((((selectedAddonItem.qty || 0) * (selectedAddonItem.price || 0)) * (1 - (selectedAddonItem.disc || 0) / 100)) - ((selectedAddonItem.cost || 0) * (selectedAddonItem.qty || 0))) / (((selectedAddonItem.qty || 0) * (selectedAddonItem.price || 0)) * (1 - (selectedAddonItem.disc || 0) / 100))) * 100).toFixed(1) : 0)}%
-                      </span>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-            <div className="p-4 border-t border-slate-100 bg-slate-50/50 flex justify-end gap-2">
-              <button
-                onClick={() => setSelectedAddonItem(null)}
-                className="px-5 py-2 bg-white border border-slate-200 text-slate-700 text-xs font-bold rounded-lg hover:bg-slate-50 transition-colors shadow-sm"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={saveModalItem}
-                className="px-5 py-2 bg-yellow-400 text-slate-900 border border-yellow-500 text-xs font-bold rounded-lg hover:bg-yellow-500 transition-colors shadow-sm"
-              >
-                Save
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      <ItemAddOnsModal
+        item={selectedAddonItem}
+        onClose={() => setSelectedAddonItem(null)}
+        onSave={(updated) => {
+          setItems(items.map(i => i.id === updated.id ? updated : i));
+          setSelectedAddonItem(null);
+        }}
+        isReadOnly={isLocked}
+      />
 
       {/* HEADER */}
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-6">
@@ -1282,51 +1128,59 @@ const SalesOrders = () => {
               </div>
             )}
 
-            {/* 3. ORDER ITEMS */}
-            <div className="bg-white rounded-lg border border-slate-200 shadow-sm p-5">
-              <div className="flex justify-between items-center mb-4">
+            {/* 3. Sales Order Items */}
+            <div className="bg-white rounded-lg border border-slate-200/50 p-5 shadow-sm min-h-[460px]">
+              <div className="flex justify-between items-center mb-4 border-b border-slate-100/50 pb-2">
                 <h3 className="text-sm font-bold text-slate-800 flex items-center gap-2">
-                  <FileText size={16} className="text-yellow-500" /> Order Items
+                  <ShoppingCart size={16} className="text-yellow-500" /> Sales Order Items
                 </h3>
 
-                <div className="flex items-center gap-2">
+                {!isLocked && (
+                  <div className="flex gap-2">
                   {/* ✅ SELECT FROM CATALOG BUTTON */}
-                  {!linkedQtn && !isLocked && (
                     <button
                       onClick={() => setIsProductSelectorOpen(true)}
                       className="flex items-center gap-1 px-3 py-1.5 bg-yellow-400 text-slate-900 text-xs font-medium rounded hover:bg-yellow-500"
                     >
-                      <Plus size={14} /> Select from Catalog
+                      <Plus size={14} /> Select from Products
                     </button>
-                  )}
-                </div>
+                  </div>
+                )}
               </div>
 
-              <div className="overflow-auto max-h-[320px]">
-                <table className="w-full text-xs text-left min-w-[900px]">
+              <div className="overflow-auto max-h-[380px]">
+                <table className="w-full text-xs text-left min-w-[800px]">
                   <thead className="sticky top-0 z-10 bg-white border-b border-slate-100/80 text-[11px] font-semibold text-slate-500">
                     <tr>
                       <th className="p-2 w-8 text-center text-slate-400">#</th>
-                      <th className="p-2 min-w-[200px]">
-                        <div className="flex items-center gap-2">
-                          <ItemDescriptionHeader
-                            itemCount={items.length}
-                            expandedRowsCount={Object.keys(expandedRows).length}
-                            onToggleAll={toggleAllDescriptions}
-                          />
-                        </div>
+                      <th className="p-2 min-w-[260px]">
+                        <ItemDescriptionHeader
+                          itemCount={items.length}
+                          expandedRowsCount={Object.keys(expandedRows).length}
+                          onToggleAll={toggleAllDescriptions}
+                        />
                       </th>
                       <th className="p-2 w-16 text-center">Unit</th>
-                      <th className="p-2 w-20 text-center">Sale qty</th>
-                      <th className="p-2 w-20 text-center">Unit price</th>
+                      <th className="p-2 w-24 text-center">Sale qty</th>
+                      <th className="p-2 w-28 text-center">Unit price</th>
                       <th className="p-2 w-24 text-center text-slate-800">Amount</th>
                       <th className="p-2 w-16 text-center text-slate-500">Actions</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100/50">
-                    {items.map((item, index) => (
+                    {items.length === 0 ? (
+                      <tr>
+                        <td colSpan={7} className="py-12 text-center bg-slate-50/50 border-b border-slate-100 border-dashed rounded-b-lg">
+                          <div className="flex flex-col items-center justify-center text-slate-400">
+                            <ShoppingCart size={32} className="mb-3 text-slate-300" />
+                            <span className="text-sm font-semibold text-slate-500">No items added.</span>
+                            <span className="text-xs mt-1 text-slate-400">Click "Select from Products" to start building this Sales Order.</span>
+                          </div>
+                        </td>
+                      </tr>
+                    ) : items.map((item, index) => (
                       <React.Fragment key={item.id}>
-                        <tr className={`group hover:bg-slate-50/50 transition-colors bg-white align-middle ${isLocked ? 'opacity-80' : ''}`}>
+                        <tr className={`group hover:bg-slate-50/50 transition-colors bg-white align-middle ${isLocked ? 'opacity-80' : ''}`} onClick={() => setFocusedItem(item)}>
                           {/* Index */}
                           <td className="p-2 text-center text-slate-400 text-xs font-medium">{index + 1}</td>
 
@@ -1338,10 +1192,10 @@ const SalesOrders = () => {
                               onToggleExpand={toggleRowDescription}
                               onItemChange={handleItemChange}
                               onFocusCode={() => { setFocusedItem(item); }}
-                              onOpenProductSelection={(item) => setIsProductSelectorOpen(true)}
+                              onOpenProductSelection={!isLocked ? () => setIsProductSelectorOpen(true) : undefined}
                               onCheckStock={(item) => { setSelectedStockItem(item); setIsItemStockModalOpen(true); }}
                               isReadOnly={isLocked}
-                              showSettings={true}
+                              showSettings={Boolean(item.code || item.desc || item.remarks)}
                               showTaxDiscount={true}
                               onOpenSettings={(item) => setSelectedAddonItem({ ...item })}
                               page="sales_orders"
@@ -1364,7 +1218,7 @@ const SalesOrders = () => {
 
                           {/* Qty */}
                           <td className="p-2 text-center align-middle">
-                            <div className="rounded-md border border-slate-200 bg-white inline-flex items-center px-2 py-1 mx-auto w-16">
+                            <div className="rounded-md border border-slate-200 bg-white flex items-center px-2 py-1 w-full max-w-[88px] mx-auto">
                               <input
                                 id={`qty-${item.id}`}
                                 disabled={isLocked}
@@ -1379,8 +1233,8 @@ const SalesOrders = () => {
                           </td>
 
                           {/* Unit Price */}
-                          <td className="p-2 text-center align-middle w-20">
-                            <div className="rounded-md border border-slate-200 bg-white inline-flex items-center px-2 py-1 mx-auto w-20">
+                          <td className="p-2 text-center align-middle">
+                            <div className="rounded-md border border-slate-200 bg-white flex items-center px-2 py-1 w-full max-w-[104px] mx-auto">
                               <input
                                 disabled={isLocked}
                                 type="number"
@@ -1400,11 +1254,13 @@ const SalesOrders = () => {
                           </td>
 
                           {/* Actions */}
-                          <td className="p-2 text-center align-middle w-16">
-                            <div className="flex items-center justify-center">
-                              <button disabled={isLocked} onClick={() => handleDeleteItem(item.id)} className={`text-slate-300 ${!isLocked && 'hover:text-red-500'} transition-colors`}>
-                                <Trash2 size={16} />
-                              </button>
+                          <td className="p-2 text-center align-middle">
+                            <div className="flex items-center justify-center gap-1.5">
+                              {!isLocked && (
+                                <button onClick={() => handleDeleteItem(item.id)} className="p-1.5 text-red-500 border border-red-100 hover:bg-red-50 rounded transition-colors group">
+                                  <Trash2 size={14} className="group-hover:scale-110 transition-transform" />
+                                </button>
+                              )}
                             </div>
                           </td>
                         </tr>
@@ -1429,7 +1285,7 @@ const SalesOrders = () => {
                                   className="w-full bg-transparent text-[11px] text-slate-600 outline-none placeholder:text-yellow-700/30 resize-none font-medium leading-relaxed disabled:opacity-50"
                                   value={item.remarks || ''}
                                   onChange={(e) => handleItemChange(item.id, 'remarks', e.target.value)}
-                                  placeholder="Enter product description — auto-loaded from product master, fully editable..."
+                                  placeholder="Enter product description - auto-loaded from product master, fully editable..."
                                   onInput={(e) => {
                                     e.target.style.height = 'auto';
                                     e.target.style.height = (e.target.scrollHeight) + 'px';

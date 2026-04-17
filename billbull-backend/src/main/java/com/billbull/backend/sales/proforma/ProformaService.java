@@ -7,14 +7,26 @@ import java.util.List;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import com.billbull.backend.inventory.product.Product;
+import com.billbull.backend.inventory.product.ProductBarcode;
+import com.billbull.backend.inventory.product.ProductBarcodeRepository;
+import com.billbull.backend.inventory.product.ProductRepository;
+
 @Service
 @Transactional
 public class ProformaService {
 
     private final ProformaRepository repo;
+    private final ProductRepository productRepo;
+    private final ProductBarcodeRepository barcodeRepo;
 
-    public ProformaService(ProformaRepository repo) {
+    public ProformaService(
+            ProformaRepository repo,
+            ProductRepository productRepo,
+            ProductBarcodeRepository barcodeRepo) {
         this.repo = repo;
+        this.productRepo = productRepo;
+        this.barcodeRepo = barcodeRepo;
     }
 
     /* ================= CREATE ================= */
@@ -124,6 +136,9 @@ public class ProformaService {
             item.setPrice(i.price);
             item.setTaxPercent(i.taxPercent);
             item.setFoc(i.foc);
+            item.setFocUnit(i.focUnit);
+            item.setRemarks(i.remarks);
+            hydrateProformaItemDisplayData(item);
             item.setLineTotal(total);
 
             pi.getItems().add(item);
@@ -143,6 +158,7 @@ public class ProformaService {
     /* ================= DTO MAPPER ================= */
 
     public ProformaResponse toResponse(ProformaInvoice pi) {
+        hydrateProformaItemDisplayData(pi);
 
         ProformaResponse res = new ProformaResponse();
 
@@ -184,10 +200,51 @@ public class ProformaService {
                     ir.setPrice(item.getPrice());
                     ir.setTaxPercent(item.getTaxPercent());
                     ir.setFoc(item.getFoc());
+                    ir.setFocUnit(item.getFocUnit());
+                    ir.setRemarks(item.getRemarks());
                     ir.setLineTotal(item.getLineTotal());
                     return ir;
                 }).toList());
 
         return res;
+    }
+
+    private void hydrateProformaItemDisplayData(ProformaInvoice pi) {
+        if (pi == null || pi.getItems() == null) {
+            return;
+        }
+
+        pi.getItems().forEach(this::hydrateProformaItemDisplayData);
+    }
+
+    private void hydrateProformaItemDisplayData(ProformaInvoiceItem item) {
+        if (item == null || item.getItemCode() == null || item.getItemCode().isBlank()) {
+            return;
+        }
+
+        Product product = productRepo.findByCodeAndIsActiveTrue(item.getItemCode()).orElse(null);
+        if (product == null) {
+            return;
+        }
+
+        if (item.getBarcode() == null || item.getBarcode().isBlank()) {
+            String barcode = barcodeRepo.findByProductId(product.getId()).stream()
+                    .map(ProductBarcode::getBarcode)
+                    .filter(code -> code != null && !code.isBlank())
+                    .findFirst()
+                    .orElse(null);
+
+            if (barcode != null) {
+                item.setBarcode(barcode);
+            }
+        }
+
+        if (item.getFocUnit() == null || item.getFocUnit().isBlank()) {
+            item.setFocUnit(item.getUnit());
+        }
+
+        if (item.getRemarks() == null || item.getRemarks().isBlank()) {
+            item.setRemarks(item.getDescription());
+        }
     }
 }
