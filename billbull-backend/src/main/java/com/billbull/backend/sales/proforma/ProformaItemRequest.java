@@ -11,4 +11,6 @@ public class ProformaItemRequest {
     public BigDecimal price;
     public BigDecimal taxPercent;
     public Integer foc;
+    public String focUnit;
+    public String remarks;
 }

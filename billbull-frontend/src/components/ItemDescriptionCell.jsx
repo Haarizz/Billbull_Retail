@@ -172,7 +172,7 @@ export const ItemDescriptionCell = React.memo(({
                                 <button
                                     onClick={(e) => { e.preventDefault(); onOpenSettings(item); }}
                                     className="p-1 rounded bg-slate-50 text-slate-400 hover:text-slate-900 hover:bg-yellow-400 transition-all shadow-sm border border-slate-200"
-                                    title="Item Settings"
+                                    title={isReadOnly ? 'View Item Details' : 'Item Settings'}
                                 >
                                     <SlidersHorizontal size={14} />
                                 </button>

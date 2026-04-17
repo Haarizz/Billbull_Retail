@@ -2289,7 +2289,7 @@ const Quotations = () => {
                                                                     onCheckStock={handleCheckItemStock}
                                                                     onOpenSettings={(item) => setSelectedAddonItem({ ...item })}
                                                                     isReadOnly={isViewMode}
-                                                                    showSettings={!isViewMode}
+                                                                    showSettings={Boolean(item.code || item.desc || item.remarks)}
                                                                 />
                                                             </td>
 
@@ -2913,12 +2913,13 @@ const Quotations = () => {
                 }
                 {/* ITEM ADD-ONS MODAL — BB-026: shared component */}
                 <ItemAddOnsModal
-                    item={isViewMode ? null : selectedAddonItem}
+                    item={selectedAddonItem}
                     onClose={() => setSelectedAddonItem(null)}
                     onSave={(updated) => {
                         setItems(items.map(i => i.id === updated.id ? updated : i));
                         setSelectedAddonItem(null);
                     }}
+                    isReadOnly={isViewMode}
                 />
 
                 {/* --- COMPARE REVISIONS MODAL --- */}

@@ -9,6 +9,8 @@ import org.springframework.web.server.ResponseStatusException;
 
 import com.billbull.backend.financials.generalledger.postingengine.PostingEngineService;
 import com.billbull.backend.inventory.product.Product;
+import com.billbull.backend.inventory.product.ProductBarcode;
+import com.billbull.backend.inventory.product.ProductBarcodeRepository;
 import com.billbull.backend.inventory.product.ProductRepository;
 import com.billbull.backend.inventory.warehouse.Warehouse;
 import com.billbull.backend.inventory.warehouse.WarehouseRepository;
@@ -42,6 +44,7 @@ public class DeliveryNoteService {
     private final StockDeductionStrategyService stockStrategy;
     private final PostingEngineService postingEngineService;
     private final SalesInvoiceRepository salesInvoiceRepo;
+    private final ProductBarcodeRepository barcodeRepo;
 
     public DeliveryNoteService(
             DeliveryNoteRepository repo,
@@ -54,7 +57,8 @@ public class DeliveryNoteService {
             BinRepository binRepo,
             StockDeductionStrategyService stockStrategy,
             PostingEngineService postingEngineService,
-            SalesInvoiceRepository salesInvoiceRepo) {
+            SalesInvoiceRepository salesInvoiceRepo,
+            ProductBarcodeRepository barcodeRepo) {
         this.repo = repo;
         this.warehouseStockService = warehouseStockService;
         this.productRepo = productRepo;
@@ -66,9 +70,11 @@ public class DeliveryNoteService {
         this.stockStrategy = stockStrategy;
         this.postingEngineService = postingEngineService;
         this.salesInvoiceRepo = salesInvoiceRepo;
+        this.barcodeRepo = barcodeRepo;
     }
 
     private DeliveryNoteResponse toResponse(DeliveryNote dn) {
+        hydrateDeliveryItemDisplayData(dn);
 
         DeliveryNoteResponse r = new DeliveryNoteResponse();
 
@@ -120,12 +126,15 @@ public class DeliveryNoteService {
             DeliveryNoteItemResponse ir = new DeliveryNoteItemResponse();
             ir.id = item.getId();
             ir.itemCode = item.getItemCode();
+            ir.barcode = item.getBarcode();
             ir.description = item.getDescription();
             ir.unit = item.getUnit();
             ir.orderedQty = item.getOrderedQty();
             ir.image = item.getImage();
             ir.prevDeliveredQty = item.getPrevDeliveredQty();
             ir.foc = item.getFoc();
+            ir.focUnit = item.getFocUnit();
+            ir.remarks = item.getRemarks();
             ir.currentQty = item.getCurrentQty();
             ir.boxes = item.getBoxes();
             ir.binId = item.getBinId();
@@ -591,6 +600,49 @@ public class DeliveryNoteService {
         }
     }
 
+    private void hydrateDeliveryItemDisplayData(DeliveryNote dn) {
+        if (dn == null || dn.getItems() == null) {
+            return;
+        }
+
+        dn.getItems().forEach(this::hydrateDeliveryItemDisplayData);
+    }
+
+    private void hydrateDeliveryItemDisplayData(DeliveryNoteItem item) {
+        if (item == null) {
+            return;
+        }
+
+        Product product = item.getProduct();
+        if (product == null && item.getItemCode() != null && !item.getItemCode().isBlank()) {
+            product = productRepo.findByCodeAndIsActiveTrue(item.getItemCode()).orElse(null);
+        }
+
+        if (product == null) {
+            return;
+        }
+
+        if (item.getBarcode() == null || item.getBarcode().isBlank()) {
+            String barcode = barcodeRepo.findByProductId(product.getId()).stream()
+                    .map(ProductBarcode::getBarcode)
+                    .filter(code -> code != null && !code.isBlank())
+                    .findFirst()
+                    .orElse(null);
+
+            if (barcode != null) {
+                item.setBarcode(barcode);
+            }
+        }
+
+        if (item.getFocUnit() == null || item.getFocUnit().isBlank()) {
+            item.setFocUnit(item.getUnit());
+        }
+
+        if (item.getRemarks() == null || item.getRemarks().isBlank()) {
+            item.setRemarks(item.getDescription());
+        }
+    }
+
     public DeliveryNote getEntity(Long id) {
         return repo.findById(id)
                 .orElseThrow(() -> new RuntimeException("Delivery Note not found"));
@@ -642,15 +694,20 @@ public class DeliveryNoteService {
             item.setDeliveryNote(dn);
             item.setProduct(product);
             item.setItemCode(i.itemCode);
+            item.setBarcode(i.barcode);
             item.setDescription(i.description);
             item.setUnit(i.unit);
             item.setOrderedQty(i.orderedQty);
             item.setPrevDeliveredQty(i.prevDeliveredQty);
             item.setFoc(i.foc);
+            item.setFocUnit(i.focUnit);
+            item.setRemarks(i.remarks);
             item.setCurrentQty(i.currentQty);
             item.setBoxes(i.boxes);
+            item.setImage(i.image);
             item.setBinId(i.binId);
             item.setSalesOrderItemId(i.salesOrderItemId);
+            hydrateDeliveryItemDisplayData(item);
 
             dn.getItems().add(item);
 

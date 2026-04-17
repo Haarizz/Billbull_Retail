@@ -12,6 +12,7 @@ public class SalesOrderItem {
     private Long id;
 
     private String itemCode;
+    private String barcode;
     private String description;
     private String unit;
     private Integer quantity;
@@ -24,7 +25,11 @@ public class SalesOrderItem {
     private Double lineTotal;
     private Integer deliveredQuantity = 0;
     private Integer foc;
+    private String focUnit;
     private String image;
+
+    @Column(length = 500)
+    private String remarks;
 
     // ✅ LAZY + BACK REFERENCE
     @ManyToOne(fetch = FetchType.LAZY)
@@ -48,6 +53,14 @@ public class SalesOrderItem {
 
     public void setItemCode(String itemCode) {
         this.itemCode = itemCode;
+    }
+
+    public String getBarcode() {
+        return barcode;
+    }
+
+    public void setBarcode(String barcode) {
+        this.barcode = barcode;
     }
 
     public String getDescription() {
@@ -152,11 +165,27 @@ public class SalesOrderItem {
         this.foc = foc;
     }
 
+    public String getFocUnit() {
+        return focUnit;
+    }
+
+    public void setFocUnit(String focUnit) {
+        this.focUnit = focUnit;
+    }
+
     public String getImage() {
         return image;
     }
 
     public void setImage(String image) {
         this.image = image;
+    }
+
+    public String getRemarks() {
+        return remarks;
+    }
+
+    public void setRemarks(String remarks) {
+        this.remarks = remarks;
     }
 }

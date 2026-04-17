@@ -14,6 +14,8 @@ public class ProformaItemResponse {
 	private BigDecimal taxPercent;
 	private BigDecimal lineTotal;
 	private Integer foc;
+	private String focUnit;
+	private String remarks;
 
 	public Long getId() {
 		return id;
@@ -55,6 +57,14 @@ public class ProformaItemResponse {
 		return foc;
 	}
 
+	public String getFocUnit() {
+		return focUnit;
+	}
+
+	public String getRemarks() {
+		return remarks;
+	}
+
 	public void setId(Long id) {
 		this.id = id;
 	}
@@ -93,6 +103,14 @@ public class ProformaItemResponse {
 
 	public void setFoc(Integer foc) {
 		this.foc = foc;
+	}
+
+	public void setFocUnit(String focUnit) {
+		this.focUnit = focUnit;
+	}
+
+	public void setRemarks(String remarks) {
+		this.remarks = remarks;
 	}
 
 	// getters
