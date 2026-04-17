@@ -38,7 +38,7 @@ public class User extends BaseEntity {
     private String avatarUrl;
     private String employeeId;
     private java.time.LocalDate joinDate;
-    @Column(nullable = false)
+    @Column(nullable = false, columnDefinition = "boolean default false")
     private boolean pendingEmployeeActivation = false;
 
     @OneToOne(fetch = FetchType.LAZY)
