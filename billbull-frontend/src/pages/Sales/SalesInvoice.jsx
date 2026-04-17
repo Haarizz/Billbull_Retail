@@ -203,6 +203,7 @@ const SalesInvoice = () => {
 
     // Payment Calculation State
     const [amountCollected, setAmountCollected] = useState(0);
+    const [invoiceBalance, setInvoiceBalance] = useState(null); // server-side remaining balance
 
     // ✅ MODAL STATES
     const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
@@ -566,6 +567,7 @@ const SalesInvoice = () => {
         setBranch('Dubai Main');
         setItems([{ id: Date.now(), code: '', name: '', unit: 'PCS', qty: 0, price: 0, disc: 0, tax: 5, taxAmt: 0, gross: 0, net: 0, cost: 0 }]);
         setAmountCollected(0);
+        setInvoiceBalance(null);
         setActiveTab('create');
     };
 
@@ -1091,6 +1093,7 @@ const SalesInvoice = () => {
         setBranch(invoice.branch || 'Dubai Main');
 
         setAmountCollected(invoice.amountPaid || 0);
+        setInvoiceBalance(invoice.balance != null ? invoice.balance : null);
         setStatus(invoice.status || 'Draft');
         setSalesType(invoice.salesType || 'STANDARD_FLOW');
         setIsGeneratedFromDN(!!invoice.linkedDeliveryNote && invoice.status !== 'CANCELLED');
@@ -1127,8 +1130,10 @@ const SalesInvoice = () => {
 
     // ✅ MODAL HANDLERS
     const handleOpenPaymentModal = () => {
-        // Determine balance due
-        const outstanding = netTotal - amountCollected;
+        // Use server-side balance if available (authoritative), otherwise compute locally
+        const outstanding = invoiceBalance != null
+            ? invoiceBalance
+            : Math.max(netTotal - amountCollected, 0);
         setModalPaymentAmount(outstanding > 0 ? outstanding.toFixed(2) : 0);
         setIsPaymentModalOpen(true);
     };
@@ -1161,8 +1166,13 @@ const SalesInvoice = () => {
                     setActiveTab('list');
                 }
             } catch (err) {
-                console.error("Failed to record payment", err);
-                const message = err?.response?.data?.message || err?.response?.data || "Failed to record payment. Please try again.";
+                console.error("Payment error - status:", err?.response?.status);
+                console.error("Payment error - data:", JSON.stringify(err?.response?.data));
+                console.error("Payment error - message:", err?.message);
+                const message = err?.response?.data?.message
+                    || (typeof err?.response?.data === 'string' ? err.response.data : null)
+                    || err?.message
+                    || "Failed to record payment. Please try again.";
                 alert(message);
             } finally {
                 setIsLoading(false);
