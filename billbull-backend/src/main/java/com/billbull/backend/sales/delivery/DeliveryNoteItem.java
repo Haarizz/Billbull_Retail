@@ -29,6 +29,11 @@ public class DeliveryNoteItem {
 	private Long binId;
 	private Long salesOrderItemId;
 
+	private Double price;
+	private Double disc;
+	private Double tax;
+	private Double cost;
+
 	@ManyToOne(fetch = FetchType.LAZY)
 	@JoinColumn(name = "product_id", nullable = false)
 	private Product product;
@@ -171,5 +176,37 @@ public class DeliveryNoteItem {
 
 	public void setSalesOrderItemId(Long salesOrderItemId) {
 		this.salesOrderItemId = salesOrderItemId;
+	}
+
+	public Double getPrice() {
+		return price;
+	}
+
+	public void setPrice(Double price) {
+		this.price = price;
+	}
+
+	public Double getDisc() {
+		return disc;
+	}
+
+	public void setDisc(Double disc) {
+		this.disc = disc;
+	}
+
+	public Double getTax() {
+		return tax;
+	}
+
+	public void setTax(Double tax) {
+		this.tax = tax;
+	}
+
+	public Double getCost() {
+		return cost;
+	}
+
+	public void setCost(Double cost) {
+		this.cost = cost;
 	}
 }

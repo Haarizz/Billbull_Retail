@@ -383,6 +383,7 @@ const DeliveryNote = () => {
         remarks: '',
         unit: 'PCS',
         availableUnits: ['PCS'],
+        unitConversions: {},
         orderedQty: 0,
         prevDelivered: 0,
         currentQty: 0,
@@ -394,6 +395,12 @@ const DeliveryNote = () => {
         tax: 0,
         disc: 0,
         taxAmt: 0,
+        grossAmount: 0,
+        discountAmount: 0,
+        taxableAmount: 0,
+        total: 0,
+        net: 0,
+        cost: 0,
         margin: 0,
         binId: null,
         salesOrderItemId: null,
@@ -411,6 +418,17 @@ const DeliveryNote = () => {
             : Math.max(orderedQty - prevDelivered, 0);
         const computedBoxes = Number(item.boxes);
 
+        const price  = Number(item.price) || 0;
+        const disc   = Number(item.disc ?? item.discount ?? item.discountPercent) || 0;
+        const tax    = Number(item.tax ?? item.taxPercent ?? item.taxRate) || 0;
+        const foc    = Number(item.foc) || 0;
+        const grossAmount    = price * currentQty;
+        const discountAmount = grossAmount * (disc / 100);
+        const taxableAmount  = grossAmount - discountAmount;
+        const taxAmt         = taxableAmount * (tax / 100);
+        const total          = taxableAmount + taxAmt;
+        const cost           = Number(item.cost ?? item.costPrice ?? item.unitCost) || 0;
+
         return {
             id: item.id || fallbackId,
             code: resolvedCode,
@@ -422,17 +440,24 @@ const DeliveryNote = () => {
             availableUnits: Array.isArray(item.availableUnits) && item.availableUnits.length > 0
                 ? item.availableUnits
                 : [resolvedUnit],
+            unitConversions: item.unitConversions || {},
             orderedQty,
             prevDelivered,
             currentQty,
             qty: currentQty,
             boxes: Number.isFinite(computedBoxes) ? computedBoxes : (currentQty > 0 ? Math.ceil(currentQty / 10) : 0),
-            foc: Number(item.foc) || 0,
+            foc,
             focUnit: item.focUnit || resolvedUnit,
-            price: Number(item.price) || 0,
-            tax: Number(item.tax ?? item.taxPercent ?? item.taxRate) || 0,
-            disc: Number(item.disc ?? item.discount ?? item.discountPercent) || 0,
-            taxAmt: Number(item.taxAmt ?? item.taxAmount) || 0,
+            price,
+            tax,
+            disc,
+            taxAmt,
+            grossAmount,
+            discountAmount,
+            taxableAmount,
+            total,
+            net: total,
+            cost,
             margin: Number(item.margin) || 0,
             binId: item.binId ?? null,
             salesOrderItemId: item.salesOrderItemId || null,
@@ -783,6 +808,19 @@ const DeliveryNote = () => {
     };
 
     // âœ… 8. HARD BLOCK INVALID QTY
+    const recomputeItemTotals = (item) => {
+        const qty   = Number(item.qty ?? item.currentQty) || 0;
+        const price = Number(item.price) || 0;
+        const disc  = Number(item.disc) || 0;
+        const tax   = Number(item.tax) || 0;
+        const grossAmount    = price * qty;
+        const discountAmount = grossAmount * (disc / 100);
+        const taxableAmount  = grossAmount - discountAmount;
+        const taxAmt         = taxableAmount * (tax / 100);
+        const total          = taxableAmount + taxAmt;
+        return { ...item, grossAmount, discountAmount, taxableAmount, taxAmt, total, net: total };
+    };
+
     const handleItemChange = (id, field, value) => {
         if (isLockedForEdit) return;
         setItems(items.map(item => {
@@ -797,9 +835,9 @@ const DeliveryNote = () => {
                         return item; // â›” Block change
                     }
 
-                    // Also auto-update boxes logic purely for UI convenience
                     const boxes = Math.ceil(qty / 10);
-                    const updatedItem = { ...item, currentQty: qty, qty, boxes };
+                    const base = { ...item, currentQty: qty, qty, boxes };
+                    const updatedItem = recomputeItemTotals(base);
                     if (focusedItem && focusedItem.id === id) {
                         setFocusedItem(updatedItem);
                     }
@@ -816,7 +854,9 @@ const DeliveryNote = () => {
                     val = Number(value) || 0;
                 }
 
-                const updatedItem = { ...item, [field]: val };
+                const recalcFields = new Set(['price', 'disc', 'tax', 'foc']);
+                const base = { ...item, [field]: val };
+                const updatedItem = recalcFields.has(field) ? recomputeItemTotals(base) : base;
                 if (focusedItem && focusedItem.id === id) {
                     setFocusedItem(updatedItem);
                 }
@@ -891,7 +931,11 @@ const DeliveryNote = () => {
                 focUnit: i.focUnit || i.unit,
                 remarks: i.remarks || '',
                 binId: i.binId ? Number(i.binId) : null,
-                salesOrderItemId: i.salesOrderItemId ? Number(i.salesOrderItemId) : null
+                salesOrderItemId: i.salesOrderItemId ? Number(i.salesOrderItemId) : null,
+                price: Number(i.price) || 0,
+                disc: Number(i.disc) || 0,
+                tax: Number(i.tax) || 0,
+                cost: Number(i.cost) || 0
             }))
         };
 

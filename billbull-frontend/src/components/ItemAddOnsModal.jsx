@@ -42,10 +42,10 @@ const calculateRow = (item) => {
 };
 
 const ItemAddOnsModal = ({ item, onClose, onSave, isReadOnly = false }) => {
-    const [current, setCurrent] = useState(item ? { ...item } : null);
+    const [current, setCurrent] = useState(item ? calculateRow({ ...item }) : null);
 
     useEffect(() => {
-        setCurrent(item ? { ...item } : null);
+        setCurrent(item ? calculateRow({ ...item }) : null);
     }, [item]);
 
     if (!item || !current) return null;
@@ -184,27 +184,33 @@ const ItemAddOnsModal = ({ item, onClose, onSave, isReadOnly = false }) => {
                             <h4 className="text-[11px] font-bold text-slate-500 uppercase tracking-wider mb-2">Calculation Breakdown</h4>
                             <div className="space-y-1.5 text-xs">
                                 <div className="flex justify-between text-slate-600">
-                                    <span>Base Amount</span>
-                                    <span>AED {((current.qty || 0) * (current.price || 0)).toFixed(2)}</span>
+                                    <span>Base Amount (Qty × Price)</span>
+                                    <span>AED {(current.grossAmount ?? (current.qty || 0) * (current.price || 0)).toFixed(2)}</span>
                                 </div>
+                                {(current.foc > 0) && (
+                                    <div className="flex justify-between text-emerald-600">
+                                        <span>FOC Deduction ({current.foc} {current.focUnit || current.unit})</span>
+                                        <span>- AED {((current.grossAmount ?? 0) - (current.taxableAmount ?? 0) - (current.discountAmount ?? 0)).toFixed(2)}</span>
+                                    </div>
+                                )}
                                 {(current.disc > 0) && (
                                     <div className="flex justify-between text-red-500">
                                         <span>Discount ({current.disc}%)</span>
-                                        <span>- AED {(((current.qty || 0) * (current.price || 0)) * (current.disc / 100)).toFixed(2)}</span>
+                                        <span>- AED {(current.discountAmount ?? 0).toFixed(2)}</span>
                                     </div>
                                 )}
                                 <div className="flex justify-between text-slate-600">
-                                    <span>After Discount (Gross)</span>
-                                    <span>AED {(((current.qty || 0) * (current.price || 0)) * (1 - (current.disc || 0) / 100)).toFixed(2)}</span>
+                                    <span>Taxable Amount</span>
+                                    <span>AED {(current.taxableAmount ?? 0).toFixed(2)}</span>
                                 </div>
                                 <div className="flex justify-between text-emerald-600">
-                                    <span>Tax ({(current.tax || 0)}%)</span>
-                                    <span>+ AED {(current.taxAmt || 0).toFixed(2)}</span>
+                                    <span>Tax ({current.tax || 0}%)</span>
+                                    <span>+ AED {(current.taxAmt || current.taxAmount || 0).toFixed(2)}</span>
                                 </div>
                                 <div className="h-px bg-slate-200 my-2 w-full" />
                                 <div className="flex justify-between font-bold text-yellow-600 text-sm">
                                     <span>Net Amount</span>
-                                    <span>AED {(current.total || 0).toFixed(2)}</span>
+                                    <span>AED {(current.total ?? current.net ?? 0).toFixed(2)}</span>
                                 </div>
                                 <div className="h-px bg-slate-100 my-2 w-full" />
                                 <div className="flex justify-between text-[10px] text-slate-400">

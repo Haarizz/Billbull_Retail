@@ -242,16 +242,25 @@ public class ReceiptVoucherService {
         });
     }
 
+    private boolean isEffectivelyDelivered(SalesInvoice invoice) {
+        DeliveryStatus ds = invoice.getDeliveryStatus();
+        // AUTO_DELIVERED = system-generated delivery (direct sale / walk-in)
+        // null = no delivery required (e.g. service invoice)
+        return ds == DeliveryStatus.DELIVERED
+                || ds == DeliveryStatus.AUTO_DELIVERED
+                || ds == null;
+    }
+
     private SalesInvoiceStatus resolveInvoiceStatus(SalesInvoice invoice, double totalPaid, double invoiceTotal) {
         SalesInvoiceStatus currentStatus = invoice.getStatus();
         if (currentStatus == SalesInvoiceStatus.DRAFT || currentStatus == SalesInvoiceStatus.CANCELLED) {
             return currentStatus;
         }
 
+        boolean delivered = isEffectivelyDelivered(invoice);
+
         if (totalPaid >= invoiceTotal && invoiceTotal > 0) {
-            return invoice.getDeliveryStatus() == DeliveryStatus.DELIVERED
-                    ? SalesInvoiceStatus.PAID
-                    : SalesInvoiceStatus.PARTIALLY_PAID;
+            return delivered ? SalesInvoiceStatus.PAID : SalesInvoiceStatus.PARTIALLY_PAID;
         }
 
         if (totalPaid > 0) {
@@ -259,9 +268,7 @@ public class ReceiptVoucherService {
         }
 
         if (currentStatus == SalesInvoiceStatus.PAID || currentStatus == SalesInvoiceStatus.PARTIALLY_PAID) {
-            return invoice.getDeliveryStatus() == DeliveryStatus.DELIVERED
-                    ? SalesInvoiceStatus.CONFIRMED
-                    : SalesInvoiceStatus.POSTED;
+            return delivered ? SalesInvoiceStatus.CONFIRMED : SalesInvoiceStatus.POSTED;
         }
 
         return currentStatus != null ? currentStatus : SalesInvoiceStatus.POSTED;
