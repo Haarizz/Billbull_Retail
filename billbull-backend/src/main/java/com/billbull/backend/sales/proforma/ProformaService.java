@@ -11,6 +11,7 @@ import com.billbull.backend.inventory.product.Product;
 import com.billbull.backend.inventory.product.ProductBarcode;
 import com.billbull.backend.inventory.product.ProductBarcodeRepository;
 import com.billbull.backend.inventory.product.ProductRepository;
+import com.billbull.backend.util.DocumentOrderingUtil;
 
 @Service
 @Transactional
@@ -57,7 +58,13 @@ public class ProformaService {
 
     @Transactional(readOnly = true)
     public List<ProformaResponse> list() {
-        return repo.findAll().stream()
+        List<ProformaInvoice> proformas = new ArrayList<>(repo.findAll());
+        DocumentOrderingUtil.sortByDocumentDateAndNumberDesc(
+                proformas,
+                ProformaInvoice::getPiDate,
+                ProformaInvoice::getPiNumber,
+                ProformaInvoice::getId);
+        return proformas.stream()
                 .map(this::toResponse) // mapping happens INSIDE TX
                 .toList();
     }

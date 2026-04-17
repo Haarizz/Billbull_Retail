@@ -12,8 +12,10 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.math.BigDecimal;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
+import com.billbull.backend.util.DocumentOrderingUtil;
 
 @Service
 public class PaymentVoucherService {
@@ -28,7 +30,13 @@ public class PaymentVoucherService {
     private PostingEngineService postingEngineService;
 
     public List<PaymentVoucher> getAllVouchers() {
-        return repository.findAll();
+        List<PaymentVoucher> vouchers = new ArrayList<>(repository.findAll());
+        DocumentOrderingUtil.sortByDocumentDateAndNumberDesc(
+                vouchers,
+                PaymentVoucher::getPaymentDate,
+                PaymentVoucher::getVoucherNumber,
+                PaymentVoucher::getId);
+        return vouchers;
     }
 
     public Optional<PaymentVoucher> getVoucherById(Long id) {

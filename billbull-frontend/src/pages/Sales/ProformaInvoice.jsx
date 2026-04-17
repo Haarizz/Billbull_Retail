@@ -185,7 +185,7 @@ const ProformaInvoice = () => {
   // Search & Filter
   const [searchTerm, setSearchTerm] = useState('');
   const [filterStatus, setFilterStatus] = useState('All');
-  const [sortConfig, setSortConfig] = useState({ key: 'piNumber', direction: 'desc' });
+  const [sortConfig, setSortConfig] = useState({ key: null, direction: 'desc' });
 
   // List View State
   const [expandedListRows, setExpandedListRows] = useState({});

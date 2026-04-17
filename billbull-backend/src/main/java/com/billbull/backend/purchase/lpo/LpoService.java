@@ -3,9 +3,10 @@ package com.billbull.backend.purchase.lpo;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.HashMap;
 
 import org.springframework.stereotype.Service;
 
@@ -30,6 +31,7 @@ import com.billbull.backend.purchase.invoice.PurchaseInvoiceRepository;
 import com.billbull.backend.purchase.invoice.InvoiceStatus;
 import com.billbull.backend.purchase.invoice.PurchaseInvoiceItem;
 import com.billbull.backend.purchase.lpo.workflow.*;
+import com.billbull.backend.util.DocumentOrderingUtil;
 import com.billbull.backend.common.workflow.ApprovalStatus;
 import jakarta.transaction.Transactional;
 
@@ -101,9 +103,14 @@ public class LpoService {
     /* ================= LIST ================= */
 
     public List<LpoListResponse> list(LpoStatus status) {
-        List<Lpo> lpos = (status == null)
+        List<Lpo> lpos = new ArrayList<>((status == null)
                 ? repository.findAll()
-                : repository.findByStatus(status);
+                : repository.findByStatus(status));
+        DocumentOrderingUtil.sortByDocumentDateAndNumberDesc(
+                lpos,
+                Lpo::getLpoDate,
+                Lpo::getLpoNumber,
+                Lpo::getId);
 
         return lpos.stream().map(this::toListDto).toList();
     }

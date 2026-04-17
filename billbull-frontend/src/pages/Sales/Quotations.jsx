@@ -203,7 +203,7 @@ const Quotations = () => {
     const [editorMode, setEditorMode] = useState('edit');
     const [status, setStatus] = useState('Draft');
     const [searchTerm, setSearchTerm] = useState('');
-    const [sortConfig, setSortConfig] = useState({ key: 'date', direction: 'desc' });
+    const [sortConfig, setSortConfig] = useState({ key: null, direction: 'desc' });
     const [filterStatus, setFilterStatus] = useState('All');
     const [showToast, setShowToast] = useState(false);
     const [toastMessage, setToastMessage] = useState('');

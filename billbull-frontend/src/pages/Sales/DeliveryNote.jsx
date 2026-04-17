@@ -88,7 +88,7 @@ const DeliveryNote = () => {
 
     const [searchTerm, setSearchTerm] = useState('');
     const [filterStatus, setFilterStatus] = useState('All');
-    const [sortConfig, setSortConfig] = useState({ key: 'date', direction: 'desc' });
+    const [sortConfig, setSortConfig] = useState({ key: null, direction: 'desc' });
 
     const filteredDeliveryNotes = useMemo(() => {
         let data = [...deliveryNotesList];

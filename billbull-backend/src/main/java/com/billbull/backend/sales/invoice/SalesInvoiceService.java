@@ -25,6 +25,7 @@ import com.billbull.backend.inventory.stockavailability.StockAvailabilityService
 import com.billbull.backend.sales.delivery.DeliveryNoteItemRequest;
 import com.billbull.backend.sales.delivery.DeliveryNoteRequest;
 import com.billbull.backend.sales.delivery.DeliveryNoteService;
+import com.billbull.backend.util.DocumentOrderingUtil;
 
 @Service
 public class SalesInvoiceService {
@@ -221,7 +222,12 @@ public class SalesInvoiceService {
     // ----------------------------
     @Transactional(readOnly = true)
     public List<SalesInvoice> getAll() {
-        List<SalesInvoice> invoices = invoiceRepo.findAllByOrderByInvoiceDateDesc();
+        List<SalesInvoice> invoices = new ArrayList<>(invoiceRepo.findAll());
+        DocumentOrderingUtil.sortByDocumentDateAndNumberDesc(
+                invoices,
+                SalesInvoice::getInvoiceDate,
+                SalesInvoice::getInvoiceNumber,
+                SalesInvoice::getId);
 
         invoices.forEach(inv -> {
             Hibernate.initialize(inv.getItems());

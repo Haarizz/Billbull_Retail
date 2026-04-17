@@ -23,10 +23,12 @@ import com.billbull.backend.sales.invoice.SalesInvoice;
 import com.billbull.backend.sales.invoice.SalesInvoiceItem;
 import com.billbull.backend.sales.invoice.SalesInvoiceRepository;
 import com.billbull.backend.sales.stockstrategy.StockDeductionStrategyService;
+import com.billbull.backend.util.DocumentOrderingUtil;
 import com.billbull.backend.inventory.warehouse.Bin;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
+import java.util.ArrayList;
 import java.util.List;
 
 @Service
@@ -174,7 +176,13 @@ public class DeliveryNoteService {
 
     @Transactional(readOnly = true)
     public List<DeliveryNoteResponse> list() {
-        return repo.findAll().stream().map(this::toResponse).toList();
+        List<DeliveryNote> deliveryNotes = new ArrayList<>(repo.findAll());
+        DocumentOrderingUtil.sortByDocumentDateAndNumberDesc(
+                deliveryNotes,
+                DeliveryNote::getDnDate,
+                DeliveryNote::getDnNumber,
+                DeliveryNote::getId);
+        return deliveryNotes.stream().map(this::toResponse).toList();
     }
 
     @Transactional(readOnly = true)
@@ -186,8 +194,14 @@ public class DeliveryNoteService {
     public List<DeliveryNoteResponse> getUninvoicedForCustomer(String customerCode) {
         // Exclude only CANCELLED so DRAFT, DISPATCHED, and DELIVERED all appear in
         // modal
-        return repo.findUninvoicedByCustomer(customerCode, DeliveryNoteStatus.CANCELLED)
-                .stream()
+        List<DeliveryNote> deliveryNotes = new ArrayList<>(
+                repo.findUninvoicedByCustomer(customerCode, DeliveryNoteStatus.CANCELLED));
+        DocumentOrderingUtil.sortByDocumentDateAndNumberDesc(
+                deliveryNotes,
+                DeliveryNote::getDnDate,
+                DeliveryNote::getDnNumber,
+                DeliveryNote::getId);
+        return deliveryNotes.stream()
                 .map(this::toResponse)
                 .toList();
     }

@@ -93,7 +93,7 @@ const SalesInvoice = () => {
     const [searchTerm, setSearchTerm] = useState('');
     const [filterStatus, setFilterStatus] = useState('All');
     const [filterPayMode, setFilterPayMode] = useState('All');
-    const [sortConfig, setSortConfig] = useState({ key: 'invoiceDate', direction: 'desc' });
+    const [sortConfig, setSortConfig] = useState({ key: null, direction: 'desc' });
 
     const filteredInvoices = useMemo(() => {
         let data = [...invoicesList];
