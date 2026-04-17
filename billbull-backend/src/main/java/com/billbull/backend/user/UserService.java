@@ -4,6 +4,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import com.billbull.backend.hr.employees.Employee;
+import com.billbull.backend.hr.employees.EmployeeLoginAccessRequest;
 import com.billbull.backend.hr.employees.EmployeeRepository;
 import com.billbull.backend.role.Role;
 import com.billbull.backend.role.RoleRepository;
@@ -13,6 +14,7 @@ import java.util.List;
 import java.util.Optional;
 import java.util.Set;
 import java.util.HashSet;
+import java.util.stream.Stream;
 import java.util.stream.Collectors;
 
 /**
@@ -79,28 +81,16 @@ public class UserService {
      */
     @Transactional
     public UserSafeDto createUser(UserCreateRequest request) {
-        // Username must be unique
-        if (userRepository.findByUsername(request.getUsername()).isPresent()) {
-            throw new RuntimeException("Username already exists: " + request.getUsername());
-        }
+        validateUsernameAvailable(request.getUsername());
 
         User user = new User();
-        user.setUsername(request.getUsername());
-        user.setPassword(passwordEncoder.encode(request.getPassword()));
+        user.setUsername(request.getUsername().trim());
+        user.setPassword(encodeRequiredPassword(request.getPassword(), "Password"));
         user.setFullName(request.getFullName());
         user.setEmail(request.getEmail());
         user.setPhone(request.getPhone());
 
-        // Assign roles
-        if (request.getRoleIds() != null && !request.getRoleIds().isEmpty()) {
-            Set<Role> roles = new HashSet<>();
-            for (Long roleId : request.getRoleIds()) {
-                Role role = roleRepository.findById(roleId)
-                        .orElseThrow(() -> new RuntimeException("Role not found with id: " + roleId));
-                roles.add(role);
-            }
-            user.setRoles(roles);
-        }
+        user.setRoles(resolveRoles(request.getRoleIds()));
 
         // Link employee if provided
         if (request.getLinkedEmployeeId() != null) {
@@ -125,6 +115,54 @@ public class UserService {
         }
 
         return new UserSafeDto(userRepository.save(user));
+    }
+
+    /**
+     * Create a linked user that remains inactive until the employee becomes Active.
+     */
+    @Transactional
+    public void createPendingEmployeeAccess(Employee employee, EmployeeLoginAccessRequest request) {
+        if (employee == null || employee.getId() == null) {
+            throw new RuntimeException("Employee must be saved before provisioning login access.");
+        }
+        if (request == null || !request.isRequested()) {
+            throw new RuntimeException("Login access request is required.");
+        }
+        if (userRepository.findByLinkedEmployee_Id(employee.getId()).isPresent()) {
+            throw new RuntimeException("Employee is already linked to a user account.");
+        }
+
+        validateUsernameAvailable(request.getLoginUsername());
+        if (request.getRoleId() == null) {
+            throw new RuntimeException("System role is required when creating login access.");
+        }
+
+        User user = new User();
+        user.setUsername(request.getLoginUsername().trim());
+        user.setPassword(encodeRequiredPassword(request.getTemporaryPassword(), "Temporary password"));
+        user.setFullName(buildEmployeeFullName(employee));
+        user.setEmail(employee.getEmail());
+        user.setPhone(employee.getPhone());
+        user.setLinkedEmployee(employee);
+        user.setRoles(resolveRoles(Set.of(request.getRoleId())));
+        user.setActive(false);
+        user.setPendingEmployeeActivation(true);
+
+        userRepository.save(user);
+    }
+
+    /**
+     * Activates provisioned employee access only once, without unfreezing later accounts.
+     */
+    @Transactional
+    public void activatePendingEmployeeAccessForEmployee(Long employeeId) {
+        userRepository.findByLinkedEmployee_Id(employeeId).ifPresent(user -> {
+            if (user.isPendingEmployeeActivation()) {
+                user.setActive(true);
+                user.setPendingEmployeeActivation(false);
+                userRepository.save(user);
+            }
+        });
     }
 
     /**
@@ -230,5 +268,42 @@ public class UserService {
     private User findUserById(Long id) {
         return userRepository.findById(id)
                 .orElseThrow(() -> new RuntimeException("User not found with id: " + id));
+    }
+
+    private void validateUsernameAvailable(String username) {
+        if (username == null || username.isBlank()) {
+            throw new RuntimeException("Username is required.");
+        }
+        String normalizedUsername = username.trim();
+        if (userRepository.findByUsername(normalizedUsername).isPresent()) {
+            throw new RuntimeException("Username already exists: " + normalizedUsername);
+        }
+    }
+
+    private String encodeRequiredPassword(String rawPassword, String label) {
+        if (rawPassword == null || rawPassword.isBlank()) {
+            throw new RuntimeException(label + " is required.");
+        }
+        return passwordEncoder.encode(rawPassword);
+    }
+
+    private Set<Role> resolveRoles(Set<Long> roleIds) {
+        Set<Role> roles = new HashSet<>();
+        if (roleIds == null || roleIds.isEmpty()) {
+            return roles;
+        }
+
+        for (Long roleId : roleIds) {
+            Role role = roleRepository.findById(roleId)
+                    .orElseThrow(() -> new RuntimeException("Role not found with id: " + roleId));
+            roles.add(role);
+        }
+        return roles;
+    }
+
+    private String buildEmployeeFullName(Employee employee) {
+        return Stream.of(employee.getFirstName(), employee.getMiddleName(), employee.getLastName())
+                .filter(part -> part != null && !part.isBlank())
+                .collect(Collectors.joining(" "));
     }
 }

@@ -5,6 +5,7 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
 
 import com.billbull.backend.security.AdminSafeguardService;
+import com.billbull.backend.user.UserService;
 import com.billbull.backend.user.UserRepository;
 
 import java.io.File;
@@ -18,14 +19,17 @@ public class EmployeeServiceImpl implements EmployeeService {
     private final EmployeeRepository repository;
     private final UserRepository userRepository;
     private final AdminSafeguardService adminSafeguardService;
+    private final UserService userService;
 
     public EmployeeServiceImpl(
             EmployeeRepository repository,
             UserRepository userRepository,
-            AdminSafeguardService adminSafeguardService) {
+            AdminSafeguardService adminSafeguardService,
+            UserService userService) {
         this.repository = repository;
         this.userRepository = userRepository;
         this.adminSafeguardService = adminSafeguardService;
+        this.userService = userService;
     }
 
     @Override
@@ -51,16 +55,25 @@ public class EmployeeServiceImpl implements EmployeeService {
     }
 
     @Override
-    public Employee createEmployee(Employee employee, MultipartFile avatar) {
+    @Transactional
+    public Employee createEmployee(EmployeeUpsertRequest request, MultipartFile avatar) {
+        Employee employee = request.toEmployee();
         employee.setStatus("Pending");
         employee.setWorkflowStage("HR Review");
         handleAvatarUpload(employee, avatar);
-        return repository.save(employee);
+        Employee saved = repository.save(employee);
+
+        if (request.hasLoginAccessRequest()) {
+            userService.createPendingEmployeeAccess(saved, request.getLoginAccess());
+        }
+
+        return saved;
     }
 
     @Override
     @Transactional
-    public Employee updateEmployee(Long id, Employee updated, MultipartFile avatar) {
+    public Employee updateEmployee(Long id, EmployeeUpsertRequest request, MultipartFile avatar) {
+        Employee updated = request.toEmployee();
         Employee existing = getById(id);
 
         // Capture old email BEFORE field updates (needed for linked user email sync)
@@ -143,15 +156,18 @@ public class EmployeeServiceImpl implements EmployeeService {
     }
 
     @Override
+    @Transactional
     public Employee activateEmployee(Long id) {
         Employee emp = getById(id);
         emp.setStatus("Active");
         emp.setWorkflowStage("Completed");
-        // DO NOT auto-unfreeze linked user (per spec)
-        return repository.save(emp);
+        Employee saved = repository.save(emp);
+        userService.activatePendingEmployeeAccessForEmployee(id);
+        return saved;
     }
 
     @Override
+    @Transactional
     public Employee approve(Long id) {
         Employee emp = getById(id);
 
@@ -163,7 +179,13 @@ public class EmployeeServiceImpl implements EmployeeService {
             emp.setStatus("Active");
             emp.setWorkflowStage("Completed");
         }
-        return repository.save(emp);
+        Employee saved = repository.save(emp);
+
+        if ("Active".equals(saved.getStatus())) {
+            userService.activatePendingEmployeeAccessForEmployee(id);
+        }
+
+        return saved;
     }
 
     @Override

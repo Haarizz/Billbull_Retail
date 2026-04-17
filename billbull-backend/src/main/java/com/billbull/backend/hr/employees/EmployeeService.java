@@ -15,9 +15,9 @@ public interface EmployeeService {
     List<Employee> getPendingEmployees();
 
     // ===== CREATE / UPDATE =====
-    Employee createEmployee(Employee employee, MultipartFile avatar);
+    Employee createEmployee(EmployeeUpsertRequest request, MultipartFile avatar);
 
-    Employee updateEmployee(Long id, Employee employee, MultipartFile avatar);
+    Employee updateEmployee(Long id, EmployeeUpsertRequest request, MultipartFile avatar);
 
     // ===== STATUS =====
     Employee deactivateEmployee(Long id);

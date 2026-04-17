@@ -6,7 +6,9 @@ import com.billbull.backend.user.UserRepository;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 
@@ -69,10 +71,12 @@ public class EmployeeController {
     @PostMapping
     public ResponseEntity<Employee> create(
             @RequestPart("employee") String employeeJson,
-            @RequestPart(value = "avatar", required = false) MultipartFile avatar) throws Exception {
+            @RequestPart(value = "avatar", required = false) MultipartFile avatar,
+            Authentication authentication) throws Exception {
         modulePermissionService.requireCanCreate("hr");
-        Employee employee = mapper.readValue(employeeJson, Employee.class);
-        return ResponseEntity.ok(service.createEmployee(employee, avatar));
+        EmployeeUpsertRequest request = mapper.readValue(employeeJson, EmployeeUpsertRequest.class);
+        validateAdminLoginProvisioning(request, authentication);
+        return ResponseEntity.ok(service.createEmployee(request, avatar));
     }
 
     // ── VERTICAL: canEdit('hr') ──────────────────────────────────────────────
@@ -83,8 +87,9 @@ public class EmployeeController {
             @RequestPart("employee") String employeeJson,
             @RequestPart(value = "avatar", required = false) MultipartFile avatar) throws Exception {
         modulePermissionService.requireCanEdit("hr");
-        Employee employee = mapper.readValue(employeeJson, Employee.class);
-        return ResponseEntity.ok(service.updateEmployee(id, employee, avatar));
+        EmployeeUpsertRequest request = mapper.readValue(employeeJson, EmployeeUpsertRequest.class);
+        rejectLoginProvisioningOnUpdate(request);
+        return ResponseEntity.ok(service.updateEmployee(id, request, avatar));
     }
 
     @PutMapping("/{id}/deactivate")
@@ -136,6 +141,7 @@ public class EmployeeController {
             dto.setLinkedUsername(user.getUsername());
             dto.setLinkedEmail(user.getEmail());
             dto.setUserActive(user.isActive());
+            dto.setPendingEmployeeActivation(user.isPendingEmployeeActivation());
             dto.setAssignedRoles(
                 user.getRoles().stream()
                     .map(r -> r.getName())
@@ -146,5 +152,24 @@ public class EmployeeController {
         });
 
         return ResponseEntity.ok(dto);
+    }
+
+    private void validateAdminLoginProvisioning(EmployeeUpsertRequest request, Authentication authentication) {
+        if (!request.hasLoginAccessRequest()) {
+            return;
+        }
+
+        boolean isAdmin = authentication != null && authentication.getAuthorities().stream()
+                .anyMatch(authority -> "ROLE_ADMIN".equals(authority.getAuthority()));
+
+        if (!isAdmin) {
+            throw new AccessDeniedException("Only ADMIN can provision employee login access.");
+        }
+    }
+
+    private void rejectLoginProvisioningOnUpdate(EmployeeUpsertRequest request) {
+        if (request.hasLoginAccessRequest()) {
+            throw new RuntimeException("Login access can only be provisioned during employee creation.");
+        }
     }
 }
