@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
     FaFileAlt,
     FaFileInvoice,
@@ -21,21 +21,89 @@ import {
     FaSlidersH,
     FaToggleOn,
     FaAlignLeft,
-    FaImage,
     FaTrash,
     FaArrowLeft,
     FaExclamationTriangle,
     FaCheckCircle
 } from 'react-icons/fa';
-import logo from '../../assets/NEST Logo Final.png';
 import { getPrintTemplates, createPrintTemplate, updatePrintTemplate, deletePrintTemplate, setDefaultTemplate } from '../../api/printTemplateApi';
+import { generatePrintHtml } from '../../utils/printGenerator';
 
-const COMPANY_DETAILS = {
-    name: "New Extreme Sports Trading LLC",
+const PREVIEW_COMPANY = {
+    companyName: "New Extreme Sports Trading LLC",
     address: "M1 Office, Al Harthi Building, Rolla Street, Bur Dubai, Dubai - U.A.E",
     email: "admin@extremesportstrading.com",
     phone: "04 393 9169",
-    trn: "100014932600003"
+    trn: "100014932600003",
+    currencySymbol: "AED",
+};
+
+const PREVIEW_CUSTOMER = {
+    name: "Al Futtaim Retail LLC",
+    address: "Festival City, Dubai, UAE",
+    trn: "100239411200003",
+    phone: "+971 4 232 5000",
+};
+
+const PREVIEW_ITEMS = [
+    {
+        name: "Nike Air Max 270 — Black / White",
+        description: { title: "Nike Air Max 270 — Black / White", details: ["Size: UK 9", "Color: Black/White", "SKU: NK-AM270-BW-09"] },
+        unit: "Pair", qty: 3, price: 420, taxableAmount: 1260, taxAmt: 63, taxPercent: 5, total: 1323,
+    },
+    {
+        name: "Adidas Ultraboost 22",
+        description: { title: "Adidas Ultraboost 22", details: ["Size: UK 10", "Color: Core Black", "SKU: AD-UB22-BK-10"] },
+        unit: "Pair", qty: 2, price: 580, taxableAmount: 1160, taxAmt: 58, taxPercent: 5, total: 1218,
+    },
+    {
+        name: "Puma RS-X Reinvention",
+        description: { title: "Puma RS-X Reinvention", details: ["Size: UK 8", "Color: White/Red"] },
+        unit: "Pair", qty: 1, price: 310, taxableAmount: 310, taxAmt: 15.5, taxPercent: 5, total: 325.5,
+    },
+];
+
+const buildSalesPreviewData = (category) => {
+    const titles = {
+        "Quotation": "QUOTATION",
+        "Sales Invoice": "TAX INVOICE",
+        "Sales Order (SO)": "SALES ORDER",
+        "Delivery Note (DO/DN)": "DELIVERY NOTE",
+        "Proforma Invoice (PI)": "PROFORMA INVOICE",
+        "Sales Return": "CREDIT NOTE",
+    };
+    const docNos = {
+        "Quotation": "QT-2026-0058",
+        "Sales Invoice": "INV-2026-0142",
+        "Sales Order (SO)": "SO-2026-0091",
+        "Delivery Note (DO/DN)": "DN-2026-0037",
+        "Proforma Invoice (PI)": "PI-2026-0024",
+        "Sales Return": "CR-2026-0011",
+    };
+    return {
+        title: titles[category] || category,
+        docNo: docNos[category] || "DOC-2026-0001",
+        date: "2026-04-18",
+        customer: PREVIEW_CUSTOMER,
+        items: PREVIEW_ITEMS,
+        totals: {
+            subTotal: 2730,
+            tax: 136.5,
+            grandTotal: 2866.5,
+            currency: "AED",
+            billDiscount: 0,
+            billDiscountAmount: 0,
+            amountPaid: category === "Sales Invoice" ? 1000 : 0,
+            balanceDue: category === "Sales Invoice" ? 1866.5 : 0,
+        },
+        meta: {
+            status: "POSTED",
+            paymentTerm: "NET 30",
+            validTill: "2026-05-18",
+            validTillLabel: category === "Quotation" ? "Valid Until" : "Due Date",
+            notes: "",
+        },
+    };
 };
 
 const defaultTemplates = [
@@ -80,7 +148,7 @@ const defaultTemplates = [
         termsContent: `PAYMENT INSTRUCTION:
 Please transfer the total amount to the following bank account:
 Bank: Global City Bank
-Account Name: ${COMPANY_DETAILS.name}
+Account Name: ${PREVIEW_COMPANY.companyName}
 Account No: 1234-5678-9012
 IBAN: US12 GCBK 1234 5678 9012 34
 
@@ -303,6 +371,22 @@ const TemplateDesigner = ({ category, onCancel, onSave, initialData }) => {
         tax: true,
         total: true
     });
+
+    const previewHtml = useMemo(() => {
+        const template = {
+            category: category.title,
+            paperSize,
+            orientation,
+            headerContent,
+            footerContent,
+            termsContent,
+            displayOptions,
+            columns,
+        };
+        return generatePrintHtml(template, buildSalesPreviewData(category.title), {
+            companyProfile: PREVIEW_COMPANY,
+        });
+    }, [category.title, paperSize, orientation, headerContent, footerContent, termsContent, displayOptions, columns]);
 
     const handleDisplayOptionChange = (key) => {
         setDisplayOptions(prev => ({ ...prev, [key]: !prev[key] }));
@@ -602,7 +686,7 @@ const TemplateDesigner = ({ category, onCancel, onSave, initialData }) => {
                     </div>
 
                     {/* RIGHT COLUMN */}
-                    <div className="flex-[2] space-y-6">
+                    <div className="flex-2 space-y-6">
 
                         {/* Header Section */}
                         <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-6">
@@ -656,126 +740,13 @@ const TemplateDesigner = ({ category, onCancel, onSave, initialData }) => {
                                     <FaEye />
                                     <h3 className="font-bold text-gray-900 text-sm">Live Preview</h3>
                                 </div>
-
-                                {/* Dynamic Paper Mockup */}
-                                <div
-                                    className="border border-gray-300 shadow-lg mx-auto bg-white p-8 relative transition-all duration-300 ease-in-out flex flex-col"
-                                    style={getPaperStyle()}
-                                >
-
-                                    {/* Header Content (if any) */}
-                                    {headerContent && (
-                                        <div className="mb-4 text-sm" dangerouslySetInnerHTML={{ __html: headerContent }} />
-                                    )}
-
-                                    {/* Header */}
-                                    <div className="flex justify-between items-start mb-8 border-b border-gray-200 pb-6">
-                                        <div className="flex items-center gap-4">
-                                            {displayOptions.showLogo && (
-                                                <div className="w-16 h-16 flex items-center justify-center">
-                                                    <img src={logo} alt="Company Logo" className="max-w-full max-h-full object-contain" />
-                                                </div>
-                                            )}
-                                            {displayOptions.showCompanyDetails && (
-                                                <div>
-                                                    <h2 className="font-bold text-lg text-slate-800">New Extreme Sports Trading LLC</h2>
-                                                    <p className="text-xs text-gray-500">M1 Office, Al Harthi Building, Rolla Street, Bur Dubai, Dubai - U.A.E</p>
-                                                    <p className="text-xs text-gray-500">Email: admin@extremesportstrading.com | Phone: 04 393 9169</p>
-                                                    <p className="text-xs text-gray-500">TRN: 100014932600003</p>
-                                                </div>
-                                            )}
-                                        </div>
-                                        <div className="text-right">
-                                            <h1 className="text-2xl font-bold text-gray-900">{category.title}</h1>
-                                            <p className="text-sm text-gray-500">Date: {new Date().toLocaleDateString()}</p>
-                                            <p className="text-sm text-gray-500">Ref: PO-2024-001</p>
-                                        </div>
-                                    </div>
-
-                                    {/* Customer Details */}
-                                    {displayOptions.showCustomerDetails && (
-                                        <div className="mb-8">
-                                            <h3 className="font-bold text-sm text-slate-800 mb-1">Bill To:</h3>
-                                            <div className="text-sm text-gray-600">
-                                                <p className="font-semibold">Customer Name</p>
-                                                <p>Customer Address Line 1</p>
-                                                <p>City, State, Zip</p>
-                                                <p>Phone: +1 234 567 890</p>
-                                            </div>
-                                        </div>
-                                    )}
-
-                                    {/* Table */}
-                                    <div className="mb-8 flex-1">
-                                        <table className="w-full text-sm">
-                                            <thead className="bg-gray-50 border-y border-gray-200">
-                                                <tr className="text-left text-gray-600">
-                                                    {columns.productId && <th className="py-2 px-2 font-semibold text-center">Product ID</th>}
-                                                    {columns.sku && <th className="py-2 px-2 font-semibold">SKU</th>}
-                                                    {columns.arabicName && <th className="py-2 px-2 font-semibold text-right">Arabic Name</th>}
-                                                    {columns.item && <th className="py-2 px-2 font-semibold">Item</th>}
-                                                    {columns.description && <th className="py-2 px-2 font-semibold">Description</th>}
-                                                    {columns.qty && <th className="py-2 px-2 font-semibold text-right">Qty</th>}
-                                                    {columns.unitPrice && <th className="py-2 px-2 font-semibold text-right">Unit Price</th>}
-                                                    {columns.discount && <th className="py-2 px-2 font-semibold text-right">Discount</th>}
-                                                    {columns.tax && <th className="py-2 px-2 font-semibold text-right">Tax</th>}
-                                                    {columns.total && <th className="py-2 px-2 font-semibold text-right">Total</th>}
-                                                </tr>
-                                            </thead>
-                                            <tbody className="divide-y divide-gray-100">
-                                                {[1, 2, 3].map((i) => (
-                                                    <tr key={i}>
-                                                        {columns.productId && <td className="py-2 px-2 text-center text-gray-400 font-mono text-xs">{100 + i}</td>}
-                                                        {columns.sku && <td className="py-2 px-2 text-gray-400 font-mono text-xs">SKU-{i}00</td>}
-                                                        {columns.arabicName && <td className="py-2 px-2 text-gray-700 text-right" dir="rtl">منتج نموذجي</td>}
-                                                        {columns.item && <td className="py-2 px-2 text-gray-700">
-                                                            {!columns.description && displayOptions.showItemImage ? (
-                                                                <div className="flex items-center gap-2">
-                                                                    <div className="w-6 h-6 bg-gray-200 rounded flex items-center justify-center text-gray-400 text-[8px]"><FaImage /></div>
-                                                                    <span>Sample</span>
-                                                                </div>
-                                                            ) : 'Sample'}
-                                                        </td>}
-                                                        {columns.description && <td className="py-2 px-2 text-gray-500">
-                                                            {displayOptions.showItemImage ? (
-                                                                <div className="flex items-center gap-2">
-                                                                    <div className="w-6 h-6 bg-gray-200 rounded flex items-center justify-center text-gray-400 text-[8px]"><FaImage /></div>
-                                                                    <span>Sample</span>
-                                                                </div>
-                                                            ) : 'Sample'}
-                                                        </td>}
-                                                        {columns.qty && <td className="py-2 px-2 text-right text-gray-700">Sample</td>}
-                                                        {columns.unitPrice && <td className="py-2 px-2 text-right text-gray-700">Sample</td>}
-                                                        {columns.discount && <td className="py-2 px-2 text-right text-gray-700">Sample</td>}
-                                                        {columns.tax && <td className="py-2 px-2 text-right text-gray-700">Sample</td>}
-                                                        {columns.total && <td className="py-2 px-2 text-right font-medium text-gray-900">Sample</td>}
-                                                    </tr>
-                                                ))}
-                                            </tbody>
-                                            {columns.total && (
-                                                <tfoot className="border-t border-gray-200">
-                                                    <tr>
-                                                        <td colSpan={Object.values(columns).filter(Boolean).length - 1} className="py-2 px-2 text-right font-bold text-gray-800">Total:</td>
-                                                        <td className="py-2 px-2 text-right font-bold text-gray-900">Sample</td>
-                                                    </tr>
-                                                </tfoot>
-                                            )}
-                                        </table>
-                                    </div>
-
-                                    {/* Terms */}
-                                    {displayOptions.showTerms && termsContent && (
-                                        <div className="mb-4 border-t border-gray-200 pt-4">
-                                            <h3 className="font-bold text-sm text-slate-800 mb-2">Terms & Conditions</h3>
-                                            <div className="text-xs text-gray-500 whitespace-pre-wrap">{termsContent}</div>
-                                        </div>
-                                    )}
-
-                                    {/* Footer Content */}
-                                    {footerContent && (
-                                        <div className="mt-4 border-t border-gray-200 pt-4 text-xs text-center text-gray-400" dangerouslySetInnerHTML={{ __html: footerContent }} />
-                                    )}
-
+                                <div className="border border-gray-300 shadow-lg mx-auto overflow-hidden rounded" style={{ width: '100%', maxWidth: '794px', aspectRatio: '210/297' }}>
+                                    <iframe
+                                        title="Template Preview"
+                                        srcDoc={previewHtml}
+                                        style={{ width: '100%', height: '100%', border: 'none' }}
+                                        sandbox="allow-same-origin"
+                                    />
                                 </div>
                             </div>
                         )}

@@ -1,4 +1,8 @@
 import React, { useState, useEffect } from 'react';
+import { generatePrintHtml, printHtml } from '../../utils/printGenerator';
+import { getTemplatesByCategory } from '../../api/printTemplateApi';
+import { useCompany } from '../../context/CompanyContext';
+import billBullLogo from '../../assets/billBullLogo.png';
 import {
    RotateCcw,
    Search,
@@ -47,6 +51,7 @@ import { getAllSalesInvoices } from '../../api/salesInvoiceApi';
 // ==========================================
 
 const SalesReturn = () => {
+   const { company } = useCompany();
    const [activeTab, setActiveTab] = useState('list');
    const [isLoading, setIsLoading] = useState(false);
 
@@ -274,109 +279,68 @@ const SalesReturn = () => {
       }
    };
 
-   const handlePrint = (ret) => {
+   const handlePrint = async (ret) => {
       if (!ret) return;
-      const printWindow = window.open('', '_blank');
-      const printContent = `
-            <html>
-                <head>
-                    <title>Credit Note - ${ret.returnNumber}</title>
-                    <style>
-                        body { font-family: 'Segoe UI', sans-serif; padding: 40px; color: #333; }
-                        .header { border-bottom: 2px solid #F5C742; padding-bottom: 20px; margin-bottom: 30px; display: flex; justify-content: space-between; align-items: center; }
-                        .logo { font-size: 24px; font-weight: bold; color: #F5C742; }
-                        .title { font-size: 20px; font-weight: bold; color: #555; }
-                        .details-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 40px; margin-bottom: 30px; }
-                        .label { font-size: 11px; color: #888; text-transform: uppercase; font-weight: bold; }
-                        .value { font-size: 13px; font-weight: 600; margin-top: 2px; }
-                        table { w-full; border-collapse: collapse; margin-top: 20px; width: 100%; }
-                        th { background: #f8fafc; text-align: left; padding: 12px; border-bottom: 1px solid #e2e8f0; font-size: 11px; color: #64748b; }
-                        td { padding: 12px; border-bottom: 1px solid #f1f5f9; font-size: 12px; }
-                        .totals { margin-top: 30px; margin-left: auto; width: 250px; }
-                        .total-row { display: flex; justify-content: space-between; padding: 8px 0; }
-                        .grand-total { border-top: 2px solid #F5C742; margin-top: 10px; font-weight: bold; font-size: 16px; color: #ef4444; }
-                        .footer { margin-top: 50px; text-align: center; font-size: 11px; color: #94a3b8; border-top: 1px solid #f1f5f9; padding-top: 20px; }
-                    </style>
-                </head>
-                <body>
-                    <div class="header">
-                        <div class="logo">BILLBULL</div>
-                        <div class="title">CREDIT NOTE</div>
-                    </div>
-                    
-                    <div class="details-grid">
-                        <div>
-                            <div class="label">Return Number</div>
-                            <div class="value">${ret.returnNumber}</div>
-                            <br/>
-                            <div class="label">Date</div>
-                            <div class="value">${ret.returnDate}</div>
-                            <br/>
-                            <div class="label">Reason</div>
-                            <div class="value">${ret.reason}</div>
-                        </div>
-                        <div style="text-align: right;">
-                            <div class="label">Customer</div>
-                            <div class="value">${ret.customerName}</div>
-                            <div class="value">${ret.customerCode}</div>
-                            <br/>
-                            <div class="label">Original Invoice</div>
-                            <div class="value">${ret.linkedInvoice}</div>
-                        </div>
-                    </div>
+      try {
+         const templates = await getTemplatesByCategory('Sales Return');
+         const defaultTemplate = (templates && templates.find(t => t.isDefault)) || {
+            category: 'Sales Return',
+            paperSize: 'A4',
+            orientation: 'Portrait',
+            headerContent: '',
+            footerContent: '',
+            termsContent: '',
+            displayOptions: { showLogo: true, showCompanyDetails: true, showCustomerDetails: true, showTerms: false, showItemImage: false },
+            columns: { qty: true, unitPrice: true, taxableAmount: true, tax: true, discount: false, total: true },
+         };
 
-                    <table>
-                        <thead>
-                            <tr>
-                                <th>Item Code</th>
-                                <th>Description</th>
-                                <th style="text-align: center;">Qty</th>
-                                <th style="text-align: right;">Price</th>
-                                <th style="text-align: right;">Total</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            ${ret.items.map(item => `
-                                <tr>
-                                    <td>${item.itemCode}</td>
-                                    <td>${item.itemName}</td>
-                                    <td style="text-align: center;">${item.returnQty}</td>
-                                    <td style="text-align: right;">${item.price.toLocaleString()}</td>
-                                    <td style="text-align: right; font-weight: bold;">${item.total.toLocaleString()}</td>
-                                </tr>
-                            `).join('')}
-                        </tbody>
-                    </table>
+         const subTotal = Number(ret.subTotal) || (ret.items || []).reduce((s, i) => s + Number(i.price) * Number(i.returnQty), 0);
+         const taxAmt = Number(ret.taxAmount) || 0;
+         const grandTotal = Number(ret.totalAmount) || subTotal + taxAmt;
 
-                    <div class="totals">
-                        <div class="total-row">
-                            <span class="label">Subtotal</span>
-                            <span class="value">AED ${ret.subTotal.toLocaleString()}</span>
-                        </div>
-                        <div class="total-row">
-                            <span class="label">Tax Recovery</span>
-                            <span class="value">AED ${ret.taxAmount.toLocaleString()}</span>
-                        </div>
-                        <div class="total-row grand-total">
-                            <span style="color: #64748b;">TOTAL CREDIT</span>
-                            <span>AED ${ret.totalAmount.toLocaleString()}</span>
-                        </div>
-                    </div>
+         const printData = {
+            title: 'CREDIT NOTE',
+            docNo: ret.returnNumber,
+            date: ret.returnDate,
+            customer: {
+               name: ret.customerName || '',
+               address: '',
+               trn: '',
+               phone: '',
+            },
+            items: (ret.items || []).map(item => ({
+               name: item.itemName || item.itemCode || '',
+               description: { title: item.itemName || item.itemCode || '', details: item.itemCode ? [`Code: ${item.itemCode}`] : [] },
+               unit: item.unit || 'PCS',
+               qty: Number(item.returnQty),
+               price: Number(item.price),
+               taxableAmount: Number(item.price) * Number(item.returnQty),
+               taxAmt: 0,
+               taxPercent: 0,
+               total: Number(item.total),
+            })),
+            totals: {
+               subTotal,
+               tax: taxAmt,
+               grandTotal,
+               currency: 'AED',
+               billDiscount: 0,
+               billDiscountAmount: 0,
+            },
+            meta: {
+               status: ret.status || '',
+               paymentTerm: '',
+               validTill: '',
+               validTillLabel: 'Original Invoice',
+               notes: `Original Invoice: ${ret.linkedInvoice || '-'}${ret.reason ? `\nReason: ${ret.reason}` : ''}`,
+            },
+         };
 
-                    <div class="footer">
-                        This document serves as an official Credit Note.
-                        <br/>
-                        &copy; 2026 Billbull ERP - Advanced Business Management
-                    </div>
-
-                    <script>
-                        window.onload = function() { window.print(); window.close(); };
-                    </script>
-                </body>
-            </html>
-        `;
-      printWindow.document.write(printContent);
-      printWindow.document.close();
+         const html = generatePrintHtml(defaultTemplate, printData, { companyProfile: company, billBullLogo });
+         printHtml(html);
+      } catch (err) {
+         console.error('Failed to print credit note', err);
+      }
    };
 
    // ==========================================
