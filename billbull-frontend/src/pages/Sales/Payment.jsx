@@ -30,12 +30,17 @@ import {
 import { getAllSalesPayments, saveSalesPayment, getNextSalesPaymentNumber, getSalesPaymentStats, deleteSalesPayment } from '../../api/salesPaymentApi';
 import { getAllSalesInvoices } from '../../api/salesInvoiceApi';
 import { getAllCustomers } from '../../api/customerledgerApi';
+import { getTemplatesByCategory } from '../../api/printTemplateApi';
+import { generatePrintHtml, printHtml } from '../../utils/printGenerator';
+import { useCompany } from '../../context/CompanyContext';
+import billBullLogo from '../../assets/billBullLogo.png';
 
 // ==========================================
 // PAYMENT MODULE COMPONENT
 // ==========================================
 
 const Payment = () => {
+    const { company } = useCompany();
     const [activeTab, setActiveTab] = useState('list');
     const [isLoading, setIsLoading] = useState(false);
 
@@ -164,89 +169,68 @@ const Payment = () => {
         }
     };
 
-    const handlePrint = (payment) => {
+    const handlePrint = async (payment) => {
         if (!payment) return;
-        // Logic for printing a clean receipt
-        const printWindow = window.open('', '_blank');
-        const printContent = `
-            <html>
-                <head>
-                    <title>Payment Receipt - ${payment.paymentNo}</title>
-                    <style>
-                        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; padding: 40px; color: #333; }
-                        .header { border-bottom: 2px solid #F5C742; padding-bottom: 20px; margin-bottom: 30px; display: flex; justify-content: space-between; align-items: center; }
-                        .logo { font-size: 24px; font-weight: bold; color: #F5C742; }
-                        .receipt-title { font-size: 20px; font-weight: bold; color: #555; }
-                        .details { display: grid; grid-template-cols: 1fr 1fr; gap: 40px; margin-bottom: 40px; }
-                        .label { font-size: 12px; color: #888; text-transform: uppercase; font-weight: bold; margin-bottom: 5px; }
-                        .value { font-size: 14px; font-weight: 600; }
-                        .amount-box { background: #f9f9f9; border: 1px solid #eee; padding: 20px; text-align: center; margin-bottom: 40px; }
-                        .amount-value { font-size: 32px; font-weight: 800; color: #10b981; }
-                        .footer { border-top: 1px solid #eee; padding-top: 20px; margin-top: 40px; font-size: 12px; color: #999; text-align: center; }
-                    </style>
-                </head>
-                <body>
-                    <div class="header">
-                        <div class="logo">BILLBULL</div>
-                        <div class="receipt-title">PAYMENT RECEIPT</div>
-                    </div>
-                    
-                    <div class="details">
-                        <div>
-                            <div class="label">Payment Number</div>
-                            <div class="value">${payment.paymentNo}</div>
-                            <br/>
-                            <div class="label">Payment Date</div>
-                            <div class="value">${payment.date}</div>
-                        </div>
-                        <div style="text-align: right;">
-                            <div class="label">Customer</div>
-                            <div class="value">${payment.customerName}</div>
-                            <div class="value">${payment.customerCode}</div>
-                        </div>
-                    </div>
+        try {
+            const templates = await getTemplatesByCategory('Sales Invoice');
+            const defaultTemplate = (templates && templates.find(t => t.isDefault)) || {
+                category: 'Sales Invoice',
+                paperSize: 'A4',
+                orientation: 'Portrait',
+                headerContent: '',
+                footerContent: '',
+                termsContent: '',
+                displayOptions: { showLogo: true, showCompanyDetails: true, showCustomerDetails: true, showTerms: false, showItemImage: false },
+                columns: { qty: false, unitPrice: false, taxableAmount: false, tax: false, discount: false, total: true },
+            };
 
-                    <div class="details">
-                        <div>
-                            <div class="label">Payment Mode</div>
-                            <div class="value">${payment.mode}</div>
-                        </div>
-                        <div style="text-align: right;">
-                            <div class="label">Reference No</div>
-                            <div class="value">${payment.reference || '-'}</div>
-                        </div>
-                    </div>
+            const amount = Number(payment.amount) || 0;
+            const printData = {
+                title: 'PAYMENT RECEIPT',
+                docNo: payment.paymentNo,
+                date: payment.date,
+                customer: {
+                    name: payment.customerName || '',
+                    address: '',
+                    trn: '',
+                    phone: '',
+                },
+                items: [{
+                    name: 'Payment Received',
+                    description: { title: 'Payment Received', details: [
+                        `Mode: ${payment.mode || '-'}`,
+                        payment.reference ? `Ref: ${payment.reference}` : null,
+                        payment.invoiceNo ? `Invoice: ${payment.invoiceNo}` : null,
+                    ].filter(Boolean) },
+                    unit: '',
+                    qty: 1,
+                    price: amount,
+                    taxableAmount: amount,
+                    taxAmt: 0,
+                    taxPercent: 0,
+                    total: amount,
+                }],
+                totals: {
+                    subTotal: amount,
+                    tax: 0,
+                    grandTotal: amount,
+                    currency: 'AED',
+                    billDiscount: 0,
+                    billDiscountAmount: 0,
+                },
+                meta: {
+                    status: payment.status || 'Completed',
+                    paymentTerm: '',
+                    validTill: '',
+                    notes: payment.notes || '',
+                },
+            };
 
-                    <div class="amount-box">
-                        <div class="label">Amount Received</div>
-                        <div class="amount-value">AED ${payment.amount.toLocaleString(undefined, { minimumFractionDigits: 2 })}</div>
-                    </div>
-
-                    <div class="details">
-                        <div>
-                            <div class="label">Linked Invoice</div>
-                            <div class="value">${payment.invoiceNo || '-'}</div>
-                        </div>
-                        <div style="text-align: right;">
-                            <div class="label">Notes</div>
-                            <div class="value">${payment.notes || 'N/A'}</div>
-                        </div>
-                    </div>
-
-                    <div class="footer">
-                        This is a computer-generated document. No signature is required.
-                        <br/>
-                        &copy; 2026 Billbull ERP
-                    </div>
-
-                    <script>
-                        window.onload = function() { window.print(); window.close(); };
-                    </script>
-                </body>
-            </html>
-        `;
-        printWindow.document.write(printContent);
-        printWindow.document.close();
+            const html = generatePrintHtml(defaultTemplate, printData, { companyProfile: company, billBullLogo });
+            printHtml(html);
+        } catch (err) {
+            console.error('Failed to print payment receipt', err);
+        }
     };
 
 

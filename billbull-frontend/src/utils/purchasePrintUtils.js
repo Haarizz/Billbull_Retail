@@ -396,6 +396,7 @@ export const buildPurchaseInvoicePrintData = (invoice, vendor, companyProfile) =
         const discountAmount = toNumber(item.discountAmount);
         const taxableAmount = toNumber((qty * price) - discountAmount);
         const taxAmt = toNumber(item.taxAmount ?? item.taxAmt);
+        const taxPercent = toNumber(item.taxPercent ?? item.taxRate ?? 0);
         const lineTotal = toNumber(item.lineTotal || taxableAmount + taxAmt);
 
         return {
@@ -408,6 +409,7 @@ export const buildPurchaseInvoicePrintData = (invoice, vendor, companyProfile) =
             price,
             taxableAmount,
             taxAmt,
+            taxPercent,
             total: lineTotal,
             image: item.image || "",
             description: buildDescriptionLines(
@@ -565,9 +567,9 @@ export const buildPurchasePreviewData = (category, companyProfile = {}) => {
                     balanceDue: 4800,
                     status: "POSTED",
                     items: [
-                        { itemCode: "ITM-001", itemName: "DART Retail ERP Software", qty: 1, uom: "User License", unitCost: 2300, taxAmount: 115, lineTotal: 2415, remarks: "Server software license" },
-                        { itemCode: "ITM-002", itemName: "DART Wholesale Trading Module", qty: 1, uom: "User License", unitCost: 1420, taxAmount: 71, lineTotal: 1491 },
-                        { itemCode: "ITM-003", itemName: "Zebra ZD220 USB Printer", qty: 1, uom: "Unit", unitCost: 780, taxAmount: 39, lineTotal: 819 },
+                        { itemCode: "ITM-001", itemName: "DART Retail ERP Software", qty: 1, uom: "User License", unitCost: 2300, taxPercent: 5, taxAmount: 115, lineTotal: 2415, remarks: "Server software license" },
+                        { itemCode: "ITM-002", itemName: "DART Wholesale Trading Module", qty: 1, uom: "User License", unitCost: 1420, taxPercent: 5, taxAmount: 71, lineTotal: 1491 },
+                        { itemCode: "ITM-003", itemName: "Zebra ZD220 USB Printer", qty: 1, uom: "Unit", unitCost: 780, taxPercent: 5, taxAmount: 39, lineTotal: 819 },
                     ],
                     subTotal: 4500,
                     taxTotal: 225,
