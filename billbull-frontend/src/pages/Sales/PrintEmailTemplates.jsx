@@ -14,7 +14,6 @@ import {
     FaEdit,
     FaCopy,
     FaEye,
-    FaTimes,
     FaSave,
     FaCode,
     FaListUl,
@@ -27,22 +26,24 @@ import {
     FaCheckCircle
 } from 'react-icons/fa';
 import { getPrintTemplates, createPrintTemplate, updatePrintTemplate, deletePrintTemplate, setDefaultTemplate } from '../../api/printTemplateApi';
-import { generatePrintHtml } from '../../utils/printGenerator';
+import DocumentPreviewCanvas from '../../components/DocumentPreviewCanvas';
+import { generateEmailHtml, generatePrintHtml } from '../../utils/printGenerator';
 
 const PREVIEW_COMPANY = {
-    companyName: "New Extreme Sports Trading LLC",
-    address: "M1 Office, Al Harthi Building, Rolla Street, Bur Dubai, Dubai - U.A.E",
-    email: "admin@extremesportstrading.com",
-    phone: "04 393 9169",
-    trn: "100014932600003",
+    companyName: "Sample Company LLC",
+    address: "Sample Business Center, Dubai, UAE",
+    email: "sample@company.test",
+    phone: "+971 4 000 0000",
+    trn: "100000000000000",
     currencySymbol: "AED",
+    logoUrl: null,
 };
 
 const PREVIEW_CUSTOMER = {
-    name: "Al Futtaim Retail LLC",
-    address: "Festival City, Dubai, UAE",
-    trn: "100239411200003",
-    phone: "+971 4 232 5000",
+    name: "Sample Customer LLC",
+    address: "Sample Customer Address, Dubai, UAE",
+    trn: "100000000000111",
+    phone: "+971 50 000 0001",
 };
 
 const PREVIEW_ITEMS = [
@@ -73,19 +74,42 @@ const buildSalesPreviewData = (category) => {
         "Sales Return": "CREDIT NOTE",
     };
     const docNos = {
-        "Quotation": "QT-2026-0058",
-        "Sales Invoice": "INV-2026-0142",
-        "Sales Order (SO)": "SO-2026-0091",
-        "Delivery Note (DO/DN)": "DN-2026-0037",
-        "Proforma Invoice (PI)": "PI-2026-0024",
-        "Sales Return": "CR-2026-0011",
+        "Quotation": "QT-SAMPLE-0001",
+        "Sales Invoice": "INV-SAMPLE-0001",
+        "Sales Order (SO)": "SO-SAMPLE-0001",
+        "Delivery Note (DO/DN)": "DN-SAMPLE-0001",
+        "Proforma Invoice (PI)": "PI-SAMPLE-0001",
+        "Sales Return": "CR-SAMPLE-0001",
     };
+    const previewCustomer = {
+        name: "Sample Customer LLC",
+        address: "Sample Customer Address, Dubai, UAE",
+        trn: "100000000000111",
+        phone: "+971 50 000 0001",
+    };
+    const previewItems = [
+        {
+            name: "Product Name Sample 01",
+            description: { title: "Product Name Sample 01", details: ["Color: Sample Black", "Size: Standard", "Sku: SKU-SAMPLE-01"] },
+            unit: "Pcs", qty: 3, price: 420, taxableAmount: 1260, taxAmt: 63, taxPercent: 5, total: 1323,
+        },
+        {
+            name: "Product Name Sample 02",
+            description: { title: "Product Name Sample 02", details: ["Variant: Standard", "Sku: SKU-SAMPLE-02"] },
+            unit: "Pcs", qty: 2, price: 580, taxableAmount: 1160, taxAmt: 58, taxPercent: 5, total: 1218,
+        },
+        {
+            name: "Product Name Sample 03",
+            description: { title: "Product Name Sample 03", details: ["Specification: Demo Item", "Sku: SKU-SAMPLE-03"] },
+            unit: "Pcs", qty: 1, price: 310, taxableAmount: 310, taxAmt: 15.5, taxPercent: 5, total: 325.5,
+        },
+    ];
     return {
         title: titles[category] || category,
-        docNo: docNos[category] || "DOC-2026-0001",
+        docNo: docNos[category] || "DOC-SAMPLE-0001",
         date: "2026-04-18",
-        customer: PREVIEW_CUSTOMER,
-        items: PREVIEW_ITEMS,
+        customer: previewCustomer,
+        items: previewItems,
         totals: {
             subTotal: 2730,
             tax: 136.5,
@@ -372,6 +396,8 @@ const TemplateDesigner = ({ category, onCancel, onSave, initialData }) => {
         total: true
     });
 
+    const previewCompany = PREVIEW_COMPANY;
+
     const previewHtml = useMemo(() => {
         const template = {
             category: category.title,
@@ -384,9 +410,25 @@ const TemplateDesigner = ({ category, onCancel, onSave, initialData }) => {
             columns,
         };
         return generatePrintHtml(template, buildSalesPreviewData(category.title), {
-            companyProfile: PREVIEW_COMPANY,
+            companyProfile: previewCompany,
         });
-    }, [category.title, paperSize, orientation, headerContent, footerContent, termsContent, displayOptions, columns]);
+    }, [category.title, paperSize, orientation, headerContent, footerContent, termsContent, displayOptions, columns, previewCompany]);
+
+    const previewEmailHtml = useMemo(() => {
+        const template = {
+            category: category.title,
+            paperSize,
+            orientation,
+            headerContent,
+            footerContent,
+            termsContent,
+            displayOptions,
+            columns,
+        };
+        return generateEmailHtml(template, buildSalesPreviewData(category.title), {
+            companyProfile: previewCompany,
+        });
+    }, [category.title, paperSize, orientation, headerContent, footerContent, termsContent, displayOptions, columns, previewCompany]);
 
     const handleDisplayOptionChange = (key) => {
         setDisplayOptions(prev => ({ ...prev, [key]: !prev[key] }));
@@ -412,30 +454,6 @@ const TemplateDesigner = ({ category, onCancel, onSave, initialData }) => {
             isDefault: initialData?.isDefault || false
         };
         onSave(templateData);
-    };
-
-    // Helper for Paper Dimensions
-    const getPaperStyle = () => {
-        const dimensions = {
-            'A3': { width: '297mm', height: '420mm' },
-            'A4': { width: '210mm', height: '297mm' },
-            'A5': { width: '148mm', height: '210mm' },
-            'Letter': { width: '216mm', height: '279mm' },
-            'Legal': { width: '216mm', height: '356mm' }
-        };
-
-        const base = dimensions[paperSize] || dimensions['A4'];
-        const isLandscape = orientation === 'Landscape';
-
-        const width = isLandscape ? base.height : base.width;
-        const height = isLandscape ? base.width : base.height;
-
-        return {
-            width: '100%',
-            maxWidth: width,
-            minHeight: height,
-            aspectRatio: `${width.replace('mm', '')}/${height.replace('mm', '')}`
-        };
     };
 
     return (
@@ -688,13 +706,20 @@ const TemplateDesigner = ({ category, onCancel, onSave, initialData }) => {
                     {/* RIGHT COLUMN */}
                     <div className="flex-2 space-y-6">
 
+                        <div className="rounded-xl border border-blue-100 bg-blue-50 p-5">
+                            <h3 className="text-sm font-bold text-blue-900">System-Controlled Layout</h3>
+                            <p className="mt-2 text-xs leading-6 text-blue-800">
+                                Document structure is now layout-driven. Date blocks, company details, party cards, item table, totals, and footer stay consistent, while the fields below add supporting content inside those fixed regions.
+                            </p>
+                        </div>
+
                         {/* Header Section */}
                         <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-6">
                             <div className="flex items-center gap-2 mb-2 text-yellow-600">
                                 <FaCode />
-                                <h3 className="font-bold text-gray-900 text-sm">Header Section</h3>
+                                <h3 className="font-bold text-gray-900 text-sm">Header Add-on</h3>
                             </div>
-                            <p className="text-xs text-gray-400 mb-3">Enter custom HTML for header (optional). Variables: &#123;company_name&#125;, &#123;company_address&#125;, &#123;logo&#125;</p>
+                            <p className="text-xs text-gray-400 mb-3">Optional HTML rendered inside the system header area. Variables: &#123;company_name&#125;, &#123;company_address&#125;, &#123;logo&#125;</p>
                             <textarea
                                 value={headerContent}
                                 onChange={(e) => setHeaderContent(e.target.value)}
@@ -722,9 +747,9 @@ const TemplateDesigner = ({ category, onCancel, onSave, initialData }) => {
                         <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-6">
                             <div className="flex items-center gap-2 mb-2 text-yellow-600">
                                 <FaCode />
-                                <h3 className="font-bold text-gray-900 text-sm">Footer Section</h3>
+                                <h3 className="font-bold text-gray-900 text-sm">Footer Add-on</h3>
                             </div>
-                            <p className="text-xs text-gray-400 mb-3">Enter custom HTML for footer (optional). Variables: &#123;page_number&#125;, &#123;total_pages&#125;, &#123;company_phone&#125;, &#123;company_email&#125;</p>
+                            <p className="text-xs text-gray-400 mb-3">Optional HTML rendered near the standard footer bar. Variables: &#123;page_number&#125;, &#123;total_pages&#125;, &#123;company_phone&#125;, &#123;company_email&#125;</p>
                             <textarea
                                 value={footerContent}
                                 onChange={(e) => setFooterContent(e.target.value)}
@@ -736,18 +761,13 @@ const TemplateDesigner = ({ category, onCancel, onSave, initialData }) => {
                         {/* Live Preview Section */}
                         {showPreview && (
                             <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-6 animate-in fade-in slide-in-from-bottom-4">
-                                <div className="flex items-center gap-2 mb-4 text-yellow-600">
-                                    <FaEye />
-                                    <h3 className="font-bold text-gray-900 text-sm">Live Preview</h3>
-                                </div>
-                                <div className="border border-gray-300 shadow-lg mx-auto overflow-hidden rounded" style={{ width: '100%', maxWidth: '794px', aspectRatio: '210/297' }}>
-                                    <iframe
-                                        title="Template Preview"
-                                        srcDoc={previewHtml}
-                                        style={{ width: '100%', height: '100%', border: 'none' }}
-                                        sandbox="allow-same-origin"
-                                    />
-                                </div>
+                                <DocumentPreviewCanvas
+                                    printHtml={previewHtml}
+                                    emailHtml={previewEmailHtml}
+                                    paperSize={paperSize}
+                                    orientation={orientation}
+                                    subtitle="Print preview is rendered on a paper canvas, and email preview uses the same structured layout in a responsive format."
+                                />
                             </div>
                         )}
 

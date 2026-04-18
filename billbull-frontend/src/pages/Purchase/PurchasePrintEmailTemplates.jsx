@@ -32,8 +32,8 @@ import {
     setDefaultTemplate,
     updatePrintTemplate
 } from '../../api/printTemplateApi';
-import { useCompany } from '../../context/CompanyContext';
-import { generatePrintHtml } from '../../utils/printGenerator';
+import DocumentPreviewCanvas from '../../components/DocumentPreviewCanvas';
+import { generateEmailHtml, generatePrintHtml } from '../../utils/printGenerator';
 import {
     buildPurchasePreviewData,
     getDefaultPurchaseTemplates,
@@ -67,28 +67,6 @@ const formatTemplateDate = (template) => {
     }
 
     return parsedDate.toISOString().split('T')[0];
-};
-
-const getPaperStyle = (paperSize, orientation) => {
-    const dimensions = {
-        A3: { width: '297mm', height: '420mm' },
-        A4: { width: '210mm', height: '297mm' },
-        A5: { width: '148mm', height: '210mm' },
-        Letter: { width: '216mm', height: '279mm' },
-        Legal: { width: '216mm', height: '356mm' }
-    };
-
-    const base = dimensions[paperSize] || dimensions.A4;
-    const isLandscape = orientation === 'Landscape';
-    const width = isLandscape ? base.height : base.width;
-    const height = isLandscape ? base.width : base.height;
-
-    return {
-        width: '100%',
-        maxWidth: width,
-        minHeight: height,
-        aspectRatio: `${width.replace('mm', '')}/${height.replace('mm', '')}`
-    };
 };
 
 const TemplateCard = ({ title, description, count, icon: Icon, onClick, disabled }) => (
@@ -166,7 +144,6 @@ const ConfirmationModal = ({ isOpen, onClose, onConfirm, title, message }) => {
 };
 
 const TemplateDesigner = ({ category, onCancel, onSave, initialData }) => {
-    const { company } = useCompany();
     const [showPreview, setShowPreview] = useState(false);
 
     const baseTemplate = useMemo(
@@ -217,12 +194,21 @@ const TemplateDesigner = ({ category, onCancel, onSave, initialData }) => {
 
     const previewHtml = useMemo(() => generatePrintHtml(
         previewTemplate,
-        buildPurchasePreviewData(category.title, company),
+        buildPurchasePreviewData(category.title),
         {
-            companyProfile: getPurchasePreviewCompany(company),
+            companyProfile: getPurchasePreviewCompany(),
             billBullLogo
         }
-    ), [previewTemplate, category.title, company]);
+    ), [previewTemplate, category.title]);
+
+    const previewEmailHtml = useMemo(() => generateEmailHtml(
+        previewTemplate,
+        buildPurchasePreviewData(category.title),
+        {
+            companyProfile: getPurchasePreviewCompany(),
+            billBullLogo
+        }
+    ), [previewTemplate, category.title]);
 
     const handleDisplayOptionChange = (key) => {
         setDisplayOptions((prev) => ({ ...prev, [key]: !prev[key] }));
@@ -489,12 +475,19 @@ const TemplateDesigner = ({ category, onCancel, onSave, initialData }) => {
                     </div>
 
                     <div className="flex-[2] space-y-6">
+                        <div className="rounded-xl border border-blue-100 bg-blue-50 p-5">
+                            <h3 className="text-sm font-bold text-blue-900">System-Controlled Layout</h3>
+                            <p className="mt-2 text-xs leading-6 text-blue-800">
+                                Purchase documents now render through a fixed layout system: document header, vendor and reference cards, structured item columns, totals, terms, and footer stay consistent while the fields below add supporting content inside those regions.
+                            </p>
+                        </div>
+
                         <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-6">
                             <div className="flex items-center gap-2 mb-2 text-yellow-600">
                                 <FaCode />
-                                <h3 className="font-bold text-gray-900 text-sm">Header Section</h3>
+                                <h3 className="font-bold text-gray-900 text-sm">Header Add-on</h3>
                             </div>
-                            <p className="text-xs text-gray-400 mb-3">Enter custom HTML for header (optional). Variables: &#123;company_name&#125;, &#123;company_address&#125;, &#123;logo&#125;</p>
+                            <p className="text-xs text-gray-400 mb-3">Optional HTML rendered inside the system header area. Variables: &#123;company_name&#125;, &#123;company_address&#125;, &#123;logo&#125;</p>
                             <textarea
                                 value={headerContent}
                                 onChange={(e) => setHeaderContent(e.target.value)}
@@ -520,9 +513,9 @@ const TemplateDesigner = ({ category, onCancel, onSave, initialData }) => {
                         <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-6">
                             <div className="flex items-center gap-2 mb-2 text-yellow-600">
                                 <FaCode />
-                                <h3 className="font-bold text-gray-900 text-sm">Footer Section</h3>
+                                <h3 className="font-bold text-gray-900 text-sm">Footer Add-on</h3>
                             </div>
-                            <p className="text-xs text-gray-400 mb-3">Enter custom HTML for footer (optional). Variables: &#123;page_number&#125;, &#123;total_pages&#125;, &#123;company_phone&#125;, &#123;company_email&#125;</p>
+                            <p className="text-xs text-gray-400 mb-3">Optional HTML rendered near the standard footer bar. Variables: &#123;page_number&#125;, &#123;total_pages&#125;, &#123;company_phone&#125;, &#123;company_email&#125;</p>
                             <textarea
                                 value={footerContent}
                                 onChange={(e) => setFooterContent(e.target.value)}
@@ -533,21 +526,13 @@ const TemplateDesigner = ({ category, onCancel, onSave, initialData }) => {
 
                         {showPreview && (
                             <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-6 animate-in fade-in slide-in-from-bottom-4">
-                                <div className="flex items-center gap-2 mb-4 text-yellow-600">
-                                    <FaEye />
-                                    <h3 className="font-bold text-gray-900 text-sm">Live Preview</h3>
-                                </div>
-
-                                <div
-                                    className="border border-gray-300 shadow-lg mx-auto bg-white relative overflow-hidden transition-all duration-300 ease-in-out"
-                                    style={getPaperStyle(paperSize, orientation)}
-                                >
-                                    <iframe
-                                        title={`${category.title} Template Preview`}
-                                        srcDoc={previewHtml}
-                                        className="w-full h-full min-h-[820px] border-0 bg-white"
-                                    />
-                                </div>
+                                <DocumentPreviewCanvas
+                                    printHtml={previewHtml}
+                                    emailHtml={previewEmailHtml}
+                                    paperSize={paperSize}
+                                    orientation={orientation}
+                                    subtitle="Print preview uses an A4 paper canvas and email preview uses the same structured layout in a responsive wrapper."
+                                />
                             </div>
                         )}
                     </div>
