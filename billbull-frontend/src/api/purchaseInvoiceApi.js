@@ -41,6 +41,16 @@ export const createDraftInvoice = async (data) => {
   }
 };
 
+export const updateDraftInvoice = async (id, data) => {
+  try {
+    const response = await api.put(`/api/purchase-invoices/${id}`, data);
+    return response;
+  } catch (error) {
+    console.error("Error updating draft invoice", error);
+    throw error;
+  }
+};
+
 export const submitInvoice = async (id) => {
   try {
     const response = await api.post(`/api/purchase-invoices/${id}/submit`);

@@ -63,7 +63,8 @@ import {
   approveInvoice,
   recordPayment,
   getInvoices,
-  getInvoiceById
+  getInvoiceById,
+  updateDraftInvoice
 } from "../../../api/purchaseInvoiceApi";
 import { getVendors } from "../../../api/vendorsApi";
 import { getProductsList } from "../../../api/productsApi";
@@ -93,6 +94,18 @@ const SOURCE = {
   GRN: "AGAINST_GRN"
 };
 
+const todayAsInputDate = () => new Date().toISOString().split('T')[0];
+
+const compareInvoiceRows = (left, right) => {
+  const documentDateCompare = (right.documentDate || "").localeCompare(left.documentDate || "");
+  if (documentDateCompare !== 0) return documentDateCompare;
+
+  const vendorInvoiceDateCompare = (right.vendorInvoiceDate || "").localeCompare(left.vendorInvoiceDate || "");
+  if (vendorInvoiceDateCompare !== 0) return vendorInvoiceDateCompare;
+
+  return (right.id || "").localeCompare(left.id || "");
+};
+
 // ==========================================
 // DATA MAPPING HELPER (BACKEND -> UI)
 // ==========================================
@@ -115,14 +128,19 @@ const mapInvoiceFromApi = (inv) => {
     inv.amountPaid ?? (inv.payments ? inv.payments.reduce((acc, p) => acc + (Number(p.paidAmount) || 0), 0) : 0)
   );
   const outstanding = Number(inv.balanceDue ?? (Number(inv.grandTotal) - amountPaid));
+  const documentDate = inv.invoiceDate || "";
+  const vendorInvoiceDate = inv.vendorInvoiceDate || inv.invoiceDate || "";
+  const vendorInvoiceNo = inv.vendorInvoiceNo || "";
 
   return {
     dbId: inv.id,                        // 🔑 backend ID
     id: inv.invoiceNumber,               // UI invoice no
-    date: inv.invoiceDate,
+    documentDate,
+    date: documentDate,
     vendor: inv.vendorName,
-    vendorId: inv.vendorInvoiceNo,   // kept for backward compat — see vendorInvoiceNo below
-    vendorInvoiceNo: inv.vendorInvoiceNo,
+    vendorInvoiceNo,
+    vendorInvoiceDate,
+    vendorId: inv.vendorId || null, // if exists, else null
     grnId: inv.grnId,
     lpoId: inv.lpoId,
     source: inv.sourceType || "Direct",
@@ -215,13 +233,17 @@ const ViewInvoiceModal = ({ invoice, onClose }) => {
             <div className="space-y-1">
               <label className="text-xs font-semibold text-slate-400 uppercase">Vendor</label>
               <div className="font-medium text-slate-800">{invoice.vendor}</div>
-              <div className="text-xs text-slate-500">{invoice.vendorId}</div>
+              <div className="text-xs text-slate-500">{invoice.vendorInvoiceNo || invoice.vendorId || '-'}</div>
             </div>
             <div className="space-y-1">
               <label className="text-xs font-semibold text-slate-400 uppercase">Details</label>
               <div className="flex justify-between text-sm">
-                <span className="text-slate-500">Date:</span>
-                <span className="font-medium text-slate-800">{invoice.date}</span>
+                <span className="text-slate-500">Document Date:</span>
+                <span className="font-medium text-slate-800">{invoice.documentDate || invoice.date || '-'}</span>
+              </div>
+              <div className="flex justify-between text-sm">
+                <span className="text-slate-500">Invoice Date:</span>
+                <span className="font-medium text-slate-800">{invoice.vendorInvoiceDate || '-'}</span>
               </div>
               <div className="flex justify-between text-sm">
                 <span className="text-slate-500">Warehouse:</span>
@@ -436,7 +458,8 @@ const InvoiceListView = ({ invoices, activeFilter, setActiveFilter, searchQuery,
   const filteredInvoices = invoices.filter(inv => {
     // 1. Search Query
     const matchesSearch = inv.id.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      inv.vendor.toLowerCase().includes(searchQuery.toLowerCase());
+      inv.vendor.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      (inv.vendorInvoiceNo || "").toLowerCase().includes(searchQuery.toLowerCase());
 
     // 2. Status Filter
     const normalizedStatus = inv.status.toUpperCase().replace(/ /g, "_");
@@ -461,9 +484,8 @@ const InvoiceListView = ({ invoices, activeFilter, setActiveFilter, searchQuery,
     if (vendorFilter) {
       matchesVendor = inv.vendor.toLowerCase().includes(vendorFilter.toLowerCase());
     }
-
     return matchesSearch && matchesStatus && matchesDate && matchesVendor;
-  });
+  }).sort(compareInvoiceRows);
 
   const clearFilters = () => {
     setDateRange({ start: "", end: "" });
@@ -555,11 +577,11 @@ const InvoiceListView = ({ invoices, activeFilter, setActiveFilter, searchQuery,
           </div>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <div className="space-y-1">
-              <label className="text-xs font-medium text-slate-500">Start Date</label>
+              <label className="text-xs font-medium text-slate-500">Document Start Date</label>
               <input type="date" value={dateRange.start} onChange={(e) => setDateRange({ ...dateRange, start: e.target.value })} className="w-full h-9 border border-slate-200 rounded-md text-xs px-3 focus:outline-none focus:ring-2 focus:ring-blue-500/50" />
             </div>
             <div className="space-y-1">
-              <label className="text-xs font-medium text-slate-500">End Date</label>
+              <label className="text-xs font-medium text-slate-500">Document End Date</label>
               <input type="date" value={dateRange.end} onChange={(e) => setDateRange({ ...dateRange, end: e.target.value })} className="w-full h-9 border border-slate-200 rounded-md text-xs px-3 focus:outline-none focus:ring-2 focus:ring-blue-500/50" />
             </div>
             <div className="space-y-1">
@@ -580,7 +602,7 @@ const InvoiceListView = ({ invoices, activeFilter, setActiveFilter, searchQuery,
           <div className="flex flex-col sm:flex-row items-center gap-2 w-full sm:w-auto">
             <div className="relative w-full sm:w-auto flex-1 sm:flex-none">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-400" />
-              <input type="text" placeholder="Search invoice no..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} className="pl-9 pr-4 h-9 w-full sm:w-64 text-sm border border-slate-200 rounded-md focus:outline-none focus:ring-2 focus:ring-[#F5C742]/50 placeholder:text-slate-400 text-xs" />
+              <input type="text" placeholder="Search document no, vendor, invoice no..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} className="pl-9 pr-4 h-9 w-full sm:w-64 text-sm border border-slate-200 rounded-md focus:outline-none focus:ring-2 focus:ring-[#F5C742]/50 placeholder:text-slate-400 text-xs" />
             </div>
             <div className="flex gap-2 w-full sm:w-auto">
               <button onClick={() => setShowFilters(!showFilters)} className={`flex-1 sm:flex-none h-9 px-3 border rounded-md flex items-center justify-center gap-1.5 text-xs font-medium transition-colors ${showFilters ? 'bg-blue-50 border-blue-200 text-blue-700' : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'}`}><Filter className="h-3 w-3" /> Filters</button>
@@ -590,11 +612,12 @@ const InvoiceListView = ({ invoices, activeFilter, setActiveFilter, searchQuery,
         </div>
 
         <div className="overflow-x-auto">
-          <table className="w-full text-xs text-left">
+          <table className="w-full text-xs text-left min-w-[1320px]">
             <thead className="bg-[#F7F7FA] text-slate-500 font-medium border-b border-slate-200">
               <tr>
-                <th className="px-6 py-3 whitespace-nowrap">Invoice No</th>
-                <th className="px-6 py-3 whitespace-nowrap">Date</th>
+                <th className="px-6 py-3 whitespace-nowrap">Document No</th>
+                <th className="px-6 py-3 whitespace-nowrap">Document Date</th>
+                <th className="px-6 py-3 whitespace-nowrap">Invoice Date</th>
                 <th className="px-6 py-3 whitespace-nowrap">Vendor</th>
                 <th className="px-6 py-3 whitespace-nowrap">Source</th>
                 <th className="px-6 py-3 whitespace-nowrap">Ref No</th>
@@ -610,8 +633,9 @@ const InvoiceListView = ({ invoices, activeFilter, setActiveFilter, searchQuery,
               {filteredInvoices.map((row) => (
                 <tr key={row.dbId} className="hover:bg-slate-50 group transition-colors">
                   <td onClick={() => onView(row)} className="px-6 py-4 font-mono font-medium text-[#F5C742] cursor-pointer hover:underline">{row.id}</td>
-                  <td className="px-6 py-4 text-slate-600"><div className="flex items-center gap-1.5"><Calendar className="h-3 w-3 text-slate-400" /> {row.date}</div></td>
-                  <td className="px-6 py-4"><div><div className="font-medium text-slate-900">{row.vendor}</div><div className="text-[10px] text-slate-400">{row.vendorId}</div></div></td>
+                  <td className="px-6 py-4 text-slate-600"><div className="flex items-center gap-1.5"><Calendar className="h-3 w-3 text-slate-400" /> {row.documentDate || '-'}</div></td>
+                  <td className="px-6 py-4 text-slate-600"><div className="flex items-center gap-1.5"><Calendar className="h-3 w-3 text-slate-400" /> {row.vendorInvoiceDate || '-'}</div></td>
+                  <td className="px-6 py-4"><div><div className="font-medium text-slate-900">{row.vendor}</div><div className="text-[10px] text-slate-400">{row.vendorInvoiceNo || '-'}</div></div></td>
                   <td className="px-6 py-4"><span className={`text-[10px] px-2 py-0.5 rounded border font-medium ${row.sourceColor}`}>{row.source}</span></td>
                   <td className="px-6 py-4 text-slate-600 font-mono text-[10px]">{row.refNo}</td>
                   <td className="px-6 py-4 text-slate-600 flex items-center gap-1"><LayoutDashboard className="h-3 w-3 text-slate-400" /> {row.warehouse}</td>
@@ -690,10 +714,12 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
   };
 
   const [formData, setFormData] = useState({
+    dbId: null,
     id: `PI-2024-${Math.floor(Math.random() * 10000)}`,
-    date: new Date().toISOString().split('T')[0],
+    date: todayAsInputDate(),
     vendor: "",
     vendorInvoiceNo: "",
+    vendorInvoiceDate: todayAsInputDate(),
     dueDate: "",
     status: "Draft",
     warehouse: "", // Store ID or Name? detailed logic below
@@ -725,7 +751,7 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
       setIsProductSelectorOpen(prev => !prev);
     },
     'ctrl+s': (e) => {
-      onSaveDraft();
+      onSaveDraft(getInvoicePayload());
     },
     'alt+v': (e) => {
       setIsVendorSearchOpen(prev => !prev);
@@ -822,10 +848,12 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
 
       // 3. Set Form Data
       setFormData({
+        dbId: editInvoice.dbId || null,
         id: editInvoice.id,
-        date: editInvoice.date,
+        date: editInvoice.documentDate || editInvoice.date || todayAsInputDate(),
         vendor: editInvoice.vendor,
         vendorInvoiceNo: editInvoice.vendorInvoiceNo || editInvoice.vendorId || "",
+        vendorInvoiceDate: editInvoice.vendorInvoiceDate || editInvoice.documentDate || editInvoice.date || todayAsInputDate(),
         dueDate: editInvoice.dueDate,
         status: editInvoice.status || "Draft",
         warehouse: editInvoice.warehouse || "Main Warehouse",
@@ -1393,10 +1421,12 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
 
   // Prepare invoice data for submission (Backend 100% Match)
   const getInvoicePayload = () => ({
+    dbId: formData.dbId,
     invoiceNumber: formData.id,
     invoiceDate: formData.date,
     vendorName: formData.vendor,
     vendorInvoiceNo: formData.vendorInvoiceNo,
+    vendorInvoiceDate: formData.vendorInvoiceDate,
     sourceType: invoiceType, // Matches Enum directly
 
     lpoId: invoiceType === SOURCE.LPO ? selectedLpoId : null,
@@ -1502,11 +1532,11 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
             <div className="space-y-4">
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="text-[10px] uppercase font-bold text-slate-400 mb-1 block">Invoice No</label>
+                  <label className="text-[10px] font-medium text-slate-500 mb-1 block">Document No / Internal Invoice No</label>
                   <input type="text" value={formData.id} readOnly className="w-full text-xs bg-slate-50 border border-slate-200 rounded p-2 text-slate-600 font-mono" />
                 </div>
                 <div>
-                  <label className="text-[10px] uppercase font-bold text-slate-400 mb-1 block">Invoice Date</label>
+                  <label className="text-[10px] font-medium text-slate-500 mb-1 block">Document Date</label>
                   <input type="date" value={formData.date} disabled={isInvoiceLocked} onChange={(e) => setFormData({ ...formData, date: e.target.value })} className="w-full text-xs bg-slate-50 border border-slate-200 rounded p-2 text-slate-600 disabled:opacity-70" />
                 </div>
               </div>
@@ -1543,7 +1573,7 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
                       }));
                     }}
 
-                    className="w-full text-xs border border-slate-200 rounded-md py-2 pl-3 pr-8 bg-white focus:ring-1 focus:ring-[#F5C742] outline-none"
+                    className="w-full appearance-none text-xs border border-slate-200 rounded-md py-2 pl-3 pr-8 bg-white focus:ring-1 focus:ring-[#F5C742] outline-none"
                   >
                     {/* Use Enum for Options */}
                     <option value={SOURCE.DIRECT}>Direct Invoice</option>
@@ -1665,6 +1695,17 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
                 {!formData.vendorInvoiceNo?.trim() && !isInvoiceLocked && (
                   <p className="text-[10px] text-red-500 mt-0.5">Vendor invoice number is required</p>
                 )}
+              </div>
+
+              <div>
+                <label className="text-xs font-medium text-slate-500 mb-1 block">Invoice Date</label>
+                <input
+                  type="date"
+                  value={formData.vendorInvoiceDate}
+                  disabled={isInvoiceLocked}
+                  onChange={(e) => setFormData({ ...formData, vendorInvoiceDate: e.target.value })}
+                  className="w-full text-xs border border-slate-200 rounded-md py-2 px-3 focus:ring-1 focus:ring-[#F5C742] outline-none disabled:opacity-70"
+                />
               </div>
 
               <div>
@@ -2518,7 +2559,7 @@ const PurchaseInvoices = () => {
     try {
       const res = await getInvoices();
       const list = Array.isArray(res) ? res : (res.data || []);
-      const mapped = list.map(mapInvoiceFromApi);
+      const mapped = list.map(mapInvoiceFromApi).sort(compareInvoiceRows);
 
       setInvoices(mapped);
 
@@ -2544,7 +2585,11 @@ const PurchaseInvoices = () => {
 
   const handleSaveDraft = async (payload) => {
     try {
-      const res = await createDraftInvoice(payload);
+      const res = payload?.dbId
+        ? await updateDraftInvoice(payload.dbId, payload)
+        : await createDraftInvoice(payload);
+
+      // 🔑 CAPTURE DB ID
       const createdId = res.data.id;
       await loadInvoices();
       setActiveNavTab("list");

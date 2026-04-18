@@ -120,6 +120,8 @@ public class PurchaseInvoiceService {
 
         PurchaseInvoiceResponse dto = new PurchaseInvoiceResponse();
         dto.setSourceType("AGAINST_LPO");
+        dto.setInvoiceDate(LocalDate.now());
+        dto.setVendorInvoiceDate(LocalDate.now());
         dto.setVendorName(lpo.getVendorName());
         if (lpo.getWarehouse() != null) {
             dto.setWarehouseName(lpo.getWarehouse().getName());
@@ -179,6 +181,8 @@ public class PurchaseInvoiceService {
         PurchaseInvoiceResponse dto = new PurchaseInvoiceResponse();
 
         dto.setSourceType("AGAINST_GRN");
+        dto.setInvoiceDate(LocalDate.now());
+        dto.setVendorInvoiceDate(LocalDate.now());
         dto.setVendorName(grn.getVendorName());
         dto.setWarehouseName(grn.getWarehouse().getName());
         dto.setWarehouseId(grn.getWarehouse().getId());
@@ -504,6 +508,7 @@ public class PurchaseInvoiceService {
         invoice.setInvoiceDate(req.getInvoiceDate());
         invoice.setVendorName(req.getVendorName());
         invoice.setVendorInvoiceNo(req.getVendorInvoiceNo());
+        invoice.setVendorInvoiceDate(req.getVendorInvoiceDate() != null ? req.getVendorInvoiceDate() : req.getInvoiceDate());
         invoice.setSourceType(req.getSourceType());
         invoice.setReferenceNo(req.getReferenceNo());
         invoice.setGrnId(req.getGrnId());
@@ -593,6 +598,7 @@ public class PurchaseInvoiceService {
 
         dto.setVendorName(invoice.getVendorName());
         dto.setVendorInvoiceNo(invoice.getVendorInvoiceNo());
+        dto.setVendorInvoiceDate(invoice.getVendorInvoiceDate() != null ? invoice.getVendorInvoiceDate() : invoice.getInvoiceDate());
 
         dto.setSourceType(invoice.getSourceType());
         dto.setReferenceNo(invoice.getReferenceNo());

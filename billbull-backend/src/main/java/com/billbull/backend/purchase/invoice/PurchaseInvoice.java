@@ -42,6 +42,7 @@ public class PurchaseInvoice extends BaseEntity {
 	// TEMP vendor (as per your decision)
 	private String vendorName;
 	private String vendorInvoiceNo;
+	private LocalDate vendorInvoiceDate;
 
 	private String sourceType; // DIRECT / AGAINST_LPO / AGAINST_GRN
 	private String referenceNo;
@@ -170,6 +171,14 @@ public class PurchaseInvoice extends BaseEntity {
 
 	public void setVendorInvoiceNo(String vendorInvoiceNo) {
 		this.vendorInvoiceNo = vendorInvoiceNo;
+	}
+
+	public LocalDate getVendorInvoiceDate() {
+		return vendorInvoiceDate;
+	}
+
+	public void setVendorInvoiceDate(LocalDate vendorInvoiceDate) {
+		this.vendorInvoiceDate = vendorInvoiceDate;
 	}
 
 	public String getSourceType() {
