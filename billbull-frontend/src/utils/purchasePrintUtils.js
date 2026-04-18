@@ -19,11 +19,11 @@ const TEMPLATE_NAMES = {
 };
 
 const PREVIEW_COMPANY = {
-    companyName: "Northstar Retail LLC",
-    address: "Al Murooj Building, Bur Dubai, Dubai, UAE",
-    phone: "+971 4 555 0188",
-    email: "accounts@northstarretail.ae",
-    trn: "100388200100003",
+    companyName: "Sample Company LLC",
+    address: "Sample Business Center, Dubai, UAE",
+    phone: "+971 4 000 0000",
+    email: "sample@company.test",
+    trn: "100000000000000",
     currency: "AED",
     logoUrl: null,
 };
@@ -516,37 +516,36 @@ export const buildPaymentVoucherPrintData = (voucher, vendor, companyProfile, li
 
 export const getPurchasePreviewCompany = (companyProfile = {}) => ({
     ...PREVIEW_COMPANY,
-    ...companyProfile,
 });
 
 export const buildPurchasePreviewData = (category, companyProfile = {}) => {
     const previewCompany = getPurchasePreviewCompany(companyProfile);
     const previewVendor = {
-        name: "Galaxy Supplies LLC",
-        code: "VND-1008",
-        address: "Shop 14, Al Fahidi Street, Dubai, UAE",
-        primaryPhone: "+971 50 641 1180",
-        email: "sales@galaxysupplies.ae",
-        taxId: "100422511200003",
+        name: "Sample Vendor LLC",
+        code: "VND-SAMPLE-01",
+        address: "Sample Vendor Address, Dubai, UAE",
+        primaryPhone: "+971 50 000 0002",
+        email: "vendor@sample.test",
+        taxId: "100000000000222",
     };
 
     switch (category) {
         case "Goods Receipt Note":
             return buildGrnPrintData(
                 {
-                    grnNo: "GRN-2026-0018",
+                    grnNo: "GRN-SAMPLE-0001",
                     date: "2026-04-18",
                     vendor: previewVendor.name,
                     status: "POSTED",
-                    qcStatus: "QC_COMPLETED",
-                    docRef: "LPO-2026-0012",
-                    warehouseName: "Main Warehouse",
-                    zoneName: "Inbound",
-                    locatorName: "A-12",
-                    binName: "BIN-04",
+                    qcStatus: "Completed",
+                    docRef: "LPO-SAMPLE-0001",
+                    warehouseName: "Sample Warehouse",
+                    zoneName: "Inbound Area",
+                    locatorName: "A-01",
+                    binName: "BIN-01",
                     items: [
-                        { code: "ITM-001", name: "Wireless Scanner", uom: "Unit", received: 2, unitCost: 780, total: 1560, remarks: "Packed and verified" },
-                        { code: "ITM-002", name: "Retail Tag Printer", uom: "Unit", received: 1, unitCost: 1420, total: 1420 },
+                        { code: "ITM-SAMPLE-01", name: "Product Name Sample 01", uom: "Pcs", received: 2, unitCost: 780, total: 1560, remarks: "Sample packed item" },
+                        { code: "ITM-SAMPLE-02", name: "Product Name Sample 02", uom: "Pcs", received: 1, unitCost: 1420, total: 1420, remarks: "Sample standard item" },
                     ],
                 },
                 previewVendor,
@@ -555,21 +554,21 @@ export const buildPurchasePreviewData = (category, companyProfile = {}) => {
         case "Purchase Invoice":
             return buildPurchaseInvoicePrintData(
                 {
-                    invoiceNumber: "PINV-2026-0041",
+                    invoiceNumber: "PINV-SAMPLE-0001",
                     invoiceDate: "2026-04-18",
                     vendorName: previewVendor.name,
-                    vendorInvoiceNo: "SUP-INV-8842",
+                    vendorInvoiceNo: "V-INV-SAMPLE-001",
                     dueDate: "2026-05-18",
-                    sourceType: "AGAINST_GRN",
-                    referenceNo: "GRN-2026-0018",
-                    warehouseName: "Main Warehouse",
+                    sourceType: "Against GRN",
+                    referenceNo: "GRN-SAMPLE-0001",
+                    warehouseName: "Sample Warehouse",
                     amountPaid: 1200,
                     balanceDue: 4800,
                     status: "POSTED",
                     items: [
-                        { itemCode: "ITM-001", itemName: "DART Retail ERP Software", qty: 1, uom: "User License", unitCost: 2300, taxPercent: 5, taxAmount: 115, lineTotal: 2415, remarks: "Server software license" },
-                        { itemCode: "ITM-002", itemName: "DART Wholesale Trading Module", qty: 1, uom: "User License", unitCost: 1420, taxPercent: 5, taxAmount: 71, lineTotal: 1491 },
-                        { itemCode: "ITM-003", itemName: "Zebra ZD220 USB Printer", qty: 1, uom: "Unit", unitCost: 780, taxPercent: 5, taxAmount: 39, lineTotal: 819 },
+                        { itemCode: "ITM-SAMPLE-01", itemName: "Product Name Sample 01", qty: 1, uom: "License", unitCost: 2300, taxPercent: 5, taxAmount: 115, lineTotal: 2415, remarks: "Sample licensed item" },
+                        { itemCode: "ITM-SAMPLE-02", itemName: "Product Name Sample 02", qty: 1, uom: "License", unitCost: 1420, taxPercent: 5, taxAmount: 71, lineTotal: 1491, remarks: "Sample module item" },
+                        { itemCode: "ITM-SAMPLE-03", itemName: "Product Name Sample 03", qty: 1, uom: "Pcs", unitCost: 780, taxPercent: 5, taxAmount: 39, lineTotal: 819, remarks: "Sample hardware item" },
                     ],
                     subTotal: 4500,
                     taxTotal: 225,
@@ -581,40 +580,40 @@ export const buildPurchasePreviewData = (category, companyProfile = {}) => {
         case "Payment Voucher":
             return buildPaymentVoucherPrintData(
                 {
-                    voucherNumber: "PV-2026-0009",
+                    voucherNumber: "PV-SAMPLE-0001",
                     paymentDate: "2026-04-18",
                     vendorName: previewVendor.name,
-                    paymentMode: "BANK_TRANSFER",
-                    referenceNumber: "TXN-884119",
-                    bankAccount: "ADCB - 110220401",
+                    paymentMode: "Bank Transfer",
+                    referenceNumber: "REF-SAMPLE-001",
+                    bankAccount: "Sample Bank - 100200300",
                     amount: 1800,
                     allocated: 1800,
                     unallocated: 0,
                     status: "POSTED",
-                    notes: "Partial settlement against April invoice.",
+                    notes: "Sample payment entry for preview only.",
                     invoiceId: 41,
                 },
                 previewVendor,
                 previewCompany,
-                { invoiceNumber: "PINV-2026-0041" }
+                { invoiceNumber: "PINV-SAMPLE-0001" }
             );
         case "Local Purchase Order":
         default:
             return buildLpoPrintData(
                 {
-                    lpoNumber: "LPO-2026-0012",
+                    lpoNumber: "LPO-SAMPLE-0001",
                     lpoDate: "2026-04-18",
                     vendorName: previewVendor.name,
-                    warehouseName: "Main Warehouse",
+                    warehouseName: "Sample Warehouse",
                     expectedDeliveryDate: "2026-04-22",
-                    buyerAssigned: "Operations Team",
-                    referenceDocument: "AUTO-REPLENISH-12",
-                    createdFrom: "Auto Min/Max",
+                    buyerAssigned: "Sample Buyer",
+                    referenceDocument: "REF-SAMPLE-001",
+                    createdFrom: "Manual Entry",
                     approvalStatus: "APPROVED",
                     status: "APPROVED",
                     items: [
-                        { itemCode: "ITM-001", itemName: "Wireless Scanner", uom: "Unit", quantity: 2, unitPrice: 780, lineTotal: 1560, remarks: "Black finish" },
-                        { itemCode: "ITM-002", itemName: "Retail Tag Printer", uom: "Unit", quantity: 1, unitPrice: 1420, lineTotal: 1420 },
+                        { itemCode: "ITM-SAMPLE-01", itemName: "Product Name Sample 01", uom: "Pcs", quantity: 2, unitPrice: 780, lineTotal: 1560, remarks: "Sample black finish" },
+                        { itemCode: "ITM-SAMPLE-02", itemName: "Product Name Sample 02", uom: "Pcs", quantity: 1, unitPrice: 1420, lineTotal: 1420, remarks: "Sample standard finish" },
                     ],
                     subtotal: 2980,
                     tax: 0,
