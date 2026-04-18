@@ -51,12 +51,17 @@ import { ItemDescriptionCell, ItemDescriptionHeader } from '../../../components/
 import ItemAddOnsModal from '../../../components/ItemAddOnsModal';
 import StockAvailabilityModal from '../../../components/StockAvailabilityModal';
 import toast from 'react-hot-toast';
+import { useCompany } from '../../../context/CompanyContext';
 
 // Printing Utilities
 import { getTemplatesByCategory } from '../../../api/printTemplateApi';
 import { generatePrintHtml, printHtml } from '../../../utils/printGenerator';
-import nestLogo from '../../../assets/NEST Logo Final.png';
 import billBullLogo from '../../../assets/billBullLogo.png';
+import {
+  buildLpoPrintData,
+  findVendorRecord,
+  normalizePurchaseTemplate
+} from '../../../utils/purchasePrintUtils';
 
 // API Imports
 import {
@@ -2126,6 +2131,7 @@ const EditorView = ({ initialData, vendors, warehouses, onSave, onSubmit, onPrin
 // ==========================================
 
 const LPOList = () => {
+  const { company } = useCompany();
   const navigate = useNavigate();
   const [activeStatusTab, setActiveStatusTab] = useState("All LPOs");
   const [activeNavTab, setActiveNavTab] = useState("list");
@@ -2273,58 +2279,26 @@ const LPOList = () => {
   };
 
   const handlePrintLPO = async (lpo) => {
+    const loadingToast = toast.loading('Generating print layout...');
     try {
       setLoading(true);
-      const loadingToast = toast.loading('Generating print layout...');
 
       const detailedLpo = await getLpoByNumber(lpo.lpoNumber);
 
       const templates = await getTemplatesByCategory('Local Purchase Order');
-      toast.dismiss(loadingToast);
 
-      const defaultTemplate = templates.find(t => t.isDefault) || templates[0];
+      const defaultTemplate = normalizePurchaseTemplate(
+        templates.find(t => t.isDefault) || templates[0],
+        'Local Purchase Order'
+      );
 
       if (defaultTemplate) {
-        const fullVendor = vendors.find(v => v.id === detailedLpo.vendorId || v.name === detailedLpo.vendorName);
-
-        const printData = {
-          title: 'LOCAL PURCHASE ORDER',
-          docNo: detailedLpo.lpoNumber,
-          date: detailedLpo.date,
-          customer: {
-            name: detailedLpo.vendorName || '',
-            address: fullVendor?.address || '',
-            trn: fullVendor?.trn
-          },
-          items: (detailedLpo.items || []).map(i => ({
-            code: i.itemCode || i.code,
-            name: i.itemName || i.name || '',
-            desc: i.description || i.shortDescription || '',
-            sku: i.sku || i.productSku || '',
-            localName: i.localName || i.productLocalName || '',
-            unit: i.uom || i.unit || 'PCS',
-            qty: Number(i.quantity || i.qty),
-            price: Number(i.unitPrice || i.price),
-            disc: Number(i.discountPercent || i.disc || 0),
-            tax: 0,
-            taxAmt: 0,
-            total: (Number(i.quantity || i.qty) * Number(i.unitPrice || i.price)) * (1 - (Number(i.discountPercent || i.disc || 0) / 100)),
-            image: i.imageUrl || i.image ? getImageUrl(i.imageUrl || i.image) : ''
-          })),
-          totals: {
-            subTotal: Number(detailedLpo.totalValue),
-            tax: 0,
-            grandTotal: Number(detailedLpo.totalValue),
-            currency: 'AED'
-          },
-          meta: {
-            status: detailedLpo.status,
-            paymentTerm: detailedLpo.paymentTerms || 'N/A',
-            notes: detailedLpo.notes || ''
-          }
-        };
-
-        const html = generatePrintHtml(defaultTemplate, printData, { nestLogo, billBullLogo });
+        const fullVendor = findVendorRecord(vendors, detailedLpo, detailedLpo?.vendorName);
+        const printData = buildLpoPrintData(detailedLpo, fullVendor, company);
+        const html = generatePrintHtml(defaultTemplate, printData, {
+          companyProfile: company,
+          billBullLogo
+        });
         printHtml(html);
       } else {
         toast.error("No default template for LPO found.");
@@ -2333,6 +2307,7 @@ const LPOList = () => {
       console.error("Print error:", error);
       toast.error("Failed to generate print layout.");
     } finally {
+      toast.dismiss(loadingToast);
       setLoading(false);
     }
   };

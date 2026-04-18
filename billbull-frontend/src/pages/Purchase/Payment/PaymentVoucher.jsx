@@ -24,13 +24,18 @@ import {
     Check,
     Printer
 } from 'lucide-react';
+import { useCompany } from '../../../context/CompanyContext';
 
 // Printing Utilities
 import { getTemplatesByCategory } from '../../../api/printTemplateApi';
 import { generatePrintHtml, printHtml } from '../../../utils/printGenerator';
-import nestLogo from '../../../assets/NEST Logo Final.png';
 import billBullLogo from '../../../assets/billBullLogo.png';
 import toast from 'react-hot-toast';
+import {
+    buildPaymentVoucherPrintData,
+    findVendorRecord,
+    normalizePurchaseTemplate
+} from '../../../utils/purchasePrintUtils';
 
 // ==========================================
 // API IMPORTS
@@ -38,6 +43,7 @@ import toast from 'react-hot-toast';
 import { getPostedInvoicesForPayment } from '../../../api/purchaseInvoiceApi';
 import {
     getPaymentVouchers,
+    getPaymentVoucherById,
     createPaymentVoucher,
     updateVoucherStatus
 } from '../../../api/paymentApi';
@@ -163,7 +169,8 @@ const CreateVoucherModal = ({ isOpen, onClose, onCreate, purchaseInvoices }) => 
         mode: "Cash",
         amount: "",
         ref: "",
-        invoiceId: ""
+        invoiceId: "",
+        notes: ""
     });
 
     const handleChange = (field, value) => {
@@ -196,7 +203,8 @@ const CreateVoucherModal = ({ isOpen, onClose, onCreate, purchaseInvoices }) => 
             mode: "Cash",
             amount: "",
             ref: "",
-            invoiceId: ""
+            invoiceId: "",
+            notes: ""
         });
     };
 
@@ -303,6 +311,8 @@ const CreateVoucherModal = ({ isOpen, onClose, onCreate, purchaseInvoices }) => 
                         <textarea
                             className="w-full p-3 border border-slate-200 rounded-lg text-sm text-slate-700 focus:outline-none focus:ring-2 focus:ring-[#F5C742]/20 resize-none h-20"
                             placeholder="Allocation details or internal notes..."
+                            value={formData.notes}
+                            onChange={(e) => handleChange('notes', e.target.value)}
                         ></textarea>
                     </div>
                 </div>
@@ -329,6 +339,7 @@ const CreateVoucherModal = ({ isOpen, onClose, onCreate, purchaseInvoices }) => 
 // ==========================================
 
 const PaymentVoucher = () => {
+    const { company } = useCompany();
     const [activeTab, setActiveTab] = useState("list");
     const [selectedVoucher, setSelectedVoucher] = useState(null);
     const [isCreateOpen, setCreateOpen] = useState(false);
@@ -517,6 +528,46 @@ const PaymentVoucher = () => {
         } catch (error) {
             console.error("Error printing Voucher:", error);
             toast.error('Failed to generate print layout');
+        }
+    };
+
+    const handlePrintVoucher = async (voucher) => {
+        const loadingToast = toast.loading('Preparing print layout...');
+        try {
+            const [templates, voucherDetail] = await Promise.all([
+                getTemplatesByCategory('Payment Voucher'),
+                getPaymentVoucherById(voucher.dbId)
+            ]);
+
+            if (!templates || templates.length === 0) {
+                toast.error('No templates found for Payment Voucher');
+                return;
+            }
+
+            const defaultTemplate = normalizePurchaseTemplate(
+                templates.find(t => t.isDefault) || templates[0],
+                'Payment Voucher'
+            );
+            const fullVendor = findVendorRecord(vendors, voucherDetail, voucherDetail?.vendorName);
+            const linkedInvoice = purchaseInvoices.find((invoice) => invoice.id === voucherDetail.invoiceId) || null;
+            const printData = buildPaymentVoucherPrintData(
+                voucherDetail,
+                fullVendor,
+                company,
+                linkedInvoice
+            );
+
+            const html = generatePrintHtml(defaultTemplate, printData, {
+                companyProfile: company,
+                billBullLogo
+            });
+
+            printHtml(html);
+        } catch (error) {
+            console.error("Error printing Voucher:", error);
+            toast.error('Failed to generate print layout');
+        } finally {
+            toast.dismiss(loadingToast);
         }
     };
 
@@ -1116,7 +1167,7 @@ const PaymentVoucher = () => {
                                                         <button onClick={() => setSelectedVoucher(row)} className="p-1.5 border border-slate-200 rounded hover:bg-slate-100 text-slate-500" title="View Audit">
                                                             <Eye className="w-3 h-3" />
                                                         </button>
-                                                        <button onClick={() => handlePrint(row)} className="p-1.5 border border-slate-200 rounded hover:bg-slate-100 text-slate-500" title="Print">
+                                                        <button onClick={() => handlePrintVoucher(row)} className="p-1.5 border border-slate-200 rounded hover:bg-slate-100 text-slate-500" title="Print">
                                                             <Printer className="w-3 h-3" />
                                                         </button>
                                                     </div>
