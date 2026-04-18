@@ -64,6 +64,7 @@ import ProductSelector from '../../../components/ProductSelector';
 import SearchableDropdown from '../../../components/SearchableDropdown';
 import VendorSelector from '../../../components/VendorSelector';
 import { getImageUrl } from '../../../utils/urlUtils';
+import { useBranch } from '../../../context/BranchContext';
 import { ItemDescriptionCell, ItemDescriptionHeader } from '../../../components/ItemDescriptionCell';
 import ItemAddOnsModal from '../../../components/ItemAddOnsModal';
 import StockAvailabilityModal from '../../../components/StockAvailabilityModal';
@@ -624,6 +625,19 @@ const EditorView = ({ initialData, onSaveDraft, onSubmitQC, onPost, onPrint, grn
 
   // FIX 5: Lock UI on POSTED
   const isLocked = formData.status === GRN_STATUS.POSTED;
+
+  const { defaultBranch } = useBranch();
+
+  useEffect(() => {
+    if (!initialData && defaultBranch?.defaultWarehouseId) {
+      const wh = warehouses.find(w => w.id === defaultBranch.defaultWarehouseId);
+      setFormData(prev => ({
+        ...prev,
+        warehouseId: defaultBranch.defaultWarehouseId,
+        warehouse: wh?.name || defaultBranch.defaultWarehouseName || '',
+      }));
+    }
+  }, [defaultBranch, warehouses, initialData]);
 
   // Fetch initial data
   useEffect(() => {

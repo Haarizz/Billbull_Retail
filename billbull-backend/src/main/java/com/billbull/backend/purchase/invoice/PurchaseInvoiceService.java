@@ -79,9 +79,29 @@ public class PurchaseInvoiceService {
         this.productBarcodeRepository = productBarcodeRepository;
     }
 
+    /* ================= VENDOR INVOICE NO VALIDATION ================= */
+
+    private void validateVendorInvoiceNo(String vendorName, String vendorInvoiceNo, Long excludeId) {
+        if (vendorInvoiceNo == null || vendorInvoiceNo.isBlank()) {
+            throw new IllegalArgumentException("Vendor invoice number is required");
+        }
+        String trimmed = vendorInvoiceNo.trim();
+        if (trimmed.length() < 3 || trimmed.length() > 50) {
+            throw new IllegalArgumentException("Vendor invoice number must be between 3 and 50 characters");
+        }
+        boolean duplicate = excludeId != null
+                ? repository.existsByVendorNameAndVendorInvoiceNoAndIdNot(vendorName, trimmed, excludeId)
+                : repository.existsByVendorNameAndVendorInvoiceNo(vendorName, trimmed);
+        if (duplicate) {
+            throw new IllegalStateException(
+                    "Vendor invoice number '" + trimmed + "' already exists for this vendor");
+        }
+    }
+
     /* ================= CREATE (DRAFT) ================= */
 
     public PurchaseInvoice createDraft(PurchaseInvoiceRequest req) {
+        validateVendorInvoiceNo(req.getVendorName(), req.getVendorInvoiceNo(), null);
         PurchaseInvoice invoice = mapToEntity(req);
         invoice.setStatus(InvoiceStatus.DRAFT);
         invoice.setPaymentStatus(PaymentStatus.UNPAID);
@@ -222,6 +242,8 @@ public class PurchaseInvoiceService {
             throw new IllegalStateException("Only DRAFT invoices can be updated");
         }
 
+        validateVendorInvoiceNo(req.getVendorName(), req.getVendorInvoiceNo(), id);
+
         invoice.getItems().clear();
         invoice.getLandedCosts().clear();
 
@@ -241,6 +263,10 @@ public class PurchaseInvoiceService {
             throw new IllegalStateException("Only DRAFT invoices can be submitted");
         }
 
+        if (invoice.getVendorInvoiceNo() == null || invoice.getVendorInvoiceNo().isBlank()) {
+            throw new IllegalArgumentException("Vendor invoice number is required before submitting for approval");
+        }
+
         invoice.setStatus(InvoiceStatus.PENDING_APPROVAL);
         invoice.setSubmittedBy(username);
         invoice.setSubmittedAt(LocalDateTime.now());
@@ -257,6 +283,10 @@ public class PurchaseInvoiceService {
 
         if (invoice.getStatus() != InvoiceStatus.PENDING_APPROVAL) {
             throw new IllegalStateException("Invoice is not pending approval");
+        }
+
+        if (invoice.getVendorInvoiceNo() == null || invoice.getVendorInvoiceNo().isBlank()) {
+            throw new IllegalArgumentException("Vendor invoice number is required before approval");
         }
 
         if (invoice.isStockPosted()) {

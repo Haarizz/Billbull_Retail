@@ -11,6 +11,10 @@ public interface PurchaseInvoiceRepository
 
         boolean existsByVendorName(String vendorName);
 
+        boolean existsByVendorNameAndVendorInvoiceNo(String vendorName, String vendorInvoiceNo);
+
+        boolean existsByVendorNameAndVendorInvoiceNoAndIdNot(String vendorName, String vendorInvoiceNo, Long id);
+
         boolean existsByLpoIdAndStockPostedTrue(Long lpoId);
 
         List<PurchaseInvoice> findByLpoId(Long lpoId);

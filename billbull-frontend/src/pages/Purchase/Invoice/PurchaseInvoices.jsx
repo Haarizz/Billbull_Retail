@@ -75,6 +75,7 @@ import { getGrns, getGrnById } from "../../../api/grnApi";
 
 // SHORTCUTS HOOK
 import useShortcuts from '../../../hooks/useShortcuts';
+import { useBranch } from '../../../context/BranchContext';
 
 // WAREHOUSE API IMPORTS
 import {
@@ -139,7 +140,7 @@ const mapInvoiceFromApi = (inv) => {
     vendor: inv.vendorName,
     vendorInvoiceNo,
     vendorInvoiceDate,
-    vendorId: vendorInvoiceNo,
+    vendorId: inv.vendorId || null, // if exists, else null
     grnId: inv.grnId,
     lpoId: inv.lpoId,
     source: inv.sourceType || "Direct",
@@ -799,6 +800,19 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
 
     return "";
   };
+
+  const { defaultBranch } = useBranch();
+
+  useEffect(() => {
+    if (!editInvoice && defaultBranch?.defaultWarehouseId) {
+      const wh = warehouseList.find(w => w.id === defaultBranch.defaultWarehouseId);
+      setFormData(prev => ({
+        ...prev,
+        warehouseId: defaultBranch.defaultWarehouseId,
+        warehouse: wh?.name || defaultBranch.defaultWarehouseName || '',
+      }));
+    }
+  }, [defaultBranch, warehouseList, editInvoice]);
 
   // Handle Edit Mode from Draft
   useEffect(() => {
@@ -1663,15 +1677,24 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
               </div>
 
               <div className="mt-2">
-                <label className="text-xs font-medium text-slate-500 mb-1 block">Vendor Invoice No</label>
+                <label className="text-xs font-medium text-slate-500 mb-1 block">
+                  Vendor Invoice No <span className="text-red-500">*</span>
+                </label>
                 <input
                   type="text"
                   placeholder="Vendor's invoice #"
                   value={formData.vendorInvoiceNo}
                   readOnly={isInvoiceLocked}
                   onChange={(e) => setFormData({ ...formData, vendorInvoiceNo: e.target.value })}
-                  className="w-full text-xs border border-slate-200 rounded-md py-2 px-3 focus:ring-1 focus:ring-[#F5C742] outline-none read-only:bg-slate-50"
+                  className={`w-full text-xs border rounded-md py-2 px-3 focus:ring-1 focus:ring-[#F5C742] outline-none read-only:bg-slate-50 ${
+                    !formData.vendorInvoiceNo?.trim() && !isInvoiceLocked
+                      ? "border-red-300 bg-red-50"
+                      : "border-slate-200"
+                  }`}
                 />
+                {!formData.vendorInvoiceNo?.trim() && !isInvoiceLocked && (
+                  <p className="text-[10px] text-red-500 mt-0.5">Vendor invoice number is required</p>
+                )}
               </div>
 
               <div>
@@ -2162,7 +2185,13 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
             ) : (
               <>
                 <button
-                  onClick={() => onSaveDraft(getInvoicePayload())}
+                  onClick={() => {
+                    if (!formData.vendorInvoiceNo?.trim()) {
+                      alert("Vendor invoice number is required.");
+                      return;
+                    }
+                    onSaveDraft(getInvoicePayload());
+                  }}
                   className="flex-1 xl:flex-none px-4 py-2 bg-white border border-slate-300 rounded hover:bg-slate-50 font-medium text-slate-700 flex items-center justify-center gap-2 transition-colors whitespace-nowrap">
                   <FileText className="h-3 w-3" /> <span className="hidden sm:inline">Save Draft</span><span className="sm:hidden">Draft</span>
                 </button>
@@ -2180,7 +2209,13 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
                   return;
                 }
 
-                // 3. Direct Invoice Location Guard
+                // 3. Vendor Invoice Number Guard
+                if (!formData.vendorInvoiceNo?.trim()) {
+                  alert("Vendor invoice number is required.");
+                  return;
+                }
+
+                // 4. Direct Invoice Location Guard
                 if (invoiceType === SOURCE.DIRECT && !formData.warehouseId) {
                   alert("Warehouse is required for Direct Invoices to post stock.");
                   return;
@@ -2556,40 +2591,30 @@ const PurchaseInvoices = () => {
 
       // 🔑 CAPTURE DB ID
       const createdId = res.data.id;
-
-      // reload list
       await loadInvoices();
-
       setActiveNavTab("list");
       alert("Invoice saved as Draft.");
-
-      return createdId; // important for submit flow
+      return createdId;
     } catch (err) {
       console.error(err);
-      alert("Failed to save draft.");
+      const msg = err.response?.data?.message || "Failed to save draft.";
+      alert(msg);
     }
   };
-
 
   const handleSubmitApproval = async (payload) => {
     try {
       const invoiceId = await handleSaveDraft(payload);
-
-      if (!invoiceId) {
-        alert("Draft creation failed. Cannot submit.");
-        return;
-      }
-
+      if (!invoiceId) return;
       await submitInvoice(invoiceId);
       await loadInvoices();
       setActiveNavTab("approval");
     } catch (err) {
       console.error(err);
-      alert("Failed to submit for approval.");
+      const msg = err.response?.data?.message || "Failed to submit for approval.";
+      alert(msg);
     }
   };
-
-
 
   const handleApprove = async (dbId) => {
     try {
@@ -2599,7 +2624,8 @@ const PurchaseInvoices = () => {
       alert(`Invoice Approved and Posted.`);
     } catch (err) {
       console.error(err);
-      alert("Failed to approve invoice.");
+      const msg = err.response?.data?.message || "Failed to approve invoice.";
+      alert(msg);
     }
   };
 
