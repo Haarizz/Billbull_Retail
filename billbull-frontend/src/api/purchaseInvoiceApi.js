@@ -84,5 +84,15 @@ export const createDraftFromGrn = async (grnId) => {
   }
 };
 
+export const createDraftFromLpo = async (lpoId) => {
+  try {
+    const response = await api.get(`/api/purchase-invoices/draft/from-lpo/${lpoId}`);
+    return response.data;
+  } catch (error) {
+    console.error("Error creating draft invoice from LPO", error);
+    throw error;
+  }
+};
+
 // Alias for PaymentVoucher.jsx
 export const getPostedInvoicesForPayment = getPostedPurchaseInvoices;

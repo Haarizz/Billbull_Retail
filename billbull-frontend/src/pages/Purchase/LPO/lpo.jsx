@@ -47,6 +47,7 @@ import {
 } from 'lucide-react';
 
 import { getImageUrl } from "../../../utils/urlUtils";
+import { createDraftFromLpo } from '../../../api/purchaseInvoiceApi';
 import { ItemDescriptionCell, ItemDescriptionHeader } from '../../../components/ItemDescriptionCell';
 import ItemAddOnsModal from '../../../components/ItemAddOnsModal';
 import StockAvailabilityModal from '../../../components/StockAvailabilityModal';
@@ -278,7 +279,7 @@ const MobileCard = ({ row, onView }) => (
 // 3. VIEW COMPONENTS
 // ==========================================
 
-const ListView = ({ lpos, onEdit, onView, onPrint, activeFilter, onApprove, onReject, onStockApprove, onStockReject, searchQuery, setSearchQuery, sortConfig, requestSort, showFilterPanel, setShowFilterPanel, dateRange, setDateRange, selectedVendor, setSelectedVendor, vendors }) => {
+const ListView = ({ lpos, onEdit, onView, onPrint, activeFilter, onApprove, onReject, onStockApprove, onStockReject, onProceedToInvoice, searchQuery, setSearchQuery, sortConfig, requestSort, showFilterPanel, setShowFilterPanel, dateRange, setDateRange, selectedVendor, setSelectedVendor, vendors }) => {
   const formatDate = (dateString) => {
     if (!dateString) return '-';
     try {
@@ -569,6 +570,17 @@ const ListView = ({ lpos, onEdit, onView, onPrint, activeFilter, onApprove, onRe
                         )}
 
 
+
+                        {/* Proceed to Invoice — APPROVED / SENT_TO_VENDOR / PARTIALLY_RECEIVED */}
+                        {['APPROVED', 'SENT_TO_VENDOR', 'PARTIALLY_RECEIVED'].includes(row.status) && (
+                          <button
+                            onClick={(e) => { e.stopPropagation(); onProceedToInvoice && onProceedToInvoice(row.dbId); }}
+                            title="Proceed to Invoice"
+                            className="p-1.5 bg-blue-50 hover:bg-blue-100 rounded text-blue-600 hover:text-blue-700 flex items-center gap-1 font-medium text-[10px]"
+                          >
+                            <FileText className="h-3 w-3" /> Invoice
+                          </button>
+                        )}
 
                         {/* Standard Actions */}
                         <button
@@ -2432,6 +2444,16 @@ const LPOList = () => {
     await refreshLpos();
   };
 
+  const handleProceedToInvoice = async (dbId) => {
+    try {
+      const draft = await createDraftFromLpo(dbId);
+      navigate('/purchases/invoice', { state: { fromLpo: draft } });
+    } catch (error) {
+      console.error("Proceed to Invoice Error:", error);
+      toast.error(error.response?.data?.message || "Failed to proceed to invoice");
+    }
+  };
+
   const handleRevertLPO = async (dbId) => {
     try {
       setLoading(true);
@@ -2643,6 +2665,7 @@ const LPOList = () => {
                 onReject={handleReject}
                 onStockApprove={handleInitiateStockApprove}
                 onStockReject={handleInitiateStockReject}
+                onProceedToInvoice={handleProceedToInvoice}
                 onPrint={handlePrintLPO}
                 searchQuery={searchQuery}
                 setSearchQuery={setSearchQuery}

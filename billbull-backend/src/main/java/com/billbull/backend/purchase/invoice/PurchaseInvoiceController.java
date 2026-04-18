@@ -29,6 +29,13 @@ public class PurchaseInvoiceController {
         return ResponseEntity.ok(service.createDraftFromGrn(grnId));
     }
 
+    @GetMapping("/draft/from-lpo/{lpoId}")
+    @PreAuthorize("hasAnyRole('ADMIN','INVENTORY_MANAGER')")
+    public ResponseEntity<PurchaseInvoiceResponse> draftFromLpo(
+            @PathVariable Long lpoId) {
+        return ResponseEntity.ok(service.createDraftFromLpo(lpoId));
+    }
+
     @PostMapping("/draft")
     @PreAuthorize("hasAnyRole('ADMIN','INVENTORY_MANAGER')")
     public ResponseEntity<PurchaseInvoiceResponse> createDraft(
