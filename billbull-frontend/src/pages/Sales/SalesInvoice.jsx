@@ -58,6 +58,7 @@ import { generatePrintHtml, printHtml } from '../../utils/printGenerator';
 import { getImageUrl } from '../../utils/urlUtils';
 import billBullLogo from '../../assets/billBullLogo.png';
 import { useCompany } from '../../context/CompanyContext';
+import { useBranch } from '../../context/BranchContext';
 
 // ✅ PRODUCT SELECTOR
 import ProductSelector from '../../components/ProductSelector';
@@ -81,6 +82,7 @@ import useShortcuts from '../../hooks/useShortcuts';
 
 const SalesInvoice = () => {
     const { company } = useCompany();
+    const { defaultBranch } = useBranch();
     const location = useLocation();
     const fromQuotationHandled = useRef(false);
     const [activeTab, setActiveTab] = useState('list');
@@ -983,7 +985,7 @@ const SalesInvoice = () => {
             cost: cost,
             gp: 0,
             remarks: product.description || '',
-            warehouseId: warehousesList.length > 0 ? warehousesList[0].id : ''
+            warehouseId: defaultBranch?.defaultWarehouseId || (warehousesList.length > 0 ? warehousesList[0].id : '')
         };
 
         const newItem = calculateRow(rawItem);
@@ -1002,7 +1004,7 @@ const SalesInvoice = () => {
     };
 
     const handleAddItem = () => {
-        setItems([...items, { id: Date.now(), code: '', name: '', unit: 'PCS', qty: 0, price: 0, disc: 0, tax: 5, taxAmt: 0, gross: 0, net: 0, cost: 0, warehouseId: warehousesList.length > 0 ? warehousesList[0].id : '' }]);
+        setItems([...items, { id: Date.now(), code: '', name: '', unit: 'PCS', qty: 0, price: 0, disc: 0, tax: 5, taxAmt: 0, gross: 0, net: 0, cost: 0, warehouseId: defaultBranch?.defaultWarehouseId || (warehousesList.length > 0 ? warehousesList[0].id : '') }]);
     };
 
     const handleDeleteItem = (id) => {
@@ -1128,7 +1130,7 @@ const SalesInvoice = () => {
                 warehouseId: i.warehouseId || ''
             })));
         } else {
-            setItems([{ id: Date.now(), code: '', name: '', unit: 'PCS', qty: 0, price: 0, disc: 0, tax: 5, taxAmt: 0, gross: 0, net: 0, cost: 0, warehouseId: warehousesList.length > 0 ? warehousesList[0].id : '' }]);
+            setItems([{ id: Date.now(), code: '', name: '', unit: 'PCS', qty: 0, price: 0, disc: 0, tax: 5, taxAmt: 0, gross: 0, net: 0, cost: 0, warehouseId: defaultBranch?.defaultWarehouseId || (warehousesList.length > 0 ? warehousesList[0].id : '') }]);
         }
 
         setActiveTab('create');

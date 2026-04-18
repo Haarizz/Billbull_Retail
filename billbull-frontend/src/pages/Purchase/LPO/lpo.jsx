@@ -87,6 +87,7 @@ import {
 
 // SHORTCUTS HOOK
 import useShortcuts from '../../../hooks/useShortcuts';
+import { useBranch } from '../../../context/BranchContext';
 
 // ==========================================
 // UTILITIES & CONSTANTS
@@ -969,6 +970,19 @@ const EditorView = ({ initialData, vendors, warehouses, onSave, onSubmit, onPrin
   const [zoneList, setZoneList] = useState([]);
   const [locatorList, setLocatorList] = useState([]);
   const [binList, setBinList] = useState([]);
+
+  const { defaultBranch } = useBranch();
+
+  useEffect(() => {
+    if (!initialData && defaultBranch?.defaultWarehouseId) {
+      const wh = warehouses.find(w => w.id === defaultBranch.defaultWarehouseId);
+      setFormData(prev => ({
+        ...prev,
+        warehouseId: defaultBranch.defaultWarehouseId,
+        warehouseName: wh?.name || defaultBranch.defaultWarehouseName || '',
+      }));
+    }
+  }, [defaultBranch, initialData]);
 
   useEffect(() => {
     if (initialData) {

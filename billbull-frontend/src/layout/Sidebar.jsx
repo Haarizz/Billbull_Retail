@@ -233,8 +233,9 @@ const Sidebar = ({ children }) => {
       module: "userManagement",
       roles: ["ADMIN"],
       subItems: [
-        { path: "/settings/company", label: "Company Profile",       icon: <Building2 size={14} /> },
-        { path: "/settings/roles",   label: "User & Role Config",    icon: <ShieldCheck size={14} /> },
+        { path: "/settings/company",   label: "Company Profile",    icon: <Building2 size={14} /> },
+        { path: "/settings/roles",     label: "User & Role Config", icon: <ShieldCheck size={14} /> },
+        { path: "/settings/branches",  label: "Branch Setup",       icon: <Warehouse size={14} /> },
       ],
     },
     {
