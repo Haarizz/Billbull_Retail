@@ -43,13 +43,18 @@ import { getImageUrl } from "../../../utils/urlUtils";
 import { ItemDescriptionCell, ItemDescriptionHeader } from '../../../components/ItemDescriptionCell';
 import ItemAddOnsModal from '../../../components/ItemAddOnsModal'; // BB-026
 import StockAvailabilityModal from '../../../components/StockAvailabilityModal';
+import { useCompany } from '../../../context/CompanyContext';
 
 // Printing Utilities
 import { getTemplatesByCategory } from '../../../api/printTemplateApi';
 import { generatePrintHtml, printHtml } from '../../../utils/printGenerator';
-import nestLogo from '../../../assets/NEST Logo Final.png';
 import billBullLogo from '../../../assets/billBullLogo.png';
 import toast from 'react-hot-toast';
+import {
+  buildPurchaseInvoicePrintData,
+  findVendorRecord,
+  normalizePurchaseTemplate
+} from '../../../utils/purchasePrintUtils';
 
 // API IMPORTS
 import {
@@ -2402,6 +2407,7 @@ const DraftInvoicesView = ({ drafts, onEdit, onDelete }) => {
 // ==========================================
 
 const PurchaseInvoices = () => {
+  const { company } = useCompany();
   const navigate = useNavigate();
   const location = useLocation();
   const [activeNavTab, setActiveNavTab] = useState("list");
@@ -2538,58 +2544,27 @@ const PurchaseInvoices = () => {
   };
 
   const handlePrint = async (invoice) => {
+    const loadingToast = toast.loading('Preparing print layout...');
     try {
-      const loadingToast = toast.loading('Preparing print layout...');
-      const templates = await getTemplatesByCategory('Purchase Invoice');
-      toast.dismiss(loadingToast);
+      const [templates, invoiceDetail] = await Promise.all([
+        getTemplatesByCategory('Purchase Invoice'),
+        getInvoiceById(invoice.dbId)
+      ]);
 
       if (!templates || templates.length === 0) {
         toast.error('No templates found for Purchase Invoice');
         return;
       }
 
-      const defaultTemplate = templates.find(t => t.isDefault) || templates[0];
-
-      // Map to standard print data
-      const printData = {
-        title: 'PURCHASE INVOICE',
-        docNo: invoice.id || invoice.invoiceNumber,
-        date: invoice.date,
-        customer: {
-          name: invoice.vendor || 'Unknown Vendor',
-          address: '',
-          trn: invoice.vendorTrn || ''
-        },
-        items: (invoice.items || []).map(i => ({
-          code: i.itemCode || i.code || '-',
-          name: i.itemName || i.name || '',
-          desc: i.description || i.shortDescription || '',
-          sku: i.sku || i.productSku || '',
-          localName: i.localName || i.productLocalName || '',
-          unit: i.uom || i.unit || 'PCS',
-          qty: Number(i.quantity || i.qty || 0),
-          price: Number(i.unitPrice || i.price || 0),
-          disc: Number(i.discountPercent || i.disc || 0),
-          tax: Number(i.taxAmount || i.tax || 0),
-          taxAmt: Number(i.taxAmount || i.taxAmt || 0),
-          total: Number(i.total || (Number(i.quantity || 0) * Number(i.unitPrice || 0)))
-        })),
-        totals: {
-          subTotal: Number(invoice.total || 0) - Number(invoice.tax || 0),
-          tax: Number(invoice.tax || 0),
-          grandTotal: Number(invoice.total || 0),
-          currency: 'AED'
-        },
-        meta: {
-          status: invoice.status,
-          paymentTerm: invoice.paymentTerm || '',
-          notes: invoice.notes || '',
-          dueDate: invoice.dueDate
-        }
-      };
+      const defaultTemplate = normalizePurchaseTemplate(
+        templates.find(t => t.isDefault) || templates[0],
+        'Purchase Invoice'
+      );
+      const fullVendor = findVendorRecord(vendorList, invoiceDetail, invoiceDetail?.vendorName);
+      const printData = buildPurchaseInvoicePrintData(invoiceDetail, fullVendor, company);
 
       const html = generatePrintHtml(defaultTemplate, printData, {
-        nestLogo: nestLogo,
+        companyProfile: company,
         billBullLogo: billBullLogo
       });
 
@@ -2597,6 +2572,8 @@ const PurchaseInvoices = () => {
     } catch (error) {
       console.error("Error printing Invoice:", error);
       toast.error('Failed to generate print layout');
+    } finally {
+      toast.dismiss(loadingToast);
     }
   };
 

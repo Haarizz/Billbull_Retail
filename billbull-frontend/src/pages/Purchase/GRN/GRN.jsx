@@ -67,6 +67,7 @@ import { getImageUrl } from '../../../utils/urlUtils';
 import { ItemDescriptionCell, ItemDescriptionHeader } from '../../../components/ItemDescriptionCell';
 import ItemAddOnsModal from '../../../components/ItemAddOnsModal';
 import StockAvailabilityModal from '../../../components/StockAvailabilityModal';
+import { useCompany } from '../../../context/CompanyContext';
 
 // SHORTCUTS HOOK
 import useShortcuts from '../../../hooks/useShortcuts';
@@ -74,9 +75,13 @@ import useShortcuts from '../../../hooks/useShortcuts';
 // Printing Utilities
 import { getTemplatesByCategory } from '../../../api/printTemplateApi';
 import { generatePrintHtml, printHtml } from '../../../utils/printGenerator';
-import nestLogo from '../../../assets/NEST Logo Final.png';
 import billBullLogo from '../../../assets/billBullLogo.png';
 import toast from 'react-hot-toast';
+import {
+  buildGrnPrintData,
+  findVendorRecord,
+  normalizePurchaseTemplate
+} from '../../../utils/purchasePrintUtils';
 
 // ==========================================
 // 1. MOCK DATA & CONFIGURATION
@@ -1884,6 +1889,7 @@ const EditorView = ({ initialData, onSaveDraft, onSubmitQC, onPost, onPrint, grn
 // ==========================================
 
 const GRN = () => {
+  const { company } = useCompany();
   const navigate = useNavigate();
   const [activeNavTab, setActiveNavTab] = useState("list");
   const [grns, setGrns] = useState([]);
@@ -2077,64 +2083,30 @@ const GRN = () => {
   };
 
   const handlePrint = async (grn) => {
+    const loadingToast = toast.loading('Preparing print layout...');
     try {
-      const loadingToast = toast.loading('Preparing print layout...');
       const templates = await getTemplatesByCategory('Goods Receipt Note');
 
       if (!templates || templates.length === 0) {
-        toast.dismiss(loadingToast);
         toast.error('No templates found for Goods Receipt Note');
         return;
       }
 
-      const defaultTemplate = templates.find(t => t.isDefault) || templates[0];
+      const defaultTemplate = normalizePurchaseTemplate(
+        templates.find(t => t.isDefault) || templates[0],
+        'Goods Receipt Note'
+      );
 
       // Fetch full GRN details if needed
       let fullGrn = grn;
       if (!grn.items || grn.items.length === 0) {
         fullGrn = await getGrnById(grn.id);
       }
-      toast.dismiss(loadingToast);
-
-      // Map to standard print data
-      const printData = {
-        title: 'GOODS RECEIPT NOTE',
-        docNo: fullGrn.grnNo || fullGrn.id || '-',
-        date: fullGrn.date,
-        customer: {
-          name: fullGrn.vendor || fullGrn.vendorName || 'Unknown Vendor',
-          address: fullGrn.vendorAddress || '',
-          trn: fullGrn.vendorTrn || ''
-        },
-        items: (fullGrn.items || []).map(i => ({
-          code: i.itemCode || i.code || '-',
-          name: i.itemName || i.name || '',
-          desc: i.description || i.shortDescription || '',
-          sku: i.sku || i.productSku || '',
-          localName: i.localName || i.productLocalName || '',
-          unit: i.uom || i.unit || 'PCS',
-          qty: Number(i.received || i.quantity || i.qty || 0),
-          price: Number(i.unitCost || i.price || 0),
-          disc: 0,
-          tax: 0,
-          taxAmt: 0,
-          total: Number(i.total || (Number(i.received || 0) * Number(i.unitCost || 0)))
-        })),
-        totals: {
-          subTotal: Number(fullGrn.totalValue || (fullGrn.items || []).reduce((acc, i) => acc + (Number(i.received || 0) * Number(i.unitCost || 0)), 0)),
-          tax: 0,
-          grandTotal: Number(fullGrn.totalValue || (fullGrn.items || []).reduce((acc, i) => acc + (Number(i.received || 0) * Number(i.unitCost || 0)), 0)),
-          currency: 'AED'
-        },
-        meta: {
-          status: fullGrn.status,
-          notes: fullGrn.notes || '',
-          refNo: fullGrn.lpoNumber || fullGrn.lpo || ''
-        }
-      };
+      const fullVendor = findVendorRecord(vendors, fullGrn, fullGrn?.vendor, fullGrn?.vendorName);
+      const printData = buildGrnPrintData(fullGrn, fullVendor, company);
 
       const html = generatePrintHtml(defaultTemplate, printData, {
-        nestLogo: nestLogo,
+        companyProfile: company,
         billBullLogo: billBullLogo
       });
 
@@ -2142,6 +2114,8 @@ const GRN = () => {
     } catch (error) {
       console.error("Error printing GRN:", error);
       toast.error('Failed to generate print layout');
+    } finally {
+      toast.dismiss(loadingToast);
     }
   };
 
