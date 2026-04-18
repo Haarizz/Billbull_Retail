@@ -1,9 +1,12 @@
 package com.billbull.backend.sales.invoice;
 
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.time.LocalDate;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 import org.hibernate.Hibernate;
 import org.springframework.http.HttpStatus;
@@ -19,6 +22,7 @@ import com.billbull.backend.financials.generalledger.postingengine.PostingEngine
 import com.billbull.backend.financials.receiptvoucher.ReceiptPurpose;
 import com.billbull.backend.financials.receiptvoucher.ReceiptVoucher;
 import com.billbull.backend.financials.receiptvoucher.ReceiptVoucherService;
+import com.billbull.backend.inventory.product.ProductMediaRepository;
 import com.billbull.backend.inventory.product.ProductRepository;
 import com.billbull.backend.inventory.stockavailability.StockAvailabilityResponse;
 import com.billbull.backend.inventory.stockavailability.StockAvailabilityService;
@@ -37,6 +41,7 @@ public class SalesInvoiceService {
     private final StockAvailabilityService stockAvailabilityService;
     private final ReceiptVoucherService receiptVoucherService;
     private final ProductRepository productRepo;
+    private final ProductMediaRepository productMediaRepository;
 
     public SalesInvoiceService(SalesInvoiceRepository invoiceRepo,
             PostingEngineService postingEngineService,
@@ -44,7 +49,8 @@ public class SalesInvoiceService {
             SalesSettingsService settingsService,
             StockAvailabilityService stockAvailabilityService,
             ReceiptVoucherService receiptVoucherService,
-            ProductRepository productRepo) {
+            ProductRepository productRepo,
+            ProductMediaRepository productMediaRepository) {
         this.invoiceRepo = invoiceRepo;
         this.postingEngineService = postingEngineService;
         this.deliveryNoteService = deliveryNoteService;
@@ -52,6 +58,7 @@ public class SalesInvoiceService {
         this.stockAvailabilityService = stockAvailabilityService;
         this.receiptVoucherService = receiptVoucherService;
         this.productRepo = productRepo;
+        this.productMediaRepository = productMediaRepository;
     }
 
     // ----------------------------
@@ -110,7 +117,10 @@ public class SalesInvoiceService {
             }
         }
 
-        double total = subTotal + taxTotal;
+        // Round to 2 dp to eliminate floating-point noise from client-side arithmetic
+        subTotal = BigDecimal.valueOf(subTotal).setScale(2, RoundingMode.HALF_UP).doubleValue();
+        taxTotal = BigDecimal.valueOf(taxTotal).setScale(2, RoundingMode.HALF_UP).doubleValue();
+        double total = BigDecimal.valueOf(subTotal + taxTotal).setScale(2, RoundingMode.HALF_UP).doubleValue();
         double paid = invoice.getAmountPaid() != null ? invoice.getAmountPaid() : 0;
 
         if (paid < 0) {
@@ -241,7 +251,7 @@ public class SalesInvoiceService {
     // ENRICH ITEMS FROM PRODUCT
     // ----------------------------
     private void enrichItems(java.util.List<SalesInvoiceItem> items) {
-        if (items == null) return;
+        if (items == null || items.isEmpty()) return;
         for (SalesInvoiceItem item : items) {
             if (item.getItemCode() == null || item.getItemCode().isBlank()) continue;
             productRepo.findByCodeAndIsActiveTrue(item.getItemCode()).ifPresent(p -> {
@@ -249,6 +259,24 @@ public class SalesInvoiceService {
                 if (item.getLocalName() == null || item.getLocalName().isBlank()) item.setLocalName(p.getLocalName());
                 if (item.getDescription() == null || item.getDescription().isBlank()) item.setDescription(p.getShortDesc());
                 if (item.getItemName() == null || item.getItemName().isBlank()) item.setItemName(p.getName());
+            });
+        }
+
+        List<String> codesNeedingImage = items.stream()
+                .filter(i -> (i.getImage() == null || i.getImage().isBlank()) && i.getItemCode() != null && !i.getItemCode().isBlank())
+                .map(SalesInvoiceItem::getItemCode)
+                .distinct()
+                .toList();
+
+        if (!codesNeedingImage.isEmpty()) {
+            Map<String, String> imageMap = new HashMap<>();
+            productMediaRepository.findPrimaryByProductCodesIn(codesNeedingImage)
+                    .forEach(m -> imageMap.put(m.getProduct().getCode(), m.getImageUrl()));
+            items.forEach(i -> {
+                if ((i.getImage() == null || i.getImage().isBlank()) && i.getItemCode() != null) {
+                    String url = imageMap.get(i.getItemCode());
+                    if (url != null) i.setImage(url);
+                }
             });
         }
     }
@@ -381,11 +409,13 @@ public class SalesInvoiceService {
         return recordPayment(id, paymentAmount, paymentMode, paymentReference, paymentDate, null);
     }
 
+    @Transactional
     public SalesInvoice recordPayment(Long id, Double paymentAmount, String paymentMode,
             String paymentReference, LocalDate paymentDate, String bankAccount) {
         return recordPayment(id, paymentAmount, paymentMode, paymentReference, paymentDate, bankAccount, null);
     }
 
+    @Transactional
     public SalesInvoice recordPayment(Long id, Double paymentAmount, String paymentMode,
             String paymentReference, LocalDate paymentDate, String bankAccount, LocalDate chequeDate) {
         SalesInvoice invoice = getById(id);
@@ -395,6 +425,13 @@ public class SalesInvoiceService {
         }
 
         createReceiptForInvoicePayment(invoice, paymentAmount, paymentMode, paymentReference, paymentDate, bankAccount, chequeDate);
+
+        // Sync invoice's paymentMode to the actual mode used for payment
+        if (paymentMode != null && !paymentMode.isBlank()) {
+            SalesInvoice toUpdate = invoiceRepo.findById(id).orElseThrow();
+            toUpdate.setPaymentMode(paymentMode);
+            invoiceRepo.save(toUpdate);
+        }
 
         return getById(id);
     }

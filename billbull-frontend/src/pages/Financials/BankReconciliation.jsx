@@ -49,8 +49,8 @@ const BankReconciliation = () => {
     useEffect(() => {
         if (selectedAccount && allTransactions.length > 0) {
             const filtered = allTransactions.filter(tx =>
-                (tx.accountId === selectedAccount.id) ||
-                (tx.accountName === selectedAccount.name)
+                tx.accountCode === selectedAccount.code ||
+                tx.accountName === selectedAccount.name
             );
             setLedgerTransactions(filtered);
 
@@ -156,23 +156,32 @@ const BankReconciliation = () => {
         const loadingToast = toast.loading("Finalizing reconciliation...");
 
         try {
+            const newlyMatchedIds = Array.from(matchedIds).filter(id => {
+                const tx = ledgerTransactions.find(t => t.id === id);
+                return tx && !tx.reconciled;
+            });
+
             await finalizeReconciliation({
                 bankAccountId: selectedAccount.id,
                 statementDate: statementDate,
                 statementBalance: bankBalance,
-                journalLineIds: Array.from(matchedIds)
+                ledgerEntryIds: newlyMatchedIds
             });
-
-            setLedgerTransactions(prev => prev.map(tx =>
-                matchedIds.has(tx.id) ? { ...tx, reconciled: true } : tx
-            ));
-
-            setMatchedIds(new Set());
-            setIgnoredIds(new Set());
-            setManualBankBalance(getBalanceString(selectedAccount));
 
             toast.dismiss(loadingToast);
             toast.success("Bank Reconciliation Successful!");
+
+            // Re-fetch fresh data so reconciled status updates from DB
+            const [accData, txData] = await Promise.all([getAccounts(), getTransactions()]);
+            setAccounts(accData);
+            setAllTransactions(txData);
+            setIgnoredIds(new Set());
+
+            const currentId = selectedAccount.id;
+            const updatedAccount = accData.find(a => a.id === currentId);
+            if (updatedAccount) {
+                setSelectedAccount(updatedAccount);
+            }
         } catch (error) {
             toast.dismiss(loadingToast);
             toast.error("Failed to finalize reconciliation: " + (error.response?.data?.message || error.message));

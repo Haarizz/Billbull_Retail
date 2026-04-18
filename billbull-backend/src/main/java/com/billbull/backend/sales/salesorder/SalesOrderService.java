@@ -5,8 +5,11 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
+import com.billbull.backend.inventory.product.ProductMediaRepository;
 import com.billbull.backend.util.DocumentOrderingUtil;
 
 @Service
@@ -17,18 +20,21 @@ public class SalesOrderService {
     private final com.billbull.backend.inventory.warehouse.WarehouseStockService warehouseStockService;
     private final com.billbull.backend.inventory.product.ProductRepository productRepo;
     private final com.billbull.backend.inventory.product.ProductBarcodeRepository barcodeRepo;
+    private final ProductMediaRepository productMediaRepository;
 
     public SalesOrderService(
             SalesOrderRepository orderRepo,
             com.billbull.backend.sales.quotation.QuotationRepository quotationRepo,
             com.billbull.backend.inventory.warehouse.WarehouseStockService warehouseStockService,
             com.billbull.backend.inventory.product.ProductRepository productRepo,
-            com.billbull.backend.inventory.product.ProductBarcodeRepository barcodeRepo) {
+            com.billbull.backend.inventory.product.ProductBarcodeRepository barcodeRepo,
+            ProductMediaRepository productMediaRepository) {
         this.orderRepo = orderRepo;
         this.quotationRepo = quotationRepo;
         this.warehouseStockService = warehouseStockService;
         this.productRepo = productRepo;
         this.barcodeRepo = barcodeRepo;
+        this.productMediaRepository = productMediaRepository;
     }
 
     // ----------------------------
@@ -206,6 +212,24 @@ public class SalesOrderService {
         }
 
         order.getItems().forEach(this::hydrateOrderItemDisplayData);
+
+        List<String> codesNeedingImage = order.getItems().stream()
+                .filter(i -> (i.getImage() == null || i.getImage().isBlank()) && i.getItemCode() != null && !i.getItemCode().isBlank())
+                .map(SalesOrderItem::getItemCode)
+                .distinct()
+                .toList();
+
+        if (!codesNeedingImage.isEmpty()) {
+            Map<String, String> imageMap = new HashMap<>();
+            productMediaRepository.findPrimaryByProductCodesIn(codesNeedingImage)
+                    .forEach(m -> imageMap.put(m.getProduct().getCode(), m.getImageUrl()));
+            order.getItems().forEach(i -> {
+                if ((i.getImage() == null || i.getImage().isBlank()) && i.getItemCode() != null) {
+                    String url = imageMap.get(i.getItemCode());
+                    if (url != null) i.setImage(url);
+                }
+            });
+        }
     }
 
     private void hydrateOrderItemDisplayData(SalesOrderItem item) {

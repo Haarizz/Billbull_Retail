@@ -4,7 +4,9 @@ import java.io.IOException;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.stream.Collectors;
 
 import org.springframework.data.domain.PageRequest;
@@ -90,6 +92,7 @@ public class QuotationService {
                 Quotation::getQtnNo,
                 Quotation::getId);
         quotations.forEach(this::initialize);
+        enrichQuotationImages(quotations);
         return quotations;
     }
 
@@ -126,6 +129,7 @@ public class QuotationService {
         Quotation quotation = quotationRepo.findById(id)
                 .orElseThrow(() -> new RuntimeException("Quotation not found with id: " + id));
         initialize(quotation);
+        enrichQuotationImages(List.of(quotation));
         return quotation;
     }
 
@@ -465,6 +469,28 @@ public class QuotationService {
     // -------------------------------------------------
     // LAZY INIT
     // -------------------------------------------------
+    private void enrichQuotationImages(List<Quotation> quotations) {
+        List<String> codes = quotations.stream()
+                .flatMap(q -> q.getItems().stream())
+                .filter(i -> (i.getImage() == null || i.getImage().isBlank()) && i.getItemCode() != null && !i.getItemCode().isBlank())
+                .map(QuotationItem::getItemCode)
+                .distinct()
+                .toList();
+
+        if (codes.isEmpty()) return;
+
+        Map<String, String> imageMap = new HashMap<>();
+        mediaRepo.findPrimaryByProductCodesIn(codes)
+                .forEach(m -> imageMap.put(m.getProduct().getCode(), m.getImageUrl()));
+
+        quotations.forEach(q -> q.getItems().forEach(i -> {
+            if ((i.getImage() == null || i.getImage().isBlank()) && i.getItemCode() != null) {
+                String url = imageMap.get(i.getItemCode());
+                if (url != null) i.setImage(url);
+            }
+        }));
+    }
+
     private void initialize(Quotation quotation) {
         quotation.getItems().size();
         quotation.getAttachments().size();

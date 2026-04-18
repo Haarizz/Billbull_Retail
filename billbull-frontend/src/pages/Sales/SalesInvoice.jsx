@@ -435,6 +435,16 @@ const SalesInvoice = () => {
         loadData();
     }, []);
 
+    // Auto-fill items' warehouseId once warehouses / default branch are available
+    useEffect(() => {
+        const defaultWhId = defaultBranch?.defaultWarehouseId || (warehousesList.length > 0 ? warehousesList[0].id : null);
+        if (!defaultWhId) return;
+        setItems(prev => prev.map(item => ({
+            ...item,
+            warehouseId: item.warehouseId || defaultWhId,
+        })));
+    }, [defaultBranch, warehousesList]);
+
     // Pre-fill form from Quotation navigation state
     useEffect(() => {
         const fromQtn = location.state?.fromQuotation;
@@ -453,6 +463,7 @@ const SalesInvoice = () => {
                 id: Date.now() + idx,
                 code: i.code || '',
                 name: i.desc || i.name || '',
+                image: i.image || i.primaryImage || '',
                 unit: i.unit || 'PCS',
                 qty: Number(i.qty) || 0,
                 price: Number(i.price) || 0,
@@ -1015,6 +1026,12 @@ const SalesInvoice = () => {
         if (!selectedCustomer) { alert("Please select a customer"); return; }
 
         // Build payload for backend
+        // Resolve invoice-level warehouse ID for fallback on items that have no warehouseId
+        const invoiceLevelWarehouseId =
+            warehousesList.find(w => w.name === branch)?.id ||
+            defaultBranch?.defaultWarehouseId ||
+            (warehousesList.length > 0 ? warehousesList[0].id : null);
+
         const payload = {
             id: invoiceId,
             invoiceNumber: invoiceNo,
@@ -1055,7 +1072,9 @@ const SalesInvoice = () => {
                 grossAmount: Number(i.gross),
                 netAmount: Number(i.net),
                 foc: Number(i.foc) || 0,
-                warehouseId: i.warehouseId ? Number(i.warehouseId) : null
+                warehouseId: (i.warehouseId && i.warehouseId !== '')
+                    ? Number(i.warehouseId)
+                    : (invoiceLevelWarehouseId ? Number(invoiceLevelWarehouseId) : null)
             }))
         };
 
@@ -1075,7 +1094,7 @@ const SalesInvoice = () => {
             setActiveTab('list');
         } catch (e) {
             console.error("Save failed", e);
-            alert("Failed to save Invoice. Please check inputs.");
+            alert(e.response?.data?.message || "Failed to save Invoice. Please check inputs.");
         }
     };
 

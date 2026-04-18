@@ -29,6 +29,12 @@ public class LedgerEntry {
     private String costCenter;
     private String cfBucket;
 
+    @Column(name = "is_reconciled", nullable = false, columnDefinition = "boolean default false")
+    private Boolean reconciled = false;
+
+    @Column(name = "reconciliation_date")
+    private LocalDate reconciliationDate;
+
     public LedgerEntry() {
     }
 
@@ -143,5 +149,21 @@ public class LedgerEntry {
 
     public void setCfBucket(String cfBucket) {
         this.cfBucket = cfBucket;
+    }
+
+    public Boolean isReconciled() {
+        return reconciled;
+    }
+
+    public void setReconciled(Boolean reconciled) {
+        this.reconciled = reconciled;
+    }
+
+    public LocalDate getReconciliationDate() {
+        return reconciliationDate;
+    }
+
+    public void setReconciliationDate(LocalDate reconciliationDate) {
+        this.reconciliationDate = reconciliationDate;
     }
 }

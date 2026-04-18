@@ -81,6 +81,6 @@ export const getOpeningBalanceLocks = async () => {
 
 // ================= BANK RECONCILIATION =================
 export const finalizeReconciliation = async (payload) => {
-  const res = await api.post("/api/financials/reconciliation/finalize", payload);
+  const res = await api.post("/api/reconciliation/finalize", payload);
   return res.data;
 };

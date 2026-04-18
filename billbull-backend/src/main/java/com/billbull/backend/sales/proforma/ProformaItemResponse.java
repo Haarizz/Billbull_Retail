@@ -16,6 +16,7 @@ public class ProformaItemResponse {
 	private Integer foc;
 	private String focUnit;
 	private String remarks;
+	private String image;
 
 	public Long getId() {
 		return id;
@@ -113,5 +114,11 @@ public class ProformaItemResponse {
 		this.remarks = remarks;
 	}
 
-	// getters
+	public String getImage() {
+		return image;
+	}
+
+	public void setImage(String image) {
+		this.image = image;
+	}
 }

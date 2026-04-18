@@ -8,7 +8,7 @@ public class ReconciliationRequest {
     private String bankAccountId;
     private LocalDate statementDate;
     private BigDecimal statementBalance;
-    private List<Long> journalLineIds;
+    private List<String> ledgerEntryIds;
 
     // Getters and Setters
     public String getBankAccountId() {
@@ -35,11 +35,11 @@ public class ReconciliationRequest {
         this.statementBalance = statementBalance;
     }
 
-    public List<Long> getJournalLineIds() {
-        return journalLineIds;
+    public List<String> getLedgerEntryIds() {
+        return ledgerEntryIds;
     }
 
-    public void setJournalLineIds(List<Long> journalLineIds) {
-        this.journalLineIds = journalLineIds;
+    public void setLedgerEntryIds(List<String> ledgerEntryIds) {
+        this.ledgerEntryIds = ledgerEntryIds;
     }
 }
