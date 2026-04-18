@@ -450,6 +450,7 @@ export const buildPurchaseInvoicePrintData = (invoice, vendor, companyProfile) =
         headerMeta: [
             { label: "Due Date", value: invoice?.dueDate },
             { label: "Vendor Invoice No", value: invoice?.vendorInvoiceNo },
+            { label: "Invoice Date", value: invoice?.vendorInvoiceDate },
             { label: "Source Type", value: invoice?.sourceType },
         ].filter((item) => trimValue(item.value)),
         references: [
