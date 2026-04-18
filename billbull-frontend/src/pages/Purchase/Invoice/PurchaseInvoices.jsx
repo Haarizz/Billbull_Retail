@@ -1033,7 +1033,7 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
             code: item.productCode || item.itemCode,
             barcode: item.barcode || item.productBarcode || '',
             name: item.productName || item.itemName,
-            image: item.image,
+            image: item.image || item.primaryImage || item.thumbnailUrl || '',
             uom: item.uom,
             qty: item.quantity,
             cost: item.unitPrice,

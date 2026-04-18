@@ -7,49 +7,42 @@ import java.util.List;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import com.billbull.backend.financials.generalledger.JournalLine;
-import com.billbull.backend.financials.generalledger.JournalLineRepository;
+import com.billbull.backend.financials.generalledger.LedgerEntry;
+import com.billbull.backend.financials.generalledger.LedgerEntryRepository;
 
 @Service
 public class ReconciliationService {
 
     private final ReconciliationSessionRepository sessionRepository;
-    private final JournalLineRepository journalLineRepository;
+    private final LedgerEntryRepository ledgerEntryRepository;
 
     public ReconciliationService(ReconciliationSessionRepository sessionRepository,
-            JournalLineRepository journalLineRepository) {
+            LedgerEntryRepository ledgerEntryRepository) {
         this.sessionRepository = sessionRepository;
-        this.journalLineRepository = journalLineRepository;
+        this.ledgerEntryRepository = ledgerEntryRepository;
     }
 
     @Transactional
     public ReconciliationSession finalizeReconciliation(ReconciliationRequest request) {
-        // 1. Create and save the session snapshot
         ReconciliationSession session = new ReconciliationSession();
         session.setBankAccountId(request.getBankAccountId());
         session.setStatementDate(request.getStatementDate());
         session.setStatementBalance(request.getStatementBalance());
         session.setFinalizedAt(LocalDateTime.now());
-        session.setFinalizedBy("System User"); // Placeholder
+        session.setFinalizedBy("System User");
 
         ReconciliationSession savedSession = sessionRepository.save(session);
 
-        // 2. Bulk update journal lines
-        List<JournalLine> lines = journalLineRepository.findAllById(request.getJournalLineIds());
-
-        for (JournalLine line : lines) {
-            // Enforcement: Idempotent & Date-guarded
-            // Note: In a real app we'd fetch the transaction date from the parent
-            // JournalVoucher if not on the line
-            // For now, we assume the user only selects valid lines from the UI which
-            // already applies these filters
-            if (!line.isReconciled()) {
-                line.setReconciled(true);
-                line.setReconciliationDate(LocalDate.now());
+        if (request.getLedgerEntryIds() != null && !request.getLedgerEntryIds().isEmpty()) {
+            List<LedgerEntry> entries = ledgerEntryRepository.findAllById(request.getLedgerEntryIds());
+            for (LedgerEntry entry : entries) {
+                if (!Boolean.TRUE.equals(entry.isReconciled())) {
+                    entry.setReconciled(true);
+                    entry.setReconciliationDate(LocalDate.now());
+                }
             }
+            ledgerEntryRepository.saveAll(entries);
         }
-
-        journalLineRepository.saveAll(lines);
 
         return savedSession;
     }

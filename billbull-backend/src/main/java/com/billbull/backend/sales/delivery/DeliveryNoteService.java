@@ -11,6 +11,7 @@ import com.billbull.backend.financials.generalledger.postingengine.PostingEngine
 import com.billbull.backend.inventory.product.Product;
 import com.billbull.backend.inventory.product.ProductBarcode;
 import com.billbull.backend.inventory.product.ProductBarcodeRepository;
+import com.billbull.backend.inventory.product.ProductMediaRepository;
 import com.billbull.backend.inventory.product.ProductRepository;
 import com.billbull.backend.inventory.warehouse.Warehouse;
 import com.billbull.backend.inventory.warehouse.WarehouseRepository;
@@ -29,7 +30,9 @@ import com.billbull.backend.inventory.warehouse.Bin;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 @Service
 @Transactional
@@ -47,6 +50,7 @@ public class DeliveryNoteService {
     private final PostingEngineService postingEngineService;
     private final SalesInvoiceRepository salesInvoiceRepo;
     private final ProductBarcodeRepository barcodeRepo;
+    private final ProductMediaRepository productMediaRepository;
 
     public DeliveryNoteService(
             DeliveryNoteRepository repo,
@@ -60,7 +64,8 @@ public class DeliveryNoteService {
             StockDeductionStrategyService stockStrategy,
             PostingEngineService postingEngineService,
             SalesInvoiceRepository salesInvoiceRepo,
-            ProductBarcodeRepository barcodeRepo) {
+            ProductBarcodeRepository barcodeRepo,
+            ProductMediaRepository productMediaRepository) {
         this.repo = repo;
         this.warehouseStockService = warehouseStockService;
         this.productRepo = productRepo;
@@ -73,6 +78,7 @@ public class DeliveryNoteService {
         this.postingEngineService = postingEngineService;
         this.salesInvoiceRepo = salesInvoiceRepo;
         this.barcodeRepo = barcodeRepo;
+        this.productMediaRepository = productMediaRepository;
     }
 
     private DeliveryNoteResponse toResponse(DeliveryNote dn) {
@@ -624,6 +630,24 @@ public class DeliveryNoteService {
         }
 
         dn.getItems().forEach(this::hydrateDeliveryItemDisplayData);
+
+        List<String> codesNeedingImage = dn.getItems().stream()
+                .filter(i -> (i.getImage() == null || i.getImage().isBlank()) && i.getItemCode() != null && !i.getItemCode().isBlank())
+                .map(DeliveryNoteItem::getItemCode)
+                .distinct()
+                .toList();
+
+        if (!codesNeedingImage.isEmpty()) {
+            Map<String, String> imageMap = new HashMap<>();
+            productMediaRepository.findPrimaryByProductCodesIn(codesNeedingImage)
+                    .forEach(m -> imageMap.put(m.getProduct().getCode(), m.getImageUrl()));
+            dn.getItems().forEach(i -> {
+                if ((i.getImage() == null || i.getImage().isBlank()) && i.getItemCode() != null) {
+                    String url = imageMap.get(i.getItemCode());
+                    if (url != null) i.setImage(url);
+                }
+            });
+        }
     }
 
     private void hydrateDeliveryItemDisplayData(DeliveryNoteItem item) {
