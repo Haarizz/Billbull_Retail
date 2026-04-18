@@ -88,6 +88,65 @@ public class PurchaseInvoiceService {
         return repository.save(invoice);
     }
 
+    public PurchaseInvoiceResponse createDraftFromLpo(Long lpoId) {
+        Lpo lpo = lpoRepository.findById(lpoId)
+                .orElseThrow(() -> new IllegalArgumentException("LPO not found"));
+
+        List<LpoStatus> allowed = List.of(
+                LpoStatus.APPROVED, LpoStatus.SENT_TO_VENDOR, LpoStatus.PARTIALLY_RECEIVED);
+        if (!allowed.contains(lpo.getStatus())) {
+            throw new IllegalStateException("Only APPROVED LPOs can be directly invoiced");
+        }
+
+        PurchaseInvoiceResponse dto = new PurchaseInvoiceResponse();
+        dto.setSourceType("AGAINST_LPO");
+        dto.setVendorName(lpo.getVendorName());
+        if (lpo.getWarehouse() != null) {
+            dto.setWarehouseName(lpo.getWarehouse().getName());
+            dto.setWarehouseId(lpo.getWarehouse().getId());
+        }
+        if (lpo.getZone() != null) dto.setZoneId(lpo.getZone().getId());
+        if (lpo.getLocator() != null) dto.setLocatorId(lpo.getLocator().getId());
+        if (lpo.getBin() != null) dto.setBinId(lpo.getBin().getId());
+        dto.setLpoId(lpo.getId());
+        dto.setReferenceNo(lpo.getLpoNumber());
+
+        BigDecimal headerSubTotal = BigDecimal.ZERO;
+        BigDecimal headerTaxTotal = BigDecimal.ZERO;
+
+        var lineItems = lpo.getItems().stream().map(i -> {
+            InvoiceItemDraft d = new InvoiceItemDraft();
+            d.setItemCode(i.getItemCode());
+            d.setItemName(i.getItemName());
+            d.setUom(i.getUom());
+            d.setQty(i.getQuantity());
+            BigDecimal unitCost = i.getUnitPrice() != null ? i.getUnitPrice() : BigDecimal.ZERO;
+            d.setUnitCost(unitCost);
+
+            BigDecimal taxPercent = BigDecimal.valueOf(5);
+            BigDecimal base = unitCost.multiply(BigDecimal.valueOf(i.getQuantity() != null ? i.getQuantity() : 0));
+            BigDecimal taxAmount = base.multiply(taxPercent).divide(BigDecimal.valueOf(100));
+
+            d.setTaxPercent(taxPercent);
+            d.setTaxAmount(taxAmount);
+            d.setLineTotal(base.add(taxAmount));
+            return d;
+        }).toList();
+
+        for (InvoiceItemDraft d : lineItems) {
+            BigDecimal lineBase = d.getUnitCost().multiply(BigDecimal.valueOf(d.getQty() != null ? d.getQty() : 0));
+            headerSubTotal = headerSubTotal.add(lineBase);
+            headerTaxTotal = headerTaxTotal.add(d.getTaxAmount() != null ? d.getTaxAmount() : BigDecimal.ZERO);
+        }
+
+        dto.setItems(lineItems);
+        dto.setSubTotal(headerSubTotal);
+        dto.setTaxTotal(headerTaxTotal);
+        dto.setGrandTotal(headerSubTotal.add(headerTaxTotal));
+
+        return dto;
+    }
+
     public PurchaseInvoiceResponse createDraftFromGrn(Long grnId) {
 
         GrnEntity grn = grnRepo.findById(grnId)
@@ -102,6 +161,10 @@ public class PurchaseInvoiceService {
         dto.setSourceType("AGAINST_GRN");
         dto.setVendorName(grn.getVendorName());
         dto.setWarehouseName(grn.getWarehouse().getName());
+        dto.setWarehouseId(grn.getWarehouse().getId());
+        if (grn.getZone() != null) dto.setZoneId(grn.getZone().getId());
+        if (grn.getLocator() != null) dto.setLocatorId(grn.getLocator().getId());
+        if (grn.getBin() != null) dto.setBinId(grn.getBin().getId());
         dto.setGrnId(grn.getId());
         dto.setGrnNo(grn.getGrnNo());
         dto.setReferenceNo(grn.getGrnNo());

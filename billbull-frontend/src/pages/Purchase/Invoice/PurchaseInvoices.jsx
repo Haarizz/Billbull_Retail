@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from "react";
+import React, { useState, useEffect, useMemo, useRef } from "react";
 import api from "../../../api/axiosConfig";
 import { useNavigate, useLocation } from "react-router-dom";
 import {
@@ -121,7 +121,8 @@ const mapInvoiceFromApi = (inv) => {
     date: inv.invoiceDate,
     vendor: inv.vendorName,
     vendorId: inv.vendorInvoiceNo,
-    grnId: inv.grnId, // Added for editor linking
+    grnId: inv.grnId,
+    lpoId: inv.lpoId,
     source: inv.sourceType || "Direct",
     sourceColor: inv.sourceType === SOURCE.LPO ? "bg-blue-50 text-blue-600 border-blue-100" :
       inv.sourceType === SOURCE.GRN ? "bg-green-50 text-green-600 border-green-100" :
@@ -714,6 +715,7 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
 
   const [isVendorSearchOpen, setIsVendorSearchOpen] = useState(false);
   const [landedCostItems, setLandedCostItems] = useState([]);
+  const [includeFocInAllocation, setIncludeFocInAllocation] = useState(false);
 
   // ✅ GLOBAL SHORTCUTS
   useShortcuts({
@@ -846,6 +848,27 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
         setSelectedGrnNo(editInvoice.grnNo || editInvoice.refNo);
         if (editInvoice.grnId) setSelectedGrn(editInvoice.grnId);
       }
+
+      // 5. Cascade-load warehouse zones/locators/bins
+      const loadWarehouseHierarchy = async () => {
+        const whId = editInvoice.warehouseId;
+        if (!whId) return;
+        try {
+          const zones = await getWarehouseZones(whId);
+          setZoneList(zones);
+          if (editInvoice.zoneId) {
+            const locators = await getZoneLocators(editInvoice.zoneId);
+            setLocatorList(locators);
+            if (editInvoice.locatorId) {
+              const bins = await getLocatorBins(editInvoice.locatorId);
+              setBinList(bins);
+            }
+          }
+        } catch (e) {
+          console.error("Failed to load warehouse hierarchy", e);
+        }
+      };
+      loadWarehouseHierarchy();
     }
   }, [editInvoice, productBarcodeIndex]);
 
@@ -1211,8 +1234,9 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
       return;
     }
 
-    // Allocation Logic: Weighted by Value (Gross Total)
-    const itemsGrossTotal = formData.items.reduce((sum, item) => sum + (item.qty * item.cost), 0);
+    // Allocation Logic: Weighted by Value (Gross Total); optionally include FOC qty
+    const effectiveQty = (item) => item.qty + (includeFocInAllocation ? (Number(item.foc) || 0) : 0);
+    const itemsGrossTotal = formData.items.reduce((sum, item) => sum + (effectiveQty(item) * item.cost), 0);
 
     if (itemsGrossTotal === 0) {
       alert("Cannot allocate based on value because total item value is 0.");
@@ -1220,7 +1244,7 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
     }
 
     const updatedItems = formData.items.map(item => {
-      const itemGross = item.qty * item.cost;
+      const itemGross = effectiveQty(item) * item.cost;
       const weight = itemGross / itemsGrossTotal;
       const allocatedCost = landedCost * weight;
 
@@ -1992,9 +2016,11 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
               </div>
 
               <div className="flex justify-between items-center mt-4 pt-2 border-t border-slate-100">
-                <div className="flex items-center gap-2">
-                  <div className="w-8 h-4 bg-slate-200 rounded-full relative cursor-pointer"><div className="w-4 h-4 bg-white rounded-full shadow absolute left-0"></div></div>
-                  <span className="text-xs text-slate-500">Include FOC in allocation</span>
+                <div className="flex items-center gap-2 cursor-pointer" onClick={() => setIncludeFocInAllocation(v => !v)}>
+                  <div className={`w-8 h-4 rounded-full relative transition-colors ${includeFocInAllocation ? 'bg-[#F5C742]' : 'bg-slate-200'}`}>
+                    <div className={`w-4 h-4 bg-white rounded-full shadow absolute top-0 transition-transform ${includeFocInAllocation ? 'translate-x-4' : 'translate-x-0'}`}></div>
+                  </div>
+                  <span className={`text-xs ${includeFocInAllocation ? 'text-slate-700 font-medium' : 'text-slate-500'}`}>Include FOC in allocation</span>
                 </div>
                 <div className="text-xs font-bold text-[#F5C742]">Total Landed Cost: {landedCost.toFixed(2)} AED</div>
               </div>
@@ -2411,8 +2437,9 @@ const PurchaseInvoices = () => {
   const navigate = useNavigate();
   const location = useLocation();
   const [activeNavTab, setActiveNavTab] = useState("list");
-  const [editInvoice, setEditInvoice] = useState(null); // Add State
+  const [editInvoice, setEditInvoice] = useState(null);
   const [editorMode, setEditorMode] = useState("edit");
+  const pendingDraftRef = useRef(null);
 
   const [dateRange, setDateRange] = useState({ start: "", end: "" });
   const [vendorFilter, setVendorFilter] = useState("");
@@ -2437,14 +2464,16 @@ const PurchaseInvoices = () => {
     loadInvoices();
   }, []);
 
-  // Pre-fill editor when navigated from GRN "Proceed to Invoice"
+  // Pre-fill editor when navigated from GRN or LPO "Proceed to Invoice"
   useEffect(() => {
     const fromGrn = location.state?.fromGrn;
-    if (fromGrn) {
-      setEditInvoice(mapInvoiceFromApi(fromGrn));
+    const fromLpo = location.state?.fromLpo;
+    const draft = fromGrn || fromLpo;
+    if (draft) {
+      // Store in ref so the tab-change effect applies it after the tab switch
+      pendingDraftRef.current = mapInvoiceFromApi(draft);
       setEditorMode("edit");
       setActiveNavTab("editor");
-      // Clear state so a page refresh doesn't re-trigger
       navigate(location.pathname, { replace: true, state: {} });
     }
   }, []);
@@ -2618,9 +2647,12 @@ const PurchaseInvoices = () => {
     setActiveNavTab("editor");
   };
 
-  // Reset Edit State on Tab Change
+  // Reset Edit State on Tab Change; apply pending draft when switching to editor
   useEffect(() => {
-    if (activeNavTab !== 'editor') {
+    if (activeNavTab === 'editor' && pendingDraftRef.current) {
+      setEditInvoice(pendingDraftRef.current);
+      pendingDraftRef.current = null;
+    } else if (activeNavTab !== 'editor') {
       setEditInvoice(null);
       setEditorMode("edit");
     }
