@@ -7,6 +7,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 import org.springframework.cache.annotation.CacheEvict;
+import org.springframework.cache.annotation.Caching;
 import org.springframework.stereotype.Service;
 
 import com.billbull.backend.financials.generalledger.postingengine.PostingEngineService;
@@ -276,7 +277,10 @@ public class PurchaseInvoiceService {
 
     /* ================= APPROVE ================= */
 
-    @CacheEvict(value = "stockAvailability", allEntries = true)
+    @Caching(evict = {
+        @CacheEvict(value = "stockAvailability", allEntries = true),
+        @CacheEvict(value = "productList", allEntries = true)
+    })
     public PurchaseInvoice approve(Long id, String approver) {
 
         PurchaseInvoice invoice = getEntity(id);

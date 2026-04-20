@@ -1,6 +1,8 @@
 package com.billbull.backend.sales.salesorder;
 
 import org.hibernate.Hibernate;
+import org.springframework.cache.annotation.CacheEvict;
+import org.springframework.cache.annotation.Caching;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -40,8 +42,11 @@ public class SalesOrderService {
     // ----------------------------
     // CREATE / UPDATE
     // ----------------------------
-    @Transactional(isolation = org.springframework.transaction.annotation.Isolation.SERIALIZABLE,
-                   rollbackFor = Exception.class)
+    @Caching(evict = {
+        @CacheEvict(value = "stockAvailability", allEntries = true),
+        @CacheEvict(value = "productList", allEntries = true)
+    })
+    @Transactional(rollbackFor = Exception.class)
     public SalesOrder save(SalesOrder order) {
 
         double subTotal = 0;

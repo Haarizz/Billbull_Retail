@@ -167,7 +167,7 @@ const SalesOrders = () => {
 
 
   // Header Info
-  const [soNumber, setSoNumber] = useState('SO-459371');
+  const [soNumber, setSoNumber] = useState(() => `SO-${Math.floor(100000 + Math.random() * 900000)}`);
   const [orderDate, setOrderDate] = useState(new Date().toISOString().split('T')[0]);
   const [linkedQtn, setLinkedQtn] = useState('');
   const [linkedPi, setLinkedPi] = useState('');
@@ -377,7 +377,8 @@ const SalesOrders = () => {
   const normalizeOrderItem = (item = {}, fallbackId = Date.now() + Math.random()) => {
     const resolvedUnit = item.unit || item.focUnit || 'PCS';
     const normalized = {
-      id: item.id || fallbackId,
+      id: fallbackId,
+      soItemId: item.soItemId || null,
       code: item.code || item.itemCode || '',
       barcode: item.barcode || item.itemBarcode || '',
       image: item.primaryImage || item.image || item.thumbnailUrl || item.imageUrl || '',
@@ -560,9 +561,7 @@ const SalesOrders = () => {
 
       // Map Items
       items: items.map(i => ({
-        // If ID is a timestamp (frontend generated), send null so backend creates new item
-        // If ID is small (database generated), send it so backend updates existing item
-        id: (i.id > 1000000000000) ? null : i.id,
+        id: (orderId && i.soItemId) ? i.soItemId : null,
         itemCode: i.code,
         barcode: i.barcode || '',
         image: i.image || '',
@@ -600,7 +599,8 @@ const SalesOrders = () => {
       setAttachmentFile(null);
     } catch (e) {
       console.error("Save failed", e);
-      alert("Failed to save Sales Order. Please check inputs.");
+      const msg = e?.response?.data?.message || e?.message || "Please check inputs.";
+      alert(`Failed to save Sales Order: ${msg}`);
     }
   };
 
@@ -624,6 +624,9 @@ const SalesOrders = () => {
   };
 
   const handleSelectQuotation = (qtn) => {
+    if (!orderId) {
+      setSoNumber(`SO-${Math.floor(100000 + Math.random() * 900000)}`);
+    }
     setLinkedQtn(qtn.qtnNo);
 
     if (qtn.customer) {
@@ -662,7 +665,7 @@ const SalesOrders = () => {
 
     // Map items back
     if (order.items) {
-      const mappedItems = order.items.map((item, index) => normalizeOrderItem(item, Date.now() + index));
+      const mappedItems = order.items.map((item, index) => normalizeOrderItem({ ...item, soItemId: item.id }, Date.now() + index));
       setItems(mappedItems);
       setFocusedItem(mappedItems[0] || null);
     } else {
@@ -672,9 +675,13 @@ const SalesOrders = () => {
 
     setAdvanceAmount(order.advanceAmount || 0);
     setPaymentMethod(order.paymentMethod || 'Cash');
+    setPaymentRef(order.paymentReference || '');
     setDeliveryType(order.deliveryType || 'Delivery');
     setExpectedDelivery(order.expectedDeliveryDate || '');
     setShippingAddress(order.shippingAddress || '');
+    setDeliveryInstructions(order.deliveryInstructions || '');
+    setCustomerNotes(order.customerNotes || '');
+    setInternalNotes(order.internalNotes || '');
     setStatus(order.status);
 
     setAttachmentName('No file chosen');
@@ -696,6 +703,14 @@ const SalesOrders = () => {
     setLinkedQtn('');
     setItems([{ id: Date.now(), code: '', barcode: '', image: '', desc: '', remarks: '', unit: 'PCS', qty: 0, price: 0, cost: 0, foc: 0, focUnit: 'PCS', availableUnits: ['PCS'], disc: 0, tax: 5, taxAmt: 0, total: 0 }]);
     setAdvanceAmount(0);
+    setPaymentMethod('Cash');
+    setPaymentRef('');
+    setDeliveryType('Delivery');
+    setExpectedDelivery('');
+    setShippingAddress('');
+    setDeliveryInstructions('');
+    setCustomerNotes('');
+    setInternalNotes('');
     setStatus('DRAFT');
     setAttachmentName('No file chosen');
     setAttachmentFile(null);

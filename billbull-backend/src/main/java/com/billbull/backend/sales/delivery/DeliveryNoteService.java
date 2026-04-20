@@ -1,6 +1,8 @@
 package com.billbull.backend.sales.delivery;
 
 import org.hibernate.Hibernate;
+import org.springframework.cache.annotation.CacheEvict;
+import org.springframework.cache.annotation.Caching;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Isolation;
@@ -260,6 +262,10 @@ public class DeliveryNoteService {
         return toResponse(saved);
     }
 
+    @Caching(evict = {
+        @CacheEvict(value = "stockAvailability", allEntries = true),
+        @CacheEvict(value = "productList", allEntries = true)
+    })
     @Transactional(rollbackFor = Exception.class, isolation = Isolation.READ_COMMITTED)
     public DeliveryNoteResponse markDelivered(Long id, String receivedBy) {
 

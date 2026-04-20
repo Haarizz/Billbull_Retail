@@ -1,5 +1,7 @@
 package com.billbull.backend.exception;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.AccessDeniedException;
@@ -8,17 +10,14 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
 
 import java.util.Map;
 
-/**
- * Global exception handler — returns clean JSON errors, never stack traces.
- */
 @RestControllerAdvice
 public class GlobalExceptionHandler {
 
-    /**
-     * General runtime errors → 400 Bad Request
-     */
+    private static final Logger log = LoggerFactory.getLogger(GlobalExceptionHandler.class);
+
     @ExceptionHandler(RuntimeException.class)
     public ResponseEntity<Map<String, String>> handleRuntime(RuntimeException ex) {
+        log.error("RuntimeException caught: {}", ex.getMessage(), ex);
         return ResponseEntity
                 .badRequest()
                 .body(Map.of("message", ex.getMessage() != null ? ex.getMessage() : "Bad request"));

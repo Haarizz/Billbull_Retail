@@ -34,6 +34,23 @@ public class SalesOrder {
     private Double advanceAmount;
     private Double balanceDue;
 
+    private String paymentMethod;
+    private String paymentReference;
+    private String deliveryType;
+    private LocalDate expectedDeliveryDate;
+
+    @Column(length = 500)
+    private String shippingAddress;
+
+    @Column(length = 500)
+    private String deliveryInstructions;
+
+    @Column(length = 1000)
+    private String customerNotes;
+
+    @Column(length = 1000)
+    private String internalNotes;
+
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "warehouse_id")
     private com.billbull.backend.inventory.warehouse.Warehouse warehouse;
@@ -142,6 +159,70 @@ public class SalesOrder {
 
     public void setBalanceDue(Double balanceDue) {
         this.balanceDue = balanceDue;
+    }
+
+    public String getPaymentMethod() {
+        return paymentMethod;
+    }
+
+    public void setPaymentMethod(String paymentMethod) {
+        this.paymentMethod = paymentMethod;
+    }
+
+    public String getPaymentReference() {
+        return paymentReference;
+    }
+
+    public void setPaymentReference(String paymentReference) {
+        this.paymentReference = paymentReference;
+    }
+
+    public String getDeliveryType() {
+        return deliveryType;
+    }
+
+    public void setDeliveryType(String deliveryType) {
+        this.deliveryType = deliveryType;
+    }
+
+    public LocalDate getExpectedDeliveryDate() {
+        return expectedDeliveryDate;
+    }
+
+    public void setExpectedDeliveryDate(LocalDate expectedDeliveryDate) {
+        this.expectedDeliveryDate = expectedDeliveryDate;
+    }
+
+    public String getShippingAddress() {
+        return shippingAddress;
+    }
+
+    public void setShippingAddress(String shippingAddress) {
+        this.shippingAddress = shippingAddress;
+    }
+
+    public String getDeliveryInstructions() {
+        return deliveryInstructions;
+    }
+
+    public void setDeliveryInstructions(String deliveryInstructions) {
+        this.deliveryInstructions = deliveryInstructions;
+    }
+
+    public String getCustomerNotes() {
+        return customerNotes;
+    }
+
+    public void setCustomerNotes(String customerNotes) {
+        this.customerNotes = customerNotes;
+    }
+
+    public String getInternalNotes() {
+        return internalNotes;
+    }
+
+    public void setInternalNotes(String internalNotes) {
+        this.internalNotes = internalNotes;
     }
 
     public com.billbull.backend.inventory.warehouse.Warehouse getWarehouse() {

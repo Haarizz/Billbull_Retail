@@ -387,7 +387,9 @@ const Quotations = () => {
             billDiscount: data.billDiscount || 0,
             status: data.status === 'PENDING_APPROVAL' ? 'Pending Approval' :
                 data.status === 'APPROVED' ? 'Approved' :
-                    data.status === 'REJECTED' ? 'Rejected' : 'Draft',
+                data.status === 'REJECTED' ? 'Rejected' :
+                data.status === 'CONVERTED' ? 'Converted' :
+                data.status === 'EXPIRED' ? 'Expired' : 'Draft',
             currency: data.currency,
             paymentTerm: data.paymentTerms,
             deliveryType: data.deliveryType,
@@ -1268,11 +1270,43 @@ const Quotations = () => {
         });
     };
 
+    const handleRevertToApproved = async () => {
+        if (!editingId) return;
+        try {
+            await updateQuotationStatus(editingId, 'APPROVED');
+            setStatus('Approved');
+            setEditorMode('view');
+            await refreshData();
+            setToastMessage('Quotation reverted to Approved.');
+            setToastType('success');
+        } catch {
+            setToastMessage('Failed to revert quotation.');
+            setToastType('error');
+        }
+    };
+
+    const handleListingRevertToApproved = async (qtn, e) => {
+        e.stopPropagation();
+        closeActionMenu();
+        try {
+            await updateQuotationStatus(qtn.id, 'APPROVED');
+            await refreshData();
+            setToastMessage('Quotation reverted to Approved.');
+            setToastType('success');
+        } catch {
+            setToastMessage('Failed to revert quotation.');
+            setToastType('error');
+        }
+    };
+
     // BB-022: Proceed to Invoice from the edit/create view
     const handleProceedToInvoice = async () => {
         if (!editingId) return;
         try {
             await updateQuotationStatus(editingId, 'CONVERTED');
+            setStatus('Converted');
+            setEditorMode('view');
+            await refreshData();
             navigate('/sales/invoice', {
                 state: {
                     fromQuotation: {
@@ -1326,6 +1360,10 @@ const Quotations = () => {
                 return <span className="text-xs font-bold text-emerald-600 bg-emerald-50 border border-emerald-100 px-2 py-0.5 rounded-full">Approved</span>;
             case 'Rejected':
                 return <span className="text-xs font-bold text-red-600 bg-red-50 border border-red-100 px-2 py-0.5 rounded-full">Rejected</span>;
+            case 'Converted':
+                return <span className="text-xs font-bold text-blue-600 bg-blue-50 border border-blue-100 px-2 py-0.5 rounded-full">Converted</span>;
+            case 'Expired':
+                return <span className="text-xs font-bold text-amber-600 bg-amber-50 border border-amber-100 px-2 py-0.5 rounded-full">Expired</span>;
             default:
                 return <span className="text-xs font-bold text-slate-700 bg-slate-100 border border-slate-200 px-2 py-0.5 rounded">Draft</span>;
         }
@@ -1906,6 +1944,11 @@ const Quotations = () => {
                                                                             <FileText size={13} /> Finalize to Invoice
                                                                         </button>
                                                                     </>
+                                                                )}
+                                                                {qtn.status === 'Converted' && (
+                                                                    <button onClick={(e) => handleListingRevertToApproved(qtn, e)} className="w-full text-left px-4 py-2 hover:bg-orange-50 flex items-center gap-2 text-orange-600 font-semibold">
+                                                                        <RotateCcw size={13} /> Revert to Approved
+                                                                    </button>
                                                                 )}
 
                                                                 {/* --- Danger zone --- */}
@@ -2644,6 +2687,15 @@ const Quotations = () => {
                                             <X size={14} /> Reject
                                         </button>
                                     </>
+                                )}
+
+                                {status === 'Converted' && (
+                                    <button
+                                        onClick={handleRevertToApproved}
+                                        className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-orange-300 text-orange-600 rounded text-xs font-bold hover:bg-orange-50 transition-colors shadow-sm"
+                                    >
+                                        <RotateCcw size={14} /> Revert to Approved
+                                    </button>
                                 )}
 
                                 {status === 'Approved' && (
