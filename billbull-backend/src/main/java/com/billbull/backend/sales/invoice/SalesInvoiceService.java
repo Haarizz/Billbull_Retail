@@ -42,6 +42,7 @@ public class SalesInvoiceService {
     private final ReceiptVoucherService receiptVoucherService;
     private final ProductRepository productRepo;
     private final ProductMediaRepository productMediaRepository;
+    private final com.billbull.backend.sales.salesorder.SalesOrderRepository salesOrderRepository;
 
     public SalesInvoiceService(SalesInvoiceRepository invoiceRepo,
             PostingEngineService postingEngineService,
@@ -50,7 +51,8 @@ public class SalesInvoiceService {
             StockAvailabilityService stockAvailabilityService,
             ReceiptVoucherService receiptVoucherService,
             ProductRepository productRepo,
-            ProductMediaRepository productMediaRepository) {
+            ProductMediaRepository productMediaRepository,
+            com.billbull.backend.sales.salesorder.SalesOrderRepository salesOrderRepository) {
         this.invoiceRepo = invoiceRepo;
         this.postingEngineService = postingEngineService;
         this.deliveryNoteService = deliveryNoteService;
@@ -59,6 +61,7 @@ public class SalesInvoiceService {
         this.receiptVoucherService = receiptVoucherService;
         this.productRepo = productRepo;
         this.productMediaRepository = productMediaRepository;
+        this.salesOrderRepository = salesOrderRepository;
     }
 
     // ----------------------------
@@ -186,6 +189,14 @@ public class SalesInvoiceService {
             // Trigger doUpdateStatus with the already-fetched settings (single DB fetch
             // per request — avoids a redundant getSettings() call inside updateStatus).
             doUpdateStatus(saved.getId(), intendedStatus, settings);
+
+            // Auto-update linked Sales Order to INVOICED
+            if (saved.getLinkedSalesOrder() != null && !saved.getLinkedSalesOrder().isBlank()) {
+                salesOrderRepository.findBySoNumber(saved.getLinkedSalesOrder()).ifPresent(so -> {
+                    so.setStatus(com.billbull.backend.sales.salesorder.SalesOrderStatus.INVOICED);
+                    salesOrderRepository.save(so);
+                });
+            }
         }
 
         if (isNewlyFinalized && paid > 0) {

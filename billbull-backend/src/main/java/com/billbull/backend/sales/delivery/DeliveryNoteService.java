@@ -308,43 +308,64 @@ public class DeliveryNoteService {
                                     " | Requested: " + requested);
                 }
 
-                Long binId = item.getBinId();
+                // BIN-SPLIT DEDUCTION: spread the outbound qty across bins in descending
+                // stock order. This prevents negative bin stock when a single bin cannot
+                // cover the full ordered quantity.
+                int totalToDeduct = qty + foc;
 
-                // AUTO-RESOLVE BIN: if the DN item has no bin, pick the bin with the most
-                // stock for this product so the outbound movement is recorded at bin level.
-                // Without this, outbound movements land with binId=null and the warehouse
-                // bin page shows inflated on-hand that never decreases on sales.
-                if (binId == null) {
-                    List<Object[]> activeBins = stockMovementRepo.findActiveBinsByWarehouseAndProduct(
-                            dn.getWarehouse().getId(), item.getProduct().getId());
-                    if (!activeBins.isEmpty()) {
-                        binId = (Long) activeBins.get(0)[0]; // bin with highest stock first
-                    }
-                }
-
-                Long zoneId = null;
-                Long locatorId = null;
-
-                if (binId != null) {
+                if (item.getBinId() != null) {
+                    // Explicit bin chosen — deduct entirely from that bin (single movement)
+                    Long binId = item.getBinId();
+                    Long zoneId = null;
+                    Long locatorId = null;
                     Bin bin = binRepo.findById(binId).orElse(null);
                     if (bin != null) {
                         locatorId = bin.getLocator() != null ? bin.getLocator().getId() : null;
                         zoneId = (bin.getLocator() != null && bin.getLocator().getZone() != null)
-                                ? bin.getLocator().getZone().getId()
-                                : null;
+                                ? bin.getLocator().getZone().getId() : null;
+                    }
+                    stockMovementService.postOutboundStock(
+                            StockSourceType.DELIVERY_NOTE, dn.getId(),
+                            item.getProduct().getId(), dn.getWarehouse().getId(),
+                            binId, zoneId, locatorId, totalToDeduct, dn.getDnNumber());
+                } else {
+                    // Auto-split across bins ordered by highest stock first
+                    List<Object[]> activeBins = stockMovementRepo.findActiveBinsByWarehouseAndProduct(
+                            dn.getWarehouse().getId(), item.getProduct().getId());
+
+                    int remaining = totalToDeduct;
+
+                    for (Object[] row : activeBins) {
+                        if (remaining <= 0) break;
+                        Long binId = (Long) row[0];
+                        int binStock = ((Number) row[1]).intValue();
+                        int deductFromBin = Math.min(remaining, binStock);
+
+                        Long zoneId = null;
+                        Long locatorId = null;
+                        Bin bin = binRepo.findById(binId).orElse(null);
+                        if (bin != null) {
+                            locatorId = bin.getLocator() != null ? bin.getLocator().getId() : null;
+                            zoneId = (bin.getLocator() != null && bin.getLocator().getZone() != null)
+                                    ? bin.getLocator().getZone().getId() : null;
+                        }
+
+                        stockMovementService.postOutboundStock(
+                                StockSourceType.DELIVERY_NOTE, dn.getId(),
+                                item.getProduct().getId(), dn.getWarehouse().getId(),
+                                binId, zoneId, locatorId, deductFromBin, dn.getDnNumber());
+
+                        remaining -= deductFromBin;
+                    }
+
+                    // Any remaining qty not covered by located bins — post without bin
+                    if (remaining > 0) {
+                        stockMovementService.postOutboundStock(
+                                StockSourceType.DELIVERY_NOTE, dn.getId(),
+                                item.getProduct().getId(), dn.getWarehouse().getId(),
+                                null, null, null, remaining, dn.getDnNumber());
                     }
                 }
-
-                stockMovementService.postOutboundStock(
-                        StockSourceType.DELIVERY_NOTE,
-                        dn.getId(),
-                        item.getProduct().getId(),
-                        dn.getWarehouse().getId(),
-                        binId,
-                        zoneId,
-                        locatorId,
-                        qty + foc,
-                        dn.getDnNumber());
             }
         }
 
