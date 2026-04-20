@@ -1,3 +1,11 @@
+import {
+    DEFAULT_TEMPLATE_COLUMNS,
+    DEFAULT_TEMPLATE_DISPLAY_OPTIONS,
+    parsePrintTemplateObject,
+    sanitizeTemplateColumns,
+    sanitizeTemplateDisplayOptions
+} from './printTemplateConfig';
+
 const PURCHASE_TEMPLATE_TERMS = {
     "Local Purchase Order": `1. Delivery: Goods must be delivered within the specified time frame.
 2. Compliance: All goods must meet the quality standards and specifications mentioned.
@@ -25,7 +33,22 @@ const PREVIEW_COMPANY = {
     email: "sample@company.test",
     trn: "100000000000000",
     currency: "AED",
+    currencySymbol: "AED",
     logoUrl: null,
+};
+
+const buildPreviewImage = (label, accent, base = "#f8fafc") => {
+    const svg = `
+        <svg xmlns="http://www.w3.org/2000/svg" width="96" height="96" viewBox="0 0 96 96">
+            <rect width="96" height="96" rx="18" fill="${base}"/>
+            <rect x="18" y="18" width="60" height="60" rx="14" fill="${accent}" opacity="0.18"/>
+            <circle cx="48" cy="42" r="14" fill="${accent}" opacity="0.92"/>
+            <path d="M30 66h36" stroke="${accent}" stroke-width="6" stroke-linecap="round"/>
+            <text x="48" y="87" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="10" font-weight="700" fill="#334155">${label}</text>
+        </svg>
+    `;
+
+    return `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`;
 };
 
 export const PURCHASE_TEMPLATE_CATEGORIES = [
@@ -34,17 +57,6 @@ export const PURCHASE_TEMPLATE_CATEGORIES = [
     "Purchase Invoice",
     "Payment Voucher",
 ];
-
-const safeParseObject = (value) => {
-    if (!value) return {};
-    if (typeof value === "object") return value;
-    if (typeof value !== "string") return {};
-    try {
-        return JSON.parse(value);
-    } catch {
-        return {};
-    }
-};
 
 const toNumber = (value) => {
     const parsed = Number(value ?? 0);
@@ -82,76 +94,55 @@ const buildDescriptionLines = (item, vendorItemMeta = {}) => {
 
 export const getPurchaseDefaultDisplayOptions = (category, overrides = {}) => {
     const isVoucher = category === "Payment Voucher";
-    const {
-        layoutVariant,
-        showReferenceFields,
-        showWarehouseFields,
-        showTotalsPanel,
-        showBalancePanel,
-        showSignatureBlock,
-        showPaymentDetails,
-        showItemTable,
-        ...uiOverrides
-    } = overrides || {};
-
-    return {
-        showLogo: true,
-        showCompanyDetails: true,
-        showCustomerDetails: true,
-        showTerms: !isVoucher,
-        showItemImage: false,
-        partyLabel: isVoucher ? "Paid To:" : "Vendor Details:",
-        ...uiOverrides,
-    };
+    return sanitizeTemplateDisplayOptions(
+        {
+            ...DEFAULT_TEMPLATE_DISPLAY_OPTIONS,
+            showTerms: !isVoucher,
+            ...overrides
+        },
+        {
+            ...DEFAULT_TEMPLATE_DISPLAY_OPTIONS,
+            showTerms: !isVoucher
+        }
+    );
 };
 
 export const getPurchaseDefaultColumns = (category, overrides = {}) => {
     const isVoucher = category === "Payment Voucher";
-    const {
-        taxableAmount,
-        lineAmount,
-        ...uiOverrides
-    } = overrides || {};
-
-    return {
-        productId: false,
-        sku: false,
-        arabicName: false,
-        item: true,
-        description: true,
-        qty: !isVoucher,
-        unitPrice: !isVoucher,
-        discount: false,
-        tax: category === "Purchase Invoice",
-        total: true,
-        ...uiOverrides,
-    };
+    return sanitizeTemplateColumns(
+        {
+            ...DEFAULT_TEMPLATE_COLUMNS,
+            qty: !isVoucher,
+            unitPrice: !isVoucher,
+            tax: category === "Purchase Invoice",
+            ...overrides
+        },
+        {
+            ...DEFAULT_TEMPLATE_COLUMNS,
+            qty: !isVoucher,
+            unitPrice: !isVoucher,
+            tax: category === "Purchase Invoice"
+        }
+    );
 };
 
 export const normalizePurchaseTemplate = (template, category = template?.category) => {
     if (!PURCHASE_TEMPLATE_CATEGORIES.includes(category)) {
         return {
             ...template,
-            displayOptions: safeParseObject(template?.displayOptions),
-            columns: safeParseObject(template?.columns),
+            displayOptions: sanitizeTemplateDisplayOptions(template?.displayOptions),
+            columns: sanitizeTemplateColumns(template?.columns),
         };
     }
 
-    const rawDisplayOptions = safeParseObject(template?.displayOptions);
-    const rawColumns = safeParseObject(template?.columns);
-    const isLegacyPurchaseLayout = rawDisplayOptions.layoutVariant === "purchase-modern-v1";
     const displayOptions = getPurchaseDefaultDisplayOptions(
         category,
-        isLegacyPurchaseLayout ? {} : rawDisplayOptions
+        parsePrintTemplateObject(template?.displayOptions)
     );
     const columns = getPurchaseDefaultColumns(
         category,
-        isLegacyPurchaseLayout ? {} : rawColumns
+        parsePrintTemplateObject(template?.columns)
     );
-
-    if (!isLegacyPurchaseLayout && columns.total === undefined) {
-        columns.total = rawColumns.lineAmount ?? true;
-    }
 
     return {
         ...template,
@@ -162,8 +153,8 @@ export const normalizePurchaseTemplate = (template, category = template?.categor
 
 export const serializeTemplateForApi = (template) => ({
     ...template,
-    displayOptions: JSON.stringify(template.displayOptions || {}),
-    columns: JSON.stringify(template.columns || {}),
+    displayOptions: JSON.stringify(getPurchaseDefaultDisplayOptions(template?.category, template?.displayOptions)),
+    columns: JSON.stringify(getPurchaseDefaultColumns(template?.category, template?.columns)),
 });
 
 export const getDefaultPurchaseTemplates = () =>
@@ -181,7 +172,7 @@ export const getDefaultPurchaseTemplates = () =>
     }));
 
 const resolveCurrency = (companyProfile, vendor) =>
-    firstValue(companyProfile?.currency, vendor?.currency, "AED");
+    firstValue(companyProfile?.currencySymbol, companyProfile?.currency, vendor?.currency, "AED");
 
 const resolveParty = (vendor, fallbackName) => ({
     name: firstValue(vendor?.name, vendor?.vendorName, fallbackName, "Unknown Vendor"),
@@ -260,12 +251,16 @@ export const buildLpoPrintData = (lpo, vendor, companyProfile) => {
             },
             {
                 code: item.itemCode,
+                sku: item.sku,
+                localName: item.localName,
             }
         );
 
         return {
             rowNo: index + 1,
             code: item.itemCode || "",
+            sku: item.sku || "",
+            localName: item.localName || "",
             name: item.itemName || "",
             desc: item.remarks || "",
             unit: item.uom || "PCS",
@@ -345,8 +340,12 @@ export const buildGrnPrintData = (grn, vendor, companyProfile) => {
                 },
                 {
                     code: item.code,
+                    sku: item.sku,
+                    localName: item.localName,
                 }
             ),
+            sku: item.sku || "",
+            localName: item.localName || "",
         };
     });
 
@@ -421,8 +420,12 @@ export const buildPurchaseInvoicePrintData = (invoice, vendor, companyProfile) =
                 },
                 {
                     code: item.itemCode,
+                    sku: item.sku,
+                    localName: item.localName,
                 }
             ),
+            sku: item.sku || "",
+            localName: item.localName || "",
         };
     });
 
@@ -517,6 +520,9 @@ export const buildPaymentVoucherPrintData = (voucher, vendor, companyProfile, li
 
 export const getPurchasePreviewCompany = (companyProfile = {}) => ({
     ...PREVIEW_COMPANY,
+    ...companyProfile,
+    currency: companyProfile?.currency || PREVIEW_COMPANY.currency,
+    currencySymbol: companyProfile?.currencySymbol || companyProfile?.currency || PREVIEW_COMPANY.currencySymbol,
 });
 
 export const buildPurchasePreviewData = (category, companyProfile = {}) => {
@@ -545,8 +551,30 @@ export const buildPurchasePreviewData = (category, companyProfile = {}) => {
                     locatorName: "A-01",
                     binName: "BIN-01",
                     items: [
-                        { code: "ITM-SAMPLE-01", name: "Product Name Sample 01", uom: "Pcs", received: 2, unitCost: 780, total: 1560, remarks: "Sample packed item" },
-                        { code: "ITM-SAMPLE-02", name: "Product Name Sample 02", uom: "Pcs", received: 1, unitCost: 1420, total: 1420, remarks: "Sample standard item" },
+                        {
+                            code: "ITM-SAMPLE-01",
+                            sku: "GRN-SKU-01",
+                            localName: "منتج تجريبي 01",
+                            name: "Product Name Sample 01",
+                            uom: "Pcs",
+                            received: 2,
+                            unitCost: 780,
+                            total: 1560,
+                            remarks: "Sample packed item",
+                            image: buildPreviewImage("GRN 1", "#2563eb")
+                        },
+                        {
+                            code: "ITM-SAMPLE-02",
+                            sku: "GRN-SKU-02",
+                            localName: "منتج تجريبي 02",
+                            name: "Product Name Sample 02",
+                            uom: "Pcs",
+                            received: 1,
+                            unitCost: 1420,
+                            total: 1420,
+                            remarks: "Sample standard item",
+                            image: buildPreviewImage("GRN 2", "#0f766e")
+                        },
                     ],
                 },
                 previewVendor,
@@ -567,9 +595,48 @@ export const buildPurchasePreviewData = (category, companyProfile = {}) => {
                     balanceDue: 4800,
                     status: "POSTED",
                     items: [
-                        { itemCode: "ITM-SAMPLE-01", itemName: "Product Name Sample 01", qty: 1, uom: "License", unitCost: 2300, taxPercent: 5, taxAmount: 115, lineTotal: 2415, remarks: "Sample licensed item" },
-                        { itemCode: "ITM-SAMPLE-02", itemName: "Product Name Sample 02", qty: 1, uom: "License", unitCost: 1420, taxPercent: 5, taxAmount: 71, lineTotal: 1491, remarks: "Sample module item" },
-                        { itemCode: "ITM-SAMPLE-03", itemName: "Product Name Sample 03", qty: 1, uom: "Pcs", unitCost: 780, taxPercent: 5, taxAmount: 39, lineTotal: 819, remarks: "Sample hardware item" },
+                        {
+                            itemCode: "ITM-SAMPLE-01",
+                            sku: "PINV-SKU-01",
+                            localName: "منتج فاتورة 01",
+                            itemName: "Product Name Sample 01",
+                            qty: 1,
+                            uom: "License",
+                            unitCost: 2300,
+                            taxPercent: 5,
+                            taxAmount: 115,
+                            lineTotal: 2415,
+                            remarks: "Sample licensed item",
+                            image: buildPreviewImage("PI 1", "#1d4ed8")
+                        },
+                        {
+                            itemCode: "ITM-SAMPLE-02",
+                            sku: "PINV-SKU-02",
+                            localName: "منتج فاتورة 02",
+                            itemName: "Product Name Sample 02",
+                            qty: 1,
+                            uom: "License",
+                            unitCost: 1420,
+                            taxPercent: 5,
+                            taxAmount: 71,
+                            lineTotal: 1491,
+                            remarks: "Sample module item",
+                            image: buildPreviewImage("PI 2", "#2563eb")
+                        },
+                        {
+                            itemCode: "ITM-SAMPLE-03",
+                            sku: "PINV-SKU-03",
+                            localName: "منتج فاتورة 03",
+                            itemName: "Product Name Sample 03",
+                            qty: 1,
+                            uom: "Pcs",
+                            unitCost: 780,
+                            taxPercent: 5,
+                            taxAmount: 39,
+                            lineTotal: 819,
+                            remarks: "Sample hardware item",
+                            image: buildPreviewImage("PI 3", "#0f766e")
+                        },
                     ],
                     subTotal: 4500,
                     taxTotal: 225,
@@ -613,8 +680,30 @@ export const buildPurchasePreviewData = (category, companyProfile = {}) => {
                     approvalStatus: "APPROVED",
                     status: "APPROVED",
                     items: [
-                        { itemCode: "ITM-SAMPLE-01", itemName: "Product Name Sample 01", uom: "Pcs", quantity: 2, unitPrice: 780, lineTotal: 1560, remarks: "Sample black finish" },
-                        { itemCode: "ITM-SAMPLE-02", itemName: "Product Name Sample 02", uom: "Pcs", quantity: 1, unitPrice: 1420, lineTotal: 1420, remarks: "Sample standard finish" },
+                        {
+                            itemCode: "ITM-SAMPLE-01",
+                            sku: "LPO-SKU-01",
+                            localName: "منتج شراء 01",
+                            itemName: "Product Name Sample 01",
+                            uom: "Pcs",
+                            quantity: 2,
+                            unitPrice: 780,
+                            lineTotal: 1560,
+                            remarks: "Sample black finish",
+                            image: buildPreviewImage("LPO 1", "#2563eb")
+                        },
+                        {
+                            itemCode: "ITM-SAMPLE-02",
+                            sku: "LPO-SKU-02",
+                            localName: "منتج شراء 02",
+                            itemName: "Product Name Sample 02",
+                            uom: "Pcs",
+                            quantity: 1,
+                            unitPrice: 1420,
+                            lineTotal: 1420,
+                            remarks: "Sample standard finish",
+                            image: buildPreviewImage("LPO 2", "#0f766e")
+                        },
                     ],
                     subtotal: 2980,
                     tax: 0,

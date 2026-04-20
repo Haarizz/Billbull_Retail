@@ -25,9 +25,17 @@ import {
     FaExclamationTriangle,
     FaCheckCircle
 } from 'react-icons/fa';
+import { getCompanyProfile } from '../../api/companyProfileApi';
 import { getPrintTemplates, createPrintTemplate, updatePrintTemplate, deletePrintTemplate, setDefaultTemplate } from '../../api/printTemplateApi';
 import DocumentPreviewCanvas from '../../components/DocumentPreviewCanvas';
+import { useCompany } from '../../context/CompanyContext';
 import { generateEmailHtml, generatePrintHtml } from '../../utils/printGenerator';
+import {
+    DEFAULT_TEMPLATE_COLUMNS,
+    DEFAULT_TEMPLATE_DISPLAY_OPTIONS,
+    sanitizeTemplateColumns,
+    sanitizeTemplateDisplayOptions
+} from '../../utils/printTemplateConfig';
 
 const PREVIEW_COMPANY = {
     companyName: "Sample Company LLC",
@@ -64,7 +72,60 @@ const PREVIEW_ITEMS = [
     },
 ];
 
-const buildSalesPreviewData = (category) => {
+const buildPreviewImage = (label, accent, base = '#f8fafc') => {
+    const svg = `
+        <svg xmlns="http://www.w3.org/2000/svg" width="96" height="96" viewBox="0 0 96 96">
+            <rect width="96" height="96" rx="18" fill="${base}"/>
+            <rect x="18" y="18" width="60" height="60" rx="14" fill="${accent}" opacity="0.18"/>
+            <circle cx="48" cy="42" r="14" fill="${accent}" opacity="0.92"/>
+            <path d="M30 66h36" stroke="${accent}" stroke-width="6" stroke-linecap="round"/>
+            <text x="48" y="87" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="10" font-weight="700" fill="#334155">${label}</text>
+        </svg>
+    `;
+
+    return `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`;
+};
+
+const getSalesDefaultDisplayOptions = (overrides = {}) =>
+    sanitizeTemplateDisplayOptions(
+        {
+            ...DEFAULT_TEMPLATE_DISPLAY_OPTIONS,
+            ...overrides
+        },
+        DEFAULT_TEMPLATE_DISPLAY_OPTIONS
+    );
+
+const getSalesDefaultColumns = (category, overrides = {}) => {
+    const categoryDefaults = {
+        ...DEFAULT_TEMPLATE_COLUMNS,
+        discount: !['Sales Invoice', 'Delivery Note (DO/DN)'].includes(category),
+        tax: category !== 'Sales Order (SO)' && category !== 'Delivery Note (DO/DN)',
+        total: category !== 'Delivery Note (DO/DN)',
+        unitPrice: category !== 'Delivery Note (DO/DN)'
+    };
+
+    return sanitizeTemplateColumns(
+        {
+            ...categoryDefaults,
+            ...overrides
+        },
+        categoryDefaults
+    );
+};
+
+const normalizeSalesTemplate = (template, category = template?.category) => ({
+    ...template,
+    displayOptions: getSalesDefaultDisplayOptions(template?.displayOptions),
+    columns: getSalesDefaultColumns(category, template?.columns)
+});
+
+const serializeSalesTemplate = (template) => ({
+    ...template,
+    displayOptions: JSON.stringify(getSalesDefaultDisplayOptions(template?.displayOptions)),
+    columns: JSON.stringify(getSalesDefaultColumns(template?.category, template?.columns))
+});
+
+const buildSalesPreviewData = (category, companyProfile = {}) => {
     const titles = {
         "Quotation": "QUOTATION",
         "Sales Invoice": "TAX INVOICE",
@@ -82,25 +143,39 @@ const buildSalesPreviewData = (category) => {
         "Sales Return": "CR-SAMPLE-0001",
     };
     const previewCustomer = {
+        code: "CUST-SAMPLE-01",
         name: "Sample Customer LLC",
         address: "Sample Customer Address, Dubai, UAE",
         trn: "100000000000111",
         phone: "+971 50 000 0001",
+        email: "accounts@samplecustomer.test",
     };
     const previewItems = [
         {
+            code: "ITM-SAMPLE-01",
+            sku: "SAL-SKU-01",
+            localName: "منتج مبيعات 01",
             name: "Product Name Sample 01",
             description: { title: "Product Name Sample 01", details: ["Color: Sample Black", "Size: Standard", "Sku: SKU-SAMPLE-01"] },
+            image: buildPreviewImage("INV 1", "#2563eb"),
             unit: "Pcs", qty: 3, price: 420, taxableAmount: 1260, taxAmt: 63, taxPercent: 5, total: 1323,
         },
         {
+            code: "ITM-SAMPLE-02",
+            sku: "SAL-SKU-02",
+            localName: "منتج مبيعات 02",
             name: "Product Name Sample 02",
             description: { title: "Product Name Sample 02", details: ["Variant: Standard", "Sku: SKU-SAMPLE-02"] },
+            image: buildPreviewImage("INV 2", "#0f766e"),
             unit: "Pcs", qty: 2, price: 580, taxableAmount: 1160, taxAmt: 58, taxPercent: 5, total: 1218,
         },
         {
+            code: "ITM-SAMPLE-03",
+            sku: "SAL-SKU-03",
+            localName: "منتج مبيعات 03",
             name: "Product Name Sample 03",
             description: { title: "Product Name Sample 03", details: ["Specification: Demo Item", "Sku: SKU-SAMPLE-03"] },
+            image: buildPreviewImage("INV 3", "#1d4ed8"),
             unit: "Pcs", qty: 1, price: 310, taxableAmount: 310, taxAmt: 15.5, taxPercent: 5, total: 325.5,
         },
     ];
@@ -114,7 +189,7 @@ const buildSalesPreviewData = (category) => {
             subTotal: 2730,
             tax: 136.5,
             grandTotal: 2866.5,
-            currency: "AED",
+            currency: companyProfile?.currencySymbol || companyProfile?.currency || "AED",
             billDiscount: 0,
             billDiscountAmount: 0,
             amountPaid: category === "Sales Invoice" ? 1000 : 0,
@@ -125,7 +200,8 @@ const buildSalesPreviewData = (category) => {
             paymentTerm: "NET 30",
             validTill: "2026-05-18",
             validTillLabel: category === "Quotation" ? "Valid Until" : "Due Date",
-            notes: "",
+            reference: "SO: SO-SAMPLE-0001 | DN: DN-SAMPLE-0001",
+            notes: "Salesperson: Demo User | Branch: Main Showroom",
         },
     };
 };
@@ -144,23 +220,8 @@ const defaultTemplates = [
 4. Taxes: All applicable taxes will be charged as per government regulations.
 5. Warranty: Standard manufacturer warranty applies to all products.`,
         footerContent: "",
-        displayOptions: JSON.stringify({
-            showLogo: true,
-            showCompanyDetails: true,
-            showCustomerDetails: true,
-            showTerms: true,
-            showItemImage: false
-        }),
-        columns: JSON.stringify({
-            productId: false, sku: false, arabicName: false,
-            item: true,
-            description: true,
-            qty: true,
-            unitPrice: true,
-            discount: true,
-            tax: true,
-            total: true
-        })
+        displayOptions: JSON.stringify(getSalesDefaultDisplayOptions()),
+        columns: JSON.stringify(getSalesDefaultColumns("Quotation"))
     },
     {
         category: "Sales Invoice",
@@ -170,31 +231,12 @@ const defaultTemplates = [
         orientation: "Portrait",
         headerContent: "",
         termsContent: `PAYMENT INSTRUCTION:
-Please transfer the total amount to the following bank account:
-Bank: Global City Bank
-Account Name: ${PREVIEW_COMPANY.companyName}
-Account No: 1234-5678-9012
-IBAN: US12 GCBK 1234 5678 9012 34
-
-Late payments are subject to a 1.5% monthly interest charge.`,
+Please transfer the total amount to the registered company bank account.
+Use the invoice number as your payment reference.
+Late payments may be subject to finance charges as per the agreed customer terms.`,
         footerContent: "",
-        displayOptions: JSON.stringify({
-            showLogo: true,
-            showCompanyDetails: true,
-            showCustomerDetails: true,
-            showTerms: true,
-            showItemImage: false
-        }),
-        columns: JSON.stringify({
-            productId: false, sku: false, arabicName: false,
-            item: true,
-            description: true,
-            qty: true,
-            unitPrice: true,
-            discount: false,
-            tax: true,
-            total: true
-        })
+        displayOptions: JSON.stringify(getSalesDefaultDisplayOptions()),
+        columns: JSON.stringify(getSalesDefaultColumns("Sales Invoice"))
     },
     {
         category: "Sales Order (SO)",
@@ -207,23 +249,8 @@ Late payments are subject to a 1.5% monthly interest charge.`,
 2. Prices: Prices are subject to change without notice prior to shipment.
 3. Cancellations: Orders cannot be cancelled after 24 hours of placement.`,
         footerContent: "",
-        displayOptions: JSON.stringify({
-            showLogo: true,
-            showCompanyDetails: true,
-            showCustomerDetails: true,
-            showTerms: true,
-            showItemImage: false
-        }),
-        columns: JSON.stringify({
-            productId: false, sku: false, arabicName: false,
-            item: true,
-            description: true,
-            qty: true,
-            unitPrice: true,
-            discount: true,
-            tax: false,
-            total: true
-        })
+        displayOptions: JSON.stringify(getSalesDefaultDisplayOptions()),
+        columns: JSON.stringify(getSalesDefaultColumns("Sales Order (SO)"))
     },
     {
         category: "Delivery Note (DO/DN)",
@@ -236,23 +263,8 @@ Late payments are subject to a 1.5% monthly interest charge.`,
 2. Any discrepancies must be reported within 24 hours of receipt.
 3. Title to goods remains with the seller until full payment is received.`,
         footerContent: "",
-        displayOptions: JSON.stringify({
-            showLogo: true,
-            showCompanyDetails: true,
-            showCustomerDetails: true,
-            showTerms: true,
-            showItemImage: false
-        }),
-        columns: JSON.stringify({
-            productId: false, sku: false, arabicName: false,
-            item: true,
-            description: true,
-            qty: true,
-            unitPrice: false,
-            discount: false,
-            tax: false,
-            total: false
-        })
+        displayOptions: JSON.stringify(getSalesDefaultDisplayOptions()),
+        columns: JSON.stringify(getSalesDefaultColumns("Delivery Note (DO/DN)"))
     },
     {
         category: "Proforma Invoice (PI)",
@@ -265,23 +277,8 @@ Late payments are subject to a 1.5% monthly interest charge.`,
 2. Goods will be dispatched only after receipt of 100% advance payment.
 3. Prices are valid for 15 days from the date of this proforma invoice.`,
         footerContent: "",
-        displayOptions: JSON.stringify({
-            showLogo: true,
-            showCompanyDetails: true,
-            showCustomerDetails: true,
-            showTerms: true,
-            showItemImage: false
-        }),
-        columns: JSON.stringify({
-            productId: false, sku: false, arabicName: false,
-            item: true,
-            description: true,
-            qty: true,
-            unitPrice: true,
-            discount: true,
-            tax: true,
-            total: true
-        })
+        displayOptions: JSON.stringify(getSalesDefaultDisplayOptions()),
+        columns: JSON.stringify(getSalesDefaultColumns("Proforma Invoice (PI)"))
     }
 ];
 
@@ -359,47 +356,32 @@ const ConfirmationModal = ({ isOpen, onClose, onConfirm, title, message }) => {
     );
 };
 
-const TemplateDesigner = ({ category, onCancel, onSave, initialData }) => {
-    // --- STATE MANAGEMENT ---
+const TemplateDesigner = ({ category, onCancel, onSave, initialData, previewCompany }) => {
+    const baseTemplate = useMemo(
+        () => normalizeSalesTemplate(initialData || { category: category.title }, category.title),
+        [initialData, category.title]
+    );
+
     const [showPreview, setShowPreview] = useState(false);
 
-    // Basic Settings
-    const [templateName, setTemplateName] = useState(initialData?.name || `New ${category.title} Template`);
-    const [paperSize, setPaperSize] = useState(initialData?.paperSize || 'A4');
-    const [orientation, setOrientation] = useState(initialData?.orientation || 'Portrait');
+    const [templateName, setTemplateName] = useState(baseTemplate?.name || `New ${category.title} Template`);
+    const [paperSize, setPaperSize] = useState(baseTemplate?.paperSize || 'A4');
+    const [orientation, setOrientation] = useState(baseTemplate?.orientation || 'Portrait');
 
-    // Content
-    const [headerContent, setHeaderContent] = useState(initialData?.headerContent || '');
-    const [termsContent, setTermsContent] = useState(initialData?.termsContent || '');
-    const [footerContent, setFooterContent] = useState(initialData?.footerContent || '');
+    const [headerContent, setHeaderContent] = useState(baseTemplate?.headerContent || '');
+    const [termsContent, setTermsContent] = useState(baseTemplate?.termsContent || '');
+    const [footerContent, setFooterContent] = useState(baseTemplate?.footerContent || '');
 
-    // Display Options
-    const [displayOptions, setDisplayOptions] = useState(initialData?.displayOptions || {
-        showLogo: true,
-        showCompanyDetails: true,
-        showCustomerDetails: true,
-        showTerms: true,
-        showItemImage: false
-    });
+    const [displayOptions, setDisplayOptions] = useState(
+        baseTemplate?.displayOptions || getSalesDefaultDisplayOptions()
+    );
 
-    // Table Columns
-    const [columns, setColumns] = useState(initialData?.columns || {
-        productId: false,
-        sku: false,
-        arabicName: false,
-        item: true,
-        description: true,
-        qty: true,
-        unitPrice: true,
-        discount: false,
-        tax: true,
-        total: true
-    });
-
-    const previewCompany = PREVIEW_COMPANY;
+    const [columns, setColumns] = useState(
+        baseTemplate?.columns || getSalesDefaultColumns(category.title)
+    );
 
     const previewHtml = useMemo(() => {
-        const template = {
+        const template = normalizeSalesTemplate({
             category: category.title,
             paperSize,
             orientation,
@@ -408,14 +390,15 @@ const TemplateDesigner = ({ category, onCancel, onSave, initialData }) => {
             termsContent,
             displayOptions,
             columns,
-        };
-        return generatePrintHtml(template, buildSalesPreviewData(category.title), {
+        }, category.title);
+
+        return generatePrintHtml(template, buildSalesPreviewData(category.title, previewCompany), {
             companyProfile: previewCompany,
         });
     }, [category.title, paperSize, orientation, headerContent, footerContent, termsContent, displayOptions, columns, previewCompany]);
 
     const previewEmailHtml = useMemo(() => {
-        const template = {
+        const template = normalizeSalesTemplate({
             category: category.title,
             paperSize,
             orientation,
@@ -424,8 +407,9 @@ const TemplateDesigner = ({ category, onCancel, onSave, initialData }) => {
             termsContent,
             displayOptions,
             columns,
-        };
-        return generateEmailHtml(template, buildSalesPreviewData(category.title), {
+        }, category.title);
+
+        return generateEmailHtml(template, buildSalesPreviewData(category.title, previewCompany), {
             companyProfile: previewCompany,
         });
     }, [category.title, paperSize, orientation, headerContent, footerContent, termsContent, displayOptions, columns, previewCompany]);
@@ -439,8 +423,8 @@ const TemplateDesigner = ({ category, onCancel, onSave, initialData }) => {
     };
 
     const handleSave = () => {
-        const templateData = {
-            id: initialData?.id, // ID is undefined for new templates
+        const templateData = normalizeSalesTemplate({
+            id: initialData?.id,
             category: category.title,
             name: templateName,
             paperSize,
@@ -452,7 +436,8 @@ const TemplateDesigner = ({ category, onCancel, onSave, initialData }) => {
             columns,
             lastModified: new Date().toISOString().split('T')[0],
             isDefault: initialData?.isDefault || false
-        };
+        }, category.title);
+
         onSave(templateData);
     };
 
@@ -635,15 +620,6 @@ const TemplateDesigner = ({ category, onCancel, onSave, initialData }) => {
                                     <span className="text-sm text-gray-700 font-medium">Arabic Name</span>
                                 </label>
                                 <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider pt-1">Line Item</p>
-                                <label className="flex items-center gap-2 cursor-pointer">
-                                    <input
-                                        type="checkbox"
-                                        checked={columns.item}
-                                        onChange={() => handleColumnChange('item')}
-                                        className="w-4 h-4 text-yellow-500 rounded border-gray-300 focus:ring-yellow-400"
-                                    />
-                                    <span className="text-sm text-gray-700 font-medium">Item</span>
-                                </label>
                                 <label className="flex items-center gap-2 cursor-pointer">
                                     <input
                                         type="checkbox"
@@ -885,6 +861,7 @@ const TemplateDetailView = ({ category, templates, onBack, onCreate, onEdit, onD
 };
 
 const PrintEmailTemplates = () => {
+    const { company } = useCompany();
     const [selectedCategory, setSelectedCategory] = useState(null);
     const [isCreating, setIsCreating] = useState(false);
     const [editingTemplate, setEditingTemplate] = useState(null);
@@ -895,10 +872,31 @@ const PrintEmailTemplates = () => {
 
     // State for all templates loaded from backend
     const [allTemplates, setAllTemplates] = useState([]);
+    const [previewCompanyProfile, setPreviewCompanyProfile] = useState(company || null);
 
     useEffect(() => {
         loadTemplates();
     }, []);
+
+    useEffect(() => {
+        if (company) {
+            setPreviewCompanyProfile(company);
+            return;
+        }
+
+        let isActive = true;
+        getCompanyProfile()
+            .then((res) => {
+                if (isActive) {
+                    setPreviewCompanyProfile(res.data || null);
+                }
+            })
+            .catch(() => {});
+
+        return () => {
+            isActive = false;
+        };
+    }, [company]);
 
     const loadTemplates = async () => {
         try {
@@ -911,28 +909,7 @@ const PrintEmailTemplates = () => {
                 return;
             }
 
-            // Parse JSON fields
-            const parsedData = data.map(t => {
-                let displayOptions = {};
-                try {
-                    displayOptions = typeof t.displayOptions === 'string' ? JSON.parse(t.displayOptions) : t.displayOptions;
-                } catch (e) {
-                    console.error("Error parsing displayOptions", e);
-                }
-
-                let columns = {};
-                try {
-                    columns = typeof t.columns === 'string' ? JSON.parse(t.columns) : t.columns;
-                } catch (e) {
-                    console.error("Error parsing columns", e);
-                }
-
-                return {
-                    ...t,
-                    displayOptions: displayOptions || {},
-                    columns: columns || {}
-                };
-            });
+            const parsedData = data.map((template) => normalizeSalesTemplate(template, template.category));
             setAllTemplates(parsedData);
         } catch (error) {
             console.error("Error loading templates:", error);
@@ -946,11 +923,7 @@ const PrintEmailTemplates = () => {
             }
             // Reload after seeding
             const data = await getPrintTemplates();
-            const parsedData = data.map(t => ({
-                ...t,
-                displayOptions: typeof t.displayOptions === 'string' ? JSON.parse(t.displayOptions) : t.displayOptions,
-                columns: typeof t.columns === 'string' ? JSON.parse(t.columns) : t.columns
-            }));
+            const parsedData = data.map((template) => normalizeSalesTemplate(template, template.category));
             setAllTemplates(parsedData);
         } catch (error) {
             console.error("Error seeding default templates:", error);
@@ -981,7 +954,7 @@ const PrintEmailTemplates = () => {
     };
 
     const handleDuplicate = async (template) => {
-        const payload = {
+        const payload = serializeSalesTemplate({
             category: template.category,
             name: `${template.name} - Copy`,
             isDefault: false,
@@ -990,18 +963,13 @@ const PrintEmailTemplates = () => {
             headerContent: template.headerContent,
             termsContent: template.termsContent,
             footerContent: template.footerContent,
-            displayOptions: JSON.stringify(template.displayOptions),
-            columns: JSON.stringify(template.columns),
-            // let backend set dates and id
-        };
+            displayOptions: template.displayOptions,
+            columns: template.columns,
+        });
 
         try {
             const savedTemplate = await createPrintTemplate(payload);
-            const parsedTemplate = {
-                ...savedTemplate,
-                displayOptions: JSON.parse(savedTemplate.displayOptions),
-                columns: JSON.parse(savedTemplate.columns)
-            };
+            const parsedTemplate = normalizeSalesTemplate(savedTemplate, savedTemplate.category);
             setAllTemplates(prev => [...prev, parsedTemplate]);
         } catch (error) {
             console.error("Error duplicating template:", error);
@@ -1030,42 +998,19 @@ const PrintEmailTemplates = () => {
 
     const handleSaveTemplate = async (templateData) => {
         try {
-            const payload = {
-                ...templateData,
-                displayOptions: JSON.stringify(templateData.displayOptions),
-                columns: JSON.stringify(templateData.columns)
-            };
-
-            // Remove undefined IDs for new entries if present, although handleSave likely sets it or leaves it.
-            // If it's a new template, ID shouldn't be sent to create endpoint usually, or if it is, backend ignores it.
+            const normalizedTemplate = normalizeSalesTemplate(templateData, templateData.category);
+            const payload = serializeSalesTemplate(normalizedTemplate);
 
             let savedTemplate;
             if (templateData.id && allTemplates.some(t => t.id === templateData.id)) {
-                // Update
                 savedTemplate = await updatePrintTemplate(templateData.id, payload);
-                // Backend returns the updated entity
-                // Parse JSON fields
-                const parsedTemplate = {
-                    ...savedTemplate,
-                    displayOptions: JSON.parse(savedTemplate.displayOptions),
-                    columns: JSON.parse(savedTemplate.columns)
-                };
+                const parsedTemplate = normalizeSalesTemplate(savedTemplate, savedTemplate.category);
                 setAllTemplates(prev => prev.map(t => t.id === parsedTemplate.id ? parsedTemplate : t));
 
             } else {
-                // Create
-                // Ensure we don't send a temp ID if one was generated by frontend (Date.now() was used before)
-                // handleSave passes ID for logic check.
-                // If it's new, we call create.
                 const { id, ...createPayload } = payload;
                 savedTemplate = await createPrintTemplate(createPayload);
-
-                // Parse JSON fields
-                const parsedTemplate = {
-                    ...savedTemplate,
-                    displayOptions: JSON.parse(savedTemplate.displayOptions),
-                    columns: JSON.parse(savedTemplate.columns)
-                };
+                const parsedTemplate = normalizeSalesTemplate(savedTemplate, savedTemplate.category);
                 setAllTemplates(prev => [...prev, parsedTemplate]);
             }
 
@@ -1079,16 +1024,16 @@ const PrintEmailTemplates = () => {
 
     const handleSetDefault = async (template) => {
         try {
-            const updatedTemplate = await setDefaultTemplate(template.id, template);
+            const updatedTemplate = await setDefaultTemplate(
+                template.id,
+                serializeSalesTemplate({
+                    ...normalizeSalesTemplate(template, template.category),
+                    isDefault: true
+                })
+            );
 
-            // Parse JSON fields
-            const parsedTemplate = {
-                ...updatedTemplate,
-                displayOptions: JSON.parse(updatedTemplate.displayOptions),
-                columns: JSON.parse(updatedTemplate.columns)
-            };
+            const parsedTemplate = normalizeSalesTemplate(updatedTemplate, updatedTemplate.category);
 
-            // Update state: Set the new default and unset others in the same category
             setAllTemplates(prev => prev.map(t => {
                 if (t.id === parsedTemplate.id) {
                     return parsedTemplate;
@@ -1109,6 +1054,7 @@ const PrintEmailTemplates = () => {
             <TemplateDesigner
                 category={selectedCategory}
                 initialData={editingTemplate}
+                previewCompany={previewCompanyProfile}
                 onSave={handleSaveTemplate}
                 onCancel={() => { setIsCreating(false); setEditingTemplate(null); }}
             />
