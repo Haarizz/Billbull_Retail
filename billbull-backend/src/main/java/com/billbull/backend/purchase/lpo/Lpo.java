@@ -37,6 +37,9 @@ public class Lpo extends BaseEntity {
 	private String purchaseType;
 	private String buyerAssigned;
 	private String referenceDocument;
+	private Long branchId;
+	private String branchName;
+	private String branchCode;
 
 	private BigDecimal subtotal;
 	private BigDecimal discount;
@@ -238,6 +241,30 @@ public class Lpo extends BaseEntity {
 
 	public void setReferenceDocument(String referenceDocument) {
 		this.referenceDocument = referenceDocument;
+	}
+
+	public Long getBranchId() {
+		return branchId;
+	}
+
+	public void setBranchId(Long branchId) {
+		this.branchId = branchId;
+	}
+
+	public String getBranchName() {
+		return branchName;
+	}
+
+	public void setBranchName(String branchName) {
+		this.branchName = branchName;
+	}
+
+	public String getBranchCode() {
+		return branchCode;
+	}
+
+	public void setBranchCode(String branchCode) {
+		this.branchCode = branchCode;
 	}
 
 	public BigDecimal getSubtotal() {

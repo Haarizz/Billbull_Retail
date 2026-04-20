@@ -12,6 +12,9 @@ public class WarehouseResponse {
     private Long zoneCount;
     private Long locatorCount;
     private Long binCount;
+    private Long branchId;
+    private String branchName;
+    private String branchCode;
 
     // ===== Getters & Setters =====
 
@@ -93,5 +96,29 @@ public class WarehouseResponse {
 
     public void setBinCount(Long binCount) {
         this.binCount = binCount;
+    }
+
+    public Long getBranchId() {
+        return branchId;
+    }
+
+    public void setBranchId(Long branchId) {
+        this.branchId = branchId;
+    }
+
+    public String getBranchName() {
+        return branchName;
+    }
+
+    public void setBranchName(String branchName) {
+        this.branchName = branchName;
+    }
+
+    public String getBranchCode() {
+        return branchCode;
+    }
+
+    public void setBranchCode(String branchCode) {
+        this.branchCode = branchCode;
     }
 }

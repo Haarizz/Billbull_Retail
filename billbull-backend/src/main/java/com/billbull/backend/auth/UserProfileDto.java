@@ -15,6 +15,11 @@ public class UserProfileDto {
     private String role; // Primary role or comma separated
     private String employeeId;
     private java.time.LocalDate joinDate;
+    private Long branchId;
+    private String branchName;
+    private String branchCode;
+    private Long defaultWarehouseId;
+    private String defaultWarehouseName;
 
     public UserProfileDto(User user) {
         this.username = user.getUsername();
@@ -28,6 +33,15 @@ public class UserProfileDto {
         this.role = user.getRoles().isEmpty() ? "" : user.getRoles().iterator().next().getName();
         this.employeeId = user.getEmployeeId();
         this.joinDate = user.getJoinDate();
+        if (user.getBranch() != null) {
+            this.branchId = user.getBranch().getId();
+            this.branchName = user.getBranch().getName();
+            this.branchCode = user.getBranch().getCode();
+            if (user.getBranch().getDefaultWarehouse() != null) {
+                this.defaultWarehouseId = user.getBranch().getDefaultWarehouse().getId();
+                this.defaultWarehouseName = user.getBranch().getDefaultWarehouse().getName();
+            }
+        }
     }
 
     // Getters
@@ -73,5 +87,25 @@ public class UserProfileDto {
 
     public java.time.LocalDate getJoinDate() {
         return joinDate;
+    }
+
+    public Long getBranchId() {
+        return branchId;
+    }
+
+    public String getBranchName() {
+        return branchName;
+    }
+
+    public String getBranchCode() {
+        return branchCode;
+    }
+
+    public Long getDefaultWarehouseId() {
+        return defaultWarehouseId;
+    }
+
+    public String getDefaultWarehouseName() {
+        return defaultWarehouseName;
     }
 }

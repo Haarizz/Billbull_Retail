@@ -9,6 +9,7 @@ public class UserUpdateRequest {
     private String email;
     private String phone;
     private String password;
+    private Long branchId;
 
     // Getters and Setters
 
@@ -42,5 +43,13 @@ public class UserUpdateRequest {
 
     public void setPassword(String password) {
         this.password = password;
+    }
+
+    public Long getBranchId() {
+        return branchId;
+    }
+
+    public void setBranchId(Long branchId) {
+        this.branchId = branchId;
     }
 }

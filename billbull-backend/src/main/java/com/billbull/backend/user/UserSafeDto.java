@@ -18,6 +18,11 @@ public class UserSafeDto {
     private boolean active;
     private Long linkedEmployeeId;
     private String linkedEmployeeCode;
+    private Long branchId;
+    private String branchName;
+    private String branchCode;
+    private Long defaultWarehouseId;
+    private String defaultWarehouseName;
     private LocalDateTime createdAt;
 
     public UserSafeDto(User user) {
@@ -36,6 +41,16 @@ public class UserSafeDto {
             this.linkedEmployeeId = user.getLinkedEmployee().getId();
             this.linkedEmployeeCode = user.getLinkedEmployee().getEmployeeCode();
         }
+
+        if (user.getBranch() != null) {
+            this.branchId = user.getBranch().getId();
+            this.branchName = user.getBranch().getName();
+            this.branchCode = user.getBranch().getCode();
+            if (user.getBranch().getDefaultWarehouse() != null) {
+                this.defaultWarehouseId = user.getBranch().getDefaultWarehouse().getId();
+                this.defaultWarehouseName = user.getBranch().getDefaultWarehouse().getName();
+            }
+        }
     }
 
     // --- Getters only (no setters on DTO) ---
@@ -49,5 +64,10 @@ public class UserSafeDto {
     public boolean isActive() { return active; }
     public Long getLinkedEmployeeId() { return linkedEmployeeId; }
     public String getLinkedEmployeeCode() { return linkedEmployeeCode; }
+    public Long getBranchId() { return branchId; }
+    public String getBranchName() { return branchName; }
+    public String getBranchCode() { return branchCode; }
+    public Long getDefaultWarehouseId() { return defaultWarehouseId; }
+    public String getDefaultWarehouseName() { return defaultWarehouseName; }
     public LocalDateTime getCreatedAt() { return createdAt; }
 }

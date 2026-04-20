@@ -33,6 +33,9 @@ public class LpoListResponse {
 
     private boolean stockPosted;
     private Long warehouseId;
+    private Long branchId;
+    private String branchName;
+    private String branchCode;
 
     public Long getWarehouseId() {
         return warehouseId;
@@ -185,5 +188,29 @@ public class LpoListResponse {
 
     public void setStockPosted(boolean stockPosted) {
         this.stockPosted = stockPosted;
+    }
+
+    public Long getBranchId() {
+        return branchId;
+    }
+
+    public void setBranchId(Long branchId) {
+        this.branchId = branchId;
+    }
+
+    public String getBranchName() {
+        return branchName;
+    }
+
+    public void setBranchName(String branchName) {
+        this.branchName = branchName;
+    }
+
+    public String getBranchCode() {
+        return branchCode;
+    }
+
+    public void setBranchCode(String branchCode) {
+        this.branchCode = branchCode;
     }
 }

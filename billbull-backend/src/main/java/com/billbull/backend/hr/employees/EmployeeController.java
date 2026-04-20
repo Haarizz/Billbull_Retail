@@ -147,6 +147,11 @@ public class EmployeeController {
                     .map(r -> r.getName())
                     .collect(Collectors.toList())
             );
+            if (user.getBranch() != null) {
+                dto.setBranchId(user.getBranch().getId());
+                dto.setBranchName(user.getBranch().getName());
+                dto.setBranchCode(user.getBranch().getCode());
+            }
         }, () -> {
             dto.setHasLinkedUser(false);
         });

@@ -6,6 +6,7 @@ import java.util.Set;
 import com.billbull.backend.common.BaseEntity;
 import com.billbull.backend.hr.employees.Employee;
 import com.billbull.backend.role.Role;
+import com.billbull.backend.settings.branch.Branch;
 
 import jakarta.persistence.*;
 
@@ -44,6 +45,10 @@ public class User extends BaseEntity {
     @OneToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "linked_employee_id", unique = true)
     private Employee linkedEmployee;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "branch_id")
+    private Branch branch;
 
     @ManyToMany(fetch = FetchType.EAGER)
     @JoinTable(name = "user_roles", joinColumns = @JoinColumn(name = "user_id"), inverseJoinColumns = @JoinColumn(name = "role_id"))
@@ -165,5 +170,13 @@ public class User extends BaseEntity {
 
     public void setLinkedEmployee(Employee linkedEmployee) {
         this.linkedEmployee = linkedEmployee;
+    }
+
+    public Branch getBranch() {
+        return branch;
+    }
+
+    public void setBranch(Branch branch) {
+        this.branch = branch;
     }
 }

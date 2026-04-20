@@ -19,6 +19,8 @@ public class WarehouseRequestDto {
 
     private Integer utilization;
 
+    private Long branchId;
+
     // ===== Getters & Setters =====
 
     public String getName() {
@@ -67,5 +69,13 @@ public class WarehouseRequestDto {
 
     public void setUtilization(Integer utilization) {
         this.utilization = utilization;
+    }
+
+    public Long getBranchId() {
+        return branchId;
+    }
+
+    public void setBranchId(Long branchId) {
+        this.branchId = branchId;
     }
 }

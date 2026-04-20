@@ -617,6 +617,33 @@ const Sidebar = ({ children }) => {
          padding-top: 0 !important;
       }
     }
+
+    @media print {
+      .mobile-header,
+      .mobile-overlay,
+      .sidebar,
+      .collapse-trigger {
+        display: none !important;
+      }
+
+      .app-shell {
+        display: block !important;
+        height: auto !important;
+        min-height: 0 !important;
+        overflow: visible !important;
+        background: #ffffff !important;
+      }
+
+      .main-content,
+      .app-shell > main {
+        width: 100% !important;
+        height: auto !important;
+        min-height: 0 !important;
+        margin: 0 !important;
+        padding: 0 !important;
+        overflow: visible !important;
+      }
+    }
   `;
 
   return (

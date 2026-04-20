@@ -51,6 +51,18 @@ public interface SalesInvoiceRepository extends JpaRepository<SalesInvoice, Long
         List<PriceHistoryDTO> findPriceHistoryByItemCode(String itemCode,
                         org.springframework.data.domain.Pageable pageable);
 
+        @Query("SELECT new com.billbull.backend.sales.invoice.PriceHistoryDTO(s.invoiceDate, s.invoiceNumber, s.customerName, i.price) "
+                        +
+                        "FROM SalesInvoiceItem i JOIN i.salesInvoice s " +
+                        "WHERE i.itemCode = :itemCode AND s.status = com.billbull.backend.sales.invoice.SalesInvoiceStatus.POSTED "
+                        + "AND (s.branchId = :branchId OR s.branchId IS NULL) "
+                        +
+                        "ORDER BY s.invoiceDate DESC, s.id DESC")
+        List<PriceHistoryDTO> findPriceHistoryByItemCodeAndBranchScope(
+                        String itemCode,
+                        Long branchId,
+                        org.springframework.data.domain.Pageable pageable);
+
         // --- RECONCILIATION QUERIES ---
 
         /** Posted invoices where delivery is still PENDING (no delivery note completed). */

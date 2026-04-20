@@ -20,5 +20,8 @@ public record GrnDetailResponse(
         String locatorName,
         Long binId,
         String binName,
-        List<GrnItemResponse> items) {
+        List<GrnItemResponse> items,
+        Long branchId,
+        String branchName,
+        String branchCode) {
 }

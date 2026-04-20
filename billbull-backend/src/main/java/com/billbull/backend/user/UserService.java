@@ -9,6 +9,8 @@ import com.billbull.backend.hr.employees.EmployeeRepository;
 import com.billbull.backend.role.Role;
 import com.billbull.backend.role.RoleRepository;
 import com.billbull.backend.security.AdminSafeguardService;
+import com.billbull.backend.settings.branch.Branch;
+import com.billbull.backend.settings.branch.BranchRepository;
 
 import java.util.List;
 import java.util.Optional;
@@ -29,18 +31,21 @@ public class UserService {
     private final PasswordEncoder passwordEncoder;
     private final AdminSafeguardService adminSafeguardService;
     private final EmployeeRepository employeeRepository;
+    private final BranchRepository branchRepository;
 
     public UserService(
             UserRepository userRepository,
             RoleRepository roleRepository,
             PasswordEncoder passwordEncoder,
             AdminSafeguardService adminSafeguardService,
-            EmployeeRepository employeeRepository) {
+            EmployeeRepository employeeRepository,
+            BranchRepository branchRepository) {
         this.userRepository = userRepository;
         this.roleRepository = roleRepository;
         this.passwordEncoder = passwordEncoder;
         this.adminSafeguardService = adminSafeguardService;
         this.employeeRepository = employeeRepository;
+        this.branchRepository = branchRepository;
     }
 
     /**
@@ -89,6 +94,7 @@ public class UserService {
         user.setFullName(request.getFullName());
         user.setEmail(request.getEmail());
         user.setPhone(request.getPhone());
+        user.setBranch(resolveRequiredBranch(request.getBranchId()));
 
         user.setRoles(resolveRoles(request.getRoleIds()));
 
@@ -147,6 +153,7 @@ public class UserService {
         user.setRoles(resolveRoles(Set.of(request.getRoleId())));
         user.setActive(false);
         user.setPendingEmployeeActivation(true);
+        user.setBranch(resolveBranchForEmployeeAccess(employee, request.getBranchId()));
 
         userRepository.save(user);
     }
@@ -181,6 +188,7 @@ public class UserService {
         if (request.getPhone() != null) {
             user.setPhone(request.getPhone());
         }
+        user.setBranch(resolveRequiredBranch(request.getBranchId()));
         if (request.getPassword() != null && !request.getPassword().isEmpty()) {
             user.setPassword(passwordEncoder.encode(request.getPassword()));
         }
@@ -305,5 +313,30 @@ public class UserService {
         return Stream.of(employee.getFirstName(), employee.getMiddleName(), employee.getLastName())
                 .filter(part -> part != null && !part.isBlank())
                 .collect(Collectors.joining(" "));
+    }
+
+    private Branch resolveRequiredBranch(Long branchId) {
+        if (branchId == null) {
+            throw new RuntimeException("Branch is required for user access.");
+        }
+
+        return branchRepository.findById(branchId)
+                .orElseThrow(() -> new RuntimeException("Branch not found with id: " + branchId));
+    }
+
+    private Branch resolveBranchForEmployeeAccess(Employee employee, Long requestedBranchId) {
+        if (requestedBranchId != null) {
+            return resolveRequiredBranch(requestedBranchId);
+        }
+
+        if (employee != null && employee.getBranch() != null && !employee.getBranch().isBlank()) {
+            String label = employee.getBranch().trim();
+            return branchRepository.findByCodeIgnoreCase(label)
+                    .or(() -> branchRepository.findByNameIgnoreCase(label))
+                    .orElseThrow(() -> new RuntimeException(
+                            "Branch assignment is required before creating employee login access."));
+        }
+
+        throw new RuntimeException("Branch assignment is required before creating employee login access.");
     }
 }
