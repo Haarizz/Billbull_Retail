@@ -51,7 +51,19 @@ public class AuthController {
 
         System.out.println("Login - User: " + user.getUsername() + " Role: " + mainRole);
 
-        return new LoginResponse(token, user.getUsername(), mainRole);
+        return new LoginResponse(
+                token,
+                user.getUsername(),
+                mainRole,
+                user.getBranch() != null ? user.getBranch().getId() : null,
+                user.getBranch() != null ? user.getBranch().getName() : null,
+                user.getBranch() != null ? user.getBranch().getCode() : null,
+                user.getBranch() != null && user.getBranch().getDefaultWarehouse() != null
+                        ? user.getBranch().getDefaultWarehouse().getId()
+                        : null,
+                user.getBranch() != null && user.getBranch().getDefaultWarehouse() != null
+                        ? user.getBranch().getDefaultWarehouse().getName()
+                        : null);
     }
 
     @GetMapping("/profile")

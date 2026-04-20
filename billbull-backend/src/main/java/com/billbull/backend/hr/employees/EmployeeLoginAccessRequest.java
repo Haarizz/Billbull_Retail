@@ -6,6 +6,7 @@ public class EmployeeLoginAccessRequest {
     private String loginUsername;
     private String temporaryPassword;
     private Long roleId;
+    private Long branchId;
 
     public Boolean getCreateAccess() {
         return createAccess;
@@ -37,6 +38,14 @@ public class EmployeeLoginAccessRequest {
 
     public void setRoleId(Long roleId) {
         this.roleId = roleId;
+    }
+
+    public Long getBranchId() {
+        return branchId;
+    }
+
+    public void setBranchId(Long branchId) {
+        this.branchId = branchId;
     }
 
     public boolean isRequested() {

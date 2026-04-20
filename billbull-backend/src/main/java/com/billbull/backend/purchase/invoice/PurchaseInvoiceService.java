@@ -30,6 +30,8 @@ import com.billbull.backend.purchase.payment.PaymentVoucher;
 import com.billbull.backend.purchase.payment.PaymentVoucherService;
 import com.billbull.backend.purchase.stockmovement.StockMovementService;
 import com.billbull.backend.purchase.stockmovement.StockSourceType;
+import com.billbull.backend.settings.branch.Branch;
+import com.billbull.backend.settings.branch.BranchAccessService;
 import com.billbull.backend.util.DocumentOrderingUtil;
 
 import jakarta.transaction.Transactional;
@@ -53,6 +55,7 @@ public class PurchaseInvoiceService {
     private final PaymentVoucherService paymentVoucherService;
     private final ProductMediaRepository productMediaRepository;
     private final ProductBarcodeRepository productBarcodeRepository;
+    private final BranchAccessService branchAccessService;
 
     public PurchaseInvoiceService(PurchaseInvoiceRepository repository, GrnRepository grnRepo,
             PostingEngineService postingEngineService, StockMovementService stockService,
@@ -61,7 +64,8 @@ public class PurchaseInvoiceService {
             ZoneRepository zoneRepository, LocatorRepository locatorRepository, BinRepository binRepository,
             LpoRepository lpoRepository, PaymentVoucherService paymentVoucherService,
             ProductMediaRepository productMediaRepository,
-            ProductBarcodeRepository productBarcodeRepository) {
+            ProductBarcodeRepository productBarcodeRepository,
+            BranchAccessService branchAccessService) {
         super();
         this.repository = repository;
         this.grnRepo = grnRepo;
@@ -78,6 +82,7 @@ public class PurchaseInvoiceService {
         this.paymentVoucherService = paymentVoucherService;
         this.productMediaRepository = productMediaRepository;
         this.productBarcodeRepository = productBarcodeRepository;
+        this.branchAccessService = branchAccessService;
     }
 
     /* ================= VENDOR INVOICE NO VALIDATION ================= */
@@ -112,6 +117,7 @@ public class PurchaseInvoiceService {
     public PurchaseInvoiceResponse createDraftFromLpo(Long lpoId) {
         Lpo lpo = lpoRepository.findById(lpoId)
                 .orElseThrow(() -> new IllegalArgumentException("LPO not found"));
+        branchAccessService.assertTransactionBranchAccessible(lpo.getBranchId(), "LPO");
 
         List<LpoStatus> allowed = List.of(
                 LpoStatus.APPROVED, LpoStatus.SENT_TO_VENDOR, LpoStatus.PARTIALLY_RECEIVED);
@@ -133,6 +139,9 @@ public class PurchaseInvoiceService {
         if (lpo.getBin() != null) dto.setBinId(lpo.getBin().getId());
         dto.setLpoId(lpo.getId());
         dto.setReferenceNo(lpo.getLpoNumber());
+        dto.setBranchId(lpo.getBranchId());
+        dto.setBranchName(lpo.getBranchName());
+        dto.setBranchCode(lpo.getBranchCode());
 
         BigDecimal headerSubTotal = BigDecimal.ZERO;
         BigDecimal headerTaxTotal = BigDecimal.ZERO;
@@ -174,6 +183,7 @@ public class PurchaseInvoiceService {
 
         GrnEntity grn = grnRepo.findById(grnId)
                 .orElseThrow(() -> new IllegalArgumentException("GRN not found"));
+        branchAccessService.assertTransactionBranchAccessible(grn.getBranchId(), "GRN");
 
         if (!grn.isStockPosted()) {
             throw new IllegalStateException("Only POSTED GRN can be invoiced");
@@ -193,6 +203,9 @@ public class PurchaseInvoiceService {
         dto.setGrnId(grn.getId());
         dto.setGrnNo(grn.getGrnNo());
         dto.setReferenceNo(grn.getGrnNo());
+        dto.setBranchId(grn.getBranchId());
+        dto.setBranchName(grn.getBranchName());
+        dto.setBranchCode(grn.getBranchCode());
 
         BigDecimal headerSubTotal = BigDecimal.ZERO;
         BigDecimal headerTaxTotal = BigDecimal.ZERO;
@@ -476,7 +489,8 @@ public class PurchaseInvoiceService {
     /* ================= READ ================= */
 
     public List<PurchaseInvoiceResponse> listAll() {
-        List<PurchaseInvoice> invoices = new ArrayList<>(repository.findAll());
+        List<PurchaseInvoice> invoices = new ArrayList<>(
+                branchAccessService.filterBranchScoped(repository.findAll(), PurchaseInvoice::getBranchId));
         DocumentOrderingUtil.sortByDocumentDateAndNumberDesc(
                 invoices,
                 PurchaseInvoice::getInvoiceDate,
@@ -495,8 +509,10 @@ public class PurchaseInvoiceService {
     /* ================= INTERNAL HELPERS ================= */
 
     private PurchaseInvoice getEntity(Long id) {
-        return repository.findById(id)
+        PurchaseInvoice invoice = repository.findById(id)
                 .orElseThrow(() -> new RuntimeException("Purchase Invoice not found"));
+        branchAccessService.assertTransactionBranchAccessible(invoice.getBranchId(), "Purchase Invoice");
+        return invoice;
     }
 
     private PurchaseInvoice mapToEntity(PurchaseInvoiceRequest req) {
@@ -536,6 +552,20 @@ public class PurchaseInvoiceService {
             invoice.setWarehouseName(invoice.getWarehouse().getName());
         }
 
+        Branch branch = resolveBranchForInvoice(invoice, req);
+        if (branch != null) {
+            invoice.setBranchId(branch.getId());
+            invoice.setBranchName(branch.getName());
+            invoice.setBranchCode(branch.getCode());
+            if (invoice.getWarehouse() != null) {
+                branchAccessService.assertWarehouseMatchesBranch(invoice.getWarehouse(), branch.getId(), "Purchase Invoice");
+            }
+        } else {
+            invoice.setBranchId(null);
+            invoice.setBranchName(null);
+            invoice.setBranchCode(null);
+        }
+
         invoice.setSubTotal(req.getSubTotal());
         invoice.setDiscountTotal(req.getDiscountTotal());
         invoice.setTaxTotal(req.getTaxTotal());
@@ -549,6 +579,42 @@ public class PurchaseInvoiceService {
         invoice.setClearing(req.getClearing());
         invoice.setInsurance(req.getInsurance());
         invoice.setOtherCosts(req.getOtherCosts());
+    }
+
+    private Branch resolveBranchForInvoice(PurchaseInvoice invoice, PurchaseInvoiceRequest req) {
+        if (req.getGrnId() != null) {
+            GrnEntity grn = grnRepo.findById(req.getGrnId())
+                    .orElseThrow(() -> new IllegalArgumentException("GRN not found"));
+            branchAccessService.assertTransactionBranchAccessible(grn.getBranchId(), "GRN");
+            if (grn.getBranchId() == null) {
+                return null;
+            }
+            Branch currentBranch = branchAccessService.getRequiredCurrentUserBranch();
+            if (!currentBranch.getId().equals(grn.getBranchId())) {
+                throw new IllegalStateException("GRN belongs to another branch.");
+            }
+            return currentBranch;
+        }
+
+        if (req.getLpoId() != null) {
+            Lpo lpo = lpoRepository.findById(req.getLpoId())
+                    .orElseThrow(() -> new IllegalArgumentException("LPO not found"));
+            branchAccessService.assertTransactionBranchAccessible(lpo.getBranchId(), "LPO");
+            if (lpo.getBranchId() == null) {
+                return null;
+            }
+            Branch currentBranch = branchAccessService.getRequiredCurrentUserBranch();
+            if (!currentBranch.getId().equals(lpo.getBranchId())) {
+                throw new IllegalStateException("LPO belongs to another branch.");
+            }
+            return currentBranch;
+        }
+
+        if (invoice.getId() != null && invoice.getBranchId() == null) {
+            return null;
+        }
+
+        return branchAccessService.getRequiredCurrentUserBranch();
     }
 
     private void syncItems(PurchaseInvoice invoice, PurchaseInvoiceRequest req) {
@@ -609,6 +675,9 @@ public class PurchaseInvoiceService {
         dto.setGrnNo(invoice.getGrnNo());
         dto.setGrnId(invoice.getGrnId());
         dto.setLpoId(invoice.getLpoId());
+        dto.setBranchId(invoice.getBranchId());
+        dto.setBranchName(invoice.getBranchName());
+        dto.setBranchCode(invoice.getBranchCode());
         dto.setWarehouseName(invoice.getWarehouseName());
 
         if (invoice.getWarehouse() != null)
@@ -718,7 +787,8 @@ public class PurchaseInvoiceService {
 
     @Transactional
     public List<PurchaseInvoiceResponse> getPostedInvoicesForPayment() {
-        List<PurchaseInvoice> invoices = new ArrayList<>(repository.findByStatus(InvoiceStatus.POSTED));
+        List<PurchaseInvoice> invoices = new ArrayList<>(
+                branchAccessService.filterBranchScoped(repository.findByStatus(InvoiceStatus.POSTED), PurchaseInvoice::getBranchId));
         DocumentOrderingUtil.sortByDocumentDateAndNumberDesc(
                 invoices,
                 PurchaseInvoice::getInvoiceDate,

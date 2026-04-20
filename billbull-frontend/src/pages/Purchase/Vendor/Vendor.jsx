@@ -8,6 +8,7 @@ import {
   Globe, Phone, Briefcase, FileUp, X, Loader2, Check,
   ArrowRight, ChevronRight, CreditCard, Banknote, RefreshCw
 } from 'lucide-react';
+import StatementPrintPreview from '../../../components/StatementPrintPreview';
 
 // API IMPORTS
 import {
@@ -845,7 +846,7 @@ const VendorSoA = ({ vendors }) => {
 
       {/* STATEMENT UI */}
       {statementData && selectedVendorDetails && (
-        <div className="bg-white rounded-lg border border-slate-200 p-8 shadow-sm">
+        <div className="bg-white rounded-lg border border-slate-200 p-8 shadow-sm print:hidden">
           <div className="flex justify-between items-start mb-6">
             <div>
               <h2 className="text-xl font-bold text-slate-900">STATEMENT OF ACCOUNT</h2>
@@ -930,6 +931,22 @@ const VendorSoA = ({ vendors }) => {
           </div>
         </div>
       )}
+
+      <StatementPrintPreview
+        statementData={statementData}
+        party={selectedVendorDetails}
+        partyLabel="Vendor"
+        statementLabel="Statement of Account"
+        startDate={startDate}
+        endDate={endDate}
+        debitSummaryLabel="Total Payments"
+        creditSummaryLabel="Total Purchases"
+        debitColumnLabel="Debit (Payment)"
+        creditColumnLabel="Credit (Invoice)"
+        positiveBalanceLabel="Cr"
+        negativeBalanceLabel="Dr"
+        emptyMessage="No transactions recorded in this period."
+      />
     </div>
   );
 };
@@ -1507,7 +1524,7 @@ const VendorListViewWithActions = ({ vendors, loading, onAddNew, onEdit, onDelet
 
   return (
     <>
-      <div className="bg-white border-b border-slate-200 p-6 pb-0">
+      <div className="bg-white border-b border-slate-200 p-6 pb-0 print:hidden">
         <div className="flex flex-col md:flex-row items-start justify-between mb-4 gap-4 md:gap-0">
           <div>
             <div className="text-sm text-gray-500 mb-1">Vendors & Purchases → Vendor Ledger</div>

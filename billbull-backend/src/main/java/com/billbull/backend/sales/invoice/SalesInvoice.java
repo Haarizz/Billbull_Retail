@@ -35,6 +35,9 @@ public class SalesInvoice {
     private String paymentTerms;
     private String salesperson;
     private String branch;
+    private Long branchId;
+    private String branchName;
+    private String branchCode;
 
     private Double subTotal;
     private Double taxTotal;
@@ -174,6 +177,30 @@ public class SalesInvoice {
 
     public void setBranch(String branch) {
         this.branch = branch;
+    }
+
+    public Long getBranchId() {
+        return branchId;
+    }
+
+    public void setBranchId(Long branchId) {
+        this.branchId = branchId;
+    }
+
+    public String getBranchName() {
+        return branchName;
+    }
+
+    public void setBranchName(String branchName) {
+        this.branchName = branchName;
+    }
+
+    public String getBranchCode() {
+        return branchCode;
+    }
+
+    public void setBranchCode(String branchCode) {
+        this.branchCode = branchCode;
     }
 
     public Double getSubTotal() {

@@ -10,6 +10,7 @@ public class BranchResponse {
     private boolean isDefault;
     private Long defaultWarehouseId;
     private String defaultWarehouseName;
+    private String defaultWarehouseBranchName;
 
     public BranchResponse() {}
 
@@ -24,6 +25,9 @@ public class BranchResponse {
         if (b.getDefaultWarehouse() != null) {
             r.defaultWarehouseId = b.getDefaultWarehouse().getId();
             r.defaultWarehouseName = b.getDefaultWarehouse().getName();
+            r.defaultWarehouseBranchName = b.getDefaultWarehouse().getBranch() != null
+                    ? b.getDefaultWarehouse().getBranch().getName()
+                    : null;
         }
         return r;
     }
@@ -51,4 +55,9 @@ public class BranchResponse {
 
     public String getDefaultWarehouseName() { return defaultWarehouseName; }
     public void setDefaultWarehouseName(String defaultWarehouseName) { this.defaultWarehouseName = defaultWarehouseName; }
+
+    public String getDefaultWarehouseBranchName() { return defaultWarehouseBranchName; }
+    public void setDefaultWarehouseBranchName(String defaultWarehouseBranchName) {
+        this.defaultWarehouseBranchName = defaultWarehouseBranchName;
+    }
 }

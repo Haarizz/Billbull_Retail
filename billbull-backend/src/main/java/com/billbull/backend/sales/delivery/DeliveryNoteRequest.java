@@ -14,7 +14,10 @@ public class DeliveryNoteRequest {
     public String salesOrderNo;
     public String proformaNo;
 
-    public Long warehouseId; // ✅ FIXED
+    public Long warehouseId;
+    public Long branchId;
+    public String branchName;
+    public String branchCode;
 
     public String driverName;
     public String vehicleNo;

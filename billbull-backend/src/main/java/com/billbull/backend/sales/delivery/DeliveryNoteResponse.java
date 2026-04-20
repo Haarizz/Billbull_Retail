@@ -15,6 +15,9 @@ public class DeliveryNoteResponse {
     public String salesOrderNo;
     public String proformaNo;
     public String warehouse;
+    public Long branchId;
+    public String branchName;
+    public String branchCode;
 
     public Integer totalLines;
     public Integer totalQty;
