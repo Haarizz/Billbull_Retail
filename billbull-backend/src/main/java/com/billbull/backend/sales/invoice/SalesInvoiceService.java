@@ -61,7 +61,7 @@ public class SalesInvoiceService {
             ProductRepository productRepo,
             ProductMediaRepository productMediaRepository,
             com.billbull.backend.sales.salesorder.SalesOrderRepository salesOrderRepository,
-            CustomerRepository customerRepository) {
+            CustomerRepository customerRepository,
             WarehouseRepository warehouseRepository,
             BranchAccessService branchAccessService) {
         this.invoiceRepo = invoiceRepo;
