@@ -1,6 +1,7 @@
 package com.billbull.backend.inventory.warehouse;
 
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import com.billbull.backend.settings.branch.Branch;
 import com.billbull.backend.settings.branch.BranchAccessService;
@@ -34,6 +35,7 @@ public class WarehouseService {
         this.branchAccessService = branchAccessService;
     }
 
+    @Transactional(readOnly = true)
     public List<WarehouseResponse> list() {
         return getAccessibleWarehouses()
                 .stream()
@@ -41,6 +43,7 @@ public class WarehouseService {
                 .collect(Collectors.toList());
     }
 
+    @Transactional(readOnly = true)
     public WarehouseResponse getById(Long id) {
         Warehouse warehouse = repository.findById(id)
                 .orElseThrow(() -> new RuntimeException("Warehouse not found"));

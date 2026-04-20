@@ -32,6 +32,7 @@ public class Warehouse extends BaseEntity {
 
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "branch_id")
+    @com.fasterxml.jackson.annotation.JsonIgnore
     private Branch branch;
 
     // ===== Getters & Setters =====
