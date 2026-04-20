@@ -95,17 +95,23 @@ public class SalesOrderService {
         order.setBalanceDue(total - advance);
 
         // ✅ STATUS LOGIC: Maintain reservation until delivery
-        if (order.getStatus() == null || order.getId() == null) {
+        // Load current DB status to avoid overwriting finalized states on update
+        SalesOrderStatus currentStatus = (order.getId() != null)
+                ? orderRepo.findById(order.getId()).map(SalesOrder::getStatus).orElse(null)
+                : null;
+
+        if (order.getId() == null) {
             order.setStatus(SalesOrderStatus.CONFIRMED);
-        } else if (order.getStatus() == SalesOrderStatus.INVOICED) {
-            // Keep INVOICED if already set (by delivery logic)
+        } else if (currentStatus == SalesOrderStatus.INVOICED
+                || currentStatus == SalesOrderStatus.DELIVERED
+                || currentStatus == SalesOrderStatus.PARTIALLY_DELIVERED) {
+            order.setStatus(currentStatus); // Never downgrade finalized statuses
         } else if (advance > 0 && advance < total) {
             order.setStatus(SalesOrderStatus.PARTIALLY_PAID);
-        } else if (advance >= total && order.getStatus() != SalesOrderStatus.INVOICED) {
-            // Fully paid but not yet delivered? Keep as PARTIALLY_PAID or CONFIRMED
-            // in many ERPs, fully paid before delivery is still a confirmed order.
-            // We'll keep it as PARTIALLY_PAID (misnomer but reserves) or just CONFIRMED.
+        } else if (advance >= total) {
             order.setStatus(SalesOrderStatus.PARTIALLY_PAID);
+        } else {
+            order.setStatus(SalesOrderStatus.CONFIRMED);
         }
 
         SalesOrder saved = orderRepo.save(order);
@@ -158,6 +164,18 @@ public class SalesOrderService {
     @Transactional
     public void updateStatus(String soNumber, SalesOrderStatus status) {
         orderRepo.findBySoNumber(soNumber).ifPresent(order -> {
+            order.setStatus(status);
+            orderRepo.save(order);
+        });
+    }
+
+    @Caching(evict = {
+        @CacheEvict(value = "stockAvailability", allEntries = true),
+        @CacheEvict(value = "productList", allEntries = true)
+    })
+    @Transactional
+    public void updateStatusById(Long id, SalesOrderStatus status) {
+        orderRepo.findById(id).ifPresent(order -> {
             order.setStatus(status);
             orderRepo.save(order);
         });

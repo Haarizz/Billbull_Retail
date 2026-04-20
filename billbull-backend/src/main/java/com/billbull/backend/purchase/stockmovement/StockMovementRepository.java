@@ -120,6 +120,7 @@ public interface StockMovementRepository
                               AND sm.binId IS NOT NULL
                             GROUP BY sm.binId
                             HAVING SUM(sm.quantity) > 0
+                            ORDER BY SUM(sm.quantity) DESC
                         """)
         List<Object[]> findActiveBinsByWarehouseAndProduct(
                         @Param("warehouseId") Long warehouseId,

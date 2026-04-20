@@ -33,7 +33,8 @@ import { getAllQuotations } from '../../api/quotationApi';
 import {
   getAllSalesOrders,
   saveSalesOrder,
-  uploadSalesOrderAttachment
+  uploadSalesOrderAttachment,
+  updateSalesOrderStatus
 } from '../../api/salesorderApi';
 import { getTemplatesByCategory } from '../../api/printTemplateApi';
 import { generatePrintHtml, printHtml } from '../../utils/printGenerator';
@@ -454,8 +455,47 @@ const SalesOrders = () => {
     saveOrUpdateOrder();
   };
 
-  const handleMarkAsInvoiced = () => {
-    saveOrUpdateOrder();
+  const handleMarkAsInvoiced = async () => {
+    if (!orderId) {
+      alert('Save the order first before marking as invoiced.');
+      return;
+    }
+    try {
+      await updateSalesOrderStatus(orderId, 'INVOICED');
+      setStatus('INVOICED');
+      await fetchSalesOrders();
+    } catch (e) {
+      const msg = e?.response?.data?.message || e?.message || 'Failed to mark as invoiced.';
+      alert(`Error: ${msg}`);
+    }
+  };
+
+  const handleProceedToInvoice = () => {
+    navigate('/sales/invoice', {
+      state: {
+        fromSalesOrder: {
+          soNumber,
+          customer: selectedCustomer?.name || selectedCustomer?.code || '',
+          customerCode: selectedCustomer?.code || '',
+          linkedQuotation: linkedQtn || '',
+          items: items
+            .filter(i => i.code && i.qty > 0)
+            .map(i => ({
+              code: i.code,
+              desc: i.desc,
+              image: i.image || '',
+              unit: i.unit,
+              qty: i.qty,
+              price: i.price,
+              disc: i.disc,
+              tax: i.tax,
+              taxAmt: i.taxAmt,
+              total: i.total,
+              cost: i.cost,
+            }))
+        }
+      }
+    });
   };
 
   // ✅ PRINT FUNCTIONALITY
@@ -1576,11 +1616,16 @@ const SalesOrders = () => {
                 </>
               )}
 
-              {/* ── VERTICAL: canApprove('sales') for Mark Invoiced ── */}
+              {/* ── Proceed to Invoice / Mark Invoiced for CONFIRMED / PARTIALLY_PAID ── */}
               {(status === 'CONFIRMED' || status === 'PARTIALLY_PAID') && canApprove('sales') && (
-                <button onClick={handleMarkAsInvoiced} className="flex items-center gap-1.5 px-5 py-1.5 bg-blue-600 text-white rounded text-xs font-bold hover:bg-blue-700 transition-all shadow-md transform hover:-translate-y-0.5">
-                  <CheckCircle2 size={14} /> Mark Invoiced
-                </button>
+                <>
+                  <button onClick={handleProceedToInvoice} className="flex items-center gap-1.5 px-4 py-1.5 bg-gradient-to-r from-amber-500 to-amber-400 text-white rounded text-xs font-bold hover:from-amber-600 hover:to-amber-500 transition-all shadow-md transform hover:-translate-y-0.5">
+                    <FileText size={14} /> Proceed to Invoice
+                  </button>
+                  <button onClick={handleMarkAsInvoiced} className="flex items-center gap-1.5 px-5 py-1.5 bg-blue-600 text-white rounded text-xs font-bold hover:bg-blue-700 transition-all shadow-md transform hover:-translate-y-0.5">
+                    <CheckCircle2 size={14} /> Mark Invoiced
+                  </button>
+                </>
               )}
             </div>
           </div>

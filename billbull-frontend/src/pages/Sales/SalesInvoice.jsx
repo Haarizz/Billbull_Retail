@@ -85,6 +85,7 @@ const SalesInvoice = () => {
     const { defaultBranch } = useBranch();
     const location = useLocation();
     const fromQuotationHandled = useRef(false);
+    const fromSOHandled = useRef(false);
     const [activeTab, setActiveTab] = useState('list');
     const [isLoading, setIsLoading] = useState(false);
 
@@ -487,6 +488,51 @@ const SalesInvoice = () => {
         setActiveTab('create');
 
         // Clear state so back-navigation doesn't re-trigger
+        window.history.replaceState({}, document.title);
+    }, [customersList, location.state]);
+
+    // Pre-fill form from Sales Order navigation state
+    useEffect(() => {
+        const fromSO = location.state?.fromSalesOrder;
+        if (!fromSO || fromSOHandled.current) return;
+        if (customersList.length === 0) return;
+
+        fromSOHandled.current = true;
+
+        const matched = customersList.find(
+            c => c.name === fromSO.customer || c.code === fromSO.customerCode
+        );
+
+        const mappedItems = (fromSO.items || [])
+            .filter(i => i.code || i.desc)
+            .map((i, idx) => ({
+                id: Date.now() + idx,
+                code: i.code || '',
+                name: i.desc || i.name || '',
+                image: i.image || '',
+                unit: i.unit || 'PCS',
+                qty: Number(i.qty) || 0,
+                price: Number(i.price) || 0,
+                disc: Number(i.disc) || 0,
+                tax: Number(i.tax) || 5,
+                taxAmt: Number(i.taxAmt) || 0,
+                gross: Number(i.total) || 0,
+                net: Number(i.total) || 0,
+                cost: Number(i.cost) || 0
+            }));
+
+        getNextInvoiceNumber()
+            .then(nextNo => setInvoiceNo(nextNo))
+            .catch(() => {});
+
+        setSelectedCustomer(matched || { name: fromSO.customer, code: fromSO.customerCode || '', id: null });
+        setItems(mappedItems.length > 0 ? mappedItems : [{ id: Date.now(), code: '', name: '', unit: 'PCS', qty: 0, price: 0, disc: 0, tax: 5, taxAmt: 0, gross: 0, net: 0, cost: 0 }]);
+        setLinkedSO(fromSO.soNumber || '');
+        setReference(fromSO.linkedQuotation || fromSO.soNumber || '');
+        setInvoiceDate(new Date().toISOString().split('T')[0]);
+        setStatus('Draft');
+        setActiveTab('create');
+
         window.history.replaceState({}, document.title);
     }, [customersList, location.state]);
 
