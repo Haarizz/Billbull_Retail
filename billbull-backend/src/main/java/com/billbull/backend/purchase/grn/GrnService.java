@@ -9,6 +9,7 @@ import java.util.List;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.cache.annotation.CacheEvict;
+import org.springframework.cache.annotation.Caching;
 
 import com.billbull.backend.inventory.product.Product;
 import com.billbull.backend.inventory.product.ProductBarcodeRepository;
@@ -327,7 +328,10 @@ public class GrnService {
     }
 
     /* ================= POST STOCK (ONLY PLACE) ================= */
-    @CacheEvict(value = "stockAvailability", allEntries = true)
+    @Caching(evict = {
+        @CacheEvict(value = "stockAvailability", allEntries = true),
+        @CacheEvict(value = "productList", allEntries = true)
+    })
     public void postGrn(Long grnId, GrnPostRequest postReq) {
 
         GrnEntity grn = grnRepo.findById(grnId)
