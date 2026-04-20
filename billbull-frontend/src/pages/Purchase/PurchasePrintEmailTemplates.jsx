@@ -25,6 +25,7 @@ import {
     FaCheckCircle
 } from 'react-icons/fa';
 import billBullLogo from '../../assets/billBullLogo.png';
+import { getCompanyProfile } from '../../api/companyProfileApi';
 import {
     createPrintTemplate,
     deletePrintTemplate,
@@ -33,11 +34,11 @@ import {
     updatePrintTemplate
 } from '../../api/printTemplateApi';
 import DocumentPreviewCanvas from '../../components/DocumentPreviewCanvas';
+import { useCompany } from '../../context/CompanyContext';
 import { generateEmailHtml, generatePrintHtml } from '../../utils/printGenerator';
 import {
     buildPurchasePreviewData,
     getDefaultPurchaseTemplates,
-    getPurchasePreviewCompany,
     normalizePurchaseTemplate,
     PURCHASE_TEMPLATE_CATEGORIES,
     serializeTemplateForApi
@@ -143,7 +144,7 @@ const ConfirmationModal = ({ isOpen, onClose, onConfirm, title, message }) => {
     );
 };
 
-const TemplateDesigner = ({ category, onCancel, onSave, initialData }) => {
+const TemplateDesigner = ({ category, onCancel, onSave, initialData, previewCompany }) => {
     const [showPreview, setShowPreview] = useState(false);
 
     const baseTemplate = useMemo(
@@ -168,7 +169,6 @@ const TemplateDesigner = ({ category, onCancel, onSave, initialData }) => {
         productId: false,
         sku: false,
         arabicName: false,
-        item: true,
         description: true,
         qty: true,
         unitPrice: true,
@@ -194,21 +194,21 @@ const TemplateDesigner = ({ category, onCancel, onSave, initialData }) => {
 
     const previewHtml = useMemo(() => generatePrintHtml(
         previewTemplate,
-        buildPurchasePreviewData(category.title),
+        buildPurchasePreviewData(category.title, previewCompany),
         {
-            companyProfile: getPurchasePreviewCompany(),
+            companyProfile: previewCompany,
             billBullLogo
         }
-    ), [previewTemplate, category.title]);
+    ), [previewTemplate, category.title, previewCompany]);
 
     const previewEmailHtml = useMemo(() => generateEmailHtml(
         previewTemplate,
-        buildPurchasePreviewData(category.title),
+        buildPurchasePreviewData(category.title, previewCompany),
         {
-            companyProfile: getPurchasePreviewCompany(),
+            companyProfile: previewCompany,
             billBullLogo
         }
-    ), [previewTemplate, category.title]);
+    ), [previewTemplate, category.title, previewCompany]);
 
     const handleDisplayOptionChange = (key) => {
         setDisplayOptions((prev) => ({ ...prev, [key]: !prev[key] }));
@@ -407,15 +407,6 @@ const TemplateDesigner = ({ category, onCancel, onSave, initialData }) => {
                                     <span className="text-sm text-gray-700 font-medium">Arabic Name</span>
                                 </label>
                                 <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider pt-1">Line Item</p>
-                                <label className="flex items-center gap-2 cursor-pointer">
-                                    <input
-                                        type="checkbox"
-                                        checked={columns.item !== false}
-                                        onChange={() => handleColumnChange('item')}
-                                        className="w-4 h-4 text-yellow-500 rounded border-gray-300 focus:ring-yellow-400"
-                                    />
-                                    <span className="text-sm text-gray-700 font-medium">Item</span>
-                                </label>
                                 <label className="flex items-center gap-2 cursor-pointer">
                                     <input
                                         type="checkbox"
@@ -649,16 +640,38 @@ const TemplateDetailView = ({ category, templates, onBack, onCreate, onEdit, onD
 };
 
 const PurchasePrintEmailTemplates = () => {
+    const { company } = useCompany();
     const [selectedCategory, setSelectedCategory] = useState(null);
     const [isCreating, setIsCreating] = useState(false);
     const [editingTemplate, setEditingTemplate] = useState(null);
     const [showDeleteModal, setShowDeleteModal] = useState(false);
     const [templateToDelete, setTemplateToDelete] = useState(null);
     const [allTemplates, setAllTemplates] = useState([]);
+    const [previewCompanyProfile, setPreviewCompanyProfile] = useState(company || null);
 
     useEffect(() => {
         loadTemplates();
     }, []);
+
+    useEffect(() => {
+        if (company) {
+            setPreviewCompanyProfile(company);
+            return;
+        }
+
+        let isActive = true;
+        getCompanyProfile()
+            .then((res) => {
+                if (isActive) {
+                    setPreviewCompanyProfile(res.data || null);
+                }
+            })
+            .catch(() => {});
+
+        return () => {
+            isActive = false;
+        };
+    }, [company]);
 
     const loadTemplates = async () => {
         try {
@@ -785,6 +798,7 @@ const PurchasePrintEmailTemplates = () => {
             <TemplateDesigner
                 category={selectedCategory}
                 initialData={editingTemplate}
+                previewCompany={previewCompanyProfile}
                 onSave={handleSaveTemplate}
                 onCancel={() => {
                     setIsCreating(false);
