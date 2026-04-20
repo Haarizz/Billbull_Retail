@@ -1,11 +1,10 @@
-import React, { useState, useEffect } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
     FaFileAlt,
     FaFileInvoice,
-    FaTruck,
     FaClipboardList,
+    FaTruck,
     FaFileInvoiceDollar,
-    FaUndo,
     FaCog,
     FaDownload,
     FaUpload,
@@ -14,146 +13,62 @@ import {
     FaEdit,
     FaCopy,
     FaEye,
-    FaTimes,
     FaSave,
     FaCode,
     FaListUl,
     FaSlidersH,
     FaToggleOn,
     FaAlignLeft,
-    FaImage,
     FaTrash,
     FaArrowLeft,
     FaExclamationTriangle,
     FaCheckCircle
 } from 'react-icons/fa';
-import logo from '../../assets/NEST Logo Final.png';
-import { getPrintTemplates, createPrintTemplate, updatePrintTemplate, deletePrintTemplate, setDefaultTemplate } from '../../api/printTemplateApi';
+import billBullLogo from '../../assets/billBullLogo.png';
+import { getCompanyProfile } from '../../api/companyProfileApi';
+import {
+    createPrintTemplate,
+    deletePrintTemplate,
+    getPrintTemplates,
+    setDefaultTemplate,
+    updatePrintTemplate
+} from '../../api/printTemplateApi';
+import DocumentPreviewCanvas from '../../components/DocumentPreviewCanvas';
+import { useCompany } from '../../context/CompanyContext';
+import { generateEmailHtml, generatePrintHtml } from '../../utils/printGenerator';
+import {
+    buildPurchasePreviewData,
+    getDefaultPurchaseTemplates,
+    normalizePurchaseTemplate,
+    PURCHASE_TEMPLATE_CATEGORIES,
+    serializeTemplateForApi
+} from '../../utils/purchasePrintUtils';
 
-const COMPANY_DETAILS = {
-    name: "New Extreme Sports Trading LLC",
-    address: "M1 Office, Al Harthi Building, Rolla Street, Bur Dubai, Dubai - U.A.E",
-    email: "admin@extremesportstrading.com",
-    phone: "04 393 9169",
-    trn: "100014932600003"
-};
-
-const defaultTemplates = [
-    {
-        category: "Local Purchase Order",
-        name: "Standard LPO",
-        isDefault: true,
-        paperSize: "A4",
-        orientation: "Portrait",
-        headerContent: "",
-        termsContent: `1. Delivery: Goods must be delivered within the specified time frame.
-2. Compliance: All goods must meet the quality standards and specifications mentioned.
-3. Documentation: Original delivery note and invoice must accompany the shipment.
-4. Taxes: Prices are inclusive of VAT unless stated otherwise.`,
-        footerContent: "",
-        displayOptions: JSON.stringify({
-            showLogo: true,
-            showCompanyDetails: true,
-            showCustomerDetails: true,
-            showTerms: true,
-            showItemImage: false
-        }),
-        columns: JSON.stringify({
-            productId: false, sku: false, arabicName: false,
-            item: true,
-            description: true,
-            qty: true,
-            unitPrice: true,
-            discount: true,
-            tax: true,
-            total: true
-        })
-    },
-    {
-        category: "Goods Receipt Note",
-        name: "Standard GRN",
-        isDefault: true,
-        paperSize: "A4",
-        orientation: "Portrait",
-        headerContent: "",
-        termsContent: `1. Verification: All items received are subject to final inspection and verification.
-2. Discrepancies: Any shortages or damages must be noted immediately.`,
-        footerContent: "",
-        displayOptions: JSON.stringify({
-            showLogo: true,
-            showCompanyDetails: true,
-            showCustomerDetails: true,
-            showTerms: true,
-            showItemImage: false
-        }),
-        columns: JSON.stringify({
-            productId: false, sku: false, arabicName: false,
-            item: true,
-            description: true,
-            qty: true,
-            unitPrice: false,
-            discount: false,
-            tax: false,
-            total: false
-        })
-    },
-    {
-        category: "Purchase Invoice",
-        name: "Standard Purchase Invoice",
-        isDefault: true,
-        paperSize: "A4",
-        orientation: "Portrait",
-        headerContent: "",
-        termsContent: `1. Payment Terms: As per the agreed credit period from the date of invoice.
-2. Reconciliation: Statement of account must be provided monthly.`,
-        footerContent: "",
-        displayOptions: JSON.stringify({
-            showLogo: true,
-            showCompanyDetails: true,
-            showCustomerDetails: true,
-            showTerms: true,
-            showItemImage: false
-        }),
-        columns: JSON.stringify({
-            productId: false, sku: false, arabicName: false,
-            item: true,
-            description: true,
-            qty: true,
-            unitPrice: true,
-            discount: true,
-            tax: true,
-            total: true
-        })
-    },
-    {
-        category: "Payment Voucher",
-        name: "Standard Payment Voucher",
-        isDefault: true,
-        paperSize: "A4",
-        orientation: "Portrait",
-        headerContent: "",
-        termsContent: `1. This payment voucher confirms the payment made to the vendor.
-2. All details are subject to verification.`,
-        footerContent: `Thank you for your business.`,
-        displayOptions: JSON.stringify({
-            showLogo: true,
-            showCompanyDetails: true,
-            showCustomerDetails: true,
-            showTerms: true,
-            showItemImage: false
-        }),
-        columns: JSON.stringify({
-            productId: false, sku: false, arabicName: false,
-            item: true,
-            description: true,
-            qty: true,
-            unitPrice: true,
-            discount: false,
-            tax: false,
-            total: true
-        })
-    }
+const PURCHASE_CATEGORY_META = [
+    { title: 'Local Purchase Order', description: 'Vendor purchase order template', icon: FaClipboardList },
+    { title: 'Goods Receipt Note', description: 'Goods receipt confirmation template', icon: FaTruck },
+    { title: 'Purchase Invoice', description: 'Vendor purchase invoice template', icon: FaFileInvoiceDollar },
+    { title: 'Payment Voucher', description: 'Vendor payment voucher template', icon: FaFileInvoice }
 ];
+
+const formatTemplateDate = (template) => {
+    const rawValue =
+        template?.lastModified ||
+        template?.updatedAt ||
+        template?.updatedDate ||
+        template?.modifiedDate ||
+        template?.createdAt ||
+        template?.createdDate;
+
+    if (!rawValue) return new Date().toISOString().split('T')[0];
+
+    const parsedDate = new Date(rawValue);
+    if (Number.isNaN(parsedDate.getTime())) {
+        return String(rawValue).split('T')[0];
+    }
+
+    return parsedDate.toISOString().split('T')[0];
+};
 
 const TemplateCard = ({ title, description, count, icon: Icon, onClick, disabled }) => (
     <div
@@ -181,7 +96,7 @@ const TemplateCard = ({ title, description, count, icon: Icon, onClick, disabled
     </div>
 );
 
-const ActionCard = ({ icon: Icon, title, description, colorClass = "text-blue-600 bg-blue-50" }) => (
+const ActionCard = ({ icon: Icon, title, description, colorClass = 'text-blue-600 bg-blue-50' }) => (
     <div className="bg-white p-4 rounded-xl border border-gray-200 shadow-sm flex items-center gap-4 cursor-pointer hover:bg-gray-50 transition-colors">
         <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${colorClass}`}>
             <Icon size={18} />
@@ -229,35 +144,31 @@ const ConfirmationModal = ({ isOpen, onClose, onConfirm, title, message }) => {
     );
 };
 
-const TemplateDesigner = ({ category, onCancel, onSave, initialData }) => {
-    // --- STATE MANAGEMENT ---
+const TemplateDesigner = ({ category, onCancel, onSave, initialData, previewCompany }) => {
     const [showPreview, setShowPreview] = useState(false);
 
-    // Basic Settings
-    const [templateName, setTemplateName] = useState(initialData?.name || `New ${category.title} Template`);
-    const [paperSize, setPaperSize] = useState(initialData?.paperSize || 'A4');
-    const [orientation, setOrientation] = useState(initialData?.orientation || 'Portrait');
+    const baseTemplate = useMemo(
+        () => normalizePurchaseTemplate(initialData || { category: category.title }, category.title),
+        [initialData, category.title]
+    );
 
-    // Content
-    const [headerContent, setHeaderContent] = useState(initialData?.headerContent || '');
-    const [termsContent, setTermsContent] = useState(initialData?.termsContent || '');
-    const [footerContent, setFooterContent] = useState(initialData?.footerContent || '');
-
-    // Display Options
-    const [displayOptions, setDisplayOptions] = useState(initialData?.displayOptions || {
+    const [templateName, setTemplateName] = useState(baseTemplate?.name || `New ${category.title} Template`);
+    const [paperSize, setPaperSize] = useState(baseTemplate?.paperSize || 'A4');
+    const [orientation, setOrientation] = useState(baseTemplate?.orientation || 'Portrait');
+    const [headerContent, setHeaderContent] = useState(baseTemplate?.headerContent || '');
+    const [termsContent, setTermsContent] = useState(baseTemplate?.termsContent || '');
+    const [footerContent, setFooterContent] = useState(baseTemplate?.footerContent || '');
+    const [displayOptions, setDisplayOptions] = useState(baseTemplate?.displayOptions || {
         showLogo: true,
         showCompanyDetails: true,
         showCustomerDetails: true,
         showTerms: true,
         showItemImage: false
     });
-
-    // Table Columns
-    const [columns, setColumns] = useState(initialData?.columns || {
+    const [columns, setColumns] = useState(baseTemplate?.columns || {
         productId: false,
         sku: false,
         arabicName: false,
-        item: true,
         description: true,
         qty: true,
         unitPrice: true,
@@ -266,17 +177,50 @@ const TemplateDesigner = ({ category, onCancel, onSave, initialData }) => {
         total: true
     });
 
+    const previewTemplate = useMemo(() => normalizePurchaseTemplate({
+        ...baseTemplate,
+        id: initialData?.id,
+        category: category.title,
+        name: templateName,
+        paperSize,
+        orientation,
+        headerContent,
+        termsContent,
+        footerContent,
+        displayOptions,
+        columns,
+        isDefault: initialData?.isDefault || false
+    }, category.title), [baseTemplate, category.title, columns, displayOptions, footerContent, headerContent, initialData?.id, initialData?.isDefault, orientation, paperSize, templateName, termsContent]);
+
+    const previewHtml = useMemo(() => generatePrintHtml(
+        previewTemplate,
+        buildPurchasePreviewData(category.title, previewCompany),
+        {
+            companyProfile: previewCompany,
+            billBullLogo
+        }
+    ), [previewTemplate, category.title, previewCompany]);
+
+    const previewEmailHtml = useMemo(() => generateEmailHtml(
+        previewTemplate,
+        buildPurchasePreviewData(category.title, previewCompany),
+        {
+            companyProfile: previewCompany,
+            billBullLogo
+        }
+    ), [previewTemplate, category.title, previewCompany]);
+
     const handleDisplayOptionChange = (key) => {
-        setDisplayOptions(prev => ({ ...prev, [key]: !prev[key] }));
+        setDisplayOptions((prev) => ({ ...prev, [key]: !prev[key] }));
     };
 
     const handleColumnChange = (key) => {
-        setColumns(prev => ({ ...prev, [key]: !prev[key] }));
+        setColumns((prev) => ({ ...prev, [key]: !prev[key] }));
     };
 
     const handleSave = () => {
-        const templateData = {
-            id: initialData?.id, // ID is undefined for new templates
+        onSave({
+            id: initialData?.id,
             category: category.title,
             name: templateName,
             paperSize,
@@ -286,46 +230,21 @@ const TemplateDesigner = ({ category, onCancel, onSave, initialData }) => {
             footerContent,
             displayOptions,
             columns,
-            lastModified: new Date().toISOString().split('T')[0],
             isDefault: initialData?.isDefault || false
-        };
-        onSave(templateData);
+        });
     };
 
-    // Helper for Paper Dimensions
-    const getPaperStyle = () => {
-        const dimensions = {
-            'A3': { width: '297mm', height: '420mm' },
-            'A4': { width: '210mm', height: '297mm' },
-            'A5': { width: '148mm', height: '210mm' },
-            'Letter': { width: '216mm', height: '279mm' },
-            'Legal': { width: '216mm', height: '356mm' }
-        };
-
-        const base = dimensions[paperSize] || dimensions['A4'];
-        const isLandscape = orientation === 'Landscape';
-
-        const width = isLandscape ? base.height : base.width;
-        const height = isLandscape ? base.width : base.height;
-
-        return {
-            width: '100%',
-            maxWidth: width,
-            minHeight: height,
-            aspectRatio: `${width.replace('mm', '')}/${height.replace('mm', '')}`
-        };
-    };
+    const CategoryIcon = category.icon;
 
     return (
         <div className="flex flex-col h-full bg-gray-50 text-slate-800 font-sans">
-            {/* Header / Breadcrumbs */}
             <div className="px-8 py-5 border-b border-gray-200 bg-white">
                 <div className="text-xs text-gray-500 mb-2 font-medium">
-                    Vendors & Purchases &gt; Print & Email Templates &gt; Template Designer
+                    Vendors &amp; Purchases &gt; Print &amp; Email Templates &gt; Template Designer
                 </div>
                 <div className="flex justify-between items-center">
                     <h1 className="text-2xl font-bold text-gray-900 flex items-center gap-2">
-                        <span className="text-yellow-500"><category.icon /></span>
+                        <span className="text-yellow-500"><CategoryIcon /></span>
                         {initialData ? 'Edit' : 'New'} {category.title} Template
                     </h1>
                     <div className="flex items-center gap-3">
@@ -351,14 +270,9 @@ const TemplateDesigner = ({ category, onCancel, onSave, initialData }) => {
                 </div>
             </div>
 
-            {/* Content Area */}
             <div className="p-8 flex-1 overflow-auto">
                 <div className="flex flex-col lg:flex-row gap-6">
-
-                    {/* LEFT COLUMN */}
                     <div className="flex-1 space-y-6">
-
-                        {/* Basic Settings */}
                         <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-6">
                             <div className="flex items-center gap-2 mb-4 text-yellow-600">
                                 <FaSlidersH />
@@ -403,7 +317,6 @@ const TemplateDesigner = ({ category, onCancel, onSave, initialData }) => {
                             </div>
                         </div>
 
-                        {/* Display Options */}
                         <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-6">
                             <div className="flex items-center gap-2 mb-4 text-yellow-600">
                                 <FaToggleOn />
@@ -413,7 +326,7 @@ const TemplateDesigner = ({ category, onCancel, onSave, initialData }) => {
                                 <label className="flex items-center gap-2 cursor-pointer">
                                     <input
                                         type="checkbox"
-                                        checked={displayOptions.showLogo}
+                                        checked={!!displayOptions.showLogo}
                                         onChange={() => handleDisplayOptionChange('showLogo')}
                                         className="w-4 h-4 text-yellow-500 rounded border-gray-300 focus:ring-yellow-400"
                                     />
@@ -422,7 +335,7 @@ const TemplateDesigner = ({ category, onCancel, onSave, initialData }) => {
                                 <label className="flex items-center gap-2 cursor-pointer">
                                     <input
                                         type="checkbox"
-                                        checked={displayOptions.showCompanyDetails}
+                                        checked={displayOptions.showCompanyDetails !== false}
                                         onChange={() => handleDisplayOptionChange('showCompanyDetails')}
                                         className="w-4 h-4 text-yellow-500 rounded border-gray-300 focus:ring-yellow-400"
                                     />
@@ -431,7 +344,7 @@ const TemplateDesigner = ({ category, onCancel, onSave, initialData }) => {
                                 <label className="flex items-center gap-2 cursor-pointer">
                                     <input
                                         type="checkbox"
-                                        checked={displayOptions.showCustomerDetails}
+                                        checked={!!displayOptions.showCustomerDetails}
                                         onChange={() => handleDisplayOptionChange('showCustomerDetails')}
                                         className="w-4 h-4 text-yellow-500 rounded border-gray-300 focus:ring-yellow-400"
                                     />
@@ -440,16 +353,16 @@ const TemplateDesigner = ({ category, onCancel, onSave, initialData }) => {
                                 <label className="flex items-center gap-2 cursor-pointer">
                                     <input
                                         type="checkbox"
-                                        checked={displayOptions.showTerms}
+                                        checked={!!displayOptions.showTerms}
                                         onChange={() => handleDisplayOptionChange('showTerms')}
                                         className="w-4 h-4 text-yellow-500 rounded border-gray-300 focus:ring-yellow-400"
                                     />
-                                    <span className="text-sm text-gray-700 font-medium">Show Terms & Conditions</span>
+                                    <span className="text-sm text-gray-700 font-medium">Show Terms &amp; Conditions</span>
                                 </label>
                                 <label className="flex items-center gap-2 cursor-pointer">
                                     <input
                                         type="checkbox"
-                                        checked={displayOptions.showItemImage}
+                                        checked={!!displayOptions.showItemImage}
                                         onChange={() => handleDisplayOptionChange('showItemImage')}
                                         className="w-4 h-4 text-yellow-500 rounded border-gray-300 focus:ring-yellow-400"
                                     />
@@ -458,7 +371,6 @@ const TemplateDesigner = ({ category, onCancel, onSave, initialData }) => {
                             </div>
                         </div>
 
-                        {/* Table Columns */}
                         <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-6">
                             <div className="flex items-center gap-2 mb-4 text-yellow-600">
                                 <FaListUl />
@@ -470,7 +382,7 @@ const TemplateDesigner = ({ category, onCancel, onSave, initialData }) => {
                                 <label className="flex items-center gap-2 cursor-pointer">
                                     <input
                                         type="checkbox"
-                                        checked={columns.productId}
+                                        checked={!!columns.productId}
                                         onChange={() => handleColumnChange('productId')}
                                         className="w-4 h-4 text-yellow-500 rounded border-gray-300 focus:ring-yellow-400"
                                     />
@@ -479,7 +391,7 @@ const TemplateDesigner = ({ category, onCancel, onSave, initialData }) => {
                                 <label className="flex items-center gap-2 cursor-pointer">
                                     <input
                                         type="checkbox"
-                                        checked={columns.sku}
+                                        checked={!!columns.sku}
                                         onChange={() => handleColumnChange('sku')}
                                         className="w-4 h-4 text-yellow-500 rounded border-gray-300 focus:ring-yellow-400"
                                     />
@@ -488,7 +400,7 @@ const TemplateDesigner = ({ category, onCancel, onSave, initialData }) => {
                                 <label className="flex items-center gap-2 cursor-pointer">
                                     <input
                                         type="checkbox"
-                                        checked={columns.arabicName}
+                                        checked={!!columns.arabicName}
                                         onChange={() => handleColumnChange('arabicName')}
                                         className="w-4 h-4 text-yellow-500 rounded border-gray-300 focus:ring-yellow-400"
                                     />
@@ -498,16 +410,7 @@ const TemplateDesigner = ({ category, onCancel, onSave, initialData }) => {
                                 <label className="flex items-center gap-2 cursor-pointer">
                                     <input
                                         type="checkbox"
-                                        checked={columns.item}
-                                        onChange={() => handleColumnChange('item')}
-                                        className="w-4 h-4 text-yellow-500 rounded border-gray-300 focus:ring-yellow-400"
-                                    />
-                                    <span className="text-sm text-gray-700 font-medium">Item</span>
-                                </label>
-                                <label className="flex items-center gap-2 cursor-pointer">
-                                    <input
-                                        type="checkbox"
-                                        checked={columns.description}
+                                        checked={columns.description !== false}
                                         onChange={() => handleColumnChange('description')}
                                         className="w-4 h-4 text-yellow-500 rounded border-gray-300 focus:ring-yellow-400"
                                     />
@@ -516,7 +419,7 @@ const TemplateDesigner = ({ category, onCancel, onSave, initialData }) => {
                                 <label className="flex items-center gap-2 cursor-pointer">
                                     <input
                                         type="checkbox"
-                                        checked={columns.qty}
+                                        checked={!!columns.qty}
                                         onChange={() => handleColumnChange('qty')}
                                         className="w-4 h-4 text-yellow-500 rounded border-gray-300 focus:ring-yellow-400"
                                     />
@@ -525,7 +428,7 @@ const TemplateDesigner = ({ category, onCancel, onSave, initialData }) => {
                                 <label className="flex items-center gap-2 cursor-pointer">
                                     <input
                                         type="checkbox"
-                                        checked={columns.unitPrice}
+                                        checked={!!columns.unitPrice}
                                         onChange={() => handleColumnChange('unitPrice')}
                                         className="w-4 h-4 text-yellow-500 rounded border-gray-300 focus:ring-yellow-400"
                                     />
@@ -534,7 +437,7 @@ const TemplateDesigner = ({ category, onCancel, onSave, initialData }) => {
                                 <label className="flex items-center gap-2 cursor-pointer">
                                     <input
                                         type="checkbox"
-                                        checked={columns.discount}
+                                        checked={!!columns.discount}
                                         onChange={() => handleColumnChange('discount')}
                                         className="w-4 h-4 text-yellow-500 rounded border-gray-300 focus:ring-yellow-400"
                                     />
@@ -543,7 +446,7 @@ const TemplateDesigner = ({ category, onCancel, onSave, initialData }) => {
                                 <label className="flex items-center gap-2 cursor-pointer">
                                     <input
                                         type="checkbox"
-                                        checked={columns.tax}
+                                        checked={!!columns.tax}
                                         onChange={() => handleColumnChange('tax')}
                                         className="w-4 h-4 text-yellow-500 rounded border-gray-300 focus:ring-yellow-400"
                                     />
@@ -552,7 +455,7 @@ const TemplateDesigner = ({ category, onCancel, onSave, initialData }) => {
                                 <label className="flex items-center gap-2 cursor-pointer">
                                     <input
                                         type="checkbox"
-                                        checked={columns.total}
+                                        checked={columns.total !== false}
                                         onChange={() => handleColumnChange('total')}
                                         className="w-4 h-4 text-yellow-500 rounded border-gray-300 focus:ring-yellow-400"
                                     />
@@ -560,188 +463,69 @@ const TemplateDesigner = ({ category, onCancel, onSave, initialData }) => {
                                 </label>
                             </div>
                         </div>
-
                     </div>
 
-                    {/* RIGHT COLUMN */}
                     <div className="flex-[2] space-y-6">
+                        <div className="rounded-xl border border-blue-100 bg-blue-50 p-5">
+                            <h3 className="text-sm font-bold text-blue-900">System-Controlled Layout</h3>
+                            <p className="mt-2 text-xs leading-6 text-blue-800">
+                                Purchase documents now render through a fixed layout system: document header, vendor and reference cards, structured item columns, totals, terms, and footer stay consistent while the fields below add supporting content inside those regions.
+                            </p>
+                        </div>
 
-                        {/* Header Section */}
                         <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-6">
                             <div className="flex items-center gap-2 mb-2 text-yellow-600">
                                 <FaCode />
-                                <h3 className="font-bold text-gray-900 text-sm">Header Section</h3>
+                                <h3 className="font-bold text-gray-900 text-sm">Header Add-on</h3>
                             </div>
-                            <p className="text-xs text-gray-400 mb-3">Enter custom HTML for header (optional). Variables: &#123;company_name&#125;, &#123;company_address&#125;, &#123;logo&#125;</p>
+                            <p className="text-xs text-gray-400 mb-3">Optional HTML rendered inside the system header area. Variables: &#123;company_name&#125;, &#123;company_address&#125;, &#123;logo&#125;</p>
                             <textarea
                                 value={headerContent}
                                 onChange={(e) => setHeaderContent(e.target.value)}
                                 className="w-full h-32 text-sm border border-gray-300 rounded-lg p-3 font-mono text-slate-600 focus:outline-none focus:border-yellow-400 bg-gray-50"
                                 placeholder="<div>...</div>"
-                            ></textarea>
+                            />
                         </div>
 
-                        {/* Terms & Conditions */}
                         <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-6">
                             <div className="flex items-center gap-2 mb-2 text-yellow-600">
                                 <FaAlignLeft />
-                                <h3 className="font-bold text-gray-900 text-sm">Terms & Conditions</h3>
+                                <h3 className="font-bold text-gray-900 text-sm">Terms &amp; Conditions</h3>
                             </div>
                             <p className="text-xs text-gray-400 mb-3">Enter terms and conditions</p>
                             <textarea
                                 value={termsContent}
                                 onChange={(e) => setTermsContent(e.target.value)}
                                 className="w-full h-32 text-sm border border-gray-300 rounded-lg p-3 focus:outline-none focus:border-yellow-400"
-                                placeholder="1. Goods once sold will not be taken back..."
-                            ></textarea>
+                                placeholder="1. Goods once received are subject to final verification..."
+                            />
                         </div>
 
-                        {/* Footer Section */}
                         <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-6">
                             <div className="flex items-center gap-2 mb-2 text-yellow-600">
                                 <FaCode />
-                                <h3 className="font-bold text-gray-900 text-sm">Footer Section</h3>
+                                <h3 className="font-bold text-gray-900 text-sm">Footer Add-on</h3>
                             </div>
-                            <p className="text-xs text-gray-400 mb-3">Enter custom HTML for footer (optional). Variables: &#123;page_number&#125;, &#123;total_pages&#125;, &#123;company_phone&#125;, &#123;company_email&#125;</p>
+                            <p className="text-xs text-gray-400 mb-3">Optional HTML rendered near the standard footer bar. Variables: &#123;page_number&#125;, &#123;total_pages&#125;, &#123;company_phone&#125;, &#123;company_email&#125;</p>
                             <textarea
                                 value={footerContent}
                                 onChange={(e) => setFooterContent(e.target.value)}
                                 className="w-full h-32 text-sm border border-gray-300 rounded-lg p-3 font-mono text-slate-600 focus:outline-none focus:border-yellow-400 bg-gray-50"
                                 placeholder="<div>...</div>"
-                            ></textarea>
+                            />
                         </div>
 
-                        {/* Live Preview Section */}
                         {showPreview && (
                             <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-6 animate-in fade-in slide-in-from-bottom-4">
-                                <div className="flex items-center gap-2 mb-4 text-yellow-600">
-                                    <FaEye />
-                                    <h3 className="font-bold text-gray-900 text-sm">Live Preview</h3>
-                                </div>
-
-                                {/* Dynamic Paper Mockup */}
-                                <div
-                                    className="border border-gray-300 shadow-lg mx-auto bg-white p-8 relative transition-all duration-300 ease-in-out flex flex-col"
-                                    style={getPaperStyle()}
-                                >
-
-                                    {/* Header Content (if any) */}
-                                    {headerContent && (
-                                        <div className="mb-4 text-sm" dangerouslySetInnerHTML={{ __html: headerContent }} />
-                                    )}
-
-                                    {/* Header */}
-                                    <div className="flex justify-between items-start mb-8 border-b border-gray-200 pb-6">
-                                        <div className="flex items-center gap-4">
-                                            {displayOptions.showLogo && (
-                                                <div className="w-16 h-16 flex items-center justify-center">
-                                                    <img src={logo} alt="Company Logo" className="max-w-full max-h-full object-contain" />
-                                                </div>
-                                            )}
-                                            {displayOptions.showCompanyDetails && (
-                                                <div>
-                                                    <h2 className="font-bold text-lg text-slate-800">New Extreme Sports Trading LLC</h2>
-                                                    <p className="text-xs text-gray-500">M1 Office, Al Harthi Building, Rolla Street, Bur Dubai, Dubai - U.A.E</p>
-                                                    <p className="text-xs text-gray-500">Email: admin@extremesportstrading.com | Phone: 04 393 9169</p>
-                                                    <p className="text-xs text-gray-500">TRN: 100014932600003</p>
-                                                </div>
-                                            )}
-                                        </div>
-                                        <div className="text-right">
-                                            <h1 className="text-2xl font-bold text-gray-900">{category.title}</h1>
-                                            <p className="text-sm text-gray-500">Date: {new Date().toLocaleDateString()}</p>
-                                            <p className="text-sm text-gray-500">Ref: PO-2024-001</p>
-                                        </div>
-                                    </div>
-
-                                    {/* Vendor Details */}
-                                    {displayOptions.showCustomerDetails && (
-                                        <div className="mb-8">
-                                            <h3 className="font-bold text-sm text-slate-800 mb-1">Vendor:</h3>
-                                            <div className="text-sm text-gray-600">
-                                                <p className="font-semibold">Vendor Name</p>
-                                                <p>Vendor Address Line 1</p>
-                                                <p>City, State, Zip</p>
-                                                <p>Phone: +1 234 567 890</p>
-                                            </div>
-                                        </div>
-                                    )}
-
-                                    {/* Table */}
-                                    <div className="mb-8 flex-1">
-                                        <table className="w-full text-sm">
-                                            <thead className="bg-gray-50 border-y border-gray-200">
-                                                <tr className="text-left text-gray-600">
-                                                    {columns.productId && <th className="py-2 px-2 font-semibold text-center">Product ID</th>}
-                                                    {columns.sku && <th className="py-2 px-2 font-semibold">SKU</th>}
-                                                    {columns.arabicName && <th className="py-2 px-2 font-semibold text-right">Arabic Name</th>}
-                                                    {columns.item && <th className="py-2 px-2 font-semibold">Item</th>}
-                                                    {columns.description && <th className="py-2 px-2 font-semibold">Description</th>}
-                                                    {columns.qty && <th className="py-2 px-2 font-semibold text-right">Qty</th>}
-                                                    {columns.unitPrice && <th className="py-2 px-2 font-semibold text-right">Unit Price</th>}
-                                                    {columns.discount && <th className="py-2 px-2 font-semibold text-right">Discount</th>}
-                                                    {columns.tax && <th className="py-2 px-2 font-semibold text-right">Tax</th>}
-                                                    {columns.total && <th className="py-2 px-2 font-semibold text-right">Total</th>}
-                                                </tr>
-                                            </thead>
-                                            <tbody className="divide-y divide-gray-100">
-                                                {[1, 2, 3].map((i) => (
-                                                    <tr key={i}>
-                                                        {columns.productId && <td className="py-2 px-2 text-center text-gray-400 font-mono text-xs">{100 + i}</td>}
-                                                        {columns.sku && <td className="py-2 px-2 text-gray-400 font-mono text-xs">SKU-{i}00</td>}
-                                                        {columns.arabicName && <td className="py-2 px-2 text-gray-700 text-right" dir="rtl">منتج نموذجي</td>}
-                                                        {columns.item && <td className="py-2 px-2 text-gray-700">
-                                                            {!columns.description && displayOptions.showItemImage ? (
-                                                                <div className="flex items-center gap-2">
-                                                                    <div className="min-w-[24px] w-6 h-6 bg-gray-200 rounded flex items-center justify-center text-gray-400 text-[8px]"><FaImage /></div>
-                                                                    <span>Sample Item</span>
-                                                                </div>
-                                                            ) : 'Sample Item'}
-                                                        </td>}
-                                                        {columns.description && <td className="py-2 px-2 text-gray-500">
-                                                            {displayOptions.showItemImage ? (
-                                                                <div className="flex items-center gap-2">
-                                                                    <div className="min-w-[24px] w-6 h-6 bg-gray-200 rounded flex items-center justify-center text-gray-400 text-[8px]"><FaImage /></div>
-                                                                    <span>Sample Description</span>
-                                                                </div>
-                                                            ) : 'Sample Description'}
-                                                        </td>}
-                                                        {columns.qty && <td className="py-2 px-2 text-right text-gray-700">10.00</td>}
-                                                        {columns.unitPrice && <td className="py-2 px-2 text-right text-gray-700">100.00</td>}
-                                                        {columns.discount && <td className="py-2 px-2 text-right text-gray-700">0.00</td>}
-                                                        {columns.tax && <td className="py-2 px-2 text-right text-gray-700">5.00</td>}
-                                                        {columns.total && <td className="py-2 px-2 text-right font-medium text-gray-900">1050.00</td>}
-                                                    </tr>
-                                                ))}
-                                            </tbody>
-                                            {columns.total && (
-                                                <tfoot className="border-t border-gray-200">
-                                                    <tr>
-                                                        <td colSpan={Object.values(columns).filter(Boolean).length - 1} className="py-2 px-2 text-right font-bold text-gray-800">Total:</td>
-                                                        <td className="py-2 px-2 text-right font-bold text-gray-900">3150.00</td>
-                                                    </tr>
-                                                </tfoot>
-                                            )}
-                                        </table>
-                                    </div>
-
-                                    {/* Terms */}
-                                    {displayOptions.showTerms && termsContent && (
-                                        <div className="mb-4 border-t border-gray-200 pt-4">
-                                            <h3 className="font-bold text-sm text-slate-800 mb-2">Terms & Conditions</h3>
-                                            <div className="text-xs text-gray-500 whitespace-pre-wrap">{termsContent}</div>
-                                        </div>
-                                    )}
-
-                                    {/* Footer Content */}
-                                    {footerContent && (
-                                        <div className="mt-4 border-t border-gray-200 pt-4 text-xs text-center text-gray-400" dangerouslySetInnerHTML={{ __html: footerContent }} />
-                                    )}
-
-                                </div>
+                                <DocumentPreviewCanvas
+                                    printHtml={previewHtml}
+                                    emailHtml={previewEmailHtml}
+                                    paperSize={paperSize}
+                                    orientation={orientation}
+                                    subtitle="Print preview uses an A4 paper canvas and email preview uses the same structured layout in a responsive wrapper."
+                                />
                             </div>
                         )}
-
                     </div>
                 </div>
             </div>
@@ -750,13 +534,14 @@ const TemplateDesigner = ({ category, onCancel, onSave, initialData }) => {
 };
 
 const TemplateDetailView = ({ category, templates, onBack, onCreate, onEdit, onDuplicate, onDelete, onSetDefault }) => {
+    const CategoryIcon = category.icon;
+
     return (
         <div className="flex flex-col h-full bg-gray-50 text-slate-800 font-sans">
-            {/* Header / Breadcrumbs */}
             <div className="px-8 py-5 border-b border-gray-200 bg-white">
                 <div className="text-xs text-gray-500 mb-2 font-medium">
-                    Vendors & Purchases &gt;
-                    <span className="cursor-pointer hover:text-yellow-600" onClick={onBack}> Print & Email Templates </span>
+                    Vendors &amp; Purchases &gt;
+                    <span className="cursor-pointer hover:text-yellow-600" onClick={onBack}> Print &amp; Email Templates </span>
                     &gt; <span className="text-gray-900">{category.title}</span>
                 </div>
                 <div className="flex justify-between items-center">
@@ -769,7 +554,7 @@ const TemplateDetailView = ({ category, templates, onBack, onCreate, onEdit, onD
                             <FaArrowLeft size={16} />
                         </button>
                         <h1 className="text-2xl font-bold text-gray-900 flex items-center gap-2">
-                            <span className="text-yellow-500"><category.icon /></span>
+                            <span className="text-yellow-500"><CategoryIcon /></span>
                             {category.title} Templates
                         </h1>
                     </div>
@@ -783,7 +568,6 @@ const TemplateDetailView = ({ category, templates, onBack, onCreate, onEdit, onD
                 <p className="text-gray-500 mt-1 text-sm">{category.description}</p>
             </div>
 
-            {/* Content Area */}
             <div className="p-8 flex-1 overflow-auto">
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                     {templates.length === 0 ? (
@@ -795,7 +579,7 @@ const TemplateDetailView = ({ category, templates, onBack, onCreate, onEdit, onD
                             <p className="text-sm">Create a new template to get started.</p>
                         </div>
                     ) : (
-                        templates.map(template => (
+                        templates.map((template) => (
                             <div key={template.id} className="bg-white rounded-xl border border-gray-200 shadow-sm p-6 flex flex-col relative group">
                                 <div className="flex justify-between items-start mb-4">
                                     <div>
@@ -806,7 +590,7 @@ const TemplateDetailView = ({ category, templates, onBack, onCreate, onEdit, onD
                                             )}
                                         </div>
                                         <div className="text-xs text-gray-500 mt-2 space-y-1">
-                                            <p>Last modified: {template.lastModified}</p>
+                                            <p>Last modified: {formatTemplateDate(template)}</p>
                                             <p>Paper: {template.paperSize} ({template.orientation})</p>
                                         </div>
                                     </div>
@@ -856,91 +640,76 @@ const TemplateDetailView = ({ category, templates, onBack, onCreate, onEdit, onD
 };
 
 const PurchasePrintEmailTemplates = () => {
+    const { company } = useCompany();
     const [selectedCategory, setSelectedCategory] = useState(null);
     const [isCreating, setIsCreating] = useState(false);
     const [editingTemplate, setEditingTemplate] = useState(null);
-
-    // Delete Modal State
     const [showDeleteModal, setShowDeleteModal] = useState(false);
     const [templateToDelete, setTemplateToDelete] = useState(null);
-
-    // State for all templates loaded from backend
     const [allTemplates, setAllTemplates] = useState([]);
+    const [previewCompanyProfile, setPreviewCompanyProfile] = useState(company || null);
 
     useEffect(() => {
         loadTemplates();
     }, []);
 
+    useEffect(() => {
+        if (company) {
+            setPreviewCompanyProfile(company);
+            return;
+        }
+
+        let isActive = true;
+        getCompanyProfile()
+            .then((res) => {
+                if (isActive) {
+                    setPreviewCompanyProfile(res.data || null);
+                }
+            })
+            .catch(() => {});
+
+        return () => {
+            isActive = false;
+        };
+    }, [company]);
+
     const loadTemplates = async () => {
         try {
             const data = await getPrintTemplates();
+            const purchaseTemplates = data
+                .filter((template) => PURCHASE_TEMPLATE_CATEGORIES.includes(template.category))
+                .map((template) => normalizePurchaseTemplate(template, template.category));
 
-            // Filter for purchase categories or seeding
-            const purchaseCategories = [
-                "Local Purchase Order",
-                "Goods Receipt Note",
-                "Purchase Invoice",
-                "Purchase Return",
-                "Payment Voucher"
-            ];
+            const missingCategories = PURCHASE_TEMPLATE_CATEGORIES.filter(
+                (category) => !purchaseTemplates.some((template) => template.category === category)
+            );
 
-            const purchaseData = data.filter(t => purchaseCategories.includes(t.category));
+            if (missingCategories.length > 0) {
+                const defaultsToCreate = getDefaultPurchaseTemplates()
+                    .filter((template) => missingCategories.includes(template.category));
 
-            // Auto-seed if empty for these categories
-            if (purchaseData.length === 0) {
-                console.log("No purchase templates found. Seeding defaults...");
-                await seedDefaultTemplates();
+                for (const template of defaultsToCreate) {
+                    await createPrintTemplate(template);
+                }
+
+                const refreshedData = await getPrintTemplates();
+                setAllTemplates(
+                    refreshedData
+                        .filter((template) => PURCHASE_TEMPLATE_CATEGORIES.includes(template.category))
+                        .map((template) => normalizePurchaseTemplate(template, template.category))
+                );
                 return;
             }
 
-            // Parse JSON fields
-            const parsedData = purchaseData.map(t => {
-                let displayOptions = {};
-                try {
-                    displayOptions = typeof t.displayOptions === 'string' ? JSON.parse(t.displayOptions) : t.displayOptions;
-                } catch (e) {
-                    console.error("Error parsing displayOptions", e);
-                }
-
-                let columns = {};
-                try {
-                    columns = typeof t.columns === 'string' ? JSON.parse(t.columns) : t.columns;
-                } catch (e) {
-                    console.error("Error parsing columns", e);
-                }
-
-                return {
-                    ...t,
-                    displayOptions: displayOptions || {},
-                    columns: columns || {}
-                };
-            });
-            setAllTemplates(parsedData);
+            setAllTemplates(purchaseTemplates);
         } catch (error) {
-            console.error("Error loading templates:", error);
+            console.error('Error loading purchase templates:', error);
         }
     };
 
-    const seedDefaultTemplates = async () => {
-        try {
-            for (const template of defaultTemplates) {
-                await createPrintTemplate(template);
-            }
-            // Reload after seeding
-            loadTemplates();
-        } catch (error) {
-            console.error("Error seeding default templates:", error);
-        }
-    };
-
-    const categoryTemplates = [
-        { title: "Local Purchase Order", description: "Standard LPO print template", icon: FaFileInvoice },
-        { title: "Goods Receipt Note", description: "Inventory receipt confirmation", icon: FaTruck },
-        { title: "Purchase Invoice", description: "Vendor invoice record", icon: FaFileInvoiceDollar },
-        { title: "Purchase Return", description: "Debit note / return voucher", icon: FaUndo, disabled: true }
-    ].map(cat => ({
-        ...cat,
-        count: allTemplates.filter(t => t.category === cat.title).length
+    const categoryTemplates = PURCHASE_CATEGORY_META.map((category) => ({
+        ...category,
+        count: allTemplates.filter((template) => template.category === category.title).length
     }));
 
     const handleCreateNew = () => {
@@ -954,30 +723,20 @@ const PurchasePrintEmailTemplates = () => {
     };
 
     const handleDuplicate = async (template) => {
-        const payload = {
-            category: template.category,
-            name: `${template.name} - Copy`,
-            isDefault: false,
-            paperSize: template.paperSize,
-            orientation: template.orientation,
-            headerContent: template.headerContent,
-            termsContent: template.termsContent,
-            footerContent: template.footerContent,
-            displayOptions: JSON.stringify(template.displayOptions),
-            columns: JSON.stringify(template.columns)
-        };
-
         try {
-            const savedTemplate = await createPrintTemplate(payload);
-            const parsedTemplate = {
-                ...savedTemplate,
-                displayOptions: JSON.parse(savedTemplate.displayOptions),
-                columns: JSON.parse(savedTemplate.columns)
-            };
-            setAllTemplates(prev => [...prev, parsedTemplate]);
+            const duplicatePayload = serializeTemplateForApi({
+                ...normalizePurchaseTemplate(template, template.category),
+                id: undefined,
+                name: `${template.name} - Copy`,
+                isDefault: false
+            });
+
+            const { id, ...createPayload } = duplicatePayload;
+            await createPrintTemplate(createPayload);
+            await loadTemplates();
         } catch (error) {
-            console.error("Error duplicating template:", error);
-            alert("Failed to duplicate template");
+            console.error('Error duplicating purchase template:', error);
+            alert('Failed to duplicate template');
         }
     };
 
@@ -991,71 +750,46 @@ const PurchasePrintEmailTemplates = () => {
 
         try {
             await deletePrintTemplate(templateToDelete);
-            setAllTemplates(prev => prev.filter(t => t.id !== templateToDelete));
             setShowDeleteModal(false);
             setTemplateToDelete(null);
+            await loadTemplates();
         } catch (error) {
-            console.error("Error deleting template:", error);
-            alert("Failed to delete template");
+            console.error('Error deleting purchase template:', error);
+            alert('Failed to delete template');
         }
     };
 
     const handleSaveTemplate = async (templateData) => {
         try {
-            const payload = {
-                ...templateData,
-                displayOptions: JSON.stringify(templateData.displayOptions),
-                columns: JSON.stringify(templateData.columns)
-            };
+            const normalizedTemplate = normalizePurchaseTemplate(templateData, templateData.category);
+            const payload = serializeTemplateForApi(normalizedTemplate);
 
-            let savedTemplate;
-            if (templateData.id && allTemplates.some(t => t.id === templateData.id)) {
-                savedTemplate = await updatePrintTemplate(templateData.id, payload);
-                const parsedTemplate = {
-                    ...savedTemplate,
-                    displayOptions: JSON.parse(savedTemplate.displayOptions),
-                    columns: JSON.parse(savedTemplate.columns)
-                };
-                setAllTemplates(prev => prev.map(t => t.id === parsedTemplate.id ? parsedTemplate : t));
+            if (templateData.id && allTemplates.some((template) => template.id === templateData.id)) {
+                await updatePrintTemplate(templateData.id, payload);
             } else {
                 const { id, ...createPayload } = payload;
-                savedTemplate = await createPrintTemplate(createPayload);
-                const parsedTemplate = {
-                    ...savedTemplate,
-                    displayOptions: JSON.parse(savedTemplate.displayOptions),
-                    columns: JSON.parse(savedTemplate.columns)
-                };
-                setAllTemplates(prev => [...prev, parsedTemplate]);
+                await createPrintTemplate(createPayload);
             }
 
             setIsCreating(false);
             setEditingTemplate(null);
+            await loadTemplates();
         } catch (error) {
-            console.error("Error saving template:", error);
-            alert("Failed to save template");
+            console.error('Error saving purchase template:', error);
+            alert('Failed to save template');
         }
     };
 
     const handleSetDefault = async (template) => {
         try {
-            const updatedTemplate = await setDefaultTemplate(template.id, template);
-            const parsedTemplate = {
-                ...updatedTemplate,
-                displayOptions: JSON.parse(updatedTemplate.displayOptions),
-                columns: JSON.parse(updatedTemplate.columns)
-            };
-
-            setAllTemplates(prev => prev.map(t => {
-                if (t.id === parsedTemplate.id) {
-                    return parsedTemplate;
-                } else if (t.category === parsedTemplate.category) {
-                    return { ...t, isDefault: false };
-                }
-                return t;
+            await setDefaultTemplate(template.id, serializeTemplateForApi({
+                ...normalizePurchaseTemplate(template, template.category),
+                isDefault: true
             }));
+            await loadTemplates();
         } catch (error) {
-            console.error("Error setting default template:", error);
-            alert("Failed to set default template");
+            console.error('Error setting purchase default template:', error);
+            alert('Failed to set default template');
         }
     };
 
@@ -1064,14 +798,18 @@ const PurchasePrintEmailTemplates = () => {
             <TemplateDesigner
                 category={selectedCategory}
                 initialData={editingTemplate}
+                previewCompany={previewCompanyProfile}
                 onSave={handleSaveTemplate}
-                onCancel={() => { setIsCreating(false); setEditingTemplate(null); }}
+                onCancel={() => {
+                    setIsCreating(false);
+                    setEditingTemplate(null);
+                }}
             />
         );
     }
 
     if (selectedCategory) {
-        const templates = allTemplates.filter(t => t.category === selectedCategory.title);
+        const templates = allTemplates.filter((template) => template.category === selectedCategory.title);
         return (
             <>
                 <TemplateDetailView
@@ -1086,7 +824,10 @@ const PurchasePrintEmailTemplates = () => {
                 />
                 <ConfirmationModal
                     isOpen={showDeleteModal}
-                    onClose={() => { setShowDeleteModal(false); setTemplateToDelete(null); }}
+                    onClose={() => {
+                        setShowDeleteModal(false);
+                        setTemplateToDelete(null);
+                    }}
                     onConfirm={confirmDelete}
                     title="Delete Template?"
                     message="Are you sure you want to delete this template? This action cannot be undone and may affect documents using this template."
@@ -1099,14 +840,14 @@ const PurchasePrintEmailTemplates = () => {
         <div className="flex flex-col h-full bg-gray-50 text-slate-800 font-sans">
             <div className="px-8 py-5 border-b border-gray-200 bg-white">
                 <div className="text-xs text-gray-500 mb-2 font-medium">
-                    Vendors & Purchases &gt; <span className="text-gray-900">Print & Email Templates</span>
+                    Vendors &amp; Purchases &gt; <span className="text-gray-900">Print &amp; Email Templates</span>
                 </div>
                 <h1 className="text-2xl font-bold text-gray-900 flex items-center gap-2">
                     <span className="text-yellow-500"><FaFileAlt /></span>
-                    Purchase Print & Email Templates
+                    Print &amp; Email Templates
                 </h1>
                 <p className="text-gray-500 mt-1 text-sm">
-                    Design and customize templates for LPOs, GRNs, and other purchase documents
+                    Design and customize templates for purchase orders, GRNs, vendor invoices, and payment vouchers
                 </p>
             </div>
 
@@ -1146,20 +887,23 @@ const PurchasePrintEmailTemplates = () => {
                 <div className="bg-blue-50 border border-blue-100 rounded-xl p-6">
                     <div className="flex items-center gap-2 mb-3 text-blue-800 font-semibold">
                         <FaLightbulb />
-                        <h3 className="text-sm">Email & Print Tips</h3>
+                        <h3 className="text-sm">Email &amp; Print Tips</h3>
                     </div>
                     <ul className="list-disc list-inside text-sm text-blue-700 space-y-1 ml-1">
-                        <li>Templates are automatically used when emailing or printing purchase documents</li>
-                        <li>Set a default template for LPOs and GRNs for consistent branding with vendors</li>
-                        <li>Use HTML/CSS for advanced customization of headers and footers</li>
-                        <li>Preview templates before saving to ensure correct formatting</li>
+                        <li>Templates are automatically used when printing or emailing purchase documents</li>
+                        <li>Set a default template for each purchase document type to keep layouts consistent</li>
+                        <li>Use HTML and CSS in headers and footers for advanced vendor-facing formatting</li>
+                        <li>Preview templates before saving to confirm the print layout matches sales-style output</li>
                     </ul>
                 </div>
             </div>
 
             <ConfirmationModal
                 isOpen={showDeleteModal}
-                onClose={() => { setShowDeleteModal(false); setTemplateToDelete(null); }}
+                onClose={() => {
+                    setShowDeleteModal(false);
+                    setTemplateToDelete(null);
+                }}
                 onConfirm={confirmDelete}
                 title="Delete Template?"
                 message="Are you sure you want to delete this template? This action cannot be undone and may affect documents using this template."

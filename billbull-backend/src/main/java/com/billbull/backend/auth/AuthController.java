@@ -32,8 +32,10 @@ public class AuthController {
     @PostMapping("/login")
     public LoginResponse login(@RequestBody LoginRequest request) {
 
+        // Accept username OR email in the "username" field — backward compatible
         User user = userRepository
                 .findByUsernameAndIsActiveTrue(request.getUsername())
+                .or(() -> userRepository.findByEmailAndIsActiveTrue(request.getUsername()))
                 .orElseThrow(() -> new RuntimeException("Invalid username or password"));
 
         if (!passwordEncoder.matches(request.getPassword(), user.getPassword())) {

@@ -20,6 +20,9 @@ public class CustomerController {
     @Autowired
     private AuditLogService auditLogService;
 
+    @Autowired
+    private OpeningInvoiceRepository openingInvoiceRepository;
+
     // =========================
     // GET ALL CUSTOMERS
     // =========================
@@ -50,6 +53,17 @@ public class CustomerController {
 
         Customer savedCustomer = service.saveCustomer(customerDTO);
         return ResponseEntity.ok(savedCustomer);
+    }
+
+    // =========================
+    // GET OPENING INVOICES BY CUSTOMER CODE
+    // QA-002: used by Receive Money to show outstanding opening invoices
+    // =========================
+    @GetMapping("/by-code/{customerCode}/opening-invoices")
+    @PreAuthorize("hasAnyRole('ADMIN','SALES','ACCOUNTANT')")
+    public ResponseEntity<List<OpeningInvoice>> getOpeningInvoicesByCode(
+            @PathVariable String customerCode) {
+        return ResponseEntity.ok(openingInvoiceRepository.findByCustomer_Code(customerCode));
     }
 
     // =========================

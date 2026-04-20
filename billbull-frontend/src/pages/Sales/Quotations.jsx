@@ -200,9 +200,10 @@ const Quotations = () => {
     const { company } = useCompany();
     const navigate = useNavigate();
     const [activeTab, setActiveTab] = useState('list');
+    const [editorMode, setEditorMode] = useState('edit');
     const [status, setStatus] = useState('Draft');
     const [searchTerm, setSearchTerm] = useState('');
-    const [sortConfig, setSortConfig] = useState({ key: 'date', direction: 'desc' });
+    const [sortConfig, setSortConfig] = useState({ key: null, direction: 'desc' });
     const [filterStatus, setFilterStatus] = useState('All');
     const [showToast, setShowToast] = useState(false);
     const [toastMessage, setToastMessage] = useState('');
@@ -238,6 +239,7 @@ const Quotations = () => {
     const [isRevisionsOpen, setIsRevisionsOpen] = useState(false);
     const [isReviseModalOpen, setIsReviseModalOpen] = useState(false);
     const [activeActionMenu, setActiveActionMenu] = useState(null);
+    const [actionMenuPosition, setActionMenuPosition] = useState(null);
     const [isPrintModalOpen, setIsPrintModalOpen] = useState(false);
     const [focusedRowId, setFocusedRowId] = useState(null);
     const [highlightedIndex, setHighlightedIndex] = useState(0);
@@ -309,6 +311,14 @@ const Quotations = () => {
     const [selectedAddonItem, setSelectedAddonItem] = useState(null);
     const [isPrinting, setIsPrinting] = useState(false);
 
+    const canEditQuotation = (quotationStatus) => !['Approved', 'Invoiced', 'Converted'].includes(quotationStatus);
+    const isViewMode = activeTab === 'create' && editorMode === 'view';
+    const canEditCurrentQuotation = canEditQuotation(status);
+    const closeActionMenu = () => {
+        setActiveActionMenu(null);
+        setActionMenuPosition(null);
+    };
+
     const [items, setItems] = useState([
         { id: Date.now(), code: '', image: '', desc: '', unit: 'PCS', qty: 0, price: 0, foc: 0, focUnit: 'PCS', availableUnits: ['PCS'], disc: 0, tax: 5, taxAmt: 0.00, total: 0.00, remarks: '', isProductSelected: false }
     ]);
@@ -316,13 +326,13 @@ const Quotations = () => {
     // ✅ GLOBAL SHORTCUTS
     useShortcuts({
         'ctrl+p': (e) => {
-            if (activeTab === 'create') setIsProductSelectionOpen(prev => !prev);
+            if (activeTab === 'create' && !isViewMode) setIsProductSelectionOpen(prev => !prev);
         },
         'ctrl+s': (e) => {
-            if (activeTab === 'create') handleSaveDraft();
+            if (activeTab === 'create' && !isViewMode) handleSaveDraft();
         },
         'alt+c': (e) => {
-            if (activeTab === 'create') setIsCustomerSearchOpen(prev => !prev);
+            if (activeTab === 'create' && !isViewMode) setIsCustomerSearchOpen(prev => !prev);
         }
     });
 
@@ -377,7 +387,9 @@ const Quotations = () => {
             billDiscount: data.billDiscount || 0,
             status: data.status === 'PENDING_APPROVAL' ? 'Pending Approval' :
                 data.status === 'APPROVED' ? 'Approved' :
-                    data.status === 'REJECTED' ? 'Rejected' : 'Draft',
+                data.status === 'REJECTED' ? 'Rejected' :
+                data.status === 'CONVERTED' ? 'Converted' :
+                data.status === 'EXPIRED' ? 'Expired' : 'Draft',
             currency: data.currency,
             paymentTerm: data.paymentTerms,
             deliveryType: data.deliveryType,
@@ -495,6 +507,23 @@ const Quotations = () => {
         refreshData();
     }, []);
 
+    useEffect(() => {
+        if (!activeActionMenu) return;
+
+        const closeActionMenu = () => {
+            setActiveActionMenu(null);
+            setActionMenuPosition(null);
+        };
+
+        window.addEventListener('resize', closeActionMenu);
+        window.addEventListener('scroll', closeActionMenu, true);
+
+        return () => {
+            window.removeEventListener('resize', closeActionMenu);
+            window.removeEventListener('scroll', closeActionMenu, true);
+        };
+    }, [activeActionMenu]);
+
     // Set Walk-In Customer as default on initial load (page starts in create mode)
     useEffect(() => {
         if (customersList.length === 0 || customer) return;
@@ -604,6 +633,7 @@ const Quotations = () => {
     };
 
     const handleItemChange = (id, field, value) => {
+        if (isViewMode) return;
         setItems(items.map(item => {
             if (item.id === id) {
                 const val = (field === 'desc' || field === 'remarks' || field === 'unit' || field === 'code' || field === 'image' || field === 'focUnit')
@@ -643,6 +673,7 @@ const Quotations = () => {
     };
 
     const handleModalItemChange = (field, value) => {
+        if (isViewMode) return;
         if (!selectedAddonItem) return;
         const val = (field === 'focUnit') ? value : Number(value);
         let updatedItem = { ...selectedAddonItem, [field]: val };
@@ -651,6 +682,7 @@ const Quotations = () => {
     };
 
     const saveModalItem = () => {
+        if (isViewMode) return;
         if (!selectedAddonItem) return;
         setItems(items.map(item => item.id === selectedAddonItem.id ? selectedAddonItem : item));
         setSelectedAddonItem(null);
@@ -665,6 +697,7 @@ const Quotations = () => {
     };
 
     const handleAddSingleProduct = (product) => {
+        if (isViewMode) return;
         const price = parseFloat(product.retailPrice) || parseFloat(product.sellingPrice) || 0;
         const cost = parseFloat(product.cost) || 0;
         const disc = parseFloat(product.maxDiscount) || 0;
@@ -734,6 +767,7 @@ const Quotations = () => {
     };
 
     const handleFileUpload = async (e) => {
+        if (isViewMode) return;
         if (!editingId) {
             setToastMessage('Please save the quotation first before adding attachments.');
             setToastType('info');
@@ -774,14 +808,17 @@ const Quotations = () => {
     };
 
     const handleRemoveAttachment = (index) => {
+        if (isViewMode) return;
         setAttachments(prev => prev.filter((_, i) => i !== index));
     };
 
     const handleAddItem = () => {
+        if (isViewMode) return;
         setItems([...items, { id: Date.now(), code: '', image: '', desc: '', unit: 'PCS', qty: 0, price: 0, foc: 0, focUnit: 'PCS', availableUnits: ['PCS'], disc: 0, tax: 5, taxAmt: 0, total: 0, remarks: '', isProductSelected: false }]);
     };
 
     const handleDeleteItem = (id) => {
+        if (isViewMode) return;
         setItems(items.filter(item => item.id !== id));
     };
 
@@ -840,6 +877,7 @@ const Quotations = () => {
     };
 
     const handleSaveDraft = async () => {
+        if (isViewMode) return;
         try {
             const payload = constructPayload('Draft');
             const savedQtn = await saveQuotation(payload);
@@ -863,6 +901,7 @@ const Quotations = () => {
     };
 
     const handleConfirm = async () => {
+        if (isViewMode) return;
         try {
             const payload = constructPayload('Pending Approval');
 
@@ -874,6 +913,7 @@ const Quotations = () => {
 
             setEditingId(savedQtn.id);
             setStatus('Pending Approval');
+            setEditorMode('edit');
 
             setActiveTab('list');
 
@@ -908,6 +948,7 @@ const Quotations = () => {
 
             await refreshData();
             setStatus("Approved");
+            setEditorMode('view');
 
             setToastMessage("Quotation Approved!");
             setToastType("success");
@@ -959,6 +1000,7 @@ const Quotations = () => {
             if (currentQtn) {
                 const mapped = mapBackendToFrontend(currentQtn);
                 setStatus(mapped.status);
+                setEditorMode(canEditQuotation(mapped.status) ? 'edit' : 'view');
             }
 
             setRevisionNote('');
@@ -1012,7 +1054,8 @@ const Quotations = () => {
     };
 
 
-    const handleEditQuotation = (qtn) => {
+    const handleEditQuotation = (qtn, mode = 'edit') => {
+        const allowEdit = mode === 'edit' && canEditQuotation(qtn.status);
         setEditingId(qtn.id);
         setCustomer(qtn.customer);
         setQtnDate(qtn.date);
@@ -1028,13 +1071,38 @@ const Quotations = () => {
         setShippingAddress(qtn.shippingAddress || '');
         setAttachments(qtn.attachments || []);
         setBillDiscount(qtn.billDiscount || 0);
+        setEditorMode(allowEdit ? 'edit' : 'view');
+        setIsCustomerSearchOpen(false);
+        setIsCurrencyOpen(false);
+        setIsPaymentTermOpen(false);
+        setIsDeliveryTypeOpen(false);
         setActiveTab('create');
+
+        if (mode === 'edit' && !allowEdit) {
+            setToastMessage('Approved quotations are view-only. Use Revise to make changes.');
+            setToastType('info');
+            setShowToast(true);
+        }
+    };
+
+    const handleViewQuotation = (qtn) => {
+        handleEditQuotation(qtn, 'view');
+    };
+
+    const handleSwitchToEditMode = () => {
+        if (!canEditCurrentQuotation) {
+            setToastMessage('This quotation is view-only after approval. Use Revise to make changes.');
+            setToastType('info');
+            setShowToast(true);
+            return;
+        }
+        setEditorMode('edit');
     };
 
     // BB-006/BB-021: Row-level quick actions from the listing table
     const handleListingApprove = async (qtn, e) => {
         e.stopPropagation();
-        setActiveActionMenu(null);
+        closeActionMenu();
         try {
             await updateQuotationStatus(qtn.id, 'APPROVED');
             setToastMessage('Quotation approved.');
@@ -1048,7 +1116,7 @@ const Quotations = () => {
 
     const handleListingReject = async (qtn, e) => {
         e.stopPropagation();
-        setActiveActionMenu(null);
+        closeActionMenu();
         try {
             await updateQuotationStatus(qtn.id, 'REJECTED');
             setToastMessage('Quotation rejected.');
@@ -1062,7 +1130,7 @@ const Quotations = () => {
 
     const handleListingConfirm = async (qtn, e) => {
         e.stopPropagation();
-        setActiveActionMenu(null);
+        closeActionMenu();
         try {
             await updateQuotationStatus(qtn.id, 'PENDING_APPROVAL');
             setToastMessage('Quotation confirmed and sent for approval.');
@@ -1076,7 +1144,7 @@ const Quotations = () => {
 
     const handleListingMarkExpired = async (qtn, e) => {
         e.stopPropagation();
-        setActiveActionMenu(null);
+        closeActionMenu();
         try {
             await updateQuotationStatus(qtn.id, 'Expired');
             setToastMessage('Quotation marked as expired.');
@@ -1090,7 +1158,7 @@ const Quotations = () => {
 
     const handleListingProceedToInvoice = async (qtn, e) => {
         e.stopPropagation();
-        setActiveActionMenu(null);
+        closeActionMenu();
         try {
             await updateQuotationStatus(qtn.id, 'CONVERTED');
             navigate('/sales/invoice', {
@@ -1111,7 +1179,7 @@ const Quotations = () => {
 
     const handleListingConvertToOrder = (qtn, e) => {
         e.stopPropagation();
-        setActiveActionMenu(null);
+        closeActionMenu();
         navigate('/sales/order', {
             state: {
                 quotation: {
@@ -1126,7 +1194,7 @@ const Quotations = () => {
 
     const handleListingRevise = (qtn, e) => {
         e.stopPropagation();
-        setActiveActionMenu(null);
+        closeActionMenu();
         handleEditQuotation(qtn);
         // Slight delay so the create tab opens before the modal
         setTimeout(() => setIsReviseModalOpen(true), 100);
@@ -1134,7 +1202,7 @@ const Quotations = () => {
 
     const handleListingPrint = async (qtn, e) => {
         e.stopPropagation();
-        setActiveActionMenu(null);
+        closeActionMenu();
         try {
             const templates = await getTemplatesByCategory('Quotation');
             const defaultTemplate = templates.find(t => t.isDefault);
@@ -1180,19 +1248,55 @@ const Quotations = () => {
         }
     };
 
-    const handleListingEmail = (qtn, e) => {
+    const handleActionMenuToggle = (quotationId, e) => {
         e.stopPropagation();
-        setActiveActionMenu(null);
-        const subject = encodeURIComponent(`Quotation ${qtn.qtnNo}`);
-        const body = encodeURIComponent(`Dear Customer,\n\nPlease find attached Quotation ${qtn.qtnNo}.\n\nTotal: ${qtn.currency} ${qtn.total?.toFixed(2) || '0.00'}\n\nThank you.`);
-        window.open(`mailto:?subject=${subject}&body=${body}`, '_blank');
+
+        if (activeActionMenu === quotationId) {
+            closeActionMenu();
+            return;
+        }
+
+        const rect = e.currentTarget.getBoundingClientRect();
+        const menuWidth = 208;
+        const estimatedMenuHeight = 240;
+        const gutter = 12;
+        const openUpward = window.innerHeight - rect.bottom < estimatedMenuHeight && rect.top > estimatedMenuHeight;
+
+        setActiveActionMenu(quotationId);
+        setActionMenuPosition({
+            left: Math.min(window.innerWidth - menuWidth - gutter, Math.max(gutter, rect.right - menuWidth)),
+            top: openUpward ? rect.top - 8 : rect.bottom + 8,
+            openUpward
+        });
     };
 
-    const handleListingWhatsApp = (qtn, e) => {
+    const handleRevertToApproved = async () => {
+        if (!editingId) return;
+        try {
+            await updateQuotationStatus(editingId, 'APPROVED');
+            setStatus('Approved');
+            setEditorMode('view');
+            await refreshData();
+            setToastMessage('Quotation reverted to Approved.');
+            setToastType('success');
+        } catch {
+            setToastMessage('Failed to revert quotation.');
+            setToastType('error');
+        }
+    };
+
+    const handleListingRevertToApproved = async (qtn, e) => {
         e.stopPropagation();
-        setActiveActionMenu(null);
-        const text = encodeURIComponent(`Dear Customer, please find Quotation ${qtn.qtnNo} totaling ${qtn.currency} ${qtn.total?.toFixed(2) || '0.00'}. Thank you.`);
-        window.open(`https://wa.me/?text=${text}`, '_blank');
+        closeActionMenu();
+        try {
+            await updateQuotationStatus(qtn.id, 'APPROVED');
+            await refreshData();
+            setToastMessage('Quotation reverted to Approved.');
+            setToastType('success');
+        } catch {
+            setToastMessage('Failed to revert quotation.');
+            setToastType('error');
+        }
     };
 
     // BB-022: Proceed to Invoice from the edit/create view
@@ -1200,6 +1304,9 @@ const Quotations = () => {
         if (!editingId) return;
         try {
             await updateQuotationStatus(editingId, 'CONVERTED');
+            setStatus('Converted');
+            setEditorMode('view');
+            await refreshData();
             navigate('/sales/invoice', {
                 state: {
                     fromQuotation: {
@@ -1218,6 +1325,7 @@ const Quotations = () => {
 
     const handleCreateNew = async () => {
         setEditingId(null);
+        setEditorMode('edit');
         setCustomer('');
         const walkin = customersList.find(c => c.name.toLowerCase().includes('walkin') || c.name.toLowerCase().includes('walk-in'));
         if (walkin) {
@@ -1252,6 +1360,10 @@ const Quotations = () => {
                 return <span className="text-xs font-bold text-emerald-600 bg-emerald-50 border border-emerald-100 px-2 py-0.5 rounded-full">Approved</span>;
             case 'Rejected':
                 return <span className="text-xs font-bold text-red-600 bg-red-50 border border-red-100 px-2 py-0.5 rounded-full">Rejected</span>;
+            case 'Converted':
+                return <span className="text-xs font-bold text-blue-600 bg-blue-50 border border-blue-100 px-2 py-0.5 rounded-full">Converted</span>;
+            case 'Expired':
+                return <span className="text-xs font-bold text-amber-600 bg-amber-50 border border-amber-100 px-2 py-0.5 rounded-full">Expired</span>;
             default:
                 return <span className="text-xs font-bold text-slate-700 bg-slate-100 border border-slate-200 px-2 py-0.5 rounded">Draft</span>;
         }
@@ -1585,6 +1697,7 @@ const Quotations = () => {
     return (
         <div className="flex min-h-screen w-full max-w-[100vw] overflow-x-hidden bg-[#F7F7FA] font-sans text-slate-900 relative" onClick={() => {
             setIsCurrencyOpen(false); setIsCustomerOpen(false); setIsPaymentTermOpen(false); setIsDeliveryTypeOpen(false);
+            setActiveActionMenu(null); setActionMenuPosition(null);
         }}>
             <main className="flex-1 p-4 md:p-6 flex flex-col min-w-0">
                 {/* --- Sticky Header --- */}
@@ -1611,18 +1724,22 @@ const Quotations = () => {
                                     <ArrowLeft className="h-4 w-4" /> Back
                                 </button>
                             )}
-                            <button className="flex-1 sm:flex-none h-8 px-3 border border-slate-300 rounded-md bg-white hover:bg-slate-50 text-slate-700 flex items-center justify-center gap-1.5 text-sm font-medium transition-colors">
-                                <Mail className="h-4 w-4" /> Email
-                            </button>
-                            <button className="flex-1 sm:flex-none h-8 px-3 border border-slate-300 rounded-md bg-white hover:bg-slate-50 text-slate-700 flex items-center justify-center gap-1.5 text-sm font-medium transition-colors">
-                                <MessageCircle className="h-4 w-4" /> WhatsApp
-                            </button>
-                            <button className="flex-1 sm:flex-none h-8 px-3 border border-slate-300 rounded-md bg-white hover:bg-slate-50 text-slate-700 flex items-center justify-center gap-1.5 text-sm font-medium transition-colors">
-                                <Smartphone className="h-4 w-4" /> SMS
-                            </button>
-                            <button onClick={handlePrintClick} disabled={isPrinting} className="flex-1 sm:flex-none h-8 px-3 border border-slate-300 rounded-md bg-white hover:bg-slate-50 text-slate-700 flex items-center justify-center gap-1.5 text-sm font-medium transition-colors disabled:opacity-50">
-                                <Printer className="h-4 w-4" /> {isPrinting ? 'Printing...' : 'Print'}
-                            </button>
+                            {activeTab !== 'list' && (
+                                <>
+                                    <button className="flex-1 sm:flex-none h-8 px-3 border border-slate-300 rounded-md bg-white hover:bg-slate-50 text-slate-700 flex items-center justify-center gap-1.5 text-sm font-medium transition-colors">
+                                        <Mail className="h-4 w-4" /> Email
+                                    </button>
+                                    <button className="flex-1 sm:flex-none h-8 px-3 border border-slate-300 rounded-md bg-white hover:bg-slate-50 text-slate-700 flex items-center justify-center gap-1.5 text-sm font-medium transition-colors">
+                                        <MessageCircle className="h-4 w-4" /> WhatsApp
+                                    </button>
+                                    <button className="flex-1 sm:flex-none h-8 px-3 border border-slate-300 rounded-md bg-white hover:bg-slate-50 text-slate-700 flex items-center justify-center gap-1.5 text-sm font-medium transition-colors">
+                                        <Smartphone className="h-4 w-4" /> SMS
+                                    </button>
+                                    <button onClick={handlePrintClick} disabled={isPrinting} className="flex-1 sm:flex-none h-8 px-3 border border-slate-300 rounded-md bg-white hover:bg-slate-50 text-slate-700 flex items-center justify-center gap-1.5 text-sm font-medium transition-colors disabled:opacity-50">
+                                        <Printer className="h-4 w-4" /> {isPrinting ? 'Printing...' : 'Print'}
+                                    </button>
+                                </>
+                            )}
                             {activeTab === 'list' && (
                                 <button
                                     onClick={handleCreateNew}
@@ -1750,7 +1867,7 @@ const Quotations = () => {
                                     {filteredQuotations.map((qtn) => (
                                         <React.Fragment key={qtn.id}>
                                             <tr
-                                                onClick={() => handleEditQuotation(qtn)}
+                                                onClick={() => handleViewQuotation(qtn)}
                                                 className="hover:bg-slate-50 cursor-pointer transition-colors"
                                             >
                                                 <td className="px-4 py-3 text-blue-600 font-medium flex items-center gap-2">
@@ -1773,17 +1890,29 @@ const Quotations = () => {
                                                 <td className="px-4 py-3 text-center" onClick={e => e.stopPropagation()}>
                                                     <div className="relative inline-block">
                                                         <button
-                                                            onClick={(e) => { e.stopPropagation(); setActiveActionMenu(activeActionMenu === qtn.id ? null : qtn.id); }}
+                                                            onClick={(e) => handleActionMenuToggle(qtn.id, e)}
                                                             className="p-1.5 rounded hover:bg-slate-200 text-slate-500 transition-colors"
                                                         >
                                                             <MoreVertical size={15} />
                                                         </button>
-                                                        {activeActionMenu === qtn.id && (
-                                                            <div className="absolute right-0 top-8 z-50 w-52 bg-white border border-slate-200 rounded-lg shadow-xl py-1 text-xs">
+                                                        {activeActionMenu === qtn.id && actionMenuPosition && (
+                                                            <div
+                                                                className="fixed z-[80] w-52 bg-white border border-slate-200 rounded-lg shadow-xl py-1 text-xs"
+                                                                style={{
+                                                                    left: `${actionMenuPosition.left}px`,
+                                                                    top: `${actionMenuPosition.top}px`,
+                                                                    transform: actionMenuPosition.openUpward ? 'translateY(-100%)' : 'none'
+                                                                }}
+                                                            >
                                                                 {/* View / Edit — always */}
-                                                                <button onClick={(e) => { e.stopPropagation(); setActiveActionMenu(null); handleEditQuotation(qtn); }} className="w-full text-left px-4 py-2 hover:bg-slate-50 flex items-center gap-2 text-slate-700">
-                                                                    <Eye size={13} /> View / Edit
+                                                                <button onClick={(e) => { e.stopPropagation(); closeActionMenu(); handleViewQuotation(qtn); }} className="w-full text-left px-4 py-2 hover:bg-slate-50 flex items-center gap-2 text-slate-700">
+                                                                    <Eye size={13} /> View
                                                                 </button>
+                                                                {canEditQuotation(qtn.status) && (
+                                                                    <button onClick={(e) => { e.stopPropagation(); closeActionMenu(); handleEditQuotation(qtn, 'edit'); }} className="w-full text-left px-4 py-2 hover:bg-slate-50 flex items-center gap-2 text-slate-700">
+                                                                        <Edit size={13} /> Edit
+                                                                    </button>
+                                                                )}
 
                                                                 {/* --- Workflow actions --- */}
                                                                 {(qtn.status === 'Draft' || qtn.status === 'Approved' || qtn.status === 'Rejected') && (
@@ -1816,6 +1945,11 @@ const Quotations = () => {
                                                                         </button>
                                                                     </>
                                                                 )}
+                                                                {qtn.status === 'Converted' && (
+                                                                    <button onClick={(e) => handleListingRevertToApproved(qtn, e)} className="w-full text-left px-4 py-2 hover:bg-orange-50 flex items-center gap-2 text-orange-600 font-semibold">
+                                                                        <RotateCcw size={13} /> Revert to Approved
+                                                                    </button>
+                                                                )}
 
                                                                 {/* --- Danger zone --- */}
                                                                 {!['Expired', 'Invoiced', 'Rejected'].includes(qtn.status) && (
@@ -1832,16 +1966,9 @@ const Quotations = () => {
                                                                     </>
                                                                 )}
 
-                                                                {/* --- Print / Share --- */}
                                                                 <div className="border-t border-slate-100 my-1" />
                                                                 <button onClick={(e) => handleListingPrint(qtn, e)} className="w-full text-left px-4 py-2 hover:bg-slate-50 flex items-center gap-2 text-slate-700">
                                                                     <Printer size={13} /> Print
-                                                                </button>
-                                                                <button onClick={(e) => handleListingEmail(qtn, e)} className="w-full text-left px-4 py-2 hover:bg-slate-50 flex items-center gap-2 text-slate-700">
-                                                                    <Mail size={13} /> Email
-                                                                </button>
-                                                                <button onClick={(e) => handleListingWhatsApp(qtn, e)} className="w-full text-left px-4 py-2 hover:bg-slate-50 flex items-center gap-2 text-slate-700">
-                                                                    <Smartphone size={13} /> WhatsApp
                                                                 </button>
                                                             </div>
                                                         )}
@@ -1903,7 +2030,7 @@ const Quotations = () => {
                                     <MobileCard
                                         key={qtn.id}
                                         qtn={qtn}
-                                        onClick={() => handleEditQuotation(qtn)}
+                                        onClick={() => handleViewQuotation(qtn)}
                                         renderStatusBadge={renderStatusBadge}
                                         isExpanded={expandedListRows[qtn.id]}
                                         onToggleExpand={toggleListRow}
@@ -1919,6 +2046,22 @@ const Quotations = () => {
                 {/* ======================= VIEW: CREATE / EDIT ======================= */}
                 {activeTab === 'create' && (
                     <div className="space-y-6 flex-1 flex flex-col pb-24">
+                        {isViewMode && (
+                            <div className="bg-blue-50 border border-blue-200 text-blue-800 rounded-lg px-4 py-3 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                                <div>
+                                    <div className="text-sm font-bold">View Only</div>
+                                    <div className="text-xs text-blue-700">This quotation is opened in read-only mode. Use Edit only where editing is allowed.</div>
+                                </div>
+                                {canEditCurrentQuotation && (
+                                    <button
+                                        onClick={handleSwitchToEditMode}
+                                        className="px-3 py-1.5 bg-white border border-blue-200 rounded-md text-xs font-bold text-blue-700 hover:bg-blue-100"
+                                    >
+                                        <Edit size={13} className="inline mr-1" /> Switch to Edit
+                                    </button>
+                                )}
+                            </div>
+                        )}
                         <div className="grid grid-cols-1 xl:grid-cols-4 gap-6 flex-1">
 
                             {/* ======================= LEFT COLUMN ======================= */}
@@ -1938,24 +2081,24 @@ const Quotations = () => {
                                         </div>
                                         <div className="flex flex-col col-span-2 sm:col-span-1">
 
-                                            <input type="date" value={qtnDate} onChange={(e) => setQtnDate(e.target.value)} className="w-full text-sm p-1.5 border border-slate-300/50 rounded text-slate-700" />
+                                            <input type="date" value={qtnDate} onChange={(e) => setQtnDate(e.target.value)} disabled={isViewMode} className="w-full text-sm p-1.5 border border-slate-300/50 rounded text-slate-700 disabled:bg-slate-50 disabled:text-slate-500 disabled:cursor-not-allowed" />
 
                                         </div>
                                         <div className="flex flex-col col-span-2 sm:col-span-1">
 
-                                            <input type="date" value={validTill} onChange={(e) => setValidTill(e.target.value)} className="w-full text-sm p-1.5 border border-slate-300/50 rounded text-slate-700" />
+                                            <input type="date" value={validTill} onChange={(e) => setValidTill(e.target.value)} disabled={isViewMode} className="w-full text-sm p-1.5 border border-slate-300/50 rounded text-slate-700 disabled:bg-slate-50 disabled:text-slate-500 disabled:cursor-not-allowed" />
 
                                         </div>
 
                                         <div className="flex flex-col relative col-span-2 sm:col-span-1">
                                             <label className="text-xs font-semibold text-slate-500 mb-1">Currency</label>
                                             <div
-                                                className="w-full text-sm p-1.5 border border-slate-300/50 rounded text-slate-700 bg-white flex justify-between items-center cursor-pointer"
-                                                onClick={(e) => { e.stopPropagation(); setIsCurrencyOpen(!isCurrencyOpen); }}
+                                                className={`w-full text-sm p-1.5 border border-slate-300/50 rounded text-slate-700 bg-white flex justify-between items-center ${isViewMode ? 'cursor-not-allowed bg-slate-50 text-slate-500' : 'cursor-pointer'}`}
+                                                onClick={(e) => { if (isViewMode) return; e.stopPropagation(); setIsCurrencyOpen(!isCurrencyOpen); }}
                                             >
                                                 {currency} <ChevronDown size={14} className="text-slate-400" />
                                             </div>
-                                            {isCurrencyOpen && (
+                                            {isCurrencyOpen && !isViewMode && (
                                                 <div className="absolute top-full left-0 w-full bg-white border border-slate-200 rounded shadow-lg z-20 mt-1">
                                                     {['AED', 'USD', 'SAR', 'EUR'].map(opt => (
                                                         <div
@@ -1973,7 +2116,7 @@ const Quotations = () => {
                                         <div className="flex flex-col col-span-2 sm:col-span-1">
                                             <label className="text-xs font-semibold text-slate-500 mb-1">Branch / Location</label>
                                             <div className="relative">
-                                                <select className="w-full text-sm p-1.5 border border-slate-300/50 rounded text-slate-700 appearance-none bg-white">
+                                                <select disabled={isViewMode} className="w-full text-sm p-1.5 border border-slate-300/50 rounded text-slate-700 appearance-none bg-white disabled:bg-slate-50 disabled:text-slate-500 disabled:cursor-not-allowed">
                                                     <option>Main Branch</option>
                                                 </select>
                                                 <ChevronDown className="absolute right-2 top-2 text-slate-400" size={14} />
@@ -1994,8 +2137,8 @@ const Quotations = () => {
                                     <div className="mb-3 relative">
                                         <label className="text-xs font-semibold text-slate-500 mb-1 block">Select Customer</label>
                                         <div
-                                            className="w-full text-sm p-2 border border-slate-300/50 rounded text-slate-700 bg-white flex items-center gap-2 cursor-pointer hover:border-yellow-400 transition-colors"
-                                            onClick={() => setIsCustomerSearchOpen(true)}
+                                            className={`w-full text-sm p-2 border border-slate-300/50 rounded text-slate-700 bg-white flex items-center gap-2 transition-colors ${isViewMode ? 'cursor-not-allowed bg-slate-50 text-slate-500' : 'cursor-pointer hover:border-yellow-400'}`}
+                                            onClick={() => { if (!isViewMode) setIsCustomerSearchOpen(true); }}
                                         >
                                             <Search size={14} className="text-slate-400 shrink-0" />
                                             <span className="flex-1 truncate">{selectedCustomerData ? `${selectedCustomerData.code} - ${selectedCustomerData.name}` : 'Search customer...'}</span>
@@ -2033,7 +2176,7 @@ const Quotations = () => {
 
                                     {/* CUSTOMER SELECTOR MODAL */}
                                     <CustomerSelector
-                                        isOpen={isCustomerSearchOpen}
+                                        isOpen={!isViewMode && isCustomerSearchOpen}
                                         onClose={() => setIsCustomerSearchOpen(false)}
                                         onSelect={(cust) => {
                                             setCustomer(`${cust.name} - ${cust.code}`);
@@ -2052,12 +2195,12 @@ const Quotations = () => {
                                     <div className="flex flex-col relative">
                                         <label className="text-[10px] font-semibold text-slate-500 mb-1">Terms</label>
                                         <div
-                                            className="w-full text-xs p-2 border border-slate-300/50 rounded text-slate-700 bg-white flex justify-between items-center cursor-pointer"
-                                            onClick={(e) => { e.stopPropagation(); setIsPaymentTermOpen(!isPaymentTermOpen); }}
+                                            className={`w-full text-xs p-2 border border-slate-300/50 rounded text-slate-700 bg-white flex justify-between items-center ${isViewMode ? 'cursor-not-allowed bg-slate-50 text-slate-500' : 'cursor-pointer'}`}
+                                            onClick={(e) => { if (isViewMode) return; e.stopPropagation(); setIsPaymentTermOpen(!isPaymentTermOpen); }}
                                         >
                                             {paymentTerm} <ChevronDown size={12} className="text-slate-400" />
                                         </div>
-                                        {isPaymentTermOpen && (
+                                        {isPaymentTermOpen && !isViewMode && (
                                             <div className="absolute top-full left-0 w-full bg-white border border-slate-200 rounded shadow-lg z-20 mt-1">
                                                 {['Cash', '7 Days', '30 Days', '60 Days', 'Custom'].map(opt => (
                                                     <div
@@ -2082,12 +2225,12 @@ const Quotations = () => {
                                         <div className="flex flex-col relative">
                                             <label className="text-[10px] font-semibold text-slate-500 mb-1">Type</label>
                                             <div
-                                                className="w-full text-xs p-2 border border-slate-300/50 rounded text-slate-700 bg-white flex justify-between items-center cursor-pointer"
-                                                onClick={(e) => { e.stopPropagation(); setIsDeliveryTypeOpen(!isDeliveryTypeOpen); }}
+                                                className={`w-full text-xs p-2 border border-slate-300/50 rounded text-slate-700 bg-white flex justify-between items-center ${isViewMode ? 'cursor-not-allowed bg-slate-50 text-slate-500' : 'cursor-pointer'}`}
+                                                onClick={(e) => { if (isViewMode) return; e.stopPropagation(); setIsDeliveryTypeOpen(!isDeliveryTypeOpen); }}
                                             >
                                                 {deliveryType} <ChevronDown size={12} className="text-slate-400" />
                                             </div>
-                                            {isDeliveryTypeOpen && (
+                                            {isDeliveryTypeOpen && !isViewMode && (
                                                 <div className="absolute top-full left-0 w-full bg-white border border-slate-200 rounded shadow-lg z-20 mt-1">
                                                     {['Delivery', 'Pickup'].map(opt => (
                                                         <div
@@ -2105,14 +2248,14 @@ const Quotations = () => {
 
                                         <div className="flex flex-col">
                                             <label className="text-[10px] font-semibold text-slate-500 mb-1">Expected Dispatch</label>
-                                            <input type="date" value={expectedDispatch} onChange={(e) => setExpectedDispatch(e.target.value)} className="text-xs p-2 border border-slate-300/50 rounded text-slate-700" />
+                                            <input type="date" value={expectedDispatch} onChange={(e) => setExpectedDispatch(e.target.value)} disabled={isViewMode} className="text-xs p-2 border border-slate-300/50 rounded text-slate-700 disabled:bg-slate-50 disabled:text-slate-500 disabled:cursor-not-allowed" />
                                         </div>
 
                                     </div>
 
                                     <div className="flex flex-col">
                                         <label className="text-[10px] font-semibold text-slate-500 mb-1">Shipping Address</label>
-                                        <textarea rows="2" value={shippingAddress} onChange={(e) => setShippingAddress(e.target.value)} className="w-full text-xs p-2 border border-slate-300/50 rounded resize-none"></textarea>
+                                        <textarea rows="2" value={shippingAddress} onChange={(e) => setShippingAddress(e.target.value)} readOnly={isViewMode} className="w-full text-xs p-2 border border-slate-300/50 rounded resize-none read-only:bg-slate-50 read-only:text-slate-500" />
                                     </div>
 
                                 </div>
@@ -2129,14 +2272,16 @@ const Quotations = () => {
                                         <h3 className="text-sm font-bold text-slate-800 flex items-center gap-2">
                                             <ShoppingCart size={16} className="text-yellow-500" /> Quotation Items
                                         </h3>
-                                        <div className="flex gap-2">
+                                        {!isViewMode && (
+                                            <div className="flex gap-2">
                                             <button
                                                 onClick={() => setIsProductSelectionOpen(true)}
                                                 className="flex items-center gap-1 px-3 py-1.5 bg-yellow-400 text-slate-900 text-xs font-medium rounded hover:bg-yellow-500"
                                             >
                                                 <Plus size={14} /> Select from Products
                                             </button>
-                                        </div>
+                                            </div>
+                                        )}
                                     </div>
 
                                     <div className="overflow-auto max-h-[380px]">
@@ -2152,8 +2297,8 @@ const Quotations = () => {
                                                         />
                                                     </th>
                                                     <th className="p-2 w-16 text-center">Unit</th>
-                                                    <th className="p-2 w-20 text-center">Sale qty</th>
-                                                    <th className="p-2 w-20 text-center">Unit price</th>
+                                                    <th className="p-2 w-24 text-center">Sale qty</th>
+                                                    <th className="p-2 w-28 text-center">Unit price</th>
                                                     <th className="p-2 w-24 text-center text-slate-800">Amount</th>
                                                     <th className="p-2 w-16 text-center text-slate-500">Actions</th>
                                                 </tr>
@@ -2183,9 +2328,11 @@ const Quotations = () => {
                                                                     onToggleExpand={toggleRowDescription}
                                                                     onItemChange={handleItemChange}
                                                                     onFocusCode={() => { setFocusedRowId(item.id); setHighlightedIndex(0); }}
-                                                                    onOpenProductSelection={() => setIsProductSelectionOpen(true)}
+                                                                    onOpenProductSelection={!isViewMode ? () => setIsProductSelectionOpen(true) : undefined}
                                                                     onCheckStock={handleCheckItemStock}
                                                                     onOpenSettings={(item) => setSelectedAddonItem({ ...item })}
+                                                                    isReadOnly={isViewMode}
+                                                                    showSettings={Boolean(item.code || item.desc || item.remarks)}
                                                                 />
                                                             </td>
 
@@ -2196,6 +2343,7 @@ const Quotations = () => {
                                                                         className="w-full bg-transparent outline-none text-center text-xs text-slate-700 appearance-none font-medium cursor-pointer"
                                                                         value={item.unit}
                                                                         onChange={(e) => handleItemChange(item.id, 'unit', e.target.value)}
+                                                                        disabled={isViewMode}
                                                                     >
                                                                         {(item.availableUnits || ['PCS']).map(u => <option key={u} value={u}>{u}</option>)}
                                                                     </select>
@@ -2204,7 +2352,7 @@ const Quotations = () => {
 
                                                             {/* Qty */}
                                                             <td className="p-2 text-center align-middle">
-                                                                <div className="rounded-md border border-slate-200 bg-white inline-flex items-center px-2 py-1 sm:w-14 mx-auto">
+                                                                <div className="rounded-md border border-slate-200 bg-white flex items-center px-2 py-1 w-full max-w-[88px] mx-auto">
                                                                     <input
                                                                         id={`qty-${item.id}`}
                                                                         type="number"
@@ -2213,19 +2361,21 @@ const Quotations = () => {
                                                                         value={item.qty === 0 ? '' : item.qty}
                                                                         onChange={(e) => handleItemChange(item.id, 'qty', e.target.value)}
                                                                         placeholder="0"
+                                                                        disabled={isViewMode}
                                                                     />
                                                                 </div>
                                                             </td>
 
                                                             {/* Unit Price */}
                                                             <td className="p-2 text-center align-middle">
-                                                                <div className="rounded-md border border-slate-200 bg-white inline-flex items-center px-2 py-1 sm:w-16 mx-auto">
+                                                                <div className="rounded-md border border-slate-200 bg-white flex items-center px-2 py-1 w-full max-w-[104px] mx-auto">
                                                                     <input
                                                                         type="number"
                                                                         className="w-full bg-transparent text-center outline-none font-semibold text-sm text-slate-700"
                                                                         value={item.price === 0 ? '' : item.price}
                                                                         onChange={(e) => handleItemChange(item.id, 'price', e.target.value)}
                                                                         placeholder="0.00"
+                                                                        disabled={isViewMode}
                                                                     />
                                                                 </div>
                                                             </td>
@@ -2240,9 +2390,11 @@ const Quotations = () => {
                                                             {/* Actions */}
                                                             <td className="p-2 text-center align-middle">
                                                                 <div className="flex items-center justify-center gap-1.5">
+                                                                    {!isViewMode && (
                                                                     <button onClick={() => handleDeleteItem(item.id)} className="p-1.5 text-red-500 border border-red-100 hover:bg-red-50 rounded transition-colors group">
                                                                         <Trash2 size={14} className="group-hover:scale-110 transition-transform" />
                                                                     </button>
+                                                                    )}
                                                                 </div>
                                                             </td>
                                                         </tr>
@@ -2267,6 +2419,7 @@ const Quotations = () => {
                                                                             value={item.remarks || ''}
                                                                             onChange={(e) => handleItemChange(item.id, 'remarks', e.target.value)}
                                                                             placeholder="Enter product description — auto-loaded from product master, fully editable..."
+                                                                            readOnly={isViewMode}
                                                                             onInput={(e) => {
                                                                                 e.target.style.height = 'auto';
                                                                                 e.target.style.height = (e.target.scrollHeight) + 'px';
@@ -2294,10 +2447,12 @@ const Quotations = () => {
                                         <div className="border-2 border-dashed border-slate-200/50 rounded-lg p-4 flex flex-col items-center justify-center text-center h-[calc(100%-2rem)]">
                                             <p className="text-[10px] text-slate-500 mb-2">Upload documents (Customer PO, Specs)</p>
 
+                                            {!isViewMode && (
                                             <label className="cursor-pointer mb-2">
                                                 <span className="px-3 py-1 bg-white border border-slate-300/50 rounded text-[10px] font-bold text-slate-700 hover:bg-slate-50">Choose Files</span>
                                                 <input type="file" className="hidden" multiple onChange={handleFileUpload} />
                                             </label>
+                                            )}
 
                                             <div className="w-full max-h-[120px] overflow-y-auto">
                                                 {attachments.length === 0 ? (
@@ -2307,9 +2462,11 @@ const Quotations = () => {
                                                         {attachments.map((file, idx) => (
                                                             <div key={idx} className="flex justify-between items-center bg-slate-50 border border-slate-100 p-1.5 rounded text-[10px]">
                                                                 <span className="truncate max-w-[150px] text-slate-700">{file.fileName || file.name}</span>
+                                                                {!isViewMode && (
                                                                 <button onClick={() => handleRemoveAttachment(idx)} className="text-slate-400 hover:text-red-500">
                                                                     <X size={12} />
                                                                 </button>
+                                                                )}
                                                             </div>
                                                         ))}
                                                     </div>
@@ -2330,7 +2487,8 @@ const Quotations = () => {
                                                     rows="3"
                                                     value={notesToCustomer}
                                                     onChange={(e) => setNotesToCustomer(e.target.value)}
-                                                    className="w-full text-xs p-2 border border-slate-300/50 rounded resize-none focus:border-yellow-400 focus:outline-none"
+                                                    readOnly={isViewMode}
+                                                    className="w-full text-xs p-2 border border-slate-300/50 rounded resize-none focus:border-yellow-400 focus:outline-none read-only:bg-slate-50 read-only:text-slate-500"
                                                     placeholder="Visible on quotation..."
                                                 ></textarea>
                                             </div>
@@ -2340,7 +2498,8 @@ const Quotations = () => {
                                                     rows="3"
                                                     value={internalNotes}
                                                     onChange={(e) => setInternalNotes(e.target.value)}
-                                                    className="w-full text-xs p-2 border border-slate-300/50 rounded resize-none focus:border-yellow-400 focus:outline-none"
+                                                    readOnly={isViewMode}
+                                                    className="w-full text-xs p-2 border border-slate-300/50 rounded resize-none focus:border-yellow-400 focus:outline-none read-only:bg-slate-50 read-only:text-slate-500"
                                                     placeholder="Internal use only..."
                                                 ></textarea>
                                             </div>
@@ -2367,7 +2526,8 @@ const Quotations = () => {
                                                     type="number"
                                                     min="0"
                                                     max="100"
-                                                    className="w-10 border border-slate-300/50 rounded px-1 text-center focus:outline-none focus:border-yellow-400"
+                                                    disabled={isViewMode}
+                                                    className="w-10 border border-slate-300/50 rounded px-1 text-center focus:outline-none focus:border-yellow-400 disabled:bg-slate-50 disabled:text-slate-500 disabled:cursor-not-allowed"
                                                     value={billDiscount}
                                                     onChange={(e) => setBillDiscount(Number(e.target.value))}
                                                 /> %
@@ -2510,6 +2670,11 @@ const Quotations = () => {
                                     Status: {renderStatusBadge()}
                                 </div>
                                 <span className="text-[11px] font-medium text-slate-500 hidden lg:inline">Quotation No: <span className="text-slate-700 font-bold">{getQuotationNo()}</span></span>
+                                {isViewMode && (
+                                    <span className="px-2 py-1 bg-blue-50 border border-blue-200 rounded-md text-[11px] font-bold text-blue-700">
+                                        View Only
+                                    </span>
+                                )}
                             </div>
 
                             <div className="flex gap-2">
@@ -2522,6 +2687,15 @@ const Quotations = () => {
                                             <X size={14} /> Reject
                                         </button>
                                     </>
+                                )}
+
+                                {status === 'Converted' && (
+                                    <button
+                                        onClick={handleRevertToApproved}
+                                        className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-orange-300 text-orange-600 rounded text-xs font-bold hover:bg-orange-50 transition-colors shadow-sm"
+                                    >
+                                        <RotateCcw size={14} /> Revert to Approved
+                                    </button>
                                 )}
 
                                 {status === 'Approved' && (
@@ -2558,20 +2732,39 @@ const Quotations = () => {
                                 </button>
 
                                 <button
+                                    onClick={handlePrintClick}
+                                    disabled={isPrinting}
+                                    className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-slate-300 text-slate-700 rounded text-xs font-bold hover:bg-slate-50 transition-colors disabled:opacity-50"
+                                >
+                                    <Printer size={14} /> {isPrinting ? 'Printing...' : 'Print'}
+                                </button>
+
+                                {isViewMode && canEditCurrentQuotation && (
+                                    <button
+                                        onClick={handleSwitchToEditMode}
+                                        className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 text-white rounded text-xs font-bold hover:bg-blue-700 transition-colors shadow-sm"
+                                    >
+                                        <Edit size={14} /> Edit Quotation
+                                    </button>
+                                )}
+
+                                <button
                                     onClick={() => setIsReviseModalOpen(true)}
                                     className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-slate-300 text-slate-700 rounded text-xs font-bold hover:bg-slate-50 transition-colors"
                                 >
                                     <Edit size={14} /> Revise Quotation
                                 </button>
 
-                                <button
-                                    onClick={handleSaveDraft}
-                                    className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-slate-300 text-slate-700 rounded text-xs font-bold hover:bg-slate-50 transition-colors shadow-sm"
-                                >
-                                    <Save size={14} /> Save Draft
-                                </button>
+                                {!isViewMode && (
+                                    <button
+                                        onClick={handleSaveDraft}
+                                        className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-slate-300 text-slate-700 rounded text-xs font-bold hover:bg-slate-50 transition-colors shadow-sm"
+                                    >
+                                        <Save size={14} /> Save Draft
+                                    </button>
+                                )}
 
-                                {status === 'Draft' && (
+                                {!isViewMode && status === 'Draft' && (
                                     <button onClick={handleConfirm} className="flex items-center gap-1.5 px-5 py-1.5 bg-gradient-to-r from-emerald-600 to-emerald-500 text-white rounded text-xs font-bold hover:from-emerald-700 hover:to-emerald-600 transition-all shadow-md transform hover:-translate-y-0.5">
                                         Confirm <ChevronRight size={14} />
                                     </button>
@@ -2583,7 +2776,7 @@ const Quotations = () => {
 
                 {/* FLOATING MOBILE ACTIONS */}
                 {
-                    activeTab === 'create' && (
+                    activeTab === 'create' && !isViewMode && (
                         <MobileFloatingActions
                             status={status}
                             onSaveDraft={handleSaveDraft}
@@ -2647,12 +2840,14 @@ const Quotations = () => {
                                                     >
                                                         Compare
                                                     </button>
-                                                    <button
-                                                        onClick={() => handleRestoreRevision(rev)}
-                                                        className="flex items-center gap-1 px-3 py-1 bg-yellow-400 text-slate-900 rounded text-[10px] font-bold hover:bg-yellow-500"
-                                                    >
-                                                        <RotateCcw size={10} /> Restore
-                                                    </button>
+                                                    {!isViewMode && (
+                                                        <button
+                                                            onClick={() => handleRestoreRevision(rev)}
+                                                            className="flex items-center gap-1 px-3 py-1 bg-yellow-400 text-slate-900 rounded text-[10px] font-bold hover:bg-yellow-500"
+                                                        >
+                                                            <RotateCcw size={10} /> Restore
+                                                        </button>
+                                                    )}
                                                 </div>
                                             </div>
                                         ))
@@ -2714,7 +2909,7 @@ const Quotations = () => {
 
                 {/* Product Selector Modal — self-fetching, server-side search */}
                 <ProductSelector
-                    isOpen={isProductSelectionOpen}
+                    isOpen={!isViewMode && isProductSelectionOpen}
                     onClose={() => setIsProductSelectionOpen(false)}
                     onSelect={handleAddSingleProduct}
                     title="Select Items from Products / Services"
@@ -2776,6 +2971,7 @@ const Quotations = () => {
                         setItems(items.map(i => i.id === updated.id ? updated : i));
                         setSelectedAddonItem(null);
                     }}
+                    isReadOnly={isViewMode}
                 />
 
                 {/* --- COMPARE REVISIONS MODAL --- */}

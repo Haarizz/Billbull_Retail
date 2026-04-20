@@ -95,6 +95,17 @@ public class CustomerService {
         // -------------------------
         // DEFAULT VALUES
         // -------------------------
+
+        // QA-004: auto-generate code when not provided (quick-create from selector)
+        if (customer.getCode() == null || customer.getCode().isBlank()) {
+            String candidate;
+            long seq = repository.count() + 1;
+            do {
+                candidate = String.format("CUST-%04d", seq++);
+            } while (repository.existsByCode(candidate));
+            customer.setCode(candidate);
+        }
+
         if (customer.getStatus() == null)
             customer.setStatus("Active");
 
@@ -106,12 +117,21 @@ public class CustomerService {
 
         // -------------------------
         // OPENING BALANCE
+        // QA-002 fix: use outstanding (the actual unpaid portion entered at migration)
+        // and fall back to amount only when outstanding is null or zero.
         // -------------------------
         BigDecimal openingBalance = BigDecimal.ZERO;
 
         if (dto.getOpeningInvoices() != null) {
             openingBalance = dto.getOpeningInvoices().stream()
-                    .map(inv -> inv.getAmount() != null ? inv.getAmount() : BigDecimal.ZERO)
+                    .map(inv -> {
+                        BigDecimal outstanding = inv.getOutstanding();
+                        BigDecimal amount = inv.getAmount();
+                        if (outstanding != null && outstanding.compareTo(BigDecimal.ZERO) > 0) {
+                            return outstanding;
+                        }
+                        return amount != null ? amount : BigDecimal.ZERO;
+                    })
                     .reduce(BigDecimal.ZERO, BigDecimal::add);
         }
 

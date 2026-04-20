@@ -64,6 +64,12 @@ public class PaymentVoucherController {
             if (payload.get("notes") != null) {
                 voucher.setNotes(payload.get("notes").toString());
             }
+            if (payload.get("bankAccount") != null) {
+                voucher.setBankAccount(payload.get("bankAccount").toString());
+            }
+            if (payload.get("chequeDate") != null && !payload.get("chequeDate").toString().isBlank()) {
+                voucher.setChequeDate(LocalDate.parse(payload.get("chequeDate").toString()));
+            }
 
             if (payload.get("invoiceId") != null && !payload.get("invoiceId").toString().isEmpty()) {
                 voucher.setInvoiceId(Long.parseLong(payload.get("invoiceId").toString()));

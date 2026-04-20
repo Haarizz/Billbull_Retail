@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { useLocation } from 'react-router-dom';
+import api from '../../api/axiosConfig';
 import {
     ShoppingCart,
     Search,
@@ -29,7 +30,8 @@ import {
     ArrowUp,
     Package,
     TrendingUp,
-    History
+    History,
+    Zap
 } from 'lucide-react';
 
 // ✅ DYNAMIC UI COMPONENTS
@@ -56,6 +58,7 @@ import { generatePrintHtml, printHtml } from '../../utils/printGenerator';
 import { getImageUrl } from '../../utils/urlUtils';
 import billBullLogo from '../../assets/billBullLogo.png';
 import { useCompany } from '../../context/CompanyContext';
+import { useBranch } from '../../context/BranchContext';
 
 // ✅ PRODUCT SELECTOR
 import ProductSelector from '../../components/ProductSelector';
@@ -79,8 +82,10 @@ import useShortcuts from '../../hooks/useShortcuts';
 
 const SalesInvoice = () => {
     const { company } = useCompany();
+    const { defaultBranch } = useBranch();
     const location = useLocation();
     const fromQuotationHandled = useRef(false);
+    const fromSOHandled = useRef(false);
     const [activeTab, setActiveTab] = useState('list');
     const [isLoading, setIsLoading] = useState(false);
 
@@ -91,7 +96,7 @@ const SalesInvoice = () => {
     const [searchTerm, setSearchTerm] = useState('');
     const [filterStatus, setFilterStatus] = useState('All');
     const [filterPayMode, setFilterPayMode] = useState('All');
-    const [sortConfig, setSortConfig] = useState({ key: 'invoiceDate', direction: 'desc' });
+    const [sortConfig, setSortConfig] = useState({ key: null, direction: 'desc' });
 
     const filteredInvoices = useMemo(() => {
         let data = [...invoicesList];
@@ -202,6 +207,7 @@ const SalesInvoice = () => {
 
     // Payment Calculation State
     const [amountCollected, setAmountCollected] = useState(0);
+    const [invoiceBalance, setInvoiceBalance] = useState(null); // server-side remaining balance
 
     // ✅ MODAL STATES
     const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
@@ -209,7 +215,10 @@ const SalesInvoice = () => {
     const [modalPaymentAmount, setModalPaymentAmount] = useState(0);
     const [modalPaymentRef, setModalPaymentRef] = useState('');
     const [modalPaymentMode, setModalPaymentMode] = useState('Cash');
+    const [modalBankAccount, setModalBankAccount] = useState('');
+    const [modalChequeDate, setModalChequeDate] = useState(new Date().toISOString().split('T')[0]);
     const [modalNotes, setModalNotes] = useState('');
+    const [bankAccountOptions, setBankAccountOptions] = useState([]);
 
     // Stock Check Modal
     const [selectedStockItem, setSelectedStockItem] = useState(null);
@@ -390,15 +399,17 @@ const SalesInvoice = () => {
     useEffect(() => {
         const loadData = async () => {
             try {
-                const [custData, soData, piData, dnData, invData, whsData, settingsData] = await Promise.all([
+                const [custData, soData, piData, dnData, invData, whsData, settingsData, bankAccData] = await Promise.all([
                     getAllCustomers(),
                     getAllSalesOrders(),
                     getAllProformas(),
                     getDeliveryNotes(),
                     getAllSalesInvoices(),
                     getWarehouses(),
-                    getSalesSettings().catch(() => null)
+                    getSalesSettings().catch(() => null),
+                    api.get('/api/ledger/accounts/bank-accounts').then(r => r.data).catch(() => [])
                 ]);
+                setBankAccountOptions(Array.isArray(bankAccData) ? bankAccData : []);
 
                 let validCustomers = Array.isArray(custData) ? custData : [];
                 const hasWalkin = validCustomers.some(c =>
@@ -425,6 +436,16 @@ const SalesInvoice = () => {
         loadData();
     }, []);
 
+    // Auto-fill items' warehouseId once warehouses / default branch are available
+    useEffect(() => {
+        const defaultWhId = defaultBranch?.defaultWarehouseId || (warehousesList.length > 0 ? warehousesList[0].id : null);
+        if (!defaultWhId) return;
+        setItems(prev => prev.map(item => ({
+            ...item,
+            warehouseId: item.warehouseId || defaultWhId,
+        })));
+    }, [defaultBranch, warehousesList]);
+
     // Pre-fill form from Quotation navigation state
     useEffect(() => {
         const fromQtn = location.state?.fromQuotation;
@@ -443,6 +464,7 @@ const SalesInvoice = () => {
                 id: Date.now() + idx,
                 code: i.code || '',
                 name: i.desc || i.name || '',
+                image: i.image || i.primaryImage || '',
                 unit: i.unit || 'PCS',
                 qty: Number(i.qty) || 0,
                 price: Number(i.price) || 0,
@@ -466,6 +488,51 @@ const SalesInvoice = () => {
         setActiveTab('create');
 
         // Clear state so back-navigation doesn't re-trigger
+        window.history.replaceState({}, document.title);
+    }, [customersList, location.state]);
+
+    // Pre-fill form from Sales Order navigation state
+    useEffect(() => {
+        const fromSO = location.state?.fromSalesOrder;
+        if (!fromSO || fromSOHandled.current) return;
+        if (customersList.length === 0) return;
+
+        fromSOHandled.current = true;
+
+        const matched = customersList.find(
+            c => c.name === fromSO.customer || c.code === fromSO.customerCode
+        );
+
+        const mappedItems = (fromSO.items || [])
+            .filter(i => i.code || i.desc)
+            .map((i, idx) => ({
+                id: Date.now() + idx,
+                code: i.code || '',
+                name: i.desc || i.name || '',
+                image: i.image || '',
+                unit: i.unit || 'PCS',
+                qty: Number(i.qty) || 0,
+                price: Number(i.price) || 0,
+                disc: Number(i.disc) || 0,
+                tax: Number(i.tax) || 5,
+                taxAmt: Number(i.taxAmt) || 0,
+                gross: Number(i.total) || 0,
+                net: Number(i.total) || 0,
+                cost: Number(i.cost) || 0
+            }));
+
+        getNextInvoiceNumber()
+            .then(nextNo => setInvoiceNo(nextNo))
+            .catch(() => {});
+
+        setSelectedCustomer(matched || { name: fromSO.customer, code: fromSO.customerCode || '', id: null });
+        setItems(mappedItems.length > 0 ? mappedItems : [{ id: Date.now(), code: '', name: '', unit: 'PCS', qty: 0, price: 0, disc: 0, tax: 5, taxAmt: 0, gross: 0, net: 0, cost: 0 }]);
+        setLinkedSO(fromSO.soNumber || '');
+        setReference(fromSO.linkedQuotation || fromSO.soNumber || '');
+        setInvoiceDate(new Date().toISOString().split('T')[0]);
+        setStatus('Draft');
+        setActiveTab('create');
+
         window.history.replaceState({}, document.title);
     }, [customersList, location.state]);
 
@@ -565,6 +632,7 @@ const SalesInvoice = () => {
         setBranch('Dubai Main');
         setItems([{ id: Date.now(), code: '', name: '', unit: 'PCS', qty: 0, price: 0, disc: 0, tax: 5, taxAmt: 0, gross: 0, net: 0, cost: 0 }]);
         setAmountCollected(0);
+        setInvoiceBalance(null);
         setActiveTab('create');
     };
 
@@ -974,7 +1042,7 @@ const SalesInvoice = () => {
             cost: cost,
             gp: 0,
             remarks: product.description || '',
-            warehouseId: warehousesList.length > 0 ? warehousesList[0].id : ''
+            warehouseId: defaultBranch?.defaultWarehouseId || (warehousesList.length > 0 ? warehousesList[0].id : '')
         };
 
         const newItem = calculateRow(rawItem);
@@ -993,7 +1061,7 @@ const SalesInvoice = () => {
     };
 
     const handleAddItem = () => {
-        setItems([...items, { id: Date.now(), code: '', name: '', unit: 'PCS', qty: 0, price: 0, disc: 0, tax: 5, taxAmt: 0, gross: 0, net: 0, cost: 0, warehouseId: warehousesList.length > 0 ? warehousesList[0].id : '' }]);
+        setItems([...items, { id: Date.now(), code: '', name: '', unit: 'PCS', qty: 0, price: 0, disc: 0, tax: 5, taxAmt: 0, gross: 0, net: 0, cost: 0, warehouseId: defaultBranch?.defaultWarehouseId || (warehousesList.length > 0 ? warehousesList[0].id : '') }]);
     };
 
     const handleDeleteItem = (id) => {
@@ -1004,6 +1072,12 @@ const SalesInvoice = () => {
         if (!selectedCustomer) { alert("Please select a customer"); return; }
 
         // Build payload for backend
+        // Resolve invoice-level warehouse ID for fallback on items that have no warehouseId
+        const invoiceLevelWarehouseId =
+            warehousesList.find(w => w.name === branch)?.id ||
+            defaultBranch?.defaultWarehouseId ||
+            (warehousesList.length > 0 ? warehousesList[0].id : null);
+
         const payload = {
             id: invoiceId,
             invoiceNumber: invoiceNo,
@@ -1044,7 +1118,9 @@ const SalesInvoice = () => {
                 grossAmount: Number(i.gross),
                 netAmount: Number(i.net),
                 foc: Number(i.foc) || 0,
-                warehouseId: i.warehouseId ? Number(i.warehouseId) : null
+                warehouseId: (i.warehouseId && i.warehouseId !== '')
+                    ? Number(i.warehouseId)
+                    : (invoiceLevelWarehouseId ? Number(invoiceLevelWarehouseId) : null)
             }))
         };
 
@@ -1064,7 +1140,7 @@ const SalesInvoice = () => {
             setActiveTab('list');
         } catch (e) {
             console.error("Save failed", e);
-            alert("Failed to save Invoice. Please check inputs.");
+            alert(e.response?.data?.message || "Failed to save Invoice. Please check inputs.");
         }
     };
 
@@ -1090,6 +1166,7 @@ const SalesInvoice = () => {
         setBranch(invoice.branch || 'Dubai Main');
 
         setAmountCollected(invoice.amountPaid || 0);
+        setInvoiceBalance(invoice.balance != null ? invoice.balance : null);
         setStatus(invoice.status || 'Draft');
         setSalesType(invoice.salesType || 'STANDARD_FLOW');
         setIsGeneratedFromDN(!!invoice.linkedDeliveryNote && invoice.status !== 'CANCELLED');
@@ -1118,17 +1195,25 @@ const SalesInvoice = () => {
                 warehouseId: i.warehouseId || ''
             })));
         } else {
-            setItems([{ id: Date.now(), code: '', name: '', unit: 'PCS', qty: 0, price: 0, disc: 0, tax: 5, taxAmt: 0, gross: 0, net: 0, cost: 0, warehouseId: warehousesList.length > 0 ? warehousesList[0].id : '' }]);
+            setItems([{ id: Date.now(), code: '', name: '', unit: 'PCS', qty: 0, price: 0, disc: 0, tax: 5, taxAmt: 0, gross: 0, net: 0, cost: 0, warehouseId: defaultBranch?.defaultWarehouseId || (warehousesList.length > 0 ? warehousesList[0].id : '') }]);
         }
 
         setActiveTab('create');
     };
 
     // ✅ MODAL HANDLERS
-    const handleOpenPaymentModal = () => {
-        // Determine balance due
-        const outstanding = netTotal - amountCollected;
+    const handleOpenPaymentModal = (invRow) => {
+        // Support being called from the list (with invRow) or from the editor (no arg)
+        if (invRow) {
+            handleLoadInvoice(invRow);
+        }
+        // Use server-side balance if available (authoritative), otherwise compute locally
+        const outstanding = invoiceBalance != null
+            ? invoiceBalance
+            : Math.max(netTotal - amountCollected, 0);
         setModalPaymentAmount(outstanding > 0 ? outstanding.toFixed(2) : 0);
+        setModalBankAccount('');
+        setModalChequeDate(new Date().toISOString().split('T')[0]);
         setIsPaymentModalOpen(true);
     };
 
@@ -1145,7 +1230,9 @@ const SalesInvoice = () => {
                     amount: Number(modalPaymentAmount),
                     paymentMode: modalPaymentMode,
                     paymentReference: modalPaymentRef,
-                    paymentDate: modalPaymentDate
+                    paymentDate: modalPaymentDate,
+                    ...(modalBankAccount ? { bankAccount: modalBankAccount } : {}),
+                    ...(modalPaymentMode === 'Cheque' && modalChequeDate ? { chequeDate: modalChequeDate } : {})
                 });
                 await fetchInvoices();
                 alert("Payment recorded successfully!");
@@ -1160,8 +1247,13 @@ const SalesInvoice = () => {
                     setActiveTab('list');
                 }
             } catch (err) {
-                console.error("Failed to record payment", err);
-                const message = err?.response?.data?.message || err?.response?.data || "Failed to record payment. Please try again.";
+                console.error("Payment error - status:", err?.response?.status);
+                console.error("Payment error - data:", JSON.stringify(err?.response?.data));
+                console.error("Payment error - message:", err?.message);
+                const message = err?.response?.data?.message
+                    || (typeof err?.response?.data === 'string' ? err.response.data : null)
+                    || err?.message
+                    || "Failed to record payment. Please try again.";
                 alert(message);
             } finally {
                 setIsLoading(false);
@@ -1277,6 +1369,13 @@ const SalesInvoice = () => {
         if (s === 'PARTIALLY_PAID') return <span className="bg-orange-100 text-orange-700 px-2 py-0.5 rounded text-[10px] font-bold">Partially Paid</span>;
         if (s === 'CONFIRMED') return <span className="bg-blue-100 text-blue-700 px-2 py-0.5 rounded text-[10px] font-bold">Confirmed</span>;
         return <span className="bg-slate-100 text-slate-600 px-2 py-0.5 rounded text-[10px] font-bold">{statusVal || 'Draft'}</span>;
+    };
+
+    const resolveSourceType = (inv) => {
+        if (inv.linkedDeliveryNote) return { label: 'Against DN', ref: inv.linkedDeliveryNote, color: 'bg-green-100 text-green-700 border-green-200' };
+        if (inv.linkedSalesOrder)   return { label: 'Against SO', ref: inv.linkedSalesOrder,   color: 'bg-blue-100 text-blue-700 border-blue-200' };
+        if (inv.linkedProforma)     return { label: 'Against PI', ref: inv.linkedProforma,      color: 'bg-purple-100 text-purple-700 border-purple-200' };
+        return { label: 'Direct Sale', ref: null, color: 'bg-orange-100 text-orange-700 border-orange-200' };
     };
 
     const renderTypeBadge = (type) => {
@@ -1545,7 +1644,7 @@ const SalesInvoice = () => {
                                             <th className="px-4 py-3 cursor-pointer hover:bg-slate-100 select-none" onClick={() => handleSort('customerName')}>
                                                 <div className="flex items-center gap-1">Customer {sortConfig.key === 'customerName' && (sortConfig.direction === 'asc' ? <ArrowUp size={12} /> : <ArrowDown size={12} />)}</div>
                                             </th>
-                                            <th className="px-4 py-3">From SO/PI/DN</th>
+                                            <th className="px-4 py-3">Source Type</th>
                                             <th className="px-4 py-3">Pay Mode</th>
                                             <th className="px-4 py-3 cursor-pointer hover:bg-slate-100 select-none" onClick={() => handleSort('invoiceTotal')}>
                                                 <div className="flex items-center gap-1">Net Amount {sortConfig.key === 'invoiceTotal' && (sortConfig.direction === 'asc' ? <ArrowUp size={12} /> : <ArrowDown size={12} />)}</div>
@@ -1574,11 +1673,18 @@ const SalesInvoice = () => {
                                                     <div className="font-medium text-slate-700">{inv.customerName}</div>
                                                     <div className="text-[10px] text-slate-400">{inv.customerCode}</div>
                                                 </td>
-                                                <td className="px-4 py-3 text-[10px]">
-                                                    {inv.linkedSalesOrder && <div className="text-blue-500 block">{inv.linkedSalesOrder}</div>}
-                                                    {inv.linkedDeliveryNote && <div className="text-green-600 block">{inv.linkedDeliveryNote}</div>}
-                                                    {inv.linkedProforma && <div className="text-purple-600 block">{inv.linkedProforma}</div>}
-                                                    {!inv.linkedSalesOrder && !inv.linkedDeliveryNote && !inv.linkedProforma && <span className="text-slate-400">Direct</span>}
+                                                <td className="px-4 py-3">
+                                                    {(() => {
+                                                        const src = resolveSourceType(inv);
+                                                        return (
+                                                            <div className="flex flex-col gap-0.5">
+                                                                <span className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold border w-fit ${src.color}`}>
+                                                                    {src.label}
+                                                                </span>
+                                                                {src.ref && <span className="text-[10px] text-slate-400">{src.ref}</span>}
+                                                            </div>
+                                                        );
+                                                    })()}
                                                 </td>
                                                 <td className="px-4 py-3">
                                                     <span className="border border-slate-200 px-2 py-0.5 rounded text-[10px] bg-white text-slate-600">{inv.paymentMode || 'Cash'}</span>
@@ -1594,7 +1700,17 @@ const SalesInvoice = () => {
                                                     <div className="flex justify-end gap-2" onClick={(e) => e.stopPropagation()}>
                                                         <button onClick={() => handleLoadInvoice(inv)} className="p-1 hover:bg-slate-200 rounded text-slate-500"><Edit size={14} /></button>
                                                         <button onClick={() => handlePrintClick(inv)} disabled={isPrinting} className="p-1 hover:bg-slate-200 rounded text-slate-500 disabled:opacity-50"><Printer size={14} /></button>
-                                                        <button className="p-1 hover:bg-slate-200 rounded text-slate-500"><Mail size={14} /></button>
+                                                        <button
+                                                            onClick={() => {
+                                                                handleLoadInvoice(inv);
+                                                                const bal = inv.balance != null ? inv.balance : Math.max((inv.netTotal || 0) - (inv.amountPaid || 0), 0);
+                                                                setModalPaymentAmount(bal > 0 ? bal.toFixed(2) : 0);
+                                                                setModalBankAccount('');
+                                                                setIsPaymentModalOpen(true);
+                                                            }}
+                                                            className="p-1 hover:bg-green-100 rounded text-green-600"
+                                                            title="Record Payment"
+                                                        ><DollarSign size={14} /></button>
                                                     </div>
                                                 </td>
                                             </tr>
@@ -1623,6 +1739,17 @@ const SalesInvoice = () => {
                     {/* ================= VIEW: CREATE ================= */}
                     {activeTab === 'create' && (
                         <div className="space-y-6 flex-1 flex flex-col pb-24 animate-in fade-in duration-300">
+
+                            {/* FAST SALE MODE INDICATOR */}
+                            {salesSettings?.salesMode === 'FAST_SALE' && (
+                                <div className="flex items-center gap-2.5 px-4 py-3 rounded-xl bg-amber-50 border border-amber-200">
+                                    <Zap size={14} className="text-amber-500 shrink-0" />
+                                    <p className="text-xs text-amber-700">
+                                        <strong>Fast Sale Mode is active.</strong> Saving this invoice will automatically create the Delivery Note, deduct stock, and recognise revenue in one step. Ensure every line item has a warehouse assigned.
+                                    </p>
+                                </div>
+                            )}
+
                             <div className="grid grid-cols-1 xl:grid-cols-4 gap-6 flex-1">
                                 {/* LEFT COLUMN */}
                                 <div className="xl:col-span-1 space-y-4 min-w-0">
@@ -2214,11 +2341,14 @@ const SalesInvoice = () => {
                                         <div className="text-center py-6 text-white/30 text-xs italic flex flex-col items-center gap-2">
                                             Focus an item row to view real-time pricing analysis and warehouse-level stock reservations.
                                         </div>
-                                    ) : (
+                                    ) : (() => {
+                                        const _locs = focusedItemStock?.locations || [];
+                                        const _totalAvailable = _locs.reduce((s, l) => s + (l.available || 0), 0);
+                                        return (
                                         <div className="mt-4 grid grid-cols-1 md:grid-cols-3 gap-6 text-white">
                                             <div className="bg-white/5 p-3 rounded-md border border-white/5">
                                                 <div className="text-[10px] text-white/40 font-bold uppercase mb-1">Stock Position</div>
-                                                <div className="text-lg font-black">{focusedItemStock?.totalAvailable || 0} <span className="text-[10px] font-normal text-white/40 ml-1">Available</span></div>
+                                                <div className="text-lg font-black">{_totalAvailable} <span className="text-[10px] font-normal text-white/40 ml-1">Available</span></div>
                                             </div>
                                             <div className="bg-white/5 p-3 rounded-md border border-white/5">
                                                 <div className="text-[10px] text-white/40 font-bold uppercase mb-1">Pricing Trend</div>
@@ -2231,12 +2361,13 @@ const SalesInvoice = () => {
                                             <div className="bg-white/5 p-3 rounded-md border border-white/5">
                                                 <div className="text-[10px] text-white/40 font-bold uppercase mb-1">Status</div>
                                                 <div className="flex items-center gap-2 mt-1">
-                                                    <div className={`w-2 h-2 rounded-full ${(focusedItemStock?.totalAvailable || 0) > 0 ? 'bg-emerald-500' : 'bg-red-500'}`}></div>
-                                                    <span className="text-sm font-bold">{(focusedItemStock?.totalAvailable || 0) > 0 ? 'In Stock' : 'Out of Stock'}</span>
+                                                    <div className={`w-2 h-2 rounded-full ${_totalAvailable > 0 ? 'bg-emerald-500' : 'bg-red-500'}`}></div>
+                                                    <span className="text-sm font-bold">{_totalAvailable > 0 ? 'In Stock' : 'Out of Stock'}</span>
                                                 </div>
                                             </div>
                                         </div>
-                                    )}
+                                        );
+                                    })()}
                                 </div>
 
                                 {/* SIDEBAR - INTELLIGENCE PANELS */}
@@ -2325,7 +2456,7 @@ const SalesInvoice = () => {
                                     <label className="block text-xs font-bold text-slate-700 mb-1">Payment Mode</label>
                                     <select
                                         value={modalPaymentMode}
-                                        onChange={(e) => setModalPaymentMode(e.target.value)}
+                                        onChange={(e) => { setModalPaymentMode(e.target.value); setModalBankAccount(''); setModalChequeDate(new Date().toISOString().split('T')[0]); }}
                                         className="w-full text-sm p-2 border border-slate-300 rounded focus:border-[#F5C742] focus:ring-1 focus:ring-[#F5C742] outline-none bg-white"
                                     >
                                         <option>Cash</option>
@@ -2334,6 +2465,36 @@ const SalesInvoice = () => {
                                         <option>Credit Card</option>
                                     </select>
                                 </div>
+
+                                {/* Bank Account — shown for non-Cash modes */}
+                                {modalPaymentMode !== 'Cash' && (
+                                    <div>
+                                        <label className="block text-xs font-bold text-slate-700 mb-1">Bank Account</label>
+                                        <select
+                                            value={modalBankAccount}
+                                            onChange={(e) => setModalBankAccount(e.target.value)}
+                                            className="w-full text-sm p-2 border border-slate-300 rounded focus:border-[#F5C742] focus:ring-1 focus:ring-[#F5C742] outline-none bg-white"
+                                        >
+                                            <option value="">Select bank account...</option>
+                                            {bankAccountOptions.map(acc => (
+                                                <option key={acc.id} value={acc.name}>{acc.code} — {acc.name}</option>
+                                            ))}
+                                        </select>
+                                    </div>
+                                )}
+
+                                {/* Cheque Date — shown only when mode is Cheque */}
+                                {modalPaymentMode === 'Cheque' && (
+                                    <div>
+                                        <label className="block text-xs font-bold text-slate-700 mb-1">Cheque Date</label>
+                                        <input
+                                            type="date"
+                                            value={modalChequeDate}
+                                            onChange={(e) => setModalChequeDate(e.target.value)}
+                                            className="w-full text-sm p-2 border border-slate-300 rounded focus:border-[#F5C742] focus:ring-1 focus:ring-[#F5C742] outline-none"
+                                        />
+                                    </div>
+                                )}
 
                                 {/* Amount */}
                                 <div>

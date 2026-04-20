@@ -3,6 +3,7 @@ package com.billbull.backend.sales.payment;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.YearMonth;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -18,6 +19,7 @@ import com.billbull.backend.financials.receiptvoucher.ReceiptVoucher;
 import com.billbull.backend.financials.receiptvoucher.ReceiptVoucherService;
 import com.billbull.backend.sales.invoice.SalesInvoice;
 import com.billbull.backend.sales.invoice.SalesInvoiceRepository;
+import com.billbull.backend.util.DocumentOrderingUtil;
 
 @Service
 public class PaymentService {
@@ -32,7 +34,13 @@ public class PaymentService {
     private ReceiptVoucherService receiptVoucherService;
 
     public List<Payment> getAllPayments() {
-        return paymentRepository.findAll();
+        List<Payment> payments = new ArrayList<>(paymentRepository.findAll());
+        DocumentOrderingUtil.sortByDocumentDateAndNumberDesc(
+                payments,
+                Payment::getPaymentDate,
+                Payment::getPaymentNumber,
+                Payment::getId);
+        return payments;
     }
 
     public Payment getPaymentById(Long id) {
@@ -41,11 +49,23 @@ public class PaymentService {
     }
 
     public List<Payment> getPaymentsByCustomer(String customerCode) {
-        return paymentRepository.findByCustomerCode(customerCode);
+        List<Payment> payments = new ArrayList<>(paymentRepository.findByCustomerCode(customerCode));
+        DocumentOrderingUtil.sortByDocumentDateAndNumberDesc(
+                payments,
+                Payment::getPaymentDate,
+                Payment::getPaymentNumber,
+                Payment::getId);
+        return payments;
     }
 
     public List<Payment> getPaymentsByInvoice(String invoiceNumber) {
-        return paymentRepository.findByLinkedInvoice(invoiceNumber);
+        List<Payment> payments = new ArrayList<>(paymentRepository.findByLinkedInvoice(invoiceNumber));
+        DocumentOrderingUtil.sortByDocumentDateAndNumberDesc(
+                payments,
+                Payment::getPaymentDate,
+                Payment::getPaymentNumber,
+                Payment::getId);
+        return payments;
     }
 
     public String generatePaymentNumber() {

@@ -40,11 +40,16 @@ import {
   X as XIcon,
   Edit,
   UserX,
-  UserCheck
+  UserCheck,
+  LayoutList,
+  LayoutGrid
 } from 'lucide-react';
 
-// Import the API helper
+// Import the API helpers
 import { employeesApi } from '../../../api/employeesApi';
+import { usersApi } from '../../../api/usersApi';
+import { hasRole } from '../../../api/auth';
+import { usePermissions } from '../../../context/PermissionContext';
 
 // Configuration for Image Base URL
 const SERVER_URL = window.location.origin;
@@ -62,6 +67,47 @@ const STAT_COLORS = {
   purple: 'bg-purple-50 text-purple-600'
 };
 
+const buildInitialChecklist = () => ([
+  { id: 1, label: "Personal info completed", checked: false },
+  { id: 2, label: "Role assigned", checked: false },
+  { id: 3, label: "Permissions set", checked: false },
+  { id: 4, label: "Bank details added", checked: false },
+  { id: 5, label: "Mandatory docs uploaded", checked: false },
+]);
+
+const buildInitialEmployeeForm = () => ({
+  firstName: '',
+  middleName: '',
+  lastName: '',
+  employeeCode: 'EMP' + Math.floor(Math.random() * 10000),
+  gender: 'Male',
+  dateOfBirth: '',
+  phone: '',
+  email: '',
+  currentAddress: '',
+  nationality: '',
+  role: 'Sales Executive',
+  department: 'Store Team',
+  branch: 'Downtown Store',
+  reportingManager: '',
+  workLocation: '',
+  employmentType: 'Full Time',
+  joinDate: new Date().toISOString().split('T')[0],
+  probationPeriod: '3',
+  confirmationDate: '',
+  salaryType: 'Monthly',
+  basicSalary: '',
+  posAccess: true,
+  posPin: '',
+  permissionProfile: 'Role-based (Auto)',
+  emiratesId: '',
+  expiryDate: '',
+  createLoginAccess: false,
+  loginUsername: '',
+  temporaryPassword: '',
+  systemRoleId: '',
+});
+
 // ==========================================
 // 1. ADD / EDIT EMPLOYEE MODAL COMPONENT
 // ==========================================
@@ -69,15 +115,12 @@ const STAT_COLORS = {
 const AddEmployeeModal = ({ isOpen, onClose, onWorkflowStart, employeeToEdit }) => {
   const [activeTab, setActiveTab] = useState('personal');
   const [completedSteps, setCompletedSteps] = useState(new Set());
+  const isAdmin = hasRole('ADMIN');
+  const isCreateMode = !employeeToEdit;
+  const canProvisionLoginAccess = isAdmin && isCreateMode;
 
   // --- Checklist State ---
-  const [checklist, setChecklist] = useState([
-    { id: 1, label: "Personal info completed", checked: false },
-    { id: 2, label: "Role assigned", checked: false },
-    { id: 3, label: "Permissions set", checked: false },
-    { id: 4, label: "Bank details added", checked: false },
-    { id: 5, label: "Mandatory docs uploaded", checked: false },
-  ]);
+  const [checklist, setChecklist] = useState(buildInitialChecklist);
 
   // --- Media & File Refs ---
   const [avatarPreview, setAvatarPreview] = useState(null);
@@ -92,43 +135,30 @@ const AddEmployeeModal = ({ isOpen, onClose, onWorkflowStart, employeeToEdit }) 
 
   // --- Document State ---
   const [emiratesIdFile, setEmiratesIdFile] = useState(null);
+  const [systemRoles, setSystemRoles] = useState([]);
+  const [systemRolesLoading, setSystemRolesLoading] = useState(false);
+  const [systemRolesError, setSystemRolesError] = useState('');
+  const [formError, setFormError] = useState('');
 
   // --- Form Data State (Captures all inputs) ---
-  const initialFormState = {
-    firstName: '',
-    middleName: '',
-    lastName: '',
-    employeeCode: 'EMP' + Math.floor(Math.random() * 10000),
-    gender: 'Male',
-    dateOfBirth: '',
-    phone: '',
-    email: '',
-    currentAddress: '',
-    nationality: '',
-    role: 'Sales Executive',
-    department: 'Store Team',
-    branch: 'Downtown Store',
-    reportingManager: '',
-    workLocation: '',
-    employmentType: 'Full Time',
-    joinDate: new Date().toISOString().split('T')[0],
-    probationPeriod: '3',
-    confirmationDate: '',
-    salaryType: 'Monthly',
-    basicSalary: '',
-    posAccess: true,
-    posPin: '',
-    permissionProfile: 'Role-based (Auto)',
-    emiratesId: '',
-    expiryDate: ''
-  };
+  const [formData, setFormData] = useState(buildInitialEmployeeForm);
 
-  const [formData, setFormData] = useState(initialFormState);
-
-  // --- POPULATE DATA FOR EDIT MODE ---
   useEffect(() => {
+    if (!isOpen) return;
+
+    setActiveTab('personal');
+    setCompletedSteps(new Set());
+    setChecklist(buildInitialChecklist());
+    setAvatarFile(null);
+    setIsCameraOpen(false);
+    setCameraError('');
+    setEmiratesIdFile(null);
+    setFormError('');
+    setSystemRolesError('');
+
     if (employeeToEdit) {
       setFormData({
+        ...buildInitialEmployeeForm(),
         firstName: employeeToEdit.firstName || "",
         middleName: employeeToEdit.middleName || "",
         lastName: employeeToEdit.lastName || "",
@@ -159,9 +189,55 @@ const AddEmployeeModal = ({ isOpen, onClose, onWorkflowStart, employeeToEdit }) 
 
       if (employeeToEdit.avatarUrl) {
         setAvatarPreview(`${SERVER_URL}${employeeToEdit.avatarUrl}`);
+      } else {
+        setAvatarPreview(null);
       }
+      return;
     }
-  }, [employeeToEdit]);
+
+    setFormData(buildInitialEmployeeForm());
+    setAvatarPreview(null);
+  }, [isOpen, employeeToEdit]);
+
+  useEffect(() => {
+    if (!isOpen || !canProvisionLoginAccess) {
+      setSystemRoles([]);
+      setSystemRolesLoading(false);
+      setSystemRolesError('');
+      return;
+    }
+
+    let cancelled = false;
+
+    const loadSystemRoles = async () => {
+      setSystemRolesLoading(true);
+      setSystemRolesError('');
+
+      try {
+        const roles = await usersApi.getAllRoles();
+        if (!cancelled) {
+          setSystemRoles(roles);
+        }
+      } catch (e) {
+        if (!cancelled) {
+          setSystemRoles([]);
+          setSystemRolesError(
+            e.response?.data?.message || e.message || 'Failed to load system roles'
+          );
+        }
+      } finally {
+        if (!cancelled) {
+          setSystemRolesLoading(false);
+        }
+      }
+    };
+
+    loadSystemRoles();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isOpen, canProvisionLoginAccess]);
 
   // --- Computed Values ---
   const checklistProgress = useMemo(() => {
@@ -194,10 +270,21 @@ const AddEmployeeModal = ({ isOpen, onClose, onWorkflowStart, employeeToEdit }) 
 
   const handleInputChange = (e) => {
     const { name, value, type, checked } = e.target;
-    setFormData(prev => ({
-      ...prev,
-      [name]: type === 'checkbox' ? checked : value
-    }));
+    setFormError('');
+    setFormData(prev => {
+      const next = {
+        ...prev,
+        [name]: type === 'checkbox' ? checked : value
+      };
+
+      if (name === 'createLoginAccess' && !checked) {
+        next.loginUsername = '';
+        next.temporaryPassword = '';
+        next.systemRoleId = '';
+      }
+
+      return next;
+    });
   };
 
   const handleNext = () => {
@@ -225,14 +312,69 @@ const AddEmployeeModal = ({ isOpen, onClose, onWorkflowStart, employeeToEdit }) 
     onClose();
   };
 
-  const handleFormSubmit = () => {
-    const submissionData = { ...formData };
+  const validateLoginAccess = () => {
+    if (!canProvisionLoginAccess || !formData.createLoginAccess) {
+      return '';
+    }
+
+    if (systemRolesLoading) {
+      return 'System roles are still loading. Please wait a moment.';
+    }
+    if (systemRolesError) {
+      return systemRolesError;
+    }
+    if (!formData.loginUsername.trim()) {
+      return 'Login username or email is required to create system access.';
+    }
+    if (!formData.temporaryPassword) {
+      return 'Temporary password is required to create system access.';
+    }
+    if (!formData.systemRoleId) {
+      return 'System role is required to create system access.';
+    }
+
+    return '';
+  };
+
+  const handleFormSubmit = async () => {
+    const accessError = validateLoginAccess();
+    if (accessError) {
+      setFormError(accessError);
+      setActiveTab('access');
+      return;
+    }
+
+    const {
+      expiryDate,
+      createLoginAccess,
+      loginUsername,
+      temporaryPassword,
+      systemRoleId,
+      ...employeeFields
+    } = formData;
+
+    const submissionData = {
+      ...employeeFields,
+      emiratesIdExpiry: expiryDate || null,
+    };
+
     if (employeeToEdit) {
       submissionData.id = employeeToEdit.id;
     }
 
-    onWorkflowStart(submissionData, avatarFile, !!employeeToEdit);
-    onClose();
+    if (canProvisionLoginAccess && createLoginAccess) {
+      submissionData.loginAccess = {
+        createAccess: true,
+        loginUsername: loginUsername.trim(),
+        temporaryPassword,
+        roleId: Number(systemRoleId),
+      };
+    }
+
+    const success = await onWorkflowStart(submissionData, avatarFile, !!employeeToEdit);
+    if (success) {
+      onClose();
+    }
   };
 
   const toggleChecklist = (id) => {
@@ -636,6 +778,93 @@ const AddEmployeeModal = ({ isOpen, onClose, onWorkflowStart, employeeToEdit }) 
               </div>
             </div>
 
+            {canProvisionLoginAccess && (
+              <div className="bg-white border border-slate-200 rounded-lg p-6 shadow-sm">
+                <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <h3 className="text-sm font-semibold text-slate-700">System Login Access</h3>
+                      <ShieldCheck size={14} className="text-slate-400" />
+                    </div>
+                    <p className="mt-1 text-xs text-slate-500">
+                      Provision employee login now. The account stays inactive until this employee becomes Active.
+                    </p>
+                  </div>
+                  <label className="flex items-center gap-2 text-xs font-medium text-slate-600">
+                    <input
+                      name="createLoginAccess"
+                      checked={formData.createLoginAccess}
+                      onChange={handleInputChange}
+                      type="checkbox"
+                      className="w-4 h-4 text-[#F5C742] rounded focus:ring-[#F5C742]"
+                    />
+                    Create login access
+                  </label>
+                </div>
+
+                {formData.createLoginAccess && (
+                  <div className="mt-6 space-y-4">
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div>
+                        <label className="block text-xs font-medium text-slate-500 mb-1">Login Username or Email *</label>
+                        <input
+                          name="loginUsername"
+                          value={formData.loginUsername}
+                          onChange={handleInputChange}
+                          type="text"
+                          placeholder="employee.login"
+                          className="w-full text-sm border border-slate-200 rounded-md px-3 py-2 focus:outline-none focus:border-[#F5C742]"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-medium text-slate-500 mb-1">Temporary Password *</label>
+                        <input
+                          name="temporaryPassword"
+                          value={formData.temporaryPassword}
+                          onChange={handleInputChange}
+                          type="password"
+                          placeholder="Set temporary password"
+                          className="w-full text-sm border border-slate-200 rounded-md px-3 py-2 focus:outline-none focus:border-[#F5C742]"
+                        />
+                      </div>
+                      <div className="md:col-span-2">
+                        <label className="block text-xs font-medium text-slate-500 mb-1">System Role *</label>
+                        <div className="relative">
+                          <select
+                            name="systemRoleId"
+                            value={formData.systemRoleId}
+                            onChange={handleInputChange}
+                            disabled={systemRolesLoading || systemRoles.length === 0}
+                            className="w-full text-sm border border-slate-200 rounded-md px-3 py-2 appearance-none bg-white focus:outline-none focus:border-[#F5C742] text-slate-600 disabled:bg-slate-50 disabled:text-slate-400"
+                          >
+                            <option value="">
+                              {systemRolesLoading ? 'Loading system roles...' : 'Select a system role'}
+                            </option>
+                            {systemRoles.map(role => (
+                              <option key={role.id} value={role.id}>
+                                {role.name.replace(/_/g, ' ')}
+                              </option>
+                            ))}
+                          </select>
+                          <ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
+                        </div>
+                      </div>
+                    </div>
+
+                    {systemRolesError && (
+                      <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-600">
+                        {systemRolesError}
+                      </div>
+                    )}
+
+                    <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700">
+                      This user account will activate automatically when the employee becomes Active.
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
             <div className="bg-white border border-slate-200 rounded-lg p-6 shadow-sm">
               <h3 className="text-sm font-semibold text-slate-700 mb-4">Branch & Warehouse Access</h3>
               <div className="space-y-4">
@@ -671,6 +900,12 @@ const AddEmployeeModal = ({ isOpen, onClose, onWorkflowStart, employeeToEdit }) 
                 </div>
               </div>
             </div>
+
+            {formError && (
+              <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-xs text-red-600">
+                {formError}
+              </div>
+            )}
           </div>
         );
 
@@ -1098,6 +1333,7 @@ const TopPerformerCard = ({ name, score }) => (
 // ==========================================
 
 const ActionModal = ({ employee, onClose, onDeactivate, onActivate, onEdit }) => {
+  const { canEdit } = usePermissions();
   if (!employee) return null;
 
   return (
@@ -1130,12 +1366,20 @@ const ActionModal = ({ employee, onClose, onDeactivate, onActivate, onEdit }) =>
           </div>
 
           <div className="space-y-2">
-            <button
-              onClick={() => onEdit(employee)}
-              className="w-full text-left px-3 py-2 text-xs font-medium text-slate-700 hover:bg-slate-50 rounded flex items-center gap-2 transition-colors"
-            >
-              <Edit size={14} className="text-slate-400" /> Edit Profile
-            </button>
+            {/* ── VERTICAL: canEdit('hr') ── */}
+            {canEdit('hr') ? (
+              <button
+                onClick={() => onEdit(employee)}
+                className="w-full text-left px-3 py-2 text-xs font-medium text-slate-700 hover:bg-slate-50 rounded flex items-center gap-2 transition-colors"
+              >
+                <Edit size={14} className="text-slate-400" /> Edit Profile
+              </button>
+            ) : (
+              <div className="px-3 py-2 text-xs text-slate-400 flex items-center gap-2 cursor-not-allowed select-none">
+                <Edit size={14} className="text-slate-300" /> Edit Profile
+                <span className="ml-auto text-[10px] bg-slate-100 text-slate-400 px-1.5 py-0.5 rounded">No permission</span>
+              </div>
+            )}
 
             <button
               onClick={() => alert(`Set Target for ${employee.name}`)}
@@ -1146,20 +1390,29 @@ const ActionModal = ({ employee, onClose, onDeactivate, onActivate, onEdit }) =>
 
             <div className="h-px bg-slate-100 my-1"></div>
 
-            {employee.status === 'Active' ? (
-              <button
-                onClick={() => onDeactivate(employee.id)}
-                className="w-full text-left px-3 py-2 text-xs font-medium text-red-600 hover:bg-red-50 rounded flex items-center gap-2 transition-colors"
-              >
-                <UserX size={14} className="text-red-500" /> Deactivate
-              </button>
+            {/* ── VERTICAL: canEdit('hr') for activate/deactivate ── */}
+            {canEdit('hr') ? (
+              employee.status === 'Active' ? (
+                <button
+                  onClick={() => onDeactivate(employee.id)}
+                  className="w-full text-left px-3 py-2 text-xs font-medium text-red-600 hover:bg-red-50 rounded flex items-center gap-2 transition-colors"
+                >
+                  <UserX size={14} className="text-red-500" /> Deactivate
+                </button>
+              ) : (
+                <button
+                  onClick={() => onActivate(employee.id)}
+                  className="w-full text-left px-3 py-2 text-xs font-medium text-green-600 hover:bg-green-50 rounded flex items-center gap-2 transition-colors"
+                >
+                  <UserCheck size={14} className="text-green-500" /> Activate
+                </button>
+              )
             ) : (
-              <button
-                onClick={() => onActivate(employee.id)}
-                className="w-full text-left px-3 py-2 text-xs font-medium text-green-600 hover:bg-green-50 rounded flex items-center gap-2 transition-colors"
-              >
-                <UserCheck size={14} className="text-green-500" /> Activate
-              </button>
+              <div className="px-3 py-2 text-xs text-slate-400 flex items-center gap-2 cursor-not-allowed select-none">
+                <UserX size={14} className="text-slate-300" />
+                {employee.status === 'Active' ? 'Deactivate' : 'Activate'}
+                <span className="ml-auto text-[10px] bg-slate-100 text-slate-400 px-1.5 py-0.5 rounded">No permission</span>
+              </div>
             )}
           </div>
         </div>
@@ -1169,10 +1422,428 @@ const ActionModal = ({ employee, onClose, onDeactivate, onActivate, onEdit }) =>
 };
 
 // ==========================================
-// 4. MAIN COMPONENT (API INTEGRATED)
+// 4. EMPLOYEE ACCESS PANEL (ADMIN ONLY)
+// ==========================================
+
+const ACCESS_STATUS = {
+  noAccess: { label: 'No Access', cls: 'bg-slate-100 text-slate-500 border-slate-200' },
+  provisioned: { label: 'Provisioned', cls: 'bg-amber-100 text-amber-700 border-amber-200' },
+  active:   { label: 'Active',    cls: 'bg-green-100 text-green-700 border-green-200' },
+  frozen:   { label: 'Frozen',    cls: 'bg-red-100 text-red-600 border-red-200' },
+};
+
+const EmployeeAccessPanel = ({ employee, onClose }) => {
+  const [accessData, setAccessData]     = useState(null);
+  const [loading, setLoading]           = useState(true);
+  const [actionLoading, setActionLoading] = useState(false);
+  const [error, setError]               = useState(null);
+  const [inlineError, setInlineError]   = useState(null);
+
+  // Assign-roles sub-view state
+  const [showRoles, setShowRoles]       = useState(false);
+  const [allRoles, setAllRoles]         = useState([]);       // [{ id, name }]
+  const [selectedIds, setSelectedIds]   = useState(new Set()); // role ids currently checked
+  const [rolesLoading, setRolesLoading] = useState(false);
+  const [rolesSaving, setRolesSaving]   = useState(false);
+  const [rolesLayout, setRolesLayout]   = useState('vertical'); // 'vertical' | 'horizontal'
+
+  // ── data loading ──────────────────────────────────────────
+  const loadAccess = async () => {
+    setLoading(true);
+    setInlineError(null);
+    try {
+      const data = await usersApi.getEmployeeAccess(employee.id);
+      setAccessData(data);
+    } catch (e) {
+      setError(e.response?.data?.message || e.message || 'Failed to load access data');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => { loadAccess(); }, [employee.id]);
+
+  // ── generic action wrapper ────────────────────────────────
+  const withAction = async (fn) => {
+    setActionLoading(true);
+    setInlineError(null);
+    try {
+      await fn();
+      await loadAccess();
+    } catch (e) {
+      setInlineError(e.response?.data?.message || e.message || 'Action failed');
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  // ── main actions ──────────────────────────────────────────
+  const handleCreateAccess = () => withAction(async () => {
+    if (employee.status !== 'Active') {
+      throw new Error('Cannot create access for an inactive employee. Activate the employee first.');
+    }
+    const password = window.prompt('Enter a temporary password for this account:');
+    if (!password) throw new Error('Password is required');
+    await usersApi.create({
+      username: employee.rawEmail || employee.email,
+      email:    employee.rawEmail || employee.email,
+      password,
+      fullName: employee.name,
+      phone:    employee.rawPhone || '',
+      linkedEmployeeId: employee.id,
+      roleIds: [],
+    });
+  });
+
+  const handleFreeze         = () => withAction(() => usersApi.freeze(accessData.linkedUserId));
+  const handleUnfreeze       = () => withAction(() => usersApi.unfreeze(accessData.linkedUserId));
+
+  const handleResetPassword  = () => withAction(async () => {
+    const newPw = window.prompt('Enter the new temporary password:');
+    if (!newPw) throw new Error('Password is required');
+    await usersApi.resetPassword(accessData.linkedUserId, newPw);
+  });
+
+  const handleDeleteAccess   = () => withAction(async () => {
+    if (!window.confirm('Delete this user account? The employee record will NOT be affected.')) return;
+    await usersApi.deleteUser(accessData.linkedUserId);
+  });
+
+  // ── assign-roles flow ─────────────────────────────────────
+  const openRoles = async () => {
+    setShowRoles(true);
+    setRolesLoading(true);
+    setInlineError(null);
+    try {
+      const roles = await usersApi.getAllRoles();
+      setAllRoles(roles);
+      // Pre-select roles already assigned to this user
+      const currentNames = new Set(accessData?.assignedRoles || []);
+      const preSelected  = new Set(roles.filter(r => currentNames.has(r.name)).map(r => r.id));
+      setSelectedIds(preSelected);
+    } catch (e) {
+      setInlineError(e.response?.data?.message || e.message || 'Failed to load roles');
+      setShowRoles(false);
+    } finally {
+      setRolesLoading(false);
+    }
+  };
+
+  const toggleRole = (id) => {
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+  };
+
+  const handleSaveRoles = async () => {
+    setRolesSaving(true);
+    setInlineError(null);
+    try {
+      await usersApi.assignRoles(accessData.linkedUserId, [...selectedIds]);
+      await loadAccess();
+      setShowRoles(false);
+    } catch (e) {
+      setInlineError(e.response?.data?.message || e.message || 'Failed to save roles');
+    } finally {
+      setRolesSaving(false);
+    }
+  };
+
+  // ── derived display ───────────────────────────────────────
+  const statusInfo = !accessData?.hasLinkedUser
+    ? ACCESS_STATUS.noAccess
+    : accessData.pendingEmployeeActivation
+      ? ACCESS_STATUS.provisioned
+      : accessData.userActive
+        ? ACCESS_STATUS.active
+        : ACCESS_STATUS.frozen;
+
+  const hasUser = accessData?.hasLinkedUser;
+
+  // Role badge colours
+  const roleBadge = {
+    ADMIN:             'bg-purple-100 text-purple-700',
+    HR:                'bg-blue-100 text-blue-700',
+    ACCOUNTANT:        'bg-green-100 text-green-700',
+    SALES:             'bg-yellow-100 text-yellow-700',
+    INVENTORY_MANAGER: 'bg-orange-100 text-orange-700',
+  };
+
+  return (
+    <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4"
+         onClick={onClose}>
+      <div className="bg-white rounded-xl shadow-2xl w-full max-w-md relative overflow-hidden"
+           onClick={e => e.stopPropagation()}>
+
+        {/* ── Header ── */}
+        <div className="flex items-center justify-between px-6 pt-5 pb-4 border-b border-slate-100">
+          <div className="flex items-center gap-2">
+            {showRoles && (
+              <button onClick={() => setShowRoles(false)}
+                className="text-slate-400 hover:text-slate-600 p-1 rounded hover:bg-slate-100 transition-colors mr-1">
+                <ChevronDown size={16} className="rotate-90" />
+              </button>
+            )}
+            <div>
+              <h2 className="text-sm font-semibold text-slate-800 flex items-center gap-1.5">
+                <Lock size={14} className="text-slate-400" />
+                {showRoles ? 'Assign Roles' : 'System Access'}
+              </h2>
+              <p className="text-xs text-slate-400 mt-0.5">{employee.name} · {employee.code}</p>
+            </div>
+          </div>
+          <button onClick={onClose}
+            className="text-slate-400 hover:text-slate-600 p-1 rounded hover:bg-slate-100 transition-colors">
+            <X size={18} />
+          </button>
+        </div>
+
+        {/* ── Body ── */}
+        <div className="px-6 py-5">
+          {loading ? (
+            <div className="py-10 text-center text-sm text-slate-400">Loading…</div>
+          ) : error ? (
+            <div className="py-10 text-center text-sm text-red-500">{error}</div>
+
+          ) : showRoles ? (
+            /* ────────── ASSIGN ROLES SUB-VIEW ────────── */
+            <div className="space-y-4">
+
+              {/* Sub-view toolbar: description + layout toggle */}
+              <div className="flex items-start justify-between gap-3">
+                <p className="text-xs text-slate-500 leading-relaxed">
+                  Select roles for{' '}
+                  <span className="font-semibold text-slate-700">{accessData?.linkedUsername}</span>.
+                  Changes take effect on next login.
+                </p>
+                {/* Layout toggle */}
+                <div className="flex items-center gap-0.5 border border-slate-200 rounded-md p-0.5 shrink-0">
+                  <button
+                    onClick={() => setRolesLayout('vertical')}
+                    title="List view"
+                    className={`p-1 rounded transition-colors ${
+                      rolesLayout === 'vertical'
+                        ? 'bg-[#F5C742] text-slate-900'
+                        : 'text-slate-400 hover:text-slate-600'
+                    }`}>
+                    <LayoutList size={13} />
+                  </button>
+                  <button
+                    onClick={() => setRolesLayout('horizontal')}
+                    title="Grid view"
+                    className={`p-1 rounded transition-colors ${
+                      rolesLayout === 'horizontal'
+                        ? 'bg-[#F5C742] text-slate-900'
+                        : 'text-slate-400 hover:text-slate-600'
+                    }`}>
+                    <LayoutGrid size={13} />
+                  </button>
+                </div>
+              </div>
+
+              {rolesLoading ? (
+                <div className="py-6 text-center text-sm text-slate-400">Loading roles…</div>
+              ) : rolesLayout === 'vertical' ? (
+                /* ── Vertical list ── */
+                <div className="space-y-1.5">
+                  {allRoles.map(role => {
+                    const checked = selectedIds.has(role.id);
+                    return (
+                      <label key={role.id}
+                        className={`flex items-center gap-3 p-3 rounded-lg border cursor-pointer transition-all select-none
+                          ${checked
+                            ? 'border-[#F5C742] bg-yellow-50'
+                            : 'border-slate-100 bg-slate-50 hover:border-slate-200 hover:bg-white'}`}>
+                        <input
+                          type="checkbox"
+                          className="w-4 h-4 accent-[#F5C742] cursor-pointer shrink-0"
+                          checked={checked}
+                          onChange={() => toggleRole(role.id)}
+                        />
+                        <div className="flex-1 min-w-0">
+                          <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${roleBadge[role.name] || 'bg-slate-100 text-slate-600'}`}>
+                            {role.name}
+                          </span>
+                        </div>
+                        {checked && <Check size={14} className="text-yellow-600 shrink-0" />}
+                      </label>
+                    );
+                  })}
+                </div>
+              ) : (
+                /* ── Horizontal grid (2 columns) ── */
+                <div className="grid grid-cols-2 gap-2">
+                  {allRoles.map(role => {
+                    const checked = selectedIds.has(role.id);
+                    return (
+                      <label key={role.id}
+                        className={`relative flex flex-col items-center gap-2 p-3 rounded-lg border cursor-pointer transition-all select-none text-center
+                          ${checked
+                            ? 'border-[#F5C742] bg-yellow-50'
+                            : 'border-slate-100 bg-slate-50 hover:border-slate-200 hover:bg-white'}`}>
+                        <input
+                          type="checkbox"
+                          className="sr-only"
+                          checked={checked}
+                          onChange={() => toggleRole(role.id)}
+                        />
+                        {/* Check tick in top-right corner */}
+                        {checked && (
+                          <span className="absolute top-1.5 right-1.5 w-4 h-4 flex items-center justify-center rounded-full bg-[#F5C742]">
+                            <Check size={10} className="text-slate-900" />
+                          </span>
+                        )}
+                        {/* Role initial avatar */}
+                        <span className={`w-9 h-9 flex items-center justify-center rounded-full text-sm font-bold ${roleBadge[role.name] || 'bg-slate-100 text-slate-600'}`}>
+                          {role.name.charAt(0)}
+                        </span>
+                        <span className="text-[10px] font-semibold text-slate-700 leading-tight break-words w-full">
+                          {role.name.replace(/_/g, ' ')}
+                        </span>
+                      </label>
+                    );
+                  })}
+                </div>
+              )}
+
+              {inlineError && (
+                <div className="text-xs text-red-600 bg-red-50 border border-red-100 rounded-md p-2">
+                  {inlineError}
+                </div>
+              )}
+
+              <div className="flex gap-2 pt-1">
+                <button onClick={handleSaveRoles} disabled={rolesSaving}
+                  className="flex-1 flex items-center justify-center gap-1.5 px-4 py-2 text-xs font-semibold rounded-md bg-[#F5C742] text-slate-900 hover:bg-yellow-400 disabled:opacity-50 transition-colors">
+                  <Save size={13} />
+                  {rolesSaving ? 'Saving…' : 'Save Roles'}
+                </button>
+                <button onClick={() => setShowRoles(false)} disabled={rolesSaving}
+                  className="px-4 py-2 text-xs font-medium rounded-md border border-slate-200 text-slate-600 hover:bg-slate-50 disabled:opacity-50 transition-colors">
+                  Cancel
+                </button>
+              </div>
+            </div>
+
+          ) : (
+            /* ────────── MAIN ACCESS VIEW ────────── */
+            <div className="space-y-4">
+
+              {/* Status */}
+              <div className="flex items-center justify-between p-3 bg-slate-50 rounded-lg border border-slate-100">
+                <span className="text-xs text-slate-500 font-medium">Account Status</span>
+                <span className={`text-xs px-2.5 py-0.5 rounded-full border font-semibold ${statusInfo.cls}`}>
+                  {statusInfo.label}
+                </span>
+              </div>
+
+              {hasUser && accessData.pendingEmployeeActivation && (
+                <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700">
+                  Login access has been provisioned and will activate automatically when this employee becomes Active.
+                </div>
+              )}
+
+              {/* User details */}
+              {hasUser && (
+                <div className="space-y-2 text-xs">
+                  <div className="flex justify-between items-center py-1 border-b border-slate-50">
+                    <span className="text-slate-400">Email</span>
+                    <span className="text-slate-700 font-medium truncate max-w-[200px]">
+                      {accessData.linkedEmail || '—'}
+                    </span>
+                  </div>
+                  <div className="flex justify-between items-center py-1 border-b border-slate-50">
+                    <span className="text-slate-400">Username</span>
+                    <span className="text-slate-600 font-mono">{accessData.linkedUsername}</span>
+                  </div>
+                  <div className="flex justify-between items-start py-1">
+                    <span className="text-slate-400 pt-0.5">Roles</span>
+                    <div className="flex flex-wrap gap-1 justify-end max-w-[220px]">
+                      {accessData.assignedRoles?.length > 0
+                        ? accessData.assignedRoles.map(r => (
+                            <span key={r}
+                              className={`text-[10px] px-1.5 py-0.5 rounded-full font-semibold ${roleBadge[r] || 'bg-slate-100 text-slate-600'}`}>
+                              {r}
+                            </span>
+                          ))
+                        : <span className="text-slate-400 italic">None assigned</span>}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Inline error */}
+              {inlineError && (
+                <div className="text-xs text-red-600 bg-red-50 border border-red-100 rounded-md px-3 py-2">
+                  {inlineError}
+                </div>
+              )}
+
+              {/* Action buttons */}
+              <div className="flex flex-wrap gap-2 pt-1">
+
+                {/* No access yet */}
+                {!hasUser && (
+                  <button onClick={handleCreateAccess} disabled={actionLoading}
+                    className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-md bg-[#F5C742] text-slate-900 hover:bg-yellow-400 disabled:opacity-50 transition-colors">
+                    <UserCheck size={13} /> Create Access
+                  </button>
+                )}
+
+                {/* Has user — Assign Roles (available whether active or frozen) */}
+                {hasUser && (
+                  <button onClick={openRoles} disabled={actionLoading}
+                    className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-md bg-[#F5C742] text-slate-900 hover:bg-yellow-400 disabled:opacity-50 transition-colors">
+                    <ShieldCheck size={13} /> Assign Roles
+                  </button>
+                )}
+
+                {/* Active-only actions */}
+                {hasUser && accessData.userActive && (
+                  <button onClick={handleFreeze} disabled={actionLoading}
+                    className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md border border-orange-200 text-orange-600 hover:bg-orange-50 disabled:opacity-50 transition-colors">
+                    <Lock size={13} /> Freeze
+                  </button>
+                )}
+
+                {/* Frozen-only actions */}
+                {hasUser && !accessData.userActive && !accessData.pendingEmployeeActivation && (
+                  <button onClick={handleUnfreeze} disabled={actionLoading}
+                    className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md border border-green-200 text-green-600 hover:bg-green-50 disabled:opacity-50 transition-colors">
+                    <UserCheck size={13} /> Unfreeze
+                  </button>
+                )}
+
+                {/* Always available when user exists */}
+                {hasUser && (
+                  <>
+                    <button onClick={handleResetPassword} disabled={actionLoading}
+                      className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md border border-slate-200 text-slate-600 hover:bg-slate-50 disabled:opacity-50 transition-colors">
+                      <ShieldCheck size={13} /> Reset Password
+                    </button>
+                    <button onClick={handleDeleteAccess} disabled={actionLoading}
+                      className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md border border-red-200 text-red-600 hover:bg-red-50 disabled:opacity-50 transition-colors">
+                      <UserX size={13} /> Delete Access
+                    </button>
+                  </>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// ==========================================
+// 5. MAIN COMPONENT (API INTEGRATED)
 // ==========================================
 
 const Employees = () => {
+  const { canCreate, canEdit, canApprove, canExport } = usePermissions();
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [activeCategory, setActiveCategory] = useState("All Employees");
 
@@ -1188,6 +1859,9 @@ const Employees = () => {
 
   // Edit State
   const [employeeToEdit, setEmployeeToEdit] = useState(null);
+
+  // Access Panel State (ADMIN only)
+  const [accessPanelEmployee, setAccessPanelEmployee] = useState(null);
 
   // --- FILTER & SORT STATE ---
   const [searchTerm, setSearchTerm] = useState("");
@@ -1218,11 +1892,13 @@ const Employees = () => {
 
   const handleWorkflowStart = async (formData, avatarFile, isEditMode) => {
     // API call expects a specific structure + file
-    const backendPayload = {
-      ...formData,
-      status: 'Pending',
-      workflowStage: 'HR Review'
-    };
+    const backendPayload = isEditMode
+      ? { ...formData }
+      : {
+          ...formData,
+          status: 'Pending',
+          workflowStage: 'HR Review'
+        };
 
     try {
       if (isEditMode) {
@@ -1236,13 +1912,15 @@ const Employees = () => {
         setActiveCategory("Access & Permissions"); // Auto-switch to view request
       }
 
-      // Refresh UI
-      fetchData();
-    } catch (e) {
-      console.error(e);
-      alert("Error saving employee. Check console.");
-    }
-  };
+        // Refresh UI
+        await fetchData();
+        return true;
+      } catch (e) {
+        console.error(e);
+        alert(e.response?.data?.message || "Error saving employee. Check console.");
+        return false;
+      }
+    };
 
   const handleApproveStep = async (id) => {
     try {
@@ -1327,7 +2005,11 @@ const Employees = () => {
     initials: (emp.firstName?.[0] || "") + (emp.lastName?.[0] || ""),
     color: emp.status === 'Active' ? "bg-blue-100 text-blue-600" : "bg-slate-100 text-slate-600",
     // Construct Full Image URL
-    avatar: emp.avatarUrl ? `${SERVER_URL}${emp.avatarUrl}` : null
+    avatar: emp.avatarUrl ? `${SERVER_URL}${emp.avatarUrl}` : null,
+    // Raw fields needed by EmployeeAccessPanel for user creation
+    email: emp.email,
+    rawEmail: emp.email,
+    rawPhone: emp.phone,
   });
 
   // --- 4. Filtering Logic (New) ---
@@ -1478,6 +2160,14 @@ const Employees = () => {
         employeeToEdit={employeeToEdit}
       />
 
+      {/* EMPLOYEE ACCESS PANEL (ADMIN only) */}
+      {accessPanelEmployee && (
+        <EmployeeAccessPanel
+          employee={accessPanelEmployee}
+          onClose={() => setAccessPanelEmployee(null)}
+        />
+      )}
+
       {/* MAIN CONTENT */}
       <main className="flex-1 flex flex-col w-full">
         <div className="p-4 md:p-6 space-y-6">
@@ -1491,34 +2181,47 @@ const Employees = () => {
             </div>
 
             <div className="flex flex-wrap gap-2 w-full lg:w-auto">
-              <button className="flex-1 lg:flex-none flex items-center justify-center gap-2 px-3 py-2 bg-white border border-slate-200 rounded-md text-sm text-slate-600 hover:bg-slate-50 whitespace-nowrap transition-colors">
-                <Upload size={16} /> Import
-              </button>
-              <button className="flex-1 lg:flex-none flex items-center justify-center gap-2 px-3 py-2 bg-white border border-slate-200 rounded-md text-sm text-slate-600 hover:bg-slate-50 whitespace-nowrap transition-colors">
-                <Download size={16} /> Export
-              </button>
-              <button className="flex-1 lg:flex-none flex items-center justify-center gap-2 px-3 py-2 bg-white border border-slate-200 rounded-md text-sm text-slate-600 hover:bg-slate-50 whitespace-nowrap transition-colors">
-                <Target size={16} /> Set Targets
-              </button>
+              {/* ── VERTICAL: canCreate('hr') for Import ── */}
+              {canCreate('hr') && (
+                <button className="flex-1 lg:flex-none flex items-center justify-center gap-2 px-3 py-2 bg-white border border-slate-200 rounded-md text-sm text-slate-600 hover:bg-slate-50 whitespace-nowrap transition-colors">
+                  <Upload size={16} /> Import
+                </button>
+              )}
+              {/* ── VERTICAL: canExport('hr') ── */}
+              {canExport('hr') && (
+                <button className="flex-1 lg:flex-none flex items-center justify-center gap-2 px-3 py-2 bg-white border border-slate-200 rounded-md text-sm text-slate-600 hover:bg-slate-50 whitespace-nowrap transition-colors">
+                  <Download size={16} /> Export
+                </button>
+              )}
+              {/* ── VERTICAL: canEdit('hr') for Set Targets ── */}
+              {canEdit('hr') && (
+                <button className="flex-1 lg:flex-none flex items-center justify-center gap-2 px-3 py-2 bg-white border border-slate-200 rounded-md text-sm text-slate-600 hover:bg-slate-50 whitespace-nowrap transition-colors">
+                  <Target size={16} /> Set Targets
+                </button>
+              )}
               <button className="p-2 bg-white border border-slate-200 rounded-md text-slate-600 hover:bg-slate-50 transition-colors">
                 <Settings size={16} />
               </button>
 
-              {/* Desktop Add Button */}
-              <button
-                onClick={openAddModal}
-                className="hidden sm:flex items-center justify-center gap-2 px-4 py-2 bg-[#F5C742] rounded-md text-sm font-semibold text-slate-900 hover:bg-yellow-400 whitespace-nowrap shadow-sm transition-colors"
-              >
-                <Plus size={16} /> Add Employee
-              </button>
-
-              {/* Mobile Add Button */}
-              <button
-                onClick={openAddModal}
-                className="sm:hidden flex-1 flex items-center justify-center gap-2 px-4 py-2 bg-[#F5C742] rounded-md text-sm font-semibold text-slate-900 hover:bg-yellow-400 whitespace-nowrap shadow-sm transition-colors"
-              >
-                <Plus size={16} />
-              </button>
+              {/* ── VERTICAL: canCreate('hr') for Add Employee ── */}
+              {canCreate('hr') && (
+                <>
+                  {/* Desktop */}
+                  <button
+                    onClick={openAddModal}
+                    className="hidden sm:flex items-center justify-center gap-2 px-4 py-2 bg-[#F5C742] rounded-md text-sm font-semibold text-slate-900 hover:bg-yellow-400 whitespace-nowrap shadow-sm transition-colors"
+                  >
+                    <Plus size={16} /> Add Employee
+                  </button>
+                  {/* Mobile */}
+                  <button
+                    onClick={openAddModal}
+                    className="sm:hidden flex-1 flex items-center justify-center gap-2 px-4 py-2 bg-[#F5C742] rounded-md text-sm font-semibold text-slate-900 hover:bg-yellow-400 whitespace-nowrap shadow-sm transition-colors"
+                  >
+                    <Plus size={16} />
+                  </button>
+                </>
+              )}
             </div>
           </div>
 
@@ -1671,20 +2374,25 @@ const Employees = () => {
                               {req.submittedAt}
                             </td>
                             <td className="px-6 py-4 text-right whitespace-nowrap">
-                              <div className="flex items-center justify-end gap-2">
-                                <button
-                                  onClick={() => handleReject(req.id)}
-                                  className="p-1.5 rounded-full text-red-600 hover:bg-red-50 border border-transparent hover:border-red-100 transition-colors" title="Reject"
-                                >
-                                  <XIcon size={16} />
-                                </button>
-                                <button
-                                  onClick={() => handleApproveStep(req.id)}
-                                  className="flex items-center gap-1.5 px-3 py-1.5 bg-green-600 text-white rounded text-xs font-medium hover:bg-green-700 shadow-sm transition-colors"
-                                >
-                                  <Check size={14} /> Approve
-                                </button>
-                              </div>
+                              {/* ── VERTICAL: canApprove('hr') ── */}
+                              {canApprove('hr') ? (
+                                <div className="flex items-center justify-end gap-2">
+                                  <button
+                                    onClick={() => handleReject(req.id)}
+                                    className="p-1.5 rounded-full text-red-600 hover:bg-red-50 border border-transparent hover:border-red-100 transition-colors" title="Reject"
+                                  >
+                                    <XIcon size={16} />
+                                  </button>
+                                  <button
+                                    onClick={() => handleApproveStep(req.id)}
+                                    className="flex items-center gap-1.5 px-3 py-1.5 bg-green-600 text-white rounded text-xs font-medium hover:bg-green-700 shadow-sm transition-colors"
+                                  >
+                                    <Check size={14} /> Approve
+                                  </button>
+                                </div>
+                              ) : (
+                                <span className="text-[10px] text-slate-400 bg-slate-100 px-2 py-1 rounded">No approve permission</span>
+                              )}
                             </td>
                           </tr>
                         ))
@@ -1770,15 +2478,29 @@ const Employees = () => {
                               </span>
                             </td>
                             <td className="px-6 py-4 text-right whitespace-nowrap relative">
-                              <button
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  setSelectedEmployeeForAction(emp);
-                                }}
-                                className="text-slate-400 hover:text-slate-600 p-1 rounded hover:bg-slate-100 transition-colors"
-                              >
-                                <MoreHorizontal size={18} />
-                              </button>
+                              <div className="flex items-center justify-end gap-2">
+                                {hasRole('ADMIN') && (
+                                  <button
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      setAccessPanelEmployee(emp);
+                                    }}
+                                    title="Manage system access"
+                                    className="flex items-center gap-1 text-xs px-2 py-1 rounded border border-slate-200 text-slate-500 hover:bg-slate-50 hover:text-slate-700 transition-colors"
+                                  >
+                                    <Lock size={12} /> Access
+                                  </button>
+                                )}
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setSelectedEmployeeForAction(emp);
+                                  }}
+                                  className="text-slate-400 hover:text-slate-600 p-1 rounded hover:bg-slate-100 transition-colors"
+                                >
+                                  <MoreHorizontal size={18} />
+                                </button>
+                              </div>
                             </td>
                           </tr>
                         ))

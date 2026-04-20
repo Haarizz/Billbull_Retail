@@ -2,19 +2,38 @@ package com.billbull.backend.sales.proforma;
 
 import java.math.BigDecimal;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+
+import com.billbull.backend.inventory.product.Product;
+import com.billbull.backend.inventory.product.ProductBarcode;
+import com.billbull.backend.inventory.product.ProductBarcodeRepository;
+import com.billbull.backend.inventory.product.ProductMediaRepository;
+import com.billbull.backend.inventory.product.ProductRepository;
+import com.billbull.backend.util.DocumentOrderingUtil;
 
 @Service
 @Transactional
 public class ProformaService {
 
     private final ProformaRepository repo;
+    private final ProductRepository productRepo;
+    private final ProductBarcodeRepository barcodeRepo;
+    private final ProductMediaRepository productMediaRepository;
 
-    public ProformaService(ProformaRepository repo) {
+    public ProformaService(
+            ProformaRepository repo,
+            ProductRepository productRepo,
+            ProductBarcodeRepository barcodeRepo,
+            ProductMediaRepository productMediaRepository) {
         this.repo = repo;
+        this.productRepo = productRepo;
+        this.barcodeRepo = barcodeRepo;
+        this.productMediaRepository = productMediaRepository;
     }
 
     /* ================= CREATE ================= */
@@ -45,7 +64,13 @@ public class ProformaService {
 
     @Transactional(readOnly = true)
     public List<ProformaResponse> list() {
-        return repo.findAll().stream()
+        List<ProformaInvoice> proformas = new ArrayList<>(repo.findAll());
+        DocumentOrderingUtil.sortByDocumentDateAndNumberDesc(
+                proformas,
+                ProformaInvoice::getPiDate,
+                ProformaInvoice::getPiNumber,
+                ProformaInvoice::getId);
+        return proformas.stream()
                 .map(this::toResponse) // mapping happens INSIDE TX
                 .toList();
     }
@@ -124,6 +149,9 @@ public class ProformaService {
             item.setPrice(i.price);
             item.setTaxPercent(i.taxPercent);
             item.setFoc(i.foc);
+            item.setFocUnit(i.focUnit);
+            item.setRemarks(i.remarks);
+            hydrateProformaItemDisplayData(item);
             item.setLineTotal(total);
 
             pi.getItems().add(item);
@@ -143,6 +171,7 @@ public class ProformaService {
     /* ================= DTO MAPPER ================= */
 
     public ProformaResponse toResponse(ProformaInvoice pi) {
+        hydrateProformaItemDisplayData(pi);
 
         ProformaResponse res = new ProformaResponse();
 
@@ -172,8 +201,7 @@ public class ProformaService {
         res.setStatus(pi.getStatus());
         res.setRevisionNo(pi.getRevisionNo());
 
-        res.setItems(
-                pi.getItems().stream().map(item -> {
+        List<ProformaItemResponse> itemResponses = pi.getItems().stream().map(item -> {
                     ProformaItemResponse ir = new ProformaItemResponse();
                     ir.setId(item.getId());
                     ir.setItemCode(item.getItemCode());
@@ -184,10 +212,66 @@ public class ProformaService {
                     ir.setPrice(item.getPrice());
                     ir.setTaxPercent(item.getTaxPercent());
                     ir.setFoc(item.getFoc());
+                    ir.setFocUnit(item.getFocUnit());
+                    ir.setRemarks(item.getRemarks());
                     ir.setLineTotal(item.getLineTotal());
                     return ir;
-                }).toList());
+                }).toList();
+
+        List<String> codes = itemResponses.stream()
+                .map(ProformaItemResponse::getItemCode)
+                .filter(c -> c != null && !c.isBlank())
+                .distinct()
+                .toList();
+
+        if (!codes.isEmpty()) {
+            Map<String, String> imageMap = new HashMap<>();
+            productMediaRepository.findPrimaryByProductCodesIn(codes)
+                    .forEach(m -> imageMap.put(m.getProduct().getCode(), m.getImageUrl()));
+            itemResponses.forEach(ir -> ir.setImage(imageMap.get(ir.getItemCode())));
+        }
+
+        res.setItems(itemResponses);
 
         return res;
+    }
+
+    private void hydrateProformaItemDisplayData(ProformaInvoice pi) {
+        if (pi == null || pi.getItems() == null) {
+            return;
+        }
+
+        pi.getItems().forEach(this::hydrateProformaItemDisplayData);
+    }
+
+    private void hydrateProformaItemDisplayData(ProformaInvoiceItem item) {
+        if (item == null || item.getItemCode() == null || item.getItemCode().isBlank()) {
+            return;
+        }
+
+        Product product = productRepo.findByCodeAndIsActiveTrue(item.getItemCode()).orElse(null);
+        if (product == null) {
+            return;
+        }
+
+        if (item.getBarcode() == null || item.getBarcode().isBlank()) {
+            String barcode = barcodeRepo.findByProductId(product.getId()).stream()
+                    .map(ProductBarcode::getBarcode)
+                    .filter(code -> code != null && !code.isBlank())
+                    .findFirst()
+                    .orElse(null);
+
+            if (barcode != null) {
+                item.setBarcode(barcode);
+            }
+        }
+
+        if (item.getFocUnit() == null || item.getFocUnit().isBlank()) {
+            item.setFocUnit(item.getUnit());
+        }
+
+        if (item.getRemarks() == null || item.getRemarks().isBlank()) {
+            item.setRemarks(item.getDescription());
+        }
     }
 }

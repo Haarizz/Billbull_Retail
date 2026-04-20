@@ -19,6 +19,7 @@ public class PurchaseInvoiceResponse {
     private Long grnId;
     private String grnNo;
     private String vendorInvoiceNo;
+    private LocalDate vendorInvoiceDate;
     private Long lpoId;
 
     private Long warehouseId;
@@ -82,6 +83,14 @@ public class PurchaseInvoiceResponse {
 
     public void setVendorInvoiceNo(String vendorInvoiceNo) {
         this.vendorInvoiceNo = vendorInvoiceNo;
+    }
+
+    public LocalDate getVendorInvoiceDate() {
+        return vendorInvoiceDate;
+    }
+
+    public void setVendorInvoiceDate(LocalDate vendorInvoiceDate) {
+        this.vendorInvoiceDate = vendorInvoiceDate;
     }
 
     public Long getId() {

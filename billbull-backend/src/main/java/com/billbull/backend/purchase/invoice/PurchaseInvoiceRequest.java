@@ -14,6 +14,7 @@ public class PurchaseInvoiceRequest {
 
 	private String vendorName;
 	private String vendorInvoiceNo;
+	private LocalDate vendorInvoiceDate;
 
 	private String sourceType;
 	private String referenceNo;
@@ -75,6 +76,14 @@ public class PurchaseInvoiceRequest {
 
 	public void setVendorInvoiceNo(String vendorInvoiceNo) {
 		this.vendorInvoiceNo = vendorInvoiceNo;
+	}
+
+	public LocalDate getVendorInvoiceDate() {
+		return vendorInvoiceDate;
+	}
+
+	public void setVendorInvoiceDate(LocalDate vendorInvoiceDate) {
+		this.vendorInvoiceDate = vendorInvoiceDate;
 	}
 
 	public String getSourceType() {

@@ -1,13 +1,17 @@
 package com.billbull.backend.sales.invoice;
 
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.time.LocalDate;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 import org.hibernate.Hibernate;
 import org.springframework.http.HttpStatus;
 import com.billbull.backend.sales.settings.CreditLimitPolicy;
+import com.billbull.backend.sales.settings.SalesMode;
 import com.billbull.backend.sales.settings.SalesSettings;
 import com.billbull.backend.sales.settings.SalesSettingsService;
 import org.springframework.stereotype.Service;
@@ -18,12 +22,14 @@ import com.billbull.backend.financials.generalledger.postingengine.PostingEngine
 import com.billbull.backend.financials.receiptvoucher.ReceiptPurpose;
 import com.billbull.backend.financials.receiptvoucher.ReceiptVoucher;
 import com.billbull.backend.financials.receiptvoucher.ReceiptVoucherService;
+import com.billbull.backend.inventory.product.ProductMediaRepository;
 import com.billbull.backend.inventory.product.ProductRepository;
 import com.billbull.backend.inventory.stockavailability.StockAvailabilityResponse;
 import com.billbull.backend.inventory.stockavailability.StockAvailabilityService;
 import com.billbull.backend.sales.delivery.DeliveryNoteItemRequest;
 import com.billbull.backend.sales.delivery.DeliveryNoteRequest;
 import com.billbull.backend.sales.delivery.DeliveryNoteService;
+import com.billbull.backend.util.DocumentOrderingUtil;
 
 @Service
 public class SalesInvoiceService {
@@ -35,6 +41,8 @@ public class SalesInvoiceService {
     private final StockAvailabilityService stockAvailabilityService;
     private final ReceiptVoucherService receiptVoucherService;
     private final ProductRepository productRepo;
+    private final ProductMediaRepository productMediaRepository;
+    private final com.billbull.backend.sales.salesorder.SalesOrderRepository salesOrderRepository;
 
     public SalesInvoiceService(SalesInvoiceRepository invoiceRepo,
             PostingEngineService postingEngineService,
@@ -42,7 +50,9 @@ public class SalesInvoiceService {
             SalesSettingsService settingsService,
             StockAvailabilityService stockAvailabilityService,
             ReceiptVoucherService receiptVoucherService,
-            ProductRepository productRepo) {
+            ProductRepository productRepo,
+            ProductMediaRepository productMediaRepository,
+            com.billbull.backend.sales.salesorder.SalesOrderRepository salesOrderRepository) {
         this.invoiceRepo = invoiceRepo;
         this.postingEngineService = postingEngineService;
         this.deliveryNoteService = deliveryNoteService;
@@ -50,6 +60,8 @@ public class SalesInvoiceService {
         this.stockAvailabilityService = stockAvailabilityService;
         this.receiptVoucherService = receiptVoucherService;
         this.productRepo = productRepo;
+        this.productMediaRepository = productMediaRepository;
+        this.salesOrderRepository = salesOrderRepository;
     }
 
     // ----------------------------
@@ -108,7 +120,10 @@ public class SalesInvoiceService {
             }
         }
 
-        double total = subTotal + taxTotal;
+        // Round to 2 dp to eliminate floating-point noise from client-side arithmetic
+        subTotal = BigDecimal.valueOf(subTotal).setScale(2, RoundingMode.HALF_UP).doubleValue();
+        taxTotal = BigDecimal.valueOf(taxTotal).setScale(2, RoundingMode.HALF_UP).doubleValue();
+        double total = BigDecimal.valueOf(subTotal + taxTotal).setScale(2, RoundingMode.HALF_UP).doubleValue();
         double paid = invoice.getAmountPaid() != null ? invoice.getAmountPaid() : 0;
 
         if (paid < 0) {
@@ -123,9 +138,22 @@ public class SalesInvoiceService {
         invoice.setInvoiceTotal(total);
         invoice.setBalance(total - paid);
 
+        // Fetch settings ONCE for this entire request — passed through the call chain
+        // to avoid redundant DB hits.
+        SalesSettings settings = settingsService.getSettings();
+
         // Status logic
         if (invoice.getStatus() == null) {
             invoice.setStatus(SalesInvoiceStatus.DRAFT);
+        }
+
+        // FAST_SALE enforcement: new invoices must never stay in DRAFT — the mode
+        // requires immediate posting so that the auto-delivery chain is always triggered.
+        if (invoice.getId() == null
+                && settings.getSalesMode() == SalesMode.FAST_SALE
+                && (invoice.getStatus() == null || invoice.getStatus() == SalesInvoiceStatus.DRAFT)) {
+            System.out.println("[FAST_SALE] Forcing invoice status from DRAFT → POSTED (salesMode=FAST_SALE)");
+            invoice.setStatus(SalesInvoiceStatus.POSTED);
         }
 
         SalesInvoiceStatus intendedStatus = invoice.getStatus();
@@ -158,8 +186,17 @@ public class SalesInvoiceService {
         SalesInvoice saved = invoiceRepo.save(invoice);
 
         if (isNewlyFinalized) {
-            // Trigger updateStatus to handle stock check, linked DN, Journal, etc.
-            updateStatus(saved.getId(), intendedStatus);
+            // Trigger doUpdateStatus with the already-fetched settings (single DB fetch
+            // per request — avoids a redundant getSettings() call inside updateStatus).
+            doUpdateStatus(saved.getId(), intendedStatus, settings);
+
+            // Auto-update linked Sales Order to INVOICED
+            if (saved.getLinkedSalesOrder() != null && !saved.getLinkedSalesOrder().isBlank()) {
+                salesOrderRepository.findBySoNumber(saved.getLinkedSalesOrder()).ifPresent(so -> {
+                    so.setStatus(com.billbull.backend.sales.salesorder.SalesOrderStatus.INVOICED);
+                    salesOrderRepository.save(so);
+                });
+            }
         }
 
         if (isNewlyFinalized && paid > 0) {
@@ -169,7 +206,9 @@ public class SalesInvoiceService {
                     paid,
                     refreshed.getPaymentMode(),
                     "Initial receipt for INV: " + refreshed.getInvoiceNumber(),
-                    refreshed.getInvoiceDate());
+                    refreshed.getInvoiceDate(),
+                    null,   // bankAccount — not applicable for initial receipt
+                    null);  // chequeDate  — not applicable for initial receipt
         }
 
         // Handle Linking "Before Sale" Delivery Notes
@@ -204,7 +243,12 @@ public class SalesInvoiceService {
     // ----------------------------
     @Transactional(readOnly = true)
     public List<SalesInvoice> getAll() {
-        List<SalesInvoice> invoices = invoiceRepo.findAllByOrderByInvoiceDateDesc();
+        List<SalesInvoice> invoices = new ArrayList<>(invoiceRepo.findAll());
+        DocumentOrderingUtil.sortByDocumentDateAndNumberDesc(
+                invoices,
+                SalesInvoice::getInvoiceDate,
+                SalesInvoice::getInvoiceNumber,
+                SalesInvoice::getId);
 
         invoices.forEach(inv -> {
             Hibernate.initialize(inv.getItems());
@@ -218,7 +262,7 @@ public class SalesInvoiceService {
     // ENRICH ITEMS FROM PRODUCT
     // ----------------------------
     private void enrichItems(java.util.List<SalesInvoiceItem> items) {
-        if (items == null) return;
+        if (items == null || items.isEmpty()) return;
         for (SalesInvoiceItem item : items) {
             if (item.getItemCode() == null || item.getItemCode().isBlank()) continue;
             productRepo.findByCodeAndIsActiveTrue(item.getItemCode()).ifPresent(p -> {
@@ -226,6 +270,24 @@ public class SalesInvoiceService {
                 if (item.getLocalName() == null || item.getLocalName().isBlank()) item.setLocalName(p.getLocalName());
                 if (item.getDescription() == null || item.getDescription().isBlank()) item.setDescription(p.getShortDesc());
                 if (item.getItemName() == null || item.getItemName().isBlank()) item.setItemName(p.getName());
+            });
+        }
+
+        List<String> codesNeedingImage = items.stream()
+                .filter(i -> (i.getImage() == null || i.getImage().isBlank()) && i.getItemCode() != null && !i.getItemCode().isBlank())
+                .map(SalesInvoiceItem::getItemCode)
+                .distinct()
+                .toList();
+
+        if (!codesNeedingImage.isEmpty()) {
+            Map<String, String> imageMap = new HashMap<>();
+            productMediaRepository.findPrimaryByProductCodesIn(codesNeedingImage)
+                    .forEach(m -> imageMap.put(m.getProduct().getCode(), m.getImageUrl()));
+            items.forEach(i -> {
+                if ((i.getImage() == null || i.getImage().isBlank()) && i.getItemCode() != null) {
+                    String url = imageMap.get(i.getItemCode());
+                    if (url != null) i.setImage(url);
+                }
             });
         }
     }
@@ -246,8 +308,22 @@ public class SalesInvoiceService {
     // ----------------------------
     // UPDATE STATUS
     // ----------------------------
+
+    /**
+     * Public entry point — called by the controller.
+     * Fetches settings itself and delegates to the internal overload.
+     */
     @Transactional(rollbackFor = Exception.class)
     public void updateStatus(Long id, SalesInvoiceStatus status) {
+        SalesSettings settings = settingsService.getSettings();
+        doUpdateStatus(id, status, settings);
+    }
+
+    /**
+     * Internal overload — called from save() with the already-fetched settings
+     * to ensure a single getSettings() call per request.
+     */
+    private void doUpdateStatus(Long id, SalesInvoiceStatus status, SalesSettings settings) {
         invoiceRepo.findById(id).ifPresent(invoice -> {
             SalesInvoiceStatus previousStatus = invoice.getStatus();
 
@@ -285,8 +361,8 @@ public class SalesInvoiceService {
 
                 // -------------------------------------------------------
                 // SETTINGS ENFORCEMENT — runs only when newly posting
+                // settings is passed in from the caller (single fetch per request)
                 // -------------------------------------------------------
-                SalesSettings settings = settingsService.getSettings();
 
                 // 1. STOCK CHECK
                 enforceStockCheck(invoice, settings);
@@ -298,10 +374,11 @@ public class SalesInvoiceService {
                 boolean isLinkedToDn = invoice.getLinkedDeliveryNote() != null
                         && !invoice.getLinkedDeliveryNote().isBlank();
 
-                // Generate a Delivery Note for Direct Sales / Non-Linked Invoices
+                // Generate a Delivery Note for Direct Sales / Non-Linked Invoices.
+                // Pass settings so the method can check salesMode without a second DB call.
                 if (!isLinkedToDn) {
-                    autoGenerateDeliveryNote(invoice);
-                    invoice.setDeliveryStatus(DeliveryStatus.PENDING);
+                    boolean autoDelivered = autoGenerateDeliveryNote(invoice, settings);
+                    invoice.setDeliveryStatus(autoDelivered ? DeliveryStatus.DELIVERED : DeliveryStatus.PENDING);
                 } else {
                     // Already linked to a Before-Sale DN, therefore it's already delivered
                     invoice.setDeliveryStatus(DeliveryStatus.DELIVERED);
@@ -340,19 +417,38 @@ public class SalesInvoiceService {
     @Transactional
     public SalesInvoice recordPayment(Long id, Double paymentAmount, String paymentMode,
             String paymentReference, LocalDate paymentDate) {
+        return recordPayment(id, paymentAmount, paymentMode, paymentReference, paymentDate, null);
+    }
+
+    @Transactional
+    public SalesInvoice recordPayment(Long id, Double paymentAmount, String paymentMode,
+            String paymentReference, LocalDate paymentDate, String bankAccount) {
+        return recordPayment(id, paymentAmount, paymentMode, paymentReference, paymentDate, bankAccount, null);
+    }
+
+    @Transactional
+    public SalesInvoice recordPayment(Long id, Double paymentAmount, String paymentMode,
+            String paymentReference, LocalDate paymentDate, String bankAccount, LocalDate chequeDate) {
         SalesInvoice invoice = getById(id);
 
         if (paymentAmount == null || paymentAmount <= 0) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Payment amount must be greater than zero.");
         }
 
-        createReceiptForInvoicePayment(invoice, paymentAmount, paymentMode, paymentReference, paymentDate);
+        createReceiptForInvoicePayment(invoice, paymentAmount, paymentMode, paymentReference, paymentDate, bankAccount, chequeDate);
+
+        // Sync invoice's paymentMode to the actual mode used for payment
+        if (paymentMode != null && !paymentMode.isBlank()) {
+            SalesInvoice toUpdate = invoiceRepo.findById(id).orElseThrow();
+            toUpdate.setPaymentMode(paymentMode);
+            invoiceRepo.save(toUpdate);
+        }
 
         return getById(id);
     }
 
     private void createReceiptForInvoicePayment(SalesInvoice invoice, double paymentAmount, String paymentMode,
-            String paymentReference, LocalDate paymentDate) {
+            String paymentReference, LocalDate paymentDate, String bankAccount, LocalDate chequeDate) {
         ReceiptVoucher rv = new ReceiptVoucher();
         rv.setDate(paymentDate != null ? paymentDate : LocalDate.now());
         rv.setPaymentMode((paymentMode != null && !paymentMode.isBlank()) ? paymentMode : "Bank Transfer");
@@ -364,6 +460,12 @@ public class SalesInvoiceService {
         rv.setStatus("Completed");
         rv.setPurpose(ReceiptPurpose.AGAINST_INVOICE);
         rv.setSalesInvoiceId(invoice.getId());
+        if (bankAccount != null && !bankAccount.isBlank()) {
+            rv.setBankAccount(bankAccount);
+        }
+        if (chequeDate != null) {
+            rv.setChequeDate(chequeDate);
+        }
 
         receiptVoucherService.createReceipt(rv, null);
     }
@@ -455,12 +557,25 @@ public class SalesInvoiceService {
     // ----------------------------
     // AUTO-GENERATE DELIVERY NOTE
     // ----------------------------
-    private void autoGenerateDeliveryNote(SalesInvoice invoice) {
+    /**
+     * Creates an auto-generated Delivery Note for the given invoice.
+     * For DIRECT_SALE invoices, immediately advances the DN to DELIVERED so that
+     * stock is deducted at the moment the sale is posted.
+     *
+     * @return true if the DN was auto-delivered (stock deducted), false if it
+     *         remains in DRAFT/PENDING or was skipped.
+     */
+    private boolean autoGenerateDeliveryNote(SalesInvoice invoice, SalesSettings settings) {
+        // Determine whether auto-delivery is required:
+        // either the per-invoice type is DIRECT_SALE, or the global mode is FAST_SALE.
+        boolean isAutoDelivery = invoice.getSalesType() == SalesType.DIRECT_SALE
+                || settings.getSalesMode() == SalesMode.FAST_SALE;
+
         // Prevent generating duplicate delivery notes for the same invoice
         if (deliveryNoteService.hasActiveDeliveryNoteForSource("SALES_INVOICE", invoice.getId())) {
             System.out.println(
                     "[Auto-DN] Skipped: active Delivery Note already exists for invoice " + invoice.getInvoiceNumber());
-            return;
+            return false;
         }
 
         String baseDnNumber = "DN-" + invoice.getInvoiceNumber();
@@ -493,10 +608,22 @@ public class SalesInvoiceService {
                     .orElse(null);
         }
 
-        // Cannot create delivery note without a warehouse — skip silently
+        // Cannot create delivery note without a warehouse.
+        // In auto-delivery mode (FAST_SALE / DIRECT_SALE) this must fail hard —
+        // a silent skip would leave an invoice posted with no stock deduction.
         if (req.warehouseId == null) {
+            if (isAutoDelivery) {
+                System.err.println("[Auto-DN] FAST_SALE/DIRECT_SALE: invoice " + invoice.getInvoiceNumber()
+                        + " has no warehouseId — auto-delivery blocked."
+                        + " salesMode=" + settings.getSalesMode()
+                        + ", salesType=" + invoice.getSalesType());
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                        "Auto-delivery requires a warehouse on every item. Invoice "
+                        + invoice.getInvoiceNumber() + " has no warehouse assigned. "
+                        + "Set the warehouse field on all line items before posting.");
+            }
             System.out.println("[Auto-DN] Skipped: no warehouseId on invoice " + invoice.getInvoiceNumber());
-            return;
+            return false;
         }
 
         req.items = new ArrayList<>();
@@ -515,12 +642,38 @@ public class SalesInvoiceService {
 
         var created = deliveryNoteService.create(req);
 
-        // FIX: Use the transactional service helper to persistently link the DN
-        if (created != null && created.id != null) {
-            deliveryNoteService.linkSingleDeliveryNoteToInvoice(created.id, invoice);
+        if (created == null || created.id == null) {
+            if (isAutoDelivery) {
+                System.err.println("[Auto-DN] FAST_SALE/DIRECT_SALE: DN entity creation returned null for invoice "
+                        + invoice.getInvoiceNumber() + ". salesMode=" + settings.getSalesMode());
+                throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR,
+                        "Failed to create Delivery Note for invoice " + invoice.getInvoiceNumber()
+                        + ". Auto-delivery aborted. No stock was deducted.");
+            }
+            return false;
         }
 
-        // After Sale DN stays in DRAFT — stock deducted only when marked DELIVERED
+        // Link the DN to the invoice BEFORE advancing status so that revenue
+        // recognition in markDelivered() can find the linked invoice.
+        deliveryNoteService.linkSingleDeliveryNoteToInvoice(created.id, invoice);
+
+        // Auto-delivery: triggered for per-invoice DIRECT_SALE type OR global FAST_SALE mode.
+        // Immediately advance the DN to DELIVERED so stock is deducted at point of sale.
+        // The full chain (markDispatched → markDelivered → stockMovement → recognizeRevenue)
+        // runs inside the outer save() @Transactional — any failure rolls back the invoice too.
+        if (isAutoDelivery) {
+            deliveryNoteService.markDispatched(created.id);
+            deliveryNoteService.markDelivered(created.id, "Auto");
+            System.out.println("[Auto-DN] Auto-delivery complete: invoice=" + invoice.getInvoiceNumber()
+                    + " | DN=" + created.dnNumber
+                    + " | salesType=" + invoice.getSalesType()
+                    + " | salesMode=" + settings.getSalesMode()
+                    + " | stock deducted + revenue recognised.");
+            return true;
+        }
+
+        // WORKFLOW_DRIVEN: DN stays in DRAFT — stock deducted only when manually marked DELIVERED
+        return false;
     }
 
     // ----------------------------

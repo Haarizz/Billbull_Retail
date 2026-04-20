@@ -52,6 +52,7 @@ import {
   postGrn
 } from '../../../api/grnApi';
 import { getVendors } from '../../../api/vendorsApi';
+import { createDraftFromGrn } from '../../../api/purchaseInvoiceApi';
 import {
   getWarehouses,
   getWarehouseZones,
@@ -63,8 +64,11 @@ import ProductSelector from '../../../components/ProductSelector';
 import SearchableDropdown from '../../../components/SearchableDropdown';
 import VendorSelector from '../../../components/VendorSelector';
 import { getImageUrl } from '../../../utils/urlUtils';
+import { useBranch } from '../../../context/BranchContext';
 import { ItemDescriptionCell, ItemDescriptionHeader } from '../../../components/ItemDescriptionCell';
 import ItemAddOnsModal from '../../../components/ItemAddOnsModal';
+import StockAvailabilityModal from '../../../components/StockAvailabilityModal';
+import { useCompany } from '../../../context/CompanyContext';
 
 // SHORTCUTS HOOK
 import useShortcuts from '../../../hooks/useShortcuts';
@@ -72,9 +76,13 @@ import useShortcuts from '../../../hooks/useShortcuts';
 // Printing Utilities
 import { getTemplatesByCategory } from '../../../api/printTemplateApi';
 import { generatePrintHtml, printHtml } from '../../../utils/printGenerator';
-import nestLogo from '../../../assets/NEST Logo Final.png';
 import billBullLogo from '../../../assets/billBullLogo.png';
 import toast from 'react-hot-toast';
+import {
+  buildGrnPrintData,
+  findVendorRecord,
+  normalizePurchaseTemplate
+} from '../../../utils/purchasePrintUtils';
 
 // ==========================================
 // 1. MOCK DATA & CONFIGURATION
@@ -116,7 +124,7 @@ const getStatusColor = (status) => {
 // ==========================================
 
 // --- LIST VIEW ---
-const GRNListView = ({ data, onView, onEdit, onDelete, onPost, onPrint, activeFilter, setActiveFilter }) => {
+const GRNListView = ({ data, onView, onEdit, onDelete, onPost, onPrint, onProceedToInvoice, activeFilter, setActiveFilter }) => {
   const filteredData = data.filter(item => {
     if (activeFilter === "All GRNs") return true;
     if (activeFilter === "Today") {
@@ -241,6 +249,17 @@ const GRNListView = ({ data, onView, onEdit, onDelete, onPost, onPrint, activeFi
                           className="p-1.5 bg-amber-50 hover:bg-amber-100 rounded text-amber-600 hover:text-amber-700 flex items-center gap-1 font-medium text-[10px]"
                         >
                           <Zap className="h-3 w-3" /> Post
+                        </button>
+                      )}
+
+                      {/* ✅ Proceed to Invoice for POSTED GRNs not fully invoiced */}
+                      {row.status === GRN_STATUS.POSTED && row.invStatus !== 'Fully Invoiced' && (
+                        <button
+                          onClick={(e) => { e.stopPropagation(); onProceedToInvoice && onProceedToInvoice(row.id); }}
+                          title="Proceed to Invoice"
+                          className="p-1.5 bg-blue-50 hover:bg-blue-100 rounded text-blue-600 hover:text-blue-700 flex items-center gap-1 font-medium text-[10px]"
+                        >
+                          <FileText className="h-3 w-3" /> Invoice
                         </button>
                       )}
 
@@ -607,6 +626,19 @@ const EditorView = ({ initialData, onSaveDraft, onSubmitQC, onPost, onPrint, grn
   // FIX 5: Lock UI on POSTED
   const isLocked = formData.status === GRN_STATUS.POSTED;
 
+  const { defaultBranch } = useBranch();
+
+  useEffect(() => {
+    if (!initialData && defaultBranch?.defaultWarehouseId) {
+      const wh = warehouses.find(w => w.id === defaultBranch.defaultWarehouseId);
+      setFormData(prev => ({
+        ...prev,
+        warehouseId: defaultBranch.defaultWarehouseId,
+        warehouse: wh?.name || defaultBranch.defaultWarehouseName || '',
+      }));
+    }
+  }, [defaultBranch, warehouses, initialData]);
+
   // Fetch initial data
   useEffect(() => {
     // Fetch LPOs
@@ -778,6 +810,11 @@ const EditorView = ({ initialData, onSaveDraft, onSubmitQC, onPost, onPrint, grn
 
               disc: discount,
               netCost: netCost,
+              tax: 5,
+              taxAmt: pending * netCost * 0.05,
+              foc: Number(lpoItem.focQty || lpoItem.foc || 0),
+              focUnit: lpoItem.focUnit || lpoItem.uom || lpoItem.unit || "Unit",
+              remarks: lpoItem.remarks || '',
 
               total: pending * netCost,
               variance: 0, // No variance initially as we match pending
@@ -838,6 +875,11 @@ const EditorView = ({ initialData, onSaveDraft, onSubmitQC, onPost, onPrint, grn
     setItems(
       initialData.items.map(i => ({
         ...i,
+        tax: Number(i.tax || 5),
+        taxAmt: Number(i.taxAmt || 0),
+        foc: Number(i.foc || i.focQty || 0),
+        focUnit: i.focUnit || i.uom || 'PCS',
+        remarks: i.remarks || '',
         variance: i.received - i.lpoQty
       }))
     );
@@ -849,6 +891,8 @@ const EditorView = ({ initialData, onSaveDraft, onSubmitQC, onPost, onPrint, grn
   const [isCompareModalOpen, setCompareModalOpen] = useState(false);
   const [selectedBatchItem, setSelectedBatchItem] = useState(null);
   const [selectedAddonItem, setSelectedAddonItem] = useState(null);
+  const [selectedStockItem, setSelectedStockItem] = useState(null);
+  const [isItemStockModalOpen, setIsItemStockModalOpen] = useState(false);
 
   const handleOpenBatchModal = (item) => {
     setSelectedBatchItem(item);
@@ -933,6 +977,8 @@ const EditorView = ({ initialData, onSaveDraft, onSubmitQC, onPost, onPrint, grn
       lpoPrice: 0,
       disc: 0,
       netCost: unitCost,
+      tax: product.taxRate || 5,
+      taxAmt: unitCost * ((product.taxRate || 5) / 100),
       total: unitCost,
       variance: 1, // Received 1 without LPO
       batch: false, // Default to false
@@ -951,6 +997,7 @@ const EditorView = ({ initialData, onSaveDraft, onSubmitQC, onPost, onPrint, grn
     const newItem = {
       id: Date.now(),
       code: 'SKU-NEW',
+      barcode: '',
       name: 'New Item Entry',
       uom: 'Unit',
       lpoQty: 0,
@@ -964,7 +1011,11 @@ const EditorView = ({ initialData, onSaveDraft, onSubmitQC, onPost, onPrint, grn
       total: 0,
       variance: 0,
       batch: true,
-      remarks: ''
+      tax: 5,
+      taxAmt: 0,
+      remarks: '',
+      foc: 0,
+      focUnit: 'Unit'
     };
     setItems([...items, newItem]);
   };
@@ -993,11 +1044,14 @@ const EditorView = ({ initialData, onSaveDraft, onSubmitQC, onPost, onPrint, grn
     const grossCost = (Number(item.unitCost) || 0) * (Number(item.accepted) || 0);
     const focAdjustedCost = Math.max(0, grossCost - focDeduction);
     const discAmt = focAdjustedCost * ((Number(item.disc) || 0) / 100);
+    const netLineTotal = Math.max(0, focAdjustedCost - discAmt);
 
     return {
       ...item,
+      tax: Number(item.tax) || 5,
+      taxAmt: netLineTotal * ((Number(item.tax) || 5) / 100),
       netCost: Number(item.unitCost) || 0,
-      total: Math.max(0, focAdjustedCost - discAmt)
+      total: netLineTotal
     };
   };
 
@@ -1005,7 +1059,7 @@ const EditorView = ({ initialData, onSaveDraft, onSubmitQC, onPost, onPrint, grn
     const resolvedUnit = item.uom || item.unit || 'PCS';
     return {
       ...item,
-      desc: item.remarks || item.name || item.desc,
+      desc: item.name || item.desc,
       unit: resolvedUnit,
       price: Number(item.unitCost) || 0,
       disc: Number(item.disc) || 0,
@@ -1013,6 +1067,7 @@ const EditorView = ({ initialData, onSaveDraft, onSubmitQC, onPost, onPrint, grn
       focUnit: item.focUnit || resolvedUnit,
       tax: Number(item.tax) || 0,
       cost: Number(item.unitCost) || 0,
+      remarks: item.remarks || '',
       availableUnits: item.availableUnits || [resolvedUnit]
     };
   };
@@ -1028,12 +1083,14 @@ const EditorView = ({ initialData, onSaveDraft, onSubmitQC, onPost, onPrint, grn
       const resolvedUnit = updated.unit || item.uom || item.unit || 'PCS';
       return recalculateItemTotals({
         ...item,
+        barcode: updated.barcode || item.barcode || '',
         unitCost: resolvedPrice,
         disc: resolvedDiscount,
         foc: resolvedFoc,
         focUnit: updated.focUnit || item.focUnit || resolvedUnit,
         uom: resolvedUnit,
-        tax: Number(updated.tax) || 0
+        tax: Number(updated.tax) || 0,
+        remarks: updated.remarks || ''
       });
     }));
     setSelectedAddonItem(null);
@@ -1330,6 +1387,8 @@ const EditorView = ({ initialData, onSaveDraft, onSubmitQC, onPost, onPrint, grn
                     }}
                     placeholder="Select Warehouse"
                     disabled={isLocked}
+                    menuPlacement="auto"
+                    menuZIndexClass="z-[120]"
                   />
                 </div>
               </div>
@@ -1347,6 +1406,8 @@ const EditorView = ({ initialData, onSaveDraft, onSubmitQC, onPost, onPrint, grn
                       }}
                       placeholder="Select Zone"
                       disabled={isLocked || !formData.warehouseId}
+                      menuPlacement="auto"
+                      menuZIndexClass="z-[120]"
                     />
                   </div>
                 </div>
@@ -1366,6 +1427,8 @@ const EditorView = ({ initialData, onSaveDraft, onSubmitQC, onPost, onPrint, grn
                       }}
                       placeholder="Select Locator"
                       disabled={isLocked || !formData.zoneId}
+                      menuPlacement="auto"
+                      menuZIndexClass="z-[120]"
                     />
                   </div>
                 </div>
@@ -1381,6 +1444,8 @@ const EditorView = ({ initialData, onSaveDraft, onSubmitQC, onPost, onPrint, grn
                       onChange={(val) => setFormData(prev => ({ ...prev, binId: val }))}
                       placeholder="Select Bin"
                       disabled={isLocked || !formData.locatorId}
+                      menuPlacement="auto"
+                      menuZIndexClass="z-[120]"
                     />
                   </div>
                 </div>
@@ -1474,13 +1539,13 @@ const EditorView = ({ initialData, onSaveDraft, onSubmitQC, onPost, onPrint, grn
                 {!isLocked && (
                   <>
                     <button
-                      onClick={() => {
+                  onClick={() => {
                         setIsProductSelectionOpen(true);
                         setCompareModalOpen(false); // Ensure conflict prevention
                       }}
                       className="px-3 py-1.5 bg-yellow-400 text-slate-900 text-xs font-medium rounded hover:bg-yellow-500 flex items-center gap-1"
                     >
-                      <Plus className="h-3 w-3" /> Select Product
+                      <Plus className="h-3 w-3" /> Select from Products
                     </button>
                     {/* Add Row Button Removed */}
                   </>
@@ -1493,6 +1558,7 @@ const EditorView = ({ initialData, onSaveDraft, onSubmitQC, onPost, onPrint, grn
               <table className="w-full text-xs text-left min-w-[900px]">
                 <thead className="bg-slate-50 border-b border-slate-100 text-slate-500">
                   <tr>
+                    <th className="p-3 font-medium w-10 text-center text-slate-400">#</th>
                     <th className="p-3 font-medium min-w-[280px]">
                       <ItemDescriptionHeader
                         itemCount={items.length}
@@ -1500,12 +1566,11 @@ const EditorView = ({ initialData, onSaveDraft, onSubmitQC, onPost, onPrint, grn
                         onToggleAll={toggleAllDescriptions}
                       />
                     </th>
-                    <th className="p-3 font-medium text-center">UOM</th>
+                    <th className="p-3 font-medium text-center">Unit</th>
                     <th className="p-3 font-medium text-center">LPO Qty</th>
                     <th className="p-3 font-medium text-center">Received</th>
                     <th className="p-3 font-medium text-center text-emerald-600">Accepted</th>
                     <th className="p-3 font-medium text-center text-red-600">Rejected</th>
-                    <th className="p-3 font-medium text-center">FOC</th>
                     <th className="p-3 font-medium text-right">Unit Cost</th>
                     <th className="p-3 font-medium text-center w-12">Disc %</th>
                     <th className="p-3 font-medium text-right">Net Cost</th>
@@ -1515,10 +1580,11 @@ const EditorView = ({ initialData, onSaveDraft, onSubmitQC, onPost, onPrint, grn
                 </thead>
                 <tbody className="divide-y divide-slate-50">
                   {items.length === 0 ? (
-                    <tr><td colSpan="14" className="p-8 text-center text-slate-400">No items added. {grnType === "Against LPO" || grnType === "Against Direct Purchase" ? "Select an Document to load items or click 'Add Row' to manually add items." : "Click 'Add Row' to add items."}</td></tr>
-                  ) : items.map(item => (
+                    <tr><td colSpan="12" className="p-8 text-center text-slate-400">No items added. {grnType === "Against LPO" || grnType === "Against Direct Purchase" ? "Select a document to load items or use Select from Products." : "Click Select from Products to add items."}</td></tr>
+                  ) : items.map((item, index) => (
                     <React.Fragment key={item.id}>
                       <tr className="hover:bg-slate-50 group">
+                        <td className="p-3 text-center text-slate-400 text-xs font-medium">{index + 1}</td>
                         <td className="p-3">
                           <ItemDescriptionCell
                             item={item}
@@ -1527,11 +1593,11 @@ const EditorView = ({ initialData, onSaveDraft, onSubmitQC, onPost, onPrint, grn
                             onItemChange={(id, field, val) => setItems(prev => prev.map(i => i.id === id ? { ...i, [field]: val } : i))}
                             onFocusCode={() => { }}
                             onOpenProductSelection={!isLocked ? () => setIsProductSelectionOpen(true) : undefined}
-                            onCheckStock={() => { }}
+                            onCheckStock={(selectedItem) => { setSelectedStockItem(selectedItem); setIsItemStockModalOpen(true); }}
                             onOpenSettings={() => setSelectedAddonItem(getAddonModalItem(item))}
-                            showSettings={true}
+                            showSettings={Boolean(item.code || item.name || item.remarks || item.barcode)}
                             isReadOnly={isLocked}
-                            showTaxDiscount={false}
+                            showTaxDiscount={true}
                           />
                         </td>
                         {/* UOM Dropdown */}
@@ -1576,27 +1642,6 @@ const EditorView = ({ initialData, onSaveDraft, onSubmitQC, onPost, onPrint, grn
                             className={`w-14 text-center border rounded py-1 outline-none focus:ring-1 focus:ring-red-200 ${item.rejected > 0 ? 'border-red-200 bg-red-50 text-red-600 font-bold' : 'border-slate-200 text-slate-400'}`}
                           />
                         </td>
-                        {/* FOC */}
-                        <td className="p-3 text-center align-top">
-                          <div className="flex flex-col gap-1">
-                            <input
-                              disabled={isLocked}
-                              type="number"
-                              className="w-full bg-transparent border-b border-transparent hover:border-slate-200 focus:border-yellow-400/50 text-center outline-none font-semibold text-xs text-slate-700 transition-colors py-1 disabled:opacity-50"
-                              value={item.foc === 0 ? '' : item.foc || ''}
-                              onChange={(e) => handleQtyChange(item.id, 'foc', e.target.value)}
-                              placeholder="—"
-                            />
-                            <select
-                              disabled={isLocked}
-                              className="w-full bg-transparent outline-none text-center text-[10px] text-slate-500 appearance-none font-medium cursor-pointer disabled:opacity-50"
-                              value={item.focUnit || item.uom || 'PCS'}
-                              onChange={(e) => handleQtyChange(item.id, 'focUnit', e.target.value)}
-                            >
-                              {(item.availableUnits || [item.uom || 'PCS']).map(u => <option key={u} value={u}>{u}</option>)}
-                            </select>
-                          </div>
-                        </td>
                         <td className="p-3 text-right text-slate-500">{item.unitCost.toFixed(2)}</td>
                         <td className="p-3 text-center text-slate-500">
                           {item.disc}%
@@ -1620,7 +1665,7 @@ const EditorView = ({ initialData, onSaveDraft, onSubmitQC, onPost, onPrint, grn
                       {/* Expanded Description Row */}
                       {expandedRows[item.id] && (
                         <tr className="bg-white">
-                          <td colSpan={10} className="px-0 pb-4 pt-1">
+                          <td colSpan={12} className="px-0 pb-4 pt-1">
                             <div className="ml-0 mr-4 p-3 rounded-r-[10px] border-l-[3px] border-[#FFD700] bg-[#FFFDE7]/60 shadow-[inset_0_1px_4px_rgba(0,0,0,0.02)]">
                               <div className="flex justify-between items-center mb-1.5">
                                 <div className="flex items-center gap-1.5 text-[9px] font-bold text-[#B8860B] tracking-widest uppercase">
@@ -1829,6 +1874,12 @@ const EditorView = ({ initialData, onSaveDraft, onSubmitQC, onPost, onPrint, grn
         onSave={handleAddonSave}
       />
 
+      <StockAvailabilityModal
+        isOpen={isItemStockModalOpen}
+        onClose={() => setIsItemStockModalOpen(false)}
+        selectedStockItem={selectedStockItem}
+      />
+
       {/* Product Selector Modal */}
       <ProductSelector
         isOpen={isProductSelectionOpen}
@@ -1852,6 +1903,7 @@ const EditorView = ({ initialData, onSaveDraft, onSubmitQC, onPost, onPrint, grn
 // ==========================================
 
 const GRN = () => {
+  const { company } = useCompany();
   const navigate = useNavigate();
   const [activeNavTab, setActiveNavTab] = useState("list");
   const [grns, setGrns] = useState([]);
@@ -1897,6 +1949,7 @@ const GRN = () => {
         productId: i.productId,
         code: i.code,
         name: i.name,
+        barcode: i.barcode || '',
         uom: i.uom,
         lpoQty: i.lpoQty,
         received: i.received,
@@ -1907,7 +1960,8 @@ const GRN = () => {
         total: i.total,
         batch: i.batch,
         focQty: Number(i.foc) || 0,
-        focUnit: i.focUnit || i.uom || 'PCS'
+        focUnit: i.focUnit || i.uom || 'PCS',
+        remarks: i.remarks || ''
       }))
     };
 
@@ -1997,6 +2051,17 @@ const GRN = () => {
   };
 
 
+  const handleProceedToInvoice = async (grnId) => {
+    try {
+      const draft = await createDraftFromGrn(grnId);
+      navigate('/purchases/invoice', { state: { fromGrn: draft } });
+    } catch (error) {
+      const msg = error?.response?.data?.message || error?.message || "Unknown error";
+      toast.error(`Failed to prepare invoice: ${msg}`);
+      console.error("Proceed to Invoice Error:", error);
+    }
+  };
+
   // View/Edit Handlers
   const handleEdit = async (grn) => {
     try {
@@ -2032,64 +2097,30 @@ const GRN = () => {
   };
 
   const handlePrint = async (grn) => {
+    const loadingToast = toast.loading('Preparing print layout...');
     try {
-      const loadingToast = toast.loading('Preparing print layout...');
       const templates = await getTemplatesByCategory('Goods Receipt Note');
 
       if (!templates || templates.length === 0) {
-        toast.dismiss(loadingToast);
         toast.error('No templates found for Goods Receipt Note');
         return;
       }
 
-      const defaultTemplate = templates.find(t => t.isDefault) || templates[0];
+      const defaultTemplate = normalizePurchaseTemplate(
+        templates.find(t => t.isDefault) || templates[0],
+        'Goods Receipt Note'
+      );
 
       // Fetch full GRN details if needed
       let fullGrn = grn;
       if (!grn.items || grn.items.length === 0) {
         fullGrn = await getGrnById(grn.id);
       }
-      toast.dismiss(loadingToast);
-
-      // Map to standard print data
-      const printData = {
-        title: 'GOODS RECEIPT NOTE',
-        docNo: fullGrn.grnNo || fullGrn.id || '-',
-        date: fullGrn.date,
-        customer: {
-          name: fullGrn.vendor || fullGrn.vendorName || 'Unknown Vendor',
-          address: fullGrn.vendorAddress || '',
-          trn: fullGrn.vendorTrn || ''
-        },
-        items: (fullGrn.items || []).map(i => ({
-          code: i.itemCode || i.code || '-',
-          name: i.itemName || i.name || '',
-          desc: i.description || i.shortDescription || '',
-          sku: i.sku || i.productSku || '',
-          localName: i.localName || i.productLocalName || '',
-          unit: i.uom || i.unit || 'PCS',
-          qty: Number(i.received || i.quantity || i.qty || 0),
-          price: Number(i.unitCost || i.price || 0),
-          disc: 0,
-          tax: 0,
-          taxAmt: 0,
-          total: Number(i.total || (Number(i.received || 0) * Number(i.unitCost || 0)))
-        })),
-        totals: {
-          subTotal: Number(fullGrn.totalValue || (fullGrn.items || []).reduce((acc, i) => acc + (Number(i.received || 0) * Number(i.unitCost || 0)), 0)),
-          tax: 0,
-          grandTotal: Number(fullGrn.totalValue || (fullGrn.items || []).reduce((acc, i) => acc + (Number(i.received || 0) * Number(i.unitCost || 0)), 0)),
-          currency: 'AED'
-        },
-        meta: {
-          status: fullGrn.status,
-          notes: fullGrn.notes || '',
-          refNo: fullGrn.lpoNumber || fullGrn.lpo || ''
-        }
-      };
+      const fullVendor = findVendorRecord(vendors, fullGrn, fullGrn?.vendor, fullGrn?.vendorName);
+      const printData = buildGrnPrintData(fullGrn, fullVendor, company);
 
       const html = generatePrintHtml(defaultTemplate, printData, {
-        nestLogo: nestLogo,
+        companyProfile: company,
         billBullLogo: billBullLogo
       });
 
@@ -2097,6 +2128,8 @@ const GRN = () => {
     } catch (error) {
       console.error("Error printing GRN:", error);
       toast.error('Failed to generate print layout');
+    } finally {
+      toast.dismiss(loadingToast);
     }
   };
 
@@ -2115,6 +2148,7 @@ const GRN = () => {
           onDelete={handleDelete}
           onPost={handlePost}
           onPrint={handlePrint}
+          onProceedToInvoice={handleProceedToInvoice}
           activeFilter={activeFilter}
           setActiveFilter={setActiveFilter}
         />;
@@ -2142,6 +2176,8 @@ const GRN = () => {
         onEdit={handleEdit}
         onDelete={handleDelete}
         onPost={handlePost}
+        onPrint={handlePrint}
+        onProceedToInvoice={handleProceedToInvoice}
         activeFilter={activeFilter}
         setActiveFilter={setActiveFilter}
       />;
@@ -2247,3 +2283,4 @@ const GRN = () => {
 };
 
 export default GRN;
+

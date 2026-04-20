@@ -43,6 +43,29 @@ public class Vendor extends BaseEntity {
     private String payTerms;
     private String balType;
     private String payPref;
+    private java.time.LocalDate openingBalanceDate;
+    private String openingBalanceNotes;
+    private String nickname;
+    private String taxId;
+    private String website;
+    private String address;
+    private String primaryPhone;
+    private String secondaryPhone;
+    private String mobile;
+    private String whatsapp;
+    private String secondaryEmail;
+    private String commNotes;
+    private java.math.BigDecimal creditLimit;
+    private Integer creditDays;
+    private Boolean autoBlockPo;
+    private Boolean requireFinanceApproval;
+    private String bankName;
+    private String bankBranch;
+    private String accountNumber;
+    private String iban;
+    private String swiftCode;
+    private String beneficiaryName;
+
 
     // =========================
     // Opening Balance
@@ -211,4 +234,49 @@ public class Vendor extends BaseEntity {
 	}
     
     
+
+    public java.time.LocalDate getOpeningBalanceDate() { return openingBalanceDate; }
+    public void setOpeningBalanceDate(java.time.LocalDate openingBalanceDate) { this.openingBalanceDate = openingBalanceDate; }
+    public String getOpeningBalanceNotes() { return openingBalanceNotes; }
+    public void setOpeningBalanceNotes(String openingBalanceNotes) { this.openingBalanceNotes = openingBalanceNotes; }
+    public String getNickname() { return nickname; }
+    public void setNickname(String nickname) { this.nickname = nickname; }
+    public String getTaxId() { return taxId; }
+    public void setTaxId(String taxId) { this.taxId = taxId; }
+    public String getWebsite() { return website; }
+    public void setWebsite(String website) { this.website = website; }
+    public String getAddress() { return address; }
+    public void setAddress(String address) { this.address = address; }
+    public String getPrimaryPhone() { return primaryPhone; }
+    public void setPrimaryPhone(String primaryPhone) { this.primaryPhone = primaryPhone; }
+    public String getSecondaryPhone() { return secondaryPhone; }
+    public void setSecondaryPhone(String secondaryPhone) { this.secondaryPhone = secondaryPhone; }
+    public String getMobile() { return mobile; }
+    public void setMobile(String mobile) { this.mobile = mobile; }
+    public String getWhatsapp() { return whatsapp; }
+    public void setWhatsapp(String whatsapp) { this.whatsapp = whatsapp; }
+    public String getSecondaryEmail() { return secondaryEmail; }
+    public void setSecondaryEmail(String secondaryEmail) { this.secondaryEmail = secondaryEmail; }
+    public String getCommNotes() { return commNotes; }
+    public void setCommNotes(String commNotes) { this.commNotes = commNotes; }
+    public java.math.BigDecimal getCreditLimit() { return creditLimit; }
+    public void setCreditLimit(java.math.BigDecimal creditLimit) { this.creditLimit = creditLimit; }
+    public Integer getCreditDays() { return creditDays; }
+    public void setCreditDays(Integer creditDays) { this.creditDays = creditDays; }
+    public Boolean getAutoBlockPo() { return autoBlockPo; }
+    public void setAutoBlockPo(Boolean autoBlockPo) { this.autoBlockPo = autoBlockPo; }
+    public Boolean getRequireFinanceApproval() { return requireFinanceApproval; }
+    public void setRequireFinanceApproval(Boolean requireFinanceApproval) { this.requireFinanceApproval = requireFinanceApproval; }
+    public String getBankName() { return bankName; }
+    public void setBankName(String bankName) { this.bankName = bankName; }
+    public String getBankBranch() { return bankBranch; }
+    public void setBankBranch(String bankBranch) { this.bankBranch = bankBranch; }
+    public String getAccountNumber() { return accountNumber; }
+    public void setAccountNumber(String accountNumber) { this.accountNumber = accountNumber; }
+    public String getIban() { return iban; }
+    public void setIban(String iban) { this.iban = iban; }
+    public String getSwiftCode() { return swiftCode; }
+    public void setSwiftCode(String swiftCode) { this.swiftCode = swiftCode; }
+    public String getBeneficiaryName() { return beneficiaryName; }
+    public void setBeneficiaryName(String beneficiaryName) { this.beneficiaryName = beneficiaryName; }
 }

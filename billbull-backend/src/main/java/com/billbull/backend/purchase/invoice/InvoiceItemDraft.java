@@ -6,9 +6,12 @@ public class InvoiceItemDraft {
 
     private String itemCode;
     private String itemName;
+    private String barcode;
+    private String image;
     private String uom;
     private Integer qty;
     private Integer focQty; // Added
+    private String focUnit;
     private BigDecimal unitCost;
 
     private BigDecimal discountPercent; // Added
@@ -16,6 +19,7 @@ public class InvoiceItemDraft {
     private BigDecimal taxPercent;
     private BigDecimal taxAmount;
     private BigDecimal lineTotal;
+    private String remarks;
 
     // ✅ REQUIRED: default constructor
     public InvoiceItemDraft() {
@@ -37,6 +41,22 @@ public class InvoiceItemDraft {
 
     public void setItemName(String itemName) {
         this.itemName = itemName;
+    }
+
+    public String getBarcode() {
+        return barcode;
+    }
+
+    public void setBarcode(String barcode) {
+        this.barcode = barcode;
+    }
+
+    public String getImage() {
+        return image;
+    }
+
+    public void setImage(String image) {
+        this.image = image;
     }
 
     public String getUom() {
@@ -61,6 +81,14 @@ public class InvoiceItemDraft {
 
     public void setFocQty(Integer focQty) {
         this.focQty = focQty;
+    }
+
+    public String getFocUnit() {
+        return focUnit;
+    }
+
+    public void setFocUnit(String focUnit) {
+        this.focUnit = focUnit;
     }
 
     public BigDecimal getUnitCost() {
@@ -109,5 +137,13 @@ public class InvoiceItemDraft {
 
     public void setLineTotal(BigDecimal lineTotal) {
         this.lineTotal = lineTotal;
+    }
+
+    public String getRemarks() {
+        return remarks;
+    }
+
+    public void setRemarks(String remarks) {
+        this.remarks = remarks;
     }
 }

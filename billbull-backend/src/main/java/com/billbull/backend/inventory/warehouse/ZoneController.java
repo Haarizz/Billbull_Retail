@@ -18,11 +18,13 @@ public class ZoneController {
     }
 
     @GetMapping
+    @PreAuthorize("hasAnyRole('ADMIN','INVENTORY','INVENTORY_MANAGER','ACCOUNTANT')")
     public ResponseEntity<List<ZoneResponse>> getZones(@PathVariable Long warehouseId) {
         return ResponseEntity.ok(zoneService.getZoneResponsesByWarehouse(warehouseId));
     }
 
     @GetMapping("/{id}")
+    @PreAuthorize("hasAnyRole('ADMIN','INVENTORY','INVENTORY_MANAGER','ACCOUNTANT')")
     public ResponseEntity<ZoneResponse> getZone(@PathVariable Long warehouseId, @PathVariable Long id) {
         return ResponseEntity.ok(zoneService.getZoneResponseById(id));
     }

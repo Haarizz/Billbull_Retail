@@ -164,6 +164,11 @@ public class BinStockService {
             int binDnReserved = deliveryNoteRepo.sumReservedQtyInDispatchedNotesByBin(productId, binId).intValue();
             binReserved += binDnReserved;
 
+            // Skip products with zero or negative net quantity — fully dispatched from this bin
+            if (binOnHand <= 0) {
+                continue;
+            }
+
             res.setReservedQuantity(binReserved);
             resultList.add(res);
         }
@@ -179,17 +184,21 @@ public class BinStockService {
     }
 
     public int getTotalQuantityByBin(Long binId) {
-        List<StockMovement> movements = stockMovementRepository.findByBinId(binId);
-        return movements.stream()
-                .mapToInt(sm -> sm.getQuantity() != null ? sm.getQuantity() : 0)
+        // Use aggregated query and sum only positive net stock per product
+        List<Object[]> rows = stockMovementRepository.findStockByBin(binId);
+        return rows.stream()
+                .mapToInt(r -> {
+                    int net = ((Number) r[1]).intValue();
+                    return net > 0 ? net : 0;
+                })
                 .sum();
     }
 
     public int getSkuCountByBin(Long binId) {
-        List<StockMovement> movements = stockMovementRepository.findByBinId(binId);
-        return (int) movements.stream()
-                .map(StockMovement::getProductId)
-                .distinct()
+        // Count only products with positive net stock in this bin
+        List<Object[]> rows = stockMovementRepository.findStockByBin(binId);
+        return (int) rows.stream()
+                .filter(r -> ((Number) r[1]).intValue() > 0)
                 .count();
     }
 }

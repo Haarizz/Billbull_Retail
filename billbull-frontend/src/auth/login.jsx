@@ -1,11 +1,13 @@
 import React, { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { login } from "../api/auth";
+import { useCompany } from "../context/CompanyContext";
 import { Eye, EyeOff, ArrowRight, Loader2 } from "lucide-react";
 import billBullLogo from "../assets/billBullLogo.png";
 
 const Login = () => {
   const navigate = useNavigate();
+  const { refreshCompany } = useCompany();
 
   // --- STATE (FIXED) ---
   const [formData, setFormData] = useState({
@@ -41,6 +43,7 @@ const Login = () => {
       sessionStorage.setItem("role", data.role);
       sessionStorage.setItem("user", data.username);
 
+      refreshCompany();
       navigate("/");
     } catch (err) {
       console.error(err);

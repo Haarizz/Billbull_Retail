@@ -229,6 +229,77 @@ const getStatusStyle = (status) => {
     }
 };
 
+const BACKEND_LOCAL_DATETIME_REGEX = /^(\d{4})-(\d{2})-(\d{2})(?:[T\s](\d{2}):(\d{2})(?::(\d{2})(?:\.(\d{1,6}))?)?)?$/;
+const ISO_TIMEZONE_SUFFIX_REGEX = /(Z|[+-]\d{2}:\d{2})$/i;
+
+const parseStockTakeTimestamp = (value) => {
+    if (!value) return null;
+    if (value instanceof Date) {
+        return Number.isNaN(value.getTime()) ? null : value;
+    }
+    if (typeof value === 'number') {
+        const parsed = new Date(value);
+        return Number.isNaN(parsed.getTime()) ? null : parsed;
+    }
+    if (typeof value !== 'string') return null;
+
+    const normalized = value.trim();
+    if (!normalized) return null;
+
+    if (ISO_TIMEZONE_SUFFIX_REGEX.test(normalized)) {
+        const parsed = new Date(normalized);
+        return Number.isNaN(parsed.getTime()) ? null : parsed;
+    }
+
+    const match = normalized.match(BACKEND_LOCAL_DATETIME_REGEX);
+    if (match) {
+        const [, year, month, day, hour = '0', minute = '0', second = '0', fraction = '0'] = match;
+        const milliseconds = Number((fraction + '000').slice(0, 3));
+        return new Date(
+            Number(year),
+            Number(month) - 1,
+            Number(day),
+            Number(hour),
+            Number(minute),
+            Number(second),
+            milliseconds
+        );
+    }
+
+    const parsed = new Date(normalized);
+    return Number.isNaN(parsed.getTime()) ? null : parsed;
+};
+
+const getSessionTimestamp = (session, field) => session?.[`${field}Iso`] || session?.[field] || null;
+
+const formatStockTakeDate = (value) => {
+    const parsed = parseStockTakeTimestamp(value);
+    return parsed ? parsed.toLocaleDateString() : '-';
+};
+
+const formatStockTakeTime = (value, { includeSeconds = false } = {}) => {
+    const parsed = parseStockTakeTimestamp(value);
+    if (!parsed) return '';
+
+    return parsed.toLocaleTimeString([], {
+        hour: '2-digit',
+        minute: '2-digit',
+        ...(includeSeconds ? { second: '2-digit' } : {}),
+    });
+};
+
+const mapSessionTimestamps = (session) => {
+    const startedAt = getSessionTimestamp(session, 'createdAt');
+    const completedAt = getSessionTimestamp(session, 'reconciledAt');
+
+    return {
+        startedOn: formatStockTakeDate(startedAt),
+        startedTime: formatStockTakeTime(startedAt),
+        completedOn: completedAt ? formatStockTakeDate(completedAt) : null,
+        completedTime: completedAt ? formatStockTakeTime(completedAt) : null,
+    };
+};
+
 const resolveProductImage = (product) => {
     if (!product) return null;
     return (
@@ -543,6 +614,7 @@ const SessionView = ({
     scanFlash,
     handleSubmitApproval,
     lastScannedItem,
+    lastScannedAt,
     warehouseBins,
     handleBinChange,
     // Count modal state lifted to parent
@@ -990,7 +1062,7 @@ const SessionView = ({
                             <div className="pt-2">
                                 <p className="text-[10px] font-bold text-slate-900/60 mb-1">Last Scanned:</p>
                                 <p className="text-xs font-bold leading-tight text-slate-900">{lastScannedItem.name || lastScannedItem.productName}</p>
-                                <p className="text-[10px] text-slate-900/60 font-medium">{new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}</p>
+                                <p className="text-[10px] text-slate-900/60 font-medium">{formatStockTakeTime(lastScannedAt, { includeSeconds: true })}</p>
                             </div>
                         )}
                     </div>
@@ -1257,6 +1329,7 @@ const StockTaking = () => {
     const [isCsvModalOpen, setIsCsvModalOpen] = useState(false);
     const [barcodeInput, setBarcodeInput] = useState('');
     const [lastScannedItem, setLastScannedItem] = useState(null);
+    const [lastScannedAt, setLastScannedAt] = useState(null);
     const [csvFile, setCsvFile] = useState(null);
     const [scanFlash, setScanFlash] = useState(false);
     const [lastSaved, setLastSaved] = useState(null);
@@ -1290,6 +1363,7 @@ const StockTaking = () => {
                 const countedItems = s.items?.filter(i => i.countedQty != null) || [];
                 const totalValue = countedItems.reduce((sum, item) => sum + (item.varianceValue || 0), 0);
                 const totalQty = countedItems.reduce((sum, item) => sum + (item.variance || 0), 0);
+                const sessionTimestamps = mapSessionTimestamps(s);
 
                 return {
                     ...s,
@@ -1297,11 +1371,7 @@ const StockTaking = () => {
                     dbId: s.id,
                     // BB-014: Map warehouseName → warehouse for the listing display
                     warehouse: s.warehouseName || s.warehouse || '',
-                    startedOn: s.createdAt ? new Date(s.createdAt).toLocaleDateString() : '-',
-                    startedTime: s.createdAt ? new Date(s.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '',
-                    // BB-018: Map reconciledAt as completedOn for completed sessions
-                    completedOn: s.reconciledAt ? new Date(s.reconciledAt).toLocaleDateString() : null,
-                    completedTime: s.reconciledAt ? new Date(s.reconciledAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : null,
+                    ...sessionTimestamps,
                     // BB-017: Use countedCount/totalCount from backend if available, else compute from items
                     progress: s.countedCount != null ? s.countedCount : (s.items?.filter(i => i.countedQty !== null).length || 0),
                     total: s.totalCount != null ? s.totalCount : (s.items?.length || 0),
@@ -1364,14 +1434,13 @@ const StockTaking = () => {
             const newSessionRes = await createStockTakeSession(sessionData);
 
             // Map backend response to frontend view model
-            const sessionCreatedAt = newSessionRes.createdAt ? new Date(newSessionRes.createdAt) : new Date();
+            const sessionTimestamps = mapSessionTimestamps(newSessionRes);
             const mappedSession = {
                 ...newSessionRes,
                 id: newSessionRes.sessionId,
                 dbId: newSessionRes.id,
                 warehouse: newSessionRes.warehouseName || newSessionRes.warehouse || '',
-                startedOn: sessionCreatedAt.toLocaleDateString(),
-                startedTime: sessionCreatedAt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+                ...sessionTimestamps,
                 progress: 0,
                 total: 0,
                 status: 'In Progress',
@@ -1384,6 +1453,8 @@ const StockTaking = () => {
 
             setAllSessions(prev => [mappedSession, ...prev]);
             setSelectedSession(mappedSession);
+            setLastScannedItem(null);
+            setLastScannedAt(null);
             // Fetch bins for the selected warehouse so the session view has them ready
             getWarehouseBins(wh.id).then(bins => setWarehouseBins(Array.isArray(bins) ? bins : [])).catch(() => {});
             setViewMode('session');
@@ -1412,6 +1483,7 @@ const StockTaking = () => {
             if (initialCount !== null) {
                 await handleCountChange(existingItem.id, (existingItem.countedQty || 0) + initialCount);
                 setLastScannedItem({ ...existingItem, countedQty: (existingItem.countedQty || 0) + initialCount });
+                setLastScannedAt(new Date());
             } else {
                 showNotif('info', 'Already Added', 'This product is already in the session.');
             }
@@ -1438,7 +1510,10 @@ const StockTaking = () => {
             };
 
             setSelectedSession(updatedSession);
-            if (initialCount !== null) setLastScannedItem(mappedItem);
+            if (initialCount !== null) {
+                setLastScannedItem(mappedItem);
+                setLastScannedAt(new Date());
+            }
             // Push to undo history so user can remove this item
             setUndoHistory(prev => [...prev, { type: 'ADD_ITEM', itemId: newItem.id }]);
             setIsLoading(false);
@@ -1585,6 +1660,7 @@ const StockTaking = () => {
                 const updatedItems = selectedSession.items.filter(i => i.id !== last.itemId);
                 setSelectedSession({ ...selectedSession, items: updatedItems });
                 setLastScannedItem(null);
+                setLastScannedAt(null);
             } catch (err) {
                 console.error('Undo ADD_ITEM failed:', err);
                 // Re-push in case of failure
@@ -1819,12 +1895,12 @@ const StockTaking = () => {
                 getWarehouseBins(session.warehouseId).catch(() => [])
             ]);
             setWarehouseBins(Array.isArray(bins) ? bins : []);
+            const sessionTimestamps = mapSessionTimestamps(detail);
             const mapped = {
                 ...detail,
                 id: detail.sessionId,
                 dbId: detail.id,
-                startedOn: new Date(detail.createdAt).toLocaleDateString(),
-                startedTime: new Date(detail.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+                ...sessionTimestamps,
                 status: detail.status === 'IN_PROGRESS' ? 'In Progress' :
                     detail.status === 'PENDING_APPROVAL' ? 'Pending Approval' :
                         detail.status === 'COMPLETED' ? 'Completed' : detail.status,
@@ -1839,6 +1915,8 @@ const StockTaking = () => {
                 }))
             };
             setSelectedSession(mapped);
+            setLastScannedItem(null);
+            setLastScannedAt(null);
             if (mapped.status === 'Pending Approval') {
                 setIsReviewModalOpen(true);
             } else {
@@ -1877,13 +1955,13 @@ const StockTaking = () => {
         setIsLoading(true);
         try {
             const detail = await getStockTakeSession(session.sessionId || session.id);
+            const sessionTimestamps = mapSessionTimestamps(detail);
             const mapped = {
                 ...detail,
                 id: detail.sessionId,
                 dbId: detail.id,
                 warehouse: detail.warehouseName || detail.warehouse || '',
-                startedOn: new Date(detail.createdAt).toLocaleDateString(),
-                startedTime: new Date(detail.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+                ...sessionTimestamps,
                 status: 'View Only', // Force read-only
                 items: detail.items.map(item => ({
                     ...item,
@@ -1893,6 +1971,8 @@ const StockTaking = () => {
                 }))
             };
             setSelectedSession(mapped);
+            setLastScannedItem(null);
+            setLastScannedAt(null);
             setViewMode('session');
         } catch (error) {
             console.error("Error loading session detail:", error);
@@ -1947,6 +2027,7 @@ const StockTaking = () => {
                     scanFlash={scanFlash}
                     handleSubmitApproval={handleSubmitApproval}
                     lastScannedItem={lastScannedItem}
+                    lastScannedAt={lastScannedAt}
                     warehouseBins={warehouseBins}
                     handleBinChange={handleBinChange}
                     isCountModalOpen={isCountModalOpen}

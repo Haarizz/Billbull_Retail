@@ -7,6 +7,8 @@ import com.billbull.backend.inventory.warehouse.WarehouseStockService;
 import com.billbull.backend.purchase.stockmovement.StockMovement;
 import com.billbull.backend.purchase.stockmovement.StockMovementRepository;
 import com.billbull.backend.purchase.stockmovement.StockSourceType;
+import org.springframework.cache.annotation.CacheEvict;
+import org.springframework.cache.annotation.Caching;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -95,6 +97,10 @@ public class StockTransferService {
         return toResponse(repository.save(st));
     }
 
+    @Caching(evict = {
+        @CacheEvict(value = "stockAvailability", allEntries = true),
+        @CacheEvict(value = "productList", allEntries = true)
+    })
     public StockTransferResponse markSent(Long id) {
         StockTransfer st = getEntity(id);
         if (st.getStatus() != StockTransferStatus.DRAFT && st.getStatus() != StockTransferStatus.PENDING_APPROVAL) {
@@ -128,6 +134,10 @@ public class StockTransferService {
         return toResponse(repository.save(st));
     }
 
+    @Caching(evict = {
+        @CacheEvict(value = "stockAvailability", allEntries = true),
+        @CacheEvict(value = "productList", allEntries = true)
+    })
     public StockTransferResponse markReceived(Long id) {
         StockTransfer st = getEntity(id);
         if (st.getStatus() != StockTransferStatus.SENT) {

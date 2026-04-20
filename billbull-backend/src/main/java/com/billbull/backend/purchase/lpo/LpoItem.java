@@ -19,6 +19,7 @@ public class LpoItem extends BaseEntity {
 
 	private String itemCode;
 	private String itemName;
+	private String barcode;
 	private String uom;
 
 	private BigDecimal lastPrice;
@@ -29,6 +30,7 @@ public class LpoItem extends BaseEntity {
 	private BigDecimal discountPercent;
 	private BigDecimal lineTotal;
 	private Integer focQty;
+	private String focUnit;
 
 	private String remarks;
 
@@ -66,6 +68,14 @@ public class LpoItem extends BaseEntity {
 
 	public void setItemName(String itemName) {
 		this.itemName = itemName;
+	}
+
+	public String getBarcode() {
+		return barcode;
+	}
+
+	public void setBarcode(String barcode) {
+		this.barcode = barcode;
 	}
 
 	public String getUom() {
@@ -138,5 +148,13 @@ public class LpoItem extends BaseEntity {
 
 	public void setFocQty(Integer focQty) {
 		this.focQty = focQty;
+	}
+
+	public String getFocUnit() {
+		return focUnit;
+	}
+
+	public void setFocUnit(String focUnit) {
+		this.focUnit = focUnit;
 	}
 }

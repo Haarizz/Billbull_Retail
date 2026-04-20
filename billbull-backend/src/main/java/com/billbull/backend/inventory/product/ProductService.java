@@ -21,6 +21,7 @@ import com.billbull.backend.inventory.warehouse.BinRepository;
 import com.billbull.backend.inventory.warehouse.LocatorRepository;
 import com.billbull.backend.inventory.warehouse.WarehouseRepository;
 import com.billbull.backend.inventory.warehouse.ZoneRepository;
+import com.billbull.backend.purchase.stockmovement.StockMovementRepository;
 
 @Service
 @Transactional
@@ -48,6 +49,7 @@ public class ProductService {
     private final BinRepository binRepo;
 
     private final ProductImageStorageService imageStorage;
+    private final StockMovementRepository stockMovementRepo;
 
     public ProductService(
             ProductRepository productRepo,
@@ -65,7 +67,8 @@ public class ProductService {
             ZoneRepository zoneRepo,
             LocatorRepository locatorRepo,
             BinRepository binRepo,
-            ProductImageStorageService imageStorage) {
+            ProductImageStorageService imageStorage,
+            StockMovementRepository stockMovementRepo) {
         this.productRepo = productRepo;
         this.pricingRepo = pricingRepo;
         this.taxRepo = taxRepo;
@@ -82,6 +85,7 @@ public class ProductService {
         this.locatorRepo = locatorRepo;
         this.binRepo = binRepo;
         this.imageStorage = imageStorage;
+        this.stockMovementRepo = stockMovementRepo;
     }
 
     // ==================================================
@@ -609,6 +613,13 @@ public class ProductService {
         java.util.Map<Long, List<ProductPacking>> packingMap = packingRepo.findByProductIdIn(ids)
                 .stream().collect(Collectors.groupingBy(p -> p.getProduct().getId()));
 
+        // Query 7: available stock totals (QA-007 fix — stock was missing, showing 0 everywhere)
+        java.util.Map<Long, Integer> stockMap = new java.util.HashMap<>();
+        List<Object[]> stockRows = stockMovementRepo.getTotalAvailableStockForProducts(ids);
+        for (Object[] row : stockRows) {
+            stockMap.put((Long) row[0], ((Number) row[1]).intValue());
+        }
+
         List<java.util.Map<String, Object>> content = products.stream().map(p -> {
             java.util.Map<String, Object> item = new java.util.HashMap<>();
             item.put("id", p.getId());
@@ -673,6 +684,9 @@ public class ProductService {
             item.put("availableUnits", availableUnits.isEmpty() ? java.util.List.of("PCS") : availableUnits);
             item.put("unitConversions", unitConversions);
             item.put("unitPrices", unitPrices);
+
+            // QA-007 fix: include total available stock so the product selector displays correct quantity
+            item.put("stock", stockMap.getOrDefault(p.getId(), 0));
 
             return item;
         }).collect(Collectors.toList());

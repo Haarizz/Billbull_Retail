@@ -47,15 +47,22 @@ import {
 } from 'lucide-react';
 
 import { getImageUrl } from "../../../utils/urlUtils";
+import { createDraftFromLpo } from '../../../api/purchaseInvoiceApi';
 import { ItemDescriptionCell, ItemDescriptionHeader } from '../../../components/ItemDescriptionCell';
 import ItemAddOnsModal from '../../../components/ItemAddOnsModal';
+import StockAvailabilityModal from '../../../components/StockAvailabilityModal';
 import toast from 'react-hot-toast';
+import { useCompany } from '../../../context/CompanyContext';
 
 // Printing Utilities
 import { getTemplatesByCategory } from '../../../api/printTemplateApi';
 import { generatePrintHtml, printHtml } from '../../../utils/printGenerator';
-import nestLogo from '../../../assets/NEST Logo Final.png';
 import billBullLogo from '../../../assets/billBullLogo.png';
+import {
+  buildLpoPrintData,
+  findVendorRecord,
+  normalizePurchaseTemplate
+} from '../../../utils/purchasePrintUtils';
 
 // API Imports
 import {
@@ -80,6 +87,7 @@ import {
 
 // SHORTCUTS HOOK
 import useShortcuts from '../../../hooks/useShortcuts';
+import { useBranch } from '../../../context/BranchContext';
 
 // ==========================================
 // UTILITIES & CONSTANTS
@@ -277,7 +285,7 @@ const MobileCard = ({ row, onView }) => (
 // 3. VIEW COMPONENTS
 // ==========================================
 
-const ListView = ({ lpos, onEdit, onView, onPrint, activeFilter, onApprove, onReject, onStockApprove, onStockReject, searchQuery, setSearchQuery, sortConfig, requestSort, showFilterPanel, setShowFilterPanel, dateRange, setDateRange, selectedVendor, setSelectedVendor, vendors }) => {
+const ListView = ({ lpos, onEdit, onView, onPrint, activeFilter, onApprove, onReject, onStockApprove, onStockReject, onProceedToInvoice, searchQuery, setSearchQuery, sortConfig, requestSort, showFilterPanel, setShowFilterPanel, dateRange, setDateRange, selectedVendor, setSelectedVendor, vendors }) => {
   const formatDate = (dateString) => {
     if (!dateString) return '-';
     try {
@@ -568,6 +576,17 @@ const ListView = ({ lpos, onEdit, onView, onPrint, activeFilter, onApprove, onRe
                         )}
 
 
+
+                        {/* Proceed to Invoice — APPROVED / SENT_TO_VENDOR / PARTIALLY_RECEIVED */}
+                        {['APPROVED', 'SENT_TO_VENDOR', 'PARTIALLY_RECEIVED'].includes(row.status) && (
+                          <button
+                            onClick={(e) => { e.stopPropagation(); onProceedToInvoice && onProceedToInvoice(row.dbId); }}
+                            title="Proceed to Invoice"
+                            className="p-1.5 bg-blue-50 hover:bg-blue-100 rounded text-blue-600 hover:text-blue-700 flex items-center gap-1 font-medium text-[10px]"
+                          >
+                            <FileText className="h-3 w-3" /> Invoice
+                          </button>
+                        )}
 
                         {/* Standard Actions */}
                         <button
@@ -901,7 +920,7 @@ const EditorView = ({ initialData, vendors, warehouses, onSave, onSubmit, onPrin
     buyerAssigned: "SYSTEM",
     referenceDocument: "",
     items: [
-      { id: Date.now(), productId: null, code: '', name: '', uom: '', lastPrice: 0, currentCost: 0, qty: 1, unitPrice: 0, disc: 0, foc: 0, focUnit: '', remarks: '', image: null, availableUnits: [], unitConversions: {}, unitPrices: {} }
+      { id: Date.now(), productId: null, code: '', barcode: '', name: '', uom: '', lastPrice: 0, currentCost: 0, qty: 1, unitPrice: 0, disc: 0, foc: 0, focUnit: '', tax: 5, taxAmt: 0, remarks: '', image: null, availableUnits: [], unitConversions: {}, unitPrices: {} }
     ]
   };
 
@@ -911,6 +930,8 @@ const EditorView = ({ initialData, vendors, warehouses, onSave, onSubmit, onPrin
   const [isProductSelectionOpen, setIsProductSelectionOpen] = useState(false);
   const [expandedRows, setExpandedRows] = useState({});
   const [selectedAddonItem, setSelectedAddonItem] = useState(null);
+  const [selectedStockItem, setSelectedStockItem] = useState(null);
+  const [isItemStockModalOpen, setIsItemStockModalOpen] = useState(false);
   const [approvalRemarks, setApprovalRemarks] = useState('');
 
   // ✅ GLOBAL SHORTCUTS
@@ -950,6 +971,19 @@ const EditorView = ({ initialData, vendors, warehouses, onSave, onSubmit, onPrin
   const [locatorList, setLocatorList] = useState([]);
   const [binList, setBinList] = useState([]);
 
+  const { defaultBranch } = useBranch();
+
+  useEffect(() => {
+    if (!initialData && defaultBranch?.defaultWarehouseId) {
+      const wh = warehouses.find(w => w.id === defaultBranch.defaultWarehouseId);
+      setFormData(prev => ({
+        ...prev,
+        warehouseId: defaultBranch.defaultWarehouseId,
+        warehouseName: wh?.name || defaultBranch.defaultWarehouseName || '',
+      }));
+    }
+  }, [defaultBranch, initialData]);
+
   useEffect(() => {
     if (initialData) {
       setFormData({
@@ -963,6 +997,7 @@ const EditorView = ({ initialData, vendors, warehouses, onSave, onSubmit, onPrin
             id: i.id || `item-${Date.now()}-${Math.random().toString(36).slice(2)}`,
             productId: i.productId,
             code: i.itemCode,
+            barcode: i.barcode || '',
             name: i.itemName,
             uom: i.uom,
             lastPrice: i.lastPrice || 0,
@@ -970,8 +1005,10 @@ const EditorView = ({ initialData, vendors, warehouses, onSave, onSubmit, onPrin
             qty: i.quantity,
             unitPrice: i.unitPrice,
             disc: i.discountPercent || 0,
-            foc: i.foc || 0,
+            foc: i.focQty || i.foc || 0,
             focUnit: i.focUnit || i.uom || 'PCS',
+            tax: typeof i.tax === 'number' ? i.tax : 5,
+            taxAmt: Number(i.taxAmt || 0),
             remarks: i.remarks || '',
             image: i.image || i.imageUrl || null,
             availableUnits: i.availableUnits || [i.uom || 'PCS'],
@@ -1037,6 +1074,7 @@ const EditorView = ({ initialData, vendors, warehouses, onSave, onSubmit, onPrin
       id: Date.now(),
       productId: null,
       code: '',
+      barcode: '',
       name: '',
       uom: '',
       lastPrice: 0,
@@ -1046,6 +1084,8 @@ const EditorView = ({ initialData, vendors, warehouses, onSave, onSubmit, onPrin
       disc: 0,
       foc: 0,
       focUnit: '',
+      tax: 5,
+      taxAmt: 0,
       remarks: '',
       image: null,
       availableUnits: [],
@@ -1072,6 +1112,8 @@ const EditorView = ({ initialData, vendors, warehouses, onSave, onSubmit, onPrin
       disc: product.maxDiscount || 0,
       foc: 0,
       focUnit: defaultUnit,
+      tax: product.taxRate || 5,
+      taxAmt: 0,
       remarks: product.description || '',
       image: product.primaryImage || product.image || product.thumbnailUrl || product.imageUrl || null,
       availableUnits: product.availableUnits || [defaultUnit],
@@ -1091,7 +1133,7 @@ const EditorView = ({ initialData, vendors, warehouses, onSave, onSubmit, onPrin
     const resolvedUnit = item.uom || item.unit || 'PCS';
     return {
       ...item,
-      desc: item.remarks || item.name || item.desc,
+      desc: item.name || item.desc,
       unit: resolvedUnit,
       price: Number(item.unitPrice) || 0,
       disc: Number(item.disc) || 0,
@@ -1099,6 +1141,7 @@ const EditorView = ({ initialData, vendors, warehouses, onSave, onSubmit, onPrin
       focUnit: item.focUnit || resolvedUnit,
       tax: Number(item.tax) || 0,
       cost: Number(item.unitPrice) || 0,
+      remarks: item.remarks || '',
       availableUnits: item.availableUnits || [resolvedUnit]
     };
   };
@@ -1116,12 +1159,15 @@ const EditorView = ({ initialData, vendors, warehouses, onSave, onSubmit, onPrin
         const resolvedUnit = updated.unit || item.uom || item.unit || 'PCS';
         return {
           ...item,
+          barcode: updated.barcode || item.barcode || '',
           unitPrice: resolvedPrice,
           disc: resolvedDiscount,
           foc: resolvedFoc,
           focUnit: updated.focUnit || item.focUnit || resolvedUnit,
           uom: resolvedUnit,
-          tax: Number(updated.tax) || 0
+          tax: Number(updated.tax) || 0,
+          taxAmt: Number(updated.taxAmt) || 0,
+          remarks: updated.remarks || ''
         };
       })
     }));
@@ -1173,7 +1219,8 @@ const EditorView = ({ initialData, vendors, warehouses, onSave, onSubmit, onPrin
       totalTaxable += lineTotal;
       totalQty += qty;
 
-      return { ...item, lineTotal };
+      const taxAmt = lineTotal * ((Number(item.tax) || 5) / 100);
+      return { ...item, tax: Number(item.tax) || 5, taxAmt, lineTotal, total: lineTotal + taxAmt };
     });
 
     const tax = totalTaxable * 0.05;
@@ -1199,8 +1246,9 @@ const EditorView = ({ initialData, vendors, warehouses, onSave, onSubmit, onPrin
       quantity: i.qty,
       unitPrice: i.unitPrice,
       discountPercent: i.disc || 0,
-      remarks: "",
-      foc: Number(i.foc) || 0,
+      lineTotal: Number(i.lineTotal) || 0,
+      barcode: i.barcode || '',
+      remarks: i.remarks || "",
       focQty: Number(i.foc) || 0,
       focUnit: i.focUnit || i.uom || 'PCS',
       availableUnits: i.availableUnits || [],
@@ -1477,6 +1525,8 @@ const EditorView = ({ initialData, vendors, warehouses, onSave, onSubmit, onPrin
                   onChange={handleWarehouseChange}
                   placeholder="Select Warehouse"
                   disabled={isReadOnly}
+                  menuPlacement="auto"
+                  menuZIndexClass="z-[120]"
                   className="w-full"
                 />
               </div>
@@ -1492,6 +1542,8 @@ const EditorView = ({ initialData, vendors, warehouses, onSave, onSubmit, onPrin
                       onChange={handleZoneChange}
                       placeholder="Zone"
                       disabled={isReadOnly}
+                      menuPlacement="auto"
+                      menuZIndexClass="z-[120]"
                       className="w-full"
                     />
                   </div>
@@ -1503,6 +1555,8 @@ const EditorView = ({ initialData, vendors, warehouses, onSave, onSubmit, onPrin
                       onChange={handleLocatorChange}
                       placeholder="Locator"
                       disabled={isReadOnly || !formData.zoneId}
+                      menuPlacement="auto"
+                      menuZIndexClass="z-[120]"
                       className="w-full"
                     />
                   </div>
@@ -1514,6 +1568,8 @@ const EditorView = ({ initialData, vendors, warehouses, onSave, onSubmit, onPrin
                       onChange={handleBinChange}
                       placeholder="Bin"
                       disabled={isReadOnly || !formData.locatorId}
+                      menuPlacement="auto"
+                      menuZIndexClass="z-[120]"
                       className="w-full"
                     />
                   </div>
@@ -1563,8 +1619,8 @@ const EditorView = ({ initialData, vendors, warehouses, onSave, onSubmit, onPrin
           <div className="bg-white border border-slate-200 rounded-lg shadow-sm flex flex-col h-full min-h-[200px]">
             <div className="px-4 py-3 border-b border-slate-100 flex justify-between items-center">
               <div className="flex items-center gap-2">
-                <Package className="h-4 w-4 text-slate-400" />
-                <h3 className="font-semibold text-sm text-slate-700">Item Details</h3>
+                <ShoppingCart className="h-4 w-4 text-yellow-500" />
+                <h3 className="font-semibold text-sm text-slate-700">LPO Items</h3>
               </div>
               <div className="flex items-center gap-2">
                 {!isReadOnly && (
@@ -1573,7 +1629,7 @@ const EditorView = ({ initialData, vendors, warehouses, onSave, onSubmit, onPrin
                       onClick={() => setIsProductSelectionOpen(true)}
                       className="px-3 py-1.5 bg-yellow-400 text-slate-900 text-xs font-medium rounded hover:bg-yellow-500 flex items-center gap-1"
                     >
-                      <Plus className="h-3 w-3" /> Select Product
+                      <Plus className="h-3 w-3" /> Select from Products
                     </button>
                     <button onClick={handleAddItem} className="px-3 py-1.5 border border-slate-200 rounded text-xs font-medium text-slate-600 hover:bg-slate-50 flex items-center gap-1">
                       <Plus className="h-3 w-3" /> Add Row
@@ -1586,6 +1642,7 @@ const EditorView = ({ initialData, vendors, warehouses, onSave, onSubmit, onPrin
               <table className="w-full text-xs text-left min-w-[800px]">
                 <thead className="bg-slate-50 border-b border-slate-100 text-slate-500">
                   <tr>
+                    <th className="p-3 font-medium w-10 text-center text-slate-400">#</th>
                     <th className="p-3 font-medium min-w-[280px]">
                       <ItemDescriptionHeader
                         itemCount={formData.items.length}
@@ -1593,20 +1650,20 @@ const EditorView = ({ initialData, vendors, warehouses, onSave, onSubmit, onPrin
                         onToggleAll={toggleAllDescriptions}
                       />
                     </th>
-                    <th className="p-3 font-medium text-center w-16">UOM</th>
+                    <th className="p-3 font-medium text-center w-16">Unit</th>
                     <th className="p-3 font-medium text-right w-20">Last Price</th>
-                    <th className="p-3 font-medium text-center w-16">Qty</th>
-                    <th className="p-3 font-medium text-center w-20">FOC</th>
+                    <th className="p-3 font-medium text-center w-16">Order Qty</th>
                     <th className="p-3 font-medium text-center w-20">Unit Price</th>
                     <th className="p-3 font-medium text-center w-16">Disc %</th>
-                    <th className="p-3 font-medium text-right">Line Total</th>
+                    <th className="p-3 font-medium text-right">Amount</th>
                     <th className="p-3 font-medium text-center">Actions</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-50">
-                  {calculations.calculatedItems.map((item) => (
+                  {calculations.calculatedItems.map((item, index) => (
                     <React.Fragment key={item.id}>
                       <tr className="group hover:bg-slate-50">
+                        <td className="p-3 text-center text-slate-400 text-xs font-medium">{index + 1}</td>
                         <td className="p-3">
                           <ItemDescriptionCell
                             item={item}
@@ -1615,11 +1672,11 @@ const EditorView = ({ initialData, vendors, warehouses, onSave, onSubmit, onPrin
                             onItemChange={handleItemChange}
                             onFocusCode={() => { }}
                             onOpenProductSelection={!isReadOnly ? () => setIsProductSelectionOpen(true) : undefined}
-                            onCheckStock={() => { }}
+                            onCheckStock={(selectedItem) => { setSelectedStockItem(selectedItem); setIsItemStockModalOpen(true); }}
                             onOpenSettings={() => setSelectedAddonItem(getAddonModalItem(item))}
-                            showSettings={true}
+                            showSettings={Boolean(item.code || item.name || item.remarks || item.barcode)}
                             isReadOnly={isReadOnly}
-                            showTaxDiscount={false}
+                            showTaxDiscount={true}
                           />
                         </td>
                         <td className="p-3 text-center">
@@ -1647,26 +1704,6 @@ const EditorView = ({ initialData, vendors, warehouses, onSave, onSubmit, onPrin
                             disabled={isReadOnly}
                             className={`w-12 text-center border border-slate-200 rounded p-1 text-xs disabled:bg-slate-50 disabled:text-slate-500`}
                           />
-                        </td>
-                        <td className="p-3 text-center align-top">
-                          <div className="flex flex-col gap-1">
-                            <input
-                              disabled={isReadOnly}
-                              type="number"
-                              className="w-full bg-transparent border-b border-transparent hover:border-slate-200 focus:border-yellow-400/50 text-center outline-none font-semibold text-xs text-slate-700 transition-colors py-1 disabled:opacity-50"
-                              value={item.foc === 0 ? '' : (item.foc || '')}
-                              onChange={(e) => handleItemChange(item.id, 'foc', e.target.value)}
-                              placeholder="—"
-                            />
-                            <select
-                              disabled={isReadOnly}
-                              className="w-full bg-transparent outline-none text-center text-[10px] text-slate-500 appearance-none font-medium cursor-pointer opacity-70 hover:opacity-100 transition-opacity disabled:opacity-50"
-                              value={item.focUnit || item.uom || 'PCS'}
-                              onChange={(e) => handleItemChange(item.id, 'focUnit', e.target.value)}
-                            >
-                              {(item.availableUnits || [item.uom || 'PCS']).map(u => <option key={u} value={u}>{u}</option>)}
-                            </select>
-                          </div>
                         </td>
                         <td className="p-3">
                           <div className="relative group/price">
@@ -2105,6 +2142,12 @@ const EditorView = ({ initialData, vendors, warehouses, onSave, onSubmit, onPrin
         onClose={() => setSelectedAddonItem(null)}
         onSave={handleAddonSave}
       />
+
+      <StockAvailabilityModal
+        isOpen={isItemStockModalOpen}
+        onClose={() => setIsItemStockModalOpen(false)}
+        selectedStockItem={selectedStockItem}
+      />
     </div>
   );
 };
@@ -2114,6 +2157,7 @@ const EditorView = ({ initialData, vendors, warehouses, onSave, onSubmit, onPrin
 // ==========================================
 
 const LPOList = () => {
+  const { company } = useCompany();
   const navigate = useNavigate();
   const [activeStatusTab, setActiveStatusTab] = useState("All LPOs");
   const [activeNavTab, setActiveNavTab] = useState("list");
@@ -2261,58 +2305,26 @@ const LPOList = () => {
   };
 
   const handlePrintLPO = async (lpo) => {
+    const loadingToast = toast.loading('Generating print layout...');
     try {
       setLoading(true);
-      const loadingToast = toast.loading('Generating print layout...');
 
       const detailedLpo = await getLpoByNumber(lpo.lpoNumber);
 
       const templates = await getTemplatesByCategory('Local Purchase Order');
-      toast.dismiss(loadingToast);
 
-      const defaultTemplate = templates.find(t => t.isDefault) || templates[0];
+      const defaultTemplate = normalizePurchaseTemplate(
+        templates.find(t => t.isDefault) || templates[0],
+        'Local Purchase Order'
+      );
 
       if (defaultTemplate) {
-        const fullVendor = vendors.find(v => v.id === detailedLpo.vendorId || v.name === detailedLpo.vendorName);
-
-        const printData = {
-          title: 'LOCAL PURCHASE ORDER',
-          docNo: detailedLpo.lpoNumber,
-          date: detailedLpo.date,
-          customer: {
-            name: detailedLpo.vendorName || '',
-            address: fullVendor?.address || '',
-            trn: fullVendor?.trn
-          },
-          items: (detailedLpo.items || []).map(i => ({
-            code: i.itemCode || i.code,
-            name: i.itemName || i.name || '',
-            desc: i.description || i.shortDescription || '',
-            sku: i.sku || i.productSku || '',
-            localName: i.localName || i.productLocalName || '',
-            unit: i.uom || i.unit || 'PCS',
-            qty: Number(i.quantity || i.qty),
-            price: Number(i.unitPrice || i.price),
-            disc: Number(i.discountPercent || i.disc || 0),
-            tax: 0,
-            taxAmt: 0,
-            total: (Number(i.quantity || i.qty) * Number(i.unitPrice || i.price)) * (1 - (Number(i.discountPercent || i.disc || 0) / 100)),
-            image: i.imageUrl || i.image ? getImageUrl(i.imageUrl || i.image) : ''
-          })),
-          totals: {
-            subTotal: Number(detailedLpo.totalValue),
-            tax: 0,
-            grandTotal: Number(detailedLpo.totalValue),
-            currency: 'AED'
-          },
-          meta: {
-            status: detailedLpo.status,
-            paymentTerm: detailedLpo.paymentTerms || 'N/A',
-            notes: detailedLpo.notes || ''
-          }
-        };
-
-        const html = generatePrintHtml(defaultTemplate, printData, { nestLogo, billBullLogo });
+        const fullVendor = findVendorRecord(vendors, detailedLpo, detailedLpo?.vendorName);
+        const printData = buildLpoPrintData(detailedLpo, fullVendor, company);
+        const html = generatePrintHtml(defaultTemplate, printData, {
+          companyProfile: company,
+          billBullLogo
+        });
         printHtml(html);
       } else {
         toast.error("No default template for LPO found.");
@@ -2321,6 +2333,7 @@ const LPOList = () => {
       console.error("Print error:", error);
       toast.error("Failed to generate print layout.");
     } finally {
+      toast.dismiss(loadingToast);
       setLoading(false);
     }
   };
@@ -2418,6 +2431,16 @@ const LPOList = () => {
   const handleReject = async (dbId) => {
     await rejectLpo(dbId);
     await refreshLpos();
+  };
+
+  const handleProceedToInvoice = async (dbId) => {
+    try {
+      const draft = await createDraftFromLpo(dbId);
+      navigate('/purchases/invoice', { state: { fromLpo: draft } });
+    } catch (error) {
+      console.error("Proceed to Invoice Error:", error);
+      toast.error(error.response?.data?.message || "Failed to proceed to invoice");
+    }
   };
 
   const handleRevertLPO = async (dbId) => {
@@ -2631,6 +2654,7 @@ const LPOList = () => {
                 onReject={handleReject}
                 onStockApprove={handleInitiateStockApprove}
                 onStockReject={handleInitiateStockReject}
+                onProceedToInvoice={handleProceedToInvoice}
                 onPrint={handlePrintLPO}
                 searchQuery={searchQuery}
                 setSearchQuery={setSearchQuery}
@@ -2880,3 +2904,4 @@ const LPOList = () => {
 };
 
 export default LPOList;
+

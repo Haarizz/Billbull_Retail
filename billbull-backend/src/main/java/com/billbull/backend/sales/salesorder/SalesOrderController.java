@@ -45,6 +45,11 @@ public class SalesOrderController {
         return service.getById(id);
     }
 
+    @PutMapping("/{id}/status")
+    public void updateStatus(@PathVariable Long id, @RequestParam String status) {
+        service.updateStatusById(id, SalesOrderStatus.valueOf(status));
+    }
+
     @PostMapping("/{id}/attachments")
     public SalesOrderAttachment upload(
             @PathVariable Long id,

@@ -58,10 +58,10 @@ const SalesSummaryReport = () => {
     const customers = useMemo(() => ['All', ...new Set(invoices.map(i => i.customerName).filter(Boolean)).values()], [invoices]);
     const statuses = ['All', 'CONFIRMED', 'POSTED', 'PAID', 'PARTIALLY_PAID', 'CANCELLED', 'DRAFT'];
 
-    const totalSales = filtered.reduce((s, i) => s + parseFloat(i.grandTotal || 0), 0);
-    const totalTax = filtered.reduce((s, i) => s + parseFloat(i.taxAmount || 0), 0);
-    const totalPaid = filtered.filter(i => (i.status || '').toUpperCase() === 'PAID').reduce((s, i) => s + parseFloat(i.grandTotal || 0), 0);
-    const totalOutstanding = filtered.filter(i => ['CONFIRMED', 'PARTIALLY_PAID', 'POSTED'].includes((i.status || '').toUpperCase())).reduce((s, i) => s + parseFloat(i.grandTotal || 0), 0);
+    const totalSales = filtered.reduce((s, i) => s + parseFloat(i.invoiceTotal || 0), 0);
+    const totalTax = filtered.reduce((s, i) => s + parseFloat(i.taxTotal || 0), 0);
+    const totalPaid = filtered.filter(i => (i.status || '').toUpperCase() === 'PAID').reduce((s, i) => s + parseFloat(i.invoiceTotal || 0), 0);
+    const totalOutstanding = filtered.filter(i => ['CONFIRMED', 'PARTIALLY_PAID', 'POSTED'].includes((i.status || '').toUpperCase())).reduce((s, i) => s + parseFloat(i.invoiceTotal || 0), 0);
 
     // Group summary
     const groupedData = useMemo(() => {
@@ -72,8 +72,8 @@ const SalesSummaryReport = () => {
                     (inv.status || 'Unknown');
             if (!map[key]) map[key] = { name: key, count: 0, total: 0, paid: 0 };
             map[key].count += 1;
-            map[key].total += parseFloat(inv.grandTotal || 0);
-            if ((inv.status || '').toUpperCase() === 'PAID') map[key].paid += parseFloat(inv.grandTotal || 0);
+            map[key].total += parseFloat(inv.invoiceTotal || 0);
+            if ((inv.status || '').toUpperCase() === 'PAID') map[key].paid += parseFloat(inv.invoiceTotal || 0);
         });
         return Object.values(map).sort((a, b) => b.total - a.total);
     }, [filtered, groupBy]);
@@ -82,7 +82,7 @@ const SalesSummaryReport = () => {
         const headers = ['Invoice No', 'Date', 'Customer', 'Status', 'Grand Total', 'Tax'];
         const rows = filtered.map(i => [
             i.invoiceNumber || '', i.invoiceDate || '', i.customerName || '',
-            i.status || '', i.grandTotal || 0, i.taxAmount || 0
+            i.status || '', i.invoiceTotal || 0, i.taxTotal || 0
         ]);
         const csv = [headers, ...rows].map(r => r.join(',')).join('\n');
         const blob = new Blob([csv], { type: 'text/csv' });
@@ -315,7 +315,7 @@ const SalesSummaryReport = () => {
                                                         'bg-amber-100 text-amber-700'
                                                     }`}>{inv.status || 'Draft'}</span>
                                                 </td>
-                                                <td className="px-4 py-2.5 text-right font-bold text-slate-800">{formatCurrency(inv.grandTotal)}</td>
+                                                <td className="px-4 py-2.5 text-right font-bold text-slate-800">{formatCurrency(inv.invoiceTotal)}</td>
                                             </tr>
                                         ))}
                                     </tbody>

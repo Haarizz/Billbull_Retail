@@ -13,7 +13,7 @@ import { getPostedPurchaseInvoices } from '../../../api/purchaseInvoiceApi';
 import { getVendors } from "../../../api/vendorsApi";
 import { getBarcodeTemplates, createBarcodeTemplate, updateBarcodeTemplate, deleteBarcodeTemplate } from '../../../api/barcodeTemplateApi';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
-import api from "../../../api/axiosConfig";
+import { getImageUrl } from "../../../utils/urlUtils";
 
 const TEMPLATES = [
     {
@@ -927,7 +927,7 @@ const BarcodePrinter = () => {
                                                     <div className="h-10 w-10 bg-slate-100 rounded border border-slate-200 flex items-center justify-center overflow-hidden">
                                                         {item.product.image ? (
                                                             <img
-                                                                src={item.product.image.startsWith('http') ? item.product.image : `${api.defaults.baseURL}${item.product.image}`}
+                                                                src={getImageUrl(item.product.image)}
                                                                 className="h-full w-full object-cover"
                                                             />
                                                         ) : (
@@ -1209,7 +1209,7 @@ const BarcodePrinter = () => {
                                                                         <div className="h-8 w-8 shrink-0 bg-white rounded border border-slate-200 flex items-center justify-center overflow-hidden">
                                                                             {prod?.image ? (
                                                                                 <img
-                                                                                    src={prod.image.startsWith('http') ? prod.image : `${api.defaults.baseURL}${prod.image}`}
+                                                                                    src={getImageUrl(prod.image)}
                                                                                     alt=""
                                                                                     className="h-full w-full object-cover"
                                                                                 />

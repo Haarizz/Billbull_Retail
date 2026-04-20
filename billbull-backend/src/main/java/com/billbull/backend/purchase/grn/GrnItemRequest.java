@@ -6,6 +6,7 @@ public record GrnItemRequest(
                 Long productId,
                 String code,
                 String name,
+                String barcode,
                 String uom,
                 Integer lpoQty,
                 Integer received,
@@ -15,5 +16,7 @@ public record GrnItemRequest(
                 BigDecimal netCost,
                 BigDecimal total,
                 boolean batch,
-                Integer focQty) {
+                Integer focQty,
+                String focUnit,
+                String remarks) {
 }

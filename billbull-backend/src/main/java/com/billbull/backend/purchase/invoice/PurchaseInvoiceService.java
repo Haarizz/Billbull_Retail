@@ -3,12 +3,16 @@ package com.billbull.backend.purchase.invoice;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.List;
 
 import org.springframework.cache.annotation.CacheEvict;
+import org.springframework.cache.annotation.Caching;
 import org.springframework.stereotype.Service;
 
 import com.billbull.backend.financials.generalledger.postingengine.PostingEngineService;
+import com.billbull.backend.inventory.product.ProductMediaRepository;
+import com.billbull.backend.inventory.product.ProductBarcodeRepository;
 import com.billbull.backend.inventory.product.ProductPricingRepository;
 import com.billbull.backend.inventory.product.ProductRepository;
 import com.billbull.backend.inventory.warehouse.BinRepository;
@@ -26,6 +30,7 @@ import com.billbull.backend.purchase.payment.PaymentVoucher;
 import com.billbull.backend.purchase.payment.PaymentVoucherService;
 import com.billbull.backend.purchase.stockmovement.StockMovementService;
 import com.billbull.backend.purchase.stockmovement.StockSourceType;
+import com.billbull.backend.util.DocumentOrderingUtil;
 
 import jakarta.transaction.Transactional;
 
@@ -46,13 +51,17 @@ public class PurchaseInvoiceService {
     private final BinRepository binRepository;
     private final LpoRepository lpoRepository;
     private final PaymentVoucherService paymentVoucherService;
+    private final ProductMediaRepository productMediaRepository;
+    private final ProductBarcodeRepository productBarcodeRepository;
 
     public PurchaseInvoiceService(PurchaseInvoiceRepository repository, GrnRepository grnRepo,
             PostingEngineService postingEngineService, StockMovementService stockService,
             ProductRepository productRepository, ProductPricingRepository productPricingRepository,
             BinStockRepository binStockRepository, WarehouseRepository warehouseRepository,
             ZoneRepository zoneRepository, LocatorRepository locatorRepository, BinRepository binRepository,
-            LpoRepository lpoRepository, PaymentVoucherService paymentVoucherService) {
+            LpoRepository lpoRepository, PaymentVoucherService paymentVoucherService,
+            ProductMediaRepository productMediaRepository,
+            ProductBarcodeRepository productBarcodeRepository) {
         super();
         this.repository = repository;
         this.grnRepo = grnRepo;
@@ -67,15 +76,98 @@ public class PurchaseInvoiceService {
         this.binRepository = binRepository;
         this.lpoRepository = lpoRepository;
         this.paymentVoucherService = paymentVoucherService;
+        this.productMediaRepository = productMediaRepository;
+        this.productBarcodeRepository = productBarcodeRepository;
+    }
+
+    /* ================= VENDOR INVOICE NO VALIDATION ================= */
+
+    private void validateVendorInvoiceNo(String vendorName, String vendorInvoiceNo, Long excludeId) {
+        if (vendorInvoiceNo == null || vendorInvoiceNo.isBlank()) {
+            throw new IllegalArgumentException("Vendor invoice number is required");
+        }
+        String trimmed = vendorInvoiceNo.trim();
+        if (trimmed.length() < 3 || trimmed.length() > 50) {
+            throw new IllegalArgumentException("Vendor invoice number must be between 3 and 50 characters");
+        }
+        boolean duplicate = excludeId != null
+                ? repository.existsByVendorNameAndVendorInvoiceNoAndIdNot(vendorName, trimmed, excludeId)
+                : repository.existsByVendorNameAndVendorInvoiceNo(vendorName, trimmed);
+        if (duplicate) {
+            throw new IllegalStateException(
+                    "Vendor invoice number '" + trimmed + "' already exists for this vendor");
+        }
     }
 
     /* ================= CREATE (DRAFT) ================= */
 
     public PurchaseInvoice createDraft(PurchaseInvoiceRequest req) {
+        validateVendorInvoiceNo(req.getVendorName(), req.getVendorInvoiceNo(), null);
         PurchaseInvoice invoice = mapToEntity(req);
         invoice.setStatus(InvoiceStatus.DRAFT);
         invoice.setPaymentStatus(PaymentStatus.UNPAID);
         return repository.save(invoice);
+    }
+
+    public PurchaseInvoiceResponse createDraftFromLpo(Long lpoId) {
+        Lpo lpo = lpoRepository.findById(lpoId)
+                .orElseThrow(() -> new IllegalArgumentException("LPO not found"));
+
+        List<LpoStatus> allowed = List.of(
+                LpoStatus.APPROVED, LpoStatus.SENT_TO_VENDOR, LpoStatus.PARTIALLY_RECEIVED);
+        if (!allowed.contains(lpo.getStatus())) {
+            throw new IllegalStateException("Only APPROVED LPOs can be directly invoiced");
+        }
+
+        PurchaseInvoiceResponse dto = new PurchaseInvoiceResponse();
+        dto.setSourceType("AGAINST_LPO");
+        dto.setInvoiceDate(LocalDate.now());
+        dto.setVendorInvoiceDate(LocalDate.now());
+        dto.setVendorName(lpo.getVendorName());
+        if (lpo.getWarehouse() != null) {
+            dto.setWarehouseName(lpo.getWarehouse().getName());
+            dto.setWarehouseId(lpo.getWarehouse().getId());
+        }
+        if (lpo.getZone() != null) dto.setZoneId(lpo.getZone().getId());
+        if (lpo.getLocator() != null) dto.setLocatorId(lpo.getLocator().getId());
+        if (lpo.getBin() != null) dto.setBinId(lpo.getBin().getId());
+        dto.setLpoId(lpo.getId());
+        dto.setReferenceNo(lpo.getLpoNumber());
+
+        BigDecimal headerSubTotal = BigDecimal.ZERO;
+        BigDecimal headerTaxTotal = BigDecimal.ZERO;
+
+        var lineItems = lpo.getItems().stream().map(i -> {
+            InvoiceItemDraft d = new InvoiceItemDraft();
+            d.setItemCode(i.getItemCode());
+            d.setItemName(i.getItemName());
+            d.setUom(i.getUom());
+            d.setQty(i.getQuantity());
+            BigDecimal unitCost = i.getUnitPrice() != null ? i.getUnitPrice() : BigDecimal.ZERO;
+            d.setUnitCost(unitCost);
+
+            BigDecimal taxPercent = BigDecimal.valueOf(5);
+            BigDecimal base = unitCost.multiply(BigDecimal.valueOf(i.getQuantity() != null ? i.getQuantity() : 0));
+            BigDecimal taxAmount = base.multiply(taxPercent).divide(BigDecimal.valueOf(100));
+
+            d.setTaxPercent(taxPercent);
+            d.setTaxAmount(taxAmount);
+            d.setLineTotal(base.add(taxAmount));
+            return d;
+        }).toList();
+
+        for (InvoiceItemDraft d : lineItems) {
+            BigDecimal lineBase = d.getUnitCost().multiply(BigDecimal.valueOf(d.getQty() != null ? d.getQty() : 0));
+            headerSubTotal = headerSubTotal.add(lineBase);
+            headerTaxTotal = headerTaxTotal.add(d.getTaxAmount() != null ? d.getTaxAmount() : BigDecimal.ZERO);
+        }
+
+        dto.setItems(lineItems);
+        dto.setSubTotal(headerSubTotal);
+        dto.setTaxTotal(headerTaxTotal);
+        dto.setGrandTotal(headerSubTotal.add(headerTaxTotal));
+
+        return dto;
     }
 
     public PurchaseInvoiceResponse createDraftFromGrn(Long grnId) {
@@ -90,8 +182,14 @@ public class PurchaseInvoiceService {
         PurchaseInvoiceResponse dto = new PurchaseInvoiceResponse();
 
         dto.setSourceType("AGAINST_GRN");
+        dto.setInvoiceDate(LocalDate.now());
+        dto.setVendorInvoiceDate(LocalDate.now());
         dto.setVendorName(grn.getVendorName());
         dto.setWarehouseName(grn.getWarehouse().getName());
+        dto.setWarehouseId(grn.getWarehouse().getId());
+        if (grn.getZone() != null) dto.setZoneId(grn.getZone().getId());
+        if (grn.getLocator() != null) dto.setLocatorId(grn.getLocator().getId());
+        if (grn.getBin() != null) dto.setBinId(grn.getBin().getId());
         dto.setGrnId(grn.getId());
         dto.setGrnNo(grn.getGrnNo());
         dto.setReferenceNo(grn.getGrnNo());
@@ -145,6 +243,8 @@ public class PurchaseInvoiceService {
             throw new IllegalStateException("Only DRAFT invoices can be updated");
         }
 
+        validateVendorInvoiceNo(req.getVendorName(), req.getVendorInvoiceNo(), id);
+
         invoice.getItems().clear();
         invoice.getLandedCosts().clear();
 
@@ -164,6 +264,10 @@ public class PurchaseInvoiceService {
             throw new IllegalStateException("Only DRAFT invoices can be submitted");
         }
 
+        if (invoice.getVendorInvoiceNo() == null || invoice.getVendorInvoiceNo().isBlank()) {
+            throw new IllegalArgumentException("Vendor invoice number is required before submitting for approval");
+        }
+
         invoice.setStatus(InvoiceStatus.PENDING_APPROVAL);
         invoice.setSubmittedBy(username);
         invoice.setSubmittedAt(LocalDateTime.now());
@@ -173,13 +277,20 @@ public class PurchaseInvoiceService {
 
     /* ================= APPROVE ================= */
 
-    @CacheEvict(value = "stockAvailability", allEntries = true)
+    @Caching(evict = {
+        @CacheEvict(value = "stockAvailability", allEntries = true),
+        @CacheEvict(value = "productList", allEntries = true)
+    })
     public PurchaseInvoice approve(Long id, String approver) {
 
         PurchaseInvoice invoice = getEntity(id);
 
         if (invoice.getStatus() != InvoiceStatus.PENDING_APPROVAL) {
             throw new IllegalStateException("Invoice is not pending approval");
+        }
+
+        if (invoice.getVendorInvoiceNo() == null || invoice.getVendorInvoiceNo().isBlank()) {
+            throw new IllegalArgumentException("Vendor invoice number is required before approval");
         }
 
         if (invoice.isStockPosted()) {
@@ -301,7 +412,7 @@ public class PurchaseInvoiceService {
 
     /* ================= PAYMENT ================= */
 
-    public PurchaseInvoice recordPayment(Long id, BigDecimal amount) {
+    public PurchaseInvoice recordPayment(Long id, BigDecimal amount, String paymentModeStr, String bankAccount, String chequeDateStr) {
         PurchaseInvoice invoice = getEntity(id);
 
         if (invoice.getStatus() != InvoiceStatus.POSTED) {
@@ -324,10 +435,22 @@ public class PurchaseInvoiceService {
         PaymentVoucher pv = new PaymentVoucher();
         pv.setVendorName(invoice.getVendorName() != null ? invoice.getVendorName() : "Unknown Vendor");
         pv.setPaymentDate(LocalDate.now());
-        pv.setPaymentMode(PaymentMode.BANK_TRANSFER); // Default assumption for auto-payment
+        PaymentMode resolvedMode;
+        try {
+            resolvedMode = PaymentMode.valueOf(paymentModeStr != null ? paymentModeStr.toUpperCase() : "BANK_TRANSFER");
+        } catch (IllegalArgumentException e) {
+            resolvedMode = PaymentMode.BANK_TRANSFER;
+        }
+        pv.setPaymentMode(resolvedMode);
         pv.setAmount(amount);
         pv.setReferenceNumber("Auto-PV for INV: " + invoice.getInvoiceNumber());
         pv.setInvoiceId(invoice.getId());
+        if (bankAccount != null && !bankAccount.isBlank()) {
+            pv.setBankAccount(bankAccount);
+        }
+        if (chequeDateStr != null && !chequeDateStr.isBlank()) {
+            try { pv.setChequeDate(java.time.LocalDate.parse(chequeDateStr)); } catch (Exception ignored) {}
+        }
 
         PaymentVoucher savedPv = paymentVoucherService.createVoucher(pv);
 
@@ -353,8 +476,14 @@ public class PurchaseInvoiceService {
     /* ================= READ ================= */
 
     public List<PurchaseInvoiceResponse> listAll() {
-        return repository.findAll()
-                .stream()
+        List<PurchaseInvoice> invoices = new ArrayList<>(repository.findAll());
+        DocumentOrderingUtil.sortByDocumentDateAndNumberDesc(
+                invoices,
+                PurchaseInvoice::getInvoiceDate,
+                PurchaseInvoice::getInvoiceNumber,
+                PurchaseInvoice::getId);
+
+        return invoices.stream()
                 .map(this::toResponse)
                 .toList();
     }
@@ -383,6 +512,7 @@ public class PurchaseInvoiceService {
         invoice.setInvoiceDate(req.getInvoiceDate());
         invoice.setVendorName(req.getVendorName());
         invoice.setVendorInvoiceNo(req.getVendorInvoiceNo());
+        invoice.setVendorInvoiceDate(req.getVendorInvoiceDate() != null ? req.getVendorInvoiceDate() : req.getInvoiceDate());
         invoice.setSourceType(req.getSourceType());
         invoice.setReferenceNo(req.getReferenceNo());
         invoice.setGrnId(req.getGrnId());
@@ -426,9 +556,11 @@ public class PurchaseInvoiceService {
             PurchaseInvoiceItem item = new PurchaseInvoiceItem();
             item.setItemCode(i.getItemCode());
             item.setItemName(i.getItemName());
+            item.setBarcode(i.getBarcode());
             item.setUom(i.getUom());
             item.setQty(i.getQty());
             item.setFocQty(i.getFocQty());
+            item.setFocUnit(i.getFocUnit());
             item.setUnitCost(i.getUnitCost());
             item.setDiscountPercent(i.getDiscountPercent());
             item.setDiscountAmount(i.getDiscountAmount());
@@ -436,6 +568,7 @@ public class PurchaseInvoiceService {
             item.setTaxAmount(i.getTaxAmount());
             item.setLineTotal(i.getLineTotal());
             item.setWarehouseName(i.getWarehouseName());
+            item.setRemarks(i.getRemarks());
             item.setInvoice(invoice);
             invoice.getItems().add(item);
         });
@@ -469,6 +602,7 @@ public class PurchaseInvoiceService {
 
         dto.setVendorName(invoice.getVendorName());
         dto.setVendorInvoiceNo(invoice.getVendorInvoiceNo());
+        dto.setVendorInvoiceDate(invoice.getVendorInvoiceDate() != null ? invoice.getVendorInvoiceDate() : invoice.getInvoiceDate());
 
         dto.setSourceType(invoice.getSourceType());
         dto.setReferenceNo(invoice.getReferenceNo());
@@ -504,19 +638,43 @@ public class PurchaseInvoiceService {
         dto.setPaymentStatus(resolvedPaymentStatus);
 
         if (invoice.getItems() != null) {
+            // Bulk-fetch primary images by item code
+            java.util.List<String> codes = invoice.getItems().stream()
+                    .map(i -> i.getItemCode())
+                    .filter(c -> c != null)
+                    .distinct()
+                    .toList();
+            java.util.Map<String, String> imageMap = new java.util.HashMap<>();
+            productMediaRepository.findPrimaryByProductCodesIn(codes)
+                    .forEach(m -> imageMap.put(m.getProduct().getCode(), m.getImageUrl()));
+
             dto.setItems(invoice.getItems().stream().map(i -> {
                 InvoiceItemDraft d = new InvoiceItemDraft();
                 d.setItemCode(i.getItemCode());
                 d.setItemName(i.getItemName());
+                d.setBarcode(i.getBarcode());
+                d.setImage(imageMap.get(i.getItemCode()));
                 d.setUom(i.getUom());
                 d.setQty(i.getQty());
                 d.setFocQty(i.getFocQty());
+                d.setFocUnit(i.getFocUnit());
                 d.setUnitCost(i.getUnitCost());
                 d.setDiscountPercent(i.getDiscountPercent());
                 d.setDiscountAmount(i.getDiscountAmount());
                 d.setTaxPercent(i.getTaxPercent());
                 d.setTaxAmount(i.getTaxAmount());
                 d.setLineTotal(i.getLineTotal());
+                d.setRemarks(i.getRemarks());
+                if ((d.getBarcode() == null || d.getBarcode().isBlank()) && i.getItemCode() != null) {
+                    productRepository.findByCodeAndIsActiveTrue(i.getItemCode()).ifPresent(product -> {
+                        String barcode = productBarcodeRepository.findByProductId(product.getId()).stream()
+                                .map(b -> b.getBarcode())
+                                .filter(b -> b != null && !b.isBlank())
+                                .findFirst()
+                                .orElse(null);
+                        d.setBarcode(barcode);
+                    });
+                }
                 return d;
             }).toList());
         }
@@ -560,8 +718,14 @@ public class PurchaseInvoiceService {
 
     @Transactional
     public List<PurchaseInvoiceResponse> getPostedInvoicesForPayment() {
-        return repository.findByStatus(InvoiceStatus.POSTED)
-                .stream()
+        List<PurchaseInvoice> invoices = new ArrayList<>(repository.findByStatus(InvoiceStatus.POSTED));
+        DocumentOrderingUtil.sortByDocumentDateAndNumberDesc(
+                invoices,
+                PurchaseInvoice::getInvoiceDate,
+                PurchaseInvoice::getInvoiceNumber,
+                PurchaseInvoice::getId);
+
+        return invoices.stream()
                 .map(this::toResponse)
                 .toList();
     }

@@ -29,6 +29,13 @@ public class PurchaseInvoiceController {
         return ResponseEntity.ok(service.createDraftFromGrn(grnId));
     }
 
+    @GetMapping("/draft/from-lpo/{lpoId}")
+    @PreAuthorize("hasAnyRole('ADMIN','INVENTORY_MANAGER')")
+    public ResponseEntity<PurchaseInvoiceResponse> draftFromLpo(
+            @PathVariable Long lpoId) {
+        return ResponseEntity.ok(service.createDraftFromLpo(lpoId));
+    }
+
     @PostMapping("/draft")
     @PreAuthorize("hasAnyRole('ADMIN','INVENTORY_MANAGER')")
     public ResponseEntity<PurchaseInvoiceResponse> createDraft(
@@ -87,9 +94,12 @@ public class PurchaseInvoiceController {
     @PreAuthorize("hasAnyRole('ADMIN','ACCOUNTANT')")
     public ResponseEntity<PurchaseInvoiceResponse> recordPayment(
             @PathVariable Long id,
-            @RequestParam BigDecimal amount) {
+            @RequestParam BigDecimal amount,
+            @RequestParam(defaultValue = "BANK_TRANSFER") String paymentMode,
+            @RequestParam(required = false) String bankAccount,
+            @RequestParam(required = false) String chequeDate) {
         return ResponseEntity.ok(
-                service.getResponse(service.recordPayment(id, amount).getId()));
+                service.getResponse(service.recordPayment(id, amount, paymentMode, bankAccount, chequeDate).getId()));
     }
 
     @GetMapping

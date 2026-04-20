@@ -243,6 +243,63 @@ const Ledger = () => {
       }));
   };
 
+  const normalizeBalanceType = (type, fallback = 'Dr') => {
+    const raw = String(type || '').trim().toLowerCase();
+    if (raw === 'cr' || raw === 'credit') return 'Cr';
+    if (raw === 'dr' || raw === 'debit') return 'Dr';
+    return fallback;
+  };
+
+  const toSignedBalance = (amount, type) => {
+    const numeric = parseFloat(amount || 0);
+    if (!Number.isFinite(numeric) || numeric === 0) return 0;
+    return normalizeBalanceType(type) === 'Cr' ? -Math.abs(numeric) : Math.abs(numeric);
+  };
+
+  const fromSignedBalance = (signedAmount, fallbackType = 'Dr') => {
+    const numeric = Number.isFinite(signedAmount) ? signedAmount : 0;
+    if (numeric === 0) {
+      return {
+        balanceAmount: 0,
+        balanceType: normalizeBalanceType(fallbackType)
+      };
+    }
+
+    return {
+      balanceAmount: Math.abs(numeric),
+      balanceType: numeric >= 0 ? 'Dr' : 'Cr'
+    };
+  };
+
+  const rollupCoaTreeBalances = (nodes = []) => {
+    const walk = (node) => {
+      const children = (Array.isArray(node?.children) ? node.children : []).map(walk);
+      const ownSigned = toSignedBalance(node?.balanceAmount, node?.balanceType || node?.normalBalance);
+      const childrenSigned = children.reduce(
+        (sum, child) => sum + toSignedBalance(child.balanceAmount, child.balanceType || child.normalBalance),
+        0
+      );
+      const totalSigned = ownSigned + childrenSigned;
+      const fallbackType = node?.balanceType || node?.normalBalance || 'Dr';
+      const rolled = children.length > 0
+        ? fromSignedBalance(totalSigned, fallbackType)
+        : {
+            balanceAmount: parseFloat(node?.balanceAmount || 0) || 0,
+            balanceType: normalizeBalanceType(fallbackType)
+          };
+
+      return {
+        ...node,
+        children,
+        isGroup: Boolean(node?.isGroup) || children.length > 0,
+        balanceAmount: rolled.balanceAmount,
+        balanceType: rolled.balanceType
+      };
+    };
+
+    return (Array.isArray(nodes) ? nodes : []).map(walk);
+  };
+
   // --- INITIAL DATA FETCHING ---
   const fetchData = async () => {
     try {
@@ -256,9 +313,10 @@ const Ledger = () => {
       setAccounts(accData.map(mapAccountToUI));
       setCostCenters(ccData.map(mapCostCenterToUI));
       setGlData(txnData.map(mapTransactionToUI));
-      const resolvedTree = Array.isArray(treeData) && treeData.length > 0
+      const rawTree = Array.isArray(treeData) && treeData.length > 0
         ? treeData
         : buildCoaTreeFallback(accData);
+      const resolvedTree = rollupCoaTreeBalances(rawTree);
       setAccountTree(resolvedTree);
 
       // Auto-expand root nodes
@@ -679,7 +737,7 @@ const Ledger = () => {
             return closingNext;
           });
           delete closeTimersRef.current[code];
-        }, 180);
+        }, 240);
       } else {
         next.add(code);
         setClosingNodes((closingPrev) => {
@@ -743,9 +801,9 @@ const Ledger = () => {
       : [];
 
     const rowMotion = motion === 'out'
-      ? 'animate-out fade-out duration-200 ease-out'
+      ? 'coa-row-exit'
       : motion === 'in'
-        ? 'animate-in fade-in slide-in-from-top-1 duration-200 ease-out'
+        ? 'coa-row-enter'
         : '';
 
     const shouldRenderChildren = (isExpanded || isClosing) && hasChildren;
@@ -838,6 +896,52 @@ const Ledger = () => {
   });
 
   const visibleCoaTree = filterCoaTree(accountTree, coaTreeSearch);
+  const coaTreeAnimationCss = `
+    @keyframes coaTreeRowEnter {
+      from {
+        opacity: 0;
+        transform: translateY(-8px);
+        padding-top: 0;
+        padding-bottom: 0;
+      }
+      to {
+        opacity: 1;
+        transform: translateY(0);
+        padding-top: 0.5rem;
+        padding-bottom: 0.5rem;
+      }
+    }
+
+    @keyframes coaTreeRowExit {
+      from {
+        opacity: 1;
+        transform: translateY(0);
+        padding-top: 0.5rem;
+        padding-bottom: 0.5rem;
+      }
+      to {
+        opacity: 0;
+        transform: translateY(-10px);
+        padding-top: 0;
+        padding-bottom: 0;
+      }
+    }
+
+    .coa-row-enter > td,
+    .coa-row-exit > td {
+      will-change: opacity, transform;
+      transform-origin: top center;
+      overflow: hidden;
+    }
+
+    .coa-row-enter > td {
+      animation: coaTreeRowEnter 220ms cubic-bezier(0.22, 1, 0.36, 1) both;
+    }
+
+    .coa-row-exit > td {
+      animation: coaTreeRowExit 220ms cubic-bezier(0.4, 0, 0.2, 1) both;
+    }
+  `;
 
 // GL account combobox: filtered options by search text
 const glAccountOptions = accounts
@@ -856,6 +960,8 @@ const selectedAccountLabel = glFilterAccount
   : '';
 
   return (
+    <>
+    <style>{coaTreeAnimationCss}</style>
     <div className="min-h-screen bg-slate-50 font-sans text-slate-800 p-4 lg:p-6">
 
       {/* HEADER SECTION */}
@@ -1955,6 +2061,7 @@ const selectedAccountLabel = glFilterAccount
       )}
 
     </div>
+    </>
   );
 };
 

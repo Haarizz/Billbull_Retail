@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { X, SlidersHorizontal } from 'lucide-react';
 
 const calculateRow = (item) => {
@@ -41,24 +41,28 @@ const calculateRow = (item) => {
     };
 };
 
-/**
- * ItemAddOnsModal — shared component for editing line-item discounts, FOC, tax.
- *
- * Props:
- *   item       — the item object to edit (must have id, desc/name, code, qty, unit, price, disc, foc, focUnit, tax, taxAmt, total, cost, availableUnits)
- *   onClose    — called when the modal is dismissed without saving
- *   onSave(updatedItem) — called with the updated item when "Save" is clicked
- */
-const ItemAddOnsModal = ({ item, onClose, onSave }) => {
-    const [current, setCurrent] = useState(() => ({ ...item }));
+const ItemAddOnsModal = ({ item, onClose, onSave, isReadOnly = false }) => {
+    const [current, setCurrent] = useState(item ? calculateRow({ ...item }) : null);
 
-    if (!item) return null;
+    useEffect(() => {
+        setCurrent(item ? calculateRow({ ...item }) : null);
+    }, [item]);
+
+    if (!item || !current) return null;
+
+    const availableUnits = Array.isArray(current.availableUnits) && current.availableUnits.length > 0
+        ? current.availableUnits
+        : [current.unit || current.focUnit || 'PCS'];
 
     const handleChange = (field, value) => {
-        const val = field === 'focUnit' ? value : Number(value);
+        if (isReadOnly) return;
+        const stringFields = new Set(['focUnit', 'remarks', 'desc', 'code', 'barcode', 'unit']);
+        const val = stringFields.has(field) ? value : Number(value);
         const updated = calculateRow({ ...current, [field]: val });
         setCurrent(updated);
     };
+
+    const displayQty = current.qty ?? current.currentQty ?? current.orderedQty ?? 0;
 
     const grossProfit = (() => {
         const net = (current.qty || 0) * (current.price || 0) * (1 - (current.disc || 0) / 100);
@@ -82,13 +86,29 @@ const ItemAddOnsModal = ({ item, onClose, onSave }) => {
                     <p className="text-xs text-slate-500 mb-4">Configure discounts, taxes, FOC items, and view detailed calculations</p>
 
                     <div className="bg-slate-50 border border-slate-100 rounded-lg p-3 mb-4">
-                        <div className="font-bold text-slate-800 text-sm mb-1">{current.desc || current.name || 'Unknown Item'}</div>
-                        <div className="text-xs text-slate-500">Code: {current.code}</div>
-                        <div className="text-xs text-slate-500">Qty: {current.qty} {current.unit}</div>
+                        <div className="font-bold text-slate-800 text-sm mb-1 leading-snug">
+                            {current.desc || current.name || (current.code ? current.code : '-')}
+                        </div>
+                        {(current.desc || current.name) && current.code && (
+                            <div className="text-[10px] font-mono text-slate-400 mb-1">{current.code}</div>
+                        )}
+                        <div className="flex items-center gap-1.5 text-[10px] text-slate-400 font-semibold italic tracking-tight mb-1">
+                            <span className="font-mono text-[9px] tracking-[1.5px] font-bold text-slate-300">||||</span>
+                            <span>{current.barcode || 'no barcode'}</span>
+                        </div>
+                        <div className="flex items-center gap-4 mt-1.5">
+                            <div className="flex items-center gap-1.5">
+                                <span className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide">Qty</span>
+                                <span className="text-xs font-bold text-slate-700">{displayQty} {current.unit || ''}</span>
+                            </div>
+                            <div className="flex items-center gap-1.5">
+                                <span className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide">Unit Price</span>
+                                <span className="text-xs font-bold text-slate-700">AED {(current.price || 0).toFixed(2)}</span>
+                            </div>
+                        </div>
                     </div>
 
                     <div className="space-y-4">
-                        {/* Discount */}
                         <div>
                             <div className="flex justify-between items-center mb-1">
                                 <label className="text-xs font-bold text-slate-700">Discount</label>
@@ -98,7 +118,8 @@ const ItemAddOnsModal = ({ item, onClose, onSave }) => {
                             </div>
                             <input
                                 type="number"
-                                className="w-full p-2 border border-slate-200 rounded text-sm focus:border-yellow-400 outline-none transition-colors"
+                                disabled={isReadOnly}
+                                className="w-full p-2 border border-slate-200 rounded text-sm focus:border-yellow-400 outline-none transition-colors disabled:bg-slate-50 disabled:text-slate-500"
                                 value={current.disc || ''}
                                 onChange={(e) => handleChange('disc', e.target.value)}
                                 placeholder="0"
@@ -106,15 +127,15 @@ const ItemAddOnsModal = ({ item, onClose, onSave }) => {
                             <div className="text-[10px] text-slate-500 mt-1">Discount %: {(current.disc || 0).toFixed(2)}%</div>
                         </div>
 
-                        {/* Free of Charge */}
                         <div>
-                            <label className="block text-xs font-bold text-slate-700 mb-1 text-emerald-600">Free of Charge (FOC)</label>
+                            <label className="block text-xs font-bold text-emerald-600 mb-1">Free of Charge (FOC)</label>
                             <div className="grid grid-cols-2 gap-2">
                                 <div>
                                     <label className="text-[10px] text-slate-400 block mb-0.5">FOC Qty</label>
                                     <input
                                         type="number"
-                                        className="w-full p-2 border border-slate-200 rounded text-sm focus:border-yellow-400 outline-none transition-colors"
+                                        disabled={isReadOnly}
+                                        className="w-full p-2 border border-slate-200 rounded text-sm focus:border-yellow-400 outline-none transition-colors disabled:bg-slate-50 disabled:text-slate-500"
                                         value={current.foc || ''}
                                         onChange={(e) => handleChange('foc', e.target.value)}
                                         placeholder="0"
@@ -123,22 +144,35 @@ const ItemAddOnsModal = ({ item, onClose, onSave }) => {
                                 <div>
                                     <label className="text-[10px] text-slate-400 block mb-0.5">FOC Unit</label>
                                     <select
-                                        className="w-full p-2 border border-slate-200 rounded text-sm appearance-none outline-none focus:border-yellow-400 bg-white"
-                                        value={current.focUnit || 'PCS'}
+                                        disabled={isReadOnly}
+                                        className="w-full p-2 border border-slate-200 rounded text-sm appearance-none outline-none focus:border-yellow-400 bg-white disabled:bg-slate-50 disabled:text-slate-500"
+                                        value={current.focUnit || current.unit || 'PCS'}
                                         onChange={(e) => handleChange('focUnit', e.target.value)}
                                     >
-                                        {(current.availableUnits || ['PCS']).map(u => <option key={u} value={u}>{u}</option>)}
+                                        {availableUnits.map(u => <option key={u} value={u}>{u}</option>)}
                                     </select>
                                 </div>
                             </div>
                         </div>
 
-                        {/* Tax */}
+                        <div>
+                            <label className="block text-xs font-bold text-slate-700 mb-1">Item Details / Remarks</label>
+                            <textarea
+                                rows="3"
+                                disabled={isReadOnly}
+                                className="w-full p-2 border border-slate-200 rounded text-sm focus:border-yellow-400 outline-none transition-colors resize-none disabled:bg-slate-50 disabled:text-slate-500"
+                                value={current.remarks || ''}
+                                onChange={(e) => handleChange('remarks', e.target.value)}
+                                placeholder="Add special item notes or delivery details"
+                            />
+                        </div>
+
                         <div>
                             <label className="block text-xs font-bold text-slate-700 mb-1">Tax % (VAT)</label>
                             <input
                                 type="number"
-                                className="w-full p-2 border border-slate-200 rounded text-sm focus:border-yellow-400 outline-none transition-colors"
+                                disabled={isReadOnly}
+                                className="w-full p-2 border border-slate-200 rounded text-sm focus:border-yellow-400 outline-none transition-colors disabled:bg-slate-50 disabled:text-slate-500"
                                 value={current.tax || ''}
                                 onChange={(e) => handleChange('tax', e.target.value)}
                                 placeholder="5"
@@ -146,32 +180,37 @@ const ItemAddOnsModal = ({ item, onClose, onSave }) => {
                             <div className="text-[10px] text-slate-500 mt-1">Tax Amount: AED {(current.taxAmt || 0).toFixed(2)}</div>
                         </div>
 
-                        {/* Calculation Breakdown */}
                         <div className="border border-slate-200 rounded-lg p-3 bg-white shadow-sm mt-4">
                             <h4 className="text-[11px] font-bold text-slate-500 uppercase tracking-wider mb-2">Calculation Breakdown</h4>
                             <div className="space-y-1.5 text-xs">
                                 <div className="flex justify-between text-slate-600">
-                                    <span>Base Amount</span>
-                                    <span>AED {((current.qty || 0) * (current.price || 0)).toFixed(2)}</span>
+                                    <span>Base Amount (Qty × Price)</span>
+                                    <span>AED {(current.grossAmount ?? (current.qty || 0) * (current.price || 0)).toFixed(2)}</span>
                                 </div>
+                                {(current.foc > 0) && (
+                                    <div className="flex justify-between text-emerald-600">
+                                        <span>FOC Deduction ({current.foc} {current.focUnit || current.unit})</span>
+                                        <span>- AED {((current.grossAmount ?? 0) - (current.taxableAmount ?? 0) - (current.discountAmount ?? 0)).toFixed(2)}</span>
+                                    </div>
+                                )}
                                 {(current.disc > 0) && (
                                     <div className="flex justify-between text-red-500">
                                         <span>Discount ({current.disc}%)</span>
-                                        <span>- AED {(((current.qty || 0) * (current.price || 0)) * (current.disc / 100)).toFixed(2)}</span>
+                                        <span>- AED {(current.discountAmount ?? 0).toFixed(2)}</span>
                                     </div>
                                 )}
                                 <div className="flex justify-between text-slate-600">
-                                    <span>After Discount (Gross)</span>
-                                    <span>AED {(((current.qty || 0) * (current.price || 0)) * (1 - (current.disc || 0) / 100)).toFixed(2)}</span>
+                                    <span>Taxable Amount</span>
+                                    <span>AED {(current.taxableAmount ?? 0).toFixed(2)}</span>
                                 </div>
                                 <div className="flex justify-between text-emerald-600">
-                                    <span>Tax ({(current.tax || 0)}%)</span>
-                                    <span>+ AED {(current.taxAmt || 0).toFixed(2)}</span>
+                                    <span>Tax ({current.tax || 0}%)</span>
+                                    <span>+ AED {(current.taxAmt || current.taxAmount || 0).toFixed(2)}</span>
                                 </div>
                                 <div className="h-px bg-slate-200 my-2 w-full" />
                                 <div className="flex justify-between font-bold text-yellow-600 text-sm">
                                     <span>Net Amount</span>
-                                    <span>AED {(current.total || 0).toFixed(2)}</span>
+                                    <span>AED {(current.total ?? current.net ?? 0).toFixed(2)}</span>
                                 </div>
                                 <div className="h-px bg-slate-100 my-2 w-full" />
                                 <div className="flex justify-between text-[10px] text-slate-400">
@@ -194,14 +233,16 @@ const ItemAddOnsModal = ({ item, onClose, onSave }) => {
                         onClick={onClose}
                         className="px-5 py-2 bg-white border border-slate-200 text-slate-700 text-xs font-bold rounded-lg hover:bg-slate-50 transition-colors shadow-sm"
                     >
-                        Cancel
+                        {isReadOnly ? 'Close' : 'Cancel'}
                     </button>
-                    <button
-                        onClick={() => onSave(current)}
-                        className="px-5 py-2 bg-yellow-400 text-slate-900 border border-yellow-500 text-xs font-bold rounded-lg hover:bg-yellow-500 transition-colors shadow-sm"
-                    >
-                        Save
-                    </button>
+                    {!isReadOnly && (
+                        <button
+                            onClick={() => onSave(current)}
+                            className="px-5 py-2 bg-yellow-400 text-slate-900 border border-yellow-500 text-xs font-bold rounded-lg hover:bg-yellow-500 transition-colors shadow-sm"
+                        >
+                            Save
+                        </button>
+                    )}
                 </div>
             </div>
         </div>

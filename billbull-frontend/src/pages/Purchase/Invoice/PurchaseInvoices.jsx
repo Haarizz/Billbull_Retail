@@ -1,5 +1,6 @@
-import React, { useState, useEffect, useMemo } from "react";
-import { useNavigate } from "react-router-dom";
+import React, { useState, useEffect, useMemo, useRef } from "react";
+import api from "../../../api/axiosConfig";
+import { useNavigate, useLocation } from "react-router-dom";
 import {
   ArrowLeft,
   Upload,
@@ -41,13 +42,19 @@ import VendorSelector from "../../../components/VendorSelector";
 import { getImageUrl } from "../../../utils/urlUtils";
 import { ItemDescriptionCell, ItemDescriptionHeader } from '../../../components/ItemDescriptionCell';
 import ItemAddOnsModal from '../../../components/ItemAddOnsModal'; // BB-026
+import StockAvailabilityModal from '../../../components/StockAvailabilityModal';
+import { useCompany } from '../../../context/CompanyContext';
 
 // Printing Utilities
 import { getTemplatesByCategory } from '../../../api/printTemplateApi';
 import { generatePrintHtml, printHtml } from '../../../utils/printGenerator';
-import nestLogo from '../../../assets/NEST Logo Final.png';
 import billBullLogo from '../../../assets/billBullLogo.png';
 import toast from 'react-hot-toast';
+import {
+  buildPurchaseInvoicePrintData,
+  findVendorRecord,
+  normalizePurchaseTemplate
+} from '../../../utils/purchasePrintUtils';
 
 // API IMPORTS
 import {
@@ -56,7 +63,8 @@ import {
   approveInvoice,
   recordPayment,
   getInvoices,
-  getInvoiceById
+  getInvoiceById,
+  updateDraftInvoice
 } from "../../../api/purchaseInvoiceApi";
 import { getVendors } from "../../../api/vendorsApi";
 import { getProductsList } from "../../../api/productsApi";
@@ -67,6 +75,7 @@ import { getGrns, getGrnById } from "../../../api/grnApi";
 
 // SHORTCUTS HOOK
 import useShortcuts from '../../../hooks/useShortcuts';
+import { useBranch } from '../../../context/BranchContext';
 
 // WAREHOUSE API IMPORTS
 import {
@@ -83,6 +92,18 @@ const SOURCE = {
   DIRECT: "DIRECT", // Interpreted as "Against Direct Purchase"
   LPO: "AGAINST_LPO",
   GRN: "AGAINST_GRN"
+};
+
+const todayAsInputDate = () => new Date().toISOString().split('T')[0];
+
+const compareInvoiceRows = (left, right) => {
+  const documentDateCompare = (right.documentDate || "").localeCompare(left.documentDate || "");
+  if (documentDateCompare !== 0) return documentDateCompare;
+
+  const vendorInvoiceDateCompare = (right.vendorInvoiceDate || "").localeCompare(left.vendorInvoiceDate || "");
+  if (vendorInvoiceDateCompare !== 0) return vendorInvoiceDateCompare;
+
+  return (right.id || "").localeCompare(left.id || "");
 };
 
 // ==========================================
@@ -107,14 +128,21 @@ const mapInvoiceFromApi = (inv) => {
     inv.amountPaid ?? (inv.payments ? inv.payments.reduce((acc, p) => acc + (Number(p.paidAmount) || 0), 0) : 0)
   );
   const outstanding = Number(inv.balanceDue ?? (Number(inv.grandTotal) - amountPaid));
+  const documentDate = inv.invoiceDate || "";
+  const vendorInvoiceDate = inv.vendorInvoiceDate || inv.invoiceDate || "";
+  const vendorInvoiceNo = inv.vendorInvoiceNo || "";
 
   return {
     dbId: inv.id,                        // 🔑 backend ID
     id: inv.invoiceNumber,               // UI invoice no
-    date: inv.invoiceDate,
+    documentDate,
+    date: documentDate,
     vendor: inv.vendorName,
-    vendorId: inv.vendorInvoiceNo,
-    grnId: inv.grnId, // Added for editor linking
+    vendorInvoiceNo,
+    vendorInvoiceDate,
+    vendorId: inv.vendorId || null, // if exists, else null
+    grnId: inv.grnId,
+    lpoId: inv.lpoId,
     source: inv.sourceType || "Direct",
     sourceColor: inv.sourceType === SOURCE.LPO ? "bg-blue-50 text-blue-600 border-blue-100" :
       inv.sourceType === SOURCE.GRN ? "bg-green-50 text-green-600 border-green-100" :
@@ -205,13 +233,17 @@ const ViewInvoiceModal = ({ invoice, onClose }) => {
             <div className="space-y-1">
               <label className="text-xs font-semibold text-slate-400 uppercase">Vendor</label>
               <div className="font-medium text-slate-800">{invoice.vendor}</div>
-              <div className="text-xs text-slate-500">{invoice.vendorId}</div>
+              <div className="text-xs text-slate-500">{invoice.vendorInvoiceNo || invoice.vendorId || '-'}</div>
             </div>
             <div className="space-y-1">
               <label className="text-xs font-semibold text-slate-400 uppercase">Details</label>
               <div className="flex justify-between text-sm">
-                <span className="text-slate-500">Date:</span>
-                <span className="font-medium text-slate-800">{invoice.date}</span>
+                <span className="text-slate-500">Document Date:</span>
+                <span className="font-medium text-slate-800">{invoice.documentDate || invoice.date || '-'}</span>
+              </div>
+              <div className="flex justify-between text-sm">
+                <span className="text-slate-500">Invoice Date:</span>
+                <span className="font-medium text-slate-800">{invoice.vendorInvoiceDate || '-'}</span>
               </div>
               <div className="flex justify-between text-sm">
                 <span className="text-slate-500">Warehouse:</span>
@@ -260,14 +292,37 @@ const ViewInvoiceModal = ({ invoice, onClose }) => {
   );
 };
 
+const PAYMENT_MODES = [
+  { value: 'BANK_TRANSFER', label: 'Bank Transfer', icon: '🏦' },
+  { value: 'CASH',          label: 'Cash',          icon: '💵' },
+  { value: 'CHEQUE',        label: 'Cheque',        icon: '📄' },
+  { value: 'CARD',          label: 'Card',          icon: '💳' },
+];
+
+const BANK_REQUIRED_MODES = ['BANK_TRANSFER', 'CHEQUE', 'CARD'];
+
 const PaymentModal = ({ invoice, onClose, onConfirm }) => {
+  const [paymentMode, setPaymentMode] = useState('BANK_TRANSFER');
+  const [bankAccount, setBankAccount] = useState('');
+  const [bankAccounts, setBankAccounts] = useState([]);
+  const [chequeDate, setChequeDate] = useState(new Date().toISOString().split('T')[0]);
+
+  useEffect(() => {
+    api.get('/api/ledger/accounts/bank-accounts')
+      .then(r => setBankAccounts(r.data || []))
+      .catch(() => setBankAccounts([]));
+  }, []);
+
   if (!invoice) return null;
+
+  const needsBankAccount = BANK_REQUIRED_MODES.includes(paymentMode);
+  const canConfirm = !needsBankAccount || bankAccount;
 
   return (
     <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm animate-in fade-in duration-200">
       <div className="bg-white rounded-lg shadow-xl w-full max-w-md overflow-hidden animate-in zoom-in-95 duration-200">
         {/* Header */}
-        <div className="px-6 py-4 flex justify-between items-center">
+        <div className="px-6 py-4 flex justify-between items-center border-b border-slate-100">
           <div className="flex items-center gap-2">
             <div className="bg-[#FFF8E1] p-1.5 rounded-md">
               <CreditCard className="h-4 w-4 text-[#F5C742]" />
@@ -280,20 +335,77 @@ const PaymentModal = ({ invoice, onClose, onConfirm }) => {
         </div>
 
         {/* Body */}
-        <div className="px-6 py-2">
+        <div className="px-6 py-5 space-y-5">
           <p className="text-sm text-slate-500">Record vendor payment for purchase invoice</p>
-          <div className="mt-4 p-3 bg-slate-50 rounded border border-slate-100 mb-6">
+
+          {/* Outstanding amount */}
+          <div className="p-3 bg-slate-50 rounded-lg border border-slate-100">
             <div className="flex justify-between items-center">
-              <span className="text-xs font-semibold text-slate-500 uppercase">Outstanding Amount</span>
+              <span className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Outstanding Amount</span>
               <span className="text-lg font-bold text-slate-800">{invoice.outstanding.toLocaleString()} AED</span>
             </div>
           </div>
+
+          {/* Payment mode selection */}
+          <div>
+            <label className="block text-xs font-semibold text-slate-600 uppercase tracking-wide mb-2">Payment Mode</label>
+            <div className="grid grid-cols-2 gap-2">
+              {PAYMENT_MODES.map(mode => (
+                <button
+                  key={mode.value}
+                  onClick={() => { setPaymentMode(mode.value); setBankAccount(''); }}
+                  className={`flex items-center gap-2.5 px-3 py-2.5 rounded-lg border-2 text-sm font-medium transition-all duration-150 ${
+                    paymentMode === mode.value
+                      ? 'border-[#F5C742] bg-[#FFF8E1] text-slate-800'
+                      : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300'
+                  }`}
+                >
+                  <span className="text-base leading-none">{mode.icon}</span>
+                  <span>{mode.label}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Bank Account selector — shown for Card, Cheque, Bank Transfer */}
+          {needsBankAccount && (
+            <div>
+              <label className="block text-xs font-semibold text-slate-600 uppercase tracking-wide mb-2">Bank Account</label>
+              <select
+                value={bankAccount}
+                onChange={e => setBankAccount(e.target.value)}
+                className="w-full border border-slate-200 rounded-lg px-3 py-2.5 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-[#F5C742] bg-white"
+              >
+                <option value="">Select bank account...</option>
+                {bankAccounts.map(acc => (
+                  <option key={acc.id} value={acc.name}>{acc.code} — {acc.name}</option>
+                ))}
+              </select>
+            </div>
+          )}
+
+          {/* Cheque Date — shown only when mode is CHEQUE */}
+          {paymentMode === 'CHEQUE' && (
+            <div>
+              <label className="block text-xs font-semibold text-slate-600 uppercase tracking-wide mb-2">Cheque Date</label>
+              <input
+                type="date"
+                value={chequeDate}
+                onChange={e => setChequeDate(e.target.value)}
+                className="w-full border border-slate-200 rounded-lg px-3 py-2.5 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-[#F5C742] bg-white"
+              />
+            </div>
+          )}
         </div>
 
         {/* Footer */}
-        <div className="px-6 py-4 flex justify-end gap-3">
+        <div className="px-6 py-4 border-t border-slate-100 flex justify-end gap-3">
           <button onClick={onClose} className="px-4 py-2 rounded border border-slate-200 text-sm font-medium text-slate-600 hover:bg-slate-50 transition-colors">Cancel</button>
-          <button onClick={() => onConfirm(invoice)} className="px-4 py-2 rounded bg-[#F5C742] text-sm font-bold text-slate-900 hover:bg-[#E5B732] shadow-sm flex items-center gap-2 transition-colors">
+          <button
+            onClick={() => canConfirm && onConfirm(invoice, paymentMode, bankAccount || null, paymentMode === 'CHEQUE' ? chequeDate : null)}
+            disabled={!canConfirm}
+            className={`px-4 py-2 rounded text-sm font-bold shadow-sm flex items-center gap-2 transition-colors ${canConfirm ? 'bg-[#F5C742] text-slate-900 hover:bg-[#E5B732]' : 'bg-slate-200 text-slate-400 cursor-not-allowed'}`}
+          >
             <Check className="h-4 w-4" /> Record Payment
           </button>
         </div>
@@ -346,7 +458,8 @@ const InvoiceListView = ({ invoices, activeFilter, setActiveFilter, searchQuery,
   const filteredInvoices = invoices.filter(inv => {
     // 1. Search Query
     const matchesSearch = inv.id.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      inv.vendor.toLowerCase().includes(searchQuery.toLowerCase());
+      inv.vendor.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      (inv.vendorInvoiceNo || "").toLowerCase().includes(searchQuery.toLowerCase());
 
     // 2. Status Filter
     const normalizedStatus = inv.status.toUpperCase().replace(/ /g, "_");
@@ -371,9 +484,8 @@ const InvoiceListView = ({ invoices, activeFilter, setActiveFilter, searchQuery,
     if (vendorFilter) {
       matchesVendor = inv.vendor.toLowerCase().includes(vendorFilter.toLowerCase());
     }
-
     return matchesSearch && matchesStatus && matchesDate && matchesVendor;
-  });
+  }).sort(compareInvoiceRows);
 
   const clearFilters = () => {
     setDateRange({ start: "", end: "" });
@@ -465,11 +577,11 @@ const InvoiceListView = ({ invoices, activeFilter, setActiveFilter, searchQuery,
           </div>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <div className="space-y-1">
-              <label className="text-xs font-medium text-slate-500">Start Date</label>
+              <label className="text-xs font-medium text-slate-500">Document Start Date</label>
               <input type="date" value={dateRange.start} onChange={(e) => setDateRange({ ...dateRange, start: e.target.value })} className="w-full h-9 border border-slate-200 rounded-md text-xs px-3 focus:outline-none focus:ring-2 focus:ring-blue-500/50" />
             </div>
             <div className="space-y-1">
-              <label className="text-xs font-medium text-slate-500">End Date</label>
+              <label className="text-xs font-medium text-slate-500">Document End Date</label>
               <input type="date" value={dateRange.end} onChange={(e) => setDateRange({ ...dateRange, end: e.target.value })} className="w-full h-9 border border-slate-200 rounded-md text-xs px-3 focus:outline-none focus:ring-2 focus:ring-blue-500/50" />
             </div>
             <div className="space-y-1">
@@ -490,7 +602,7 @@ const InvoiceListView = ({ invoices, activeFilter, setActiveFilter, searchQuery,
           <div className="flex flex-col sm:flex-row items-center gap-2 w-full sm:w-auto">
             <div className="relative w-full sm:w-auto flex-1 sm:flex-none">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-400" />
-              <input type="text" placeholder="Search invoice no..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} className="pl-9 pr-4 h-9 w-full sm:w-64 text-sm border border-slate-200 rounded-md focus:outline-none focus:ring-2 focus:ring-[#F5C742]/50 placeholder:text-slate-400 text-xs" />
+              <input type="text" placeholder="Search document no, vendor, invoice no..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} className="pl-9 pr-4 h-9 w-full sm:w-64 text-sm border border-slate-200 rounded-md focus:outline-none focus:ring-2 focus:ring-[#F5C742]/50 placeholder:text-slate-400 text-xs" />
             </div>
             <div className="flex gap-2 w-full sm:w-auto">
               <button onClick={() => setShowFilters(!showFilters)} className={`flex-1 sm:flex-none h-9 px-3 border rounded-md flex items-center justify-center gap-1.5 text-xs font-medium transition-colors ${showFilters ? 'bg-blue-50 border-blue-200 text-blue-700' : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'}`}><Filter className="h-3 w-3" /> Filters</button>
@@ -500,11 +612,12 @@ const InvoiceListView = ({ invoices, activeFilter, setActiveFilter, searchQuery,
         </div>
 
         <div className="overflow-x-auto">
-          <table className="w-full text-xs text-left">
+          <table className="w-full text-xs text-left min-w-[1320px]">
             <thead className="bg-[#F7F7FA] text-slate-500 font-medium border-b border-slate-200">
               <tr>
-                <th className="px-6 py-3 whitespace-nowrap">Invoice No</th>
-                <th className="px-6 py-3 whitespace-nowrap">Date</th>
+                <th className="px-6 py-3 whitespace-nowrap">Document No</th>
+                <th className="px-6 py-3 whitespace-nowrap">Document Date</th>
+                <th className="px-6 py-3 whitespace-nowrap">Invoice Date</th>
                 <th className="px-6 py-3 whitespace-nowrap">Vendor</th>
                 <th className="px-6 py-3 whitespace-nowrap">Source</th>
                 <th className="px-6 py-3 whitespace-nowrap">Ref No</th>
@@ -520,8 +633,9 @@ const InvoiceListView = ({ invoices, activeFilter, setActiveFilter, searchQuery,
               {filteredInvoices.map((row) => (
                 <tr key={row.dbId} className="hover:bg-slate-50 group transition-colors">
                   <td onClick={() => onView(row)} className="px-6 py-4 font-mono font-medium text-[#F5C742] cursor-pointer hover:underline">{row.id}</td>
-                  <td className="px-6 py-4 text-slate-600"><div className="flex items-center gap-1.5"><Calendar className="h-3 w-3 text-slate-400" /> {row.date}</div></td>
-                  <td className="px-6 py-4"><div><div className="font-medium text-slate-900">{row.vendor}</div><div className="text-[10px] text-slate-400">{row.vendorId}</div></div></td>
+                  <td className="px-6 py-4 text-slate-600"><div className="flex items-center gap-1.5"><Calendar className="h-3 w-3 text-slate-400" /> {row.documentDate || '-'}</div></td>
+                  <td className="px-6 py-4 text-slate-600"><div className="flex items-center gap-1.5"><Calendar className="h-3 w-3 text-slate-400" /> {row.vendorInvoiceDate || '-'}</div></td>
+                  <td className="px-6 py-4"><div><div className="font-medium text-slate-900">{row.vendor}</div><div className="text-[10px] text-slate-400">{row.vendorInvoiceNo || '-'}</div></div></td>
                   <td className="px-6 py-4"><span className={`text-[10px] px-2 py-0.5 rounded border font-medium ${row.sourceColor}`}>{row.source}</span></td>
                   <td className="px-6 py-4 text-slate-600 font-mono text-[10px]">{row.refNo}</td>
                   <td className="px-6 py-4 text-slate-600 flex items-center gap-1"><LayoutDashboard className="h-3 w-3 text-slate-400" /> {row.warehouse}</td>
@@ -578,6 +692,8 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
   // UI State
   const [isProductSelectorOpen, setIsProductSelectorOpen] = useState(false);
   const [selectedAddonItem, setSelectedAddonItem] = useState(null); // BB-026
+  const [selectedStockItem, setSelectedStockItem] = useState(null);
+  const [isItemStockModalOpen, setIsItemStockModalOpen] = useState(false);
   const isViewMode = mode === "view";
 
   // Expanded rows state
@@ -598,10 +714,12 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
   };
 
   const [formData, setFormData] = useState({
+    dbId: null,
     id: `PI-2024-${Math.floor(Math.random() * 10000)}`,
-    date: new Date().toISOString().split('T')[0],
+    date: todayAsInputDate(),
     vendor: "",
     vendorInvoiceNo: "",
+    vendorInvoiceDate: todayAsInputDate(),
     dueDate: "",
     status: "Draft",
     warehouse: "", // Store ID or Name? detailed logic below
@@ -625,6 +743,7 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
 
   const [isVendorSearchOpen, setIsVendorSearchOpen] = useState(false);
   const [landedCostItems, setLandedCostItems] = useState([]);
+  const [includeFocInAllocation, setIncludeFocInAllocation] = useState(false);
 
   // ✅ GLOBAL SHORTCUTS
   useShortcuts({
@@ -632,7 +751,7 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
       setIsProductSelectorOpen(prev => !prev);
     },
     'ctrl+s': (e) => {
-      onSaveDraft();
+      onSaveDraft(getInvoicePayload());
     },
     'alt+v': (e) => {
       setIsVendorSearchOpen(prev => !prev);
@@ -682,6 +801,19 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
     return "";
   };
 
+  const { defaultBranch } = useBranch();
+
+  useEffect(() => {
+    if (!editInvoice && defaultBranch?.defaultWarehouseId) {
+      const wh = warehouseList.find(w => w.id === defaultBranch.defaultWarehouseId);
+      setFormData(prev => ({
+        ...prev,
+        warehouseId: defaultBranch.defaultWarehouseId,
+        warehouse: wh?.name || defaultBranch.defaultWarehouseName || '',
+      }));
+    }
+  }, [defaultBranch, warehouseList, editInvoice]);
+
   // Handle Edit Mode from Draft
   useEffect(() => {
     if (editInvoice) {
@@ -698,23 +830,30 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
         code: item.itemCode,
         barcode: resolveBarcode(item),
         name: item.itemName,
+        image: item.image,
         uom: item.uom,
         qty: Number(item.qty),
         cost: Number(item.unitCost),
         tax: Number(item.taxPercent),
+        taxAmt: Number(item.taxAmount || 0),
+        taxAmount: Number(item.taxAmount || 0),
+        disc: Number(item.discountPercent || 0),
         discount: Number(item.discountPercent || 0),
         discountAmount: Number(item.discountAmount || 0),
         foc: Number(item.focQty || 0),
+        focUnit: item.focUnit || item.uom || 'PCS',
         lineTotal: Number(item.lineTotal),
         remarks: item.remarks || ""
       }));
 
       // 3. Set Form Data
       setFormData({
+        dbId: editInvoice.dbId || null,
         id: editInvoice.id,
-        date: editInvoice.date,
+        date: editInvoice.documentDate || editInvoice.date || todayAsInputDate(),
         vendor: editInvoice.vendor,
-        vendorInvoiceNo: editInvoice.vendorId || "",
+        vendorInvoiceNo: editInvoice.vendorInvoiceNo || editInvoice.vendorId || "",
+        vendorInvoiceDate: editInvoice.vendorInvoiceDate || editInvoice.documentDate || editInvoice.date || todayAsInputDate(),
         dueDate: editInvoice.dueDate,
         status: editInvoice.status || "Draft",
         warehouse: editInvoice.warehouse || "Main Warehouse",
@@ -752,6 +891,27 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
         setSelectedGrnNo(editInvoice.grnNo || editInvoice.refNo);
         if (editInvoice.grnId) setSelectedGrn(editInvoice.grnId);
       }
+
+      // 5. Cascade-load warehouse zones/locators/bins
+      const loadWarehouseHierarchy = async () => {
+        const whId = editInvoice.warehouseId;
+        if (!whId) return;
+        try {
+          const zones = await getWarehouseZones(whId);
+          setZoneList(zones);
+          if (editInvoice.zoneId) {
+            const locators = await getZoneLocators(editInvoice.zoneId);
+            setLocatorList(locators);
+            if (editInvoice.locatorId) {
+              const bins = await getLocatorBins(editInvoice.locatorId);
+              setBinList(bins);
+            }
+          }
+        } catch (e) {
+          console.error("Failed to load warehouse hierarchy", e);
+        }
+      };
+      loadWarehouseHierarchy();
     }
   }, [editInvoice, productBarcodeIndex]);
 
@@ -873,13 +1033,18 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
             code: item.productCode || item.itemCode,
             barcode: item.barcode || item.productBarcode || '',
             name: item.productName || item.itemName,
-            image: item.image,
+            image: item.image || item.primaryImage || item.thumbnailUrl || '',
             uom: item.uom,
             qty: item.quantity,
             cost: item.unitPrice,
-            tax: 0,
+            tax: 5,
+            taxAmt: Number(item.taxAmount || 0),
+            taxAmount: Number(item.taxAmount || 0),
+            disc: item.discountPercent || 0,
             discount: item.discountPercent || 0,
-            foc: item.focQty || 0
+            foc: item.focQty || 0,
+            focUnit: item.focUnit || item.uom || 'PCS',
+            remarks: item.remarks || ""
           }))
         }));
 
@@ -971,11 +1136,15 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
           qty: qty,
           cost: cost,
           // 🔒 BACKEND-TRUTH FIELDS
-          tax: 0, // Visual % (optional)
+          tax: finalTax > 0 ? 5 : 0,
+          taxAmt: itemTaxAmt,
           taxAmount: itemTaxAmt,     // ✅ Distributed Tax
           lineTotal: lineGross + itemTaxAmt,
+          disc: 0,
           discount: 0,
-          foc: 0
+          foc: Number(item.focQty || 0),
+          focUnit: item.focUnit || item.uom || 'PCS',
+          remarks: item.remarks || ""
         };
       });
 
@@ -1043,6 +1212,9 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
       qty: 1,
       cost: product.cost || 0,
       tax: product.taxRate || 5, // Default tax
+      taxAmt: 0,
+      taxAmount: 0,
+      disc: 0,
       discount: 0,
       foc: 0,
       focUnit: defaultUnit,
@@ -1105,8 +1277,9 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
       return;
     }
 
-    // Allocation Logic: Weighted by Value (Gross Total)
-    const itemsGrossTotal = formData.items.reduce((sum, item) => sum + (item.qty * item.cost), 0);
+    // Allocation Logic: Weighted by Value (Gross Total); optionally include FOC qty
+    const effectiveQty = (item) => item.qty + (includeFocInAllocation ? (Number(item.foc) || 0) : 0);
+    const itemsGrossTotal = formData.items.reduce((sum, item) => sum + (effectiveQty(item) * item.cost), 0);
 
     if (itemsGrossTotal === 0) {
       alert("Cannot allocate based on value because total item value is 0.");
@@ -1114,7 +1287,7 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
     }
 
     const updatedItems = formData.items.map(item => {
-      const itemGross = item.qty * item.cost;
+      const itemGross = effectiveQty(item) * item.cost;
       const weight = itemGross / itemsGrossTotal;
       const allocatedCost = landedCost * weight;
 
@@ -1140,7 +1313,7 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
       return {
         gross: item.qty * item.cost,
         discAmt: 0,
-        taxAmt: item.taxAmount ?? 0,
+        taxAmt: item.taxAmount ?? item.taxAmt ?? 0,
         total: item.lineTotal ?? (item.qty * item.cost),
         net: item.qty * item.cost
       };
@@ -1150,7 +1323,7 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
     const qty = Number(item.qty) || 0;
     const cost = Number(item.cost) || 0;
     const focQty = Number(item.foc) || 0;
-    const discPercent = Number(item.discount) || 0;
+    const discPercent = Number(item.discount ?? item.disc) || 0;
     const taxPercent = Number(item.tax) || 0;
 
     const gross = cost * qty;
@@ -1248,10 +1421,12 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
 
   // Prepare invoice data for submission (Backend 100% Match)
   const getInvoicePayload = () => ({
+    dbId: formData.dbId,
     invoiceNumber: formData.id,
     invoiceDate: formData.date,
     vendorName: formData.vendor,
     vendorInvoiceNo: formData.vendorInvoiceNo,
+    vendorInvoiceDate: formData.vendorInvoiceDate,
     sourceType: invoiceType, // Matches Enum directly
 
     lpoId: invoiceType === SOURCE.LPO ? selectedLpoId : null,
@@ -1289,20 +1464,23 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
     // Mapped Items
     items: formData.items.map(i => ({
       itemCode: i.code,
+      barcode: i.barcode || '',
       itemName: i.name,
       uom: i.uom,
       qty: i.qty,
       focQty: i.foc,
+      focUnit: i.focUnit || i.uom || 'PCS',
       unitCost: i.cost,
 
-      discountPercent: invoiceType === SOURCE.GRN ? 0 : i.discount,
+      discountPercent: invoiceType === SOURCE.GRN ? 0 : Number(i.discount ?? i.disc ?? 0),
       discountAmount: invoiceType === SOURCE.GRN ? 0 : calculateRow(i).discAmt,
 
       taxPercent: invoiceType === SOURCE.GRN ? 0 : i.tax,
-      taxAmount: invoiceType === SOURCE.GRN ? i.taxAmount : calculateRow(i).taxAmt,
+      taxAmount: invoiceType === SOURCE.GRN ? Number(i.taxAmount ?? i.taxAmt ?? 0) : calculateRow(i).taxAmt,
 
       lineTotal: invoiceType === SOURCE.GRN ? i.lineTotal : calculateRow(i).total,
-      warehouseName: formData.warehouse
+      warehouseName: formData.warehouse,
+      remarks: i.remarks || ''
     })),
 
     // Mapped Costs - Empty array for GRN
@@ -1354,11 +1532,11 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
             <div className="space-y-4">
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="text-[10px] uppercase font-bold text-slate-400 mb-1 block">Invoice No</label>
+                  <label className="text-[10px] font-medium text-slate-500 mb-1 block">Document No / Internal Invoice No</label>
                   <input type="text" value={formData.id} readOnly className="w-full text-xs bg-slate-50 border border-slate-200 rounded p-2 text-slate-600 font-mono" />
                 </div>
                 <div>
-                  <label className="text-[10px] uppercase font-bold text-slate-400 mb-1 block">Invoice Date</label>
+                  <label className="text-[10px] font-medium text-slate-500 mb-1 block">Document Date</label>
                   <input type="date" value={formData.date} disabled={isInvoiceLocked} onChange={(e) => setFormData({ ...formData, date: e.target.value })} className="w-full text-xs bg-slate-50 border border-slate-200 rounded p-2 text-slate-600 disabled:opacity-70" />
                 </div>
               </div>
@@ -1395,7 +1573,7 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
                       }));
                     }}
 
-                    className="w-full text-xs border border-slate-200 rounded-md py-2 pl-3 pr-8 bg-white focus:ring-1 focus:ring-[#F5C742] outline-none"
+                    className="w-full appearance-none text-xs border border-slate-200 rounded-md py-2 pl-3 pr-8 bg-white focus:ring-1 focus:ring-[#F5C742] outline-none"
                   >
                     {/* Use Enum for Options */}
                     <option value={SOURCE.DIRECT}>Direct Invoice</option>
@@ -1499,14 +1677,34 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
               </div>
 
               <div className="mt-2">
-                <label className="text-xs font-medium text-slate-500 mb-1 block">Vendor Invoice No</label>
+                <label className="text-xs font-medium text-slate-500 mb-1 block">
+                  Vendor Invoice No <span className="text-red-500">*</span>
+                </label>
                 <input
                   type="text"
                   placeholder="Vendor's invoice #"
                   value={formData.vendorInvoiceNo}
                   readOnly={isInvoiceLocked}
                   onChange={(e) => setFormData({ ...formData, vendorInvoiceNo: e.target.value })}
-                  className="w-full text-xs border border-slate-200 rounded-md py-2 px-3 focus:ring-1 focus:ring-[#F5C742] outline-none read-only:bg-slate-50"
+                  className={`w-full text-xs border rounded-md py-2 px-3 focus:ring-1 focus:ring-[#F5C742] outline-none read-only:bg-slate-50 ${
+                    !formData.vendorInvoiceNo?.trim() && !isInvoiceLocked
+                      ? "border-red-300 bg-red-50"
+                      : "border-slate-200"
+                  }`}
+                />
+                {!formData.vendorInvoiceNo?.trim() && !isInvoiceLocked && (
+                  <p className="text-[10px] text-red-500 mt-0.5">Vendor invoice number is required</p>
+                )}
+              </div>
+
+              <div>
+                <label className="text-xs font-medium text-slate-500 mb-1 block">Invoice Date</label>
+                <input
+                  type="date"
+                  value={formData.vendorInvoiceDate}
+                  disabled={isInvoiceLocked}
+                  onChange={(e) => setFormData({ ...formData, vendorInvoiceDate: e.target.value })}
+                  className="w-full text-xs border border-slate-200 rounded-md py-2 px-3 focus:ring-1 focus:ring-[#F5C742] outline-none disabled:opacity-70"
                 />
               </div>
 
@@ -1571,6 +1769,8 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
                     }}
                     placeholder="Select Warehouse..."
                     disabled={isFormLocked}
+                    menuPlacement="auto"
+                    menuZIndexClass="z-[120]"
                     className="w-full"
                   />
                 </div>
@@ -1589,6 +1789,8 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
                       }}
                       placeholder="Select Zone..."
                       disabled={isInvoiceLocked}
+                      menuPlacement="auto"
+                      menuZIndexClass="z-[120]"
                       className="w-full"
                     />
                   </div>
@@ -1608,6 +1810,8 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
                       }}
                       placeholder="Select Locator..."
                       disabled={isInvoiceLocked}
+                      menuPlacement="auto"
+                      menuZIndexClass="z-[120]"
                       className="w-full"
                     />
                   </div>
@@ -1623,6 +1827,8 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
                       onChange={(bId) => setFormData({ ...formData, binId: bId })}
                       placeholder="Select Bin..."
                       disabled={isInvoiceLocked}
+                      menuPlacement="auto"
+                      menuZIndexClass="z-[120]"
                       className="w-full"
                     />
                   </div>
@@ -1638,15 +1844,15 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
             {/* Table Toolbar */}
             <div className="px-4 py-3 border-b border-slate-100 flex flex-col sm:flex-row sm:justify-between items-start sm:items-center bg-slate-50/50 gap-3">
               <div className="flex items-center gap-2">
-                <LayoutDashboard className="h-4 w-4 text-slate-400" />
-                <h3 className="font-semibold text-sm text-slate-700">Invoice Items <span className="bg-slate-100 text-slate-600 text-[10px] px-1.5 py-0.5 rounded-full ml-1 border border-slate-200">{formData.items.length} items</span></h3>
+                <LayoutDashboard className="h-4 w-4 text-yellow-500" />
+                <h3 className="font-semibold text-sm text-slate-700">Purchase Invoice Items <span className="bg-slate-100 text-slate-600 text-[10px] px-1.5 py-0.5 rounded-full ml-1 border border-slate-200">{formData.items.length} items</span></h3>
               </div>
               <div className="flex flex-wrap gap-2 w-full sm:w-auto">
                 <button
                   onClick={handleAddItem}
                   disabled={isFormLocked}
                   className={`flex-1 sm:flex-none px-3 py-1.5 bg-yellow-400 text-slate-900 rounded text-xs font-bold hover:bg-yellow-500 flex items-center justify-center gap-1 shadow-sm ${isFormLocked ? 'opacity-50 cursor-not-allowed' : ''}`}>
-                  <Plus className="h-3 w-3" /> Select Products
+                  <Plus className="h-3 w-3" /> Select from Products
                 </button>
                 <button
                   onClick={() => setIsProductSelectorOpen(true)}
@@ -1661,6 +1867,7 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
               <table className="w-full text-xs text-left min-w-[800px]">
                 <thead className="bg-slate-50 border-b border-slate-100 text-slate-500">
                   <tr>
+                    <th className="p-3 font-medium w-10 text-center text-slate-400">#</th>
                     <th className="p-3 font-medium min-w-[280px]">
                       <ItemDescriptionHeader
                         itemCount={formData.items.length}
@@ -1668,37 +1875,49 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
                         onToggleAll={toggleAllDescriptions}
                       />
                     </th>
-                    <th className="p-3 font-medium text-center w-16">UOM</th>
+                    <th className="p-3 font-medium text-center w-16">Unit</th>
                     <th className="p-3 font-medium text-center w-16">Qty</th>
-                    <th className="p-3 font-medium text-center w-16">FOC</th>
                     <th className="p-3 font-medium text-right">Unit Cost</th>
                     <th className="p-3 font-medium text-center w-10">Disc %</th>
                     <th className="p-3 font-medium text-right text-green-600">Disc Amt</th>
                     <th className="p-3 font-medium text-center w-10">Tax %</th>
                     <th className="p-3 font-medium text-right">Tax Amt</th>
-                    <th className="p-3 font-medium text-right">Line Total</th>
+                    <th className="p-3 font-medium text-right">Amount</th>
                     <th className="p-3 font-medium text-center">Actions</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-50">
-                  {formData.items.map((item) => {
+                  {formData.items.map((item, index) => {
                     const calc = calculateRow(item);
                     return (
                       <React.Fragment key={item.id}>
                         <tr className="hover:bg-slate-50 group">
+                          <td className="p-3 text-center text-slate-400 text-xs font-medium">{index + 1}</td>
                           <td className="p-3">
                             <ItemDescriptionCell
-                              item={item}
+                              item={{
+                                ...item,
+                                disc: Number(item.disc ?? item.discount ?? 0),
+                                taxAmt: Number(item.taxAmt ?? item.taxAmount ?? 0)
+                              }}
                               isExpanded={expandedRows[item.id]}
                               onToggleExpand={toggleRowDescription}
                               onItemChange={(id, field, val) => setFormData(prev => ({ ...prev, items: prev.items.map(i => i.id === id ? { ...i, [field]: val } : i) }))}
                               onFocusCode={() => { }}
                               onOpenProductSelection={!isFormLocked ? () => setIsProductSelectorOpen(true) : undefined}
-                              onCheckStock={() => { }}
-                              onOpenSettings={() => setSelectedAddonItem({ ...item, price: item.cost, disc: item.discount ?? 0, unit: item.uom || item.unit, desc: item.name || item.desc })}
-                              showSettings={true}
+                              onCheckStock={(selectedItem) => { setSelectedStockItem(selectedItem); setIsItemStockModalOpen(true); }}
+                              onOpenSettings={() => setSelectedAddonItem({
+                                ...item,
+                                price: item.cost,
+                                disc: Number(item.disc ?? item.discount ?? 0),
+                                taxAmt: Number(item.taxAmt ?? item.taxAmount ?? 0),
+                                unit: item.uom || item.unit,
+                                desc: item.name || item.desc,
+                                remarks: item.remarks || ''
+                              })}
+                              showSettings={Boolean(item.code || item.name || item.remarks || item.barcode)}
                               isReadOnly={isFormLocked}
-                              showTaxDiscount={false}
+                              showTaxDiscount={true}
                             />
                           </td>
                           {/* UOM Dropdown */}
@@ -1724,27 +1943,6 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
                               className={`w-12 text-center border border-slate-200 rounded bg-white ${isFormLocked ? 'bg-slate-50' : ''}`}
                             />
                           </td>
-                          {/* FOC with unit dropdown */}
-                          <td className="p-3 text-center align-top">
-                            <div className="flex flex-col gap-1">
-                              <input
-                                disabled={isFormLocked}
-                                type="number"
-                                className="w-full bg-transparent border-b border-transparent hover:border-slate-200 focus:border-yellow-400/50 text-center outline-none font-semibold text-xs text-slate-700 transition-colors py-1 disabled:opacity-50"
-                                value={item.foc === 0 ? '' : item.foc || ''}
-                                onChange={(e) => handleInputChange(item.id, 'foc', e.target.value)}
-                                placeholder="—"
-                              />
-                              <select
-                                disabled={isFormLocked}
-                                className="w-full bg-transparent outline-none text-center text-[10px] text-slate-500 appearance-none font-medium cursor-pointer disabled:opacity-50"
-                                value={item.focUnit || item.uom || 'PCS'}
-                                onChange={(e) => handleInputChange(item.id, 'focUnit', e.target.value)}
-                              >
-                                {(item.availableUnits || [item.uom || 'PCS']).map(u => <option key={u} value={u}>{u}</option>)}
-                              </select>
-                            </div>
-                          </td>
                           <td className="p-3 text-right">
                             <input
                               type="number"
@@ -1757,7 +1955,7 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
                               className={`w-16 text-right border border-slate-200 rounded bg-white ${isFormLocked ? 'bg-slate-50' : ''}`}
                             />
                           </td>
-                          <td className="p-3 text-center">{item.discount}</td>
+                          <td className="p-3 text-center">{Number(item.disc ?? item.discount ?? 0)}</td>
                           <td className="p-3 text-right text-green-600">{calc.discAmt.toFixed(2)}</td>
                           <td className="p-3 text-center">{item.tax}</td>
                           <td className="p-3 text-right">{calc.taxAmt.toFixed(2)}</td>
@@ -1775,7 +1973,7 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
                         {/* Expanded Description Row */}
                         {expandedRows[item.id] && (
                           <tr className="bg-white">
-                            <td colSpan={10} className="px-0 pb-4 pt-1">
+                            <td colSpan={11} className="px-0 pb-4 pt-1">
                               <div className="ml-0 mr-4 p-3 rounded-r-[10px] border-l-[3px] border-[#FFD700] bg-[#FFFDE7]/60 shadow-[inset_0_1px_4px_rgba(0,0,0,0.02)]">
                                 <div className="flex justify-between items-center mb-1.5">
                                   <div className="flex items-center gap-1.5 text-[9px] font-bold text-[#B8860B] tracking-widest uppercase">
@@ -1883,9 +2081,11 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
               </div>
 
               <div className="flex justify-between items-center mt-4 pt-2 border-t border-slate-100">
-                <div className="flex items-center gap-2">
-                  <div className="w-8 h-4 bg-slate-200 rounded-full relative cursor-pointer"><div className="w-4 h-4 bg-white rounded-full shadow absolute left-0"></div></div>
-                  <span className="text-xs text-slate-500">Include FOC in allocation</span>
+                <div className="flex items-center gap-2 cursor-pointer" onClick={() => setIncludeFocInAllocation(v => !v)}>
+                  <div className={`w-8 h-4 rounded-full relative transition-colors ${includeFocInAllocation ? 'bg-[#F5C742]' : 'bg-slate-200'}`}>
+                    <div className={`w-4 h-4 bg-white rounded-full shadow absolute top-0 transition-transform ${includeFocInAllocation ? 'translate-x-4' : 'translate-x-0'}`}></div>
+                  </div>
+                  <span className={`text-xs ${includeFocInAllocation ? 'text-slate-700 font-medium' : 'text-slate-500'}`}>Include FOC in allocation</span>
                 </div>
                 <div className="text-xs font-bold text-[#F5C742]">Total Landed Cost: {landedCost.toFixed(2)} AED</div>
               </div>
@@ -1985,7 +2185,13 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
             ) : (
               <>
                 <button
-                  onClick={() => onSaveDraft(getInvoicePayload())}
+                  onClick={() => {
+                    if (!formData.vendorInvoiceNo?.trim()) {
+                      alert("Vendor invoice number is required.");
+                      return;
+                    }
+                    onSaveDraft(getInvoicePayload());
+                  }}
                   className="flex-1 xl:flex-none px-4 py-2 bg-white border border-slate-300 rounded hover:bg-slate-50 font-medium text-slate-700 flex items-center justify-center gap-2 transition-colors whitespace-nowrap">
                   <FileText className="h-3 w-3" /> <span className="hidden sm:inline">Save Draft</span><span className="sm:hidden">Draft</span>
                 </button>
@@ -2003,7 +2209,13 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
                   return;
                 }
 
-                // 3. Direct Invoice Location Guard
+                // 3. Vendor Invoice Number Guard
+                if (!formData.vendorInvoiceNo?.trim()) {
+                  alert("Vendor invoice number is required.");
+                  return;
+                }
+
+                // 4. Direct Invoice Location Guard
                 if (invoiceType === SOURCE.DIRECT && !formData.warehouseId) {
                   alert("Warehouse is required for Direct Invoices to post stock.");
                   return;
@@ -2042,9 +2254,33 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
         item={selectedAddonItem}
         onClose={() => setSelectedAddonItem(null)}
         onSave={(updated) => {
-          setFormData(prev => ({ ...prev, items: prev.items.map(i => i.id === updated.id ? { ...updated, barcode: i.barcode || updated.barcode || "", cost: updated.price, discount: updated.disc } : i) }));
+          setFormData(prev => ({
+            ...prev,
+            items: prev.items.map(i => {
+              if (i.id !== updated.id) return i;
+              return {
+                ...i,
+                barcode: updated.barcode || i.barcode || "",
+                cost: Number(updated.price) || 0,
+                disc: Number(updated.disc) || 0,
+                discount: Number(updated.disc) || 0,
+                tax: Number(updated.tax) || 0,
+                taxAmt: Number(updated.taxAmt) || 0,
+                taxAmount: Number(updated.taxAmt) || 0,
+                foc: Number(updated.foc) || 0,
+                focUnit: updated.focUnit || i.focUnit || i.uom || 'PCS',
+                uom: updated.unit || i.uom,
+                remarks: updated.remarks || ''
+              };
+            })
+          }));
           setSelectedAddonItem(null);
         }}
+      />
+      <StockAvailabilityModal
+        isOpen={isItemStockModalOpen}
+        onClose={() => setIsItemStockModalOpen(false)}
+        selectedStockItem={selectedStockItem}
       />
     </div>
   );
@@ -2274,10 +2510,13 @@ const DraftInvoicesView = ({ drafts, onEdit, onDelete }) => {
 // ==========================================
 
 const PurchaseInvoices = () => {
+  const { company } = useCompany();
   const navigate = useNavigate();
+  const location = useLocation();
   const [activeNavTab, setActiveNavTab] = useState("list");
-  const [editInvoice, setEditInvoice] = useState(null); // Add State
+  const [editInvoice, setEditInvoice] = useState(null);
   const [editorMode, setEditorMode] = useState("edit");
+  const pendingDraftRef = useRef(null);
 
   const [dateRange, setDateRange] = useState({ start: "", end: "" });
   const [vendorFilter, setVendorFilter] = useState("");
@@ -2302,11 +2541,25 @@ const PurchaseInvoices = () => {
     loadInvoices();
   }, []);
 
+  // Pre-fill editor when navigated from GRN or LPO "Proceed to Invoice"
+  useEffect(() => {
+    const fromGrn = location.state?.fromGrn;
+    const fromLpo = location.state?.fromLpo;
+    const draft = fromGrn || fromLpo;
+    if (draft) {
+      // Store in ref so the tab-change effect applies it after the tab switch
+      pendingDraftRef.current = mapInvoiceFromApi(draft);
+      setEditorMode("edit");
+      setActiveNavTab("editor");
+      navigate(location.pathname, { replace: true, state: {} });
+    }
+  }, []);
+
   const loadInvoices = async () => {
     try {
       const res = await getInvoices();
       const list = Array.isArray(res) ? res : (res.data || []);
-      const mapped = list.map(mapInvoiceFromApi);
+      const mapped = list.map(mapInvoiceFromApi).sort(compareInvoiceRows);
 
       setInvoices(mapped);
 
@@ -2332,44 +2585,36 @@ const PurchaseInvoices = () => {
 
   const handleSaveDraft = async (payload) => {
     try {
-      const res = await createDraftInvoice(payload);
+      const res = payload?.dbId
+        ? await updateDraftInvoice(payload.dbId, payload)
+        : await createDraftInvoice(payload);
 
       // 🔑 CAPTURE DB ID
       const createdId = res.data.id;
-
-      // reload list
       await loadInvoices();
-
       setActiveNavTab("list");
       alert("Invoice saved as Draft.");
-
-      return createdId; // important for submit flow
+      return createdId;
     } catch (err) {
       console.error(err);
-      alert("Failed to save draft.");
+      const msg = err.response?.data?.message || "Failed to save draft.";
+      alert(msg);
     }
   };
-
 
   const handleSubmitApproval = async (payload) => {
     try {
       const invoiceId = await handleSaveDraft(payload);
-
-      if (!invoiceId) {
-        alert("Draft creation failed. Cannot submit.");
-        return;
-      }
-
+      if (!invoiceId) return;
       await submitInvoice(invoiceId);
       await loadInvoices();
       setActiveNavTab("approval");
     } catch (err) {
       console.error(err);
-      alert("Failed to submit for approval.");
+      const msg = err.response?.data?.message || "Failed to submit for approval.";
+      alert(msg);
     }
   };
-
-
 
   const handleApprove = async (dbId) => {
     try {
@@ -2379,7 +2624,8 @@ const PurchaseInvoices = () => {
       alert(`Invoice Approved and Posted.`);
     } catch (err) {
       console.error(err);
-      alert("Failed to approve invoice.");
+      const msg = err.response?.data?.message || "Failed to approve invoice.";
+      alert(msg);
     }
   };
 
@@ -2397,58 +2643,27 @@ const PurchaseInvoices = () => {
   };
 
   const handlePrint = async (invoice) => {
+    const loadingToast = toast.loading('Preparing print layout...');
     try {
-      const loadingToast = toast.loading('Preparing print layout...');
-      const templates = await getTemplatesByCategory('Purchase Invoice');
-      toast.dismiss(loadingToast);
+      const [templates, invoiceDetail] = await Promise.all([
+        getTemplatesByCategory('Purchase Invoice'),
+        getInvoiceById(invoice.dbId)
+      ]);
 
       if (!templates || templates.length === 0) {
         toast.error('No templates found for Purchase Invoice');
         return;
       }
 
-      const defaultTemplate = templates.find(t => t.isDefault) || templates[0];
-
-      // Map to standard print data
-      const printData = {
-        title: 'PURCHASE INVOICE',
-        docNo: invoice.id || invoice.invoiceNumber,
-        date: invoice.date,
-        customer: {
-          name: invoice.vendor || 'Unknown Vendor',
-          address: '',
-          trn: invoice.vendorTrn || ''
-        },
-        items: (invoice.items || []).map(i => ({
-          code: i.itemCode || i.code || '-',
-          name: i.itemName || i.name || '',
-          desc: i.description || i.shortDescription || '',
-          sku: i.sku || i.productSku || '',
-          localName: i.localName || i.productLocalName || '',
-          unit: i.uom || i.unit || 'PCS',
-          qty: Number(i.quantity || i.qty || 0),
-          price: Number(i.unitPrice || i.price || 0),
-          disc: Number(i.discountPercent || i.disc || 0),
-          tax: Number(i.taxAmount || i.tax || 0),
-          taxAmt: Number(i.taxAmount || i.taxAmt || 0),
-          total: Number(i.total || (Number(i.quantity || 0) * Number(i.unitPrice || 0)))
-        })),
-        totals: {
-          subTotal: Number(invoice.total || 0) - Number(invoice.tax || 0),
-          tax: Number(invoice.tax || 0),
-          grandTotal: Number(invoice.total || 0),
-          currency: 'AED'
-        },
-        meta: {
-          status: invoice.status,
-          paymentTerm: invoice.paymentTerm || '',
-          notes: invoice.notes || '',
-          dueDate: invoice.dueDate
-        }
-      };
+      const defaultTemplate = normalizePurchaseTemplate(
+        templates.find(t => t.isDefault) || templates[0],
+        'Purchase Invoice'
+      );
+      const fullVendor = findVendorRecord(vendorList, invoiceDetail, invoiceDetail?.vendorName);
+      const printData = buildPurchaseInvoicePrintData(invoiceDetail, fullVendor, company);
 
       const html = generatePrintHtml(defaultTemplate, printData, {
-        nestLogo: nestLogo,
+        companyProfile: company,
         billBullLogo: billBullLogo
       });
 
@@ -2456,6 +2671,8 @@ const PurchaseInvoices = () => {
     } catch (error) {
       console.error("Error printing Invoice:", error);
       toast.error('Failed to generate print layout');
+    } finally {
+      toast.dismiss(loadingToast);
     }
   };
 
@@ -2463,16 +2680,16 @@ const PurchaseInvoices = () => {
     setPaymentInvoice(invoice);
   };
 
-  const handleConfirmPayment = async (invoice) => {
+  const handleConfirmPayment = async (invoice, paymentMode, bankAccount, chequeDate) => {
     try {
-      // Logic assumes full payment or manual partial handling in backend
-      await recordPayment(invoice.dbId, invoice.outstanding);
+      await recordPayment(invoice.dbId, invoice.outstanding, paymentMode, bankAccount, chequeDate);
       await loadInvoices();
       setPaymentInvoice(null);
-      alert("Payment recorded successfully.");
+      toast.success("Payment recorded successfully.");
     } catch (err) {
       console.error(err);
-      alert("Failed to record payment.");
+      const msg = err?.response?.data?.message || err?.message || "Unknown error";
+      toast.error(`Failed to record payment: ${msg}`);
     }
   };
 
@@ -2500,9 +2717,12 @@ const PurchaseInvoices = () => {
     setActiveNavTab("editor");
   };
 
-  // Reset Edit State on Tab Change
+  // Reset Edit State on Tab Change; apply pending draft when switching to editor
   useEffect(() => {
-    if (activeNavTab !== 'editor') {
+    if (activeNavTab === 'editor' && pendingDraftRef.current) {
+      setEditInvoice(pendingDraftRef.current);
+      pendingDraftRef.current = null;
+    } else if (activeNavTab !== 'editor') {
       setEditInvoice(null);
       setEditorMode("edit");
     }
@@ -2688,3 +2908,5 @@ const PurchaseInvoices = () => {
 };
 
 export default PurchaseInvoices;
+
+

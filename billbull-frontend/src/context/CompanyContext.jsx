@@ -15,6 +15,7 @@ export const CompanyProvider = ({ children }) => {
     const [company, setCompany] = useState(null);
 
     useEffect(() => {
+        if (!sessionStorage.getItem("token")) return;
         getCompanyProfile()
             .then(res => {
                 const profile = res.data;
@@ -25,7 +26,7 @@ export const CompanyProvider = ({ children }) => {
                 });
             })
             .catch(() => {
-                // API failed (e.g. not logged in yet) — leave company as null.
+                // API failed — leave company as null.
                 // Components should guard with company?.companyName ?? ''.
             });
     }, []);

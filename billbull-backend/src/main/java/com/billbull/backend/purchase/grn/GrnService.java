@@ -3,13 +3,16 @@ package com.billbull.backend.purchase.grn;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.LocalDate;
+import java.util.ArrayList;
 import java.util.List;
 
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.cache.annotation.CacheEvict;
+import org.springframework.cache.annotation.Caching;
 
 import com.billbull.backend.inventory.product.Product;
+import com.billbull.backend.inventory.product.ProductBarcodeRepository;
 import com.billbull.backend.inventory.product.ProductRepository;
 import com.billbull.backend.inventory.warehouse.Warehouse;
 import com.billbull.backend.inventory.warehouse.WarehouseRepository;
@@ -22,6 +25,8 @@ import com.billbull.backend.purchase.stockmovement.StockSourceType;
 import com.billbull.backend.inventory.warehouse.BinRepository;
 import com.billbull.backend.inventory.warehouse.ZoneRepository;
 import com.billbull.backend.inventory.warehouse.LocatorRepository;
+import com.billbull.backend.inventory.product.ProductMediaRepository;
+import com.billbull.backend.util.DocumentOrderingUtil;
 
 @Service
 @Transactional
@@ -38,6 +43,8 @@ public class GrnService {
     private final LocatorRepository locatorRepo;
     private final com.billbull.backend.purchase.invoice.PurchaseInvoiceRepository invoiceRepo;
     private final com.billbull.backend.financials.generalledger.postingengine.PostingEngineService postingEngineService;
+    private final ProductMediaRepository productMediaRepo;
+    private final ProductBarcodeRepository productBarcodeRepo;
 
     public GrnService(
             StockMovementService stockMovementService,
@@ -49,7 +56,9 @@ public class GrnService {
             ZoneRepository zoneRepo,
             LocatorRepository locatorRepo,
             com.billbull.backend.purchase.invoice.PurchaseInvoiceRepository invoiceRepo,
-            com.billbull.backend.financials.generalledger.postingengine.PostingEngineService postingEngineService) {
+            com.billbull.backend.financials.generalledger.postingengine.PostingEngineService postingEngineService,
+            ProductMediaRepository productMediaRepo,
+            ProductBarcodeRepository productBarcodeRepo) {
         this.stockMovementService = stockMovementService;
         this.grnRepo = grnRepo;
         this.warehouseRepo = warehouseRepo;
@@ -61,6 +70,8 @@ public class GrnService {
         this.locatorRepo = locatorRepo;
         this.invoiceRepo = invoiceRepo;
         this.postingEngineService = postingEngineService;
+        this.productMediaRepo = productMediaRepo;
+        this.productBarcodeRepo = productBarcodeRepo;
     }
 
     /* ================= CREATE / UPDATE ================= */
@@ -183,6 +194,7 @@ public class GrnService {
 
             item.setProductCode(i.code());
             item.setProductName(i.name());
+            item.setBarcode(i.barcode());
             item.setUom(i.uom());
 
             item.setLpoQty(i.lpoQty());
@@ -195,6 +207,8 @@ public class GrnService {
             item.setLineTotal(i.total());
             item.setBatchManaged(i.batch());
             item.setFocQty(i.focQty());
+            item.setFocUnit(i.focUnit());
+            item.setRemarks(i.remarks());
 
             subtotal = subtotal.add(i.total());
             grn.getItems().add(item);
@@ -238,7 +252,14 @@ public class GrnService {
 
     @Transactional(readOnly = true)
     public List<GrnListResponse> list() {
-        return grnRepo.findAll().stream().map(g -> {
+        List<GrnEntity> grns = new ArrayList<>(grnRepo.findAll());
+        DocumentOrderingUtil.sortByDocumentDateAndNumberDesc(
+                grns,
+                GrnEntity::getGrnDate,
+                GrnEntity::getGrnNo,
+                GrnEntity::getId);
+
+        return grns.stream().map(g -> {
             return new GrnListResponse(
                     g.getId(),
                     g.getGrnNo(),
@@ -307,7 +328,10 @@ public class GrnService {
     }
 
     /* ================= POST STOCK (ONLY PLACE) ================= */
-    @CacheEvict(value = "stockAvailability", allEntries = true)
+    @Caching(evict = {
+        @CacheEvict(value = "stockAvailability", allEntries = true),
+        @CacheEvict(value = "productList", allEntries = true)
+    })
     public void postGrn(Long grnId, GrnPostRequest postReq) {
 
         GrnEntity grn = grnRepo.findById(grnId)
@@ -385,6 +409,13 @@ public class GrnService {
     /* ================= MAPPER ================= */
 
     private GrnDetailResponse mapDetail(GrnEntity g) {
+        // Bulk-fetch primary images for all items in one query
+        java.util.List<Long> productIds = g.getItems().stream()
+                .map(i -> i.getProduct().getId()).toList();
+        java.util.Map<Long, String> imageMap = new java.util.HashMap<>();
+        productMediaRepo.findByProductIdInAndIsPrimaryTrue(productIds)
+                .forEach(m -> imageMap.put(m.getProduct().getId(), m.getImageUrl()));
+
         return new GrnDetailResponse(
                 g.getId(),
                 g.getGrnNo(),
@@ -404,9 +435,17 @@ public class GrnService {
                 g.getBin() != null ? g.getBin().getName() : null,
                 g.getItems().stream().map(i -> new GrnItemResponse(
                         i.getId(),
-                        i.getProduct().getId(), // Add productId
+                        i.getProduct().getId(),
                         i.getProductCode(),
                         i.getProductName(),
+                        i.getBarcode() != null && !i.getBarcode().isBlank()
+                                ? i.getBarcode()
+                                : productBarcodeRepo.findByProductId(i.getProduct().getId()).stream()
+                                        .map(b -> b.getBarcode())
+                                        .filter(b -> b != null && !b.isBlank())
+                                        .findFirst()
+                                        .orElse(null),
+                        imageMap.get(i.getProduct().getId()),
                         i.getUom(),
                         i.getLpoQty(),
                         i.getReceivedQty(),
@@ -416,7 +455,9 @@ public class GrnService {
                         i.getNetCost(),
                         i.getLineTotal(),
                         i.isBatchManaged(),
-                        i.getFocQty())).toList());
+                        i.getFocQty(),
+                        i.getFocUnit(),
+                        i.getRemarks())).toList());
     }
 
     private String generateGrnNo() {

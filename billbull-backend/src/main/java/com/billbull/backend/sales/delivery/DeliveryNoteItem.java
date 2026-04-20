@@ -13,6 +13,7 @@ public class DeliveryNoteItem {
 	private Long id;
 
 	private String itemCode;
+	private String barcode;
 	private String description;
 	private String unit;
 
@@ -21,9 +22,17 @@ public class DeliveryNoteItem {
 	private Integer currentQty;
 	private Integer boxes;
 	private Integer foc;
+	private String focUnit;
+	@Column(length = 500)
+	private String remarks;
 	private String image;
 	private Long binId;
 	private Long salesOrderItemId;
+
+	private Double price;
+	private Double disc;
+	private Double tax;
+	private Double cost;
 
 	@ManyToOne(fetch = FetchType.LAZY)
 	@JoinColumn(name = "product_id", nullable = false)
@@ -39,6 +48,10 @@ public class DeliveryNoteItem {
 
 	public String getItemCode() {
 		return itemCode;
+	}
+
+	public String getBarcode() {
+		return barcode;
 	}
 
 	public String getDescription() {
@@ -75,6 +88,10 @@ public class DeliveryNoteItem {
 
 	public void setItemCode(String itemCode) {
 		this.itemCode = itemCode;
+	}
+
+	public void setBarcode(String barcode) {
+		this.barcode = barcode;
 	}
 
 	public void setDescription(String description) {
@@ -121,6 +138,22 @@ public class DeliveryNoteItem {
 		this.foc = foc;
 	}
 
+	public String getFocUnit() {
+		return focUnit;
+	}
+
+	public void setFocUnit(String focUnit) {
+		this.focUnit = focUnit;
+	}
+
+	public String getRemarks() {
+		return remarks;
+	}
+
+	public void setRemarks(String remarks) {
+		this.remarks = remarks;
+	}
+
 	public String getImage() {
 		return image;
 	}
@@ -143,5 +176,37 @@ public class DeliveryNoteItem {
 
 	public void setSalesOrderItemId(Long salesOrderItemId) {
 		this.salesOrderItemId = salesOrderItemId;
+	}
+
+	public Double getPrice() {
+		return price;
+	}
+
+	public void setPrice(Double price) {
+		this.price = price;
+	}
+
+	public Double getDisc() {
+		return disc;
+	}
+
+	public void setDisc(Double disc) {
+		this.disc = disc;
+	}
+
+	public Double getTax() {
+		return tax;
+	}
+
+	public void setTax(Double tax) {
+		this.tax = tax;
+	}
+
+	public Double getCost() {
+		return cost;
+	}
+
+	public void setCost(Double cost) {
+		this.cost = cost;
 	}
 }

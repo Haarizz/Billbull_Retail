@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+﻿import React, { useState, useEffect } from 'react';
 import {
   FileText,
   Plus,
@@ -30,13 +30,12 @@ import {
   X,
   Info,
   Paperclip,
-  ShoppingCart as ShoppingCartIcon,
-  SlidersHorizontal
+  ShoppingCart as ShoppingCartIcon
 } from 'lucide-react';
 
 import { useMemo } from 'react';
 
-// ✅ REAL API IMPORTS
+// âœ… REAL API IMPORTS
 import { getAllCustomers } from '../../api/customerledgerApi';
 import { getAllQuotations } from '../../api/quotationApi';
 import { getAllSalesOrders } from '../../api/salesorderApi';
@@ -46,7 +45,7 @@ import { getImageUrl } from '../../utils/urlUtils';
 import billBullLogo from '../../assets/billBullLogo.png';
 import { useCompany } from '../../context/CompanyContext';
 
-// ✅ STEP 2: PROFORMA API IMPORTS
+// âœ… STEP 2: PROFORMA API IMPORTS
 import {
   getAllProformas,
   createProforma,
@@ -55,21 +54,22 @@ import {
   getProformaById
 } from "../../api/proformaApi";
 
-// ✅ PRODUCT SELECTOR
+// âœ… PRODUCT SELECTOR
 import ProductSelector from '../../components/ProductSelector';
 
-// ✅ CUSTOMER SELECTOR
+// âœ… CUSTOMER SELECTOR
 import CustomerSelector from '../../components/CustomerSelector';
 
-// ✅ STOCK AVAILABILITY MODAL
+// âœ… STOCK AVAILABILITY MODAL
 import StockAvailabilityModal from '../../components/StockAvailabilityModal';
-import { getStockAvailability } from '../../api/stockAvailabilityApi'; // ✅ NEW API for LIVE STOCK
+import { getStockAvailability } from '../../api/stockAvailabilityApi'; // âœ… NEW API for LIVE STOCK
 
-// ✅ SHORTCUTS HOOK
+// âœ… SHORTCUTS HOOK
 import useShortcuts from '../../hooks/useShortcuts';
 
-// ✅ GLOBAL COMPONENTS
+// âœ… GLOBAL COMPONENTS
 import { ItemDescriptionCell, ItemDescriptionHeader } from '../../components/ItemDescriptionCell';
+import ItemAddOnsModal from '../../components/ItemAddOnsModal';
 
 const ProformaInvoice = () => {
   const { company } = useCompany();
@@ -82,7 +82,7 @@ const ProformaInvoice = () => {
   const [salesOrdersList, setSalesOrdersList] = useState([]);
 
   // --- PROFORMA LIST STATE ---
-  // ❌ STEP 3: REMOVE MOCK DATA & REPLACE WITH EMPTY ARRAY
+  // âŒ STEP 3: REMOVE MOCK DATA & REPLACE WITH EMPTY ARRAY
   const [proformaList, setProformaList] = useState([]);
 
   // --- FORM STATES ---
@@ -110,14 +110,34 @@ const ProformaInvoice = () => {
   // View Only Mode
   const [isReadOnly, setIsReadOnly] = useState(false);
 
-  // ✅ PRODUCT SELECTOR STATE
+  // âœ… PRODUCT SELECTOR STATE
   const [isProductSelectorOpen, setIsProductSelectorOpen] = useState(false);
 
-  const [items, setItems] = useState([
-    { id: Date.now(), code: '', image: '', desc: '', unit: 'PCS', qty: 0, price: 0, tax: 5, taxAmt: 0, total: 0 }
-  ]);
+  const createBlankProformaItem = () => ({
+    id: Date.now() + Math.random(),
+    code: '',
+    barcode: '',
+    image: '',
+    desc: '',
+    remarks: '',
+    unit: 'PCS',
+    qty: 0,
+    price: 0,
+    cost: 0,
+    foc: 0,
+    focUnit: 'PCS',
+    availableUnits: ['PCS'],
+    unitConversions: { PCS: 1 },
+    unitPrices: {},
+    disc: 0,
+    tax: 5,
+    taxAmt: 0,
+    total: 0
+  });
 
-  // ✅ GLOBAL SHORTCUTS
+  const [items, setItems] = useState([createBlankProformaItem()]);
+
+  // âœ… GLOBAL SHORTCUTS
   useShortcuts({
     'ctrl+p': (e) => {
       if (activeTab === 'create') setIsProductSelectorOpen(prev => !prev);
@@ -156,7 +176,7 @@ const ProformaInvoice = () => {
   // Sidebars & UI
   const [focusedItem, setFocusedItem] = useState(null);
 
-  // ✅ LIVE STOCK CACHE FOR ITEM AVAILABILITY PANEL
+  // âœ… LIVE STOCK CACHE FOR ITEM AVAILABILITY PANEL
   const [liveStockMap, setLiveStockMap] = useState({});
 
   // Item Add-Ons Modal State
@@ -165,7 +185,7 @@ const ProformaInvoice = () => {
   // Search & Filter
   const [searchTerm, setSearchTerm] = useState('');
   const [filterStatus, setFilterStatus] = useState('All');
-  const [sortConfig, setSortConfig] = useState({ key: 'piNumber', direction: 'desc' });
+  const [sortConfig, setSortConfig] = useState({ key: null, direction: 'desc' });
 
   // List View State
   const [expandedListRows, setExpandedListRows] = useState({});
@@ -218,7 +238,7 @@ const ProformaInvoice = () => {
 
 
   // --- 1. FETCH DATA ON MOUNT ---
-  // ✅ STEP 4: LOAD REAL DATA (List + Master Data)
+  // âœ… STEP 4: LOAD REAL DATA (List + Master Data)
   useEffect(() => {
     const fetchAllData = async () => {
       try {
@@ -248,7 +268,7 @@ const ProformaInvoice = () => {
         }
         setCustomersList(validCustomers);
 
-        // ✅ Set default customer to Walk-in
+        // âœ… Set default customer to Walk-in
         const walkIn = validCustomers.find(c => c.name.toLowerCase().includes('walkin') || c.name.toLowerCase().includes('walk-in') || c.name.toLowerCase() === 'cash customer');
         if (walkIn) {
           setSelectedCustomer(current => current || walkIn);
@@ -311,7 +331,7 @@ const ProformaInvoice = () => {
   // --- CALCULATIONS ---
   // (Using reactive summary calcs at top)
 
-  // ✅ PRINT FUNCTIONALITY
+  // âœ… PRINT FUNCTIONALITY
   // isPrinting already declared above
 
   const handlePrintClick = async () => {
@@ -427,46 +447,75 @@ const ProformaInvoice = () => {
     };
   };
 
-  // ✅ PRODUCT SELECTOR HANDLER
+  const normalizeProformaItem = (item = {}, fallbackId = Date.now() + Math.random()) => {
+    const resolvedUnit = item.unit || item.focUnit || 'PCS';
+    const normalized = {
+      id: item.id || fallbackId,
+      code: item.code || item.itemCode || '',
+      barcode: item.barcode || item.itemBarcode || '',
+      image: item.primaryImage || item.image || item.thumbnailUrl || item.imageUrl || '',
+      desc: item.desc || item.description || item.name || '',
+      remarks: item.remarks || item.description || item.desc || item.name || '',
+      unit: resolvedUnit,
+      qty: Number(item.qty ?? item.quantity) || 0,
+      price: Number(item.price) || 0,
+      cost: Number(item.cost) || ((Number(item.price) || 0) * 0.75),
+      foc: Number(item.foc) || 0,
+      focUnit: item.focUnit || resolvedUnit,
+      availableUnits: Array.isArray(item.availableUnits) && item.availableUnits.length > 0
+        ? item.availableUnits
+        : [resolvedUnit],
+      unitConversions: item.unitConversions || {},
+      unitPrices: item.unitPrices || {},
+      disc: Number(item.disc ?? item.discount ?? item.discountPercent) || 0,
+      tax: Number(item.tax ?? item.taxRate ?? item.taxPercent) || 5,
+      taxAmt: Number(item.taxAmt ?? item.taxAmount) || 0,
+      total: Number(item.total ?? item.lineTotal) || 0
+    };
+
+    return calculateRow(normalized);
+  };
+
+  // âœ… PRODUCT SELECTOR HANDLER
   const handleAddSingleProduct = (product) => {
     const price = parseFloat(product.retailPrice) || parseFloat(product.sellingPrice) || 0;
+    const cost = parseFloat(product.cost) || 0;
     const disc = parseFloat(product.maxDiscount) || 0;
-    const tax = parseFloat(product.salesTax) || 5;
+    const tax = parseFloat(product.salesTax || product.taxPercent) || 5;
 
-    const rawItem = {
+    const newItem = normalizeProformaItem({
       id: Date.now() + Math.random(),
       code: product.code,
       barcode: product.barcode || '',
       image: product.primaryImage || product.image || product.thumbnailUrl || product.imageUrl || '',
       desc: product.description || product.name,
+      remarks: product.description || product.remarks || '',
       unit: product.unitName || product.unit || (product.availableUnits && product.availableUnits[0]) || 'PCS',
       qty: 1,
-      price: price,
+      price,
+      cost,
       foc: 0,
       focUnit: product.unitName || product.unit || (product.availableUnits && product.availableUnits[0]) || 'PCS',
       availableUnits: product.availableUnits || ['PCS'],
       unitConversions: product.unitConversions || {},
       unitPrices: product.unitPrices || {},
-      disc: disc,
-      tax: tax,
+      disc,
+      tax,
       taxAmt: 0,
-      total: 0,
-      remarks: product.description || product.remarks || ''
-    };
-
-    const newItem = calculateRow(rawItem);
+      total: 0
+    });
 
     setItems(prev => {
       const hasData = prev.some(i => i.code || i.desc);
       return hasData ? [...prev, newItem] : [newItem];
     });
 
-    setIsProductSelectorOpen(false); // ✅ Close modal after adding
+    setIsProductSelectorOpen(false); // âœ… Close modal after adding
   };
 
   const handleAddItem = () => {
     if (isReadOnly) return;
-    setItems([...items, { id: Date.now(), code: '', desc: '', unit: 'PCS', qty: 0, price: 0, tax: 5, total: 0 }]);
+    setItems(prev => [...prev, createBlankProformaItem()]);
   };
 
   const handleDeleteItem = (id) => {
@@ -478,9 +527,11 @@ const ProformaInvoice = () => {
     if (isReadOnly) return;
     setItems(items.map(item => {
       if (item.id === id) {
-        let newItem = { ...item, [field]: value };
+        const stringFields = new Set(['desc', 'remarks', 'unit', 'code', 'image', 'focUnit', 'barcode']);
+        const normalizedValue = stringFields.has(field) ? value : (Number(value) || 0);
+        let newItem = { ...item, [field]: normalizedValue };
 
-        // ✅ If unit is being changed, recalculate price based on conversion
+        // âœ… If unit is being changed, recalculate price based on conversion
         if (field === 'unit' && item.unitConversions) {
           const newUnit = value;
 
@@ -508,21 +559,15 @@ const ProformaInvoice = () => {
     }));
   };
 
-  const handleModalItemChange = (field, value) => {
-    setSelectedAddonItem(prev => {
-      const updated = { ...prev, [field]: value };
-      return calculateRow(updated);
-    });
-  };
-
-  const saveModalItem = () => {
-    if (selectedAddonItem) {
-      setItems(items.map(i => i.id === selectedAddonItem.id ? selectedAddonItem : i));
-      setSelectedAddonItem(null);
+  const handleSaveAddonItem = (updatedItem) => {
+    setItems(prev => prev.map(i => i.id === updatedItem.id ? updatedItem : i));
+    if (focusedItem && focusedItem.id === updatedItem.id) {
+      setFocusedItem(updatedItem);
     }
+    setSelectedAddonItem(null);
   };
 
-  // ✅ STEP 8: LOAD PI ON ROW CLICK (REAL DATA)
+  // âœ… STEP 8: LOAD PI ON ROW CLICK (REAL DATA)
   const handleRowClick = async (pi) => {
     try {
       // Use the pi object passed from the list directly
@@ -554,21 +599,10 @@ const ProformaInvoice = () => {
       setNotesToCustomer(full.notesToCustomer || "");
 
       // Map Items safely by calculating correctly
-      setItems((full.items || []).map(i => {
-        const rawItem = {
-          id: i.id || Date.now() + Math.random(),
-          code: i.itemCode || '',
-          barcode: i.barcode || '',
-          desc: i.description || '',
-          unit: i.unit || 'PCS',
-          qty: i.quantity || 0,
-          price: i.price || 0,
-          tax: i.taxPercent || 0,
-          disc: 0,
-          foc: i.foc || 0
-        };
-        return calculateRow(rawItem);
-      }));
+      const mappedItems = (full.items || []).map((item, index) =>
+        normalizeProformaItem(item, item.id || Date.now() + index + Math.random())
+      );
+      setItems(mappedItems.length > 0 ? mappedItems : [createBlankProformaItem()]);
 
       setIsReadOnly(full.status === "ISSUED");
       setActiveTab("create");
@@ -584,10 +618,10 @@ const ProformaInvoice = () => {
     setPiId(null);
     setIsReadOnly(false);
     setVersion(1);
-    setItems([{ id: Date.now(), code: '', desc: '', unit: 'PCS', qty: 0, price: 0, tax: 5, total: 0 }]);
+    setItems([createBlankProformaItem()]);
     setAdvanceAmount(0);
 
-    // ✅ Set default customer to Walk-in
+    // âœ… Set default customer to Walk-in
     const walkIn = customersList.find(c => c.name.toLowerCase().includes('walk-in') || c.name.toLowerCase().includes('walkin') || c.name.toLowerCase() === 'cash customer');
     setSelectedCustomer(walkIn || null);
 
@@ -598,9 +632,12 @@ const ProformaInvoice = () => {
     setActiveTab('create');
   };
 
-  // ✅ STEP 6: SAVE DRAFT -> REAL API
+  // âœ… STEP 6: SAVE DRAFT -> REAL API
   const handleSaveDraft = async () => {
     if (!selectedCustomer) return alert("Please select a customer.");
+
+    const validItems = items.filter(i => i.code || i.desc);
+    if (validItems.length === 0) return alert("Please add at least one item.");
 
     try {
       const payload = {
@@ -618,7 +655,7 @@ const ProformaInvoice = () => {
         paymentNotes,
         notesToCustomer,
         shippingAddress,
-        items: items.map(i => ({
+        items: validItems.map(i => ({
           itemCode: i.code,
           barcode: i.barcode || '',
           description: i.desc,
@@ -626,14 +663,15 @@ const ProformaInvoice = () => {
           quantity: Number(i.qty),
           price: Number(i.price),
           taxPercent: Number(i.tax),
-          foc: Number(i.foc) || 0
+          foc: Number(i.foc) || 0,
+          focUnit: i.focUnit || i.unit,
+          remarks: i.remarks || ''
         }))
       };
 
-      // If piId exists, ideally update, otherwise create. 
-      // Using createProforma as per instructions for this step.
-      await createProforma(payload);
-      alert("Draft saved successfully");
+      const saved = piId ? await updateProforma(piId, payload) : await createProforma(payload);
+      setPiId(saved?.id || piId);
+      alert(piId ? "Draft updated successfully" : "Draft saved successfully");
 
       // Refresh list
       const refreshed = await getAllProformas();
@@ -645,7 +683,7 @@ const ProformaInvoice = () => {
     }
   };
 
-  // ✅ STEP 7: ISSUE PI -> REAL API
+  // âœ… STEP 7: ISSUE PI -> REAL API
   const handleIssuePI = async () => {
     if (!selectedCustomer) {
       return alert("Select customer first");
@@ -707,17 +745,10 @@ const ProformaInvoice = () => {
     }
 
     if (so.items && so.items.length > 0) {
-      const mappedItems = so.items.map(i => ({
-        id: Date.now() + Math.random(),
-        code: i.itemCode || '',
-        desc: i.description || '',
-        unit: i.unit || 'PCS',
-        qty: i.quantity || 0,
-        price: i.price || 0,
-        tax: i.taxRate || 5,
-        total: (i.quantity * i.price) + ((i.quantity * i.price) * (i.taxRate / 100))
-      }));
-      setItems(mappedItems);
+      const mappedItems = so.items.map((item, index) =>
+        normalizeProformaItem(item, item.id || Date.now() + index + Math.random())
+      );
+      setItems(mappedItems.length > 0 ? mappedItems : [createBlankProformaItem()]);
     }
   };
 
@@ -1106,166 +1137,155 @@ const ProformaInvoice = () => {
               {/* --- MIDDLE COLUMN: ITEMS & NOTES --- */}
               <div className="xl:col-span-2 space-y-4">
                 {/* Items Table */}
-                <div className="bg-white rounded-lg border border-slate-200/50 shadow-sm overflow-hidden">
-                  <div className="px-5 py-3 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
+                <div className="bg-white rounded-lg border border-slate-200/50 p-5 shadow-sm min-h-[460px]">
+                  <div className="flex justify-between items-center mb-4 border-b border-slate-100/50 pb-2">
                     <h3 className="text-sm font-bold text-slate-800 flex items-center gap-2">
-                      <FileText size={16} className="text-yellow-500" /> Proforma Items
+                      <ShoppingCart size={16} className="text-yellow-500" /> Proforma Invoice Items
                     </h3>
-                    <button
-                      onClick={() => setIsProductSelectorOpen(true)}
-                      className="flex items-center gap-1.5 px-3 py-1.5 bg-[#F5C742] text-slate-900 text-xs font-bold rounded shadow-sm hover:bg-[#E5B732] transition-colors"
-                    >
-                      <Plus size={14} /> Select from Catalog
-                    </button>
+                    {!isReadOnly && (
+                      <button
+                        onClick={() => setIsProductSelectorOpen(true)}
+                        className="flex items-center gap-1 px-3 py-1.5 bg-yellow-400 text-slate-900 text-xs font-medium rounded hover:bg-yellow-500"
+                      >
+                        <Plus size={14} /> Select from Products
+                      </button>
+                    )}
                   </div>
-                  <div className="p-0"> {/* Remove padding for full-width table */}
 
-                    <div
-                      className="overflow-x-auto"
-                      style={items.length > 5 ? { maxHeight: '440px', overflowY: 'auto' } : {}}
-                    >
-                      <table className="w-full text-xs text-left min-w-[900px]">
-                        <thead className="bg-slate-50 text-slate-600 border-b border-slate-200/50 text-xs font-semibold">
+                  <div
+                    className="overflow-auto"
+                    style={items.length > 5 ? { maxHeight: '380px', overflowY: 'auto' } : {}}
+                  >
+                    <table className="w-full text-xs text-left min-w-[800px]">
+                      <thead className="sticky top-0 z-10 bg-white border-b border-slate-100/80 text-[11px] font-semibold text-slate-500">
+                        <tr>
+                          <th className="p-2 w-8 text-center text-slate-400">#</th>
+                          <th className="p-2 min-w-[260px]">
+                            <ItemDescriptionHeader
+                              itemCount={items.length}
+                              expandedRowsCount={Object.keys(expandedRows).length}
+                              onToggleAll={toggleAllDescriptions}
+                            />
+                          </th>
+                          <th className="p-2 w-16 text-center">Unit</th>
+                          <th className="p-2 w-24 text-center">Sale qty</th>
+                          <th className="p-2 w-28 text-center">Unit price</th>
+                          <th className="p-2 w-24 text-center text-slate-800">Amount</th>
+                          <th className="p-2 w-16 text-center text-slate-500">Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100/50">
+                        {items.length === 0 ? (
                           <tr>
-                            <th className="p-2 w-8 text-center text-slate-400">#</th>
-                            <th className="p-2 min-w-[200px]">
-                              <div className="flex items-center gap-2">
-                                <ItemDescriptionHeader
-                                  itemCount={items.length}
-                                  expandedRowsCount={Object.keys(expandedRows).length}
-                                  onToggleAll={toggleAllDescriptions}
-                                />
+                            <td colSpan={7} className="py-12 text-center bg-slate-50/50 border-b border-slate-100 border-dashed rounded-b-lg">
+                              <div className="flex flex-col items-center justify-center text-slate-400">
+                                <ShoppingCart size={32} className="mb-3 text-slate-300" />
+                                <span className="text-sm font-semibold text-slate-500">No items added.</span>
+                                <span className="text-xs mt-1 text-slate-400">Click "Select from Products" to start building this Proforma Invoice.</span>
                               </div>
-                            </th>
-                            <th className="p-2 w-16 text-center">Unit</th>
-                            <th className="p-2 w-20 text-center">Qty</th>
-                            <th className="p-2 w-20 text-center">Unit price</th>
-                            <th className="p-2 w-14 text-center">Tax %</th>
-                            <th className="p-2 w-24 text-center text-slate-800">Amount</th>
-                            <th className="p-2 w-16 text-center text-slate-500">Actions</th>
+                            </td>
                           </tr>
-                        </thead>
-                        <tbody className="divide-y divide-slate-100/50">
-                          {items.length === 0 ? (
-                            <tr>
-                              <td colSpan="8" className="text-center py-12 text-slate-400">
-                                <div className="flex flex-col items-center gap-2">
-                                  <div className="w-10 h-10 bg-slate-100 rounded-full flex items-center justify-center">
-                                    <ShoppingCart size={20} className="text-slate-400" />
-                                  </div>
-                                  <p className="text-sm">No items added. <button onClick={() => setIsProductSelectorOpen(true)} className="text-yellow-600 font-bold hover:underline">Browse Products</button></p>
+                        ) : items.map((item, index) => (
+                          <React.Fragment key={item.id}>
+                            <tr className={`group hover:bg-slate-50/50 transition-colors bg-white align-middle ${isReadOnly ? 'opacity-80' : ''}`}>
+                              <td className="p-2 text-center text-slate-400 text-xs font-medium">{index + 1}</td>
+                              <td className="p-2">
+                                <ItemDescriptionCell
+                                  item={item}
+                                  isExpanded={expandedRows[item.id]}
+                                  onToggleExpand={toggleRowDescription}
+                                  onItemChange={handleItemChange}
+                                  onFocusCode={() => setFocusedItem(item)}
+                                  onOpenProductSelection={!isReadOnly ? () => setIsProductSelectorOpen(true) : undefined}
+                                  onCheckStock={() => { setSelectedStockItem(item); setIsItemStockModalOpen(true); }}
+                                  onOpenSettings={(selectedItem) => setSelectedAddonItem({ ...selectedItem })}
+                                  showSettings={Boolean(item.code || item.desc || item.remarks)}
+                                  showTaxDiscount={true}
+                                  isReadOnly={isReadOnly}
+                                  page="proforma_invoice"
+                                />
+                              </td>
+                              <td className="p-2 text-center align-middle">
+                                <div className="rounded-md border border-slate-200 bg-white inline-block px-1 py-1 min-w-[50px]">
+                                  <select
+                                    disabled={isReadOnly}
+                                    className="w-full bg-transparent outline-none text-center text-xs text-slate-700 appearance-none font-medium cursor-pointer disabled:opacity-50"
+                                    value={item.unit || 'PCS'}
+                                    onChange={(e) => handleItemChange(item.id, 'unit', e.target.value)}
+                                  >
+                                    {(item.availableUnits || ['PCS']).map(u => <option key={u} value={u}>{u}</option>)}
+                                  </select>
                                 </div>
                               </td>
-                            </tr>
-                          ) : items.map((item, index) => (
-                            <React.Fragment key={item.id}>
-                              <tr className={`group hover:bg-slate-50/50 transition-colors bg-white align-middle`}>
-                                <td className="p-2 text-center text-slate-400 text-xs font-medium">{index + 1}</td>
-                                <td className="p-2">
-                                  <ItemDescriptionCell
-                                    item={item}
-                                    isExpanded={expandedRows[item.id]}
-                                    onToggleExpand={toggleRowDescription}
-                                    onItemChange={handleItemChange}
-                                    onFocusCode={() => setFocusedItem(item)}
-                                    onOpenProductSelection={() => setIsProductSelectorOpen(true)}
-                                    onCheckStock={() => { setSelectedStockItem(item); setIsItemStockModalOpen(true); }}
-                                    onOpenSettings={(item) => setSelectedAddonItem(item)}
-                                    showSettings={true}
-                                    showTaxDiscount={true}
-                                    isReadOnly={isReadOnly}
-                                    page="proforma_invoice"
+                              <td className="p-2 text-center align-middle">
+                                <div className="rounded-md border border-slate-200 bg-white flex items-center px-2 py-1 w-full max-w-[88px] mx-auto">
+                                  <input
+                                    disabled={isReadOnly}
+                                    type="number"
+                                    min="1"
+                                    className="w-full bg-transparent text-center outline-none font-bold text-sm text-slate-800 disabled:opacity-50"
+                                    value={item.qty === 0 ? '' : item.qty}
+                                    onChange={(e) => handleItemChange(item.id, 'qty', e.target.value)}
+                                    placeholder="0"
                                   />
-                                </td>
-                                <td className="p-2 text-center align-middle">
-                                  <div className="rounded-md border border-slate-200 bg-white inline-block px-1 py-1 min-w-[50px]">
-                                    <select
-                                      className="w-full bg-transparent outline-none text-center text-xs text-slate-700 appearance-none font-medium cursor-pointer"
-                                      value={item.unit || 'PCS'}
-                                      onChange={(e) => handleItemChange(item.id, 'unit', e.target.value)}
-                                    >
-                                      {(item.availableUnits || ['PCS', 'SET', 'BOX', 'KG']).map(u => <option key={u} value={u}>{u}</option>)}
-                                    </select>
-                                  </div>
-                                </td>
-                                <td className="p-2 text-center align-middle">
-                                  <div className="rounded-md border border-slate-200 bg-white inline-flex items-center px-2 py-1 mx-auto w-16">
-                                    <input
-                                      type="number"
-                                      min="1"
-                                      className="w-full bg-transparent text-center outline-none font-bold text-sm text-slate-800"
-                                      value={item.qty === 0 ? '' : item.qty}
-                                      onChange={(e) => handleItemChange(item.id, 'qty', e.target.value)}
-                                      placeholder="0"
+                                </div>
+                              </td>
+                              <td className="p-2 text-center align-middle">
+                                <div className="rounded-md border border-slate-200 bg-white flex items-center px-2 py-1 w-full max-w-[104px] mx-auto">
+                                  <input
+                                    disabled={isReadOnly}
+                                    type="number"
+                                    className="w-full bg-transparent text-center outline-none font-semibold text-sm text-slate-700 disabled:opacity-50"
+                                    value={item.price === 0 ? '' : item.price}
+                                    onChange={(e) => handleItemChange(item.id, 'price', e.target.value)}
+                                    placeholder="0.00"
+                                  />
+                                </div>
+                              </td>
+                              <td className="p-2 text-center align-middle w-24">
+                                <div className="font-bold text-slate-800 text-sm">{Number(item.total || 0).toFixed(2)}</div>
+                              </td>
+                              <td className="p-2 text-center align-middle w-16">
+                                {!isReadOnly && (
+                                  <button
+                                    onClick={() => handleDeleteItem(item.id)}
+                                    className="text-slate-300 hover:text-red-500 transition-colors"
+                                  >
+                                    <Trash2 size={16} />
+                                  </button>
+                                )}
+                              </td>
+                            </tr>
+                            {expandedRows[item.id] && (
+                              <tr className="bg-white">
+                                <td></td>
+                                <td colSpan={6} className="px-0 pb-4 pt-1">
+                                  <div className="ml-[60px] mr-4 p-3 rounded-r-[10px] border-l-[3px] border-[#FFD700] bg-[#FFFDE7]/60 shadow-[inset_0_1px_4px_rgba(0,0,0,0.02)]">
+                                    <div className="flex justify-between items-center mb-1.5">
+                                      <div className="flex items-center gap-1.5 text-[9px] font-bold text-[#B8860B] tracking-widest uppercase">
+                                        <Menu size={10} strokeWidth={3} className="opacity-80" /> PRODUCT DESCRIPTION
+                                      </div>
+                                      <span className="text-[9px] text-yellow-700/50 font-medium">{(item.remarks || '').length} chars</span>
+                                    </div>
+                                    <textarea
+                                      disabled={isReadOnly}
+                                      rows="1"
+                                      className="w-full bg-transparent text-[11px] text-slate-600 outline-none placeholder:text-yellow-700/30 resize-none font-medium leading-relaxed disabled:opacity-50"
+                                      value={item.remarks || ''}
+                                      onChange={(e) => handleItemChange(item.id, 'remarks', e.target.value)}
+                                      placeholder="Enter product description - auto-loaded from product master, fully editable..."
+                                      onInput={(e) => { e.target.style.height = 'auto'; e.target.style.height = (e.target.scrollHeight) + 'px'; }}
                                     />
-                                  </div>
-                                </td>
-                                <td className="p-2 text-center align-middle w-20">
-                                  <div className="rounded-md border border-slate-200 bg-white inline-flex items-center px-2 py-1 mx-auto w-20">
-                                    <input
-                                      type="number"
-                                      className="w-full bg-transparent text-center outline-none font-semibold text-sm text-slate-700"
-                                      value={item.price === 0 ? '' : item.price}
-                                      onChange={(e) => handleItemChange(item.id, 'price', e.target.value)}
-                                      placeholder="0.00"
-                                    />
-                                  </div>
-                                </td>
-                                <td className="p-2 text-center align-middle w-14">
-                                  <div className="rounded-md border border-slate-200 bg-white inline-flex items-center px-1 py-1 mx-auto w-14">
-                                    <input
-                                      type="number"
-                                      min="0"
-                                      max="100"
-                                      className="w-full bg-transparent text-center outline-none text-xs text-slate-700"
-                                      value={item.tax === 0 ? '' : item.tax}
-                                      onChange={(e) => handleItemChange(item.id, 'tax', e.target.value)}
-                                      placeholder="5"
-                                    />
-                                  </div>
-                                </td>
-                                <td className="p-2 text-center align-middle w-24">
-                                  <div className="font-bold text-slate-800 text-sm">{Number(item.total || 0).toFixed(2)}</div>
-                                </td>
-                                <td className="p-2 text-center align-middle w-16">
-                                  <div className="flex items-center justify-center">
-                                    <button onClick={() => handleDeleteItem(item.id)} className="text-slate-300 hover:text-red-500 transition-colors">
-                                      <Trash2 size={16} />
-                                    </button>
                                   </div>
                                 </td>
                               </tr>
-                              {expandedRows[item.id] && (
-                                <tr className="bg-white">
-                                  <td></td>
-                                  <td colSpan={7} className="px-0 pb-4 pt-1">
-                                    <div className="ml-[60px] mr-4 p-3 rounded-r-[10px] border-l-[3px] border-[#FFD700] bg-[#FFFDE7]/60 shadow-[inset_0_1px_4px_rgba(0,0,0,0.02)]">
-                                      <div className="flex justify-between items-center mb-1.5">
-                                        <div className="flex items-center gap-1.5 text-[9px] font-bold text-[#B8860B] tracking-widest uppercase">
-                                          <Menu size={10} strokeWidth={3} className="opacity-80" /> PRODUCT DESCRIPTION
-                                        </div>
-                                        <span className="text-[9px] text-yellow-700/50 font-medium">{(item.remarks || '').length} chars</span>
-                                      </div>
-                                      <textarea
-                                        rows="1"
-                                        className="w-full bg-transparent text-[11px] text-slate-600 outline-none placeholder:text-yellow-700/30 resize-none font-medium leading-relaxed"
-                                        value={item.remarks || ''}
-                                        onChange={(e) => handleItemChange(item.id, 'remarks', e.target.value)}
-                                        placeholder="Enter product description — auto-loaded from product master, fully editable..."
-                                        onInput={(e) => { e.target.style.height = 'auto'; e.target.style.height = (e.target.scrollHeight) + 'px'; }}
-                                      />
-                                    </div>
-                                  </td>
-                                </tr>
-                              )}
-                            </React.Fragment>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
+                            )}
+                          </React.Fragment>
+                        ))}
+                      </tbody>
+                    </table>
                   </div>
                 </div>
-
                 {/* 4. Combined Attachments & Notes */}
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
                   {/* Attachments */}
@@ -1515,145 +1535,12 @@ const ProformaInvoice = () => {
 
         {/* ITEM ADD-ONS MODAL */}
         {selectedAddonItem && (
-          <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm flex items-center justify-center z-[110] p-4">
-            <div className="bg-white rounded-xl shadow-2xl max-w-md w-full flex flex-col max-h-[90vh] overflow-hidden">
-              <div className="px-4 py-3 border-b border-slate-100 flex justify-between items-center bg-slate-50/50">
-                <h2 className="text-sm font-bold text-slate-800 flex items-center gap-2">
-                  <SlidersHorizontal size={16} className="text-yellow-600" /> Item Add-Ons & Details
-                </h2>
-                <button onClick={() => setSelectedAddonItem(null)} className="text-slate-400 hover:text-red-500 transition-colors">
-                  <X size={18} />
-                </button>
-              </div>
-              <div className="p-4 overflow-y-auto">
-                <p className="text-xs text-slate-500 mb-4">Configure discounts, taxes, FOC items, and view detailed calculations</p>
-
-                <div className="bg-slate-50 border border-slate-100 rounded-lg p-3 mb-4">
-                  <div className="font-bold text-slate-800 text-sm mb-1">{selectedAddonItem.desc || selectedAddonItem.name || 'Unknown Item'}</div>
-                  <div className="text-xs text-slate-500">Code: {selectedAddonItem.code}</div>
-                  <div className="text-xs text-slate-500">Qty: {selectedAddonItem.qty} {selectedAddonItem.unit}</div>
-                </div>
-
-                <div className="space-y-4">
-                  {/* Discount */}
-                  <div>
-                    <div className="flex justify-between items-center mb-1">
-                      <label className="text-xs font-bold text-slate-700">Discount</label>
-                      <div className="flex bg-slate-100 rounded p-0.5">
-                        <button className="px-2 py-0.5 text-[10px] font-bold rounded bg-yellow-400 text-slate-900">%</button>
-                      </div>
-                    </div>
-                    <input
-                      type="number"
-                      className="w-full p-2 border border-slate-200 rounded text-sm focus:border-yellow-400 outline-none transition-colors"
-                      value={selectedAddonItem.disc || ''}
-                      onChange={(e) => handleModalItemChange('disc', e.target.value)}
-                      placeholder="0"
-                    />
-                    <div className="text-[10px] text-slate-500 mt-1">Discount %: {(selectedAddonItem.disc || 0).toFixed(2)}%</div>
-                  </div>
-
-                  {/* Free of Charge (FOC) */}
-                  <div>
-                    <label className="block text-xs font-bold text-slate-700 mb-1 text-emerald-600">Free of Charge (FOC)</label>
-                    <div className="grid grid-cols-2 gap-2">
-                      <div>
-                        <label className="text-[10px] text-slate-400 block mb-0.5">FOC Qty</label>
-                        <input
-                          type="number"
-                          className="w-full p-2 border border-slate-200 rounded text-sm focus:border-yellow-400 outline-none transition-colors"
-                          value={selectedAddonItem.foc || ''}
-                          onChange={(e) => handleModalItemChange('foc', e.target.value)}
-                          placeholder="0"
-                        />
-                      </div>
-                      <div>
-                        <label className="text-[10px] text-slate-400 block mb-0.5">FOC Unit</label>
-                        <select
-                          className="w-full p-2 border border-slate-200 rounded text-sm appearance-none outline-none focus:border-yellow-400 bg-white"
-                          value={selectedAddonItem.focUnit || 'PCS'}
-                          onChange={(e) => handleModalItemChange('focUnit', e.target.value)}
-                        >
-                          {(selectedAddonItem.availableUnits || ['PCS']).map(u => <option key={u} value={u}>{u}</option>)}
-                        </select>
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Tax */}
-                  <div>
-                    <label className="block text-xs font-bold text-slate-700 mb-1">Tax % (VAT)</label>
-                    <input
-                      type="number"
-                      className="w-full p-2 border border-slate-200 rounded text-sm focus:border-yellow-400 outline-none transition-colors"
-                      value={selectedAddonItem.tax || ''}
-                      onChange={(e) => handleModalItemChange('tax', e.target.value)}
-                      placeholder="5"
-                    />
-                    <div className="text-[10px] text-slate-500 mt-1">Tax Amount: AED {(selectedAddonItem.taxAmt || 0).toFixed(2)}</div>
-                  </div>
-
-                  {/* Calculation Breakdown */}
-                  <div className="border border-slate-200 rounded-lg p-3 bg-white shadow-sm mt-4">
-                    <h4 className="text-[11px] font-bold text-slate-500 uppercase tracking-wider mb-2">Calculation Breakdown</h4>
-
-                    <div className="space-y-1.5 text-xs">
-                      <div className="flex justify-between text-slate-600">
-                        <span>Base Amount</span>
-                        <span>AED {((selectedAddonItem.qty || 0) * (selectedAddonItem.price || 0)).toFixed(2)}</span>
-                      </div>
-                      {(selectedAddonItem.disc > 0) && (
-                        <div className="flex justify-between text-red-500">
-                          <span>Discount ({selectedAddonItem.disc}%)</span>
-                          <span>- AED {(((selectedAddonItem.qty || 0) * (selectedAddonItem.price || 0)) * (selectedAddonItem.disc / 100)).toFixed(2)}</span>
-                        </div>
-                      )}
-                      <div className="flex justify-between text-slate-600">
-                        <span>After Discount (Gross)</span>
-                        <span>AED {(((selectedAddonItem.qty || 0) * (selectedAddonItem.price || 0)) * (1 - (selectedAddonItem.disc || 0) / 100)).toFixed(2)}</span>
-                      </div>
-                      <div className="flex justify-between text-emerald-600">
-                        <span>Tax ({(selectedAddonItem.tax || 0)}%)</span>
-                        <span>+ AED {(selectedAddonItem.taxAmt || 0).toFixed(2)}</span>
-                      </div>
-                      <div className="h-px bg-slate-200 my-2 w-full"></div>
-                      <div className="flex justify-between font-bold text-yellow-600 text-sm">
-                        <span>Net Amount</span>
-                        <span>AED {(selectedAddonItem.total || 0).toFixed(2)}</span>
-                      </div>
-
-                      {/* Internal Margin */}
-                      <div className="h-px bg-slate-100 my-2 w-full"></div>
-                      <div className="flex justify-between text-[10px] text-slate-400">
-                        <span>Cost Price</span>
-                        <span>AED {((selectedAddonItem.cost || 0) * (selectedAddonItem.qty || 0)).toFixed(2)}</span>
-                      </div>
-                      <div className="flex justify-between text-[10px] text-slate-400">
-                        <span>Gross Profit %</span>
-                        <span className={(((selectedAddonItem.qty || 0) * (selectedAddonItem.price || 0)) * (1 - (selectedAddonItem.disc || 0) / 100) > 0 ? ((((((selectedAddonItem.qty || 0) * (selectedAddonItem.price || 0)) * (1 - (selectedAddonItem.disc || 0) / 100)) - ((selectedAddonItem.cost || 0) * (selectedAddonItem.qty || 0))) / (((selectedAddonItem.qty || 0) * (selectedAddonItem.price || 0)) * (1 - (selectedAddonItem.disc || 0) / 100))) * 100) : 0) < 10 ? 'text-red-400' : 'text-emerald-500'}>
-                          {((((selectedAddonItem.qty || 0) * (selectedAddonItem.price || 0)) * (1 - (selectedAddonItem.disc || 0) / 100)) > 0 ? ((((((selectedAddonItem.qty || 0) * (selectedAddonItem.price || 0)) * (1 - (selectedAddonItem.disc || 0) / 100)) - ((selectedAddonItem.cost || 0) * (selectedAddonItem.qty || 0))) / (((selectedAddonItem.qty || 0) * (selectedAddonItem.price || 0)) * (1 - (selectedAddonItem.disc || 0) / 100))) * 100).toFixed(1) : 0)}%
-                        </span>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-              <div className="p-4 border-t border-slate-100 bg-slate-50/50 flex justify-end gap-2">
-                <button
-                  onClick={() => setSelectedAddonItem(null)}
-                  className="px-5 py-2 bg-white border border-slate-200 text-slate-700 text-xs font-bold rounded-lg hover:bg-slate-50 transition-colors shadow-sm"
-                >
-                  Cancel
-                </button>
-                <button
-                  onClick={saveModalItem}
-                  className="px-5 py-2 bg-yellow-400 text-slate-900 border border-yellow-500 text-xs font-bold rounded-lg hover:bg-yellow-500 transition-colors shadow-sm"
-                >
-                  Save
-                </button>
-              </div>
-            </div>
-          </div>
+          <ItemAddOnsModal
+            item={selectedAddonItem}
+            onClose={() => setSelectedAddonItem(null)}
+            onSave={handleSaveAddonItem}
+            isReadOnly={isReadOnly}
+          />
         )}
 
         {/* --- STICKY FOOTER ACTION BAR --- */}

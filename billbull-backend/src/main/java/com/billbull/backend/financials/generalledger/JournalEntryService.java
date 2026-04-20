@@ -1,6 +1,7 @@
 package com.billbull.backend.financials.generalledger;
 
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Set;
@@ -255,8 +256,12 @@ public class JournalEntryService {
             totalDebit = totalDebit.add(line.getDebit() != null ? line.getDebit() : BigDecimal.ZERO);
             totalCredit = totalCredit.add(line.getCredit() != null ? line.getCredit() : BigDecimal.ZERO);
         }
-        if (totalDebit.compareTo(totalCredit) != 0) {
-            throw new RuntimeException("Journal is not balanced. Debit: " + totalDebit + ", Credit: " + totalCredit);
+        // Round to 2 decimal places (currency precision) before comparing to
+        // eliminate floating-point noise from double → BigDecimal conversions.
+        BigDecimal roundedDebit  = totalDebit.setScale(2, RoundingMode.HALF_UP);
+        BigDecimal roundedCredit = totalCredit.setScale(2, RoundingMode.HALF_UP);
+        if (roundedDebit.compareTo(roundedCredit) != 0) {
+            throw new RuntimeException("Journal is not balanced. Debit: " + roundedDebit + ", Credit: " + roundedCredit);
         }
     }
 

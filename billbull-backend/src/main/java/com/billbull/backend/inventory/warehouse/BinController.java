@@ -18,11 +18,13 @@ public class BinController {
     }
 
     @GetMapping
+    @PreAuthorize("hasAnyRole('ADMIN','INVENTORY','INVENTORY_MANAGER','ACCOUNTANT')")
     public ResponseEntity<List<BinResponse>> getBins(@PathVariable Long locatorId) {
         return ResponseEntity.ok(binService.getBinResponsesByLocator(locatorId));
     }
 
     @GetMapping("/{id}")
+    @PreAuthorize("hasAnyRole('ADMIN','INVENTORY','INVENTORY_MANAGER','ACCOUNTANT')")
     public ResponseEntity<BinResponse> getBin(@PathVariable Long locatorId, @PathVariable Long id) {
         return ResponseEntity.ok(binService.getBinResponseById(id));
     }

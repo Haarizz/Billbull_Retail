@@ -13,7 +13,7 @@ import {
 
 // Import API Methods
 import { useNavigate } from 'react-router-dom';
-import api from "../../../api/axiosConfig";
+import { getImageUrl } from "../../../utils/urlUtils";
 import {
   getProductsList,
   getProductById,
@@ -30,6 +30,7 @@ import { createDepartment } from "../../../api/departmentsApi";
 import { createSubDepartment } from "../../../api/subDepartmentsApi";
 import { getUnits, createUnit } from "../../../api/unitsApi";
 import { getWarehouses } from "../../../api/warehouseApi";
+import ClassificationDropdown from "../../../components/ClassificationDropdown";
 import { getZones, getLocators, getBins } from "../../../api/warehouseLocationApi";
 import { getVendors } from "../../../api/vendorsApi";
 
@@ -200,8 +201,14 @@ const AddProductWizard = ({ onCancel, onSave, initialData, brands: initialBrands
   const [brands, setBrandsLocal] = useState(initialBrands || []);
   const [departments, setDeptsLocal] = useState(initialDepts || []);
   const [units, setUnitsLocal] = useState(initialUnits || []);
-  // Quick-add modal state
+  // Quick-add modal state (used for Unit only; Brand/Dept/SubDept/Category use inline create)
   const [quickAdd, setQuickAdd] = useState({ open: false, type: null, name: '', saving: false });
+  // Inline-create loading indicator — stores which field type is currently being saved
+  const [creatingType, setCreatingType] = useState(null);
+  // Local category list — no backend entity, stored per session
+  const [categoriesLocal, setCategoriesLocal] = useState([
+    'General', 'Premium', 'Clearance',
+  ]);
   const [formData, setFormData] = useState(() => {
     if (initialData) return { ...initialData, imageFile: null };
     return {
@@ -362,7 +369,9 @@ const AddProductWizard = ({ onCancel, onSave, initialData, brands: initialBrands
     setQuickAdd(prev => ({ ...prev, saving: true }));
     try {
       if (type === 'brand') {
-        const created = await createBrand({ name: name.trim(), code: name.trim().toUpperCase().replace(/\s+/g, '_') });
+        // QA-001: truncate code to 10 chars (DB column limit) and force active=true
+        const rawCode = name.trim().toUpperCase().replace(/[^A-Z0-9]/g, '_');
+        const created = await createBrand({ name: name.trim(), code: rawCode.substring(0, 10), active: true });
         setBrandsLocal(prev => [...prev, created]);
         handleInputChange('brand', created.id);
       } else if (type === 'department') {
@@ -384,6 +393,41 @@ const AddProductWizard = ({ onCancel, onSave, initialData, brands: initialBrands
       console.error('Quick-add failed', err);
       alert('Failed to create. Please try again.');
       setQuickAdd(prev => ({ ...prev, saving: false }));
+    }
+  };
+
+  // Inline create handler — used by ClassificationDropdown for Brand/Dept/SubDept/Category
+  const handleInlineCreate = async (type, name) => {
+    if (!name.trim()) return;
+    setCreatingType(type);
+    try {
+      if (type === 'brand') {
+        const rawCode = name.trim().toUpperCase().replace(/[^A-Z0-9]/g, '_');
+        const created = await createBrand({ name: name.trim(), code: rawCode.substring(0, 10), active: true });
+        setBrandsLocal(prev => [...prev, created]);
+        handleInputChange('brand', created.id);
+      } else if (type === 'department') {
+        const created = await createDepartment({ name: name.trim() });
+        setDeptsLocal(prev => [...prev, created]);
+        handleInputChange('department', created.id);
+      } else if (type === 'subdepartment') {
+        if (!formData.department) return;
+        const created = await createSubDepartment({ name: name.trim(), departmentId: Number(formData.department) });
+        setSubDepartments(prev => [...prev, created]);
+        handleInputChange('subDepartment', created.id);
+      } else if (type === 'category') {
+        // No backend entity — persist only in local session state
+        const newCat = name.trim();
+        setCategoriesLocal(prev =>
+          prev.includes(newCat) ? prev : [...prev, newCat]
+        );
+        handleInputChange('category', newCat);
+      }
+    } catch (err) {
+      console.error('Inline create failed:', err);
+      alert(`Failed to create ${type}. Please try again.`);
+    } finally {
+      setCreatingType(null);
     }
   };
 
@@ -668,50 +712,59 @@ const AddProductWizard = ({ onCancel, onSave, initialData, brands: initialBrands
             <div className="col-span-12 lg:col-span-4 space-y-6">
               <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm space-y-4">
                 <h3 className="font-semibold text-lg flex items-center gap-2"><Layers className="h-5 w-5 text-slate-400" /> Classification</h3>
+
+                {/* Brand */}
                 <div className="space-y-1.5">
-                  <div className="flex items-center justify-between">
-                    <label className="text-xs font-semibold text-slate-500">Brand</label>
-                    <button type="button" onClick={() => setQuickAdd({ open: true, type: 'brand', name: '', saving: false })} className="flex items-center gap-0.5 text-xs text-[#F5C742] hover:text-[#E5B732] font-semibold">
-                      <PlusCircle size={13} /> New
-                    </button>
-                  </div>
-                  <select value={formData.brand} onChange={(e) => handleInputChange('brand', e.target.value)} className="w-full border border-slate-200 rounded-md px-3 py-2 text-sm text-slate-600 outline-none focus:ring-2 focus:ring-[#F5C742]/50">
-                    <option value="">Select Brand</option>
-                    {brands.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
-                  </select>
+                  <label className="text-xs font-semibold text-slate-500">Brand</label>
+                  <ClassificationDropdown
+                    options={brands.map(b => ({ value: b.id, label: b.name }))}
+                    value={formData.brand}
+                    onChange={(val) => handleInputChange('brand', val)}
+                    onCreateNew={(name) => handleInlineCreate('brand', name)}
+                    placeholder="Select Brand…"
+                    creating={creatingType === 'brand'}
+                  />
                 </div>
+
+                {/* Department */}
                 <div className="space-y-1.5">
-                  <div className="flex items-center justify-between">
-                    <label className="text-xs font-semibold text-slate-500">Department</label>
-                    <button type="button" onClick={() => setQuickAdd({ open: true, type: 'department', name: '', saving: false })} className="flex items-center gap-0.5 text-xs text-[#F5C742] hover:text-[#E5B732] font-semibold">
-                      <PlusCircle size={13} /> New
-                    </button>
-                  </div>
-                  <select value={formData.department} onChange={(e) => handleInputChange('department', e.target.value)} className="w-full border border-slate-200 rounded-md px-3 py-2 text-sm text-slate-600 outline-none focus:ring-2 focus:ring-[#F5C742]/50">
-                    <option value="">Select Department</option>
-                    {departments.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
-                  </select>
+                  <label className="text-xs font-semibold text-slate-500">Department</label>
+                  <ClassificationDropdown
+                    options={departments.map(d => ({ value: d.id, label: d.name }))}
+                    value={formData.department}
+                    onChange={(val) => handleInputChange('department', val)}
+                    onCreateNew={(name) => handleInlineCreate('department', name)}
+                    placeholder="Select Department…"
+                    creating={creatingType === 'department'}
+                  />
                 </div>
+
+                {/* Sub-Department — depends on Department */}
                 <div className="space-y-1.5">
-                  <div className="flex items-center justify-between">
-                    <label className="text-xs font-semibold text-slate-500">Sub-Department</label>
-                    <button type="button" onClick={() => setQuickAdd({ open: true, type: 'subdepartment', name: '', saving: false })} disabled={!formData.department} className="flex items-center gap-0.5 text-xs text-[#F5C742] hover:text-[#E5B732] font-semibold disabled:opacity-40 disabled:cursor-not-allowed">
-                      <PlusCircle size={13} /> New
-                    </button>
-                  </div>
-                  <select value={formData.subDepartment} onChange={(e) => handleInputChange('subDepartment', e.target.value)} className="w-full border border-slate-200 rounded-md px-3 py-2 text-sm text-slate-600 outline-none focus:ring-2 focus:ring-[#F5C742]/50" disabled={!formData.department}>
-                    <option value="">Select Sub-Department</option>
-                    {subDepartments.map(sd => <option key={sd.id} value={sd.id}>{sd.name}</option>)}
-                  </select>
+                  <label className="text-xs font-semibold text-slate-500">Sub-Department</label>
+                  <ClassificationDropdown
+                    options={subDepartments.map(sd => ({ value: sd.id, label: sd.name }))}
+                    value={formData.subDepartment}
+                    onChange={(val) => handleInputChange('subDepartment', val)}
+                    onCreateNew={formData.department ? (name) => handleInlineCreate('subdepartment', name) : undefined}
+                    placeholder={formData.department ? 'Select Sub-Department…' : 'Select a Department first'}
+                    disabled={!formData.department}
+                    creating={creatingType === 'subdepartment'}
+                    noCreateMsg={formData.department ? 'No sub-departments found' : 'Select a Department first'}
+                  />
                 </div>
+
+                {/* Category — local session values, no backend entity */}
                 <div className="space-y-1.5">
                   <label className="text-xs font-semibold text-slate-500">Category</label>
-                  <select value={formData.category} onChange={(e) => handleInputChange('category', e.target.value)} className="w-full border border-slate-200 rounded-md px-3 py-2 text-sm text-slate-600 outline-none focus:ring-2 focus:ring-[#F5C742]/50">
-                    <option value="">Select Category</option>
-                    <option value="General">General</option>
-                    <option value="Premium">Premium</option>
-                    <option value="Clearance">Clearance</option>
-                  </select>
+                  <ClassificationDropdown
+                    options={categoriesLocal.map(c => ({ value: c, label: c }))}
+                    value={formData.category}
+                    onChange={(val) => handleInputChange('category', val)}
+                    onCreateNew={(name) => handleInlineCreate('category', name)}
+                    placeholder="Select Category…"
+                    creating={creatingType === 'category'}
+                  />
                 </div>
                 <div className="space-y-1.5">
                   <label className="text-xs font-semibold text-slate-500">Tags</label>
@@ -1768,7 +1821,7 @@ const Products = () => {
         department: d.departmentId || '',
         cost: d.cost ?? 0,
         retailPrice: d.retailPrice ?? 0,
-        image: d.image ? (d.image.startsWith('http') ? d.image : `${api.defaults.baseURL}${d.image}`) : null,
+        image: d.image ? getImageUrl(d.image) : null,
         packings: d.packings || [],
       }));
       setProducts(mapped);
@@ -1890,7 +1943,7 @@ const Products = () => {
         maxDiscount: product?.maxDiscount || 0,
         status: product?.status || 'Active',
 
-        image: primaryImage ? (primaryImage.startsWith('http') ? primaryImage : `${api.defaults.baseURL}${primaryImage}`) : null,
+        image: primaryImage ? getImageUrl(primaryImage) : null,
 
         cost: pricing?.cost || '',
         landingCost: pricing?.landingCost || 0,
