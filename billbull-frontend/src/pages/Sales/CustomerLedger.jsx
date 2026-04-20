@@ -6,6 +6,8 @@ import {
 } from 'lucide-react';
 import SearchableDropdown from '../../components/SearchableDropdown'; // ✅ Import Searchable Dropdown
 
+import StatementPrintPreview from '../../components/StatementPrintPreview';
+
 // --- API IMPORTS ---
 import { getAllCustomers, getCustomerById, createCustomer, deleteCustomer, getOpeningInvoicesByCustomerCode } from '../../api/customerledgerApi';
 import { fetchStatementOfAccount } from '../../api/financialsApi';
@@ -1715,6 +1717,11 @@ const CustomerSOAView = ({ customers = [] }) => {
         window.print();
     };
 
+    const selectedCustomerDetails = useMemo(
+        () => customers.find((customer) => customer.code === selectedCustomerCode) || null,
+        [customers, selectedCustomerCode]
+    );
+
     return (
         <div className="space-y-6">
             {/* Filter & Action Bar */}
@@ -1770,7 +1777,7 @@ const CustomerSOAView = ({ customers = [] }) => {
             </div>
 
             {/* Stats Cards */}
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 print:hidden">
                 <div className="bg-white p-4 rounded-lg border border-slate-200 shadow-sm">
                     <div className="text-xs text-slate-500 mb-1">Opening Balance</div>
                     <div className="text-xl font-bold text-slate-800">
@@ -1792,7 +1799,7 @@ const CustomerSOAView = ({ customers = [] }) => {
             </div>
 
             {/* Table */}
-            <div className="bg-white rounded-lg border border-slate-200 shadow-sm overflow-hidden">
+            <div className="bg-white rounded-lg border border-slate-200 shadow-sm overflow-hidden print:hidden">
                 <table className="w-full text-sm text-left">
                     <thead className="bg-[#F7F7FA] text-slate-500 border-b border-slate-200">
                         <tr>
@@ -1841,6 +1848,22 @@ const CustomerSOAView = ({ customers = [] }) => {
                     </tfoot>
                 </table>
             </div>
+
+            <StatementPrintPreview
+                statementData={statementData}
+                party={selectedCustomerDetails}
+                partyLabel="Customer"
+                statementLabel="Statement of Account"
+                startDate={startDate}
+                endDate={endDate}
+                debitSummaryLabel={`Total Sales (${statementData?.entries?.filter((entry) => entry.type === 'INVOICE').length || 0})`}
+                creditSummaryLabel="Total Receipts"
+                debitColumnLabel="Debit"
+                creditColumnLabel="Credit"
+                positiveBalanceLabel="Dr"
+                negativeBalanceLabel="Cr"
+                emptyMessage="No transactions found for the selected period."
+            />
         </div>
     );
 };
@@ -2187,7 +2210,7 @@ const CustomerLedger = () => {
                 <div className="p-4 md:p-6 space-y-6">
 
                     {/* Header */}
-                    <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4">
+                    <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4 print:hidden">
                         <div>
                             <div className="text-xs text-slate-500 mb-1">Customers & Sales  Customer Ledger</div>
                             <h1 className="text-2xl font-bold text-slate-800 flex items-center gap-2">
@@ -2214,7 +2237,7 @@ const CustomerLedger = () => {
                     </div>
 
                     {/* Navigation Tabs */}
-                    <div className="bg-white border border-slate-200 rounded-lg p-1 inline-flex shadow-sm overflow-x-auto max-w-full">
+                    <div className="bg-white border border-slate-200 rounded-lg p-1 inline-flex shadow-sm overflow-x-auto max-w-full print:hidden">
                         {[
                             { id: 'Customer List', icon: Users },
                             { id: 'Receive Money', icon: Wallet },

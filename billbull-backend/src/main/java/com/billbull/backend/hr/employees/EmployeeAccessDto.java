@@ -19,6 +19,9 @@ public class EmployeeAccessDto {
     private boolean userActive;
     private boolean pendingEmployeeActivation;
     private List<String> assignedRoles;
+    private Long branchId;
+    private String branchName;
+    private String branchCode;
 
     // --- Getters & Setters ---
 
@@ -53,4 +56,13 @@ public class EmployeeAccessDto {
 
     public List<String> getAssignedRoles() { return assignedRoles; }
     public void setAssignedRoles(List<String> assignedRoles) { this.assignedRoles = assignedRoles; }
+
+    public Long getBranchId() { return branchId; }
+    public void setBranchId(Long branchId) { this.branchId = branchId; }
+
+    public String getBranchName() { return branchName; }
+    public void setBranchName(String branchName) { this.branchName = branchName; }
+
+    public String getBranchCode() { return branchCode; }
+    public void setBranchCode(String branchCode) { this.branchCode = branchCode; }
 }

@@ -39,6 +39,17 @@ public class JwtUtil {
         return Jwts.builder()
                 .setSubject(user.getUsername())
                 .claim("roles", roles)
+                .claim("branchId", user.getBranch() != null ? user.getBranch().getId() : null)
+                .claim("branchName", user.getBranch() != null ? user.getBranch().getName() : null)
+                .claim("branchCode", user.getBranch() != null ? user.getBranch().getCode() : null)
+                .claim("defaultWarehouseId",
+                        user.getBranch() != null && user.getBranch().getDefaultWarehouse() != null
+                                ? user.getBranch().getDefaultWarehouse().getId()
+                                : null)
+                .claim("defaultWarehouseName",
+                        user.getBranch() != null && user.getBranch().getDefaultWarehouse() != null
+                                ? user.getBranch().getDefaultWarehouse().getName()
+                                : null)
                 .setIssuedAt(new Date())
                 .setExpiration(new Date(System.currentTimeMillis() + expiration))
                 .signWith(getSigningKey(), SignatureAlgorithm.HS256)
@@ -60,6 +71,14 @@ public class JwtUtil {
     @SuppressWarnings("unchecked")
     public List<String> extractRoles(String token) {
         return (List<String>) extractClaims(token).get("roles");
+    }
+
+    public Long extractBranchId(String token) {
+        Object branchId = extractClaims(token).get("branchId");
+        if (branchId instanceof Number number) {
+            return number.longValue();
+        }
+        return null;
     }
 
     public boolean isTokenValid(String token) {

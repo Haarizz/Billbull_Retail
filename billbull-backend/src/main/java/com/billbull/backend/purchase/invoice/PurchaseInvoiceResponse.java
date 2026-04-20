@@ -13,6 +13,9 @@ public class PurchaseInvoiceResponse {
     private String vendorName;
     private String sourceType;
     private String referenceNo;
+    private Long branchId;
+    private String branchName;
+    private String branchCode;
     private String warehouseName;
 
     // ✅ GRN linkage (OPTIONAL)
@@ -147,6 +150,30 @@ public class PurchaseInvoiceResponse {
 
     public void setWarehouseName(String warehouseName) {
         this.warehouseName = warehouseName;
+    }
+
+    public Long getBranchId() {
+        return branchId;
+    }
+
+    public void setBranchId(Long branchId) {
+        this.branchId = branchId;
+    }
+
+    public String getBranchName() {
+        return branchName;
+    }
+
+    public void setBranchName(String branchName) {
+        this.branchName = branchName;
+    }
+
+    public String getBranchCode() {
+        return branchCode;
+    }
+
+    public void setBranchCode(String branchCode) {
+        this.branchCode = branchCode;
     }
 
     public Long getGrnId() {

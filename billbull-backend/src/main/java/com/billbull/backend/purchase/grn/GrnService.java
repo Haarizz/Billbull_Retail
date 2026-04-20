@@ -26,6 +26,8 @@ import com.billbull.backend.inventory.warehouse.BinRepository;
 import com.billbull.backend.inventory.warehouse.ZoneRepository;
 import com.billbull.backend.inventory.warehouse.LocatorRepository;
 import com.billbull.backend.inventory.product.ProductMediaRepository;
+import com.billbull.backend.settings.branch.Branch;
+import com.billbull.backend.settings.branch.BranchAccessService;
 import com.billbull.backend.util.DocumentOrderingUtil;
 
 @Service
@@ -45,6 +47,7 @@ public class GrnService {
     private final com.billbull.backend.financials.generalledger.postingengine.PostingEngineService postingEngineService;
     private final ProductMediaRepository productMediaRepo;
     private final ProductBarcodeRepository productBarcodeRepo;
+    private final BranchAccessService branchAccessService;
 
     public GrnService(
             StockMovementService stockMovementService,
@@ -58,7 +61,8 @@ public class GrnService {
             com.billbull.backend.purchase.invoice.PurchaseInvoiceRepository invoiceRepo,
             com.billbull.backend.financials.generalledger.postingengine.PostingEngineService postingEngineService,
             ProductMediaRepository productMediaRepo,
-            ProductBarcodeRepository productBarcodeRepo) {
+            ProductBarcodeRepository productBarcodeRepo,
+            BranchAccessService branchAccessService) {
         this.stockMovementService = stockMovementService;
         this.grnRepo = grnRepo;
         this.warehouseRepo = warehouseRepo;
@@ -72,6 +76,7 @@ public class GrnService {
         this.postingEngineService = postingEngineService;
         this.productMediaRepo = productMediaRepo;
         this.productBarcodeRepo = productBarcodeRepo;
+        this.branchAccessService = branchAccessService;
     }
 
     /* ================= CREATE / UPDATE ================= */
@@ -82,6 +87,10 @@ public class GrnService {
                 ? new GrnEntity()
                 : grnRepo.findById(id)
                         .orElseThrow(() -> new RuntimeException("GRN not found"));
+
+        if (id != null) {
+            branchAccessService.assertTransactionBranchAccessible(grn.getBranchId(), "GRN");
+        }
 
         if (id != null && grn.isStockPosted()) {
             throw new IllegalStateException("Posted GRN cannot be edited");
@@ -106,7 +115,6 @@ public class GrnService {
 
         Warehouse warehouse = warehouseRepo.findById(req.warehouseId())
                 .orElseThrow(() -> new IllegalArgumentException("Invalid warehouse"));
-        grn.setWarehouse(warehouse);
 
         if (req.zoneId() != null) {
             grn.setZone(zoneRepo.findById(req.zoneId()).orElse(null));
@@ -139,6 +147,7 @@ public class GrnService {
             var lpoOpt = lpoRepo.findByLpoNumber(refNum);
             if (lpoOpt.isPresent()) {
                 Lpo lpo = lpoOpt.get();
+                branchAccessService.assertTransactionBranchAccessible(lpo.getBranchId(), "LPO");
                 grn.setLpo(lpo);
                 grn.setLpoNumber(lpo.getLpoNumber());
                 grn.setSourceType(GrnSourceType.SYSTEM_AUTO);
@@ -170,6 +179,19 @@ public class GrnService {
             grn.setQcStatus(QcStatus.NOT_STARTED);
             grn.setStockPosted(false);
         }
+
+        Branch resolvedBranch = resolveBranchForGrn(grn);
+        if (resolvedBranch != null) {
+            branchAccessService.assertWarehouseMatchesBranch(warehouse, resolvedBranch.getId(), "GRN");
+            grn.setBranchId(resolvedBranch.getId());
+            grn.setBranchName(resolvedBranch.getName());
+            grn.setBranchCode(resolvedBranch.getCode());
+        } else {
+            grn.setBranchId(null);
+            grn.setBranchName(null);
+            grn.setBranchCode(null);
+        }
+        grn.setWarehouse(warehouse);
 
         grn.getItems().clear();
 
@@ -252,7 +274,8 @@ public class GrnService {
 
     @Transactional(readOnly = true)
     public List<GrnListResponse> list() {
-        List<GrnEntity> grns = new ArrayList<>(grnRepo.findAll());
+        List<GrnEntity> grns = new ArrayList<>(
+                branchAccessService.filterBranchScoped(grnRepo.findAll(), GrnEntity::getBranchId));
         DocumentOrderingUtil.sortByDocumentDateAndNumberDesc(
                 grns,
                 GrnEntity::getGrnDate,
@@ -274,15 +297,18 @@ public class GrnService {
                     g.isStockPosted(),
                     g.getStatus().name(),
                     g.getReferenceId(),
-                    g.getSourceType() != null ? g.getSourceType().name() : null);
+                    g.getSourceType() != null ? g.getSourceType().name() : null,
+                    g.getBranchId(),
+                    g.getBranchName(),
+                    g.getBranchCode());
         }).toList();
     }
 
     @Transactional(readOnly = true)
     public GrnDetailResponse get(Long id) {
-        return mapDetail(
-                grnRepo.findById(id)
-                        .orElseThrow(() -> new RuntimeException("GRN not found")));
+        GrnEntity grn = getScopedGrn(id);
+        branchAccessService.assertTransactionBranchAccessible(grn.getBranchId(), "GRN");
+        return mapDetail(grn);
     }
 
     /* ================= DELETE ================= */
@@ -303,8 +329,7 @@ public class GrnService {
 
     public void submitQc(Long id) {
 
-        GrnEntity g = grnRepo.findById(id)
-                .orElseThrow(() -> new RuntimeException("GRN not found"));
+        GrnEntity g = getScopedGrn(id);
 
         if (g.getStatus() != GrnStatus.DRAFT) {
             throw new IllegalStateException("Only DRAFT GRN can be submitted for QC");
@@ -316,8 +341,7 @@ public class GrnService {
 
     public void approveQc(Long id) {
 
-        GrnEntity g = grnRepo.findById(id)
-                .orElseThrow(() -> new RuntimeException("GRN not found"));
+        GrnEntity g = getScopedGrn(id);
 
         if (g.getQcStatus() != QcStatus.IN_PROGRESS) {
             throw new IllegalStateException("QC not in progress");
@@ -334,8 +358,7 @@ public class GrnService {
     })
     public void postGrn(Long grnId, GrnPostRequest postReq) {
 
-        GrnEntity grn = grnRepo.findById(grnId)
-                .orElseThrow(() -> new RuntimeException("GRN not found"));
+        GrnEntity grn = getScopedGrn(grnId);
 
         if (grn.isStockPosted()) {
             throw new IllegalStateException("GRN already posted");
@@ -457,7 +480,10 @@ public class GrnService {
                         i.isBatchManaged(),
                         i.getFocQty(),
                         i.getFocUnit(),
-                        i.getRemarks())).toList());
+                        i.getRemarks())).toList(),
+                g.getBranchId(),
+                g.getBranchName(),
+                g.getBranchCode());
     }
 
     private String generateGrnNo() {
@@ -475,5 +501,31 @@ public class GrnService {
                     }
                 })
                 .orElse(prefix + "00001");
+    }
+
+    private GrnEntity getScopedGrn(Long id) {
+        GrnEntity grn = grnRepo.findById(id)
+                .orElseThrow(() -> new RuntimeException("GRN not found"));
+        branchAccessService.assertTransactionBranchAccessible(grn.getBranchId(), "GRN");
+        return grn;
+    }
+
+    private Branch resolveBranchForGrn(GrnEntity grn) {
+        if (grn.getLpo() != null) {
+            if (grn.getLpo().getBranchId() == null) {
+                return null;
+            }
+            Branch currentBranch = branchAccessService.getRequiredCurrentUserBranch();
+            if (!currentBranch.getId().equals(grn.getLpo().getBranchId())) {
+                throw new IllegalStateException("LPO belongs to another branch.");
+            }
+            return currentBranch;
+        }
+
+        if (grn.getId() != null && grn.getBranchId() == null) {
+            return null;
+        }
+
+        return branchAccessService.getRequiredCurrentUserBranch();
     }
 }

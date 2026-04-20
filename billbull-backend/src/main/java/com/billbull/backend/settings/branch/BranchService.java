@@ -83,6 +83,13 @@ public class BranchService {
         if (req.getDefaultWarehouseId() != null) {
             Warehouse wh = warehouseRepo.findById(req.getDefaultWarehouseId())
                     .orElseThrow(() -> new IllegalArgumentException("Warehouse not found"));
+            if (wh.getBranch() == null) {
+                throw new IllegalStateException(
+                        "Default warehouse must be assigned to the same branch before it can be selected.");
+            }
+            if (branch.getId() != null && !branch.getId().equals(wh.getBranch().getId())) {
+                throw new IllegalStateException("Default warehouse must belong to the selected branch.");
+            }
             branch.setDefaultWarehouse(wh);
         } else {
             branch.setDefaultWarehouse(null);
