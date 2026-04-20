@@ -9,4 +9,5 @@ import java.util.List;
 public interface CustomerRepository extends JpaRepository<Customer, Long> {
     List<Customer> findByNameContainingIgnoreCaseOrCodeContainingIgnoreCase(String name, String code);
     boolean existsByCode(String code);
+    java.util.Optional<Customer> findByCode(String code);
 }

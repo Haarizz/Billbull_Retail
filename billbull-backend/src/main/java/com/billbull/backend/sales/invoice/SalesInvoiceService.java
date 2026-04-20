@@ -22,6 +22,7 @@ import com.billbull.backend.financials.generalledger.postingengine.PostingEngine
 import com.billbull.backend.financials.receiptvoucher.ReceiptPurpose;
 import com.billbull.backend.financials.receiptvoucher.ReceiptVoucher;
 import com.billbull.backend.financials.receiptvoucher.ReceiptVoucherService;
+import com.billbull.backend.sales.customerledger.CustomerRepository;
 import com.billbull.backend.inventory.product.ProductMediaRepository;
 import com.billbull.backend.inventory.product.ProductRepository;
 import com.billbull.backend.inventory.stockavailability.StockAvailabilityResponse;
@@ -43,6 +44,7 @@ public class SalesInvoiceService {
     private final ProductRepository productRepo;
     private final ProductMediaRepository productMediaRepository;
     private final com.billbull.backend.sales.salesorder.SalesOrderRepository salesOrderRepository;
+    private final CustomerRepository customerRepository;
 
     public SalesInvoiceService(SalesInvoiceRepository invoiceRepo,
             PostingEngineService postingEngineService,
@@ -52,7 +54,8 @@ public class SalesInvoiceService {
             ReceiptVoucherService receiptVoucherService,
             ProductRepository productRepo,
             ProductMediaRepository productMediaRepository,
-            com.billbull.backend.sales.salesorder.SalesOrderRepository salesOrderRepository) {
+            com.billbull.backend.sales.salesorder.SalesOrderRepository salesOrderRepository,
+            CustomerRepository customerRepository) {
         this.invoiceRepo = invoiceRepo;
         this.postingEngineService = postingEngineService;
         this.deliveryNoteService = deliveryNoteService;
@@ -62,6 +65,7 @@ public class SalesInvoiceService {
         this.productRepo = productRepo;
         this.productMediaRepository = productMediaRepository;
         this.salesOrderRepository = salesOrderRepository;
+        this.customerRepository = customerRepository;
     }
 
     // ----------------------------
@@ -497,14 +501,24 @@ public class SalesInvoiceService {
 
             try {
                 StockAvailabilityResponse stock = stockAvailabilityService.getStockAvailability(item.getItemCode());
-                int totalAvailable = stock.getLocations() == null ? 0
-                        : stock.getLocations().stream()
-                                .mapToInt(loc -> loc.getAvailable() != null ? loc.getAvailable() : 0)
-                                .sum();
+                int available;
+                if (item.getWarehouseId() != null && stock.getLocations() != null) {
+                    // Check only the item's specific warehouse
+                    available = stock.getLocations().stream()
+                            .filter(loc -> item.getWarehouseId().equals(loc.getLocationId()))
+                            .mapToInt(loc -> loc.getAvailable() != null ? loc.getAvailable() : 0)
+                            .sum();
+                } else {
+                    // No warehouse set — fall back to total across all warehouses
+                    available = stock.getLocations() == null ? 0
+                            : stock.getLocations().stream()
+                                    .mapToInt(loc -> loc.getAvailable() != null ? loc.getAvailable() : 0)
+                                    .sum();
+                }
 
-                if (totalAvailable < requiredQty) {
+                if (available < requiredQty) {
                     insufficientItems.add(String.format("'%s' (required: %d, available: %d)",
-                            item.getItemCode(), requiredQty, totalAvailable));
+                            item.getItemCode(), requiredQty, available));
                 }
             } catch (Exception e) {
                 // If stock check fails (e.g. product not found), skip silently
@@ -532,16 +546,18 @@ public class SalesInvoiceService {
         if (invoice.getCustomerCode() == null || invoice.getCustomerCode().isBlank())
             return;
 
-        // Sum outstanding (non-paid, non-cancelled) balances for this customer
-        Double outstanding = invoiceRepo.findOutstandingBalanceByCustomerCode(invoice.getCustomerCode());
-        double outstandingAmount = outstanding != null ? outstanding : 0.0;
-
-        // Use the customer's credit limit from the invoice entity (if set), fallback 0
-        double creditLimit = invoice.getCreditLimit() != null ? invoice.getCreditLimit() : 0.0;
+        // Look up credit limit directly from the customer record (authoritative source)
+        double creditLimit = customerRepository.findByCode(invoice.getCustomerCode())
+                .map(c -> c.getCreditLimitAmount() != null ? c.getCreditLimitAmount().doubleValue() : 0.0)
+                .orElse(0.0);
 
         // Only enforce if a credit limit is actually configured for this customer
         if (creditLimit <= 0)
             return;
+
+        // Sum outstanding (non-paid, non-cancelled) balances for this customer
+        Double outstanding = invoiceRepo.findOutstandingBalanceByCustomerCode(invoice.getCustomerCode());
+        double outstandingAmount = outstanding != null ? outstanding : 0.0;
 
         boolean isOverLimit = outstandingAmount > creditLimit;
 

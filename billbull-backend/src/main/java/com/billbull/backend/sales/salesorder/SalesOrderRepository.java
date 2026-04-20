@@ -10,14 +10,15 @@ import java.util.List;
 @Repository
 public interface SalesOrderRepository extends JpaRepository<SalesOrder, Long> {
 
+  // INVOICED is excluded: once an SO is invoiced its DN (DRAFT/DISPATCHED) tracks
+  // the reservation. Counting both would double-reserve the same stock.
   @Query("""
           SELECT COALESCE(SUM(si.quantity), 0)
           FROM SalesOrder so JOIN so.items si
           WHERE si.itemCode = :productCode
             AND so.status IN (
               com.billbull.backend.sales.salesorder.SalesOrderStatus.CONFIRMED,
-              com.billbull.backend.sales.salesorder.SalesOrderStatus.PARTIALLY_PAID,
-              com.billbull.backend.sales.salesorder.SalesOrderStatus.INVOICED
+              com.billbull.backend.sales.salesorder.SalesOrderStatus.PARTIALLY_PAID
             )
       """)
   BigDecimal sumReservedQuantity(@Param("productCode") String productCode);
@@ -28,8 +29,7 @@ public interface SalesOrderRepository extends JpaRepository<SalesOrder, Long> {
           WHERE si.itemCode IN :productCodes
             AND so.status IN (
               com.billbull.backend.sales.salesorder.SalesOrderStatus.CONFIRMED,
-              com.billbull.backend.sales.salesorder.SalesOrderStatus.PARTIALLY_PAID,
-              com.billbull.backend.sales.salesorder.SalesOrderStatus.INVOICED
+              com.billbull.backend.sales.salesorder.SalesOrderStatus.PARTIALLY_PAID
             )
           GROUP BY si.itemCode
       """)
