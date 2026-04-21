@@ -238,8 +238,17 @@ public class GrnService {
 
         grn.setSubtotal(subtotal);
 
-        BigDecimal tax = subtotal
-                .multiply(BigDecimal.valueOf(0.05))
+        BigDecimal tax = grn.getItems().stream()
+                .map(item -> {
+                    BigDecimal lineTotal = item.getLineTotal() != null ? item.getLineTotal() : BigDecimal.ZERO;
+                    BigDecimal taxPercent = (item.getProduct() != null
+                            && item.getProduct().getTax() != null
+                            && item.getProduct().getTax().getPurchaseTax() != null)
+                            ? item.getProduct().getTax().getPurchaseTax()
+                            : BigDecimal.valueOf(5);
+                    return lineTotal.multiply(taxPercent).divide(BigDecimal.valueOf(100));
+                })
+                .reduce(BigDecimal.ZERO, BigDecimal::add)
                 .setScale(2, RoundingMode.HALF_UP);
 
         grn.setTaxAmount(tax);
@@ -480,7 +489,10 @@ public class GrnService {
                         i.isBatchManaged(),
                         i.getFocQty(),
                         i.getFocUnit(),
-                        i.getRemarks())).toList(),
+                        i.getRemarks(),
+                        (i.getProduct().getTax() != null && i.getProduct().getTax().getPurchaseTax() != null)
+                                ? i.getProduct().getTax().getPurchaseTax()
+                                : java.math.BigDecimal.valueOf(5))).toList(),
                 g.getBranchId(),
                 g.getBranchName(),
                 g.getBranchCode());

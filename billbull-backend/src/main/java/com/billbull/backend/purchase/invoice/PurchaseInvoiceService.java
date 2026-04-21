@@ -155,9 +155,13 @@ public class PurchaseInvoiceService {
             BigDecimal unitCost = i.getUnitPrice() != null ? i.getUnitPrice() : BigDecimal.ZERO;
             d.setUnitCost(unitCost);
 
-            BigDecimal taxPercent = BigDecimal.valueOf(5);
+            BigDecimal taxPercent = (i.getProduct() != null
+                    && i.getProduct().getTax() != null
+                    && i.getProduct().getTax().getPurchaseTax() != null)
+                    ? i.getProduct().getTax().getPurchaseTax()
+                    : BigDecimal.valueOf(5);
             BigDecimal base = unitCost.multiply(BigDecimal.valueOf(i.getQuantity() != null ? i.getQuantity() : 0));
-            BigDecimal taxAmount = base.multiply(taxPercent).divide(BigDecimal.valueOf(100));
+            BigDecimal taxAmount = base.multiply(taxPercent).divide(BigDecimal.valueOf(100), 2, java.math.RoundingMode.HALF_UP);
 
             d.setTaxPercent(taxPercent);
             d.setTaxAmount(taxAmount);
@@ -219,12 +223,16 @@ public class PurchaseInvoiceService {
             d.setQty(i.getAcceptedQty());
             d.setUnitCost(i.getUnitCost());
 
-            BigDecimal taxPercent = BigDecimal.valueOf(5);
+            BigDecimal taxPercent = (i.getProduct() != null
+                    && i.getProduct().getTax() != null
+                    && i.getProduct().getTax().getPurchaseTax() != null)
+                    ? i.getProduct().getTax().getPurchaseTax()
+                    : BigDecimal.valueOf(5);
             BigDecimal base = i.getUnitCost()
                     .multiply(BigDecimal.valueOf(i.getAcceptedQty()));
             BigDecimal taxAmount = base
                     .multiply(taxPercent)
-                    .divide(BigDecimal.valueOf(100));
+                    .divide(BigDecimal.valueOf(100), 2, java.math.RoundingMode.HALF_UP);
 
             d.setTaxPercent(taxPercent);
             d.setTaxAmount(taxAmount);

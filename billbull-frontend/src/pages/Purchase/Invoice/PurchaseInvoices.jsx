@@ -1037,7 +1037,7 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
             uom: item.uom,
             qty: item.quantity,
             cost: item.unitPrice,
-            tax: 5,
+            tax: parseFloat(item.taxPercent) || 5,
             taxAmt: Number(item.taxAmount || 0),
             taxAmount: Number(item.taxAmount || 0),
             disc: item.discountPercent || 0,
