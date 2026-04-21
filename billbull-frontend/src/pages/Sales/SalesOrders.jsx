@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import {
   Printer,
@@ -13,6 +13,7 @@ import {
   FileText,
   Calendar,
   CreditCard,
+  DollarSign,
   Truck,
   ShoppingCart,
   Box,
@@ -28,8 +29,10 @@ import {
 } from 'lucide-react';
 
 // ✅ API IMPORTS
+import api from '../../api/axiosConfig';
 import { getAllCustomers } from '../../api/customerledgerApi';
 import { getAllQuotations } from '../../api/quotationApi';
+import { getAllProformas } from '../../api/proformaApi';
 import {
   getAllSalesOrders,
   saveSalesOrder,
@@ -131,10 +134,11 @@ const SalesOrders = () => {
   // --- DATA STATES ---
   const [customersList, setCustomersList] = useState([]);
   const [quotationsList, setQuotationsList] = useState([]);
+  const [proformasList, setProformasList] = useState([]);
   const [selectedCustomer, setSelectedCustomer] = useState(null);
   const [isCustomerOpen, setIsCustomerOpen] = useState(false);
   const [isCustomerSearchOpen, setIsCustomerSearchOpen] = useState(false);
-  const [isQuotationOpen, setIsQuotationOpen] = useState(false);
+  const [isLinkedSourceOpen, setIsLinkedSourceOpen] = useState(false);
 
   // --- ORDER LIST STATE ---
   const [ordersList, setOrdersList] = useState([]);
@@ -170,16 +174,36 @@ const SalesOrders = () => {
   // Header Info
   const [soNumber, setSoNumber] = useState(() => `SO-${Math.floor(100000 + Math.random() * 900000)}`);
   const [orderDate, setOrderDate] = useState(new Date().toISOString().split('T')[0]);
+  const [linkedSourceType, setLinkedSourceType] = useState('');
+  const [linkedSourceSearch, setLinkedSourceSearch] = useState('');
   const [linkedQtn, setLinkedQtn] = useState('');
   const [linkedPi, setLinkedPi] = useState('');
+
+  const createBlankOrderItem = () => ({
+    id: Date.now() + Math.random(),
+    code: '',
+    barcode: '',
+    image: '',
+    desc: '',
+    remarks: '',
+    unit: 'PCS',
+    qty: 0,
+    price: 0,
+    cost: 0,
+    foc: 0,
+    focUnit: 'PCS',
+    availableUnits: ['PCS'],
+    disc: 0,
+    tax: 5,
+    taxAmt: 0,
+    total: 0
+  });
 
   // ✅ PRODUCT SELECTOR STATE
   const [isProductSelectorOpen, setIsProductSelectorOpen] = useState(false);
 
   // Items
-  const [items, setItems] = useState([
-    { id: Date.now(), code: '', barcode: '', image: '', desc: '', remarks: '', unit: 'PCS', qty: 0, price: 0, cost: 0, foc: 0, focUnit: 'PCS', availableUnits: ['PCS'], disc: 0, tax: 5, taxAmt: 0, total: 0 }
-  ]);
+  const [items, setItems] = useState([createBlankOrderItem()]);
 
   // ✅ GLOBAL SHORTCUTS
   useShortcuts({
@@ -216,6 +240,17 @@ const SalesOrders = () => {
   const [advanceAmount, setAdvanceAmount] = useState(0);
   const [paymentRef, setPaymentRef] = useState('');
   const [paymentNotes, setPaymentNotes] = useState('');
+  const [bankAccountOptions, setBankAccountOptions] = useState([]);
+
+  // Payment Modal State
+  const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
+  const [modalPaymentDate, setModalPaymentDate] = useState(new Date().toISOString().split('T')[0]);
+  const [modalPaymentAmount, setModalPaymentAmount] = useState(0);
+  const [modalPaymentRef, setModalPaymentRef] = useState('');
+  const [modalPaymentMode, setModalPaymentMode] = useState('Cash');
+  const [modalBankAccount, setModalBankAccount] = useState('');
+  const [modalChequeDate, setModalChequeDate] = useState(new Date().toISOString().split('T')[0]);
+  const [modalNotes, setModalNotes] = useState('');
 
   // Delivery
   const [deliveryType, setDeliveryType] = useState('Delivery');
@@ -250,6 +285,46 @@ const SalesOrders = () => {
   // ✅ HANDLE INCOMING QUOTATION
   const location = useLocation();
   const navigate = useNavigate();
+  const activeLinkedDocumentNumber = linkedSourceType === 'quotation'
+    ? linkedQtn
+    : linkedSourceType === 'proforma'
+      ? linkedPi
+      : '';
+  const hasLinkedDocument = Boolean(linkedQtn || linkedPi);
+
+  const filteredLinkedDocuments = useMemo(() => {
+    const query = linkedSourceSearch.trim().toLowerCase();
+
+    if (linkedSourceType === 'quotation') {
+      return quotationsList.filter((quotation) => {
+        const number = (quotation.qtnNo || '').toLowerCase();
+        const customer = (quotation.customer || '').toLowerCase();
+
+        return !query || number.includes(query) || customer.includes(query);
+      });
+    }
+
+    if (linkedSourceType === 'proforma') {
+      return proformasList.filter((proforma) => {
+        const number = (proforma.piNumber || '').toLowerCase();
+        const customerName = (proforma.customerName || '').toLowerCase();
+        const customerCode = (proforma.customerCode || '').toLowerCase();
+
+        return !query
+          || number.includes(query)
+          || customerName.includes(query)
+          || customerCode.includes(query);
+      });
+    }
+
+    return [];
+  }, [linkedSourceSearch, linkedSourceType, proformasList, quotationsList]);
+
+  useEffect(() => {
+    if (!isLinkedSourceOpen) {
+      setLinkedSourceSearch(activeLinkedDocumentNumber);
+    }
+  }, [activeLinkedDocumentNumber, isLinkedSourceOpen]);
 
   useEffect(() => {
     if (location.state?.quotation) {
@@ -267,7 +342,19 @@ const SalesOrders = () => {
 
   const fetchAllData = async () => {
     try {
-      const custData = await getAllCustomers();
+      const [custResult, qtnResult, proformaResult, bankAccResult] = await Promise.allSettled([
+        getAllCustomers(),
+        getAllQuotations(),
+        getAllProformas(),
+        api.get('/api/ledger/accounts/bank-accounts').then(r => r.data)
+      ]);
+
+      const custData = custResult.status === 'fulfilled' ? custResult.value : [];
+      const qtnData = qtnResult.status === 'fulfilled' ? qtnResult.value : [];
+      const proformaData = proformaResult.status === 'fulfilled' ? proformaResult.value : [];
+      const bankAccData = bankAccResult.status === 'fulfilled' ? bankAccResult.value : [];
+      setBankAccountOptions(Array.isArray(bankAccData) ? bankAccData : []);
+
       let validCustomers = Array.isArray(custData) ? custData : [];
 
       // Ensure a default Walk-in Customer exists in the list for quick selection
@@ -293,8 +380,8 @@ const SalesOrders = () => {
         setSelectedCustomer(current => current || walkIn);
       }
 
-      const qtnData = await getAllQuotations();
       setQuotationsList(Array.isArray(qtnData) ? qtnData : []);
+      setProformasList(Array.isArray(proformaData) ? proformaData : []);
     } catch (error) {
       console.error("Failed to fetch master data:", error);
     }
@@ -397,7 +484,7 @@ const SalesOrders = () => {
       unitConversions: item.unitConversions || {},
       unitPrices: item.unitPrices || {},
       disc: Number(item.disc ?? item.discount) || 0,
-      tax: Number(item.tax ?? item.taxRate) || 5,
+      tax: Number(item.tax ?? item.taxRate ?? item.taxPercent) || 5,
       taxAmt: Number(item.taxAmt ?? item.taxAmount) || 0,
       total: Number(item.total ?? item.lineTotal) || 0
     };
@@ -445,6 +532,57 @@ const SalesOrders = () => {
     setIsProductSelectorOpen(false); // ✅ Close modal after adding
   };
 
+  const buildFallbackCustomer = (name, code = '') => ({
+    code,
+    name: name || code || 'Linked Customer',
+    trn: '',
+    phone: '',
+    mobile: '',
+    balance: 0,
+    creditStatus: 'Good'
+  });
+
+  const applyLinkedDocumentItems = (sourceItems = []) => {
+    const mappedItems = sourceItems.map((item, index) =>
+      normalizeOrderItem(item, Date.now() + index + Math.random())
+    );
+
+    if (mappedItems.length > 0) {
+      setItems(mappedItems);
+      setFocusedItem(mappedItems[0] || null);
+      return;
+    }
+
+    setItems([createBlankOrderItem()]);
+    setFocusedItem(null);
+  };
+
+  const handleLinkedSourceTypeChange = (nextType) => {
+    if (isLocked) return;
+    if (nextType === linkedSourceType) return;
+
+    setLinkedSourceType(nextType);
+    setLinkedSourceSearch('');
+    setLinkedQtn('');
+    setLinkedPi('');
+    setIsLinkedSourceOpen(false);
+  };
+
+  const handleLinkedSourceSearchFocus = (event) => {
+    event.stopPropagation();
+    if (isLocked || !linkedSourceType) return;
+
+    setLinkedSourceSearch(activeLinkedDocumentNumber);
+    setIsLinkedSourceOpen(true);
+  };
+
+  const handleLinkedSourceSearchChange = (value) => {
+    if (isLocked || !linkedSourceType) return;
+
+    setLinkedSourceSearch(value);
+    setIsLinkedSourceOpen(true);
+  };
+
   const handleConfirmOrder = () => {
     const hasItems = items.some(i => i.code && i.qty > 0);
     if (!hasItems) {
@@ -478,6 +616,7 @@ const SalesOrders = () => {
           customer: selectedCustomer?.name || selectedCustomer?.code || '',
           customerCode: selectedCustomer?.code || '',
           linkedQuotation: linkedQtn || '',
+          linkedProforma: linkedPi || '',
           items: items
             .filter(i => i.code && i.qty > 0)
             .map(i => ({
@@ -565,17 +704,34 @@ const SalesOrders = () => {
   };
 
   // ✅ New Handler for Pay Button
-  const handleLogPayment = () => {
-    if (Number(advanceAmount) <= 0) {
-      alert("Please enter a valid amount to pay.");
-      return;
+  const handleOpenPaymentModal = () => {
+    const outstanding = Math.max(orderTotal - Number(advanceAmount), 0);
+    setModalPaymentAmount(outstanding > 0 ? outstanding.toFixed(2) : '');
+    setModalPaymentDate(new Date().toISOString().split('T')[0]);
+    setModalPaymentMode('Cash');
+    setModalBankAccount('');
+    setModalChequeDate(new Date().toISOString().split('T')[0]);
+    setModalPaymentRef('');
+    setModalNotes('');
+    setIsPaymentModalOpen(true);
+  };
+
+  const handleAddPaymentFromModal = () => {
+    if (!modalPaymentAmount || Number(modalPaymentAmount) <= 0) {
+      return alert("Please enter a valid amount.");
     }
-    // Saving the order effectively "Logs" the payment in this context
-    saveOrUpdateOrder();
+    setAdvanceAmount(prev => Number(prev) + Number(modalPaymentAmount));
+    setPaymentMethod(modalPaymentMode);
+    setPaymentRef(modalPaymentRef);
+    setPaymentNotes(modalNotes);
+    setIsPaymentModalOpen(false);
   };
 
   // ✅ FIX 4: INCLUDE ID IN PAYLOAD
   const saveOrUpdateOrder = async () => {
+    const sanitizedLinkedQuotation = linkedSourceType === 'quotation' ? linkedQtn.trim() : '';
+    const sanitizedLinkedProforma = linkedSourceType === 'proforma' ? linkedPi.trim() : '';
+
     const payload = {
       id: orderId, // <--- Sent ID to backend to update existing record
       soNumber,
@@ -583,8 +739,8 @@ const SalesOrders = () => {
 
       customerCode: selectedCustomer?.code || '',
       customerName: selectedCustomer?.name || '',
-      linkedQuotation: linkedQtn,
-      linkedProforma: linkedPi,
+      linkedQuotation: sanitizedLinkedQuotation,
+      linkedProforma: sanitizedLinkedProforma,
 
       // Payment & Delivery
       advanceAmount: Number(advanceAmount),
@@ -639,7 +795,7 @@ const SalesOrders = () => {
       setAttachmentFile(null);
     } catch (e) {
       console.error("Save failed", e);
-      const msg = e?.response?.data?.message || e?.message || "Please check inputs.";
+      const msg = e?.response?.data?.message || e?.response?.data || e?.message || "Please check inputs.";
       alert(`Failed to save Sales Order: ${msg}`);
     }
   };
@@ -667,24 +823,45 @@ const SalesOrders = () => {
     if (!orderId) {
       setSoNumber(`SO-${Math.floor(100000 + Math.random() * 900000)}`);
     }
+    setLinkedSourceType('quotation');
     setLinkedQtn(qtn.qtnNo);
+    setLinkedPi('');
+    setLinkedSourceSearch(qtn.qtnNo || '');
 
     if (qtn.customer) {
       const matchedCustomer = customersList.find(c =>
         qtn.customer.includes(c.name) || qtn.customer.includes(c.code)
       );
-      if (matchedCustomer) {
-        setSelectedCustomer(matchedCustomer);
-      }
+      setSelectedCustomer(matchedCustomer || buildFallbackCustomer(qtn.customer));
     }
 
-    if (qtn.items && qtn.items.length > 0) {
-      const mappedItems = qtn.items.map((item, index) => normalizeOrderItem(item, Date.now() + index));
-      setItems(mappedItems);
-      setFocusedItem(mappedItems[0] || null);
+    applyLinkedDocumentItems(qtn.items || []);
+
+    setIsLinkedSourceOpen(false);
+  };
+
+  const handleSelectProforma = (proforma) => {
+    if (!orderId) {
+      setSoNumber(`SO-${Math.floor(100000 + Math.random() * 900000)}`);
     }
 
-    setIsQuotationOpen(false);
+    setLinkedSourceType('proforma');
+    setLinkedPi(proforma.piNumber || '');
+    setLinkedQtn('');
+    setLinkedSourceSearch(proforma.piNumber || '');
+
+    const matchedCustomer = customersList.find((customer) =>
+      (proforma.customerCode && customer.code === proforma.customerCode)
+      || (proforma.customerName && customer.name === proforma.customerName)
+    );
+
+    setSelectedCustomer(
+      matchedCustomer || buildFallbackCustomer(proforma.customerName, proforma.customerCode)
+    );
+
+    applyLinkedDocumentItems(proforma.items || []);
+
+    setIsLinkedSourceOpen(false);
   };
 
   // ✅ FIX 2: SET ID WHEN LOADING
@@ -700,8 +877,12 @@ const SalesOrders = () => {
       name: order.customerName,
     });
 
+    const hasLinkedQuotation = Boolean(order.linkedQuotation);
+    const hasLinkedProforma = Boolean(order.linkedProforma);
+    setLinkedSourceType(hasLinkedQuotation ? 'quotation' : hasLinkedProforma ? 'proforma' : '');
     setLinkedQtn(order.linkedQuotation || '');
     setLinkedPi(order.linkedProforma || '');
+    setLinkedSourceSearch(hasLinkedQuotation ? (order.linkedQuotation || '') : (order.linkedProforma || ''));
 
     // Map items back
     if (order.items) {
@@ -709,7 +890,7 @@ const SalesOrders = () => {
       setItems(mappedItems);
       setFocusedItem(mappedItems[0] || null);
     } else {
-      setItems([]);
+      setItems([createBlankOrderItem()]);
       setFocusedItem(null);
     }
 
@@ -740,8 +921,11 @@ const SalesOrders = () => {
     const walkIn = customersList.find(c => c.name.toLowerCase().includes('walk-in') || c.name.toLowerCase().includes('walkin') || c.name.toLowerCase() === 'cash customer');
     setSelectedCustomer(walkIn || null);
 
+    setLinkedSourceType('');
+    setLinkedSourceSearch('');
     setLinkedQtn('');
-    setItems([{ id: Date.now(), code: '', barcode: '', image: '', desc: '', remarks: '', unit: 'PCS', qty: 0, price: 0, cost: 0, foc: 0, focUnit: 'PCS', availableUnits: ['PCS'], disc: 0, tax: 5, taxAmt: 0, total: 0 }]);
+    setLinkedPi('');
+    setItems([createBlankOrderItem()]);
     setAdvanceAmount(0);
     setPaymentMethod('Cash');
     setPaymentRef('');
@@ -853,7 +1037,7 @@ const SalesOrders = () => {
   };
 
   return (
-    <div className="min-h-screen bg-slate-50 font-sans text-slate-800 p-4" onClick={() => { setIsCustomerOpen(false); setIsQuotationOpen(false); }}>
+    <div className="min-h-screen bg-slate-50 font-sans text-slate-800 p-4" onClick={() => { setIsCustomerOpen(false); setIsLinkedSourceOpen(false); }}>
 
       {/* ✅ PRODUCT SELECTOR MODAL */}
       <ProductSelector
@@ -1020,41 +1204,82 @@ const SalesOrders = () => {
                   <input type="date" disabled={isLocked} value={orderDate} onChange={(e) => setOrderDate(e.target.value)} className="text-xs p-2 border border-slate-200 rounded text-slate-700 focus:outline-none focus:border-yellow-400" />
                 </div>
 
-                {/* LINKED QUOTATION WITH DROPDOWN */}
+                <div className="flex flex-col">
+                  <label className="text-xs font-semibold text-slate-500 mb-1">Linked Source</label>
+                  <div className="relative">
+                    <select
+                      value={linkedSourceType}
+                      disabled={isLocked}
+                      onChange={(e) => handleLinkedSourceTypeChange(e.target.value)}
+                      className="w-full text-xs p-2 border border-slate-200 rounded text-slate-700 bg-white appearance-none focus:outline-none focus:border-yellow-400 disabled:bg-slate-50 disabled:text-slate-500"
+                    >
+                      <option value="">Direct / No Link</option>
+                      <option value="quotation">Quotation</option>
+                      <option value="proforma">PI / Proforma</option>
+                    </select>
+                    <ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
+                  </div>
+                </div>
+
                 <div className="flex flex-col relative">
-                  <label className="text-xs font-semibold text-slate-500 mb-1">Linked Quotation</label>
-                  <input
-                    type="text"
-                    value={linkedQtn}
-                    onChange={(e) => { setLinkedQtn(e.target.value); setIsQuotationOpen(true); }}
-                    onClick={(e) => { e.stopPropagation(); setIsQuotationOpen(true); }}
-                    placeholder="QTN-xxxxx"
-                    className="text-xs p-2 border border-slate-200 rounded text-slate-700 focus:outline-none focus:border-yellow-400"
-                    disabled={isLocked}
-                  />
-                  {isQuotationOpen && !isLocked && (
-                    <div className="absolute top-full left-0 w-full bg-white border border-slate-200 rounded-md shadow-xl mt-1 max-h-48 overflow-y-auto z-30">
-                      {quotationsList.length > 0 ? (
-                        quotationsList.filter(q => q.qtnNo.toLowerCase().includes(linkedQtn.toLowerCase())).map(qtn => (
-                          <div
-                            key={qtn.id}
-                            className="px-3 py-2 text-xs hover:bg-slate-50 cursor-pointer text-slate-700 border-b border-slate-50 last:border-0 flex justify-between"
-                            onClick={() => handleSelectQuotation(qtn)}
-                          >
-                            <span className="font-bold">{qtn.qtnNo}</span>
-                            <span className="text-slate-400">{qtn.customer}</span>
-                          </div>
-                        ))
+                  <label className="text-xs font-semibold text-slate-500 mb-1">Linked Document No.</label>
+                  <div className="relative">
+                    <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
+                    <input
+                      type="text"
+                      value={isLinkedSourceOpen ? linkedSourceSearch : activeLinkedDocumentNumber}
+                      onChange={(e) => handleLinkedSourceSearchChange(e.target.value)}
+                      onClick={handleLinkedSourceSearchFocus}
+                      onFocus={handleLinkedSourceSearchFocus}
+                      placeholder={
+                        !linkedSourceType
+                          ? 'Select source type first'
+                          : linkedSourceType === 'quotation'
+                            ? 'Search quotation number or customer'
+                            : 'Search PI / Proforma number or customer'
+                      }
+                      className="w-full text-xs p-2 pl-8 border border-slate-200 rounded text-slate-700 focus:outline-none focus:border-yellow-400 disabled:bg-slate-50 disabled:text-slate-500"
+                      disabled={isLocked || !linkedSourceType}
+                    />
+                  </div>
+                  {isLinkedSourceOpen && linkedSourceType && !isLocked && (
+                    <div
+                      className="absolute top-full left-0 w-full bg-white border border-slate-200 rounded-md shadow-xl mt-1 max-h-56 overflow-y-auto z-30"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      {filteredLinkedDocuments.length > 0 ? (
+                        filteredLinkedDocuments.map((document) => {
+                          const documentNumber = linkedSourceType === 'quotation'
+                            ? document.qtnNo
+                            : document.piNumber;
+                          const customerLabel = linkedSourceType === 'quotation'
+                            ? (document.customer || 'No customer')
+                            : [document.customerCode, document.customerName].filter(Boolean).join(' - ') || document.customerName || 'No customer';
+
+                          return (
+                            <div
+                              key={`${linkedSourceType}-${document.id || documentNumber}`}
+                              className="px-3 py-2 text-xs hover:bg-slate-50 cursor-pointer text-slate-700 border-b border-slate-50 last:border-0 flex justify-between gap-3"
+                              onClick={() => {
+                                if (linkedSourceType === 'quotation') {
+                                  handleSelectQuotation(document);
+                                  return;
+                                }
+                                handleSelectProforma(document);
+                              }}
+                            >
+                              <span className="font-bold">{documentNumber}</span>
+                              <span className="text-slate-400 truncate">{customerLabel}</span>
+                            </div>
+                          );
+                        })
                       ) : (
-                        <div className="px-3 py-2 text-xs text-slate-400">No quotations found</div>
+                        <div className="px-3 py-2 text-xs text-slate-400">
+                          {linkedSourceType === 'quotation' ? 'No quotations found' : 'No proforma invoices found'}
+                        </div>
                       )}
                     </div>
                   )}
-                </div>
-
-                <div className="flex flex-col">
-                  <label className="text-xs font-semibold text-slate-500 mb-1">Linked PI / Proforma</label>
-                  <input type="text" value={linkedPi} disabled={isLocked} onChange={(e) => setLinkedPi(e.target.value)} placeholder="PI-xxxxx" className="text-xs p-2 border border-slate-200 rounded text-slate-700 focus:outline-none focus:border-yellow-400" />
                 </div>
               </div>
             </div>
@@ -1070,13 +1295,13 @@ const SalesOrders = () => {
                 <label className="block text-xs font-semibold text-slate-500 mb-1">Select Customer</label>
 
                 <div
-                  className={`w-full text-xs p-2 border border-slate-200 rounded text-slate-700 flex items-center gap-2 ${linkedQtn || isLocked ? 'bg-slate-50 cursor-not-allowed' : 'bg-white cursor-pointer hover:border-yellow-400'} transition-colors`}
+                  className={`w-full text-xs p-2 border border-slate-200 rounded text-slate-700 flex items-center gap-2 ${hasLinkedDocument || isLocked ? 'bg-slate-50 cursor-not-allowed' : 'bg-white cursor-pointer hover:border-yellow-400'} transition-colors`}
                   onClick={() => {
-                    if (!linkedQtn && !isLocked) setIsCustomerSearchOpen(true);
+                    if (!hasLinkedDocument && !isLocked) setIsCustomerSearchOpen(true);
                   }}
                 >
                   <Search size={14} className="text-slate-400 shrink-0" />
-                  <span className="flex-1 truncate">{selectedCustomer ? `${selectedCustomer.code} - ${selectedCustomer.name}` : 'Search customer...'}</span>
+                  <span className="flex-1 truncate">{selectedCustomer ? [selectedCustomer.code, selectedCustomer.name].filter(Boolean).join(' - ') : 'Search customer...'}</span>
                 </div>
               </div>
 
@@ -1373,83 +1598,6 @@ const SalesOrders = () => {
 
             {/* 4. Combined Attachments & Notes */}
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-              {/* Advance Payment (Moved to Middle Column) */}
-              <div className="h-full">
-                <div className="bg-white rounded-lg border border-slate-200/50 shadow-sm p-4 h-full">
-                  <h3 className="text-sm font-bold text-slate-800 flex items-center gap-2 mb-4">
-                    <CreditCard size={15} className="text-emerald-500" /> Advance Payment
-                  </h3>
-                  <div className="grid grid-cols-2 gap-3">
-                    <div>
-                      <label className="block text-[10px] font-semibold text-slate-500 mb-1">Payment Method</label>
-                      <select
-                        className="w-full text-xs p-2 border border-slate-300/50 bg-white rounded text-slate-700 focus:border-emerald-400 outline-none disabled:bg-slate-50 disabled:text-slate-500"
-                        value={paymentMethod}
-                        onChange={(e) => setPaymentMethod(e.target.value)}
-                        disabled={isLocked}
-                      >
-                        <option>Cash</option>
-                        <option>Bank Transfer</option>
-                        <option>Card</option>
-                        <option>Cheque</option>
-                        <option>Online</option>
-                      </select>
-                    </div>
-                    <div className="relative">
-                      <label className="flex justify-between items-center w-full text-[10px] font-semibold text-slate-500 mb-1">
-                        Amount
-                        <button
-                          type="button"
-                          disabled={isLocked}
-                          onClick={() => setAdvanceAmount(orderTotal.toFixed(2))}
-                          className="text-[9px] text-emerald-600 hover:text-emerald-700 font-bold bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-100 hover:border-emerald-200 transition-colors"
-                          title="Auto-fill with total order amount"
-                        >
-                          Auto fill max
-                        </button>
-                      </label>
-                      <input
-                        type="number"
-                        placeholder="0.00"
-                        value={advanceAmount}
-                        disabled={isLocked}
-                        onChange={(e) => {
-                          const val = parseFloat(e.target.value) || 0;
-                          setAdvanceAmount(val > orderTotal ? orderTotal : val);
-                        }}
-                        className="w-full text-xs p-2 text-right border border-slate-300/50 rounded text-slate-800 font-bold focus:border-emerald-400 outline-none disabled:bg-slate-50 disabled:text-slate-500"
-                      />
-                    </div>
-                    <div className="col-span-2">
-                      <label className="block text-[10px] font-semibold text-slate-500 mb-1">Payment Ref</label>
-                      <div className="flex">
-                        <input
-                          type="text"
-                          placeholder="Ref no... (e.g. Cheque No / Txn ID)"
-                          value={paymentRef}
-                          disabled={isLocked}
-                          onChange={(e) => setPaymentRef(e.target.value)}
-                          className="w-full text-xs p-2 border border-slate-300/50 rounded-l text-slate-700 focus:border-emerald-400 outline-none disabled:bg-slate-50 disabled:text-slate-500"
-                        />
-                        <button disabled={isLocked} onClick={handleLogPayment} className="bg-emerald-600 text-white px-3 py-2 rounded-r font-medium hover:bg-emerald-700 active:bg-emerald-800 transition-colors whitespace-nowrap text-xs flex items-center gap-1.5 disabled:opacity-50">
-                          <CreditCard size={12} /> Log Pay
-                        </button>
-                      </div>
-                    </div>
-                    <div className="col-span-2">
-                      <label className="block text-[10px] font-semibold text-slate-500 mb-1">Notes (optional)</label>
-                      <input
-                        type="text"
-                        placeholder="Any additional info..."
-                        disabled={isLocked}
-                        value={paymentNotes}
-                        onChange={(e) => setPaymentNotes(e.target.value)}
-                        className="w-full text-xs p-2 border border-slate-300/50 rounded text-slate-700 focus:border-emerald-400 outline-none disabled:bg-slate-50"
-                      />
-                    </div>
-                  </div>
-                </div>
-              </div>
 
               {/* Notes */}
               <div className="h-full">
@@ -1627,6 +1775,12 @@ const SalesOrders = () => {
                   </button>
                 </>
               )}
+              <button
+                onClick={handleOpenPaymentModal}
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-slate-300 text-slate-700 rounded text-xs font-bold hover:bg-slate-50 transition-colors shadow-sm"
+              >
+                <DollarSign size={14} /> Pay
+              </button>
             </div>
           </div>
 
@@ -1641,6 +1795,139 @@ const SalesOrders = () => {
         </div>
       )}
 
+      {/* Receive Payment Modal */}
+      {isPaymentModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-[1px]">
+          <div className="bg-white w-[500px] rounded-lg shadow-2xl overflow-hidden">
+            {/* Header */}
+            <div className="px-6 py-4 border-b border-slate-100 flex justify-between items-start">
+              <div>
+                <h3 className="text-lg font-bold text-slate-800">Receive Payment</h3>
+                <p className="text-xs text-slate-500 mt-1">Record a payment received from the customer for this invoice</p>
+              </div>
+              <button onClick={() => setIsPaymentModalOpen(false)} className="text-slate-400 hover:text-slate-600">
+                <X size={20} />
+              </button>
+            </div>
+
+            {/* Body */}
+            <div className="p-6 space-y-4">
+              {/* Balance Display */}
+              <div className="flex justify-between items-center text-sm mb-2">
+                <span className="text-slate-500 font-medium">Balance Due</span>
+                <span className="text-red-600 font-bold text-lg">AED {Math.max(orderTotal - Number(advanceAmount), 0).toFixed(2)}</span>
+              </div>
+
+              {/* Date */}
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">Payment Date</label>
+                <input
+                  type="date"
+                  value={modalPaymentDate}
+                  onChange={e => setModalPaymentDate(e.target.value)}
+                  className="w-full text-sm p-2 border border-slate-300 rounded focus:border-[#F5C742] focus:ring-1 focus:ring-[#F5C742] outline-none"
+                />
+              </div>
+
+              {/* Payment Mode */}
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">Payment Mode</label>
+                <select
+                  value={modalPaymentMode}
+                  onChange={e => { setModalPaymentMode(e.target.value); setModalBankAccount(''); setModalChequeDate(new Date().toISOString().split('T')[0]); }}
+                  className="w-full text-sm p-2 border border-slate-300 rounded focus:border-[#F5C742] focus:ring-1 focus:ring-[#F5C742] outline-none bg-white"
+                >
+                  <option>Cash</option>
+                  <option>Bank Transfer</option>
+                  <option>Cheque</option>
+                  <option>Credit Card</option>
+                </select>
+              </div>
+
+              {/* Bank Account — non-Cash modes */}
+              {modalPaymentMode !== 'Cash' && (
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">Bank Account</label>
+                  <select
+                    value={modalBankAccount}
+                    onChange={e => setModalBankAccount(e.target.value)}
+                    className="w-full text-sm p-2 border border-slate-300 rounded focus:border-[#F5C742] focus:ring-1 focus:ring-[#F5C742] outline-none bg-white"
+                  >
+                    <option value="">Select bank account...</option>
+                    {bankAccountOptions.map(acc => (
+                      <option key={acc.id} value={acc.name}>{acc.code} — {acc.name}</option>
+                    ))}
+                  </select>
+                </div>
+              )}
+
+              {/* Cheque Date — Cheque only */}
+              {modalPaymentMode === 'Cheque' && (
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">Cheque Date</label>
+                  <input
+                    type="date"
+                    value={modalChequeDate}
+                    onChange={e => setModalChequeDate(e.target.value)}
+                    className="w-full text-sm p-2 border border-slate-300 rounded focus:border-[#F5C742] focus:ring-1 focus:ring-[#F5C742] outline-none"
+                  />
+                </div>
+              )}
+
+              {/* Amount */}
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">Amount</label>
+                <input
+                  type="number"
+                  value={modalPaymentAmount}
+                  onChange={e => setModalPaymentAmount(e.target.value)}
+                  className="w-full text-sm p-2 border border-slate-300 rounded focus:border-[#F5C742] focus:ring-1 focus:ring-[#F5C742] outline-none"
+                />
+              </div>
+
+              {/* Reference */}
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">Reference / Instrument No</label>
+                <input
+                  type="text"
+                  placeholder="Cheque no, Transaction ID, etc."
+                  value={modalPaymentRef}
+                  onChange={e => setModalPaymentRef(e.target.value)}
+                  className="w-full text-sm p-2 border border-slate-300 rounded focus:border-[#F5C742] focus:ring-1 focus:ring-[#F5C742] outline-none"
+                />
+              </div>
+
+              {/* Notes */}
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">Notes</label>
+                <textarea
+                  rows={2}
+                  placeholder="Additional notes..."
+                  value={modalNotes}
+                  onChange={e => setModalNotes(e.target.value)}
+                  className="w-full text-sm p-2 border border-slate-300 rounded focus:border-[#F5C742] focus:ring-1 focus:ring-[#F5C742] outline-none resize-none"
+                />
+              </div>
+            </div>
+
+            {/* Footer */}
+            <div className="px-6 py-4 bg-slate-50 flex justify-end gap-3 border-t border-slate-100">
+              <button
+                onClick={() => setIsPaymentModalOpen(false)}
+                className="px-4 py-2 bg-white border border-slate-300 text-slate-700 text-xs font-bold rounded hover:bg-slate-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleAddPaymentFromModal}
+                className="px-6 py-2 bg-[#F5C742] text-slate-900 text-xs font-bold rounded hover:bg-yellow-500 shadow-sm flex items-center gap-2"
+              >
+                <DollarSign size={14} /> Add Payment
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

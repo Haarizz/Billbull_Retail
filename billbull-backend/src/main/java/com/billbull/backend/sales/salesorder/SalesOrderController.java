@@ -3,6 +3,7 @@ package com.billbull.backend.sales.salesorder;
 import com.billbull.backend.security.AuditLogService;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 
@@ -10,6 +11,7 @@ import java.io.File;
 import java.nio.file.Files;
 import java.nio.file.Paths;
 import java.util.List;
+import java.util.Map;
 
 @RestController
 @RequestMapping("/api/sales/sales-orders")
@@ -31,8 +33,12 @@ public class SalesOrderController {
     }
 
     @PostMapping
-    public SalesOrder save(@RequestBody SalesOrder order) {
-        return service.save(order);
+    public ResponseEntity<?> save(@RequestBody SalesOrder order) {
+        try {
+            return ResponseEntity.ok(service.save(order));
+        } catch (IllegalStateException e) {
+            return ResponseEntity.badRequest().body(Map.of("message", e.getMessage()));
+        }
     }
 
     @GetMapping

@@ -13,6 +13,7 @@ import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.util.List;
+import java.util.Map;
 import java.util.stream.Collectors;
 
 @RestController
@@ -37,6 +38,21 @@ public class EmployeeController {
         this.auditLogService = auditLogService;
         this.userRepository = userRepository;
         this.modulePermissionService = modulePermissionService;
+    }
+
+    // ── PUBLIC TO ALL AUTHENTICATED USERS (for dropdowns) ───────────────────
+
+    @GetMapping("/names")
+    @PreAuthorize("isAuthenticated()")
+    public List<Map<String, Object>> getEmployeeNames() {
+        return service.getActiveEmployees().stream()
+                .map(emp -> {
+                    String fullName = (emp.getFirstName() + " " +
+                            (emp.getMiddleName() != null ? emp.getMiddleName() + " " : "") +
+                            emp.getLastName()).trim().replaceAll("\\s+", " ");
+                    return Map.<String, Object>of("id", emp.getId(), "name", fullName);
+                })
+                .collect(Collectors.toList());
     }
 
     // ── HORIZONTAL: canView('hr') ────────────────────────────────────────────

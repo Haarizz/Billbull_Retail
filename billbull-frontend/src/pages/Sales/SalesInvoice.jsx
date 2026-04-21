@@ -42,6 +42,7 @@ import { getAllCustomers } from '../../api/customerledgerApi';
 import { getAllSalesOrders } from '../../api/salesorderApi';
 import { getAllProformas } from '../../api/proformaApi';
 import { getDeliveryNotes, getUninvoicedDNsForCustomer } from '../../api/deliveryNoteApi';
+import { getEmployeeNames } from '../../api/employeeApi';
 import {
     getAllSalesInvoices,
     saveSalesInvoice,
@@ -193,7 +194,8 @@ const SalesInvoice = () => {
     // Payment Details
     const [paymentMode, setPaymentMode] = useState('Cash');
     const [paymentTerms, setPaymentTerms] = useState('Immediate');
-    const [salesperson, setSalesperson] = useState('John Doe');
+    const [salesperson, setSalesperson] = useState('');
+    const [employeesList, setEmployeesList] = useState([]);
     const [branch, setBranch] = useState(defaultBranch?.name || '');
 
     // Items
@@ -399,7 +401,7 @@ const SalesInvoice = () => {
     useEffect(() => {
         const loadData = async () => {
             try {
-                const [custData, soData, piData, dnData, invData, whsData, settingsData, bankAccData] = await Promise.all([
+                const [custData, soData, piData, dnData, invData, whsData, settingsData, bankAccData, empData] = await Promise.all([
                     getAllCustomers(),
                     getAllSalesOrders(),
                     getAllProformas(),
@@ -407,9 +409,11 @@ const SalesInvoice = () => {
                     getAllSalesInvoices(),
                     getWarehouses(),
                     getSalesSettings().catch(() => null),
-                    api.get('/api/ledger/accounts/bank-accounts').then(r => r.data).catch(() => [])
+                    api.get('/api/ledger/accounts/bank-accounts').then(r => r.data).catch(() => []),
+                    getEmployeeNames().catch(() => [])
                 ]);
                 setBankAccountOptions(Array.isArray(bankAccData) ? bankAccData : []);
+                setEmployeesList(Array.isArray(empData) ? empData : []);
 
                 let validCustomers = Array.isArray(custData) ? custData : [];
                 const hasWalkin = validCustomers.some(c =>
@@ -534,7 +538,8 @@ const SalesInvoice = () => {
         setSelectedCustomer(matched || { name: fromSO.customer, code: fromSO.customerCode || '', id: null });
         setItems(mappedItems.length > 0 ? mappedItems : [{ id: Date.now(), code: '', name: '', unit: 'PCS', qty: 0, price: 0, disc: 0, tax: 5, taxAmt: 0, gross: 0, net: 0, cost: 0 }]);
         setLinkedSO(fromSO.soNumber || '');
-        setReference(fromSO.linkedQuotation || fromSO.soNumber || '');
+        setLinkedPI(fromSO.linkedProforma || '');
+        setReference(fromSO.linkedQuotation || fromSO.linkedProforma || fromSO.soNumber || '');
         setInvoiceDate(new Date().toISOString().split('T')[0]);
         setStatus('Draft');
         setActiveTab('create');
@@ -1901,20 +1906,13 @@ const SalesInvoice = () => {
                                         </div>
 
                                         <div>
-                                            <label className="block text-xs font-bold text-slate-700 mb-1">Payment Mode</label>
-                                            <div className="relative">
-                                                <select value={paymentMode} onChange={e => setPaymentMode(e.target.value)} className="w-full text-xs p-2 border border-slate-200 rounded bg-white appearance-none focus:outline-none focus:border-[#F5C742]">
-                                                    <option>Cash</option><option>Credit</option><option>Bank Transfer</option>
-                                                </select>
-                                                <ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
-                                            </div>
-                                        </div>
-
-                                        <div>
                                             <label className="block text-xs font-bold text-slate-700 mb-1">Salesperson</label>
                                             <div className="relative">
                                                 <select value={salesperson} onChange={e => setSalesperson(e.target.value)} className="w-full text-xs p-2 border border-slate-200 rounded bg-white appearance-none focus:outline-none focus:border-[#F5C742]">
-                                                    <option>John Doe</option><option>Jane Smith</option>
+                                                    <option value="">Select salesperson...</option>
+                                                    {employeesList.map(emp => (
+                                                        <option key={emp.id} value={emp.name}>{emp.name}</option>
+                                                    ))}
                                                 </select>
                                                 <ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
                                             </div>
