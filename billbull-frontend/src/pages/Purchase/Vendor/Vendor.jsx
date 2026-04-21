@@ -19,26 +19,7 @@ import {
   deleteVendor
 } from "../../../api/vendorsApi";
 import { fetchStatementOfAccount } from '../../../api/financialsApi';
-
-// ==========================================
-// MOCK DATA (Kept for non-connected UI parts)
-// ==========================================
-
-// NOTE: initialVendors removed in favor of API data.
-
-const mockPayments = [
-  { id: 1, voucher: 'PV-2024-120', date: '2024-12-10', vendor: 'Al Mansoori Trading LLC', amount: '8,450 AED', method: 'Bank Transfer', ref: 'TRF-2024-1210', invoices: 'INV-2024-001', processedBy: 'Finance Manager' },
-  { id: 2, voucher: 'PV-2024-119', date: '2024-12-09', vendor: 'Dubai Fresh Foods', amount: '15,600 AED', method: 'Cheque', ref: 'CHQ-891234', invoices: 'INV-2024-003', processedBy: 'Accounts Officer' },
-];
-
-const mockStatement = [
-  { date: '2024-01-01', type: 'Opening', ref: 'OB-2024', desc: 'Opening Balance', debit: '-', credit: '-', balance: '5,200 AED' },
-  { date: '2024-11-15', type: 'Purchase', ref: 'INV-2024-001', desc: 'Purchase Invoice', debit: '8,450 AED', credit: '-', balance: '13,650 AED' },
-  { date: '2024-11-18', type: 'Payment', ref: 'PV-2024-045', desc: 'Payment Voucher - Bank Transfer', debit: '-', credit: '5,200 AED', balance: '8,450 AED' },
-  { date: '2024-11-20', type: 'Purchase', ref: 'INV-2024-002', desc: 'Purchase Invoice', debit: '10,000 AED', credit: '-', balance: '18,450 AED' },
-];
-
-
+import { useCompany } from '../../../context/CompanyContext';
 
 // --- DROPDOWN OPTIONS ---
 const vendorStatusOptions = ["Active", "On Hold", "Blocked"];
@@ -165,6 +146,8 @@ import { getPostedInvoicesForPayment } from '../../../api/purchaseInvoiceApi';
 import { createPaymentVoucher, getPaymentVouchers, updateVoucherStatus } from '../../../api/paymentApi';
 
 const PayInvoices = ({ vendors, initialVendor }) => {
+  const { company } = useCompany();
+  const currency = company?.currency || 'AED';
   // State
   const [selectedVendor, setSelectedVendor] = useState(null);
   const [paymentDate, setPaymentDate] = useState(new Date().toISOString().split('T')[0]);
@@ -452,7 +435,7 @@ const PayInvoices = ({ vendors, initialVendor }) => {
               </div>
               <div>
                 <p className="text-sm font-bold text-blue-800">Outstanding Balance</p>
-                <p className="text-2xl font-bold text-blue-600">AED {totalOutstanding.toLocaleString('en-US', { minimumFractionDigits: 2 })}</p>
+                <p className="text-2xl font-bold text-blue-600">{currency} {totalOutstanding.toLocaleString('en-US', { minimumFractionDigits: 2 })}</p>
               </div>
             </div>
           )}
@@ -536,10 +519,10 @@ const PayInvoices = ({ vendors, initialVendor }) => {
                             {isOverdue && <span className="block text-[9px] text-red-400">Overdue</span>}
                           </td>
                           <td className="px-4 py-3 text-right text-slate-600 font-medium">
-                            AED {(inv.grandTotal || 0).toLocaleString()}
+                            {currency} {(inv.grandTotal || 0).toLocaleString()}
                           </td>
                           <td className="px-4 py-3 text-right font-bold text-orange-600">
-                            AED {bal.toLocaleString()}
+                            {currency} {bal.toLocaleString()}
                           </td>
                           <td className="px-4 py-3 text-center">
                             {isOverdue
@@ -609,7 +592,7 @@ const PayInvoices = ({ vendors, initialVendor }) => {
               <div>
                 <label className="block text-xs font-bold text-slate-500 mb-1">Payment Amount (Auto-Allocate) <span className="text-red-500">*</span></label>
                 <div className="relative">
-                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 font-bold text-xs">AED</span>
+                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 font-bold text-xs">{currency}</span>
                   <input
                     type="number"
                     value={receivedAmount}
@@ -683,7 +666,7 @@ const PayInvoices = ({ vendors, initialVendor }) => {
               <div className="pt-4 border-t border-slate-100">
                 <div className="flex justify-between items-center mb-4">
                   <span className="text-sm font-bold text-slate-600">Total Settlement</span>
-                  <span className="text-xl font-bold text-[#F5C742]">AED {totalToSettle.toLocaleString()}</span>
+                  <span className="text-xl font-bold text-[#F5C742]">{currency} {totalToSettle.toLocaleString()}</span>
                 </div>
 
                 <button
@@ -725,7 +708,7 @@ const PayInvoices = ({ vendors, initialVendor }) => {
                   <div className="flex-1 min-w-0">
                     <div className="flex justify-between items-start">
                       <p className="font-bold text-slate-800 text-xs truncate">{payment.vendorName || 'Unknown'}</p>
-                      <span className="text-xs font-bold text-emerald-600 px-1.5 py-0.5 bg-emerald-50 rounded">AED {(payment.amount || 0).toLocaleString()}</span>
+                      <span className="text-xs font-bold text-emerald-600 px-1.5 py-0.5 bg-emerald-50 rounded">{currency} {(payment.amount || 0).toLocaleString()}</span>
                     </div>
                     <div className="flex justify-between items-center mt-1">
                       <p className="text-[10px] text-slate-500">{payment.voucherNumber || `PV-${payment.id}`} • {payment.paymentMode}</p>
@@ -749,6 +732,8 @@ const PayInvoices = ({ vendors, initialVendor }) => {
 };
 
 const VendorSoA = ({ vendors }) => {
+  const { company } = useCompany();
+  const currency = company?.currency || 'AED';
   const defaultStartDate = `${new Date().getFullYear()}-01-01`;
   const defaultEndDate = new Date().toISOString().split('T')[0];
 
@@ -868,19 +853,19 @@ const VendorSoA = ({ vendors }) => {
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
             <div className="p-4 bg-blue-50 rounded-lg border border-blue-100">
               <p className="text-xs text-blue-600">Opening Balance</p>
-              <p className="text-lg font-bold text-blue-700">{statementData.openingBalance.toLocaleString(undefined, { minimumFractionDigits: 2 })} AED {statementData.openingBalance >= 0 ? "Cr (We Owe)" : "Dr"}</p>
+              <p className="text-lg font-bold text-blue-700">{statementData.openingBalance.toLocaleString(undefined, { minimumFractionDigits: 2 })} {currency} {statementData.openingBalance >= 0 ? "Cr (We Owe)" : "Dr"}</p>
             </div>
             <div className="p-4 bg-orange-50 rounded-lg border border-orange-100">
               <p className="text-xs text-orange-600">Total Purchases</p>
-              <p className="text-lg font-bold text-orange-700">{statementData.totalCredit.toLocaleString(undefined, { minimumFractionDigits: 2 })} AED</p>
+              <p className="text-lg font-bold text-orange-700">{statementData.totalCredit.toLocaleString(undefined, { minimumFractionDigits: 2 })} {currency}</p>
             </div>
             <div className="p-4 bg-green-50 rounded-lg border border-green-100">
               <p className="text-xs text-green-600">Total Payments</p>
-              <p className="text-lg font-bold text-green-700">{statementData.totalDebit.toLocaleString(undefined, { minimumFractionDigits: 2 })} AED</p>
+              <p className="text-lg font-bold text-green-700">{statementData.totalDebit.toLocaleString(undefined, { minimumFractionDigits: 2 })} {currency}</p>
             </div>
             <div className="p-4 bg-purple-50 rounded-lg border border-purple-100">
               <p className="text-xs text-purple-600">Closing Balance</p>
-              <p className="text-lg font-bold text-purple-700">{Math.abs(statementData.closingBalance).toLocaleString(undefined, { minimumFractionDigits: 2 })} AED {statementData.closingBalance >= 0 ? "Cr (We Owe)" : "Dr (Advance)"}</p>
+              <p className="text-lg font-bold text-purple-700">{Math.abs(statementData.closingBalance).toLocaleString(undefined, { minimumFractionDigits: 2 })} {currency} {statementData.closingBalance >= 0 ? "Cr (We Owe)" : "Dr (Advance)"}</p>
             </div>
           </div>
 
@@ -956,6 +941,8 @@ const VendorSoA = ({ vendors }) => {
 // ==========================================
 
 const CreateVendorWizard = ({ onBack, onSave, initialData }) => {
+  const { company } = useCompany();
+  const defaultCurrency = company?.currency || 'AED';
   // Strict 6 steps
   const steps = [
     { id: "General", name: "General", icon: Globe },
@@ -973,7 +960,7 @@ const CreateVendorWizard = ({ onBack, onSave, initialData }) => {
   const [formData, setFormData] = useState(initialData || {
     name: '', email: '', contact: '', status: 'Active',
     vendorGroup: '', vendorType: '', category: '', country: 'United Arab Emirates',
-    prefComm: 'Email', priority: 'P2 - High', currency: 'AED - UAE Dirham',
+    prefComm: 'Email', priority: 'P2 - High', currency: defaultCurrency,
     payTerms: '', balType: 'Payable (We owe vendor)', payPref: 'Bank Transfer'
   });
 
@@ -1408,6 +1395,8 @@ const Vendor = () => {
 
 // Sub-Component: ListView with Actions wired
 const VendorListViewWithActions = ({ vendors, loading, onAddNew, onEdit, onDelete }) => {
+  const { company } = useCompany();
+  const companyCurrency = company?.currency || 'AED';
   const [activeTab, setActiveTab] = useState("Vendors List");
   const [payInvoicesVendor, setPayInvoicesVendor] = useState(null);
   const [searchTerm, setSearchTerm] = useState("");
@@ -1416,7 +1405,7 @@ const VendorListViewWithActions = ({ vendors, loading, onAddNew, onEdit, onDelet
 
   // Format Currency Helper
   const formatCurrency = (amount) => {
-    return new Intl.NumberFormat('en-AE', { style: 'currency', currency: 'AED', maximumFractionDigits: 0 }).format(amount);
+    return `${companyCurrency} ${new Intl.NumberFormat('en-AE', { maximumFractionDigits: 0 }).format(amount)}`;
   };
 
   // Calculate Stats
