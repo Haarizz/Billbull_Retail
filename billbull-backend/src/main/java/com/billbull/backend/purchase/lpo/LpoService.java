@@ -316,16 +316,32 @@ public class LpoService {
         }
     }
 
+    private static final BigDecimal DEFAULT_PURCHASE_TAX = BigDecimal.valueOf(5);
+
+    private BigDecimal resolveItemPurchaseTax(Product product) {
+        if (product != null && product.getTax() != null && product.getTax().getPurchaseTax() != null) {
+            return product.getTax().getPurchaseTax();
+        }
+        return DEFAULT_PURCHASE_TAX;
+    }
+
     private void calculateTotals(Lpo lpo) {
 
-        BigDecimal subtotal = lpo.getItems().stream()
-                .map(LpoItem::getLineTotal)
-                .reduce(BigDecimal.ZERO, BigDecimal::add);
+        BigDecimal subtotal = BigDecimal.ZERO;
+        BigDecimal taxTotal = BigDecimal.ZERO;
+
+        for (LpoItem item : lpo.getItems()) {
+            BigDecimal lineTotal = item.getLineTotal() != null ? item.getLineTotal() : BigDecimal.ZERO;
+            BigDecimal taxPercent = resolveItemPurchaseTax(item.getProduct());
+            BigDecimal lineTax = lineTotal.multiply(taxPercent).divide(BigDecimal.valueOf(100), 2, java.math.RoundingMode.HALF_UP);
+            subtotal = subtotal.add(lineTotal);
+            taxTotal = taxTotal.add(lineTax);
+        }
 
         lpo.setSubtotal(subtotal);
         lpo.setDiscount(BigDecimal.ZERO);
-        lpo.setTax(subtotal.multiply(BigDecimal.valueOf(0.05)));
-        lpo.setGrandTotal(subtotal.add(lpo.getTax()));
+        lpo.setTax(taxTotal);
+        lpo.setGrandTotal(subtotal.add(taxTotal));
     }
 
     private String generateLpoNumber() {

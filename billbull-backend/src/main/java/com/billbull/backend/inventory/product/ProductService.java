@@ -640,6 +640,7 @@ public class ProductService {
 
             ProductTax tx = taxMap.get(p.getId());
             item.put("salesTax", tx != null ? tx.getSalesTax() : null);
+            item.put("purchaseTax", tx != null ? tx.getPurchaseTax() : null);
 
             item.put("maxDiscount", p.getMaxDiscount());
 

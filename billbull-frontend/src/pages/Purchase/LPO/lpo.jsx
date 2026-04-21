@@ -1007,7 +1007,7 @@ const EditorView = ({ initialData, vendors, warehouses, onSave, onSubmit, onPrin
             disc: i.discountPercent || 0,
             foc: i.focQty || i.foc || 0,
             focUnit: i.focUnit || i.uom || 'PCS',
-            tax: typeof i.tax === 'number' ? i.tax : 5,
+            tax: parseFloat(i.purchaseTax) || parseFloat(i.tax) || 5,
             taxAmt: Number(i.taxAmt || 0),
             remarks: i.remarks || '',
             image: i.image || i.imageUrl || null,
@@ -1112,7 +1112,7 @@ const EditorView = ({ initialData, vendors, warehouses, onSave, onSubmit, onPrin
       disc: product.maxDiscount || 0,
       foc: 0,
       focUnit: defaultUnit,
-      tax: product.taxRate || 5,
+      tax: parseFloat(product.purchaseTax) || 5,
       taxAmt: 0,
       remarks: product.description || '',
       image: product.primaryImage || product.image || product.thumbnailUrl || product.imageUrl || null,
@@ -1223,7 +1223,7 @@ const EditorView = ({ initialData, vendors, warehouses, onSave, onSubmit, onPrin
       return { ...item, tax: Number(item.tax) || 5, taxAmt, lineTotal, total: lineTotal + taxAmt };
     });
 
-    const tax = totalTaxable * 0.05;
+    const tax = calculatedItems.reduce((sum, item) => sum + item.taxAmt, 0);
     const grandTotal = totalTaxable + tax;
 
     return {

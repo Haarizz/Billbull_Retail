@@ -810,8 +810,8 @@ const EditorView = ({ initialData, onSaveDraft, onSubmitQC, onPost, onPrint, grn
 
               disc: discount,
               netCost: netCost,
-              tax: 5,
-              taxAmt: pending * netCost * 0.05,
+              tax: parseFloat(lpoItem.purchaseTax) || 5,
+              taxAmt: pending * netCost * ((parseFloat(lpoItem.purchaseTax) || 5) / 100),
               foc: Number(lpoItem.focQty || lpoItem.foc || 0),
               focUnit: lpoItem.focUnit || lpoItem.uom || lpoItem.unit || "Unit",
               remarks: lpoItem.remarks || '',
@@ -875,7 +875,7 @@ const EditorView = ({ initialData, onSaveDraft, onSubmitQC, onPost, onPrint, grn
     setItems(
       initialData.items.map(i => ({
         ...i,
-        tax: Number(i.tax || 5),
+        tax: parseFloat(i.purchaseTax) || parseFloat(i.tax) || 5,
         taxAmt: Number(i.taxAmt || 0),
         foc: Number(i.foc || i.focQty || 0),
         focUnit: i.focUnit || i.uom || 'PCS',
@@ -1149,8 +1149,9 @@ const EditorView = ({ initialData, onSaveDraft, onSubmitQC, onPost, onPrint, grn
       acc.accepted += curr.accepted;
       acc.rejected += curr.rejected;
       acc.value += curr.total;
+      acc.taxAmt += curr.taxAmt || 0;
       return acc;
-    }, { received: 0, accepted: 0, rejected: 0, value: 0 });
+    }, { received: 0, accepted: 0, rejected: 0, value: 0, taxAmt: 0 });
   }, [items]);
 
   // FIX 1: Correct workflow badge logic based on single status
@@ -1768,12 +1769,12 @@ const EditorView = ({ initialData, onSaveDraft, onSubmitQC, onPost, onPrint, grn
                 <span className="font-medium">-55.20 AED</span>
               </div>
               <div className="flex justify-between">
-                <span className="text-slate-500">VAT (5%)</span>
-                <span className="font-medium">{(totals.value * 0.05).toFixed(2)} AED</span>
+                <span className="text-slate-500">VAT</span>
+                <span className="font-medium">{totals.taxAmt.toFixed(2)} AED</span>
               </div>
               <div className="flex justify-between text-base pt-2 border-t border-slate-100 mt-2">
                 <span className="font-bold text-slate-800">Grand Total</span>
-                <span className="font-bold text-[#F5C742]">{(totals.value * 1.05).toFixed(2)} AED</span>
+                <span className="font-bold text-[#F5C742]">{(totals.value + totals.taxAmt).toFixed(2)} AED</span>
               </div>
             </div>
           </div>

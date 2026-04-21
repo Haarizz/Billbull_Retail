@@ -18,6 +18,7 @@ public class LpoItemResponse {
     private String focUnit;
     private String remarks;
     private String image;
+    private BigDecimal purchaseTax;
 
     public LpoItemResponse(LpoItem item) {
         this.productId = item.getProduct().getId();
@@ -29,12 +30,14 @@ public class LpoItemResponse {
         this.unitPrice = item.getUnitPrice();
         this.discountPercent = item.getDiscountPercent();
         this.lineTotal = item.getLineTotal();
-        this.receivedQuantity = 0; // Default to 0, will be populated by service
+        this.receivedQuantity = 0;
         this.focQty = item.getFocQty();
         this.focUnit = item.getFocUnit();
         this.remarks = item.getRemarks();
-        this.image = null; // Will be populated in service if needed, or by constructor if we change the
-                           // signature
+        this.image = null;
+        this.purchaseTax = (item.getProduct().getTax() != null && item.getProduct().getTax().getPurchaseTax() != null)
+                ? item.getProduct().getTax().getPurchaseTax()
+                : java.math.BigDecimal.valueOf(5);
     }
 
     public Long getProductId() {
@@ -103,5 +106,9 @@ public class LpoItemResponse {
 
     public void setImage(String image) {
         this.image = image;
+    }
+
+    public BigDecimal getPurchaseTax() {
+        return purchaseTax;
     }
 }
