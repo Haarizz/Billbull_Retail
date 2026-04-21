@@ -259,11 +259,12 @@ const ReceiptVoucher = () => {
             }
 
             // Income Sources
-            if (!sourceMap[r.source]) {
-                sourceMap[r.source] = { amount: 0, count: 0, icon: r.icon, color: r.color, bg: r.bg };
+            const sourceKey = r.source || 'Other';
+            if (!sourceMap[sourceKey]) {
+                sourceMap[sourceKey] = { amount: 0, count: 0, icon: r.icon, color: r.color, bg: r.bg };
             }
-            sourceMap[r.source].amount += amount;
-            sourceMap[r.source].count++;
+            sourceMap[sourceKey].amount += amount;
+            sourceMap[sourceKey].count++;
 
             // Payment Mode
             if (!paymentModeMap[r.mode]) paymentModeMap[r.mode] = 0;
