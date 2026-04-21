@@ -4,6 +4,7 @@ import com.billbull.backend.financials.chartofaccounts.Account;
 import com.billbull.backend.financials.chartofaccounts.AccountRepository;
 import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.ApplicationRunner;
+import org.springframework.core.annotation.Order;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
@@ -13,6 +14,7 @@ import java.util.List;
  * Runs once on every startup — safe to run multiple times (idempotent).
  */
 @Component
+@Order(1)
 public class SystemAccountSeeder implements ApplicationRunner {
 
     private final AccountRepository accountRepository;

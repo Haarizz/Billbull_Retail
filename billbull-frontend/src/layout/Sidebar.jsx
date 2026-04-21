@@ -367,6 +367,7 @@ const Sidebar = ({ children }) => {
       text-decoration: none;
       transition: all 0.3s;
       cursor: pointer;
+      user-select: none;
       color: var(--text-slate); 
       border: 1px solid transparent; 
     }
@@ -389,6 +390,7 @@ const Sidebar = ({ children }) => {
       justify-content: center; 
       align-items: center;
       min-width: 16px;
+      pointer-events: none;
     }
     
     .nav-label {
@@ -396,6 +398,7 @@ const Sidebar = ({ children }) => {
       white-space: nowrap;
       overflow: hidden;
       text-overflow: ellipsis;
+      pointer-events: none;
     }
 
     .chevron-icon {
@@ -431,7 +434,10 @@ const Sidebar = ({ children }) => {
       display: flex;
       align-items: center;
       transition: all 0.2s;
+      cursor: pointer;
+      user-select: none;
     }
+    .sub-item * { pointer-events: none; }
     .sub-item:hover { color: var(--text-dark); background: rgba(0,0,0,0.03); }
     .sub-item.active { color: #B45309; font-weight: 500; background: transparent; }
     

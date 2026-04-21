@@ -36,13 +36,12 @@ export const getOpeningInvoicesByCustomerCode = async (customerCode) => {
 };
 
 /* ===========================
-   STATIC DROPDOWNS (TEMP)
+   DROPDOWN CONSTANTS
    =========================== */
 
-export const getCustomerGroups = async () => {
-  return ["Retail", "Wholesale", "VIP", "Corporate"];
-};
+export const CUSTOMER_GROUPS = ["Retail", "Wholesale", "VIP", "Corporate"];
+export const PRICE_LISTS = ["Default", "Standard", "VIP", "Wholesale"];
 
-export const getPriceLists = async () => {
-  return ["Default", "Standard", "VIP", "Wholesale"];
-};
+// Keep async wrappers for backwards compatibility with existing callers
+export const getCustomerGroups = async () => CUSTOMER_GROUPS;
+export const getPriceLists = async () => PRICE_LISTS;

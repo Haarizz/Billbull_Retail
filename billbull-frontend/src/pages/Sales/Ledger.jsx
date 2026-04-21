@@ -34,6 +34,7 @@ import {
 // Import API functions
 import * as api from '../../api/ledgerApi';
 import { useBranch } from '../../context/BranchContext';
+import { useCompany } from '../../context/CompanyContext';
 
 // --- HELPER: CUSTOM SELECT COMPONENT ---
 const CustomSelect = ({ label, placeholder, options, value, onChange }) => {
@@ -84,14 +85,23 @@ const CustomSelect = ({ label, placeholder, options, value, onChange }) => {
 
 const Ledger = () => {
   const { branches, defaultBranchName } = useBranch();
-  const [activeTab, setActiveTab] = useState('chart'); 
+  const { company } = useCompany();
+  const currency = company?.currency || 'AED';
+  const [activeTab, setActiveTab] = useState('chart');
   const [loading, setLoading] = useState(true);
 
   // --- FILTER STATES ---
   const [searchQuery, setSearchQuery] = useState('');
   const [filterGroup, setFilterGroup] = useState('');
   const [filterBranch, setFilterBranch] = useState('');
-  const [showArchived, setShowArchived] = useState(false); 
+  const [showArchived, setShowArchived] = useState(false);
+
+  // --- GL FILTER STATES ---
+  const today = new Date().toISOString().split('T')[0];
+  const firstOfMonth = new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().split('T')[0];
+  const [glFilterFrom, setGlFilterFrom] = useState(firstOfMonth);
+  const [glFilterTo, setGlFilterTo] = useState(today);
+  const [glFilterAccount, setGlFilterAccount] = useState('');
 
   // --- CORE DATA STATES ---
   const [accounts, setAccounts] = useState([]);
@@ -129,7 +139,7 @@ const Ledger = () => {
   // --- DATA MAPPERS (Backend -> UI) ---
   const formatBalance = (amount, type) => {
     const num = parseFloat(amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-    return `AED ${num} ${type || 'Dr'}`;
+    return `${currency} ${num} ${type || 'Dr'}`;
   };
 
   const mapAccountToUI = (acc) => ({
@@ -162,8 +172,8 @@ const Ledger = () => {
     accCode: txn.accountCode,
     accName: txn.accountName,
     desc: txn.description,
-    debit: txn.debitAmount ? `AED ${parseFloat(txn.debitAmount).toLocaleString()}` : '',
-    credit: txn.creditAmount ? `AED ${parseFloat(txn.creditAmount).toLocaleString()}` : '',
+    debit: txn.debitAmount ? `${currency} ${parseFloat(txn.debitAmount).toLocaleString()}` : '',
+    credit: txn.creditAmount ? `${currency} ${parseFloat(txn.creditAmount).toLocaleString()}` : '',
     balance: formatBalance(txn.runningBalance, txn.balanceType),
     balType: txn.balanceType
   });
@@ -191,6 +201,16 @@ const Ledger = () => {
   useEffect(() => {
     fetchData();
   }, []);
+
+  const filteredGlData = useMemo(() => {
+    return glData.filter(entry => {
+      const matchesAccount = !glFilterAccount || entry.accCode === glFilterAccount || entry.accName === glFilterAccount;
+      const matchesFrom = !glFilterFrom || (entry.date && entry.date >= glFilterFrom);
+      const matchesTo = !glFilterTo || (entry.date && entry.date <= glFilterTo);
+      return matchesAccount && matchesFrom && matchesTo;
+    });
+  }, [glData, glFilterAccount, glFilterFrom, glFilterTo]);
+
 
   // --- MODAL STATES ---
   const [isAccountModalOpen, setIsAccountModalOpen] = useState(false);
@@ -642,7 +662,7 @@ const Ledger = () => {
                       <IconComp size={16} className={color} />
                       <span className="text-xs font-bold text-slate-500">{type}</span>
                     </div>
-                    <div className="text-xl font-bold text-slate-800 mb-1">AED {total.toLocaleString()}</div>
+                    <div className="text-xl font-bold text-slate-800 mb-1">{currency} {total.toLocaleString()}</div>
                     <div className="text-[10px] text-slate-400 font-medium">{typeAccounts.length} active</div>
                   </div>
                 )
@@ -858,20 +878,27 @@ const Ledger = () => {
                <div className="grid grid-cols-1 md:grid-cols-4 gap-4 items-end">
                  <div className="md:col-span-1">
                    <label className="block text-xs font-bold text-slate-500 mb-1">Account</label>
-                   <select className="w-full px-3 py-2 text-xs border border-slate-200 rounded-md bg-white text-slate-700 font-medium">
-                     <option>All Accounts</option>
+                   <select
+                     value={glFilterAccount}
+                     onChange={(e) => setGlFilterAccount(e.target.value)}
+                     className="w-full px-3 py-2 text-xs border border-slate-200 rounded-md bg-white text-slate-700 font-medium"
+                   >
+                     <option value="">All Accounts</option>
+                     {accounts.map(a => (
+                       <option key={a.code} value={a.code}>{a.code} - {a.name}</option>
+                     ))}
                    </select>
                  </div>
                  <div>
                    <label className="block text-xs font-bold text-slate-500 mb-1">From Date</label>
-                   <input type="date" defaultValue="2024-01-01" className="w-full px-3 py-2 text-xs border border-slate-200 rounded-md text-slate-700"/>
+                   <input type="date" value={glFilterFrom} onChange={(e) => setGlFilterFrom(e.target.value)} className="w-full px-3 py-2 text-xs border border-slate-200 rounded-md text-slate-700"/>
                  </div>
                  <div>
                    <label className="block text-xs font-bold text-slate-500 mb-1">To Date</label>
-                   <input type="date" defaultValue="2024-01-31" className="w-full px-3 py-2 text-xs border border-slate-200 rounded-md text-slate-700"/>
+                   <input type="date" value={glFilterTo} onChange={(e) => setGlFilterTo(e.target.value)} className="w-full px-3 py-2 text-xs border border-slate-200 rounded-md text-slate-700"/>
                  </div>
                  <div>
-                   <button className="w-full flex items-center justify-center gap-2 px-4 py-2 bg-[#F5C742] text-slate-900 rounded-md text-xs font-bold hover:bg-yellow-400 shadow-sm">
+                   <button onClick={() => { setGlFilterFrom(glFilterFrom); setGlFilterTo(glFilterTo); }} className="w-full flex items-center justify-center gap-2 px-4 py-2 bg-[#F5C742] text-slate-900 rounded-md text-xs font-bold hover:bg-yellow-400 shadow-sm">
                       <FileText size={14}/> Generate Report
                    </button>
                  </div>
@@ -880,7 +907,7 @@ const Ledger = () => {
 
              <div className="mb-4">
                <h3 className="text-sm font-bold text-slate-700">General Ledger Entries</h3>
-               <p className="text-xs text-slate-500">All journal entries and transactions ({glData.length} entries)</p>
+               <p className="text-xs text-slate-500">{filteredGlData.length} of {glData.length} entries</p>
              </div>
 
              <div className="overflow-x-auto">
@@ -897,7 +924,7 @@ const Ledger = () => {
                    </tr>
                  </thead>
                  <tbody className="divide-y divide-slate-50">
-                    {glData.map((entry, idx) => (
+                    {filteredGlData.map((entry, idx) => (
                       <tr key={entry.id || idx} className="hover:bg-slate-50 group">
                         <td className="px-4 py-3 font-medium text-slate-700">{entry.date}</td>
                         <td className="px-4 py-3">
@@ -994,11 +1021,11 @@ const Ledger = () => {
                       <div className="flex justify-between items-end mb-4">
                         <div>
                           <div className="text-[10px] text-slate-400">Spent</div>
-                          <div className="text-xs font-bold text-red-600">AED {parseFloat(cc.spent).toLocaleString()}</div>
+                          <div className="text-xs font-bold text-red-600">{currency} {parseFloat(cc.spent).toLocaleString()}</div>
                         </div>
                         <div className="text-right">
                           <div className="text-[10px] text-slate-400">Budget</div>
-                          <div className="text-xs font-bold text-slate-700">AED {parseFloat(cc.budget).toLocaleString()}</div>
+                          <div className="text-xs font-bold text-slate-700">{currency} {parseFloat(cc.budget).toLocaleString()}</div>
                         </div>
                       </div>
 
@@ -1323,7 +1350,7 @@ const Ledger = () => {
                         </div>
 
                         <div className="col-span-1">
-                            <label className="block text-xs font-bold text-slate-600 mb-1">Budget Amount (AED)</label>
+                            <label className="block text-xs font-bold text-slate-600 mb-1">Budget Amount ({currency})</label>
                             <input type="number" value={ccBudget} onChange={(e) => setCcBudget(e.target.value)} placeholder="0.00" className="w-full px-3 py-2 text-xs border border-slate-200 rounded-md focus:border-blue-500 focus:outline-none placeholder:text-slate-400"/>
                         </div>
                         
@@ -1373,7 +1400,7 @@ const Ledger = () => {
                                 <CustomSelect placeholder="Debit" options={['Debit', 'Credit']} value={txnType} onChange={setTxnType} />
                             </div>
                             <div>
-                                <label className="block text-xs font-bold text-slate-600 mb-1">Amount (AED) <span className="text-red-500">*</span></label>
+                                <label className="block text-xs font-bold text-slate-600 mb-1">Amount ({currency}) <span className="text-red-500">*</span></label>
                                 <input type="number" value={txnAmount} onChange={(e) => setTxnAmount(e.target.value)} placeholder="0.00" className="w-full px-3 py-2 text-xs border border-slate-200 rounded-md focus:border-blue-500 focus:outline-none"/>
                             </div>
                         </div>

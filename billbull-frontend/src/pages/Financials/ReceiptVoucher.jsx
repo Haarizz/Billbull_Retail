@@ -37,6 +37,7 @@ import { employeesApi } from '../../api/employeesApi';
 import { receiptVoucherApi } from '../../api/receiptVoucherApi';
 import { getImageUrl } from '../../utils/urlUtils';
 import { useBranch } from '../../context/BranchContext';
+import { useCompany } from '../../context/CompanyContext';
 
 // --- HELPER: CUSTOM SELECT ---
 const CustomSelect = ({ placeholder, options, value, onChange }) => {
@@ -90,6 +91,8 @@ const CustomSelect = ({ placeholder, options, value, onChange }) => {
 // --- COMPONENT: RECEIPT VOUCHER ---
 const ReceiptVoucher = () => {
     const { branchNames, defaultBranchName } = useBranch();
+    const { company } = useCompany();
+    const currency = company?.currency || 'AED';
     const [isAddModalOpen, setIsAddModalOpen] = useState(false);
     const fileInputRef = useRef(null);
 
@@ -615,7 +618,7 @@ const ReceiptVoucher = () => {
                     <div className="flex justify-between items-start">
                         <div>
                             <p className="text-xs text-slate-500 font-semibold">Today's Receipts</p>
-                            <h3 className="text-2xl font-bold text-slate-800 mt-1">AED {stats.todayTotal}</h3>
+                            <h3 className="text-2xl font-bold text-slate-800 mt-1">{currency} {stats.todayTotal}</h3>
                             <p className="text-[10px] text-slate-400 mt-1">{stats.todayCount} transactions</p>
                         </div>
                         <div className="p-2 bg-[#F5C742] rounded text-slate-900">
@@ -628,7 +631,7 @@ const ReceiptVoucher = () => {
                     <div className="flex justify-between items-start">
                         <div>
                             <p className="text-xs text-slate-500 font-semibold">This Month</p>
-                            <h3 className="text-2xl font-bold text-slate-800 mt-1">AED {stats.monthTotal}</h3>
+                            <h3 className="text-2xl font-bold text-slate-800 mt-1">{currency} {stats.monthTotal}</h3>
                             <p className="text-[10px] text-slate-400 mt-1">January 2024</p>
                         </div>
                         <div className="p-2 bg-emerald-50 rounded text-emerald-600">
@@ -641,7 +644,7 @@ const ReceiptVoucher = () => {
                     <div className="flex justify-between items-start">
                         <div>
                             <p className="text-xs text-slate-500 font-semibold">Pending Amount</p>
-                            <h3 className="text-2xl font-bold text-slate-800 mt-1">AED {stats.pendingTotal}</h3>
+                            <h3 className="text-2xl font-bold text-slate-800 mt-1">{currency} {stats.pendingTotal}</h3>
                             <p className="text-[10px] text-slate-400 mt-1">Awaiting payment</p>
                         </div>
                         <div className="p-2 bg-orange-50 rounded text-orange-600">
@@ -679,7 +682,7 @@ const ReceiptVoucher = () => {
                                     <item.icon size={20} />
                                 </div>
                                 <p className="text-[10px] text-slate-500 font-semibold text-center mb-0.5">{item.label}</p>
-                                <p className="text-sm font-bold text-slate-800">AED {item.amount}</p>
+                                <p className="text-sm font-bold text-slate-800">{currency} {item.amount}</p>
                                 <p className="text-[10px] text-slate-400">{item.count}</p>
                             </div>
                         ))}
@@ -879,7 +882,7 @@ const ReceiptVoucher = () => {
                                 <th className="px-4 py-3">Date</th>
                                 <th className="px-4 py-3">Source Channel</th>
                                 <th className="px-4 py-3">Payer / Employee</th>
-                                <th className="px-4 py-3 text-right">Amount (AED)</th>
+                                <th className="px-4 py-3 text-right">Amount ({currency})</th>
                                 <th className="px-4 py-3">Payment Mode</th>
                                 <th className="px-4 py-3">Status</th>
                                 <th className="px-4 py-3 text-center">Actions</th>
@@ -928,7 +931,7 @@ const ReceiptVoucher = () => {
                                                 </div>
                                             </div>
                                         </td>
-                                        <td className="px-4 py-3 text-right font-bold text-emerald-600">AED {row.amount}</td>
+                                        <td className="px-4 py-3 text-right font-bold text-emerald-600">{currency} {row.amount}</td>
                                         <td className="px-4 py-3">
                                             <div className="flex items-center gap-1 text-slate-600">
                                                 {row.mode === 'Card' ? <CreditCard size={12} /> : <DollarSign size={12} />}
@@ -1070,7 +1073,7 @@ const ReceiptVoucher = () => {
                                 </div>
 
                                 <div>
-                                    <label className="block text-xs font-bold text-slate-600 mb-1">Amount (AED) <span className="text-red-500">*</span></label>
+                                    <label className="block text-xs font-bold text-slate-600 mb-1">Amount ({currency}) <span className="text-red-500">*</span></label>
                                     <input
                                         type="number"
                                         placeholder="0.00"
@@ -1199,7 +1202,7 @@ const ReceiptVoucher = () => {
                             {/* Amount & Status Row */}
                             <div className="grid grid-cols-2 gap-4 mb-6">
                                 <div className="border border-slate-200 rounded-lg p-4 text-center bg-white shadow-sm">
-                                    <p className="text-2xl font-bold text-emerald-600">AED {selectedReceipt.amount}</p>
+                                    <p className="text-2xl font-bold text-emerald-600">{currency} {selectedReceipt.amount}</p>
                                     <p className="text-[10px] text-slate-400 uppercase tracking-wider mt-1">Receipt Amount</p>
                                 </div>
                                 <div className="border border-slate-200 rounded-lg p-4 text-center flex flex-col items-center justify-center bg-white shadow-sm">

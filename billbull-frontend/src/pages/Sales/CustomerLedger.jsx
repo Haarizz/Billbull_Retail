@@ -17,6 +17,7 @@ import { getWarehouses } from '../../api/warehouseApi';
 import { getAllSalesPayments, saveSalesPayment, getNextSalesPaymentNumber, getSalesPaymentStats } from '../../api/salesPaymentApi';
 import { getAllSalesInvoices } from '../../api/salesInvoiceApi';
 import { useBranch } from '../../context/BranchContext';
+import { useCompany } from '../../context/CompanyContext';
 
 // ==========================================
 // 1. ADD ADDRESS MODAL (Nested)
@@ -263,6 +264,8 @@ const AddContactModal = ({ isOpen, onClose, onSave, initialData }) => {
 
 const AddCustomerModal = ({ isOpen, onClose, customerToEdit, onSaveCustomer }) => {
     const { defaultBranchName } = useBranch();
+    const { company } = useCompany();
+    const currency = company?.currency || 'AED';
     const [activeTab, setActiveTab] = useState('general');
 
     // --- Nested Modal States ---
@@ -294,7 +297,7 @@ const AddCustomerModal = ({ isOpen, onClose, customerToEdit, onSaveCustomer }) =
         country: 'United Arab Emirates', city: 'Dubai', postalCode: '',
         payMode: 'Cash', payTerms: 'Immediate', creditLimitDays: '', creditLimitAmount: '', maxCreditInvoices: '',
         discountLimitPercent: '', discountLimitAmount: '', creditStatus: 'Good', blockCredit: false,
-        priceList: 'Default', currency: 'AED - UAE Dirham', salesman: '', taxGroup: 'Standard VAT 5%', branch: defaultBranchName || '', warehouse: '', // Warehouse empty by default
+        priceList: 'Default', currency: currency, salesman: '', taxGroup: 'Standard VAT 5%', branch: defaultBranchName || '', warehouse: '',
         billingAddress: '', shippingAddress: '', notes: '',
         savedAddresses: [],
         openingInvoices: [],

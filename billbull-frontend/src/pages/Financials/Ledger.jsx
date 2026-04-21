@@ -37,6 +37,8 @@ import {
 import * as api from '../../api/ledgerApi';
 import * as reportApi from '../../api/financialReportsBackendApi';
 import { useBranch } from '../../context/BranchContext';
+import { useCompany } from '../../context/CompanyContext';
+import { employeesApi } from '../../api/employeesApi';
 
 // --- HELPER: CUSTOM SELECT COMPONENT ---
 const CustomSelect = ({ label, placeholder, options, value, onChange }) => {
@@ -87,7 +89,10 @@ const CustomSelect = ({ label, placeholder, options, value, onChange }) => {
 
 const Ledger = () => {
   const { branches, defaultBranchName } = useBranch();
+  const { company } = useCompany();
+  const currency = company?.currency || 'AED';
   const [activeTab, setActiveTab] = useState('chart');
+  const [employeeNames, setEmployeeNames] = useState([]);
   const [loading, setLoading] = useState(true);
 
   // --- FILTER STATES ---
@@ -151,7 +156,7 @@ const Ledger = () => {
   // --- DATA MAPPERS (Backend -> UI) ---
   const formatBalance = (amount, type) => {
     const num = parseFloat(amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-    return `AED ${num} ${type || 'Dr'}`;
+    return `${currency} ${num} ${type || 'Dr'}`;
   };
 
   const mapAccountToUI = (acc) => ({
@@ -184,8 +189,8 @@ const Ledger = () => {
     accCode: txn.accountCode,
     accName: txn.accountName,
     desc: txn.description,
-    debit: txn.debitAmount ? `AED ${parseFloat(txn.debitAmount).toLocaleString()}` : '',
-    credit: txn.creditAmount ? `AED ${parseFloat(txn.creditAmount).toLocaleString()}` : '',
+    debit: txn.debitAmount ? `${currency} ${parseFloat(txn.debitAmount).toLocaleString()}` : '',
+    credit: txn.creditAmount ? `${currency} ${parseFloat(txn.creditAmount).toLocaleString()}` : '',
     balance: formatBalance(txn.runningBalance, txn.balanceType),
     balType: txn.balanceType
   });
@@ -362,6 +367,15 @@ const Ledger = () => {
 
   useEffect(() => {
     fetchData();
+  }, []);
+
+  useEffect(() => {
+    employeesApi.getActiveEmployees()
+      .then(data => {
+        const names = data.map(emp => `${emp.firstName} ${emp.lastName}`.trim()).filter(Boolean);
+        setEmployeeNames(names);
+      })
+      .catch(() => {});
   }, []);
 
   useEffect(() => {
@@ -1082,7 +1096,7 @@ const selectedAccountLabel = glFilterAccount
                     <IconComp size={16} className={color} />
                     <span className="text-xs font-bold text-slate-500">{type}</span>
                   </div>
-                  <div className="text-xl font-bold text-slate-800 mb-1">AED {total.toLocaleString()}</div>
+                  <div className="text-xl font-bold text-slate-800 mb-1">{currency} {total.toLocaleString()}</div>
                   <div className="text-[10px] text-slate-400 font-medium">{typeAccounts.length} active</div>
                 </div>
               )
@@ -1602,11 +1616,11 @@ const selectedAccountLabel = glFilterAccount
                       <div className="flex justify-between items-end mb-4">
                         <div>
                           <div className="text-[10px] text-slate-400">Spent</div>
-                          <div className="text-xs font-bold text-red-600">AED {parseFloat(cc.spent).toLocaleString()}</div>
+                          <div className="text-xs font-bold text-red-600">{currency} {parseFloat(cc.spent).toLocaleString()}</div>
                         </div>
                         <div className="text-right">
                           <div className="text-[10px] text-slate-400">Budget</div>
-                          <div className="text-xs font-bold text-slate-700">AED {parseFloat(cc.budget).toLocaleString()}</div>
+                          <div className="text-xs font-bold text-slate-700">{currency} {parseFloat(cc.budget).toLocaleString()}</div>
                         </div>
                       </div>
 
@@ -1927,11 +1941,11 @@ const selectedAccountLabel = glFilterAccount
                 </div>
                 <div className="col-span-1">
                   <label className="block text-xs font-bold text-slate-600 mb-1">Manager</label>
-                  <CustomSelect placeholder="Select manager" options={['Sarah Ahmed', 'Ahmed Hassan', 'Lisa Wang', 'Mike Johnson', 'John Smith']} value={ccManager} onChange={setCcManager} />
+                  <CustomSelect placeholder="Select manager" options={employeeNames} value={ccManager} onChange={setCcManager} />
                 </div>
 
                 <div className="col-span-1">
-                  <label className="block text-xs font-bold text-slate-600 mb-1">Budget Amount (AED)</label>
+                  <label className="block text-xs font-bold text-slate-600 mb-1">Budget Amount ({currency})</label>
                   <input type="number" value={ccBudget} onChange={(e) => setCcBudget(e.target.value)} placeholder="0.00" className="w-full px-3 py-2 text-xs border border-slate-200 rounded-md focus:border-blue-500 focus:outline-none placeholder:text-slate-400" />
                 </div>
 
@@ -1981,7 +1995,7 @@ const selectedAccountLabel = glFilterAccount
                     <CustomSelect placeholder="Debit" options={['Debit', 'Credit']} value={txnType} onChange={setTxnType} />
                   </div>
                   <div>
-                    <label className="block text-xs font-bold text-slate-600 mb-1">Amount (AED) <span className="text-red-500">*</span></label>
+                    <label className="block text-xs font-bold text-slate-600 mb-1">Amount ({currency}) <span className="text-red-500">*</span></label>
                     <input type="number" value={txnAmount} onChange={(e) => setTxnAmount(e.target.value)} placeholder="0.00" className="w-full px-3 py-2 text-xs border border-slate-200 rounded-md focus:border-blue-500 focus:outline-none" />
                   </div>
                 </div>
