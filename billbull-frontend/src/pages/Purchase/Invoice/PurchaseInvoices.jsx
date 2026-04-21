@@ -1878,9 +1878,6 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
                     <th className="p-3 font-medium text-center w-16">Unit</th>
                     <th className="p-3 font-medium text-center w-16">Qty</th>
                     <th className="p-3 font-medium text-right">Unit Cost</th>
-                    <th className="p-3 font-medium text-center w-10">Disc %</th>
-                    <th className="p-3 font-medium text-right text-green-600">Disc Amt</th>
-                    <th className="p-3 font-medium text-center w-10">Tax %</th>
                     <th className="p-3 font-medium text-right">Tax Amt</th>
                     <th className="p-3 font-medium text-right">Amount</th>
                     <th className="p-3 font-medium text-center">Actions</th>
@@ -1955,9 +1952,6 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
                               className={`w-16 text-right border border-slate-200 rounded bg-white ${isFormLocked ? 'bg-slate-50' : ''}`}
                             />
                           </td>
-                          <td className="p-3 text-center">{Number(item.disc ?? item.discount ?? 0)}</td>
-                          <td className="p-3 text-right text-green-600">{calc.discAmt.toFixed(2)}</td>
-                          <td className="p-3 text-center">{item.tax}</td>
                           <td className="p-3 text-right">{calc.taxAmt.toFixed(2)}</td>
                           <td className="p-3 text-right font-bold text-[#F5C742]">{calc.total.toFixed(2)}</td>
                           <td className="p-3 text-center">
@@ -1973,7 +1967,7 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
                         {/* Expanded Description Row */}
                         {expandedRows[item.id] && (
                           <tr className="bg-white">
-                            <td colSpan={11} className="px-0 pb-4 pt-1">
+                            <td colSpan={8} className="px-0 pb-4 pt-1">
                               <div className="ml-0 mr-4 p-3 rounded-r-[10px] border-l-[3px] border-[#FFD700] bg-[#FFFDE7]/60 shadow-[inset_0_1px_4px_rgba(0,0,0,0.02)]">
                                 <div className="flex justify-between items-center mb-1.5">
                                   <div className="flex items-center gap-1.5 text-[9px] font-bold text-[#B8860B] tracking-widest uppercase">

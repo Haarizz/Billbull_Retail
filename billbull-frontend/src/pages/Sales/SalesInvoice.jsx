@@ -194,7 +194,7 @@ const SalesInvoice = () => {
     const [paymentMode, setPaymentMode] = useState('Cash');
     const [paymentTerms, setPaymentTerms] = useState('Immediate');
     const [salesperson, setSalesperson] = useState('John Doe');
-    const [branch, setBranch] = useState('Dubai Main');
+    const [branch, setBranch] = useState(defaultBranch?.name || '');
 
     // Items
     const [items, setItems] = useState([
@@ -446,6 +446,12 @@ const SalesInvoice = () => {
         })));
     }, [defaultBranch, warehousesList]);
 
+    useEffect(() => {
+        if (!invoiceId && defaultBranch?.name) {
+            setBranch(prev => prev || defaultBranch.name);
+        }
+    }, [defaultBranch?.name, invoiceId]);
+
     // Pre-fill form from Quotation navigation state
     useEffect(() => {
         const fromQtn = location.state?.fromQuotation;
@@ -629,7 +635,7 @@ const SalesInvoice = () => {
         setPaymentMode('Cash');
         setPaymentTerms('Immediate');
         setSalesperson('John Doe');
-        setBranch('Dubai Main');
+        setBranch(defaultBranch?.name || '');
         setItems([{ id: Date.now(), code: '', name: '', unit: 'PCS', qty: 0, price: 0, disc: 0, tax: 5, taxAmt: 0, gross: 0, net: 0, cost: 0 }]);
         setAmountCollected(0);
         setInvoiceBalance(null);
@@ -1074,7 +1080,6 @@ const SalesInvoice = () => {
         // Build payload for backend
         // Resolve invoice-level warehouse ID for fallback on items that have no warehouseId
         const invoiceLevelWarehouseId =
-            warehousesList.find(w => w.name === branch)?.id ||
             defaultBranch?.defaultWarehouseId ||
             (warehousesList.length > 0 ? warehousesList[0].id : null);
 
@@ -1163,7 +1168,7 @@ const SalesInvoice = () => {
         setPaymentMode(invoice.paymentMode || 'Cash');
         setPaymentTerms(invoice.paymentTerms || 'Immediate');
         setSalesperson(invoice.salesperson || 'John Doe');
-        setBranch(invoice.branch || 'Dubai Main');
+        setBranch(invoice.branch || defaultBranch?.name || '');
 
         setAmountCollected(invoice.amountPaid || 0);
         setInvoiceBalance(invoice.balance != null ? invoice.balance : null);
@@ -1887,13 +1892,12 @@ const SalesInvoice = () => {
                                         )}
 
                                         <div>
-                                            <label className="block text-xs font-bold text-slate-700 mb-1">Warehouse</label>
-                                            <div className="relative">
-                                                <select value={branch} onChange={e => setBranch(e.target.value)} className="w-full text-xs p-2 border border-slate-200 rounded bg-white appearance-none focus:outline-none focus:border-[#F5C742]">
-                                                    {warehousesList.map(w => <option key={w.id} value={w.name}>{w.name}</option>)}
-                                                </select>
-                                                <ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
-                                            </div>
+                                            <label className="block text-xs font-bold text-slate-700 mb-1">Branch</label>
+                                            <input
+                                                value={branch || defaultBranch?.name || ''}
+                                                readOnly
+                                                className="w-full text-xs p-2 border border-slate-200 rounded bg-slate-50 text-slate-600 focus:outline-none"
+                                            />
                                         </div>
 
                                         <div>

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { Building2, Plus, Pencil, Trash2, Star, StarOff, Check, X } from 'lucide-react';
 import toast from 'react-hot-toast';
 import {
@@ -19,6 +19,13 @@ const BranchSetup = () => {
     const [form, setForm] = useState(EMPTY_FORM);
     const [saving, setSaving] = useState(false);
     const [deletingId, setDeletingId] = useState(null);
+
+    const branchWarehouses = useMemo(() => {
+        if (!editId) {
+            return [];
+        }
+        return warehouses.filter(w => w.branchId === editId);
+    }, [warehouses, editId]);
 
     const load = async () => {
         setLoading(true);
@@ -69,14 +76,14 @@ const BranchSetup = () => {
                 code: form.code.trim() || null,
                 address: form.address.trim() || null,
                 phone: form.phone.trim() || null,
-                defaultWarehouseId: form.defaultWarehouseId ? Number(form.defaultWarehouseId) : null,
+                defaultWarehouseId: editId && form.defaultWarehouseId ? Number(form.defaultWarehouseId) : null,
             };
             if (editId) {
                 await updateBranch(editId, payload);
                 toast.success('Branch updated');
             } else {
                 await createBranch(payload);
-                toast.success('Branch created');
+                toast.success('Branch created. Add a warehouse for it, then edit the branch to choose the default warehouse.');
             }
             cancelForm();
             await load();
@@ -181,13 +188,23 @@ const BranchSetup = () => {
                                     <select
                                         value={form.defaultWarehouseId}
                                         onChange={e => setForm(f => ({ ...f, defaultWarehouseId: e.target.value }))}
-                                        className="w-full text-sm border border-slate-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-yellow-400 bg-white"
+                                        disabled={!editId || branchWarehouses.length === 0}
+                                        className="w-full text-sm border border-slate-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-yellow-400 bg-white disabled:bg-slate-100 disabled:text-slate-400 disabled:cursor-not-allowed"
                                     >
                                         <option value="">-- None --</option>
-                                        {warehouses.map(w => (
+                                        {branchWarehouses.map(w => (
                                             <option key={w.id} value={w.id}>{w.name}</option>
                                         ))}
                                     </select>
+                                    {!editId ? (
+                                        <p className="mt-1 text-[11px] text-slate-400">
+                                            Save the branch first. Then create a warehouse for it and come back to set the default warehouse.
+                                        </p>
+                                    ) : branchWarehouses.length === 0 ? (
+                                        <p className="mt-1 text-[11px] text-slate-400">
+                                            No warehouses are assigned to this branch yet.
+                                        </p>
+                                    ) : null}
                                 </div>
                                 <div className="col-span-2">
                                     <label className="block text-xs font-medium text-slate-600 mb-1">Address</label>

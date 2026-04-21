@@ -80,6 +80,32 @@ import { getTemplatesByCategory } from '../../api/printTemplateApi';
 import { generatePrintHtml, printHtml } from '../../utils/printGenerator';
 import { getImageUrl } from '../../utils/urlUtils';
 import { useCompany } from '../../context/CompanyContext';
+import { useBranch } from '../../context/BranchContext';
+
+const WORLD_CURRENCY_CODES = [
+    "AED", "AFN", "ALL", "AMD", "ANG", "AOA", "ARS", "AUD", "AWG", "AZN", "BAM", "BBD",
+    "BDT", "BGN", "BHD", "BIF", "BMD", "BND", "BOB", "BRL", "BSD", "BTN", "BWP", "BYN",
+    "BZD", "CAD", "CDF", "CHF", "CLP", "CNY", "COP", "CRC", "CUC", "CUP", "CVE", "CZK",
+    "DJF", "DKK", "DOP", "DZD", "EGP", "ERN", "ETB", "EUR", "FJD", "FKP", "GBP", "GEL",
+    "GHS", "GIP", "GMD", "GNF", "GTQ", "GYD", "HKD", "HNL", "HRK", "HTG", "HUF", "IDR",
+    "ILS", "INR", "IQD", "IRR", "ISK", "JMD", "JOD", "JPY", "KES", "KGS", "KHR", "KMF",
+    "KPW", "KRW", "KWD", "KYD", "KZT", "LAK", "LBP", "LKR", "LRD", "LSL", "LYD", "MAD",
+    "MDL", "MGA", "MKD", "MMK", "MNT", "MOP", "MRU", "MUR", "MVR", "MWK", "MXN", "MYR",
+    "MZN", "NAD", "NGN", "NIO", "NOK", "NPR", "NZD", "OMR", "PAB", "PEN", "PGK", "PHP",
+    "PKR", "PLN", "PYG", "QAR", "RON", "RSD", "RUB", "RWF", "SAR", "SBD", "SCR", "SDG",
+    "SEK", "SGD", "SHP", "SLE", "SLL", "SOS", "SRD", "SSP", "STN", "SVC", "SYP", "SZL",
+    "THB", "TJS", "TMT", "TND", "TOP", "TRY", "TTD", "TWD", "TZS", "UAH", "UGX", "USD",
+    "UYU", "UZS", "VES", "VND", "VUV", "WST", "XAF", "XCD", "XCG", "XDR", "XOF", "XPF",
+    "XSU", "YER", "ZAR", "ZMW", "ZWG", "ZWL"
+];
+
+const getCurrencyDisplayName = (code) => {
+    if (typeof Intl !== 'undefined' && typeof Intl.DisplayNames === 'function') {
+        const displayNames = new Intl.DisplayNames(['en'], { type: 'currency' });
+        return displayNames.of(code) || code;
+    }
+    return code;
+};
 
 // ✅ MOBILE COMPONENTS
 const MobileCard = ({ qtn, onClick, renderStatusBadge, isExpanded, onToggleExpand }) => (
@@ -198,6 +224,7 @@ const MobileFloatingActions = ({ status, onSaveDraft, onConfirm, onApprove, onRe
 
 const Quotations = () => {
     const { company } = useCompany();
+    const { defaultBranch, defaultBranchName, formatBranchLocationLabel } = useBranch();
     const navigate = useNavigate();
     const [activeTab, setActiveTab] = useState('list');
     const [editorMode, setEditorMode] = useState('edit');
@@ -254,6 +281,15 @@ const Quotations = () => {
     const [editingId, setEditingId] = useState(null);
     const [nextQtnNo, setNextQtnNo] = useState("QTN-NEW");
 
+    const createBranchSnapshot = () => ({
+        id: defaultBranch?.id ?? null,
+        name: defaultBranch?.name || '',
+        code: defaultBranch?.code || '',
+        location: defaultBranch?.defaultWarehouseName || defaultBranch?.address || ''
+    });
+
+    const [quotationBranch, setQuotationBranch] = useState(createBranchSnapshot);
+
     // --- ATTACHMENT STATE ---
     const [attachments, setAttachments] = useState([]);
 
@@ -264,6 +300,7 @@ const Quotations = () => {
     // --- DROPDOWN STATES ---
     const [currency, setCurrency] = useState('AED');
     const [isCurrencyOpen, setIsCurrencyOpen] = useState(false);
+    const [currencySearch, setCurrencySearch] = useState('');
 
     const [customer, setCustomer] = useState('');
     const [isCustomerOpen, setIsCustomerOpen] = useState(false);
@@ -278,6 +315,12 @@ const Quotations = () => {
 
     const [deliveryType, setDeliveryType] = useState('Delivery');
     const [isDeliveryTypeOpen, setIsDeliveryTypeOpen] = useState(false);
+    const branchLocationDisplay = formatBranchLocationLabel({
+        name: quotationBranch.name || defaultBranch?.name,
+        code: quotationBranch.code || defaultBranch?.code,
+        defaultWarehouseName: quotationBranch.location || defaultBranch?.defaultWarehouseName,
+        address: quotationBranch.location || defaultBranch?.address,
+    }) || quotationBranch.name || defaultBranchName || 'No branch assigned';
 
     // Form Dates
     const [qtnDate, setQtnDate] = useState(new Date().toISOString().split('T')[0]);
@@ -310,6 +353,49 @@ const Quotations = () => {
     // Item Add-ons Modal (Settings)
     const [selectedAddonItem, setSelectedAddonItem] = useState(null);
     const [isPrinting, setIsPrinting] = useState(false);
+
+    useEffect(() => {
+        if (editingId) {
+            return;
+        }
+
+        setQuotationBranch(createBranchSnapshot());
+    }, [
+        defaultBranch?.id,
+        defaultBranch?.name,
+        defaultBranch?.code,
+        defaultBranch?.defaultWarehouseName,
+        defaultBranch?.address,
+        editingId
+    ]);
+
+    const currencyOptions = useMemo(() => {
+        return WORLD_CURRENCY_CODES
+            .map((code) => {
+                const name = getCurrencyDisplayName(code);
+                return {
+                    code,
+                    name,
+                    searchText: `${code} ${name}`.toLowerCase()
+                };
+            })
+            .sort((a, b) => a.code.localeCompare(b.code));
+    }, []);
+
+    const filteredCurrencyOptions = useMemo(() => {
+        const query = currencySearch.trim().toLowerCase();
+        if (!query) {
+            return currencyOptions;
+        }
+        return currencyOptions.filter((option) => option.searchText.includes(query));
+    }, [currencyOptions, currencySearch]);
+
+    const selectedCurrencyOption = useMemo(() => {
+        return currencyOptions.find((option) => option.code === currency) || {
+            code: currency,
+            name: getCurrencyDisplayName(currency)
+        };
+    }, [currencyOptions, currency]);
 
     const canEditQuotation = (quotationStatus) => !['Approved', 'Invoiced', 'Converted'].includes(quotationStatus);
     const isViewMode = activeTab === 'create' && editorMode === 'view';
@@ -383,6 +469,10 @@ const Quotations = () => {
             customer: data.customer,
             date: data.date,
             validTill: data.validTill,
+            branchId: data.branchId || null,
+            branchName: data.branchName || '',
+            branchCode: data.branchCode || '',
+            branchLocation: data.branchLocation || '',
             total: data.totalAmount,
             billDiscount: data.billDiscount || 0,
             status: data.status === 'PENDING_APPROVAL' ? 'Pending Approval' :
@@ -843,6 +933,10 @@ const Quotations = () => {
             date: qtnDate,
             validTill: validTill,
             currency: currency,
+            branchId: quotationBranch.id,
+            branchName: quotationBranch.name || defaultBranch?.name || '',
+            branchCode: quotationBranch.code || defaultBranch?.code || '',
+            branchLocation: quotationBranch.location || defaultBranch?.defaultWarehouseName || defaultBranch?.address || '',
             paymentTerms: paymentTerm,
             deliveryType: deliveryType,
             expectedDispatch: expectedDispatch,
@@ -1060,6 +1154,12 @@ const Quotations = () => {
         setCustomer(qtn.customer);
         setQtnDate(qtn.date);
         setValidTill(qtn.validTill);
+        setQuotationBranch({
+            id: qtn.branchId || null,
+            name: qtn.branchName || defaultBranch?.name || '',
+            code: qtn.branchCode || defaultBranch?.code || '',
+            location: qtn.branchLocation || defaultBranch?.defaultWarehouseName || defaultBranch?.address || ''
+        });
         setItems(qtn.items.length > 0 ? qtn.items : [{ id: 1, code: '', image: '', desc: '', unit: 'PCS', qty: 0, price: 0, foc: 0, focUnit: 'PCS', availableUnits: ['PCS'], disc: 0, tax: 5, taxAmt: 0.00, total: 0.00, remarks: '', isProductSelected: false }]);
         setCurrency(qtn.currency || 'AED');
         setStatus(qtn.status);
@@ -1072,6 +1172,7 @@ const Quotations = () => {
         setAttachments(qtn.attachments || []);
         setBillDiscount(qtn.billDiscount || 0);
         setEditorMode(allowEdit ? 'edit' : 'view');
+        setCurrencySearch('');
         setIsCustomerSearchOpen(false);
         setIsCurrencyOpen(false);
         setIsPaymentTermOpen(false);
@@ -1326,6 +1427,7 @@ const Quotations = () => {
     const handleCreateNew = async () => {
         setEditingId(null);
         setEditorMode('edit');
+        setQuotationBranch(createBranchSnapshot());
         setCustomer('');
         const walkin = customersList.find(c => c.name.toLowerCase().includes('walkin') || c.name.toLowerCase().includes('walk-in'));
         if (walkin) {
@@ -1339,6 +1441,9 @@ const Quotations = () => {
         setStatus('Draft');
         setQtnDate(new Date().toISOString().split('T')[0]);
         setValidTill(new Date().toISOString().split('T')[0]);
+        setCurrency('AED');
+        setCurrencySearch('');
+        setIsCurrencyOpen(false);
         setAttachments([]);
         setNotesToCustomer('');
         setInternalNotes('');
@@ -2080,47 +2185,95 @@ const Quotations = () => {
                                             <input type="text" value={editingId ? `0${currentRevisions.length + 1}` : '00'} readOnly className="text-sm p-1.5 bg-slate-50 border border-slate-200/50 rounded text-center text-slate-700" />
                                         </div>
                                         <div className="flex flex-col col-span-2 sm:col-span-1">
-
+                                            <label className="text-xs font-semibold text-slate-500 mb-1">Date</label>
                                             <input type="date" value={qtnDate} onChange={(e) => setQtnDate(e.target.value)} disabled={isViewMode} className="w-full text-sm p-1.5 border border-slate-300/50 rounded text-slate-700 disabled:bg-slate-50 disabled:text-slate-500 disabled:cursor-not-allowed" />
-
                                         </div>
                                         <div className="flex flex-col col-span-2 sm:col-span-1">
-
+                                            <label className="text-xs font-semibold text-slate-500 mb-1">Valid Until</label>
                                             <input type="date" value={validTill} onChange={(e) => setValidTill(e.target.value)} disabled={isViewMode} className="w-full text-sm p-1.5 border border-slate-300/50 rounded text-slate-700 disabled:bg-slate-50 disabled:text-slate-500 disabled:cursor-not-allowed" />
-
                                         </div>
 
                                         <div className="flex flex-col relative col-span-2 sm:col-span-1">
                                             <label className="text-xs font-semibold text-slate-500 mb-1">Currency</label>
                                             <div
                                                 className={`w-full text-sm p-1.5 border border-slate-300/50 rounded text-slate-700 bg-white flex justify-between items-center ${isViewMode ? 'cursor-not-allowed bg-slate-50 text-slate-500' : 'cursor-pointer'}`}
-                                                onClick={(e) => { if (isViewMode) return; e.stopPropagation(); setIsCurrencyOpen(!isCurrencyOpen); }}
+                                                onClick={(e) => {
+                                                    if (isViewMode) return;
+                                                    e.stopPropagation();
+                                                    setIsCurrencyOpen(prev => {
+                                                        const next = !prev;
+                                                        if (next) {
+                                                            setCurrencySearch('');
+                                                        }
+                                                        return next;
+                                                    });
+                                                }}
                                             >
-                                                {currency} <ChevronDown size={14} className="text-slate-400" />
+                                                <span className="truncate pr-2">{selectedCurrencyOption.code} - {selectedCurrencyOption.name}</span>
+                                                <ChevronDown size={14} className="text-slate-400 shrink-0" />
                                             </div>
                                             {isCurrencyOpen && !isViewMode && (
-                                                <div className="absolute top-full left-0 w-full bg-white border border-slate-200 rounded shadow-lg z-20 mt-1">
-                                                    {['AED', 'USD', 'SAR', 'EUR'].map(opt => (
-                                                        <div
-                                                            key={opt}
-                                                            onClick={() => { setCurrency(opt); setIsCurrencyOpen(false); }}
-                                                            className={`px-3 py-2 text-sm cursor-pointer flex justify-between items-center hover:bg-slate-50 ${currency === opt ? 'bg-red-500 text-white hover:bg-red-600' : 'text-slate-700'}`}
-                                                        >
-                                                            {opt} {currency === opt && <Check size={14} />}
+                                                <div
+                                                    className="absolute top-full left-0 w-full bg-white border border-slate-200 rounded shadow-lg z-20 mt-1 overflow-hidden"
+                                                    onClick={(e) => e.stopPropagation()}
+                                                >
+                                                    <div className="p-2 border-b border-slate-100 bg-white">
+                                                        <div className="relative">
+                                                            <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                                                            <input
+                                                                type="text"
+                                                                value={currencySearch}
+                                                                autoFocus
+                                                                onChange={(e) => setCurrencySearch(e.target.value)}
+                                                                onClick={(e) => e.stopPropagation()}
+                                                                onKeyDown={(e) => {
+                                                                    if (e.key === 'Enter' && filteredCurrencyOptions.length > 0) {
+                                                                        setCurrency(filteredCurrencyOptions[0].code);
+                                                                        setCurrencySearch('');
+                                                                        setIsCurrencyOpen(false);
+                                                                    }
+                                                                }}
+                                                                placeholder="Search currency code or name..."
+                                                                className="w-full pl-9 pr-3 py-2 text-sm border border-slate-200 rounded bg-slate-50 focus:outline-none focus:ring-2 focus:ring-yellow-400/50 focus:border-yellow-400"
+                                                            />
                                                         </div>
-                                                    ))}
+                                                    </div>
+                                                    <div className="max-h-72 overflow-y-auto">
+                                                        {filteredCurrencyOptions.length > 0 ? filteredCurrencyOptions.map((option) => (
+                                                            <div
+                                                                key={option.code}
+                                                                onClick={() => {
+                                                                    setCurrency(option.code);
+                                                                    setCurrencySearch('');
+                                                                    setIsCurrencyOpen(false);
+                                                                }}
+                                                                className={`px-3 py-2.5 text-sm cursor-pointer flex justify-between items-center hover:bg-slate-50 ${currency === option.code ? 'bg-yellow-50 text-slate-900' : 'text-slate-700'}`}
+                                                            >
+                                                                <div className="min-w-0">
+                                                                    <div className="font-semibold">{option.code}</div>
+                                                                    <div className={`text-xs truncate ${currency === option.code ? 'text-slate-600' : 'text-slate-500'}`}>{option.name}</div>
+                                                                </div>
+                                                                {currency === option.code && <Check size={14} className="text-yellow-600 shrink-0" />}
+                                                            </div>
+                                                        )) : (
+                                                            <div className="px-3 py-6 text-sm text-center text-slate-400">
+                                                                No currencies match your search.
+                                                            </div>
+                                                        )}
+                                                    </div>
                                                 </div>
                                             )}
                                         </div>
 
                                         <div className="flex flex-col col-span-2 sm:col-span-1">
                                             <label className="text-xs font-semibold text-slate-500 mb-1">Branch / Location</label>
-                                            <div className="relative">
-                                                <select disabled={isViewMode} className="w-full text-sm p-1.5 border border-slate-300/50 rounded text-slate-700 appearance-none bg-white disabled:bg-slate-50 disabled:text-slate-500 disabled:cursor-not-allowed">
-                                                    <option>Main Branch</option>
-                                                </select>
-                                                <ChevronDown className="absolute right-2 top-2 text-slate-400" size={14} />
-                                            </div>
+                                            <input
+                                                type="text"
+                                                value={branchLocationDisplay}
+                                                readOnly
+                                                title={branchLocationDisplay}
+                                                className="w-full text-sm p-1.5 border border-slate-300/50 rounded text-slate-700 bg-slate-50"
+                                            />
                                         </div>
                                     </div>
                                 </div>

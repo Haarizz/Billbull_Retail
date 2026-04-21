@@ -14,9 +14,11 @@ import {
     BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer,
     PieChart, Pie, Cell, Legend, LineChart, Line
 } from 'recharts';
+import { useBranch } from '../../context/BranchContext';
 
 const Followups = () => {
     const navigate = useNavigate();
+    const { branches, defaultBranchName } = useBranch();
 
     // --- STATE ---
     const [followupsList, setFollowupsList] = useState([]);
@@ -92,6 +94,7 @@ const Followups = () => {
                             backendId: inq.id,
                             customer: inq.customer || 'Unknown Customer',
                             phone: inq.mobile || '-',
+                            branch: inq.branch || defaultBranchName || '',
                             inquiry: inq.inquiryNumber || `Ref-${inq.id}`,
                             inquiryStatus: derivedStatus,
                             scheduleDate: inq.followUpDate, // ✅ Only use explicit follow-up date
@@ -220,6 +223,39 @@ const Followups = () => {
         status: 'all',
         priority: 'all'
     });
+    const branchOptions = useMemo(() => {
+        const options = new Set();
+
+        if (defaultBranchName) {
+            options.add(defaultBranchName);
+        }
+
+        branches.forEach((branch) => {
+            if (branch?.name) {
+                options.add(branch.name);
+            }
+        });
+
+        followupsList.forEach((followup) => {
+            if (followup.branch) {
+                options.add(followup.branch);
+            }
+        });
+
+        return Array.from(options);
+    }, [branches, defaultBranchName, followupsList]);
+
+    useEffect(() => {
+        if (!defaultBranchName) {
+            return;
+        }
+
+        setFollowupsList((prev) => prev.map((followup) => (
+            followup.branch
+                ? followup
+                : { ...followup, branch: defaultBranchName }
+        )));
+    }, [defaultBranchName]);
 
     // Dynamic Stats Calculation
     const stats = useMemo(() => {
@@ -578,6 +614,9 @@ const Followups = () => {
             // Priority filter
             const matchesPriority = filters.priority === 'all' || item.priority.toLowerCase() === filters.priority.toLowerCase();
 
+            // Branch filter
+            const matchesBranch = filters.branch === 'all' || item.branch === filters.branch;
+
             // Date range filter
             let matchesDateRange = true;
             if (filters.dateRange !== 'all') {
@@ -595,7 +634,7 @@ const Followups = () => {
                 }
             }
 
-            return matchesSearch && matchesStatus && matchesPriority && matchesDateRange;
+            return matchesSearch && matchesStatus && matchesPriority && matchesBranch && matchesDateRange;
         });
     }, [followupsList, searchQuery, filters]);
 
@@ -675,9 +714,15 @@ const Followups = () => {
                             </select>
                         </div>
                         <div className="md:col-span-2">
-                            <select className="w-full px-3 py-2.5 md:py-2 text-xs border border-slate-200 rounded-md text-slate-600 focus:outline-none bg-white">
-                                <option>All Branches</option>
-                                <option>Main Branch</option>
+                            <select
+                                value={filters.branch}
+                                onChange={(e) => setFilters({ ...filters, branch: e.target.value })}
+                                className="w-full px-3 py-2.5 md:py-2 text-xs border border-slate-200 rounded-md text-slate-600 focus:outline-none bg-white"
+                            >
+                                <option value="all">All Branches</option>
+                                {branchOptions.map((branchName) => (
+                                    <option key={branchName} value={branchName}>{branchName}</option>
+                                ))}
                             </select>
                         </div>
                         <div className="md:col-span-2">
