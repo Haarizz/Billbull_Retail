@@ -17,6 +17,7 @@ import {
   Box,
   Wallet,
   CreditCard,
+  DollarSign,
   Menu,
   ChevronUp,
   ChevronRight,
@@ -36,9 +37,10 @@ import {
 import { useMemo } from 'react';
 
 // âœ… REAL API IMPORTS
+import api from '../../api/axiosConfig';
 import { getAllCustomers } from '../../api/customerledgerApi';
-import { getAllQuotations } from '../../api/quotationApi';
-import { getAllSalesOrders } from '../../api/salesorderApi';
+import { getAllQuotations, getQuotationById } from '../../api/quotationApi';
+import { getAllSalesOrders, getSalesOrderById } from '../../api/salesorderApi';
 import { getTemplatesByCategory } from '../../api/printTemplateApi';
 import { generatePrintHtml, printHtml } from '../../utils/printGenerator';
 import { getImageUrl } from '../../utils/urlUtils';
@@ -101,8 +103,10 @@ const ProformaInvoice = () => {
   const [isItemStockModalOpen, setIsItemStockModalOpen] = useState(false);
 
   // Linking States
+  const [sourceType, setSourceType] = useState('None');
   const [linkedQuote, setLinkedQuote] = useState('');
   const [isQuotationOpen, setIsQuotationOpen] = useState(false);
+  const [sourceSearch, setSourceSearch] = useState('');
 
   const [linkedSO, setLinkedSO] = useState('');
   const [isSalesOrderOpen, setIsSalesOrderOpen] = useState(false);
@@ -172,6 +176,17 @@ const ProformaInvoice = () => {
   const [advanceAmount, setAdvanceAmount] = useState(0);
   const [paymentRef, setPaymentRef] = useState('');
   const [paymentNotes, setPaymentNotes] = useState('');
+  const [bankAccountOptions, setBankAccountOptions] = useState([]);
+
+  // Payment Modal State
+  const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
+  const [modalPaymentDate, setModalPaymentDate] = useState(new Date().toISOString().split('T')[0]);
+  const [modalPaymentAmount, setModalPaymentAmount] = useState(0);
+  const [modalPaymentRef, setModalPaymentRef] = useState('');
+  const [modalPaymentMode, setModalPaymentMode] = useState('Cash');
+  const [modalBankAccount, setModalBankAccount] = useState('');
+  const [modalChequeDate, setModalChequeDate] = useState(new Date().toISOString().split('T')[0]);
+  const [modalNotes, setModalNotes] = useState('');
 
   // Sidebars & UI
   const [focusedItem, setFocusedItem] = useState(null);
@@ -242,12 +257,14 @@ const ProformaInvoice = () => {
   useEffect(() => {
     const fetchAllData = async () => {
       try {
-        const [custData, qtnData, soData, piData] = await Promise.all([
+        const [custData, qtnData, soData, piData, bankAccData] = await Promise.all([
           getAllCustomers(),
           getAllQuotations(),
           getAllSalesOrders(),
-          getAllProformas() // Fetch list
+          getAllProformas(),
+          api.get('/api/ledger/accounts/bank-accounts').then(r => r.data).catch(() => [])
         ]);
+        setBankAccountOptions(Array.isArray(bankAccData) ? bankAccData : []);
         const customers = Array.isArray(custData) ? custData : [];
         let validCustomers = [...customers];
 
@@ -592,6 +609,8 @@ const ProformaInvoice = () => {
 
       setLinkedQuote(full.quotationNo || "");
       setLinkedSO(full.salesOrderNo || "");
+      setSourceType(full.quotationNo ? 'Quotation' : full.salesOrderNo ? 'Sales Order' : 'None');
+      setSourceSearch('');
 
       setAdvanceAmount(full.advancePaid || 0);
       setPaymentMethod(full.paymentMethod || "Cash");
@@ -625,8 +644,10 @@ const ProformaInvoice = () => {
     const walkIn = customersList.find(c => c.name.toLowerCase().includes('walk-in') || c.name.toLowerCase().includes('walkin') || c.name.toLowerCase() === 'cash customer');
     setSelectedCustomer(walkIn || null);
 
+    setSourceType('None');
     setLinkedQuote('');
     setLinkedSO('');
+    setSourceSearch('');
     setPaymentRef('');
     setPaymentNotes('');
     setActiveTab('create');
@@ -711,11 +732,27 @@ const ProformaInvoice = () => {
     }
   };
 
-  const handleLogPayment = () => {
-    if (Number(advanceAmount) <= 0) {
-      return alert("Please enter a valid amount to pay.");
+  const handleOpenPaymentModal = () => {
+    const outstanding = Math.max(grandTotal - Number(advanceAmount), 0);
+    setModalPaymentAmount(outstanding > 0 ? outstanding.toFixed(2) : '');
+    setModalPaymentDate(new Date().toISOString().split('T')[0]);
+    setModalPaymentMode('Cash');
+    setModalBankAccount('');
+    setModalChequeDate(new Date().toISOString().split('T')[0]);
+    setModalPaymentRef('');
+    setModalNotes('');
+    setIsPaymentModalOpen(true);
+  };
+
+  const handleAddPaymentFromModal = () => {
+    if (!modalPaymentAmount || Number(modalPaymentAmount) <= 0) {
+      return alert("Please enter a valid amount.");
     }
-    alert(`Payment of AED ${Number(advanceAmount).toFixed(2)} recorded (UI Only). Save/Issue to persist.`);
+    setAdvanceAmount(prev => Number(prev) + Number(modalPaymentAmount));
+    setPaymentMethod(modalPaymentMode);
+    setPaymentRef(modalPaymentRef);
+    setPaymentNotes(modalNotes);
+    setIsPaymentModalOpen(false);
   };
 
   const handleNewRevision = () => {
@@ -726,29 +763,41 @@ const ProformaInvoice = () => {
   };
 
   // --- Selection Handlers ---
-  const handleSelectQuotation = (qtn) => {
+  const handleSelectQuotation = async (qtn) => {
     setLinkedQuote(qtn.qtnNo);
     setIsQuotationOpen(false);
-    if (!selectedCustomer) {
+    setSourceSearch('');
+    try {
+      const full = await getQuotationById(qtn.id);
+      const matchedCust = customersList.find(c => c.code === (full.customerCode || qtn.customerCode) || c.name === (full.customerName || qtn.customerName));
+      if (matchedCust) setSelectedCustomer(matchedCust);
+      const srcItems = full.items || full.lineItems || [];
+      if (srcItems.length > 0) {
+        setItems(srcItems.map((item, i) => normalizeProformaItem(item, item.id || Date.now() + i + Math.random())));
+      }
+    } catch (err) {
+      console.error('Failed to fetch quotation details', err);
       const matchedCust = customersList.find(c => c.name === qtn.customerName || c.code === qtn.customerCode);
       if (matchedCust) setSelectedCustomer(matchedCust);
     }
   };
 
-  const handleSelectSalesOrder = (so) => {
+  const handleSelectSalesOrder = async (so) => {
     setLinkedSO(so.soNumber);
     setIsSalesOrderOpen(false);
-
-    if (!selectedCustomer) {
+    setSourceSearch('');
+    try {
+      const full = await getSalesOrderById(so.id);
+      const matchedCust = customersList.find(c => c.code === (full.customerCode || so.customerCode));
+      if (matchedCust) setSelectedCustomer(matchedCust);
+      const srcItems = full.items || full.lineItems || [];
+      if (srcItems.length > 0) {
+        setItems(srcItems.map((item, i) => normalizeProformaItem(item, item.id || Date.now() + i + Math.random())));
+      }
+    } catch (err) {
+      console.error('Failed to fetch sales order details', err);
       const matchedCust = customersList.find(c => c.code === so.customerCode);
       if (matchedCust) setSelectedCustomer(matchedCust);
-    }
-
-    if (so.items && so.items.length > 0) {
-      const mappedItems = so.items.map((item, index) =>
-        normalizeProformaItem(item, item.id || Date.now() + index + Math.random())
-      );
-      setItems(mappedItems.length > 0 ? mappedItems : [createBlankProformaItem()]);
     }
   };
 
@@ -1015,54 +1064,142 @@ const ProformaInvoice = () => {
                         <label className="text-xs font-semibold text-slate-500 mb-1">Valid Till <span className="text-red-500">*</span></label>
                         <input type="date" value={validUntil} onChange={(e) => setValidUntil(e.target.value)} className="text-sm p-1.5 border border-slate-300/50 rounded text-slate-700" />
                       </div>
-                      <div className="flex flex-col relative col-span-2">
-                        <label className="text-xs font-semibold text-slate-500 mb-1">Link Quotation (Opt)</label>
-                        <div className="relative group">
-                          <input
-                            type="text"
-                            value={linkedQuote}
-                            onChange={(e) => setLinkedQuote(e.target.value)}
-                            onClick={(e) => { e.stopPropagation(); setIsQuotationOpen(true); }}
-                            placeholder="Select Quotation..."
-                            className="w-full text-sm p-1.5 border border-slate-300/50 rounded text-slate-700 cursor-pointer pr-8"
-                          />
-                          <ChevronDown size={14} className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
+                      {/* Source Type Selector */}
+                      <div className="flex flex-col col-span-2">
+                        <label className="text-xs font-semibold text-slate-500 mb-1">Source Type</label>
+                        <div className="flex gap-2">
+                          {['None', 'Quotation', 'Sales Order'].map(type => (
+                            <button
+                              key={type}
+                              type="button"
+                              onClick={() => {
+                                setSourceType(type);
+                                setLinkedQuote('');
+                                setLinkedSO('');
+                                setSourceSearch('');
+                                setIsQuotationOpen(false);
+                                setIsSalesOrderOpen(false);
+                              }}
+                              className={`flex-1 text-xs py-1.5 px-2 rounded border font-semibold transition-colors ${
+                                sourceType === type
+                                  ? 'bg-[#F5C742] border-[#F5C742] text-slate-900'
+                                  : 'bg-white border-slate-300/50 text-slate-500 hover:border-[#F5C742]'
+                              }`}
+                            >
+                              {type === 'None' ? 'None' : `Link ${type}`}
+                            </button>
+                          ))}
                         </div>
-                        {isQuotationOpen && (
-                          <div className="absolute top-full left-0 w-full bg-white border border-slate-200 rounded-md shadow-xl mt-1 max-h-48 overflow-y-auto z-50">
-                            {quotationsList.map(q => (
-                              <div key={q.id} className="px-3 py-2 text-xs hover:bg-slate-50 cursor-pointer text-slate-700 border-b border-slate-50 last:border-0 flex justify-between" onClick={() => handleSelectQuotation(q)}>
-                                <span className="font-bold">{q.qtnNo}</span>
-                                <span className="text-slate-400 truncate ml-2">{q.customer}</span>
-                              </div>
-                            ))}
-                          </div>
-                        )}
                       </div>
-                      <div className="flex flex-col relative col-span-2">
-                        <label className="text-xs font-semibold text-slate-500 mb-1">Link Sales Order (Opt)</label>
-                        <div className="relative group">
-                          <input
-                            type="text"
-                            value={linkedSO}
-                            onChange={(e) => setLinkedSO(e.target.value)}
-                            onClick={(e) => { e.stopPropagation(); setIsSalesOrderOpen(true); }}
-                            placeholder="Select Sales Order..."
-                            className="w-full text-sm p-1.5 border border-slate-300/50 rounded text-slate-700 cursor-pointer pr-8"
-                          />
-                          <ChevronDown size={14} className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
+
+                      {/* Searchable Source Picker */}
+                      {sourceType !== 'None' && (
+                        <div className="flex flex-col relative col-span-2">
+                          <label className="text-xs font-semibold text-slate-500 mb-1">
+                            {sourceType === 'Quotation' ? 'Select Quotation' : 'Select Sales Order'}
+                          </label>
+                          <div className="relative">
+                            <div
+                              className="w-full text-sm p-1.5 border border-slate-300/50 rounded flex items-center gap-2 cursor-pointer hover:border-[#F5C742] transition-colors bg-white pr-8"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                if (sourceType === 'Quotation') { setIsQuotationOpen(true); setIsSalesOrderOpen(false); }
+                                else { setIsSalesOrderOpen(true); setIsQuotationOpen(false); }
+                                setSourceSearch('');
+                              }}
+                            >
+                              <Search size={13} className="text-slate-400 shrink-0" />
+                              <span className={`flex-1 truncate ${(sourceType === 'Quotation' ? linkedQuote : linkedSO) ? 'text-slate-700 font-medium' : 'text-slate-400'}`}>
+                                {sourceType === 'Quotation'
+                                  ? (linkedQuote || 'Search quotation...')
+                                  : (linkedSO || 'Search sales order...')}
+                              </span>
+                              {(sourceType === 'Quotation' ? linkedQuote : linkedSO) && (
+                                <button
+                                  type="button"
+                                  onClick={(e) => { e.stopPropagation(); sourceType === 'Quotation' ? setLinkedQuote('') : setLinkedSO(''); }}
+                                  className="text-slate-400 hover:text-slate-600"
+                                >
+                                  <X size={12} />
+                                </button>
+                              )}
+                            </div>
+                            <ChevronDown size={14} className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
+
+                            {/* Quotation dropdown */}
+                            {isQuotationOpen && sourceType === 'Quotation' && (
+                              <div className="absolute top-full left-0 w-full bg-white border border-slate-200 rounded-md shadow-xl mt-1 z-50">
+                                <div className="p-2 border-b border-slate-100">
+                                  <div className="flex items-center gap-2 bg-slate-50 border border-slate-200 rounded px-2 py-1">
+                                    <Search size={12} className="text-slate-400 shrink-0" />
+                                    <input
+                                      autoFocus
+                                      type="text"
+                                      value={sourceSearch}
+                                      onChange={e => setSourceSearch(e.target.value)}
+                                      onClick={e => e.stopPropagation()}
+                                      placeholder="Search by number or customer..."
+                                      className="flex-1 text-xs bg-transparent outline-none text-slate-700"
+                                    />
+                                  </div>
+                                </div>
+                                <div className="max-h-48 overflow-y-auto">
+                                  {quotationsList
+                                    .filter(q => {
+                                      const s = sourceSearch.toLowerCase();
+                                      return !s || (q.qtnNo || '').toLowerCase().includes(s) || (q.customer || q.customerName || '').toLowerCase().includes(s);
+                                    })
+                                    .map(q => (
+                                      <div key={q.id} className="px-3 py-2 text-xs hover:bg-slate-50 cursor-pointer text-slate-700 border-b border-slate-50 last:border-0 flex justify-between items-center" onClick={() => handleSelectQuotation(q)}>
+                                        <span className="font-bold text-slate-800">{q.qtnNo}</span>
+                                        <span className="text-slate-400 truncate ml-2">{q.customer || q.customerName}</span>
+                                      </div>
+                                    ))}
+                                  {quotationsList.filter(q => { const s = sourceSearch.toLowerCase(); return !s || (q.qtnNo || '').toLowerCase().includes(s) || (q.customer || q.customerName || '').toLowerCase().includes(s); }).length === 0 && (
+                                    <div className="px-3 py-4 text-xs text-slate-400 text-center">No quotations found</div>
+                                  )}
+                                </div>
+                              </div>
+                            )}
+
+                            {/* Sales Order dropdown */}
+                            {isSalesOrderOpen && sourceType === 'Sales Order' && (
+                              <div className="absolute top-full left-0 w-full bg-white border border-slate-200 rounded-md shadow-xl mt-1 z-50">
+                                <div className="p-2 border-b border-slate-100">
+                                  <div className="flex items-center gap-2 bg-slate-50 border border-slate-200 rounded px-2 py-1">
+                                    <Search size={12} className="text-slate-400 shrink-0" />
+                                    <input
+                                      autoFocus
+                                      type="text"
+                                      value={sourceSearch}
+                                      onChange={e => setSourceSearch(e.target.value)}
+                                      onClick={e => e.stopPropagation()}
+                                      placeholder="Search by number or customer..."
+                                      className="flex-1 text-xs bg-transparent outline-none text-slate-700"
+                                    />
+                                  </div>
+                                </div>
+                                <div className="max-h-48 overflow-y-auto">
+                                  {salesOrdersList
+                                    .filter(so => {
+                                      const s = sourceSearch.toLowerCase();
+                                      return !s || (so.soNumber || '').toLowerCase().includes(s) || (so.customerName || '').toLowerCase().includes(s);
+                                    })
+                                    .map(so => (
+                                      <div key={so.id} className="px-3 py-2 text-xs hover:bg-slate-50 cursor-pointer text-slate-700 border-b border-slate-50 last:border-0 flex justify-between items-center" onClick={() => handleSelectSalesOrder(so)}>
+                                        <span className="font-bold text-slate-800">{so.soNumber}</span>
+                                        <span className="text-slate-400 truncate ml-2">{so.customerName}</span>
+                                      </div>
+                                    ))}
+                                  {salesOrdersList.filter(so => { const s = sourceSearch.toLowerCase(); return !s || (so.soNumber || '').toLowerCase().includes(s) || (so.customerName || '').toLowerCase().includes(s); }).length === 0 && (
+                                    <div className="px-3 py-4 text-xs text-slate-400 text-center">No sales orders found</div>
+                                  )}
+                                </div>
+                              </div>
+                            )}
+                          </div>
                         </div>
-                        {isSalesOrderOpen && (
-                          <div className="absolute top-full left-0 w-full bg-white border border-slate-200 rounded-md shadow-xl mt-1 max-h-48 overflow-y-auto z-50">
-                            {salesOrdersList.map(so => (
-                              <div key={so.id} className="px-3 py-2 text-xs hover:bg-slate-50 cursor-pointer text-slate-700 border-b border-slate-50 last:border-0 flex justify-between" onClick={() => handleSelectSalesOrder(so)}>
-                                <span className="font-bold">{so.soNumber}</span>
-                                <span className="text-slate-400 truncate ml-2">{so.customerName}</span>
-                              </div>
-                            ))}
-                          </div>
-                        )}
-                      </div>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -1332,86 +1469,6 @@ const ProformaInvoice = () => {
                   </div>
                 </div>
 
-                {/* 5. Collect Payment Card */}
-                <div className="bg-white rounded-lg border border-slate-200/50 shadow-sm relative">
-                  <div className="px-5 py-3 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
-                    <div className="space-y-0.5">
-                      <h3 className="text-sm font-bold text-slate-800 flex items-center gap-2">
-                        <Wallet size={16} className="text-emerald-500" /> Collect Payment
-                      </h3>
-                      <p className="text-[10px] text-slate-400 font-medium">Record advance payments for this Proforma</p>
-                    </div>
-                  </div>
-                  <div className="p-5">
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                      {/* Row 1 */}
-                      <div className="flex flex-col">
-                        <label className="text-xs font-semibold text-slate-500 mb-1">Payment Method</label>
-                        <select
-                          value={paymentMethod}
-                          onChange={(e) => setPaymentMethod(e.target.value)}
-                          className="w-full text-xs p-1.5 border border-slate-200/50 rounded text-slate-700 outline-none focus:border-emerald-500 bg-white"
-                        >
-                          {['Cash', 'Bank Transfer', 'Cheque', 'Credit Card'].map(m => <option key={m} value={m}>{m}</option>)}
-                        </select>
-                      </div>
-
-                      <div className="flex flex-col">
-                        <label className="text-xs font-semibold text-slate-500 mb-1">Reference / Txn ID</label>
-                        <input
-                          type="text"
-                          value={paymentRef}
-                          onChange={(e) => setPaymentRef(e.target.value)}
-                          placeholder="Check #, Transfer ID, etc."
-                          className="w-full text-xs p-1.5 border border-slate-200/50 rounded text-slate-700 outline-none focus:border-emerald-500 bg-white"
-                        />
-                      </div>
-
-                      {/* Row 2 */}
-                      <div className="flex flex-col relative w-full">
-                        <div className="flex justify-between items-center mb-1">
-                          <label className="text-xs font-semibold text-slate-500">Advance Amount</label>
-                          <button
-                            onClick={(e) => { e.preventDefault(); setAdvanceAmount(grandTotal.toFixed(2)); }}
-                            className="text-[10px] font-bold text-blue-600 hover:underline flex items-center gap-1"
-                          >
-                            Auto Fill Full
-                          </button>
-                        </div>
-                        <div className="relative">
-                          <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400 font-bold text-[10px] pointer-events-none">AED</span>
-                          <input
-                            type="number"
-                            value={advanceAmount === 0 ? '' : advanceAmount}
-                            onChange={(e) => setAdvanceAmount(e.target.value)}
-                            className="w-full text-sm font-bold p-1.5 pl-10 border border-slate-200/50 rounded text-slate-800 outline-none focus:border-emerald-500 bg-white"
-                            placeholder="0.00"
-                          />
-                        </div>
-                      </div>
-
-                      <div className="flex flex-col">
-                        <label className="text-xs font-semibold text-slate-500 mb-1">Payment Notes</label>
-                        <input
-                          type="text"
-                          value={paymentNotes}
-                          onChange={(e) => setPaymentNotes(e.target.value)}
-                          className="w-full text-xs p-1.5 border border-slate-200/50 rounded text-slate-700 outline-none focus:border-emerald-500 bg-white"
-                          placeholder="Add any notes about this payment..."
-                        />
-                      </div>
-                    </div>
-
-                    <div className="mt-6 pt-5 border-t border-slate-100 flex justify-end">
-                      <button
-                        onClick={handleLogPayment}
-                        className="px-6 py-2 bg-emerald-500 text-white rounded font-bold text-sm shadow-sm hover:bg-emerald-600 active:scale-95 transition-all flex items-center gap-2"
-                      >
-                        <CreditCard size={18} /> Record Payment
-                      </button>
-                    </div>
-                  </div>
-                </div>
               </div>
 
               {/* --- RIGHT COLUMN: SUMMARY & SIDEBAR --- */}
@@ -1569,11 +1626,151 @@ const ProformaInvoice = () => {
                     <CheckCircle2 size={14} /> Issue Proforma
                   </button>
                 )}
+                <button
+                  onClick={handleOpenPaymentModal}
+                  className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-slate-300 text-slate-700 rounded text-xs font-bold hover:bg-slate-50 transition-colors shadow-sm"
+                >
+                  <DollarSign size={14} /> Pay
+                </button>
               </div>
             </div>
           )
         }
       </main >
+
+      {/* Receive Payment Modal */}
+      {isPaymentModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-[1px]">
+          <div className="bg-white w-[500px] rounded-lg shadow-2xl overflow-hidden">
+            {/* Header */}
+            <div className="px-6 py-4 border-b border-slate-100 flex justify-between items-start">
+              <div>
+                <h3 className="text-lg font-bold text-slate-800">Receive Payment</h3>
+                <p className="text-xs text-slate-500 mt-1">Record a payment received from the customer for this invoice</p>
+              </div>
+              <button onClick={() => setIsPaymentModalOpen(false)} className="text-slate-400 hover:text-slate-600">
+                <X size={20} />
+              </button>
+            </div>
+
+            {/* Body */}
+            <div className="p-6 space-y-4">
+              {/* Balance Display */}
+              <div className="flex justify-between items-center text-sm mb-2">
+                <span className="text-slate-500 font-medium">Balance Due</span>
+                <span className="text-red-600 font-bold text-lg">AED {Math.max(grandTotal - Number(advanceAmount), 0).toFixed(2)}</span>
+              </div>
+
+              {/* Date */}
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">Payment Date</label>
+                <input
+                  type="date"
+                  value={modalPaymentDate}
+                  onChange={e => setModalPaymentDate(e.target.value)}
+                  className="w-full text-sm p-2 border border-slate-300 rounded focus:border-[#F5C742] focus:ring-1 focus:ring-[#F5C742] outline-none"
+                />
+              </div>
+
+              {/* Payment Mode */}
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">Payment Mode</label>
+                <select
+                  value={modalPaymentMode}
+                  onChange={e => { setModalPaymentMode(e.target.value); setModalBankAccount(''); setModalChequeDate(new Date().toISOString().split('T')[0]); }}
+                  className="w-full text-sm p-2 border border-slate-300 rounded focus:border-[#F5C742] focus:ring-1 focus:ring-[#F5C742] outline-none bg-white"
+                >
+                  <option>Cash</option>
+                  <option>Bank Transfer</option>
+                  <option>Cheque</option>
+                  <option>Credit Card</option>
+                </select>
+              </div>
+
+              {/* Bank Account — non-Cash modes */}
+              {modalPaymentMode !== 'Cash' && (
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">Bank Account</label>
+                  <select
+                    value={modalBankAccount}
+                    onChange={e => setModalBankAccount(e.target.value)}
+                    className="w-full text-sm p-2 border border-slate-300 rounded focus:border-[#F5C742] focus:ring-1 focus:ring-[#F5C742] outline-none bg-white"
+                  >
+                    <option value="">Select bank account...</option>
+                    {bankAccountOptions.map(acc => (
+                      <option key={acc.id} value={acc.name}>{acc.code} — {acc.name}</option>
+                    ))}
+                  </select>
+                </div>
+              )}
+
+              {/* Cheque Date — Cheque only */}
+              {modalPaymentMode === 'Cheque' && (
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">Cheque Date</label>
+                  <input
+                    type="date"
+                    value={modalChequeDate}
+                    onChange={e => setModalChequeDate(e.target.value)}
+                    className="w-full text-sm p-2 border border-slate-300 rounded focus:border-[#F5C742] focus:ring-1 focus:ring-[#F5C742] outline-none"
+                  />
+                </div>
+              )}
+
+              {/* Amount */}
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">Amount</label>
+                <input
+                  type="number"
+                  value={modalPaymentAmount}
+                  onChange={e => setModalPaymentAmount(e.target.value)}
+                  className="w-full text-sm p-2 border border-slate-300 rounded focus:border-[#F5C742] focus:ring-1 focus:ring-[#F5C742] outline-none"
+                />
+              </div>
+
+              {/* Reference */}
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">Reference / Instrument No</label>
+                <input
+                  type="text"
+                  placeholder="Cheque no, Transaction ID, etc."
+                  value={modalPaymentRef}
+                  onChange={e => setModalPaymentRef(e.target.value)}
+                  className="w-full text-sm p-2 border border-slate-300 rounded focus:border-[#F5C742] focus:ring-1 focus:ring-[#F5C742] outline-none"
+                />
+              </div>
+
+              {/* Notes */}
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">Notes</label>
+                <textarea
+                  rows={2}
+                  placeholder="Additional notes..."
+                  value={modalNotes}
+                  onChange={e => setModalNotes(e.target.value)}
+                  className="w-full text-sm p-2 border border-slate-300 rounded focus:border-[#F5C742] focus:ring-1 focus:ring-[#F5C742] outline-none resize-none"
+                />
+              </div>
+            </div>
+
+            {/* Footer */}
+            <div className="px-6 py-4 bg-slate-50 flex justify-end gap-3 border-t border-slate-100">
+              <button
+                onClick={() => setIsPaymentModalOpen(false)}
+                className="px-4 py-2 bg-white border border-slate-300 text-slate-700 text-xs font-bold rounded hover:bg-slate-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleAddPaymentFromModal}
+                className="px-6 py-2 bg-[#F5C742] text-slate-900 text-xs font-bold rounded hover:bg-yellow-500 shadow-sm flex items-center gap-2"
+              >
+                <DollarSign size={14} /> Add Payment
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div >
   );
 };

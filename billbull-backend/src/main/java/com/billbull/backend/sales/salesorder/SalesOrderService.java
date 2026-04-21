@@ -49,6 +49,14 @@ public class SalesOrderService {
     @Transactional(rollbackFor = Exception.class)
     public SalesOrder save(SalesOrder order) {
 
+        order.setLinkedQuotation(normalizeOptional(order.getLinkedQuotation()));
+        order.setLinkedProforma(normalizeOptional(order.getLinkedProforma()));
+
+        if (order.getLinkedQuotation() != null && order.getLinkedProforma() != null) {
+            throw new IllegalStateException(
+                    "Sales Order can be linked to either a quotation or a PI / Proforma, not both.");
+        }
+
         double subTotal = 0;
         double tax = 0;
 
@@ -124,6 +132,15 @@ public class SalesOrderService {
         }
 
         return saved;
+    }
+
+    private String normalizeOptional(String value) {
+        if (value == null) {
+            return null;
+        }
+
+        String trimmed = value.trim();
+        return trimmed.isEmpty() ? null : trimmed;
     }
 
     // ----------------------------
