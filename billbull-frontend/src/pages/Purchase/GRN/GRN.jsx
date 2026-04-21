@@ -1572,7 +1572,6 @@ const EditorView = ({ initialData, onSaveDraft, onSubmitQC, onPost, onPrint, grn
                     <th className="p-3 font-medium text-center text-emerald-600">Accepted</th>
                     <th className="p-3 font-medium text-center text-red-600">Rejected</th>
                     <th className="p-3 font-medium text-right">Unit Cost</th>
-                    <th className="p-3 font-medium text-center w-12">Disc %</th>
                     <th className="p-3 font-medium text-right">Net Cost</th>
                     <th className="p-3 font-medium text-right">Line Total</th>
                     <th className="p-3 font-medium text-center">Actions</th>
@@ -1643,9 +1642,6 @@ const EditorView = ({ initialData, onSaveDraft, onSubmitQC, onPost, onPrint, grn
                           />
                         </td>
                         <td className="p-3 text-right text-slate-500">{item.unitCost.toFixed(2)}</td>
-                        <td className="p-3 text-center text-slate-500">
-                          {item.disc}%
-                        </td>
                         <td className="p-3 text-right text-slate-700 font-medium">
                           {item.netCost.toFixed(2)}
                         </td>

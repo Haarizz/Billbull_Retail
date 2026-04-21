@@ -36,6 +36,7 @@ import {
 import { employeesApi } from '../../api/employeesApi';
 import { receiptVoucherApi } from '../../api/receiptVoucherApi';
 import { getImageUrl } from '../../utils/urlUtils';
+import { useBranch } from '../../context/BranchContext';
 
 // --- HELPER: CUSTOM SELECT ---
 const CustomSelect = ({ placeholder, options, value, onChange }) => {
@@ -88,6 +89,7 @@ const CustomSelect = ({ placeholder, options, value, onChange }) => {
 
 // --- COMPONENT: RECEIPT VOUCHER ---
 const ReceiptVoucher = () => {
+    const { branchNames, defaultBranchName } = useBranch();
     const [isAddModalOpen, setIsAddModalOpen] = useState(false);
     const fileInputRef = useRef(null);
 
@@ -104,7 +106,7 @@ const ReceiptVoucher = () => {
     const [editingReceipt, setEditingReceipt] = useState(null);
     const [formData, setFormData] = useState({
         date: '2026-01-22',
-        branch: 'Dubai Branch',
+        branch: '',
         member: '',
         category: '',
         amount: '',
@@ -121,7 +123,7 @@ const ReceiptVoucher = () => {
         setEditingReceipt(null);
         setFormData({
             date: new Date().toISOString().split('T')[0],
-            branch: 'Dubai Branch',
+            branch: defaultBranchName,
             member: '',
             category: '',
             amount: '',
@@ -144,6 +146,23 @@ const ReceiptVoucher = () => {
     const [filterPayment, setFilterPayment] = useState('All Payments');
     const [filterBranch, setFilterBranch] = useState('All Branches');
     const [filterDateRange, setFilterDateRange] = useState('All Time');
+    const branchOptions = useMemo(() => {
+        const options = new Set();
+        if (defaultBranchName) {
+            options.add(defaultBranchName);
+        }
+        branchNames.forEach((branchName) => {
+            if (branchName) {
+                options.add(branchName);
+            }
+        });
+        receipts.forEach((receipt) => {
+            if (receipt.branch) {
+                options.add(receipt.branch);
+            }
+        });
+        return Array.from(options);
+    }, [branchNames, defaultBranchName, receipts]);
 
     // --- DATA FETCHING ---
     const fetchReceipts = async () => {
@@ -159,6 +178,7 @@ const ReceiptVoucher = () => {
                 memberId: 'EMP-000', // Placeholder
                 amount: r.amount.toLocaleString(),
                 mode: r.paymentMode,
+                branch: r.branch || '',
                 status: r.status,
                 purpose: r.purpose,
                 icon: getIconForCategory(r.category),
@@ -178,6 +198,18 @@ const ReceiptVoucher = () => {
     useEffect(() => {
         fetchReceipts();
     }, []);
+
+    useEffect(() => {
+        if (!defaultBranchName) {
+            return;
+        }
+
+        setFormData((prev) => (
+            prev.branch
+                ? prev
+                : { ...prev, branch: defaultBranchName }
+        ));
+    }, [defaultBranchName]);
 
     // --- MOCK DATA INITIALIZATION ---
     // Moved mock data to state to support duplicate/delete actions
@@ -353,7 +385,7 @@ const ReceiptVoucher = () => {
         setEditingReceipt(receipt);
         setFormData({
             date: new Date(receipt.date).toISOString().split('T')[0], // approx conversion for demo
-            branch: 'Dubai Branch', // Default or from receipt if available
+            branch: receipt.branch || defaultBranchName,
             member: receipt.member,
             category: receipt.source,
             amount: receipt.amount.replace(/,/g, ''),
@@ -372,7 +404,7 @@ const ReceiptVoucher = () => {
         setEditingReceipt(null); // Treat as new
         setFormData({
             date: new Date().toISOString().split('T')[0], // Current date
-            branch: receipt.branch || 'Dubai Branch',
+            branch: receipt.branch || defaultBranchName,
             member: receipt.member,
             category: receipt.source,
             amount: receipt.amount.replace(/,/g, ''),
@@ -390,7 +422,7 @@ const ReceiptVoucher = () => {
     const handleSave = async () => {
         const payload = {
             date: formData.date,
-            branch: formData.branch,
+            branch: formData.branch || defaultBranchName,
             memberName: formData.member,
             category: formData.category,
             amount: Number(formData.amount),
@@ -541,7 +573,7 @@ const ReceiptVoucher = () => {
             if (filterSource !== 'All Sources' && r.source !== filterSource) return false;
             if (filterStatus !== 'All Status' && r.status !== filterStatus) return false;
             if (filterPayment !== 'All Payments' && r.mode !== filterPayment) return false;
-            if (filterBranch !== 'All Branches' && (r.branch || 'Dubai Branch') !== filterBranch) return false;
+            if (filterBranch !== 'All Branches' && (r.branch || defaultBranchName) !== filterBranch) return false;
 
             return true;
         });
@@ -816,8 +848,9 @@ const ReceiptVoucher = () => {
                                 onChange={(e) => setFilterBranch(e.target.value)}
                             >
                                 <option>All Branches</option>
-                                <option>Dubai Branch</option>
-                                <option>Marina Branch</option>
+                                {branchOptions.map((branchName) => (
+                                    <option key={branchName}>{branchName}</option>
+                                ))}
                             </select>
                         </div>
                     </div>
@@ -988,7 +1021,7 @@ const ReceiptVoucher = () => {
                                     <label className="block text-xs font-bold text-slate-600 mb-1">Branch</label>
                                     <CustomSelect
                                         placeholder="Select branch"
-                                        options={['Dubai Branch', 'Marina Branch']}
+                                        options={branchOptions}
                                         value={formData.branch}
                                         onChange={(val) => setFormData({ ...formData, branch: val })}
                                     />
@@ -1220,7 +1253,7 @@ const ReceiptVoucher = () => {
                                     </div>
                                     <div>
                                         <p className="text-[10px] text-slate-400 font-bold uppercase">Branch</p>
-                                        <p className="text-xs font-medium text-slate-700">Dubai Branch</p>
+                                        <p className="text-xs font-medium text-slate-700">{selectedReceipt.branch || defaultBranchName || 'Unassigned'}</p>
                                     </div>
                                     <div>
                                         <p className="text-[10px] text-slate-400 font-bold uppercase">Accounting Purpose</p>

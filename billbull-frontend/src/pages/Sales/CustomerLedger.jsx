@@ -16,6 +16,7 @@ import { getWarehouses } from '../../api/warehouseApi';
 // ✅ Import Sales Payment & Invoice API
 import { getAllSalesPayments, saveSalesPayment, getNextSalesPaymentNumber, getSalesPaymentStats } from '../../api/salesPaymentApi';
 import { getAllSalesInvoices } from '../../api/salesInvoiceApi';
+import { useBranch } from '../../context/BranchContext';
 
 // ==========================================
 // 1. ADD ADDRESS MODAL (Nested)
@@ -261,6 +262,7 @@ const AddContactModal = ({ isOpen, onClose, onSave, initialData }) => {
 // ==========================================
 
 const AddCustomerModal = ({ isOpen, onClose, customerToEdit, onSaveCustomer }) => {
+    const { defaultBranchName } = useBranch();
     const [activeTab, setActiveTab] = useState('general');
 
     // --- Nested Modal States ---
@@ -292,7 +294,7 @@ const AddCustomerModal = ({ isOpen, onClose, customerToEdit, onSaveCustomer }) =
         country: 'United Arab Emirates', city: 'Dubai', postalCode: '',
         payMode: 'Cash', payTerms: 'Immediate', creditLimitDays: '', creditLimitAmount: '', maxCreditInvoices: '',
         discountLimitPercent: '', discountLimitAmount: '', creditStatus: 'Good', blockCredit: false,
-        priceList: 'Default', currency: 'AED - UAE Dirham', salesman: '', taxGroup: 'Standard VAT 5%', branch: 'Main Branch', warehouse: '', // Warehouse empty by default
+        priceList: 'Default', currency: 'AED - UAE Dirham', salesman: '', taxGroup: 'Standard VAT 5%', branch: defaultBranchName || '', warehouse: '', // Warehouse empty by default
         billingAddress: '', shippingAddress: '', notes: '',
         savedAddresses: [],
         openingInvoices: [],
@@ -335,6 +337,18 @@ const AddCustomerModal = ({ isOpen, onClose, customerToEdit, onSaveCustomer }) =
             setActiveTab('general');
         }
     }, [customerToEdit, isOpen]);
+
+    useEffect(() => {
+        if (!isOpen || customerToEdit || !defaultBranchName) {
+            return;
+        }
+
+        setFormData((prev) => (
+            prev.branch
+                ? prev
+                : { ...prev, branch: defaultBranchName }
+        ));
+    }, [customerToEdit, defaultBranchName, isOpen]);
 
     // --- VALIDATION LOGIC ---
     const isFormValid = useMemo(() => {
@@ -592,7 +606,7 @@ const AddCustomerModal = ({ isOpen, onClose, customerToEdit, onSaveCustomer }) =
                             <span className="text-xs text-slate-400 ml-auto">Default settings for sales transactions</span>
                         </div>
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                            <div><label className="block text-xs font-medium text-slate-500 mb-1.5">Price List</label><div className="relative"><select name="priceList" value={formData.priceList} onChange={handleInputChange} className="w-full text-sm border border-slate-200 rounded-md px-3 py-2 bg-white text-slate-700 appearance-none"><option>Default</option><option>Standard</option><option>VIP</option><option>Wholesale</option><option>Retail</option><option>Main Branch</option></select><ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" /></div></div>
+                            <div><label className="block text-xs font-medium text-slate-500 mb-1.5">Price List</label><div className="relative"><select name="priceList" value={formData.priceList} onChange={handleInputChange} className="w-full text-sm border border-slate-200 rounded-md px-3 py-2 bg-white text-slate-700 appearance-none"><option>Default</option><option>Standard</option><option>VIP</option><option>Wholesale</option><option>Retail</option></select><ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" /></div></div>
                             <div><label className="block text-xs font-medium text-slate-500 mb-1.5">Default Currency</label><div className="relative"><select name="currency" value={formData.currency} onChange={handleInputChange} className="w-full text-sm border border-slate-200 rounded-md px-3 py-2 bg-white text-slate-700 appearance-none"><option>AED - UAE Dirham</option><option>USD - US Dollar</option><option>EUR - Euro</option><option>SAR - Saudi Riyal</option></select><ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" /></div></div>
                             <div><label className="block text-xs font-medium text-slate-500 mb-1.5">Default Salesman</label><input name="salesman" value={formData.salesman} onChange={handleInputChange} type="text" className="w-full text-sm border border-slate-200 rounded-md px-3 py-2 focus:outline-none focus:border-[#F5C742]" /></div>
                             <div><label className="block text-xs font-medium text-slate-500 mb-1.5">Default Tax Group</label><input name="taxGroup" value={formData.taxGroup} onChange={handleInputChange} type="text" className="w-full text-sm border border-slate-200 rounded-md px-3 py-2 focus:outline-none focus:border-[#F5C742]" /></div>

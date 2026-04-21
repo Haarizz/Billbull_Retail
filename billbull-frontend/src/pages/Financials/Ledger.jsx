@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useMemo } from 'react';
 import {
   BookOpen,
   FileText,
@@ -36,6 +36,7 @@ import {
 // Import API functions
 import * as api from '../../api/ledgerApi';
 import * as reportApi from '../../api/financialReportsBackendApi';
+import { useBranch } from '../../context/BranchContext';
 
 // --- HELPER: CUSTOM SELECT COMPONENT ---
 const CustomSelect = ({ label, placeholder, options, value, onChange }) => {
@@ -85,6 +86,7 @@ const CustomSelect = ({ label, placeholder, options, value, onChange }) => {
 };
 
 const Ledger = () => {
+  const { branches, defaultBranchName } = useBranch();
   const [activeTab, setActiveTab] = useState('chart');
   const [loading, setLoading] = useState(true);
 
@@ -109,6 +111,34 @@ const Ledger = () => {
   const [accounts, setAccounts] = useState([]);
   const [costCenters, setCostCenters] = useState([]);
   const [glData, setGlData] = useState([]);
+  const branchOptions = useMemo(() => {
+    const options = new Set();
+
+    if (defaultBranchName) {
+      options.add(defaultBranchName);
+    }
+
+    branches.forEach((branch) => {
+      if (branch?.name) {
+        options.add(branch.name);
+      }
+    });
+
+    accounts.forEach((account) => {
+      if (account.branch && account.branch !== 'All Branches') {
+        options.add(account.branch);
+      }
+    });
+
+    costCenters.forEach((costCenter) => {
+      if (costCenter.branch && costCenter.branch !== 'All Branches') {
+        options.add(costCenter.branch);
+      }
+    });
+
+    return Array.from(options);
+  }, [accounts, branches, costCenters, defaultBranchName]);
+  const branchSelectOptions = ['All Branches', ...branchOptions];
 
   // --- COA TREE STATES ---
   const [accountTree, setAccountTree] = useState([]);
@@ -699,13 +729,13 @@ const Ledger = () => {
   const handleOpenAddAccount = () => {
     setAccId(null); setAccName(''); setAccCode(''); setAccSubGroup('');
     setAccOpeningBalance(''); setAccDescription(''); setSelectedGroup('');
-    setSelectedBranch(''); setSelectedCostCenter(''); setSelectedBalType('Debit (Dr)');
+    setSelectedBranch(defaultBranchName || ''); setSelectedCostCenter(''); setSelectedBalType('Debit (Dr)');
     setIsActive(true);
     setIsAccountModalOpen(true);
   };
 
   const handleOpenAddCostCenter = () => {
-    setCcId(null); setCcName(''); setCcCode(''); setCcBranch(''); setCcManager('');
+    setCcId(null); setCcName(''); setCcCode(''); setCcBranch(defaultBranchName || ''); setCcManager('');
     setCcBudget(''); setCcDescription('');
     setIsCostCenterModalOpen(true);
   };
@@ -1178,9 +1208,9 @@ const selectedAccountLabel = glFilterAccount
                     onChange={(e) => setFilterBranch(e.target.value)}
                   >
                     <option value="">All Branches</option>
-                    <option value="Dubai Branch">Dubai Branch</option>
-                    <option value="Marina Branch">Marina Branch</option>
-                    <option value="Warehouse">Warehouse</option>
+                    {branchOptions.map((branchName) => (
+                      <option key={branchName} value={branchName}>{branchName}</option>
+                    ))}
                   </select>
                   <div className="flex items-center gap-2">
                     <input
@@ -1818,7 +1848,7 @@ const selectedAccountLabel = glFilterAccount
 
                 <div className="col-span-1">
                   <label className="block text-xs font-bold text-slate-600 mb-1">Branch</label>
-                  <CustomSelect placeholder="Select branch" options={['All Branches', 'Dubai Branch', 'Marina Branch', 'Warehouse']} value={selectedBranch} onChange={setSelectedBranch} />
+                  <CustomSelect placeholder="Select branch" options={branchSelectOptions} value={selectedBranch} onChange={setSelectedBranch} />
                 </div>
                 <div className="col-span-1">
                   <label className="block text-xs font-bold text-slate-600 mb-1">Cost Center</label>
@@ -1893,7 +1923,7 @@ const selectedAccountLabel = glFilterAccount
 
                 <div className="col-span-1">
                   <label className="block text-xs font-bold text-slate-600 mb-1">Branch <span className="text-red-500">*</span></label>
-                  <CustomSelect placeholder="Select branch" options={['All Branches', 'Dubai Branch', 'Marina Branch', 'Warehouse']} value={ccBranch} onChange={setCcBranch} />
+                  <CustomSelect placeholder="Select branch" options={branchSelectOptions} value={ccBranch} onChange={setCcBranch} />
                 </div>
                 <div className="col-span-1">
                   <label className="block text-xs font-bold text-slate-600 mb-1">Manager</label>
