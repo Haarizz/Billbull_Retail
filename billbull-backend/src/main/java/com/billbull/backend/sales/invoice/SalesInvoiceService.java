@@ -667,11 +667,20 @@ public class SalesInvoiceService {
             for (SalesInvoiceItem item : invoice.getItems()) {
                 DeliveryNoteItemRequest iReq = new DeliveryNoteItemRequest();
                 iReq.itemCode = item.getItemCode();
-                iReq.description = item.getItemName();
+                iReq.barcode = null;
+                iReq.description = item.getDescription() != null && !item.getDescription().isBlank()
+                        ? item.getDescription()
+                        : item.getItemName();
                 iReq.unit = item.getUnit();
                 iReq.orderedQty = item.getQuantity();
                 iReq.currentQty = item.getQuantity();
                 iReq.foc = item.getFoc();
+                iReq.focUnit = item.getUnit();
+                iReq.image = item.getImage();
+                iReq.price = item.getPrice();
+                iReq.disc = item.getDiscount();
+                iReq.tax = item.getTaxRate();
+                iReq.cost = item.getCost();
                 req.items.add(iReq);
             }
         }

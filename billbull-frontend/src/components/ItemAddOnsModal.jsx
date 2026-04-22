@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { X, SlidersHorizontal } from 'lucide-react';
 
 const calculateRow = (item) => {
-    const qty = parseFloat(item.qty) || 0;
+    const qty = parseFloat(item.qty ?? item.currentQty ?? item.orderedQty) || 0;
     const price = parseFloat(item.price) || 0;
     const discPercent = parseFloat(item.disc) || 0;
     const taxPercent = parseFloat(item.tax) || 0;
@@ -33,6 +33,7 @@ const calculateRow = (item) => {
 
     return {
         ...item,
+        qty,
         grossAmount,
         discountAmount,
         taxableAmount,
@@ -65,10 +66,12 @@ const ItemAddOnsModal = ({ item, onClose, onSave, isReadOnly = false }) => {
     const displayQty = current.qty ?? current.currentQty ?? current.orderedQty ?? 0;
 
     const grossProfit = (() => {
-        const net = (current.qty || 0) * (current.price || 0) * (1 - (current.disc || 0) / 100);
-        const cost = (current.cost || 0) * (current.qty || 0);
+        const qty = current.qty ?? current.currentQty ?? current.orderedQty ?? 0;
+        const net = qty * (current.price || 0) * (1 - (current.disc || 0) / 100);
+        const cost = (current.cost || 0) * qty;
         return net > 0 ? (((net - cost) / net) * 100).toFixed(1) : 0;
     })();
+    const roundedGrossProfit = Number(grossProfit).toFixed(2);
 
     return (
         <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm flex items-center justify-center z-[110] p-4">
@@ -185,7 +188,7 @@ const ItemAddOnsModal = ({ item, onClose, onSave, isReadOnly = false }) => {
                             <div className="space-y-1.5 text-xs">
                                 <div className="flex justify-between text-slate-600">
                                     <span>Base Amount (Qty × Price)</span>
-                                    <span>AED {(current.grossAmount ?? (current.qty || 0) * (current.price || 0)).toFixed(2)}</span>
+                                    <span>AED {(current.grossAmount ?? displayQty * (current.price || 0)).toFixed(2)}</span>
                                 </div>
                                 {(current.foc > 0) && (
                                     <div className="flex justify-between text-emerald-600">
@@ -215,12 +218,12 @@ const ItemAddOnsModal = ({ item, onClose, onSave, isReadOnly = false }) => {
                                 <div className="h-px bg-slate-100 my-2 w-full" />
                                 <div className="flex justify-between text-[10px] text-slate-400">
                                     <span>Cost Price</span>
-                                    <span>AED {((current.cost || 0) * (current.qty || 0)).toFixed(2)}</span>
+                                    <span>AED {((current.cost || 0) * displayQty).toFixed(2)}</span>
                                 </div>
                                 <div className="flex justify-between text-[10px] text-slate-400">
                                     <span>Gross Profit %</span>
-                                    <span className={parseFloat(grossProfit) < 10 ? 'text-red-400' : 'text-emerald-500'}>
-                                        {grossProfit}%
+                                    <span className={parseFloat(roundedGrossProfit) < 10 ? 'text-red-400' : 'text-emerald-500'}>
+                                        {roundedGrossProfit}%
                                     </span>
                                 </div>
                             </div>

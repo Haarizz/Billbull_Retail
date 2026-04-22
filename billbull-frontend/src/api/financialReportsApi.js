@@ -33,12 +33,12 @@ export const getFinancialReportsData = async (startDate, endDate) => {
         return {
             accounts,
             costCenters,
-            transactions,
+            transactions: filterByDateRange(transactions, startDate, endDate, 'transactionDate'),
             receiptVouchers,
             journalVouchers,
-            expenses,
+            expenses: filterByDateRange(expenses, startDate, endDate, 'date'),
             taxConfigs,
-            taxFilings
+            taxFilings: filterByDateRange(taxFilings, startDate, endDate, 'periodEndDate')
         };
     } catch (error) {
         console.error('Error fetching financial reports data:', error);
@@ -49,16 +49,18 @@ export const getFinancialReportsData = async (startDate, endDate) => {
 /**
  * Calculate key financial metrics
  */
-export const calculateFinancialMetrics = (data) => {
+export const calculateFinancialMetrics = (data, startDate, endDate) => {
     const { accounts, transactions, expenses } = data;
+    const filteredTransactions = filterByDateRange(transactions, startDate, endDate, 'transactionDate');
+    const filteredExpenses = filterByDateRange(expenses, startDate, endDate, 'date');
 
-    // Calculate total revenue (Income accounts)
-    const totalRevenue = accounts
-        .filter(acc => acc.accountGroup === 'Income' && acc.status !== 'archived')
-        .reduce((sum, acc) => sum + parseFloat(acc.balanceAmount || 0), 0);
+    // Calculate total revenue for the selected period from credit-side ledger movement.
+    const totalRevenue = filteredTransactions
+        .filter(txn => parseFloat(txn.creditAmount || 0) > 0)
+        .reduce((sum, txn) => sum + parseFloat(txn.creditAmount || 0), 0);
 
     // Calculate total expenses
-    const totalExpenses = expenses
+    const totalExpenses = filteredExpenses
         .reduce((sum, exp) => sum + parseFloat(exp.amount || 0), 0);
 
     // Calculate net profit
@@ -79,7 +81,7 @@ export const calculateFinancialMetrics = (data) => {
         .filter(acc =>
             acc.accountGroup === 'Assets' &&
             acc.status !== 'archived' &&
-            (acc.name.toLowerCase().includes('cash') || acc.name.toLowerCase().includes('bank'))
+            ((acc.name || '').toLowerCase().includes('cash') || (acc.name || '').toLowerCase().includes('bank'))
         )
         .reduce((sum, acc) => sum + parseFloat(acc.balanceAmount || 0), 0);
 

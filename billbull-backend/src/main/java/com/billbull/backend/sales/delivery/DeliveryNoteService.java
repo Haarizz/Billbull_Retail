@@ -179,8 +179,8 @@ public class DeliveryNoteService {
     public DeliveryNoteResponse update(Long id, DeliveryNoteRequest req) {
         DeliveryNote dn = getEntity(id);
 
-        if (dn.getStatus() == DeliveryNoteStatus.DELIVERED) {
-            throw new IllegalStateException("Delivered note is locked");
+        if (dn.getStatus() != DeliveryNoteStatus.DRAFT) {
+            throw new IllegalStateException("Only Draft notes can be edited");
         }
 
         dn.getItems().clear();
@@ -240,6 +240,7 @@ public class DeliveryNoteService {
 
         if (stockStrategy.canDeliveryNoteDeductStock()) {
             for (DeliveryNoteItem item : dn.getItems()) {
+                ensureDispatchBinAssignment(dn, item);
 
                 BigDecimal available = warehouseStockService.getAvailableStock(
                         dn.getWarehouse().getId(),
@@ -666,7 +667,19 @@ public class DeliveryNoteService {
             return;
         }
 
-        dn.getItems().forEach(this::hydrateDeliveryItemDisplayData);
+        Map<String, SalesInvoiceItem> linkedInvoiceItemsByCode = new HashMap<>();
+        SalesInvoice linkedInvoice = dn.getLinkedSalesInvoice();
+        if (linkedInvoice != null) {
+            Hibernate.initialize(linkedInvoice.getItems());
+            linkedInvoice.getItems().stream()
+                    .filter(i -> i.getItemCode() != null && !i.getItemCode().isBlank())
+                    .forEach(i -> linkedInvoiceItemsByCode.putIfAbsent(i.getItemCode(), i));
+        }
+
+        dn.getItems().forEach(item -> {
+            backfillDeliveryItemPricingFromInvoice(item, linkedInvoiceItemsByCode.get(item.getItemCode()));
+            hydrateDeliveryItemDisplayData(item);
+        });
 
         List<String> codesNeedingImage = dn.getItems().stream()
                 .filter(i -> (i.getImage() == null || i.getImage().isBlank()) && i.getItemCode() != null && !i.getItemCode().isBlank())
@@ -735,6 +748,38 @@ public class DeliveryNoteService {
             if (cost != null) {
                 item.setCost(cost.doubleValue());
             }
+        }
+    }
+
+    private void backfillDeliveryItemPricingFromInvoice(DeliveryNoteItem item, SalesInvoiceItem invoiceItem) {
+        if (item == null || invoiceItem == null) {
+            return;
+        }
+
+        if ((item.getDescription() == null || item.getDescription().isBlank())
+                && invoiceItem.getDescription() != null && !invoiceItem.getDescription().isBlank()) {
+            item.setDescription(invoiceItem.getDescription());
+        }
+
+        if (item.getPrice() == null && invoiceItem.getPrice() != null) {
+            item.setPrice(invoiceItem.getPrice());
+        }
+
+        if (item.getDisc() == null && invoiceItem.getDiscount() != null) {
+            item.setDisc(invoiceItem.getDiscount());
+        }
+
+        if (item.getTax() == null && invoiceItem.getTaxRate() != null) {
+            item.setTax(invoiceItem.getTaxRate());
+        }
+
+        if (item.getCost() == null && invoiceItem.getCost() != null) {
+            item.setCost(invoiceItem.getCost());
+        }
+
+        if ((item.getImage() == null || item.getImage().isBlank())
+                && invoiceItem.getImage() != null && !invoiceItem.getImage().isBlank()) {
+            item.setImage(invoiceItem.getImage());
         }
     }
 
@@ -810,7 +855,7 @@ public class DeliveryNoteService {
             item.setCurrentQty(i.currentQty);
             item.setBoxes(i.boxes);
             item.setImage(i.image);
-            item.setBinId(i.binId);
+            item.setBinId(resolveDraftBinId(warehouse.getId(), product, i));
             item.setSalesOrderItemId(i.salesOrderItemId);
             item.setPrice(i.price);
             item.setDisc(i.disc);
@@ -827,6 +872,77 @@ public class DeliveryNoteService {
         dn.setTotalLines(dn.getItems().size());
         dn.setTotalQty(qty);
         dn.setTotalBoxes(boxes);
+    }
+
+    private Long resolveDraftBinId(Long warehouseId, Product product, DeliveryNoteItemRequest itemRequest) {
+        if (itemRequest.binId != null) {
+            validateBinForWarehouse(itemRequest.binId, warehouseId);
+            return itemRequest.binId;
+        }
+
+        return findPreferredBinId(
+                warehouseId,
+                product.getId(),
+                calculateRequestedQty(itemRequest.currentQty, itemRequest.foc));
+    }
+
+    private void ensureDispatchBinAssignment(DeliveryNote dn, DeliveryNoteItem item) {
+        Long warehouseId = dn.getWarehouse().getId();
+        Long productId = item.getProduct().getId();
+        int requestedQty = calculateRequestedQty(item.getCurrentQty(), item.getFoc());
+
+        if (requestedQty <= 0) {
+            return;
+        }
+
+        if (item.getBinId() != null) {
+            validateBinForWarehouse(item.getBinId(), warehouseId);
+
+            BigDecimal selectedBinStock = stockMovementRepo.getStockByBin(warehouseId, productId, item.getBinId());
+            if (selectedBinStock.compareTo(BigDecimal.valueOf(requestedQty)) < 0) {
+                throw new IllegalStateException(
+                        "Selected bin does not have enough stock for " + item.getItemCode()
+                                + ". Available in bin: " + selectedBinStock
+                                + " | Requested: " + requestedQty);
+            }
+            return;
+        }
+
+        Long autoAssignedBinId = findPreferredBinId(warehouseId, productId, requestedQty);
+        if (autoAssignedBinId != null) {
+            item.setBinId(autoAssignedBinId);
+        }
+    }
+
+    private Long findPreferredBinId(Long warehouseId, Long productId, int requestedQty) {
+        if (requestedQty <= 0) {
+            return null;
+        }
+
+        return stockMovementRepo.findActiveBinsByWarehouseAndProduct(warehouseId, productId).stream()
+                .filter(row -> ((Number) row[1]).doubleValue() >= requestedQty)
+                .map(row -> (Long) row[0])
+                .findFirst()
+                .orElse(null);
+    }
+
+    private void validateBinForWarehouse(Long binId, Long warehouseId) {
+        Bin bin = binRepo.findByIdEager(binId)
+                .orElseThrow(() -> new RuntimeException("Bin not found: " + binId));
+
+        Long binWarehouseId = bin.getLocator() != null
+                && bin.getLocator().getZone() != null
+                && bin.getLocator().getZone().getWarehouse() != null
+                        ? bin.getLocator().getZone().getWarehouse().getId()
+                        : null;
+
+        if (binWarehouseId == null || !binWarehouseId.equals(warehouseId)) {
+            throw new IllegalStateException("Selected bin does not belong to the chosen warehouse");
+        }
+    }
+
+    private int calculateRequestedQty(Integer currentQty, Integer foc) {
+        return (currentQty != null ? currentQty : 0) + (foc != null ? foc : 0);
     }
 
     private SalesInvoice resolveSourceInvoice(DeliveryNoteRequest req) {
