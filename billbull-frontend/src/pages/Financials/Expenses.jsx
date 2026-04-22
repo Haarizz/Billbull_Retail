@@ -90,7 +90,47 @@ const Expenses = () => {
 
     const loadExpenses = async () => {
         try {
-            const data = await fetchExpenses();
+            let data = await fetchExpenses();
+            
+            // Fallback: If no expenses from dedicated API, try filtering from global transactions
+            if (!data || data.length === 0) {
+                console.warn("Expenses API returned empty. Attempting fallback from ledger transactions...");
+                const allTransactions = await getTransactions();
+                
+                // We define expenses as transactions associated with expense-type accounts 
+                // OR specific transaction types like 'EXPENSE', 'PURCHASE_INVOICE'.
+                const expAccounts = glAccounts.filter(a => 
+                    (a.accountType || '').toLowerCase().includes('expense') || 
+                    (a.accountGroup || '').toLowerCase().includes('expense')
+                );
+                const expAccountCodes = new Set(expAccounts.map(a => a.code));
+
+                const expenseTransactions = allTransactions.filter(t => 
+                    t.type === 'EXPENSE' || 
+                    t.type === 'PURCHASE_INVOICE' ||
+                    t.type === 'PAYMENT_VOUCHER' ||
+                    expAccountCodes.has(t.accountCode)
+                );
+
+                if (expenseTransactions.length > 0) {
+                    data = expenseTransactions.map(t => ({
+                        id: t.id,
+                        date: t.transactionDate,
+                        vendor: t.accountName || 'Miscellaneous',
+                        category: t.accountGroup || 'Operational',
+                        glAccountId: expAccounts.find(a => a.code === t.accountCode)?.id || '',
+                        costCenter: t.costCenterName || '',
+                        location: t.branch || 'Head Office',
+                        amount: parseFloat(t.debitAmount || 0),
+                        taxRate: 0, // Placeholder
+                        taxAmount: 0,
+                        total: parseFloat(t.debitAmount || 0),
+                        status: 'Paid',
+                        notes: t.description || ''
+                    }));
+                }
+            }
+            
             setExpenses(data);
         } catch (error) {
             console.error("Failed to load expenses", error);

@@ -632,7 +632,7 @@ const ReceiptVoucher = () => {
                         <div>
                             <p className="text-xs text-slate-500 font-semibold">This Month</p>
                             <h3 className="text-2xl font-bold text-slate-800 mt-1">{currency} {stats.monthTotal}</h3>
-                            <p className="text-[10px] text-slate-400 mt-1">January 2024</p>
+                            <p className="text-[10px] text-slate-400 mt-1">{new Date().toLocaleString('default', { month: 'long', year: 'numeric' })}</p>
                         </div>
                         <div className="p-2 bg-emerald-50 rounded text-emerald-600">
                             <TrendingUp size={20} />
