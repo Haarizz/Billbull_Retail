@@ -625,6 +625,7 @@ const SessionView = ({
     ChevronRight, Undo2, Save, ClipboardList, Barcode, Keyboard, Search, Filter, FileDown,
     ImageIcon, Trash2, PackageSearch, Package, RefreshCw, CheckSquare, MousePointer2,
     binCapacityViolations = [],
+    isItemDeleting = false,
 }) => {
     const [itemSearchQuery, setItemSearchQuery] = useState('');
     // BB-016: Filter items by search query
@@ -1088,9 +1089,10 @@ const SessionView = ({
                             </button>
                             <button
                                 onClick={handleSaveDraft}
-                                className="w-full h-10 bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 font-bold rounded-lg shadow-sm transition-all flex items-center justify-center gap-2 text-[11px] uppercase tracking-wider"
+                                disabled={isItemDeleting}
+                                className="w-full h-10 bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 font-bold rounded-lg shadow-sm transition-all flex items-center justify-center gap-2 text-[11px] uppercase tracking-wider disabled:opacity-50 disabled:cursor-not-allowed"
                             >
-                                <Save className="h-4 w-4 text-slate-400" /> Save & Continue Later
+                                <Save className="h-4 w-4 text-slate-400" /> {isItemDeleting ? 'Removing...' : 'Save & Continue Later'}
                             </button>
                         </div>
                     )}
@@ -1287,22 +1289,34 @@ const SessionView = ({
                                 )}
                             </div>
 
-                            {/* Bin capacity warning — shown when countedQty exceeds the selected bin's capacity */}
+                            {/* Bin capacity warning — checks TOTAL of all items in this bin, not just this item */}
                             {(() => {
                                 if (!selectedItemForCount.binId) return null;
                                 const bin = warehouseBins.find(b => String(b.id) === String(selectedItemForCount.binId));
                                 if (!bin?.capacity) return null;
-                                const finalQty = countMode === 'add' && selectedItemForCount.countedQty != null
+
+                                // Sum countedQty of all OTHER items already in this bin
+                                const otherItemsInBin = (selectedSession?.items || [])
+                                    .filter(i => i.id !== selectedItemForCount.id && i.binId != null && String(i.binId) === String(selectedItemForCount.binId) && i.countedQty != null)
+                                    .reduce((sum, i) => sum + i.countedQty, 0);
+
+                                const thisItemQty = countMode === 'add' && selectedItemForCount.countedQty != null
                                     ? selectedItemForCount.countedQty + (parseInt(countToAdd) || 0)
                                     : (parseInt(countToAdd) || 0);
-                                if (finalQty <= bin.capacity) return null;
+
+                                const binTotal = otherItemsInBin + thisItemQty;
+                                if (binTotal <= bin.capacity) return null;
+
                                 return (
                                     <div className="flex items-start gap-3 p-3 bg-red-50 border border-red-200 rounded-xl">
                                         <AlertTriangle className="h-4 w-4 text-red-500 shrink-0 mt-0.5" />
                                         <div>
                                             <p className="text-xs font-bold text-red-700">Bin Capacity Exceeded</p>
                                             <p className="text-[11px] text-red-600 mt-0.5">
-                                                Bin <strong>{bin.code}</strong> max is <strong>{bin.capacity}</strong> units. You are entering <strong>{finalQty}</strong>. Approval will be blocked until this is corrected.
+                                                Bin <strong>{bin.code}</strong> max is <strong>{bin.capacity}</strong> units.
+                                                Total in bin after this entry: <strong>{binTotal}</strong>
+                                                {otherItemsInBin > 0 && <span className="text-red-500"> ({otherItemsInBin} from other products + {thisItemQty} this item)</span>}.
+                                                Approval will be blocked.
                                             </p>
                                         </div>
                                     </div>
@@ -1345,6 +1359,7 @@ const StockTaking = () => {
     const [sessionToDelete, setSessionToDelete] = useState(null);
     const [notifModal, setNotifModal] = useState(null);
     // notifModal shape: { type: 'info'|'success'|'warning'|'error'|'confirm', title, message, confirmLabel?, confirmClass?, onConfirm? }
+    const [isItemDeleting, setIsItemDeleting] = useState(false);
     const [selectedType, setSelectedType] = useState('Inventory Counting');
     const [isTypeDropdownOpen, setIsTypeDropdownOpen] = useState(false);
     const [selectedCountType, setSelectedCountType] = useState('Full Stock Take (All Items)');
@@ -1367,6 +1382,8 @@ const StockTaking = () => {
     const [lastSaved, setLastSaved] = useState(null);
     const barcodeInputRef = React.useRef(null);
     const productDetailsCacheRef = React.useRef(new Map());
+    // Prevents duplicate adds from rapid barcode scanner Enter presses firing before state updates
+    const addingSkusRef = React.useRef(new Set());
 
     const [allSessions, setAllSessions] = useState([]);
     const [warehouseBins, setWarehouseBins] = useState([]);
@@ -1379,21 +1396,35 @@ const StockTaking = () => {
     // Undo history: each entry is { type: 'ADD_ITEM'|'UPDATE_COUNT', itemId, prevQty? }
     const [undoHistory, setUndoHistory] = useState([]);
 
-    // Derive bin capacity violations from current session items + bin metadata
-    // Returns array of { productName, binCode, capacity, countedQty } for items that exceed their bin's capacity
+    // Derive bin capacity violations — checks the TOTAL of all items sharing the same bin,
+    // not each item individually. e.g. Product1=100 + Product2=100 in BIN01 (cap 100) → violation.
     const binCapacityViolations = React.useMemo(() => {
         if (!selectedSession?.items || warehouseBins.length === 0) return [];
+
+        // Step 1: sum countedQty per bin across all items in the session
+        const binTotals = {};
+        selectedSession.items
+            .filter(item => item.countedQty != null && item.binId != null)
+            .forEach(item => {
+                const key = String(item.binId);
+                binTotals[key] = (binTotals[key] || 0) + item.countedQty;
+            });
+
+        // Step 2: for each bin total that exceeds capacity, flag every item in that bin
         return selectedSession.items
             .filter(item => item.countedQty != null && item.binId != null)
             .reduce((violations, item) => {
                 const bin = warehouseBins.find(b => String(b.id) === String(item.binId));
-                if (bin?.capacity != null && item.countedQty > bin.capacity) {
+                if (!bin?.capacity) return violations;
+                const binTotal = binTotals[String(item.binId)] || 0;
+                if (binTotal > bin.capacity) {
                     violations.push({
                         itemId: item.id,
                         productName: item.productName,
                         binCode: bin.code,
                         capacity: bin.capacity,
                         countedQty: item.countedQty,
+                        binTotal,
                     });
                 }
                 return violations;
@@ -1526,9 +1557,15 @@ const StockTaking = () => {
 
     const handleSelectProduct = async (product, initialCount = null) => {
         if (!selectedSession) return;
-        setIsLoading(true);
 
         const sku = product.sku || product.code;
+
+        // Guard: drop concurrent calls for the same SKU (rapid barcode scanner Enter events)
+        if (addingSkusRef.current.has(sku)) return;
+        addingSkusRef.current.add(sku);
+
+        setIsLoading(true);
+
         const existingItem = selectedSession.items?.find(i => i.sku === sku);
 
         if (existingItem) {
@@ -1541,6 +1578,7 @@ const StockTaking = () => {
                 showNotif('info', 'Already Added', 'This product is already in the session.');
             }
             setIsLoading(false);
+            addingSkusRef.current.delete(sku);
             return;
         }
 
@@ -1575,6 +1613,8 @@ const StockTaking = () => {
             console.error("Failed to add product to session:", error);
             showNotif('error', 'Error', 'Failed to add product to session.');
             setIsLoading(false);
+        } finally {
+            addingSkusRef.current.delete(sku);
         }
     };
 
@@ -1669,31 +1709,31 @@ const StockTaking = () => {
         const oldItem = selectedSession.items.find(i => i.id === itemId);
         const prevQty = oldItem ? oldItem.countedQty : null;
 
-        // 1. Optimistic Update for immediate UI responsiveness
-        const updatedItems = selectedSession.items.map(item => {
-            if (item.id === itemId) {
-                const variance = counted !== null ? counted - item.systemQty : 0 - item.systemQty;
-                const price = item.price || 0;
-                const varianceValue = price * variance;
-
-                return {
-                    ...item,
-                    countedQty: counted,
-                    variance: variance,
-                    impact: varianceValue ? `${varianceValue > 0 ? '+' : ''}AED ${Math.abs(varianceValue).toFixed(2)}` : null,
-                    status: variance === 0 ? 'Matched' : 'Variance'
-                };
-            }
-            return item;
+        // Optimistic update using functional updater — safe against concurrent state changes
+        setSelectedSession(prev => {
+            if (!prev) return prev;
+            return {
+                ...prev,
+                items: prev.items.map(item => {
+                    if (item.id !== itemId) return item;
+                    const variance = counted !== null ? counted - item.systemQty : 0 - item.systemQty;
+                    const varianceValue = (item.price || 0) * variance;
+                    return {
+                        ...item,
+                        countedQty: counted,
+                        variance,
+                        impact: varianceValue ? `${varianceValue > 0 ? '+' : ''}AED ${Math.abs(varianceValue).toFixed(2)}` : null,
+                        status: variance === 0 ? 'Matched' : 'Variance'
+                    };
+                })
+            };
         });
 
-        setSelectedSession({ ...selectedSession, items: updatedItems });
-        // Record undo entry (only push if count actually changed)
         if (prevQty !== counted) {
             setUndoHistory(prev => [...prev, { type: 'UPDATE_COUNT', itemId, prevQty }]);
         }
 
-        // 2. Background API Call
+        // Background API call
         updateApiCount(itemId, counted).then(() => {
             setLastSaved(new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }));
         }).catch(error => {
@@ -1707,22 +1747,18 @@ const StockTaking = () => {
         setUndoHistory(prev => prev.slice(0, -1));
 
         if (last.type === 'ADD_ITEM') {
-            // Remove the item from the session (soft delete)
             try {
                 await deleteStockTakeItem(last.itemId);
-                const updatedItems = selectedSession.items.filter(i => i.id !== last.itemId);
-                setSelectedSession({ ...selectedSession, items: updatedItems });
+                // Use functional updater so rapid undos always filter against latest state
+                setSelectedSession(prev => prev ? { ...prev, items: prev.items.filter(i => i.id !== last.itemId) } : prev);
                 setLastScannedItem(null);
                 setLastScannedAt(null);
             } catch (err) {
                 console.error('Undo ADD_ITEM failed:', err);
-                // Re-push in case of failure
                 setUndoHistory(prev => [...prev, last]);
             }
         } else if (last.type === 'UPDATE_COUNT') {
-            // Revert the count to the previous value
             handleCountChange(last.itemId, last.prevQty !== null ? String(last.prevQty) : '');
-            // Remove the undo entry that handleCountChange just pushed (keep history clean)
             setUndoHistory(prev => prev.slice(0, -1));
         }
     };
@@ -1777,26 +1813,35 @@ const StockTaking = () => {
             confirmClass: 'bg-red-500 hover:bg-red-600 text-white',
             onConfirm: async () => {
                 setNotifModal(null);
+                setIsItemDeleting(true);
                 try {
                     await deleteStockTakeItem(itemId);
-                    const updatedItems = selectedSession.items.filter(item => item.id !== itemId);
-                    setSelectedSession({ ...selectedSession, items: updatedItems });
+                    // Re-fetch session from backend — ensures UI reflects DB state after delete.
+                    // Local filter alone won't catch a silent backend failure.
+                    const sessionId = selectedSession.sessionId;
+                    const detail = await getStockTakeSession(sessionId);
+                    setSelectedSession(prev => prev ? {
+                        ...prev,
+                        items: detail.items.map(item => ({
+                            ...item,
+                            impact: item.varianceValue ? `${item.varianceValue > 0 ? '+' : ''}AED ${Math.abs(item.varianceValue).toFixed(2)}` : null,
+                            status: item.status.charAt(0) + item.status.slice(1).toLowerCase()
+                        }))
+                    } : prev);
                 } catch (error) {
                     console.error("Error deleting item:", error);
                     showNotif('error', 'Error', 'Failed to delete item.');
+                } finally {
+                    setIsItemDeleting(false);
                 }
             }
         });
     };
 
-    const handleSaveDraft = () => {
+    const handleSaveDraft = async () => {
         if (!selectedSession) return;
-
-        const updatedSessions = allSessions.map(s =>
-            s.id === selectedSession.id ? { ...selectedSession, status: 'In Progress', action: 'Continue' } : s
-        );
-
-        setAllSessions(updatedSessions);
+        // Re-fetch all sessions from backend so the list shows correct progress/variance
+        await fetchSessions();
         setViewMode('list');
     };
 
@@ -2109,6 +2154,7 @@ const StockTaking = () => {
                     MousePointer2={MousePointer2}
                     getStatusStyle={getStatusStyle}
                     binCapacityViolations={binCapacityViolations}
+                    isItemDeleting={isItemDeleting}
                 />
             )}
 
@@ -2515,10 +2561,18 @@ const StockTaking = () => {
                                         <p className="text-[11px] text-red-600 leading-relaxed mb-2">
                                             The following items exceed their bin&apos;s physical capacity. Edit the counted quantities before approving.
                                         </p>
+                                        {/* Group by bin so we show one line per bin, not one per item */}
                                         <ul className="space-y-1">
-                                            {binCapacityViolations.map((v, i) => (
+                                            {Object.values(
+                                                binCapacityViolations.reduce((acc, v) => {
+                                                    if (!acc[v.binCode]) acc[v.binCode] = { binCode: v.binCode, capacity: v.capacity, binTotal: v.binTotal, products: [] };
+                                                    acc[v.binCode].products.push(v.productName);
+                                                    return acc;
+                                                }, {})
+                                            ).map((group, i) => (
                                                 <li key={i} className="text-[11px] text-red-700 font-semibold">
-                                                    • <strong>{v.productName}</strong> in bin <strong>{v.binCode}</strong>: {v.countedQty} counted / {v.capacity} max
+                                                    • Bin <strong>{group.binCode}</strong>: total <strong>{group.binTotal}</strong> / max <strong>{group.capacity}</strong>
+                                                    <span className="font-normal text-red-600"> ({group.products.join(', ')})</span>
                                                 </li>
                                             ))}
                                         </ul>
