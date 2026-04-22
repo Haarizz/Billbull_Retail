@@ -805,13 +805,13 @@ const EditorView = ({ initialData, onSaveDraft, onSubmitQC, onPost, onPrint, grn
               accepted: pending, // Default accepted to pending
               rejected: 0,
 
-              // unitCost = net cost per unit (after discount) — this is what we actually pay.
-              // lpoPrice = original gross price from LPO (reference only).
-              unitCost: netCost,
+              // unitCost = Gross price per unit (base for discounts)
+              // lpoPrice = reference gross price
+              unitCost: unitPrice,
               lpoPrice: unitPrice,
 
               disc: discount,
-              netCost: netCost,
+              netCost: netCost, // Initially calculated for reference
               tax: parseFloat(lpoItem.purchaseTax) || 5,
               taxAmt: pending * netCost * ((parseFloat(lpoItem.purchaseTax) || 5) / 100),
               foc: Number(lpoItem.focQty || lpoItem.foc || 0),
@@ -824,7 +824,8 @@ const EditorView = ({ initialData, onSaveDraft, onSubmitQC, onPost, onPrint, grn
               batch: Boolean(lpoItem.isBatchTracked || lpoItem.batchTracked)
             };
           })
-          .filter(item => item.received > 0); // Only show items with pending quantity
+          .filter(item => item.received > 0)
+          .map(item => recalculateItemTotals(item));
 
         setItems(grnItems);
       } else {
@@ -875,7 +876,7 @@ const EditorView = ({ initialData, onSaveDraft, onSubmitQC, onPost, onPrint, grn
     if (initialData.locatorId) getLocatorBins(initialData.locatorId).then(setBinList).catch(console.error);
 
     setItems(
-      initialData.items.map(i => ({
+      initialData.items.map(i => recalculateItemTotals({
         ...i,
         tax: parseFloat(i.purchaseTax) || parseFloat(i.tax) || 5,
         taxAmt: Number(i.taxAmt || 0),
@@ -1027,6 +1028,11 @@ const EditorView = ({ initialData, onSaveDraft, onSubmitQC, onPost, onPrint, grn
   };
 
   const recalculateItemTotals = (item) => {
+    const qty = Number(item.accepted) || 0;
+    const unitPrice = Number(item.unitCost) || 0;
+    const discPercent = Number(item.disc) || 0;
+    const taxPercent = Number(item.tax) || 5;
+
     const focQty = Number(item.foc) || 0;
     let focDeduction = 0;
 
@@ -1034,29 +1040,29 @@ const EditorView = ({ initialData, onSaveDraft, onSubmitQC, onPost, onPrint, grn
       const sellingUnit = item.uom;
       const focUnit = item.focUnit;
       if (sellingUnit === focUnit) {
-        focDeduction = item.unitCost * focQty;
+        focDeduction = unitPrice * focQty;
       } else {
         const focConvFactor = item.unitConversions[focUnit] || 1;
         const sellingConvFactor = item.unitConversions[sellingUnit] || 1;
         const focInSellingUnit = (focQty * focConvFactor) / sellingConvFactor;
-        focDeduction = item.unitCost * focInSellingUnit;
+        focDeduction = unitPrice * focInSellingUnit;
       }
     }
 
-    const grossCost = (Number(item.unitCost) || 0) * (Number(item.accepted) || 0);
-    const focAdjustedCost = Math.max(0, grossCost - focDeduction);
-    const discAmt = focAdjustedCost * ((Number(item.disc) || 0) / 100);
-    const netLineTotal = Math.max(0, focAdjustedCost - discAmt);
-    const acceptedQty = Number(item.accepted) || 0;
+    const grossLineValue = unitPrice * qty;
+    const focAdjustedValue = Math.max(0, grossLineValue - focDeduction);
+    const discAmt = focAdjustedValue * (discPercent / 100);
+    const netLineTotal = Math.max(0, focAdjustedValue - discAmt);
+    const taxAmt = netLineTotal * (taxPercent / 100);
 
-    // netCost = effective per-unit cost (line value / accepted qty), not gross unit price.
-    // This is the value the invoice should inherit as its unit cost.
-    const effectiveNetCost = acceptedQty > 0 ? netLineTotal / acceptedQty : (Number(item.unitCost) || 0);
+    // netCost = effective per-unit cost (line value / qty)
+    const effectiveNetCost = qty > 0 ? netLineTotal / qty : unitPrice;
 
     return {
       ...item,
-      tax: Number(item.tax) || 5,
-      taxAmt: netLineTotal * ((Number(item.tax) || 5) / 100),
+      grossSubtotal: grossLineValue,
+      discountAmount: discAmt,
+      taxAmt: taxAmt,
       netCost: effectiveNetCost,
       total: netLineTotal
     };
@@ -1156,10 +1162,20 @@ const EditorView = ({ initialData, onSaveDraft, onSubmitQC, onPost, onPrint, grn
       acc.received += curr.received;
       acc.accepted += curr.accepted;
       acc.rejected += curr.rejected;
-      acc.value += curr.total;
-      acc.taxAmt += curr.taxAmt || 0;
+      acc.grossTotal += (curr.grossSubtotal || (Number(curr.unitCost) * Number(curr.accepted)) || 0);
+      acc.discountTotal += (curr.discountAmount || 0);
+      acc.taxTotal += (curr.taxAmt || 0);
+      acc.netTotal += (curr.total || 0);
       return acc;
-    }, { received: 0, accepted: 0, rejected: 0, value: 0, taxAmt: 0 });
+    }, {
+      received: 0,
+      accepted: 0,
+      rejected: 0,
+      grossTotal: 0,
+      discountTotal: 0,
+      taxTotal: 0,
+      netTotal: 0
+    });
   }, [items]);
 
   // FIX 1: Correct workflow badge logic based on single status
@@ -1769,20 +1785,24 @@ const EditorView = ({ initialData, onSaveDraft, onSubmitQC, onPost, onPrint, grn
 
             <div className="space-y-2 text-xs border-t border-slate-100 pt-3">
               <div className="flex justify-between">
-                <span className="text-slate-500 font-medium">Subtotal</span>
-                <span className="font-medium">{totals.value.toFixed(2)} AED</span>
+                <span className="text-slate-500 font-medium">Subtotal (Gross)</span>
+                <span className="font-medium text-slate-700">{totals.grossTotal.toFixed(2)} AED</span>
               </div>
-              <div className="flex justify-between text-green-600">
-                <span className="font-medium">Discount</span>
-                <span className="font-medium">-55.20 AED</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-slate-500">VAT</span>
-                <span className="font-medium">{totals.taxAmt.toFixed(2)} AED</span>
+              {totals.discountTotal > 0 && (
+                <div className="flex justify-between text-emerald-600">
+                  <span className="font-medium">Discount</span>
+                  <span className="font-medium">- {totals.discountTotal.toFixed(2)} AED</span>
+                </div>
+              )}
+              <div className="flex justify-between text-slate-500">
+                <span>VAT (Tax)</span>
+                <span className="font-medium text-slate-700">{totals.taxTotal.toFixed(2)} AED</span>
               </div>
               <div className="flex justify-between text-base pt-2 border-t border-slate-100 mt-2">
                 <span className="font-bold text-slate-800">Grand Total</span>
-                <span className="font-bold text-[#F5C742]">{(totals.value + totals.taxAmt).toFixed(2)} AED</span>
+                <span className="font-bold text-[#F5C742]">
+                  {(totals.netTotal + totals.taxTotal).toFixed(2)} AED
+                </span>
               </div>
             </div>
           </div>

@@ -1618,7 +1618,7 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
                   <SearchableDropdown
                     options={grnList.map(grn => ({
                       value: grn.id,
-                      label: `${grn.grnNo} - ${grn.vendorName || grn.vendor || "Vendor"}`
+                      label: `${grn.idDisplay || grn.grnNo} - ${grn.vendorName || grn.vendor || "Vendor"}`
                     }))}
                     value={selectedGrn}
                     onChange={(val) => handleGrnSelect(val)}
