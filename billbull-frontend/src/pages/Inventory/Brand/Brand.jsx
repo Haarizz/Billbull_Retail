@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useMemo } from 'react';
 import {
   Tag, ChevronRight, Plus, Upload, Download, Search,
   ChevronDown, RefreshCw, SquarePen, Trash2, Eye,
@@ -6,6 +6,7 @@ import {
   Package, Calendar, User, Edit, TrendingUp, TrendingDown,
   AlertTriangle
 } from 'lucide-react';
+import SearchableDropdown from "../../../components/SearchableDropdown";
 
 // --- API IMPORTS ---
 import { getImageUrl } from "../../../utils/urlUtils";
@@ -16,6 +17,15 @@ import {
   deleteBrand,
   exportBrands
 } from "../../../api/brandsApi";
+import {
+  getCountryOptions,
+  normalizeCountryValue,
+  withFallbackOption
+} from "../../../utils/countryCurrencyOptions";
+
+const EMPTY_BRAND_VALUE = "—";
+const PLACEHOLDER_BRAND_VALUES = new Set([EMPTY_BRAND_VALUE, "â€”", "Ã¢â‚¬â€"]);
+const isPlaceholderBrandValue = (value) => PLACEHOLDER_BRAND_VALUES.has(value);
 
 const Brand = () => {
   // --- STATE MANAGEMENT ---
@@ -33,7 +43,7 @@ const Brand = () => {
   const [countryFilter, setCountryFilter] = useState("All Countries");
   const [sortBy, setSortBy] = useState("Name");
 
-  const uniqueCountries = ["All Countries", ...new Set(brands.map(b => b.country).filter(c => c !== "—" && c))];
+  const uniqueCountries = ["All Countries", ...new Set(brands.map(b => b.country).filter(c => c && !isPlaceholderBrandValue(c)))];
 
   // Initial Form State
   const initialFormState = {
@@ -57,6 +67,15 @@ const Brand = () => {
   };
 
   const [formData, setFormData] = useState(initialFormState);
+  const countryOptions = useMemo(() => withFallbackOption(
+    getCountryOptions(),
+    normalizeCountryValue(formData.country)
+  ), [formData.country]);
+  const countryFilterOptions = useMemo(() => uniqueCountries.map((country) => ({
+    value: country,
+    label: country,
+    displayLabel: country
+  })), [uniqueCountries]);
 
   const availableTags = [
     "Premium", "Local Brand", "Imported", "Eco-friendly", "Organic",
@@ -81,8 +100,8 @@ const Brand = () => {
         name: b.name,
         code: b.code,
         description: b.description,
-        country: b.country || "—",
-        region: b.region || "—",
+        country: normalizeCountryValue(b.country || "") || EMPTY_BRAND_VALUE,
+        region: b.region || EMPTY_BRAND_VALUE,
         // Handle images robustly using the API base URL
         logo: b.logoUrl ? getImageUrl(b.logoUrl) : null,
         initials: b.name.substring(0, 2).toUpperCase(),
@@ -211,7 +230,7 @@ const Brand = () => {
 
   const handleAddClick = () => {
     setEditingId(null);
-    setFormData(initialFormState);
+    setFormData({ ...initialFormState, country: normalizeCountryValue(initialFormState.country) });
     setIsModalOpen(true);
   };
 
@@ -221,8 +240,8 @@ const Brand = () => {
       name: brand.name,
       code: brand.code,
       description: brand.description,
-      country: brand.country === '—' ? "" : brand.country,
-      region: brand.region === '—' ? "" : brand.region,
+      country: isPlaceholderBrandValue(brand.country) ? "" : normalizeCountryValue(brand.country),
+      region: isPlaceholderBrandValue(brand.region) ? "" : brand.region,
       isActive: brand.status === 'Active',
       tags: brand.tags || [],
       logo: null,
@@ -371,14 +390,13 @@ const Brand = () => {
 
             {/* Country Filter */}
             <div className="relative">
-              <select
+              <SearchableDropdown
+                options={countryFilterOptions}
                 value={countryFilter}
-                onChange={(e) => setCountryFilter(e.target.value)}
-                className="appearance-none w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-500 outline-none focus:ring-2 focus:ring-[#F5C742]/50 cursor-pointer"
-              >
-                {uniqueCountries.map(c => <option key={c} value={c}>{c}</option>)}
-              </select>
-              <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 opacity-50 pointer-events-none" />
+                onChange={(value) => setCountryFilter(value || "All Countries")}
+                placeholder="Search country"
+                className="w-full"
+              />
             </div>
 
             {/* Sort */}
@@ -640,17 +658,13 @@ const Brand = () => {
                 <div className="grid grid-cols-2 gap-4 mt-3">
                   <div className="space-y-1.5">
                     <label className="text-xs font-medium">Country (Optional)</label>
-                    <select
-                      name="country"
+                    <SearchableDropdown
+                      options={countryOptions}
                       value={formData.country}
-                      onChange={handleInputChange}
-                      className="flex h-9 w-full rounded-md border border-slate-200 px-3 py-1 text-sm outline-none bg-white focus:border-slate-400"
-                    >
-                      <option value="">Select country</option>
-                      <option value="USA">USA</option>
-                      <option value="Germany">Germany</option>
-                      <option value="Japan">Japan</option>
-                    </select>
+                      onChange={(value) => setFormData((prev) => ({ ...prev, country: value }))}
+                      placeholder="Search country"
+                      className="w-full"
+                    />
                   </div>
                   <div className="space-y-1.5">
                     <label className="text-xs font-medium">Region (Optional)</label>

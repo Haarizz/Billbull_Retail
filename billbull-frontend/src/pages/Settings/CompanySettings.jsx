@@ -1,12 +1,20 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import {
   Building2, Save, Upload, X, Globe, Phone, Mail,
   MapPin, Hash, DollarSign, User, RefreshCw
 } from 'lucide-react';
 import toast from 'react-hot-toast';
+import SearchableDropdown from '../../components/SearchableDropdown';
 import { getCompanyProfile, updateCompanyProfile, uploadCompanyLogo } from '../../api/companyProfileApi';
 import { useCompany } from '../../context/CompanyContext';
 import { getImageUrl } from '../../utils/urlUtils';
+import {
+  getCountryOptions,
+  getCurrencyOptions,
+  normalizeCountryValue,
+  normalizeCurrencyValue,
+  withFallbackOption
+} from '../../utils/countryCurrencyOptions';
 
 // ==========================================
 // COMPANY SETTINGS PAGE
@@ -36,6 +44,15 @@ const CompanySettings = () => {
   const [isSaving, setIsSaving] = useState(false);
   const [isUploadingLogo, setIsUploadingLogo] = useState(false);
   const fileInputRef = useRef(null);
+  const countryOptions = useMemo(() => withFallbackOption(
+    getCountryOptions(),
+    normalizeCountryValue(form.country)
+  ), [form.country]);
+  const currencyOptions = useMemo(() => withFallbackOption(
+    getCurrencyOptions(),
+    normalizeCurrencyValue(form.currency),
+    (value) => ({ value, label: value, displayLabel: value })
+  ), [form.currency]);
 
   // Load on mount
   useEffect(() => {
@@ -48,12 +65,12 @@ const CompanySettings = () => {
           localName: p.localName || '',
           address: p.address || '',
           city: p.city || '',
-          country: p.country || '',
+          country: normalizeCountryValue(p.country || ''),
           phone: p.phone || '',
           mobile: p.mobile || '',
           email: p.email || '',
           trn: p.trn || '',
-          currency: p.currency || '',
+          currency: normalizeCurrencyValue(p.currency || ''),
           currencySymbol: p.currencySymbol || '',
           website: p.website || '',
         });
@@ -119,7 +136,12 @@ const CompanySettings = () => {
     }
     setIsSaving(true);
     try {
-      await updateCompanyProfile({ ...form, logoPath });
+      await updateCompanyProfile({
+        ...form,
+        country: normalizeCountryValue(form.country),
+        currency: normalizeCurrencyValue(form.currency),
+        logoPath
+      });
       await refreshCompany();
       toast.success('Company profile saved');
     } catch (err) {
@@ -244,12 +266,13 @@ const CompanySettings = () => {
         />
 
         {/* Country */}
-        <FormField
+        <SearchableSelectField
           label="Country"
           icon={<Globe size={15} color="#94a3b8" />}
+          options={countryOptions}
           value={form.country}
           onChange={v => handleChange('country', v)}
-          placeholder="e.g. United Arab Emirates"
+          placeholder="Search country"
         />
 
         {/* Phone */}
@@ -289,12 +312,13 @@ const CompanySettings = () => {
         />
 
         {/* Currency */}
-        <FormField
+        <SearchableSelectField
           label="Currency"
           icon={<DollarSign size={15} color="#94a3b8" />}
+          options={currencyOptions}
           value={form.currency}
           onChange={v => handleChange('currency', v)}
-          placeholder="e.g. AED"
+          placeholder="Search currency"
         />
 
         {/* Currency Symbol */}
@@ -372,6 +396,25 @@ const FormField = ({ label, required, icon, value, onChange, placeholder, fullRo
         onBlur={e => e.target.style.borderColor = '#e2e8f0'}
       />
     </div>
+  </div>
+);
+
+const SearchableSelectField = ({ label, required, icon, options, value, onChange, placeholder, fullRow }) => (
+  <div style={{ gridColumn: fullRow ? '1 / -1' : undefined }}>
+    <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: '#475569', marginBottom: 6 }}>
+      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+        {icon}
+        <span>{label}</span>
+      </span>
+      {required && <span style={{ color: '#ef4444', marginLeft: 2 }}>*</span>}
+    </label>
+    <SearchableDropdown
+      options={options}
+      value={value}
+      onChange={onChange}
+      placeholder={placeholder}
+      className="w-full"
+    />
   </div>
 );
 

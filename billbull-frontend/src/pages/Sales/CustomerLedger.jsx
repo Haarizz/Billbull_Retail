@@ -18,18 +18,43 @@ import { getAllSalesPayments, saveSalesPayment, getNextSalesPaymentNumber, getSa
 import { getAllSalesInvoices } from '../../api/salesInvoiceApi';
 import { useBranch } from '../../context/BranchContext';
 import { useCompany } from '../../context/CompanyContext';
+import {
+    getCountryOptions,
+    getCurrencyOptions,
+    normalizeCountryValue,
+    normalizeCurrencyValue,
+    withFallbackOption
+} from '../../utils/countryCurrencyOptions';
 
 // ==========================================
 // 1. ADD ADDRESS MODAL (Nested)
 // ==========================================
 
 const AddAddressModal = ({ isOpen, onClose, onSave, initialData }) => {
-    const defaultData = { name: '', address1: '', address2: '', city: 'Dubai', state: '', postalCode: '', country: 'UAE', mapLink: '' };
-    const [addressData, setAddressData] = useState(defaultData);
+    const createDefaultAddressData = () => ({
+        name: '',
+        address1: '',
+        address2: '',
+        city: 'Dubai',
+        state: '',
+        postalCode: '',
+        country: 'United Arab Emirates',
+        mapLink: ''
+    });
+    const [addressData, setAddressData] = useState(createDefaultAddressData);
+    const countryOptions = useMemo(() => withFallbackOption(
+        getCountryOptions(),
+        normalizeCountryValue(addressData.country)
+    ), [addressData.country]);
 
     useEffect(() => {
-        setAddressData(initialData || defaultData);
-    }, [isOpen]);
+        const defaultData = createDefaultAddressData();
+        setAddressData({
+            ...defaultData,
+            ...(initialData || {}),
+            country: normalizeCountryValue(initialData?.country || defaultData.country)
+        });
+    }, [initialData, isOpen]);
 
     if (!isOpen) return null;
 
@@ -83,7 +108,13 @@ const AddAddressModal = ({ isOpen, onClose, onSave, initialData }) => {
                     </div>
                     <div>
                         <label className="block text-xs font-medium text-slate-500 mb-1">Country</label>
-                        <input type="text" value={addressData.country} onChange={e => setAddressData({ ...addressData, country: e.target.value })} className="w-full text-sm border border-slate-200 rounded-md px-3 py-2 focus:outline-none focus:border-[#F5C742]" />
+                        <SearchableDropdown
+                            options={countryOptions}
+                            value={addressData.country}
+                            onChange={(value) => setAddressData((prev) => ({ ...prev, country: value }))}
+                            placeholder="Search country"
+                            className="w-full"
+                        />
                     </div>
                     <div>
                         <label className="block text-xs font-medium text-slate-500 mb-1">Google Maps Pin (Optional)</label>
@@ -266,6 +297,7 @@ const AddCustomerModal = ({ isOpen, onClose, customerToEdit, onSaveCustomer }) =
     const { defaultBranchName } = useBranch();
     const { company } = useCompany();
     const currency = company?.currency || 'AED';
+    const defaultCurrency = normalizeCurrencyValue(company?.currency || 'AED');
     const [activeTab, setActiveTab] = useState('general');
 
     // --- Nested Modal States ---
@@ -290,22 +322,66 @@ const AddCustomerModal = ({ isOpen, onClose, customerToEdit, onSaveCustomer }) =
     const videoRef = useRef(null);
     const canvasRef = useRef(null);
 
-    const initialFormState = {
+    const createInitialFormState = () => ({
         code: 'CUST-' + Math.floor(10000 + Math.random() * 90000),
-        name: '', localName: '', group: '', trn: '', status: 'Active',
-        mobile: '', phone: '', email: '', whatsapp: '',
-        country: 'United Arab Emirates', city: 'Dubai', postalCode: '',
-        payMode: 'Cash', payTerms: 'Immediate', creditLimitDays: '', creditLimitAmount: '', maxCreditInvoices: '',
-        discountLimitPercent: '', discountLimitAmount: '', creditStatus: 'Good', blockCredit: false,
-        priceList: 'Default', currency: currency, salesman: '', taxGroup: 'Standard VAT 5%', branch: defaultBranchName || '', warehouse: '',
-        billingAddress: '', shippingAddress: '', notes: '',
+        name: '',
+        localName: '',
+        group: '',
+        trn: '',
+        status: 'Active',
+        mobile: '',
+        phone: '',
+        email: '',
+        whatsapp: '',
+        country: 'United Arab Emirates',
+        city: 'Dubai',
+        postalCode: '',
+        payMode: 'Cash',
+        payTerms: 'Immediate',
+        creditLimitDays: '',
+        creditLimitAmount: '',
+        maxCreditInvoices: '',
+        discountLimitPercent: '',
+        discountLimitAmount: '',
+        creditStatus: 'Good',
+        blockCredit: false,
+        priceList: 'Default',
+        currency: defaultCurrency,
+        salesman: '',
+        taxGroup: 'Standard VAT 5%',
+        branch: defaultBranchName || '',
+        warehouse: '',
+        billingAddress: '',
+        shippingAddress: '',
+        notes: '',
         savedAddresses: [],
         openingInvoices: [],
         contactPersons: [],
         documents: []
-    };
-
-    const [formData, setFormData] = useState(initialFormState);
+    });
+    const normalizeSavedAddress = (address = {}) => ({
+        ...address,
+        country: normalizeCountryValue(address.country || '')
+    });
+    const normalizeCustomerFormData = (data = {}) => ({
+        ...data,
+        country: normalizeCountryValue(data.country || ''),
+        currency: normalizeCurrencyValue(data.currency || ''),
+        savedAddresses: (data.savedAddresses || []).map(normalizeSavedAddress),
+        openingInvoices: data.openingInvoices || [],
+        contactPersons: data.contactPersons || [],
+        documents: data.documents || []
+    });
+    const [formData, setFormData] = useState(createInitialFormState);
+    const countryOptions = useMemo(() => withFallbackOption(
+        getCountryOptions(),
+        normalizeCountryValue(formData.country)
+    ), [formData.country]);
+    const currencyOptions = useMemo(() => withFallbackOption(
+        getCurrencyOptions(),
+        normalizeCurrencyValue(formData.currency),
+        (value) => ({ value, label: value, displayLabel: value })
+    ), [formData.currency]);
 
     // ✅ FETCH WAREHOUSES ON MOUNT
     useEffect(() => {
@@ -323,23 +399,23 @@ const AddCustomerModal = ({ isOpen, onClose, customerToEdit, onSaveCustomer }) =
     // ✅ SYNC FORM STATE WHEN EDITING
     useEffect(() => {
         if (isOpen && customerToEdit) {
+            const initialFormState = createInitialFormState();
+            const normalizedCustomer = normalizeCustomerFormData(customerToEdit);
             setFormData({
-                ...initialFormState, // Base structure
-                ...customerToEdit,   // Overwrite with existing data
-                // Safeguard arrays
-                savedAddresses: customerToEdit.savedAddresses || [],
-                openingInvoices: customerToEdit.openingInvoices || [],
-                contactPersons: customerToEdit.contactPersons || [],
-                documents: customerToEdit.documents || []
+                ...initialFormState,
+                ...normalizedCustomer,
+                savedAddresses: normalizedCustomer.savedAddresses,
+                openingInvoices: normalizedCustomer.openingInvoices,
+                contactPersons: normalizedCustomer.contactPersons,
+                documents: normalizedCustomer.documents
             });
             setAvatarPreview(customerToEdit.avatar || null);
         } else if (isOpen && !customerToEdit) {
-            // Reset if Adding New
-            setFormData(initialFormState);
+            setFormData(createInitialFormState());
             setAvatarPreview(null);
             setActiveTab('general');
         }
-    }, [customerToEdit, isOpen]);
+    }, [customerToEdit, defaultBranchName, defaultCurrency, isOpen]);
 
     useEffect(() => {
         if (!isOpen || customerToEdit || !defaultBranchName) {
@@ -372,7 +448,10 @@ const AddCustomerModal = ({ isOpen, onClose, customerToEdit, onSaveCustomer }) =
 
     const handleMainSave = () => {
         if (!isFormValid) return;
-        onSaveCustomer({ ...formData, avatar: avatarPreview });
+        onSaveCustomer({
+            ...normalizeCustomerFormData(formData),
+            avatar: avatarPreview
+        });
     };
 
     const navItems = [
@@ -572,7 +651,16 @@ const AddCustomerModal = ({ isOpen, onClose, customerToEdit, onSaveCustomer }) =
                             <div><label className="block text-xs font-medium text-slate-500 mb-1.5">Phone (Optional)</label><input name="phone" value={formData.phone} onChange={handleInputChange} type="text" className="w-full text-sm border border-slate-200 rounded-md px-3 py-2 focus:outline-none focus:border-[#F5C742]" /></div>
                             <div><label className="block text-xs font-medium text-slate-500 mb-1.5">Email <span className="text-red-500">*</span></label><input name="email" value={formData.email} onChange={handleInputChange} type="email" className="w-full text-sm border border-slate-200 rounded-md px-3 py-2 focus:outline-none focus:border-[#F5C742]" /></div>
                             <div><label className="block text-xs font-medium text-slate-500 mb-1.5">WhatsApp (Optional)</label><input name="whatsapp" value={formData.whatsapp} onChange={handleInputChange} type="text" className="w-full text-sm border border-slate-200 rounded-md px-3 py-2 focus:outline-none focus:border-[#F5C742]" /></div>
-                            <div><label className="block text-xs font-medium text-slate-500 mb-1.5">Country <span className="text-red-500">*</span></label><div className="relative"><select name="country" value={formData.country} onChange={handleInputChange} className="w-full text-sm border border-slate-200 rounded-md px-3 py-2 bg-white text-slate-700 appearance-none"><option value="United Arab Emirates">United Arab Emirates</option><option value="Saudi Arabia">Saudi Arabia</option><option value="Oman">Oman</option><option value="Qatar">Qatar</option><option value="Kuwait">Kuwait</option><option value="Bahrain">Bahrain</option></select><ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" /></div></div>
+                            <div>
+                                <label className="block text-xs font-medium text-slate-500 mb-1.5">Country <span className="text-red-500">*</span></label>
+                                <SearchableDropdown
+                                    options={countryOptions}
+                                    value={formData.country}
+                                    onChange={(value) => setFormData((prev) => ({ ...prev, country: value }))}
+                                    placeholder="Search country"
+                                    className="w-full"
+                                />
+                            </div>
                             <div className="grid grid-cols-2 gap-4"><div><label className="block text-xs font-medium text-slate-500 mb-1.5">City</label><input name="city" value={formData.city} onChange={handleInputChange} type="text" className="w-full text-sm border border-slate-200 rounded-md px-3 py-2 focus:outline-none focus:border-[#F5C742]" /></div><div><label className="block text-xs font-medium text-slate-500 mb-1.5">Postal Code</label><input name="postalCode" value={formData.postalCode} onChange={handleInputChange} type="text" className="w-full text-sm border border-slate-200 rounded-md px-3 py-2 focus:outline-none focus:border-[#F5C742]" /></div></div>
                         </div>
                     </div>
@@ -610,7 +698,16 @@ const AddCustomerModal = ({ isOpen, onClose, customerToEdit, onSaveCustomer }) =
                         </div>
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                             <div><label className="block text-xs font-medium text-slate-500 mb-1.5">Price List</label><div className="relative"><select name="priceList" value={formData.priceList} onChange={handleInputChange} className="w-full text-sm border border-slate-200 rounded-md px-3 py-2 bg-white text-slate-700 appearance-none"><option>Default</option><option>Standard</option><option>VIP</option><option>Wholesale</option><option>Retail</option></select><ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" /></div></div>
-                            <div><label className="block text-xs font-medium text-slate-500 mb-1.5">Default Currency</label><div className="relative"><select name="currency" value={formData.currency} onChange={handleInputChange} className="w-full text-sm border border-slate-200 rounded-md px-3 py-2 bg-white text-slate-700 appearance-none"><option>AED - UAE Dirham</option><option>USD - US Dollar</option><option>EUR - Euro</option><option>SAR - Saudi Riyal</option></select><ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" /></div></div>
+                            <div>
+                                <label className="block text-xs font-medium text-slate-500 mb-1.5">Default Currency</label>
+                                <SearchableDropdown
+                                    options={currencyOptions}
+                                    value={formData.currency}
+                                    onChange={(value) => setFormData((prev) => ({ ...prev, currency: value }))}
+                                    placeholder="Search currency"
+                                    className="w-full"
+                                />
+                            </div>
                             <div><label className="block text-xs font-medium text-slate-500 mb-1.5">Default Salesman</label><input name="salesman" value={formData.salesman} onChange={handleInputChange} type="text" className="w-full text-sm border border-slate-200 rounded-md px-3 py-2 focus:outline-none focus:border-[#F5C742]" /></div>
                             <div><label className="block text-xs font-medium text-slate-500 mb-1.5">Default Tax Group</label><input name="taxGroup" value={formData.taxGroup} onChange={handleInputChange} type="text" className="w-full text-sm border border-slate-200 rounded-md px-3 py-2 focus:outline-none focus:border-[#F5C742]" /></div>
                             <div><label className="block text-xs font-medium text-slate-500 mb-1.5">Default Branch</label><input name="branch" value={formData.branch} onChange={handleInputChange} type="text" className="w-full text-sm border border-slate-200 rounded-md px-3 py-2 focus:outline-none focus:border-[#F5C742]" /></div>
