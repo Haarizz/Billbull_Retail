@@ -8,6 +8,7 @@ import {
 } from 'lucide-react';
 import { rolePermissionsApi } from '../../api/rolePermissionsApi';
 import { usersApi } from '../../api/usersApi';
+import { usePermissions } from '../../context/PermissionContext';
 
 // ─── Module definitions ────────────────────────────────────────────────────
 const MODULES = [
@@ -17,6 +18,10 @@ const MODULES = [
     description: 'KPIs, quick stats, quick actions',
     icon: LayoutDashboard,
     color: 'text-slate-500',
+    resources: [
+      { key: 'dashboard.kpis', label: 'Main KPIs' },
+      { key: 'dashboard.charts', label: 'Financial Charts' },
+    ]
   },
   {
     key: 'sales',
@@ -24,6 +29,13 @@ const MODULES = [
     description: 'Quotations, orders, invoices, payments',
     icon: ShoppingCart,
     color: 'text-yellow-600',
+    resources: [
+      { key: 'sales.quotation', label: 'Quotations' },
+      { key: 'sales.order',     label: 'Sales Orders' },
+      { key: 'sales.invoice',   label: 'Sales Invoices' },
+      { key: 'sales.payment',   label: 'Customer Payments' },
+      { key: 'sales.customer',  label: 'Customer Registry' },
+    ]
   },
   {
     key: 'inventory',
@@ -31,6 +43,12 @@ const MODULES = [
     description: 'Products, warehouses, stock management',
     icon: Package,
     color: 'text-blue-500',
+    resources: [
+      { key: 'inventory.product',   label: 'Products' },
+      { key: 'inventory.warehouse', label: 'Warehouses' },
+      { key: 'inventory.stock',     label: 'Stock Levels / Transfers' },
+      { key: 'inventory.category',  label: 'Categories & Brands' },
+    ]
   },
   {
     key: 'purchases',
@@ -38,6 +56,12 @@ const MODULES = [
     description: 'LPOs, GRN, purchase invoices',
     icon: Truck,
     color: 'text-orange-500',
+    resources: [
+      { key: 'purchases.lpo',     label: 'Local Purchase Orders' },
+      { key: 'purchases.grn',     label: 'GRN / Deliveries' },
+      { key: 'purchases.invoice', label: 'Purchase Invoices' },
+      { key: 'purchases.vendor',  label: 'Vendor Registry' },
+    ]
   },
   {
     key: 'finance',
@@ -45,6 +69,12 @@ const MODULES = [
     description: 'Ledger, vouchers, reconciliation, tax',
     icon: DollarSign,
     color: 'text-green-600',
+    resources: [
+      { key: 'finance.ledger',    label: 'General Ledger' },
+      { key: 'finance.voucher',   label: 'Journal & Receipt Vouchers' },
+      { key: 'finance.reconcile', label: 'Bank Reconciliation' },
+      { key: 'finance.tax',       label: 'VAT & Tax Settings' },
+    ]
   },
   {
     key: 'hr',
@@ -52,6 +82,11 @@ const MODULES = [
     description: 'Staff records, salary, attendance',
     icon: Users,
     color: 'text-indigo-500',
+    resources: [
+      { key: 'hr.employee',   label: 'Employee Database' },
+      { key: 'hr.payroll',    label: 'Payroll Processing' },
+      { key: 'hr.attendance', label: 'Attendance & Leave' },
+    ]
   },
   {
     key: 'customer',
@@ -59,6 +94,11 @@ const MODULES = [
     description: 'Inquiries, follow-ups, messaging',
     icon: Headphones,
     color: 'text-pink-500',
+    resources: [
+      { key: 'customer.inquiry',  label: 'Inquiries' },
+      { key: 'customer.followup', label: 'Follow-ups' },
+      { key: 'customer.message',  label: 'Marketing Messages' },
+    ]
   },
   {
     key: 'userManagement',
@@ -66,6 +106,11 @@ const MODULES = [
     description: 'System users, roles, company config',
     icon: UserCog,
     color: 'text-purple-600',
+    resources: [
+      { key: 'userManagement.user',  label: 'User Setup' },
+      { key: 'userManagement.role',  label: 'Role Permissions' },
+      { key: 'userManagement.setup', label: 'Company Profile' },
+    ]
   },
 ];
 
@@ -104,6 +149,7 @@ const Toggle = ({ checked, onChange, disabled, saving }) => (
 
 // ─── Main component ────────────────────────────────────────────────────────
 const UserRoleConfig = () => {
+  const { refreshPermissions } = usePermissions();
   const [roles, setRoles]               = useState([]);
   const [selectedRole, setSelectedRole] = useState(null);
   const [permMap, setPermMap]           = useState({});   // module → { id?, canView, canCreate, canEdit, canApprove, canExport }
@@ -112,6 +158,11 @@ const UserRoleConfig = () => {
   const [saving, setSaving]             = useState({});   // module → bool
   const [saveStatus, setSaveStatus]     = useState({});   // module → 'ok' | 'err'
   const [globalError, setGlobalError]   = useState(null);
+
+  // New Role Modal state
+  const [isModalOpen, setIsModalOpen]   = useState(false);
+  const [newRole, setNewRole]           = useState({ name: '', description: '' });
+  const [isCreatingRole, setIsCreatingRole] = useState(false);
 
   // ── Load roles ──────────────────────────────────────────────────────────
   useEffect(() => {
@@ -151,29 +202,50 @@ const UserRoleConfig = () => {
   }, [selectedRole]);
 
   // ── Toggle a single flag ─────────────────────────────────────────────────
-  const handleToggle = useCallback(async (moduleKey, flag) => {
+  const handleToggle = useCallback(async (key, flag) => {
     if (!selectedRole) return;
 
-    const current  = permMap[moduleKey] || { canView:false, canCreate:false, canEdit:false, canApprove:false, canExport:false };
+    const current  = permMap[key] || { canView:false, canCreate:false, canEdit:false, canApprove:false, canExport:false };
     const newValue = !current[flag];
 
-    // If turning VIEW off → also clear all vertical flags
     const next = { ...current, [flag]: newValue };
+    
+    // Inheritance logic
+    // 1. If turning VIEW off -> also clear all vertical flags for THIS resource
     if (flag === 'canView' && !newValue) {
       next.canCreate  = false;
       next.canEdit    = false;
       next.canApprove = false;
       next.canExport  = false;
     }
-    // If turning any vertical ON → ensure View is also on
+    // 2. If turning any vertical ON -> ensure View is also ON
     if (flag !== 'canView' && newValue) {
       next.canView = true;
     }
 
-    // Optimistic update
-    setPermMap(prev => ({ ...prev, [moduleKey]: next }));
-    setSaving(prev => ({ ...prev, [moduleKey]: true }));
-    setSaveStatus(prev => ({ ...prev, [moduleKey]: null }));
+    // Optimistic update for the clicked row
+    setPermMap(prev => ({ ...prev, [key]: next }));
+    setSaving(prev => ({ ...prev, [key]: true }));
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // 3. Hierarchical Cleanup: If turning off VIEW for a PARENT module, 
+    //    we must also turn off EVERYTHING for all its sub-resources.
+    // ─────────────────────────────────────────────────────────────────────────
+    if (flag === 'canView' && !newValue) {
+      const module = MODULES.find(m => m.key === key);
+      if (module && module.resources) {
+        module.resources.forEach(async (res) => {
+           const resCurrent = permMap[res.key];
+           if (resCurrent && resCurrent.id) {
+              // We'll update the state optimistically for children too
+              const resNext = { canView:false, canCreate:false, canEdit:false, canApprove:false, canExport:false };
+              setPermMap(prev => ({ ...prev, [res.key]: resNext }));
+              // Fire off updates for children (async background)
+              rolePermissionsApi.update(resCurrent.id, resNext).catch(console.error);
+           }
+        });
+      }
+    }
 
     try {
       let result;
@@ -188,7 +260,7 @@ const UserRoleConfig = () => {
       } else {
         result = await rolePermissionsApi.create({
           roleName:  selectedRole.name,
-          module:    moduleKey,
+          module:    key,
           canView:   next.canView,
           canCreate: next.canCreate,
           canEdit:   next.canEdit,
@@ -198,7 +270,7 @@ const UserRoleConfig = () => {
       }
       setPermMap(prev => ({
         ...prev,
-        [moduleKey]: {
+        [key]: {
           id:        result.id,
           canView:   result.canView,
           canCreate: result.canCreate,
@@ -207,47 +279,67 @@ const UserRoleConfig = () => {
           canExport: result.canExport,
         }
       }));
-      setSaveStatus(prev => ({ ...prev, [moduleKey]: 'ok' }));
-      setTimeout(() => setSaveStatus(prev => ({ ...prev, [moduleKey]: null })), 1500);
+      setSaveStatus(prev => ({ ...prev, [key]: 'ok' }));
+      refreshPermissions();
+      setTimeout(() => setSaveStatus(prev => ({ ...prev, [key]: null })), 1500);
     } catch (e) {
-      // Revert on error
-      setPermMap(prev => ({ ...prev, [moduleKey]: current }));
-      setSaveStatus(prev => ({ ...prev, [moduleKey]: 'err' }));
-      setTimeout(() => setSaveStatus(prev => ({ ...prev, [moduleKey]: null })), 3000);
+      setPermMap(prev => ({ ...prev, [key]: current }));
+      setSaveStatus(prev => ({ ...prev, [key]: 'err' }));
+      setTimeout(() => setSaveStatus(prev => ({ ...prev, [key]: null })), 3000);
     } finally {
-      setSaving(prev => ({ ...prev, [moduleKey]: false }));
+      setSaving(prev => ({ ...prev, [key]: false }));
     }
   }, [selectedRole, permMap]);
 
   // ── Grant / revoke all for a module row ─────────────────────────────────
-  const handleRowSelectAll = useCallback(async (moduleKey, grantAll) => {
+  const handleRowSelectAll = useCallback(async (key, grantAll) => {
     if (!selectedRole) return;
-    const current = permMap[moduleKey] || {};
-    const next = {
+    
+    const nextValues = {
       canView:   grantAll,
       canCreate: grantAll,
       canEdit:   grantAll,
       canApprove:grantAll,
       canExport: grantAll,
     };
-    setPermMap(prev => ({ ...prev, [moduleKey]: { ...current, ...next } }));
-    setSaving(prev => ({ ...prev, [moduleKey]: true }));
+
+    // 1. Update the clicked row
+    const current = permMap[key] || {};
+    setPermMap(prev => ({ ...prev, [key]: { ...current, ...nextValues } }));
+    setSaving(prev => ({ ...prev, [key]: true }));
+
+    // 2. Cascade to resources if this is a parent module
+    const parentModule = MODULES.find(m => m.key === key);
+    if (parentModule && parentModule.resources) {
+      parentModule.resources.forEach(res => {
+        const resCurrent = permMap[res.key] || {};
+        setPermMap(prev => ({ ...prev, [res.key]: { ...resCurrent, ...nextValues } }));
+        // API call for children
+        if (resCurrent.id) {
+          rolePermissionsApi.update(resCurrent.id, nextValues).catch(console.error);
+        } else {
+          rolePermissionsApi.create({ roleName: selectedRole.name, module: res.key, ...nextValues }).catch(console.error);
+        }
+      });
+    }
+
     try {
       let result;
       if (current.id) {
-        result = await rolePermissionsApi.update(current.id, next);
+        result = await rolePermissionsApi.update(current.id, nextValues);
       } else {
-        result = await rolePermissionsApi.create({ roleName: selectedRole.name, module: moduleKey, ...next });
+        result = await rolePermissionsApi.create({ roleName: selectedRole.name, module: key, ...nextValues });
       }
-      setPermMap(prev => ({ ...prev, [moduleKey]: { id: result.id, ...next } }));
-      setSaveStatus(prev => ({ ...prev, [moduleKey]: 'ok' }));
-      setTimeout(() => setSaveStatus(prev => ({ ...prev, [moduleKey]: null })), 1500);
+      setPermMap(prev => ({ ...prev, [key]: { id: result.id, ...nextValues } }));
+      setSaveStatus(prev => ({ ...prev, [key]: 'ok' }));
+      refreshPermissions();
+      setTimeout(() => setSaveStatus(prev => ({ ...prev, [key]: null })), 1500);
     } catch {
-      setPermMap(prev => ({ ...prev, [moduleKey]: current }));
-      setSaveStatus(prev => ({ ...prev, [moduleKey]: 'err' }));
-      setTimeout(() => setSaveStatus(prev => ({ ...prev, [moduleKey]: null })), 3000);
+      setPermMap(prev => ({ ...prev, [key]: current }));
+      setSaveStatus(prev => ({ ...prev, [key]: 'err' }));
+      setTimeout(() => setSaveStatus(prev => ({ ...prev, [key]: null })), 3000);
     } finally {
-      setSaving(prev => ({ ...prev, [moduleKey]: false }));
+      setSaving(prev => ({ ...prev, [key]: false }));
     }
   }, [selectedRole, permMap]);
 
@@ -282,7 +374,15 @@ const UserRoleConfig = () => {
 
           {/* ── Role selector panel ── */}
           <div className="w-full lg:w-56 shrink-0 space-y-2">
-            <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider px-1 mb-3">Roles</p>
+            <div className="flex items-center justify-between px-1 mb-3">
+              <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Roles</p>
+              <button
+                onClick={() => setIsModalOpen(true)}
+                className="text-[10px] bg-[#F5C742] hover:bg-[#e5b732] text-slate-800 font-bold px-2 py-1 rounded shadow-sm transition-colors flex items-center gap-1"
+              >
+                <PlusCircle size={10} /> Add Role
+              </button>
+            </div>
 
             {loadingRoles ? (
               <div className="text-xs text-slate-400 px-2">Loading roles…</div>
@@ -305,11 +405,7 @@ const UserRoleConfig = () => {
                         {role.name}
                       </div>
                       <div className="text-[10px] text-slate-400 truncate mt-0.5">
-                        {role.name === 'ADMIN' && 'Full system access'}
-                        {role.name === 'SALES' && 'Sales & customers'}
-                        {role.name === 'HR' && 'Payroll & employees'}
-                        {role.name === 'ACCOUNTANT' && 'Finance & accounts'}
-                        {role.name === 'INVENTORY_MANAGER' && 'Stock & procurement'}
+                        {role.description || (role.name === 'ADMIN' ? 'Full system access' : 'Manage system resources')}
                       </div>
                     </div>
                     {active && <ChevronRight size={14} className={meta.text} />}
@@ -415,72 +511,103 @@ const UserRoleConfig = () => {
                         const ModIcon   = mod.icon;
 
                         return (
-                          <tr key={mod.key}
-                            className={`transition-colors ${viewOn ? 'bg-white hover:bg-slate-50/60' : 'bg-slate-50/40'}`}>
-
-                            {/* Module info */}
-                            <td className="px-5 py-3.5">
-                              <div className="flex items-center gap-2.5">
-                                <div className={`w-7 h-7 rounded-md flex items-center justify-center shrink-0
-                                  ${viewOn ? 'bg-slate-100' : 'bg-slate-100 opacity-50'}`}>
-                                  <ModIcon size={14} className={viewOn ? mod.color : 'text-slate-400'} />
-                                </div>
-                                <div>
-                                  <div className={`font-semibold ${viewOn ? 'text-slate-700' : 'text-slate-400'}`}>
-                                    {mod.label}
+                          <React.Fragment key={mod.key}>
+                            {/* Module Header Row */}
+                            <tr className={`transition-colors border-l-2 ${viewOn ? 'bg-slate-50/80 border-blue-500' : 'bg-slate-50/40 border-transparent'}`}>
+                              <td className="px-5 py-3">
+                                <div className="flex items-center gap-2.5">
+                                  <div className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 shadow-sm
+                                    ${viewOn ? 'bg-white' : 'bg-slate-100 opacity-50'}`}>
+                                    <ModIcon size={16} className={viewOn ? mod.color : 'text-slate-400'} />
                                   </div>
-                                  <div className="text-[10px] text-slate-400 mt-0.5">{mod.description}</div>
+                                  <div>
+                                    <div className={`font-bold text-sm ${viewOn ? 'text-slate-800' : 'text-slate-400'}`}>
+                                      {mod.label}
+                                    </div>
+                                    <div className="text-[10px] text-slate-400">{mod.description}</div>
+                                  </div>
                                 </div>
-                              </div>
-                            </td>
+                              </td>
 
-                            {/* Horizontal: canView */}
-                            <td className="px-3 py-3.5 text-center">
-                              <div className="flex flex-col items-center gap-1">
+                              <td className="px-3 py-3 text-center">
                                 <Toggle
                                   checked={viewOn}
                                   onChange={() => handleToggle(mod.key, 'canView')}
                                   saving={isRowSaving}
                                 />
-                              </div>
-                            </td>
-
-                            {/* Separator */}
-                            <td className="w-px bg-slate-100 p-0" />
-
-                            {/* Vertical toggles */}
-                            {['canCreate', 'canEdit', 'canApprove', 'canExport'].map(flag => (
-                              <td key={flag} className="px-3 py-3.5 text-center">
-                                <Toggle
-                                  checked={!!perm[flag]}
-                                  onChange={() => handleToggle(mod.key, flag)}
-                                  disabled={!viewOn}
-                                  saving={isRowSaving}
-                                />
                               </td>
-                            ))}
 
-                            {/* All toggle + save indicator */}
-                            <td className="px-3 py-3.5 text-center">
-                              <div className="flex items-center justify-center gap-1.5">
-                                {status === 'ok'  && <Check size={12} className="text-emerald-500" />}
-                                {status === 'err' && <X    size={12} className="text-red-500" />}
-                                {!status && !isRowSaving && (
-                                  <button
-                                    onClick={() => handleRowSelectAll(mod.key, !allOn)}
-                                    title={allOn ? 'Revoke all' : 'Grant all'}
-                                    className={`text-[10px] px-2 py-0.5 rounded border transition-colors font-medium
-                                      ${allOn
-                                        ? 'border-red-200 text-red-500 hover:bg-red-50'
-                                        : 'border-slate-200 text-slate-500 hover:bg-slate-100'}`}
-                                  >
-                                    {allOn ? 'None' : 'All'}
-                                  </button>
-                                )}
-                                {isRowSaving && <RefreshCw size={11} className="text-slate-400 animate-spin" />}
-                              </div>
-                            </td>
-                          </tr>
+                              <td className="w-px bg-slate-100 p-0" />
+                              <td colSpan={4} className="px-3 py-3 text-[10px] text-slate-400 font-medium italic">
+                                {viewOn ? 'Configure granular access below' : 'Module disabled'}
+                              </td>
+
+                              <td className="px-3 py-3 text-center">
+                                <div className="flex items-center justify-center gap-1.5">
+                                  {status === 'ok'  && <Check size={12} className="text-emerald-500" />}
+                                  {status === 'err' && <X    size={12} className="text-red-500" />}
+                                  {isRowSaving && <RefreshCw size={11} className="text-slate-400 animate-spin" />}
+                                </div>
+                              </td>
+                            </tr>
+
+                            {/* Resource Rows */}
+                            {viewOn && mod.resources?.map(res => {
+                              const rPerm = permMap[res.key] || {};
+                              const rSaving = !!saving[res.key];
+                              const rStatus = saveStatus[res.key];
+                              const rAllOn = rPerm.canView && rPerm.canCreate && rPerm.canEdit && rPerm.canApprove && rPerm.canExport;
+
+                              return (
+                                <tr key={res.key} className="bg-white hover:bg-slate-50/50 transition-colors">
+                                  <td className="px-5 py-2.5 pl-14">
+                                    <div className="flex items-center gap-2">
+                                      <div className="w-1.5 h-1.5 rounded-full bg-slate-300" />
+                                      <span className="text-xs font-medium text-slate-600">{res.label}</span>
+                                    </div>
+                                  </td>
+
+                                  <td className="px-3 py-2.5 text-center">
+                                    <Toggle
+                                      checked={!!rPerm.canView}
+                                      onChange={() => handleToggle(res.key, 'canView')}
+                                      saving={rSaving}
+                                    />
+                                  </td>
+
+                                  <td className="w-px bg-slate-50 p-0" />
+
+                                  {['canCreate', 'canEdit', 'canApprove', 'canExport'].map(flag => (
+                                    <td key={flag} className="px-3 py-2.5 text-center">
+                                      <Toggle
+                                        checked={!!rPerm[flag]}
+                                        onChange={() => handleToggle(res.key, flag)}
+                                        disabled={!rPerm.canView}
+                                        saving={rSaving}
+                                      />
+                                    </td>
+                                  ))}
+
+                                  <td className="px-3 py-2.5 text-center">
+                                    <div className="flex items-center justify-center gap-1.5">
+                                      {rStatus === 'ok'  && <Check size={12} className="text-emerald-500" />}
+                                      {rStatus === 'err' && <X    size={12} className="text-red-500" />}
+                                      {!rStatus && !rSaving && (
+                                        <button
+                                          onClick={() => handleRowSelectAll(res.key, !rAllOn)}
+                                          className={`text-[9px] px-1.5 py-0.5 rounded border transition-colors font-medium
+                                            ${rAllOn ? 'border-red-200 text-red-500' : 'border-slate-200 text-slate-400'}`}
+                                        >
+                                          {rAllOn ? 'None' : 'All'}
+                                        </button>
+                                      )}
+                                      {rSaving && <RefreshCw size={11} className="text-slate-400 animate-spin" />}
+                                    </div>
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          </React.Fragment>
                         );
                       })}
                     </tbody>
@@ -498,6 +625,89 @@ const UserRoleConfig = () => {
         </div>
 
       </div>
+
+      {/* ── Add Role Modal ── */}
+      {isModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm animate-in fade-in duration-200">
+          <div className="bg-white rounded-xl shadow-2xl border border-slate-200 w-full max-w-md overflow-hidden animate-in zoom-in-95 duration-200">
+            <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
+              <h2 className="text-base font-bold text-slate-800 flex items-center gap-2">
+                <PlusCircle size={18} className="text-[#F5C742]" />
+                Add New System Role
+              </h2>
+              <button 
+                onClick={() => setIsModalOpen(false)}
+                className="text-slate-400 hover:text-slate-600 transition-colors"
+              >
+                <X size={20} />
+              </button>
+            </div>
+            
+            <div className="p-6 space-y-4">
+              <div className="space-y-1">
+                <label className="text-[11px] font-bold text-slate-500 uppercase tracking-wider ml-0.5">Role Name</label>
+                <input
+                  type="text"
+                  placeholder="e.g. REGIONAL_MANAGER"
+                  className="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#F5C742]/20 focus:border-[#F5C742] transition-all"
+                  value={newRole.name}
+                  onChange={(e) => setNewRole({ ...newRole, name: e.target.value.toUpperCase().replace(/\s+/g, '_') })}
+                />
+                <p className="text-[10px] text-slate-400 ml-1">Use uppercase and underscores (e.g. HEAD_OFFICE)</p>
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-[11px] font-bold text-slate-500 uppercase tracking-wider ml-0.5">Description</label>
+                <textarea
+                  placeholder="Description of role responsibilities..."
+                  rows={3}
+                  className="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#F5C742]/20 focus:border-[#F5C742] transition-all resize-none"
+                  value={newRole.description}
+                  onChange={(e) => setNewRole({ ...newRole, description: e.target.value })}
+                />
+              </div>
+            </div>
+
+            <div className="px-6 py-4 bg-slate-50 border-t border-slate-100 flex items-center justify-end gap-3">
+              <button
+                disabled={isCreatingRole}
+                onClick={() => setIsModalOpen(false)}
+                className="px-4 py-2 text-sm font-semibold text-slate-600 hover:text-slate-800 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                disabled={isCreatingRole || !newRole.name}
+                onClick={async () => {
+                  setIsCreatingRole(true);
+                  try {
+                    const created = await usersApi.createRole(newRole);
+                    setRoles(prev => [...prev, created]);
+                    setSelectedRole(created);
+                    setIsModalOpen(false);
+                    setNewRole({ name: '', description: '' });
+                    refreshPermissions();
+                  } catch (err) {
+                    setGlobalError('Failed to create role. Name might already exist.');
+                  } finally {
+                    setIsCreatingRole(false);
+                  }
+                }}
+                className={`px-5 py-2 rounded-lg text-sm font-bold shadow-md transition-all flex items-center gap-2
+                  ${isCreatingRole || !newRole.name 
+                    ? 'bg-slate-200 text-slate-400 cursor-not-allowed shadow-none' 
+                    : 'bg-[#F5C742] hover:bg-[#e5b732] text-slate-800 active:scale-95'}`}
+              >
+                {isCreatingRole ? (
+                  <> <RefreshCw size={14} className="animate-spin" /> Creating... </>
+                ) : (
+                  <> <Check size={14} /> Create Role </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

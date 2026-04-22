@@ -9,6 +9,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.*;
+import com.billbull.backend.security.ModulePermissionService;
 
 @RestController
 @RequestMapping("/api/purchase-invoices")
@@ -16,10 +17,15 @@ public class PurchaseInvoiceController {
 
     private final PurchaseInvoiceService service;
     private final AuditLogService auditLogService;
+    private final ModulePermissionService modulePermissionService;
 
-    public PurchaseInvoiceController(PurchaseInvoiceService service, AuditLogService auditLogService) {
+    public PurchaseInvoiceController(
+            PurchaseInvoiceService service, 
+            AuditLogService auditLogService,
+            ModulePermissionService modulePermissionService) {
         this.service = service;
         this.auditLogService = auditLogService;
+        this.modulePermissionService = modulePermissionService;
     }
 
     @GetMapping("/draft/from-grn/{grnId}")
@@ -37,9 +43,10 @@ public class PurchaseInvoiceController {
     }
 
     @PostMapping("/draft")
-    @PreAuthorize("hasAnyRole('ADMIN','INVENTORY_MANAGER')")
+    @PreAuthorize("isAuthenticated()")
     public ResponseEntity<PurchaseInvoiceResponse> createDraft(
             @RequestBody PurchaseInvoiceRequest request) {
+        modulePermissionService.requireCanCreate("purchases");
 
         PurchaseInvoice invoice = service.createDraft(request);
         return ResponseEntity.ok(service.getResponse(invoice.getId()));
@@ -79,8 +86,9 @@ public class PurchaseInvoiceController {
     }
 
     @PostMapping("/{id}/approve")
-    @PreAuthorize("hasAnyRole('ADMIN','INVENTORY_MANAGER')")
+    @PreAuthorize("isAuthenticated()")
     public ResponseEntity<PurchaseInvoiceResponse> approve(@PathVariable Long id) {
+        modulePermissionService.requireCanApprove("purchases");
         String approver = SecurityContextHolder
                 .getContext()
                 .getAuthentication()
@@ -103,20 +111,23 @@ public class PurchaseInvoiceController {
     }
 
     @GetMapping
-    @PreAuthorize("hasAnyRole('ADMIN','INVENTORY_MANAGER','ACCOUNTANT')")
+    @PreAuthorize("isAuthenticated()")
     public ResponseEntity<List<PurchaseInvoiceResponse>> list() {
+        modulePermissionService.requireCanView("purchases");
         return ResponseEntity.ok(service.listAll());
     }
 
     @GetMapping("/{id}")
-    @PreAuthorize("hasAnyRole('ADMIN','INVENTORY_MANAGER','ACCOUNTANT')")
+    @PreAuthorize("isAuthenticated()")
     public ResponseEntity<PurchaseInvoiceResponse> get(@PathVariable Long id) {
+        modulePermissionService.requireCanView("purchases");
         return ResponseEntity.ok(service.getResponse(id));
     }
 
     @DeleteMapping("/{id}")
-    @PreAuthorize("hasRole('ADMIN')")
+    @PreAuthorize("isAuthenticated()")
     public ResponseEntity<Void> delete(@PathVariable Long id) {
+        modulePermissionService.requireCanEdit("purchases");
         service.delete(id);
         return ResponseEntity.noContent().build();
     }

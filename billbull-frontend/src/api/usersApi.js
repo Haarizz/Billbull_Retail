@@ -66,8 +66,15 @@ export const usersApi = {
 
   /**
    * Get all available roles (ADMIN only).
-   * Returns [{ id, name }]
+   * Returns [{ id, name, description? }]
    */
   getAllRoles: () =>
     api.get("/api/roles").then((r) => r.data),
+
+  /**
+   * Create a new role (ADMIN only).
+   * payload: { name, description }
+   */
+  createRole: (payload) =>
+    api.post("/api/roles", payload).then((r) => r.data),
 };

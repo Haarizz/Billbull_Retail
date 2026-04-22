@@ -4,6 +4,7 @@ import java.util.List;
 import java.util.Map;
 
 import org.springframework.beans.factory.annotation.Autowired;
+import com.billbull.backend.security.ModulePermissionService;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.CrossOrigin;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -19,20 +20,23 @@ import com.billbull.backend.financials.chartofaccounts.CostCenter;
 @RestController
 @RequestMapping("/api/ledger")
 @CrossOrigin(origins = "*")
-@PreAuthorize("hasAnyRole('ADMIN','ACCOUNTANT')")
 public class GeneralLedgerController {
 
     private final LedgerService ledgerService;
+    private final ModulePermissionService modulePermissionService;
 
     @Autowired
-    public GeneralLedgerController(LedgerService ledgerService) {
+    public GeneralLedgerController(LedgerService ledgerService, ModulePermissionService modulePermissionService) {
         this.ledgerService = ledgerService;
+        this.modulePermissionService = modulePermissionService;
     }
 
     // ---------------- ACCOUNTS ENDPOINTS ----------------
 
     @GetMapping("/accounts")
+    @PreAuthorize("isAuthenticated()")
     public List<Account> getAccounts() {
+        modulePermissionService.requireCanView("finance");
         return ledgerService.getAllAccounts();
     }
 
@@ -43,12 +47,16 @@ public class GeneralLedgerController {
     }
 
     @GetMapping("/accounts/tree")
+    @PreAuthorize("isAuthenticated()")
     public List<Map<String, Object>> getAccountTree() {
+        modulePermissionService.requireCanView("finance");
         return ledgerService.getAccountTree();
     }
 
     @PostMapping("/accounts")
+    @PreAuthorize("isAuthenticated()")
     public Account createOrUpdateAccount(@RequestBody Account account) {
+        modulePermissionService.requireCanEdit("finance");
         return ledgerService.saveAccount(account);
     }
 
@@ -87,12 +95,16 @@ public class GeneralLedgerController {
     // ---------------- TRANSACTIONS ENDPOINTS ----------------
 
     @GetMapping("/transactions")
+    @PreAuthorize("isAuthenticated()")
     public List<LedgerEntry> getTransactions() {
+        modulePermissionService.requireCanView("finance");
         return ledgerService.getTransactionHistory();
     }
 
     @PostMapping("/transactions")
+    @PreAuthorize("isAuthenticated()")
     public LedgerEntry recordTransaction(@RequestBody LedgerEntry entry) {
+        modulePermissionService.requireCanCreate("finance");
         return ledgerService.recordTransaction(entry);
     }
 
