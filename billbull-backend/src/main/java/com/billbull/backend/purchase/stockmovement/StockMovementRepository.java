@@ -86,6 +86,14 @@ public interface StockMovementRepository
                         """)
         List<Object[]> findAllStockGroupedByProductAndWarehouse();
 
+        @Query("""
+                            SELECT sm.productId, sm.warehouseId, COALESCE(SUM(sm.quantity), 0)
+                            FROM StockMovement sm
+                            WHERE sm.productId IN :productIds
+                            GROUP BY sm.productId, sm.warehouseId
+                        """)
+        List<Object[]> findStockByProductsForAllWarehouses(@Param("productIds") List<Long> productIds);
+
         // ✅ Get Last Sold and Last Received dates for Out of Stock Report
         @Query(value = """
                             SELECT

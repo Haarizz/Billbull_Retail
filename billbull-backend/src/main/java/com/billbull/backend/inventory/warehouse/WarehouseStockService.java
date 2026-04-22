@@ -2,6 +2,7 @@ package com.billbull.backend.inventory.warehouse;
 
 import java.math.BigDecimal;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -45,34 +46,13 @@ public class WarehouseStockService {
         this.deliveryNoteRepo = deliveryNoteRepo;
     }
 
-    // Helper: Bulk fetch global on-hand stock map
-    private Map<Long, Integer> getGlobalOnHandMap(List<Long> productIds) {
-        if (productIds == null || productIds.isEmpty())
-            return new HashMap<>();
-        List<Object[]> rows = stockRepo.getTotalAvailableStockForProducts(productIds);
-        Map<Long, Integer> map = new HashMap<>();
-        for (Object[] row : rows) {
-            map.put((Long) row[0], ((Number) row[1]).intValue());
-        }
-        return map;
-    }
-
-    // Helper: Bulk fetch global reserved map
     private Map<Long, Integer> getGlobalReservedMap(List<Product> products) {
-        if (products == null || products.isEmpty())
+        if (products == null || products.isEmpty()) {
             return new HashMap<>();
-        List<String> productCodes = products.stream().map(Product::getCode).collect(Collectors.toList());
+        }
 
+        List<String> productCodes = products.stream().map(Product::getCode).collect(Collectors.toList());
         Map<String, Integer> codeMap = new HashMap<>();
-        // 🚫 SOFT RESERVATION RULE: Quotations should not block physical stock.
-        // We no longer add qReservations to codeMap for hard reservation calculating.
-        // List<Object[]> qReservations =
-        // quotationRepo.sumReservedQuantityForProducts(productCodes);
-        // for (Object[] row : qReservations) {
-        // String code = (String) row[0];
-        // int qty = ((Number) row[1]).intValue();
-        // codeMap.put(code, codeMap.getOrDefault(code, 0) + qty);
-        // }
 
         List<Object[]> soReservations = salesOrderRepo.sumReservedQuantityForProducts(productCodes);
         for (Object[] row : soReservations) {
@@ -82,155 +62,204 @@ public class WarehouseStockService {
         }
 
         Map<Long, Integer> map = new HashMap<>();
-        for (Product p : products) {
-            map.put(p.getId(), codeMap.getOrDefault(p.getCode(), 0));
+        for (Product product : products) {
+            map.put(product.getId(), codeMap.getOrDefault(product.getCode(), 0));
         }
 
         return map;
     }
 
+    private int safeInt(BigDecimal value) {
+        return value != null ? value.intValue() : 0;
+    }
+
+    private Map<Long, Integer> allocateReservedByLargestRemainder(Map<Long, Integer> onHandByBucket, int totalReserved) {
+        Map<Long, Integer> allocation = new HashMap<>();
+        if (onHandByBucket == null || onHandByBucket.isEmpty() || totalReserved <= 0) {
+            return allocation;
+        }
+
+        class Share {
+            Long bucketId;
+            int onHand;
+            int allocated;
+            double remainder;
+        }
+
+        List<Share> shares = new ArrayList<>();
+        int totalOnHand = 0;
+
+        for (Map.Entry<Long, Integer> entry : onHandByBucket.entrySet()) {
+            int onHand = entry.getValue() != null ? entry.getValue() : 0;
+            if (onHand <= 0) {
+                continue;
+            }
+
+            Share share = new Share();
+            share.bucketId = entry.getKey();
+            share.onHand = onHand;
+            shares.add(share);
+            totalOnHand += onHand;
+        }
+
+        if (totalOnHand <= 0 || shares.isEmpty()) {
+            return allocation;
+        }
+
+        int totalAssigned = 0;
+        for (Share share : shares) {
+            double fractional = ((double) share.onHand / totalOnHand) * totalReserved;
+            share.allocated = (int) Math.floor(fractional);
+            share.remainder = fractional - share.allocated;
+            totalAssigned += share.allocated;
+        }
+
+        int remaining = totalReserved - totalAssigned;
+        if (remaining > 0) {
+            shares.sort((left, right) -> {
+                int remainderCompare = Double.compare(right.remainder, left.remainder);
+                if (remainderCompare != 0) {
+                    return remainderCompare;
+                }
+
+                int onHandCompare = Integer.compare(right.onHand, left.onHand);
+                if (onHandCompare != 0) {
+                    return onHandCompare;
+                }
+
+                return Long.compare(left.bucketId, right.bucketId);
+            });
+
+            for (int i = 0; i < remaining && i < shares.size(); i++) {
+                shares.get(i).allocated += 1;
+            }
+        }
+
+        for (Share share : shares) {
+            allocation.put(share.bucketId, share.allocated);
+        }
+
+        return allocation;
+    }
+
+    private Map<Long, Map<Long, Integer>> buildWarehouseOnHandMap(List<Long> productIds) {
+        Map<Long, Map<Long, Integer>> warehouseOnHandMap = new HashMap<>();
+        if (productIds == null || productIds.isEmpty()) {
+            return warehouseOnHandMap;
+        }
+
+        for (Object[] row : stockRepo.findStockByProductsForAllWarehouses(productIds)) {
+            Long productId = (Long) row[0];
+            Long warehouseId = (Long) row[1];
+            int onHand = ((Number) row[2]).intValue();
+
+            warehouseOnHandMap
+                    .computeIfAbsent(productId, ignored -> new HashMap<>())
+                    .put(warehouseId, onHand);
+        }
+
+        return warehouseOnHandMap;
+    }
+
+    private Map<Long, Map<Long, Integer>> getSalesOrderReservationAllocations(List<Product> products) {
+        Map<Long, Map<Long, Integer>> allocations = new HashMap<>();
+        if (products == null || products.isEmpty()) {
+            return allocations;
+        }
+
+        Map<Long, Integer> globalReservedMap = getGlobalReservedMap(products);
+        Map<Long, Map<Long, Integer>> warehouseOnHandMap = buildWarehouseOnHandMap(
+                products.stream().map(Product::getId).toList());
+
+        for (Product product : products) {
+            Map<Long, Integer> onHandByWarehouse = warehouseOnHandMap.getOrDefault(product.getId(), Collections.emptyMap());
+            int globalReserved = globalReservedMap.getOrDefault(product.getId(), 0);
+            allocations.put(product.getId(), allocateReservedByLargestRemainder(onHandByWarehouse, globalReserved));
+        }
+
+        return allocations;
+    }
+
+    public int getSalesOrderReservedForWarehouse(Long warehouseId, Long productId) {
+        Product product = productRepo.findById(productId).orElse(null);
+        if (product == null) {
+            return 0;
+        }
+
+        return getSalesOrderReservationAllocations(List.of(product))
+                .getOrDefault(productId, Collections.emptyMap())
+                .getOrDefault(warehouseId, 0);
+    }
+
+    public int getTotalReservedForWarehouse(Long warehouseId, Long productId) {
+        int salesOrderReserved = getSalesOrderReservedForWarehouse(warehouseId, productId);
+        int deliveryNoteReserved = safeInt(deliveryNoteRepo.sumReservedQtyInDispatchedNotes(productId, warehouseId));
+        return salesOrderReserved + deliveryNoteReserved;
+    }
+
     public List<WarehouseStockResponse> getStock(Long warehouseId) {
         List<Object[]> rows = stockRepo.findStockByWarehouse(warehouseId);
-
-        com.billbull.backend.inventory.warehouse.Warehouse w = warehouseRepo.findById(warehouseId)
+        Warehouse warehouse = warehouseRepo.findById(warehouseId)
                 .orElseThrow(() -> new RuntimeException("Warehouse not found"));
 
         List<Long> productIds = rows.stream().map(row -> (Long) row[0]).collect(Collectors.toList());
         List<Product> products = productRepo.findAllById(productIds);
-        Map<Long, Product> productMap = products.stream().collect(Collectors.toMap(Product::getId, p -> p));
-
-        Map<Long, Integer> globalOnHandMap = getGlobalOnHandMap(productIds);
-        Map<Long, Integer> globalReservedMap = getGlobalReservedMap(products);
+        Map<Long, Product> productMap = products.stream().collect(Collectors.toMap(Product::getId, product -> product));
+        Map<Long, Map<Long, Integer>> salesOrderAllocations = getSalesOrderReservationAllocations(products);
 
         return rows.stream().map(row -> {
             Long productId = (Long) row[0];
-            Integer onHand = ((Number) row[1]).intValue();
-            Product p = productMap.get(productId);
+            int onHand = ((Number) row[1]).intValue();
+            Product product = productMap.get(productId);
 
-            int globalOnHand = globalOnHandMap.getOrDefault(productId, 0);
-            int globalReserved = globalReservedMap.getOrDefault(productId, 0);
+            int reserved = salesOrderAllocations
+                    .getOrDefault(productId, Collections.emptyMap())
+                    .getOrDefault(warehouseId, 0);
+            reserved += safeInt(deliveryNoteRepo.sumReservedQtyInDispatchedNotes(productId, warehouseId));
 
-            // Proportional Distribution with Zero-Stock check
-            int reserved = 0;
-            if (globalOnHand > 0) {
-                // floor the value so we don't accidentally over-reserve across scattered bits
-                double frac = ((double) onHand / globalOnHand) * globalReserved;
-                reserved = (int) Math.floor(frac);
-            }
-
-            // Add direct specific reservations from Delivery Notes for this warehouse
-            int warehouseDnReserved = deliveryNoteRepo.sumReservedQtyInDispatchedNotes(productId, warehouseId)
-                    .intValue();
-            reserved += warehouseDnReserved;
-
-            int available = onHand - reserved;
-
-            WarehouseStockResponse res = new WarehouseStockResponse();
-            res.setProductId(productId);
-            res.setProductCode(p.getCode());
-            res.setProductName(p.getName());
-            res.setWarehouseId(warehouseId);
-            res.setWarehouseName(w.getName());
-            res.setWarehouseType(w.getType());
-            res.setQuantity(onHand);
-            res.setReserved(reserved);
-            res.setAvailable(available);
-
-            return res;
+            WarehouseStockResponse response = new WarehouseStockResponse();
+            response.setProductId(productId);
+            response.setProductCode(product.getCode());
+            response.setProductName(product.getName());
+            response.setWarehouseId(warehouseId);
+            response.setWarehouseName(warehouse.getName());
+            response.setWarehouseType(warehouse.getType());
+            response.setQuantity(onHand);
+            response.setReserved(reserved);
+            response.setAvailable(onHand - reserved);
+            return response;
         }).collect(Collectors.toList());
     }
 
-    // Inner class for deterministic proportional allocation
-    private static class Allocation {
-        int index;
-        long warehouseId;
-        String warehouseName;
-        String warehouseType;
-        int onHand;
-
-        double frac;
-        int floored;
-        double remainder;
-    }
-
     public List<WarehouseStockResponse> getStockByProduct(String productCode) {
-        Product p = productRepo.findByCodeAndIsActiveTrue(productCode)
+        Product product = productRepo.findByCodeAndIsActiveTrue(productCode)
                 .orElseThrow(() -> new RuntimeException("Product not found: " + productCode));
 
-        List<Object[]> rows = stockRepo.findStockByProductForAllWarehouses(p.getId());
+        List<Object[]> rows = stockRepo.findStockByProductForAllWarehouses(product.getId());
+        Map<Long, Integer> salesOrderAllocation = getSalesOrderReservationAllocations(List.of(product))
+                .getOrDefault(product.getId(), Collections.emptyMap());
 
-        int globalOnHand = stockRepo.getTotalAvailableStock(p.getId()).intValue();
-
-        // 🚫 SOFT RESERVATION RULE: Quotations should not block physical stock.
-        // BigDecimal totalQtnReserved = quotationRepo.sumReservedQuantity(p.getCode());
-        BigDecimal totalSoReserved = salesOrderRepo.sumReservedQuantity(p.getCode());
-
-        int globalReserved = (totalSoReserved != null ? totalSoReserved.intValue() : 0);
-
-        List<Allocation> allocations = new ArrayList<>();
-        int totalAssigned = 0;
-
-        for (int i = 0; i < rows.size(); i++) {
-            Object[] row = rows.get(i);
+        List<WarehouseStockResponse> responses = new ArrayList<>();
+        for (Object[] row : rows) {
             int onHand = ((Number) row[1]).intValue();
             Long warehouseId = (Long) row[2];
             String warehouseName = (String) row[3];
             String warehouseType = (String) row[4];
 
-            Allocation alloc = new Allocation();
-            alloc.index = i;
-            alloc.warehouseId = warehouseId;
-            alloc.warehouseName = warehouseName;
-            alloc.warehouseType = warehouseType;
-            alloc.onHand = onHand;
+            int totalReserved = salesOrderAllocation.getOrDefault(warehouseId, 0)
+                    + safeInt(deliveryNoteRepo.sumReservedQtyInDispatchedNotes(product.getId(), warehouseId));
 
-            // Division-by-zero protection
-            if (globalOnHand > 0) {
-                alloc.frac = ((double) onHand / globalOnHand) * globalReserved;
-            } else {
-                alloc.frac = 0;
-            }
-
-            alloc.floored = (int) Math.floor(alloc.frac);
-            alloc.remainder = alloc.frac - alloc.floored;
-
-            totalAssigned += alloc.floored;
-            allocations.add(alloc);
-        }
-
-        // Assign remaining units to highest fractional parts
-        int remainingToAssign = globalReserved - totalAssigned;
-        if (remainingToAssign > 0 && remainingToAssign <= rows.size()) {
-            allocations.sort((a, b) -> Double.compare(b.remainder, a.remainder));
-            for (int i = 0; i < remainingToAssign; i++) {
-                allocations.get(i).floored += 1;
-            }
-        }
-
-        // Re-sort back to original index order
-        allocations.sort((a, b) -> Integer.compare(a.index, b.index));
-
-        List<WarehouseStockResponse> responses = new ArrayList<>();
-        for (Allocation alloc : allocations) {
-            WarehouseStockResponse res = new WarehouseStockResponse();
-            res.setProductId(p.getId());
-            res.setProductCode(p.getCode());
-            res.setProductName(p.getName());
-            res.setWarehouseId(alloc.warehouseId);
-            res.setWarehouseName(alloc.warehouseName);
-            res.setWarehouseType(alloc.warehouseType);
-            res.setQuantity(alloc.onHand);
-
-            // Add specific DN reservations for this warehouse to the allocated proportional
-            // part
-            int warehouseDnReserved = deliveryNoteRepo.sumReservedQtyInDispatchedNotes(p.getId(), alloc.warehouseId)
-                    .intValue();
-            int totalReserved = alloc.floored + warehouseDnReserved;
-
-            res.setReserved(totalReserved);
-            res.setAvailable(alloc.onHand - totalReserved);
-
-            responses.add(res);
+            WarehouseStockResponse response = new WarehouseStockResponse();
+            response.setProductId(product.getId());
+            response.setProductCode(product.getCode());
+            response.setProductName(product.getName());
+            response.setWarehouseId(warehouseId);
+            response.setWarehouseName(warehouseName);
+            response.setWarehouseType(warehouseType);
+            response.setQuantity(onHand);
+            response.setReserved(totalReserved);
+            response.setAvailable(onHand - totalReserved);
+            responses.add(response);
         }
 
         return responses;
@@ -239,12 +268,15 @@ public class WarehouseStockService {
     public BigDecimal getAvailableStockWithFilters(Long warehouseId, Long productId, Long zoneId, Long locatorId,
             Long binId) {
         BigDecimal onHand = stockRepo.getAvailableStockWithFilters(warehouseId, productId, zoneId, locatorId, binId);
-        if (productId == null)
-            return onHand; // Aggregate doesn't support reservation subtraction easily here
+        if (productId == null) {
+            return onHand;
+        }
 
         BigDecimal reserved = BigDecimal.ZERO;
         if (binId != null) {
             reserved = deliveryNoteRepo.sumReservedQtyInDispatchedNotesByBin(productId, binId);
+        } else if (warehouseId != null && zoneId == null && locatorId == null) {
+            reserved = BigDecimal.valueOf(getTotalReservedForWarehouse(warehouseId, productId));
         } else if (warehouseId != null) {
             reserved = deliveryNoteRepo.sumReservedQtyInDispatchedNotes(productId, warehouseId);
         }
@@ -254,17 +286,7 @@ public class WarehouseStockService {
 
     public BigDecimal getAvailableStock(Long warehouseId, Long productId) {
         BigDecimal onHand = stockRepo.getAvailableStock(warehouseId, productId);
-        BigDecimal dnReserved = deliveryNoteRepo.sumReservedQtyInDispatchedNotes(productId, warehouseId);
-
-        // Also subtract Sales Order hard reservations so SO validation cannot double-book.
-        BigDecimal soReserved = BigDecimal.ZERO;
-        Product p = productRepo.findById(productId).orElse(null);
-        if (p != null) {
-            BigDecimal raw = salesOrderRepo.sumReservedQuantity(p.getCode());
-            soReserved = raw != null ? raw : BigDecimal.ZERO;
-        }
-
-        return onHand.subtract(dnReserved).subtract(soReserved);
+        return onHand.subtract(BigDecimal.valueOf(getTotalReservedForWarehouse(warehouseId, productId)));
     }
 
     public WarehouseController.WarehouseStockSummary getStockSummary(Long warehouseId) {
@@ -278,10 +300,9 @@ public class WarehouseStockService {
                 .mapToInt(row -> row.getReserved() != null ? row.getReserved() : 0)
                 .sum();
 
-        // TODO: Implement expiring, fast moving, dead stock calculations
-        int expiring = 0; // Items expiring within 30 days
-        int fastMoving = 0; // Items with high turnover
-        int deadStock = 0; // Items with no movement for 90+ days
+        int expiring = 0;
+        int fastMoving = 0;
+        int deadStock = 0;
 
         return new WarehouseController.WarehouseStockSummary(
                 totalSkus,

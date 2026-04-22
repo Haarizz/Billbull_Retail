@@ -13,6 +13,7 @@ import { getPostedPurchaseInvoices } from '../../../api/purchaseInvoiceApi';
 import { getVendors } from "../../../api/vendorsApi";
 import { getBarcodeTemplates, createBarcodeTemplate, updateBarcodeTemplate, deleteBarcodeTemplate } from '../../../api/barcodeTemplateApi';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
+import { useCompany } from "../../../context/CompanyContext";
 import { getImageUrl } from "../../../utils/urlUtils";
 
 const TEMPLATES = [
@@ -69,6 +70,7 @@ const TEMPLATES = [
 const BarcodePrinter = () => {
     const location = useLocation();
     const navigate = useNavigate();
+    const { company } = useCompany();
     const [products, setProducts] = useState([]);
     const [filteredProducts, setFilteredProducts] = useState([]);
     const [cart, setCart] = useState([]);
@@ -603,6 +605,7 @@ const BarcodePrinter = () => {
     const renderLabels = (isPreview = false, templateOverride = null, itemsOverride = null) => {
         const t = templateOverride || templates.find(temp => temp.id === selectedTemplate);
         if (!t) return null;
+        const companyName = company?.companyName || '';
 
         const isEnabled = (field) => !t.fields || typeof t.fields !== 'object' || t.fields[field];
 
@@ -623,7 +626,7 @@ const BarcodePrinter = () => {
                     code: 'SAMPLE-123',
                     price: '99.00',
                     packings: [{ isSale: true, barcode: '123456789012' }],
-                    company: 'NEW EXTREME SPORTS TRADING LLC'
+                    company: companyName
                 },
                 qty: 1
             });
@@ -656,7 +659,7 @@ const BarcodePrinter = () => {
                         }}
                     >
                         {isEnabled('company') && (
-                            <div className="label-name" style={{ fontSize: codeFontSize, marginBottom: '2px', fontWeight: 'bold', textTransform: 'uppercase' }}>{item.product.company || 'NEW EXTREME SPORTS TRADING LLC'}</div>
+                            <div className="label-name" style={{ fontSize: codeFontSize, marginBottom: '2px', fontWeight: 'bold', textTransform: 'uppercase' }}>{item.product.company || companyName}</div>
                         )}
 
                         {isEnabled('name') && (
@@ -672,7 +675,7 @@ const BarcodePrinter = () => {
                                         price: item.product.retailPrice || item.product.price || '0.00',
                                         barcode: item.barcode || getBarcodeValue(item.product),
                                         sku: item.product.sku || item.product.code,
-                                        company: item.product.company || 'NEW EXTREME SPORTS TRADING LLC'
+                                        company: item.product.company || companyName
                                     }))}`}
                                     alt="QR Code"
                                     className="w-full h-full object-contain"
@@ -1441,7 +1444,7 @@ const BarcodePrinter = () => {
                                                                     code: 'SAMPLE-123',
                                                                     price: '99.00',
                                                                     packings: [{ isSale: true, barcode: '123456789012' }],
-                                                                    company: 'NEW EXTREME SPORTS TRADING LLC'
+                                                                    company: company?.companyName || ''
                                                                 },
                                                                 qty: 1,
                                                                 barcode: '123456789012'

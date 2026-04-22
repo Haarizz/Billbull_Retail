@@ -146,11 +146,16 @@ public class PurchaseInvoiceService {
         BigDecimal headerSubTotal = BigDecimal.ZERO;
         BigDecimal headerTaxTotal = BigDecimal.ZERO;
         BigDecimal headerDiscountTotal = BigDecimal.ZERO;
+        var imageMap = buildPrimaryImageMap(
+                lpo.getItems().stream()
+                        .map(i -> i.getItemCode())
+                        .toList());
 
         var lineItems = lpo.getItems().stream().map(i -> {
             InvoiceItemDraft d = new InvoiceItemDraft();
             d.setItemCode(i.getItemCode());
             d.setItemName(i.getItemName());
+            d.setImage(imageMap.get(i.getItemCode()));
             d.setUom(i.getUom());
             d.setQty(i.getQuantity());
             BigDecimal unitCost = i.getUnitPrice() != null ? i.getUnitPrice() : BigDecimal.ZERO;
@@ -228,12 +233,17 @@ public class PurchaseInvoiceService {
 
         BigDecimal headerSubTotal = BigDecimal.ZERO;
         BigDecimal headerTaxTotal = BigDecimal.ZERO;
+        var imageMap = buildPrimaryImageMap(
+                grn.getItems().stream()
+                        .map(i -> i.getProductCode())
+                        .toList());
 
         var lineItems = grn.getItems().stream().map(i -> {
             InvoiceItemDraft d = new InvoiceItemDraft();
 
             d.setItemCode(i.getProductCode());
             d.setItemName(i.getProductName());
+            d.setImage(imageMap.get(i.getProductCode()));
             d.setUom(i.getUom());
             d.setQty(i.getAcceptedQty());
             d.setUnitCost(i.getUnitCost());
@@ -776,6 +786,23 @@ public class PurchaseInvoiceService {
         }
 
         return dto;
+    }
+
+    private java.util.Map<String, String> buildPrimaryImageMap(List<String> itemCodes) {
+        java.util.List<String> codes = itemCodes.stream()
+                .filter(code -> code != null && !code.isBlank())
+                .distinct()
+                .toList();
+
+        java.util.Map<String, String> imageMap = new java.util.HashMap<>();
+        if (codes.isEmpty()) {
+            return imageMap;
+        }
+
+        productMediaRepository.findPrimaryByProductCodesIn(codes)
+                .forEach(media -> imageMap.put(media.getProduct().getCode(), media.getImageUrl()));
+
+        return imageMap;
     }
 
     private BigDecimal resolveAmountPaid(PurchaseInvoice invoice) {

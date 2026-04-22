@@ -238,6 +238,18 @@ const SalesInvoice = () => {
     const [focusedItemPriceHistory, setFocusedItemPriceHistory] = useState([]);
     const [isContextLoading, setIsContextLoading] = useState(false);
 
+    const resolveInvoiceTypeUI = ({
+        linkedSalesOrder = '',
+        linkedDeliveryNote = '',
+        linkedProforma = '',
+        salesType: resolvedSalesType = 'STANDARD_FLOW'
+    } = {}) => {
+        if (linkedDeliveryNote) return 'Against Delivery Note';
+        if (linkedProforma) return 'Against Proforma Invoice';
+        if (linkedSalesOrder) return 'Against Sales Order';
+        return resolvedSalesType === 'DIRECT_SALE' ? 'Direct Sale' : 'Direct Sale';
+    };
+
     // ✅ GLOBAL SHORTCUTS
     useShortcuts({
         'ctrl+p': (e) => {
@@ -537,6 +549,8 @@ const SalesInvoice = () => {
 
         setSelectedCustomer(matched || { name: fromSO.customer, code: fromSO.customerCode || '', id: null });
         setItems(mappedItems.length > 0 ? mappedItems : [{ id: Date.now(), code: '', name: '', unit: 'PCS', qty: 0, price: 0, disc: 0, tax: 5, taxAmt: 0, gross: 0, net: 0, cost: 0 }]);
+        setInvoiceTypeUI('Against Sales Order');
+        setSalesType('STANDARD_FLOW');
         setLinkedSO(fromSO.soNumber || '');
         setLinkedPI(fromSO.linkedProforma || '');
         setReference(fromSO.linkedQuotation || fromSO.linkedProforma || fromSO.soNumber || '');
@@ -626,6 +640,7 @@ const SalesInvoice = () => {
         }
         setStatus('Draft');
         setSalesType(type);
+        setInvoiceTypeUI(resolveInvoiceTypeUI({ salesType: type }));
         setInvoiceDate(new Date().toISOString().split('T')[0]);
         setDeliveryDate('');
         // BB-027: Default to Walk-In Customer for new invoices
@@ -1178,7 +1193,14 @@ const SalesInvoice = () => {
         setAmountCollected(invoice.amountPaid || 0);
         setInvoiceBalance(invoice.balance != null ? invoice.balance : null);
         setStatus(invoice.status || 'Draft');
-        setSalesType(invoice.salesType || 'STANDARD_FLOW');
+        const resolvedSalesType = invoice.salesType || 'STANDARD_FLOW';
+        setSalesType(resolvedSalesType);
+        setInvoiceTypeUI(resolveInvoiceTypeUI({
+            linkedSalesOrder: invoice.linkedSalesOrder || '',
+            linkedDeliveryNote: invoice.linkedDeliveryNote || '',
+            linkedProforma: invoice.linkedProforma || '',
+            salesType: resolvedSalesType
+        }));
         setIsGeneratedFromDN(!!invoice.linkedDeliveryNote && invoice.status !== 'CANCELLED');
 
         // Map items back

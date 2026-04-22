@@ -781,6 +781,20 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
     return index;
   }, [productList]);
 
+  const productLookupIndex = useMemo(() => {
+    const index = new Map();
+
+    productList.forEach((product) => {
+      [product?.code, product?.sku, product?.name, product?.description]
+        .filter(Boolean)
+        .forEach((value) => {
+          index.set(String(value).trim().toLowerCase(), product);
+        });
+    });
+
+    return index;
+  }, [productList]);
+
   const resolveBarcode = (item) => {
     const directBarcode = item?.barcode || item?.productBarcode || "";
     if (directBarcode) return directBarcode;
@@ -796,6 +810,42 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
     for (const key of keys) {
       const match = productBarcodeIndex.get(String(key).trim().toLowerCase());
       if (match) return match;
+    }
+
+    return "";
+  };
+
+  const resolveProductImage = (item) => {
+    const directImage =
+      item?.image ||
+      item?.primaryImage ||
+      item?.thumbnailUrl ||
+      item?.imageUrl ||
+      item?.productImage ||
+      "";
+
+    if (directImage) return directImage;
+
+    const keys = [
+      item?.itemCode,
+      item?.code,
+      item?.sku,
+      item?.itemName,
+      item?.name
+    ].filter(Boolean);
+
+    for (const key of keys) {
+      const product = productLookupIndex.get(String(key).trim().toLowerCase());
+      if (!product) continue;
+
+      const productImage =
+        product?.primaryImage ||
+        product?.image ||
+        product?.thumbnailUrl ||
+        product?.imageUrl ||
+        "";
+
+      if (productImage) return productImage;
     }
 
     return "";
@@ -922,10 +972,11 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
       ...prev,
       items: prev.items.map((item) => ({
         ...item,
-        barcode: item.barcode || resolveBarcode(item)
+        barcode: item.barcode || resolveBarcode(item),
+        image: resolveProductImage(item)
       }))
     }));
-  }, [productList]);
+  }, [productList, productLookupIndex]);
 
   // Load LPOs and DPs on Mount
   useEffect(() => {
