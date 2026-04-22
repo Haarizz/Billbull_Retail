@@ -3,6 +3,7 @@ package com.billbull.backend.security;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.security.core.context.SecurityContextHolder;
 
 import java.util.List;
 import java.util.Map;
@@ -39,6 +40,16 @@ public class RolePermissionController {
     @PreAuthorize("isAuthenticated()")
     public ResponseEntity<List<RolePermissionDto>> getByRole(@PathVariable String roleName) {
         return ResponseEntity.ok(rolePermissionService.getByRoleName(roleName));
+    }
+
+    /**
+     * Get merged permissions for the current user across ALL their roles.
+     */
+    @GetMapping("/me")
+    @PreAuthorize("isAuthenticated()")
+    public ResponseEntity<Map<String, Object>> getMyPermissions() {
+        String username = SecurityContextHolder.getContext().getAuthentication().getName();
+        return ResponseEntity.ok(rolePermissionService.getMergedPermissionsForUser(username));
     }
 
     /**

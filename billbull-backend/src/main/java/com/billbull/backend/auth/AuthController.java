@@ -10,6 +10,7 @@ import org.springframework.web.bind.annotation.RestController;
 import com.billbull.backend.config.JwtUtil;
 import com.billbull.backend.user.User;
 import com.billbull.backend.user.UserRepository;
+import org.springframework.transaction.annotation.Transactional;
 
 @RestController
 @RequestMapping("/api/auth")
@@ -29,6 +30,7 @@ public class AuthController {
         this.jwtUtil = jwtUtil;
     }
 
+    @Transactional
     @PostMapping("/login")
     public LoginResponse login(@RequestBody LoginRequest request) {
 
@@ -66,6 +68,7 @@ public class AuthController {
                         : null);
     }
 
+    @Transactional(readOnly = true)
     @GetMapping("/profile")
     public UserProfileDto getProfile(org.springframework.security.core.Authentication authentication) {
         String username = authentication.getName();

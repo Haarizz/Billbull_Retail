@@ -67,6 +67,18 @@ public class ModulePermissionService {
         }
     }
 
+    /** Generic action-level check */
+    public void requireCan(String module, String action) {
+        switch (action.toLowerCase()) {
+            case "view":    requireCanView(module); break;
+            case "create":  requireCanCreate(module); break;
+            case "edit":    requireCanEdit(module); break;
+            case "approve": requireCanApprove(module); break;
+            case "export":  requireCanExport(module); break;
+            default: throw new IllegalArgumentException("Unknown action: " + action);
+        }
+    }
+
     // ─────────────────────────────────────────────────────────────────────────
     // Boolean check variants (no exception — for conditional logic)
     // ─────────────────────────────────────────────────────────────────────────
@@ -83,17 +95,38 @@ public class ModulePermissionService {
 
     /**
      * Returns true if ANY of the current user's roles has the given flag = true
-     * for the specified module (ALLOW-wins union).
+     * for the specified module or its parent module (ALLOW-wins union).
+     * Example: Checking 'sales.invoice' will return true if user has 'sales.invoice' OR 'sales' permission.
      */
     private boolean hasPermission(String module, Function<RolePermission, Boolean> flag) {
         List<String> roleNames = getCurrentUserRoleNames();
-        String moduleLower = module.toLowerCase();
+        if (roleNames.isEmpty()) return false;
 
-        return roleNames.stream().anyMatch(roleName ->
-            rolePermissionRepository.findByRole_Name(roleName).stream()
-                .filter(rp -> rp.getModule().equalsIgnoreCase(moduleLower))
-                .anyMatch(flag::apply)
-        );
+        String target = module.toLowerCase();
+        String parent = target.contains(".") ? target.split("\\.")[0] : null;
+
+        // Collect all relevant permissions for the user's roles
+        return roleNames.stream().anyMatch(roleName -> {
+            List<RolePermission> perms = rolePermissionRepository.findByRole_Name(roleName);
+            
+            // 1. Check for exact match (e.g., 'sales.invoice')
+            java.util.Optional<RolePermission> exactRow = perms.stream()
+                .filter(rp -> rp.getModule().equalsIgnoreCase(target))
+                .findFirst();
+            
+            if (exactRow.isPresent()) {
+                return flag.apply(exactRow.get()); // If found, its value (TRUE or FALSE) is final for this role
+            }
+
+            // 2. Fallback to parent if it's a sub-resource
+            if (parent != null) {
+                return perms.stream()
+                    .filter(rp -> rp.getModule().equalsIgnoreCase(parent))
+                    .anyMatch(rp -> flag.apply(rp));
+            }
+
+            return false;
+        });
     }
 
     /** Extracts role names from the current Spring Security context. */

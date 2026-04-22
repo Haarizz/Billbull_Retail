@@ -37,4 +37,14 @@ public class RoleService {
         return roleRepository.findByName(name)
                 .orElseThrow(() -> new RuntimeException("Role not found with name: " + name));
     }
+
+    /**
+     * Create a new role.
+     */
+    public Role createRole(Role role) {
+        if (roleRepository.findByName(role.getName()).isPresent()) {
+            throw new RuntimeException("Role already exists with name: " + role.getName());
+        }
+        return roleRepository.save(role);
+    }
 }

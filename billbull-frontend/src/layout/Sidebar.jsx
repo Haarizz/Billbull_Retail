@@ -23,7 +23,7 @@ const Sidebar = ({ children }) => {
   // --- STATE ---
   const [collapsed, setCollapsed] = useState(false);
   const username = getUsernameFromToken() || "BillBull Admin";
-  const { canView, permissionsLoaded } = usePermissions();
+  const { canView, canAction, permissionsLoaded } = usePermissions();
   const userEmail = "admin@billbull.app";
 
   const [mobileOpen, setMobileOpen] = useState(false);
@@ -102,10 +102,9 @@ const Sidebar = ({ children }) => {
       module: "customer",
       roles: ["ADMIN", "SALES"],
       subItems: [
-        { path: "/customer/inquiries", label: "Inquiries", icon: <HelpCircle size={14} /> },
-        { path: "/customer/followups", label: "Follow-ups", icon: <Phone size={14} /> },
-        { path: "/customer/messaging", label: "Messaging", icon: <MessageSquare size={14} /> },
-
+        { path: "/customer/inquiries", label: "Inquiries",  module: "customer.inquiry", icon: <HelpCircle size={14} /> },
+        { path: "/customer/followups", label: "Follow-ups", module: "customer.followup", icon: <Phone size={14} /> },
+        { path: "/customer/messaging", label: "Messaging",  module: "customer.message", icon: <MessageSquare size={14} /> },
       ],
     },
     {
@@ -118,16 +117,16 @@ const Sidebar = ({ children }) => {
       module: "inventory",
       roles: ["ADMIN", "INVENTORY_MANAGER"],
       subItems: [
-        { path: "/inventory/departments", label: "Departments", icon: <Building2 size={14} /> },
-        { path: "/inventory/subDepartments", label: "Sub Departments", icon: <Layers size={14} /> },
-        { path: "/inventory/brands", label: "Brands ", icon: <Tag size={14} /> },
-        { path: "/inventory/units", label: "Units ", icon: <Scale size={14} /> },
-        { path: "/inventory/products", label: "Products / Services", icon: <Package size={14} /> },
-        { path: "/inventory/warehouses", label: "Warehouses & Storages", icon: <Warehouse size={14} /> },
-        { path: "/inventory/stock-take", label: "Stock Taking", icon: <ClipboardList size={14} /> },
-        { path: "/inventory/stock-transfer", label: "Stock Transfers", icon: <ArrowRightLeft size={14} /> },
-        { path: "/inventory/barcode", label: "Barcode Print & Design", icon: <Barcode size={14} /> },
-        { path: "/inventory/reports", label: "Reports", icon: <PieChart size={14} /> },
+        { path: "/inventory/departments",     label: "Departments",           module: "inventory.category",  icon: <Building2 size={14} /> },
+        { path: "/inventory/subDepartments",  label: "Sub Departments",       module: "inventory.category",  icon: <Layers size={14} /> },
+        { path: "/inventory/brands",          label: "Brands ",               module: "inventory.category",  icon: <Tag size={14} /> },
+        { path: "/inventory/units",           label: "Units ",                module: "inventory.category",  icon: <Scale size={14} /> },
+        { path: "/inventory/products",        label: "Products / Services",   module: "inventory.product",   icon: <Package size={14} /> },
+        { path: "/inventory/warehouses",      label: "Warehouses & Storages", module: "inventory.warehouse", icon: <Warehouse size={14} /> },
+        { path: "/inventory/stock-take",      label: "Stock Taking",          module: "inventory.stock",     icon: <ClipboardList size={14} /> },
+        { path: "/inventory/stock-transfer",  label: "Stock Transfers",       module: "inventory.stock",     icon: <ArrowRightLeft size={14} /> },
+        { path: "/inventory/barcode",         label: "Barcode Print & Design",module: "inventory.stock",     icon: <Barcode size={14} /> },
+        { path: "/inventory/reports",         label: "Reports",               module: "inventory.stock",     icon: <PieChart size={14} /> },
       ],
     },
     {
@@ -140,17 +139,17 @@ const Sidebar = ({ children }) => {
       module: "sales",
       roles: ["ADMIN", "SALES", "ACCOUNTANT"],
       subItems: [
-        { path: "/sales/customers", label: "Customer Ledger", icon: <BookUser size={14} /> },
-        { path: "/sales/quotation", label: "Quotation", icon: <FileText size={14} /> },
-        { path: "/sales/order", label: "Sales Order", icon: <ShoppingCart size={14} /> },
-        { path: "/sales/pro-forma", label: "Proforma Invoice", icon: <File size={14} /> },
-        { path: "/sales/invoice", label: "Sales Invoice", icon: <FileSpreadsheet size={14} /> },
-        { path: "/sales/deliverynote", label: "Delivery Note", icon: <Truck size={14} /> },
-        { path: "/sales/return", label: "Sales Return", icon: <Undo2 size={14} /> },
-        { path: "/sales/payment", label: "Payments", icon: <CreditCard size={14} /> },
-        { path: "/sales/templates", label: "Print & Email Templates", icon: <Printer size={14} /> },
-        { path: "/sales/reports/summary", label: "Sales Summary Report", icon: <PieChart size={14} /> },
-        { path: "/sales/settings", label: "Sales Settings", icon: <Settings size={14} /> },
+        { path: "/sales/customers",     label: "Customer Ledger",       module: "sales.customer", icon: <BookUser size={14} /> },
+        { path: "/sales/quotation",     label: "Quotation",             module: "sales.quotation",icon: <FileText size={14} /> },
+        { path: "/sales/order",         label: "Sales Order",           module: "sales.order",    icon: <ShoppingCart size={14} /> },
+        { path: "/sales/pro-forma",     label: "Proforma Invoice",       module: "sales.invoice",  icon: <File size={14} /> },
+        { path: "/sales/invoice",       label: "Sales Invoice",         module: "sales.invoice",  icon: <FileSpreadsheet size={14} /> },
+        { path: "/sales/deliverynote",  label: "Delivery Note",         module: "sales.invoice",  icon: <Truck size={14} /> },
+        { path: "/sales/return",        label: "Sales Return",          module: "sales.invoice",  icon: <Undo2 size={14} /> },
+        { path: "/sales/payment",       label: "Payments",              module: "sales.payment",  icon: <CreditCard size={14} /> },
+        { path: "/sales/templates",     label: "Print & Email Templates",module: "sales.invoice",  icon: <Printer size={14} /> },
+        { path: "/sales/reports/summary",label: "Sales Summary Report", module: "sales.invoice",  icon: <PieChart size={14} /> },
+        { path: "/sales/settings",      label: "Sales Settings",        module: "sales.invoice",  icon: <Settings size={14} /> },
       ],
     },
     {
@@ -163,13 +162,13 @@ const Sidebar = ({ children }) => {
       module: "purchases",
       roles: ["ADMIN", "INVENTORY_MANAGER", "ACCOUNTANT"],
       subItems: [
-        { path: "/purchases/vendors", label: "Vendor Ledger", icon: <BookUser size={14} /> },
-        { path: "/purchases/lpo", label: "LPO & Approvals", icon: <FilePlus size={14} /> },
-        { path: "/purchases/grn", label: "GRN (Goods Reciept Note)", icon: <Inbox size={14} /> },
-        { path: "/purchases/invoice", label: "Purchase Invoices", icon: <FileText size={14} /> },
-        { path: "/purchases/payment", label: "Payments", icon: <CreditCard size={14} /> },
-        { path: "/purchases/templates", label: "Print & Email Templates", icon: <Printer size={14} /> },
-        { path: "/purchases/reports/summary", label: "Purchase Summary Report", icon: <PieChart size={14} /> },
+        { path: "/purchases/vendors",         label: "Vendor Ledger",           module: "purchases.vendor", icon: <BookUser size={14} /> },
+        { path: "/purchases/lpo",             label: "LPO & Approvals",         module: "purchases.lpo",    icon: <FilePlus size={14} /> },
+        { path: "/purchases/grn",             label: "GRN (Goods Reciept Note)",module: "purchases.grn",    icon: <Inbox size={14} /> },
+        { path: "/purchases/invoice",         label: "Purchase Invoices",       module: "purchases.invoice",icon: <FileText size={14} /> },
+        { path: "/purchases/payment",         label: "Payments",               module: "purchases.invoice",icon: <CreditCard size={14} /> },
+        { path: "/purchases/templates",       label: "Print & Email Templates", module: "purchases.invoice",icon: <Printer size={14} /> },
+        { path: "/purchases/reports/summary", label: "Purchase Summary Report", module: "purchases.invoice",icon: <PieChart size={14} /> },
       ],
     },
 
@@ -184,14 +183,14 @@ const Sidebar = ({ children }) => {
       module: "finance",
       roles: ["ADMIN", "ACCOUNTANT"],
       subItems: [
-        { path: "/finance/ledger", label: "Ledger", icon: <BookOpen size={14} /> },
-        { path: "/finance/receiptvoucher", label: "Receipt Voucher", icon: <Receipt size={14} /> },
-        { path: "/finance/journalvoucher", label: "Journal Voucher", icon: <PenTool size={14} /> },
-        { path: "/finance/expenses", label: "Expenses", icon: <TrendingDown size={14} /> },
-        { path: "/finance/reconciliation", label: "Bank Reconciliation", icon: <Landmark size={14} /> },
-        { path: "/finance/tax", label: "Tax Dashboard", icon: <Percent size={14} /> },
-        { path: "/finance/reports", label: "Reports", icon: <PieChart size={14} /> },
-        { path: "/finance/config", label: "Chart of Accounts & Config", icon: <Settings size={14} /> },
+        { path: "/finance/ledger",          label: "Ledger",                    module: "finance.ledger",   icon: <BookOpen size={14} /> },
+        { path: "/finance/receiptvoucher",  label: "Receipt Voucher",           module: "finance.voucher",  icon: <Receipt size={14} /> },
+        { path: "/finance/journalvoucher",  label: "Journal Voucher",           module: "finance.voucher",  icon: <PenTool size={14} /> },
+        { path: "/finance/expenses",        label: "Expenses",                  module: "finance.voucher",  icon: <TrendingDown size={14} /> },
+        { path: "/finance/reconciliation",  label: "Bank Reconciliation",       module: "finance.reconcile",icon: <Landmark size={14} /> },
+        { path: "/finance/tax",             label: "Tax Dashboard",             module: "finance.tax",      icon: <Percent size={14} /> },
+        { path: "/finance/reports",         label: "Reports",                   module: "finance.tax",      icon: <PieChart size={14} /> },
+        { path: "/finance/config",          label: "Chart of Accounts & Config",module: "finance.tax",      icon: <Settings size={14} /> },
       ],
     },
     {
@@ -204,9 +203,9 @@ const Sidebar = ({ children }) => {
       module: "hr",
       roles: ["ADMIN", "HR"],
       subItems: [
-        { path: "/payroll/employees", label: "Employees & Roles", icon: <Users size={14} /> },
-        { path: "/payroll/salary_payment", label: "Salary Payment", icon: <Wallet size={14} /> },
-        { path: "/payroll/salary_advance", label: "Salary Advance", icon: <Banknote size={14} /> },
+        { path: "/payroll/employees",       label: "Employees & Roles", module: "hr.employee",   icon: <Users size={14} /> },
+        { path: "/payroll/salary_payment",  label: "Salary Payment",     module: "hr.payroll",    icon: <Wallet size={14} /> },
+        { path: "/payroll/salary_advance",  label: "Salary Advance",     module: "hr.payroll",    icon: <Banknote size={14} /> },
       ],
     },
     // {
@@ -233,9 +232,9 @@ const Sidebar = ({ children }) => {
       module: "userManagement",
       roles: ["ADMIN"],
       subItems: [
-        { path: "/settings/company",   label: "Company Profile",    icon: <Building2 size={14} /> },
-        { path: "/settings/roles",     label: "User & Role Config", icon: <ShieldCheck size={14} /> },
-        { path: "/settings/branches",  label: "Branch Setup",       icon: <Warehouse size={14} /> },
+        { path: "/settings/company",   label: "Company Profile",    module: "userManagement.setup", icon: <Building2 size={14} /> },
+        { path: "/settings/roles",     label: "User & Role Config", module: "userManagement.role",  icon: <ShieldCheck size={14} /> },
+        { path: "/settings/branches",  label: "Branch Setup",       module: "userManagement.setup", icon: <Warehouse size={14} /> },
       ],
     },
     {
