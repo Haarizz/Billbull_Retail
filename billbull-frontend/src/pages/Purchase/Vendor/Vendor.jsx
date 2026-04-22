@@ -9,6 +9,7 @@ import {
   ArrowRight, ChevronRight, CreditCard, Banknote, RefreshCw
 } from 'lucide-react';
 import StatementPrintPreview from '../../../components/StatementPrintPreview';
+import SearchableDropdown from '../../../components/SearchableDropdown';
 
 // API IMPORTS
 import {
@@ -20,16 +21,21 @@ import {
 } from "../../../api/vendorsApi";
 import { fetchStatementOfAccount } from '../../../api/financialsApi';
 import { useCompany } from '../../../context/CompanyContext';
+import {
+  getCountryOptions,
+  getCurrencyOptions,
+  normalizeCountryValue,
+  normalizeCurrencyValue,
+  withFallbackOption
+} from '../../../utils/countryCurrencyOptions';
 
 // --- DROPDOWN OPTIONS ---
 const vendorStatusOptions = ["Active", "On Hold", "Blocked"];
 const vendorGroupOptions = ["Local Supplier", "International Supplier", "Service Provider"];
 const vendorTypeOptions = ["Manufacturer", "Distributor", "Wholesaler", "Retailer"];
 const categoryOptions = ["Food & Beverage", "Packaging", "Equipment", "Services"];
-const countryOptions = ["United Arab Emirates", "Saudi Arabia", "United States", "United Kingdom", "India"];
 const communicationOptions = ["Email", "Phone", "WhatsApp"];
 const priorityOptions = ["P1 - Critical", "P2 - High", "P3 - Normal"];
-const currencyOptions = ["AED - UAE Dirham", "USD - US Dollar", "EUR - Euro", "GBP - British Pound"];
 const paymentTermsOptions = ["Cash on Delivery", "Net 7 Days", "Net 15 Days", "Net 30 Days", "Net 60 Days"];
 const balanceTypeOptions = ["Payable (We owe vendor)", "Receivable (Vendor owes us)"];
 const paymentPrefOptions = ["Bank Transfer", "Cheque", "Cash", "Card Payment"];
@@ -942,7 +948,7 @@ const VendorSoA = ({ vendors }) => {
 
 const CreateVendorWizard = ({ onBack, onSave, initialData }) => {
   const { company } = useCompany();
-  const defaultCurrency = company?.currency || 'AED';
+  const defaultCurrency = normalizeCurrencyValue(company?.currency || 'AED');
   // Strict 6 steps
   const steps = [
     { id: "General", name: "General", icon: Globe },
@@ -956,13 +962,38 @@ const CreateVendorWizard = ({ onBack, onSave, initialData }) => {
   const [currentStepIndex, setCurrentStepIndex] = useState(0);
   const [loading, setLoading] = useState(false);
 
-  // FIX: Form State correctly mapped from initialData if present
-  const [formData, setFormData] = useState(initialData || {
-    name: '', email: '', contact: '', status: 'Active',
-    vendorGroup: '', vendorType: '', category: '', country: 'United Arab Emirates',
-    prefComm: 'Email', priority: 'P2 - High', currency: defaultCurrency,
-    payTerms: '', balType: 'Payable (We owe vendor)', payPref: 'Bank Transfer'
+  const normalizeVendorFormData = (data = {}) => ({
+    ...data,
+    country: normalizeCountryValue(data.country || ''),
+    currency: normalizeCurrencyValue(data.currency || '')
   });
+  const createInitialVendorFormState = () => normalizeVendorFormData({
+    name: '',
+    email: '',
+    contact: '',
+    status: 'Active',
+    vendorGroup: '',
+    vendorType: '',
+    category: '',
+    country: 'United Arab Emirates',
+    prefComm: 'Email',
+    priority: 'P2 - High',
+    currency: defaultCurrency,
+    payTerms: '',
+    balType: 'Payable (We owe vendor)',
+    payPref: 'Bank Transfer',
+    ...(initialData || {})
+  });
+  const [formData, setFormData] = useState(createInitialVendorFormState);
+  const countryOptions = useMemo(() => withFallbackOption(
+    getCountryOptions(),
+    normalizeCountryValue(formData.country)
+  ), [formData.country]);
+  const currencyOptions = useMemo(() => withFallbackOption(
+    getCurrencyOptions(),
+    normalizeCurrencyValue(formData.currency),
+    (value) => ({ value, label: value, displayLabel: value })
+  ), [formData.currency]);
 
   // Files State
   const [documents, setDocuments] = useState([]);
@@ -1008,7 +1039,7 @@ const CreateVendorWizard = ({ onBack, onSave, initialData }) => {
   const executeSave = async (isDraft) => {
     setLoading(true);
     try {
-      await onSave(formData, isDraft);
+      await onSave(normalizeVendorFormData(formData), isDraft);
     } catch (e) {
       console.error(e);
     } finally {
@@ -1114,7 +1145,16 @@ const CreateVendorWizard = ({ onBack, onSave, initialData }) => {
                 <div className="space-y-1.5"><label className="text-xs font-semibold text-slate-700">Vendor Type</label><div className="relative"><Dropdown options={vendorTypeOptions} selected={formData.vendorType} onSelect={(val) => handleInputChange('vendorType', val)} placeholder="Select type" /></div></div>
                 <div className="space-y-1.5"><label className="text-xs font-semibold text-slate-700">Category *</label><div className="relative"><Dropdown options={categoryOptions} selected={formData.category} onSelect={(val) => handleInputChange('category', val)} placeholder="Select category" /></div></div>
                 <div className="space-y-1.5"><label className="text-xs font-semibold text-slate-700">TRN / Tax ID</label><input type="text" placeholder="Enter tax registration number" value={formData.taxId || ''} onChange={(e) => handleInputChange('taxId', e.target.value)} className="w-full h-10 px-3 border border-slate-200 rounded-md text-sm focus:ring-2 focus:ring-[#F5C742]/50 outline-none" /></div>
-                <div className="space-y-1.5"><label className="text-xs font-semibold text-slate-700">Country *</label><div className="relative"><Dropdown options={countryOptions} selected={formData.country} onSelect={(val) => handleInputChange('country', val)} /></div></div>
+                <div className="space-y-1.5">
+                  <label className="text-xs font-semibold text-slate-700">Country *</label>
+                  <SearchableDropdown
+                    options={countryOptions}
+                    value={formData.country}
+                    onChange={(value) => handleInputChange('country', value)}
+                    placeholder="Search country"
+                    className="w-full"
+                  />
+                </div>
                 <div className="space-y-1.5"><label className="text-xs font-semibold text-slate-700">Primary Email</label><input type="email" onChange={(e) => handleInputChange('email', e.target.value)} value={formData.email} placeholder="vendor@example.com" className="w-full h-10 px-3 border border-slate-200 rounded-md text-sm focus:ring-2 focus:ring-[#F5C742]/50 outline-none" /></div>
                 <div className="space-y-1.5"><label className="text-xs font-semibold text-slate-700">Primary Contact Number</label><input type="text" onChange={(e) => handleInputChange('contact', e.target.value)} value={formData.contact} placeholder="+971-50-XXX-XXXX" className="w-full h-10 px-3 border border-slate-200 rounded-md text-sm focus:ring-2 focus:ring-[#F5C742]/50 outline-none" /></div>
                 <div className="space-y-1.5"><label className="text-xs font-semibold text-slate-700">Website</label><input type="text" placeholder="https://www.example.com" value={formData.website || ''} onChange={(e) => handleInputChange('website', e.target.value)} className="w-full h-10 px-3 border border-slate-200 rounded-md text-sm focus:ring-2 focus:ring-[#F5C742]/50 outline-none" /></div>
@@ -1147,7 +1187,16 @@ const CreateVendorWizard = ({ onBack, onSave, initialData }) => {
             <div className="bg-white p-6 rounded-lg shadow-sm border border-slate-200 animate-in fade-in slide-in-from-bottom-2 duration-300">
               <h3 className="text-base font-bold text-slate-800 mb-6">Financial & Credit Settings</h3>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
-                <div className="space-y-1.5"><label className="text-xs font-semibold text-slate-700">Currency</label><div className="relative"><Dropdown options={currencyOptions} selected={formData.currency} onSelect={(val) => handleInputChange('currency', val)} /></div></div>
+                <div className="space-y-1.5">
+                  <label className="text-xs font-semibold text-slate-700">Currency</label>
+                  <SearchableDropdown
+                    options={currencyOptions}
+                    value={formData.currency}
+                    onChange={(value) => handleInputChange('currency', value)}
+                    placeholder="Search currency"
+                    className="w-full"
+                  />
+                </div>
                 <div className="space-y-1.5"><label className="text-xs font-semibold text-slate-700">Credit Limit</label><input type="number" placeholder="0.00" value={formData.creditLimit || ''} onChange={(e) => handleInputChange('creditLimit', e.target.value)} className="w-full h-10 px-3 border border-slate-200 rounded-md text-sm focus:ring-2 focus:ring-[#F5C742]/50 outline-none" /></div>
                 <div className="space-y-1.5"><label className="text-xs font-semibold text-slate-700">Payment Terms</label><div className="relative"><Dropdown options={paymentTermsOptions} selected={formData.payTerms} onSelect={(val) => handleInputChange('payTerms', val)} placeholder="Select terms" /></div></div>
                 <div className="space-y-1.5"><label className="text-xs font-semibold text-slate-700">Credit Days</label><input type="number" placeholder="30" value={formData.creditDays || ''} onChange={(e) => handleInputChange('creditDays', e.target.value)} className="w-full h-10 px-3 border border-slate-200 rounded-md text-sm focus:ring-2 focus:ring-[#F5C742]/50 outline-none" /></div>

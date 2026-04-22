@@ -75,6 +75,10 @@ const SearchableDropdown = ({
     });
 
     const selectedOption = options.find(option => option.value === value);
+    const hasValue = value !== undefined && value !== null && `${value}`.trim() !== '';
+    const selectedLabel = selectedOption
+        ? (selectedOption.displayLabel || selectedOption.label)
+        : (hasValue ? `${value}` : placeholder);
 
     const handleSelect = (option) => {
         onChange(option.value);
@@ -95,11 +99,11 @@ const SearchableDropdown = ({
                     } ${isOpen ? 'ring-1 ring-[#F5C742] border-[#F5C742]' : 'border-slate-200'}`}
                 onClick={() => !disabled && setIsOpen(!isOpen)}
             >
-                <span className={`text-sm truncate ${!selectedOption ? 'text-slate-400' : 'text-slate-900'}`}>
-                    {selectedOption ? (selectedOption.displayLabel || selectedOption.label) : placeholder}
+                <span className={`text-sm truncate ${hasValue ? 'text-slate-900' : 'text-slate-400'}`}>
+                    {selectedLabel}
                 </span>
                 <div className="flex items-center gap-1">
-                    {selectedOption && !disabled && (
+                    {hasValue && !disabled && (
                         <div
                             onClick={clearSelection}
                             className="p-0.5 rounded-full hover:bg-slate-100 text-slate-400 hover:text-slate-600 transition-colors"
