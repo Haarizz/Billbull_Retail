@@ -68,24 +68,64 @@ const JournalVoucher = () => {
     const fetchJournalVouchers = async () => {
         setLoading(true);
         try {
-            const data = await journalVoucherApi.getAll();
+            let data = await journalVoucherApi.getAll();
+            
+            // Fallback: If no journal entries from dedicated API, try filtering from global transactions
+            if (!data || data.length === 0) {
+                console.warn("Journal entries API returned empty. Attempting fallback from ledger transactions...");
+                const allTransactions = await ledgerApi.getTransactions();
+                const jvTransactions = allTransactions.filter(t => 
+                    t.type === 'JOURNAL_VOUCHER' || 
+                    t.type === 'JOURNAL_ENTRY' || 
+                    t.type === 'Manual Journal' ||
+                    t.voucherNo?.startsWith('JV-')
+                );
+
+                if (jvTransactions.length > 0) {
+                    // Group by voucher number to reconstruct JV objects
+                    const grouped = jvTransactions.reduce((acc, t) => {
+                        if (!acc[t.voucherNo]) {
+                            acc[t.voucherNo] = {
+                                id: t.id,
+                                entryNumber: t.voucherNo,
+                                date: t.transactionDate,
+                                reference: t.reference || '',
+                                narration: t.description || '',
+                                status: 'Posted',
+                                preparedBy: 'System',
+                                lines: []
+                            };
+                        }
+                        acc[t.voucherNo].lines.push({
+                            account: t.accountName,
+                            accountCode: t.accountCode,
+                            description: t.description,
+                            debit: parseFloat(t.debitAmount || 0),
+                            credit: parseFloat(t.creditAmount || 0),
+                            costCenter: t.costCenterName || ''
+                        });
+                        return acc;
+                    }, {});
+                    data = Object.values(grouped);
+                }
+            }
+
             // Transform backend data to match frontend structure
             const transformed = data.map(jv => ({
                 id: jv.id,
-                jvNumber: jv.entryNumber,
+                jvNumber: jv.entryNumber || jv.voucherId,
                 date: jv.date,
                 reference: jv.reference,
                 narration: jv.narration,
-                status: jv.status,
-                preparedBy: jv.preparedBy,
+                status: jv.status || 'Posted',
+                preparedBy: jv.preparedBy || 'System',
                 postedBy: jv.postedBy,
                 postedAt: jv.postedAt,
                 createdAt: jv.createdAt,
                 updatedAt: jv.updatedAt,
                 lines: jv.lines || [],
-                // Calculate totals from lines
-                debit: jv.lines?.reduce((sum, line) => sum + parseFloat(line.debit || 0), 0) || 0,
-                credit: jv.lines?.reduce((sum, line) => sum + parseFloat(line.credit || 0), 0) || 0
+                debit: jv.lines?.reduce((sum, line) => sum + parseFloat(line.debit || 0), 0) || jv.debit || 0,
+                credit: jv.lines?.reduce((sum, line) => sum + parseFloat(line.credit || 0), 0) || jv.credit || 0
             }));
             setJournalVouchers(transformed);
         } catch (error) {

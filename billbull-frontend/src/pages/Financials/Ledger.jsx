@@ -166,6 +166,7 @@ const Ledger = () => {
     name: acc.name,
     sub: acc.subGroup,
     group: acc.accountGroup,
+    accountType: acc.accountType, // Added for robust stat matching
     branch: acc.branch,
     cc: acc.costCenterCode,
     balance: formatBalance(acc.balanceAmount, acc.balanceType),
@@ -1076,7 +1077,19 @@ const selectedAccountLabel = glFilterAccount
           {/* STATS */}
           <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
             {['Assets', 'Liabilities', 'Income', 'Expenses', 'Equity'].map((type, idx) => {
-              const typeAccounts = accounts.filter(a => a.group === type && a.status !== 'archived');
+              const typeAccounts = accounts.filter(a => {
+                if (a.status === 'archived') return false;
+                
+                const group = (a.group || '').toLowerCase().trim();
+                const actType = (a.accountType || '').toLowerCase().trim();
+                const target = type.toLowerCase();
+                
+                // Robust matching for plural/singular and empty groups
+                return group === target || 
+                       group === target.replace(/s$/, '').replace(/ies$/, 'y') ||
+                       actType === target || 
+                       actType === target.replace(/s$/, '').replace(/ies$/, 'y');
+              });
               const total = typeAccounts.reduce((sum, acc) => sum + parseBalance(acc.balance).amount, 0);
 
               let icon = Wallet;

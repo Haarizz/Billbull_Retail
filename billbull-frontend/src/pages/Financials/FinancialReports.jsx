@@ -36,7 +36,15 @@ import {
 } from 'recharts';
 
 import * as backendApi from '../../api/financialReportsBackendApi';
-import { getFinancialReportsData } from '../../api/financialReportsApi';
+import { 
+    getFinancialReportsData, 
+    calculateFinancialMetrics, 
+    calculateBalanceSheetDetails,
+    calculateCashFlowDetails,
+    calculateExpenseAnalysisDetails,
+    calculateTaxSummary,
+    getMonthlyTrends 
+} from '../../api/financialReportsApi';
 import toast from 'react-hot-toast';
 
 const REPORT_KEYS = [
@@ -283,21 +291,104 @@ const FinancialReports = () => {
             const nextReportStatus = createReportStatus();
             REPORT_KEYS.forEach((key, index) => {
                 const result = reportResults[index];
-                if (result.status === 'fulfilled') {
+                if (result.status === 'fulfilled' && result.value) {
                     reportSetters[key](result.value);
                     nextReportStatus[key] = { loading: false, error: null };
                 } else {
                     reportSetters[key](null);
                     nextReportStatus[key] = {
                         loading: false,
-                        error: result.reason?.message || `${key} unavailable`
+                        error: result.status === 'rejected' ? (result.reason?.message || `${key} unavailable`) : null
                     };
                 }
             });
+
+            // --- FALLBACK LOGIC ---
+            // If backend reports are missing or mostly zero, use client-side aggregation
+            if (referenceResult.status === 'fulfilled') {
+                const metrics = calculateFinancialMetrics(referenceResult.value, startDate, endDate);
+                const taxSummary = calculateTaxSummary(referenceResult.value, startDate, endDate);
+                const bsDetails = calculateBalanceSheetDetails(referenceResult.value, endDate);
+                const cfDetails = calculateCashFlowDetails(referenceResult.value, startDate, endDate);
+                const expDetails = calculateExpenseAnalysisDetails(referenceResult.value, startDate, endDate);
+                
+                setProfitLoss(prev => {
+                    if (!prev || toNumber(prev.totalRevenue) === 0) {
+                        return {
+                            ...prev,
+                            startDate,
+                            endDate,
+                            totalRevenue: metrics.totalRevenue,
+                            totalExpenses: metrics.totalExpenses,
+                            netProfit: metrics.netProfit,
+                            grossProfit: metrics.totalRevenue, // Heuristic
+                            totalOperatingExpenses: metrics.totalExpenses,
+                            revenueItems: referenceResult.value.transactions
+                                .filter(t => parseFloat(t.creditAmount) > 0)
+                                .map(t => ({ accountName: t.accountName, amount: t.creditAmount, accountCode: t.accountCode, category: 'Sales/Revenue' })),
+                            operatingExpenseItems: referenceResult.value.expenses
+                                .map(e => ({ accountName: e.category, amount: e.amount, accountCode: e.voucherNo, category: 'Operating' }))
+                        };
+                    }
+                    return prev;
+                });
+
+                setBalanceSheet(prev => {
+                    if (!prev || toNumber(prev.totalAssets) === 0) {
+                        return bsDetails;
+                    }
+                    return prev;
+                });
+
+                setCashFlow(prev => {
+                    if (!prev || toNumber(prev.netCashFlow) === 0) {
+                        return cfDetails;
+                    }
+                    return prev;
+                });
+
+                setExpenseAnalysis(prev => {
+                    if (!prev || (prev.byCategory || []).length === 0) {
+                        return expDetails;
+                    }
+                    return prev;
+                });
+
+                setTaxDashboard(prev => {
+                    if (!prev || toNumber(prev.outputTax) === 0) {
+                        return taxSummary;
+                    }
+                    return prev;
+                });
+
+                // Fix Report Status if we now have fallback data
+                if (metrics.totalRevenue > 0 || metrics.totalAssets > 0) {
+                    nextReportStatus.profitLoss = { loading: false, error: null };
+                    nextReportStatus.balanceSheet = { loading: false, error: null };
+                }
+                if (cfDetails.netCashFlow !== 0 || cfDetails.operatingActivities.length > 0) {
+                    nextReportStatus.cashFlow = { loading: false, error: null };
+                }
+                if (expDetails.byCategory.length > 0) {
+                    nextReportStatus.expenseAnalysis = { loading: false, error: null };
+                }
+                if (taxSummary.outputTax > 0) {
+                    nextReportStatus.taxDashboard = { loading: false, error: null };
+                }
+            }
+
             setReportStatus(nextReportStatus);
 
-            if (profitTrendResult.status === 'fulfilled') {
+            if (profitTrendResult.status === 'fulfilled' && profitTrendResult.value?.length > 0) {
                 setMonthlyTrends(profitTrendResult.value);
+                setTrendStatus((prev) => ({
+                    ...prev,
+                    profit: { loading: false, error: null }
+                }));
+            } else if (referenceResult.status === 'fulfilled') {
+                // Fallback for trends
+                const trends = getMonthlyTrends(referenceResult.value.transactions, referenceResult.value.expenses, 6);
+                setMonthlyTrends(trends);
                 setTrendStatus((prev) => ({
                     ...prev,
                     profit: { loading: false, error: null }
@@ -312,7 +403,7 @@ const FinancialReports = () => {
                 }));
             }
 
-            if (cashTrendResult.status === 'fulfilled') {
+            if (cashTrendResult.status === 'fulfilled' && cashTrendResult.value) {
                 setCashFlowTrends(cashTrendResult.value);
                 setTrendStatus((prev) => ({
                     ...prev,
