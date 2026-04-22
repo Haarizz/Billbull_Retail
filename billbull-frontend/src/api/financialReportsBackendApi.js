@@ -51,6 +51,14 @@ export const getTaxDashboard = async (startDate, endDate) => {
     return res.data;
 };
 
+export const getTaxReconciliation = async (startDate, endDate) => {
+    const params = {};
+    if (startDate) params.startDate = startDate;
+    if (endDate) params.endDate = endDate;
+    const res = await api.get("/api/financials/reports/tax-reconciliation", { params });
+    return res.data;
+};
+
 export const getLedgerStatement = async (accountCode, startDate, endDate) => {
     const params = { accountCode };
     if (startDate) params.startDate = startDate;
