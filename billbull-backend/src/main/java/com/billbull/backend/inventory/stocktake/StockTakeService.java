@@ -413,9 +413,14 @@ public class StockTakeService {
     public void deleteItem(Long itemId) {
         StockTakeItem item = itemRepo.findById(itemId)
                 .orElseThrow(() -> new RuntimeException("Item not found"));
-        if (item.getSession().getStatus() != StockTakeSession.StockTakeStatus.IN_PROGRESS) {
+        StockTakeSession session = item.getSession();
+        if (session.getStatus() != StockTakeSession.StockTakeStatus.IN_PROGRESS) {
             throw new IllegalStateException("Cannot delete item from a session that is not in progress");
         }
-        itemRepo.delete(item);
+        // Remove from parent collection — with orphanRemoval=true this is the correct way
+        // to delete a child. Calling itemRepo.delete() directly while the item is still
+        // in the EAGER-loaded session.items collection can cause a cascade conflict at flush time.
+        session.getItems().remove(item);
+        item.setSession(null);
     }
 }
