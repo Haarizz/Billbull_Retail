@@ -145,6 +145,7 @@ public class PurchaseInvoiceService {
 
         BigDecimal headerSubTotal = BigDecimal.ZERO;
         BigDecimal headerTaxTotal = BigDecimal.ZERO;
+        BigDecimal headerDiscountTotal = BigDecimal.ZERO;
 
         var lineItems = lpo.getItems().stream().map(i -> {
             InvoiceItemDraft d = new InvoiceItemDraft();
@@ -160,25 +161,39 @@ public class PurchaseInvoiceService {
                     && i.getProduct().getTax().getPurchaseTax() != null)
                     ? i.getProduct().getTax().getPurchaseTax()
                     : BigDecimal.valueOf(5);
+            
             BigDecimal base = unitCost.multiply(BigDecimal.valueOf(i.getQuantity() != null ? i.getQuantity() : 0));
-            BigDecimal taxAmount = base.multiply(taxPercent).divide(BigDecimal.valueOf(100), 2, java.math.RoundingMode.HALF_UP);
+            
+            d.setDiscountPercent(i.getDiscountPercent());
+            BigDecimal discountAmt = BigDecimal.ZERO;
+            if (i.getDiscountPercent() != null && i.getDiscountPercent().compareTo(BigDecimal.ZERO) > 0) {
+                discountAmt = base.multiply(i.getDiscountPercent()).divide(BigDecimal.valueOf(100), 2, java.math.RoundingMode.HALF_UP);
+            }
+            d.setDiscountAmount(discountAmt);
+            
+            BigDecimal taxableBase = base.subtract(discountAmt);
+            BigDecimal taxAmount = taxableBase.multiply(taxPercent).divide(BigDecimal.valueOf(100), 2, java.math.RoundingMode.HALF_UP);
 
             d.setTaxPercent(taxPercent);
             d.setTaxAmount(taxAmount);
-            d.setLineTotal(base.add(taxAmount));
+            d.setLineTotal(taxableBase.add(taxAmount));
+            d.setFocQty(i.getFocQty());
+            d.setFocUnit(i.getFocUnit());
+            d.setRemarks(i.getRemarks());
             return d;
         }).toList();
 
         for (InvoiceItemDraft d : lineItems) {
             BigDecimal lineBase = d.getUnitCost().multiply(BigDecimal.valueOf(d.getQty() != null ? d.getQty() : 0));
             headerSubTotal = headerSubTotal.add(lineBase);
+            headerDiscountTotal = headerDiscountTotal.add(d.getDiscountAmount() != null ? d.getDiscountAmount() : BigDecimal.ZERO);
             headerTaxTotal = headerTaxTotal.add(d.getTaxAmount() != null ? d.getTaxAmount() : BigDecimal.ZERO);
         }
 
         dto.setItems(lineItems);
         dto.setSubTotal(headerSubTotal);
         dto.setTaxTotal(headerTaxTotal);
-        dto.setGrandTotal(headerSubTotal.add(headerTaxTotal));
+        dto.setGrandTotal(headerSubTotal.subtract(headerDiscountTotal).add(headerTaxTotal));
 
         return dto;
     }
@@ -532,7 +547,11 @@ public class PurchaseInvoiceService {
     }
 
     private void mapHeader(PurchaseInvoice invoice, PurchaseInvoiceRequest req) {
-        invoice.setInvoiceNumber(req.getInvoiceNumber());
+        if (req.getInvoiceNumber() != null && !req.getInvoiceNumber().trim().isEmpty()) {
+            invoice.setInvoiceNumber(req.getInvoiceNumber());
+        } else if (invoice.getInvoiceNumber() == null || invoice.getInvoiceNumber().isBlank()) {
+            invoice.setInvoiceNumber("PINV-" + System.currentTimeMillis());
+        }
         invoice.setInvoiceDate(req.getInvoiceDate());
         invoice.setVendorName(req.getVendorName());
         invoice.setVendorInvoiceNo(req.getVendorInvoiceNo());

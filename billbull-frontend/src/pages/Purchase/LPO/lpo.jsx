@@ -1813,7 +1813,7 @@ const EditorView = ({ initialData, vendors, warehouses, onSave, onSubmit, onPrin
                 </span>
               </div>
               <div className="flex justify-between">
-                <span className="text-slate-500">Tax (5%)</span>
+                <span className="text-slate-500">Tax</span>
                 <span className="font-medium">
                   {calculations.tax.toFixed(2)} AED
                 </span>
