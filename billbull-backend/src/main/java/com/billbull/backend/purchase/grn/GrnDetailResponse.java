@@ -1,5 +1,6 @@
 package com.billbull.backend.purchase.grn;
 
+import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.List;
 
@@ -20,6 +21,9 @@ public record GrnDetailResponse(
         String locatorName,
         Long binId,
         String binName,
+        BigDecimal subtotal,
+        BigDecimal taxAmount,
+        BigDecimal grandTotal,
         List<GrnItemResponse> items,
         Long branchId,
         String branchName,

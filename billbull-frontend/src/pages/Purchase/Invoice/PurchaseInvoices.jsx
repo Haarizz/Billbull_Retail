@@ -1083,19 +1083,41 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
       const grnFromList = grnList.find(g => g.id == grnId) || {};
 
       // 3. Determine True Financials (Header Truth)
-      // Database says: Subtotal 1660, Tax 83, Total 1743. 
-      // API 'value' usually maps to Grand Total.
-      const headerGrandTotal = Number(grnDetail.value || grnDetail.grandTotal || grnFromList.value || 0);
-      const headerTax = Number(grnDetail.taxAmount || grnDetail.tax_amount || 0);
-      let headerSubTotal = Number(grnDetail.subTotal || grnDetail.subtotal || 0);
+      // Prefer explicit GRN detail totals; fall back to older field names or list data.
+      const headerGrandTotal = Number(
+        grnDetail.grandTotal ??
+        grnDetail.value ??
+        grnFromList.grandTotal ??
+        grnFromList.value ??
+        0
+      );
+      const headerTax = Number(
+        grnDetail.taxAmount ??
+        grnDetail.taxTotal ??
+        grnDetail.tax_amount ??
+        grnDetail.tax ??
+        0
+      );
+      let headerSubTotal = Number(
+        grnDetail.subtotal ??
+        grnDetail.subTotal ??
+        grnDetail.taxableAmount ??
+        0
+      );
 
 
       // 4. Calculate Item-Level Totals to check for gaps
       const rawItems = grnDetail.items || [];
       const calculatedGross = rawItems.reduce((sum, item) => {
         const qty = Number(item.accepted ?? item.acceptedQty ?? 0);
-        const cost = Number(item.unitCost ?? item.unit_cost ?? 0); // Handle snake_case too
+        const cost = Number(item.netCost ?? item.unitCost ?? item.unit_cost ?? 0);
         return sum + (qty * cost);
+      }, 0);
+      const calculatedItemTax = rawItems.reduce((sum, item) => {
+        const lineTotal = Number(item.total ?? item.lineTotal ?? 0);
+        const taxPercent = Number(item.purchaseTax ?? item.taxPercent ?? item.tax ?? 5);
+        const lineTax = Number(item.taxAmt ?? item.taxAmount ?? 0) || (lineTotal * taxPercent) / 100;
+        return sum + lineTax;
       }, 0);
 
       // 5. Intelligent Gap Filling
@@ -1104,6 +1126,9 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
 
       // If Tax is missing, derive it (GrandTotal - SubTotal)
       let finalTax = headerTax;
+      if (finalTax === 0 && calculatedItemTax > 0) {
+        finalTax = calculatedItemTax;
+      }
       if (finalTax === 0 && headerGrandTotal > 0) {
         finalTax = headerGrandTotal - headerSubTotal;
       }
@@ -1120,7 +1145,9 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
         // Prefer netCost (post-discount effective price) over gross unitCost.
         // This is what the invoice should charge — the price actually agreed after discount/FOC.
         const cost = Number(item.netCost ?? item.unitCost ?? item.unit_cost ?? 0);
+        const originalCost = Number(item.unitCost ?? item.unit_cost ?? cost);
         const lineGross = qty * cost;
+        const inferredDiscount = Math.max(0, (qty * originalCost) - lineGross);
 
         // Preserve the actual per-item tax rate (not a hardcoded 5%).
         const taxPercent = Number(item.purchaseTax ?? item.taxPercent ?? item.tax ?? 5);
@@ -1140,12 +1167,14 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
           uom: item.uom,
           qty: qty,
           cost: cost,                       // netCost — effective per-unit price
+          originalCost: originalCost,
           tax: taxPercent,                  // actual rate, not hardcoded
           taxAmt: itemTaxAmt,
           taxAmount: itemTaxAmt,
           lineTotal: (qty * cost) + itemTaxAmt, // qty × netCost + tax
           disc: 0,
           discount: 0,
+          discountAmount: inferredDiscount,
           foc: Number(item.focQty || 0),
           focUnit: item.focUnit || item.uom || 'PCS',
           remarks: item.remarks || ""
@@ -1364,7 +1393,9 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
     const totalsFromItems = formData.items.reduce((acc, item) => {
       const calc = calculateRow(item);
       acc.qty += Number(item.qty);
-      acc.discount += calc.discAmt;
+      acc.discount += invoiceType === SOURCE.GRN
+        ? Number(item.discountAmount ?? 0)
+        : calc.discAmt;
       acc.tax += calc.taxAmt;
       acc.subtotal += calc.total - calc.taxAmt;
       acc.grandTotal += calc.total;
@@ -1378,8 +1409,26 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
     return totalsFromItems;
   }, [formData.items, invoiceType]);
 
+  const summaryTotals = useMemo(() => {
+    if (invoiceType !== SOURCE.GRN) {
+      return {
+        subtotal: totals.subtotal,
+        discount: totals.discount,
+        tax: totals.tax,
+        grandTotal: totals.grandTotal
+      };
+    }
 
-  const grandTotalWithLanded = totals.grandTotal + (isLandedCostAllowed ? landedCost : 0);
+    const subtotal = Number(formData.grnSubTotal || totals.subtotal || 0);
+    const tax = Number(formData.grnTaxTotal || totals.tax || 0);
+    const discount = Number(totals.discount || 0);
+    const grandTotal = Number(formData.grnGrandTotal || (subtotal + tax) || totals.grandTotal || 0);
+
+    return { subtotal, discount, tax, grandTotal };
+  }, [formData.grnGrandTotal, formData.grnSubTotal, formData.grnTaxTotal, invoiceType, totals.discount, totals.grandTotal, totals.subtotal, totals.tax]);
+
+
+  const grandTotalWithLanded = summaryTotals.grandTotal + (isLandedCostAllowed ? landedCost : 0);
 
   const handleAddItem = () => {
     setIsProductSelectorOpen(true);
@@ -1452,9 +1501,9 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
     // Financials
 
     // Financials
-    subTotal: totals.subtotal,
-    discountTotal: totals.discount,
-    taxTotal: totals.tax,
+    subTotal: invoiceType === SOURCE.GRN ? summaryTotals.subtotal : totals.subtotal,
+    discountTotal: summaryTotals.discount,
+    taxTotal: invoiceType === SOURCE.GRN ? summaryTotals.tax : totals.tax,
 
     // Force Landed Cost 0 for GRN
     landedCost: isLandedCostAllowed ? landedCost : 0,
@@ -2104,15 +2153,15 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
             <div className="space-y-2 text-xs border-t border-slate-100 pt-3">
               <div className="flex justify-between">
                 <span className="text-slate-500 font-medium">Subtotal</span>
-                <span className="font-medium">{totals.subtotal.toFixed(2)}</span>
+                <span className="font-medium">{summaryTotals.subtotal.toFixed(2)}</span>
               </div>
               <div className="flex justify-between text-green-600">
                 <span className="font-medium">Discount</span>
-                <span className="font-medium">{totals.discount.toFixed(2)}</span>
+                <span className="font-medium">{summaryTotals.discount.toFixed(2)}</span>
               </div>
               <div className="flex justify-between">
                 <span className="text-slate-500">Tax</span>
-                <span className="font-medium">{totals.tax.toFixed(2)}</span>
+                <span className="font-medium">{summaryTotals.tax.toFixed(2)}</span>
               </div>
               <div className="flex justify-between text-red-500">
                 <span className="font-medium">Landed Cost</span>
@@ -2138,14 +2187,14 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
               {invoiceType !== SOURCE.GRN && (
                 <div className="flex justify-between">
                   <span>Dr. Inventory</span>
-                  <span>{totals.subtotal.toFixed(2)}</span>
+                  <span>{summaryTotals.subtotal.toFixed(2)}</span>
                 </div>
               )}
 
-              {totals.tax > 0 && (
+              {summaryTotals.tax > 0 && (
                 <div className="flex justify-between">
                   <span>Dr. VAT Recoverable</span>
-                  <span>{totals.tax.toFixed(2)}</span>
+                  <span>{summaryTotals.tax.toFixed(2)}</span>
                 </div>
               )}
 
@@ -2219,11 +2268,11 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
 
                 // 4. NLC Validation
                 const totalNLC = isLandedCostAllowed ? landedCost : 0;
-                if (totalNLC > totals.subtotal) { // Using subtotal as base, usually NLC shouldn't exclude goods value
+                if (totalNLC > summaryTotals.subtotal) { // Using subtotal as base, usually NLC shouldn't exclude goods value
                   // User said "Invoice Total", usually implies Goods Value.
                   // Safe check: NLC > Grand Total is definitely wrong.
                   // Let's stick to user request "NLC must not exceed invoice total"
-                  if (totalNLC > totals.grandTotal) {
+                  if (totalNLC > summaryTotals.grandTotal) {
                     alert("Total Landed Cost cannot exceed the Invoice Grand Total.");
                     return;
                   }
