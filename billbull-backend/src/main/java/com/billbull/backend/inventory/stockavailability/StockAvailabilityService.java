@@ -84,6 +84,8 @@ public class StockAvailabilityService {
         List<IncomingLpoDTO> incomingLpoDTOS = Collections.emptyList();
         try {
             List<LpoStatus> activeStatuses = Arrays.asList(
+                    LpoStatus.DRAFT,
+                    LpoStatus.PENDING_APPROVAL,
                     LpoStatus.APPROVED,
                     LpoStatus.SENT_TO_VENDOR,
                     LpoStatus.PARTIALLY_RECEIVED);
