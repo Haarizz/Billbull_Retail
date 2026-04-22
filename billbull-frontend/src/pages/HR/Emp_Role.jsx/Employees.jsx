@@ -365,6 +365,11 @@ const AddEmployeeModal = ({
   const [systemRolesError, setSystemRolesError] = useState('');
   const [formError, setFormError] = useState('');
 
+  // --- Designation Roles (for Role/Designation dropdown) ---
+  const FALLBACK_ROLES = ['ADMIN', 'SALES', 'INVENTORY_MANAGER', 'ACCOUNTANT', 'CASHIER'];
+  const [designationRoles, setDesignationRoles] = useState([]);
+  const [designationRolesLoading, setDesignationRolesLoading] = useState(false);
+
   // --- Form Data State (Captures all inputs) ---
   const [formData, setFormData] = useState(buildInitialEmployeeForm);
 
@@ -512,6 +517,31 @@ const AddEmployeeModal = ({
       branch: defaultBranchName,
     }));
   }, [defaultBranchName, employeeToEdit, formData.branch, isOpen]);
+
+  // Fetch designation roles from the /api/roles table whenever the modal opens
+  useEffect(() => {
+    if (!isOpen) return;
+
+    let cancelled = false;
+    setDesignationRolesLoading(true);
+
+    usersApi.getAllRoles()
+      .then((roles) => {
+        if (!cancelled) {
+          setDesignationRoles(roles || []);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setDesignationRoles([]);
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setDesignationRolesLoading(false);
+      });
+
+    return () => { cancelled = true; };
+  }, [isOpen]);
 
   useEffect(() => {
     if (!isOpen || !canProvisionLoginAccess) {
@@ -935,16 +965,25 @@ const AddEmployeeModal = ({
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
                   <label className="block text-xs font-medium text-slate-500 mb-1">Role / Designation *</label>
-                  <AutocompleteField
-                    options={resolvedRoleOptions}
-                    value={formData.role}
-                    onChange={(nextValue) => updateFormField('role', nextValue)}
-                    placeholder="Enter or select role"
-                    noOptionsMessage="No saved roles yet"
-                  />
-                  <p className="text-[10px] text-slate-400 mt-1">
-                    {resolvedRoleOptions.length > 0 ? 'Suggestions come from existing employee records.' : 'Enter the role for this employee.'}
-                  </p>
+                  <div className="relative">
+                    <select
+                      name="role"
+                      value={formData.role}
+                      onChange={handleInputChange}
+                      disabled={designationRolesLoading}
+                      className="w-full text-sm border border-slate-200 rounded-md px-3 py-2 appearance-none bg-white focus:outline-none focus:border-[#F5C742] text-slate-600 disabled:bg-slate-50 disabled:text-slate-400"
+                    >
+                      <option value="">
+                        {designationRolesLoading ? 'Loading roles...' : 'Select a role'}
+                      </option>
+                      {(designationRoles.length > 0 ? designationRoles : FALLBACK_ROLES.map(r => ({ name: r }))).map((role) => (
+                        <option key={role.id ?? role.name} value={role.name}>
+                          {role.name}
+                        </option>
+                      ))}
+                    </select>
+                    <ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
+                  </div>
                 </div>
                 <div>
                   <label className="block text-xs font-medium text-slate-500 mb-1">Department *</label>
