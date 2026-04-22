@@ -50,9 +50,7 @@ import { usersApi } from '../../../api/usersApi';
 import { hasRole } from '../../../api/auth';
 import { usePermissions } from '../../../context/PermissionContext';
 import { useBranch } from '../../../context/BranchContext';
-
-// Configuration for Image Base URL
-const SERVER_URL = window.location.origin;
+import { getImageUrl } from '../../../utils/urlUtils';
 
 // ==========================================
 // 0. CONSTANTS & UTILS
@@ -491,7 +489,7 @@ const AddEmployeeModal = ({
       });
 
       if (employeeToEdit.avatarUrl) {
-        setAvatarPreview(`${SERVER_URL}${employeeToEdit.avatarUrl}`);
+        setAvatarPreview(getImageUrl(employeeToEdit.avatarUrl));
       } else {
         setAvatarPreview(null);
       }
@@ -2320,7 +2318,7 @@ const Employees = () => {
     initials: (emp.firstName?.[0] || "") + (emp.lastName?.[0] || ""),
     color: emp.status === 'Active' ? "bg-blue-100 text-blue-600" : "bg-slate-100 text-slate-600",
     // Construct Full Image URL
-    avatar: emp.avatarUrl ? `${SERVER_URL}${emp.avatarUrl}` : null,
+    avatar: emp.avatarUrl ? getImageUrl(emp.avatarUrl) : null,
     // Raw fields needed by EmployeeAccessPanel for user creation
     email: emp.email,
     rawEmail: emp.email,

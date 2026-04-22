@@ -1060,6 +1060,7 @@ const EditorView = ({ initialData, onSaveDraft, onSubmitQC, onPost, onPrint, grn
     return {
       ...item,
       desc: item.name || item.desc,
+      qty: Number(item.accepted) || 0,
       unit: resolvedUnit,
       price: Number(item.unitCost) || 0,
       disc: Number(item.disc) || 0,
