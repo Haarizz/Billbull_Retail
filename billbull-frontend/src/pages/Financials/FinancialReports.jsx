@@ -99,10 +99,10 @@ const FinancialReports = () => {
         const { startDate, endDate } = getDateRange();
         try {
             // Fetch client-side data (for overview charts)
-            const data = await reportsApi.getFinancialReportsData();
+            const data = await reportsApi.getFinancialReportsData(startDate, endDate);
             setFinancialData(data);
 
-            const calculatedMetrics = reportsApi.calculateFinancialMetrics(data);
+            const calculatedMetrics = reportsApi.calculateFinancialMetrics(data, startDate, endDate);
             setMetrics(calculatedMetrics);
 
             const trends = reportsApi.getMonthlyTrends(data.transactions, data.expenses, 6);
@@ -117,24 +117,36 @@ const FinancialReports = () => {
             const distribution = reportsApi.getAccountBalanceDistribution(data.accounts);
             setAccountDistribution(distribution);
 
-            // Fetch server-side reports (with fallback)
-            try {
-                const [tb, pl, bs, cf, ea, td] = await Promise.all([
-                    backendApi.getTrialBalance(startDate, endDate),
-                    backendApi.getProfitLoss(startDate, endDate),
-                    backendApi.getBalanceSheet(endDate),
-                    backendApi.getCashFlow(startDate, endDate),
-                    backendApi.getExpenseAnalysis(startDate, endDate),
-                    backendApi.getTaxDashboard(startDate, endDate)
-                ]);
-                setTrialBalance(tb);
-                setProfitLoss(pl);
-                setBalanceSheet(bs);
-                setCashFlow(cf);
-                setExpenseAnalysis(ea);
-                setTaxDashboard(td);
-            } catch (backendErr) {
-                console.warn('Backend reports unavailable, using client-side:', backendErr);
+            // Fetch server-side reports independently so one failing endpoint
+            // does not zero out all overview cards and report tabs.
+            const backendResults = await Promise.allSettled([
+                backendApi.getTrialBalance(startDate, endDate),
+                backendApi.getProfitLoss(startDate, endDate),
+                backendApi.getBalanceSheet(endDate),
+                backendApi.getCashFlow(startDate, endDate),
+                backendApi.getExpenseAnalysis(startDate, endDate),
+                backendApi.getTaxDashboard(startDate, endDate)
+            ]);
+
+            const [
+                trialBalanceResult,
+                profitLossResult,
+                balanceSheetResult,
+                cashFlowResult,
+                expenseAnalysisResult,
+                taxDashboardResult
+            ] = backendResults;
+
+            if (trialBalanceResult.status === 'fulfilled') setTrialBalance(trialBalanceResult.value);
+            if (profitLossResult.status === 'fulfilled') setProfitLoss(profitLossResult.value);
+            if (balanceSheetResult.status === 'fulfilled') setBalanceSheet(balanceSheetResult.value);
+            if (cashFlowResult.status === 'fulfilled') setCashFlow(cashFlowResult.value);
+            if (expenseAnalysisResult.status === 'fulfilled') setExpenseAnalysis(expenseAnalysisResult.value);
+            if (taxDashboardResult.status === 'fulfilled') setTaxDashboard(taxDashboardResult.value);
+
+            const failedBackendReports = backendResults.filter(result => result.status === 'rejected');
+            if (failedBackendReports.length > 0) {
+                console.warn('Some backend reports are unavailable, using partial fallback:', failedBackendReports);
             }
 
         } catch (error) {
@@ -191,10 +203,22 @@ const FinancialReports = () => {
 
     // Summary Cards Component — Uses server-side P&L when available
     const SummaryCards = () => {
-        const revenue = profitLoss?.totalRevenue || metrics?.totalRevenue || 0;
-        const expenses = profitLoss?.totalExpenses || metrics?.totalExpenses || 0;
-        const netProfitVal = profitLoss?.netProfit || metrics?.netProfit || 0;
-        const cashBal = metrics?.cashBalance || 0;
+        const revenue = Number(profitLoss?.totalRevenue ?? metrics?.totalRevenue ?? 0);
+        const expenses = Number(
+            profitLoss?.totalExpenses
+            ?? expenseAnalysis?.totalExpenses
+            ?? metrics?.totalExpenses
+            ?? 0
+        );
+        const netProfitVal = Number(
+            profitLoss?.netProfit
+            ?? (revenue - expenses)
+        );
+        const cashBal = Number(
+            metrics?.cashBalance
+            ?? cashFlow?.netCashFlow
+            ?? 0
+        );
 
         return (
             <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
