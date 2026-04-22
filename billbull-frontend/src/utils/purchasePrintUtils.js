@@ -171,6 +171,42 @@ export const getDefaultPurchaseTemplates = () =>
         columns: JSON.stringify(getPurchaseDefaultColumns(category)),
     }));
 
+export const getDefaultPurchaseTemplate = (category) => {
+    const fallbackTemplate = getDefaultPurchaseTemplates().find(
+        (template) => template.category === category
+    );
+
+    return normalizePurchaseTemplate(
+        fallbackTemplate || {
+            category,
+            name: TEMPLATE_NAMES[category] || `${category} Template`,
+            isDefault: true,
+            paperSize: "A4",
+            orientation: "Portrait",
+            headerContent: "",
+            termsContent: PURCHASE_TEMPLATE_TERMS[category] || "",
+            footerContent: "",
+            displayOptions: getPurchaseDefaultDisplayOptions(category),
+            columns: getPurchaseDefaultColumns(category),
+        },
+        category
+    );
+};
+
+export const resolvePurchasePrintTemplate = (category, templates = []) => {
+    const categoryTemplates = Array.isArray(templates)
+        ? templates.filter((template) => template?.category === category)
+        : [];
+
+    const selectedTemplate =
+        categoryTemplates.find((template) => template?.isDefault) ||
+        categoryTemplates[0];
+
+    return selectedTemplate
+        ? normalizePurchaseTemplate(selectedTemplate, category)
+        : getDefaultPurchaseTemplate(category);
+};
+
 const resolveCurrency = (companyProfile, vendor) =>
     firstValue(companyProfile?.currencySymbol, companyProfile?.currency, vendor?.currency, "AED");
 
@@ -314,7 +350,8 @@ export const buildLpoPrintData = (lpo, vendor, companyProfile) => {
 };
 
 export const buildGrnPrintData = (grn, vendor, companyProfile) => {
-    const items = (grn?.items || []).map((item, index) => {
+    const items = (grn?.items || []).map((rawItem, index) => {
+        const item = rawItem || {};
         const qty = toNumber(item.received ?? item.quantity ?? item.qty);
         const price = toNumber(item.unitCost ?? item.price);
         const taxableAmount = toNumber(item.total || qty * price);
@@ -367,7 +404,7 @@ export const buildGrnPrintData = (grn, vendor, companyProfile) => {
     return {
         title: "GOODS RECEIPT NOTE",
         docNo: firstValue(grn?.grnNo, grn?.id),
-        date: grn?.date,
+        date: grn?.date || grn?.grnDate,
         status: firstValue(grn?.status, "DRAFT"),
         party: resolveParty(vendor, firstValue(grn?.vendor, grn?.vendorName)),
         headerMeta: [
@@ -389,14 +426,26 @@ export const buildGrnPrintData = (grn, vendor, companyProfile) => {
 };
 
 export const buildPurchaseInvoicePrintData = (invoice, vendor, companyProfile) => {
-    const items = (invoice?.items || []).map((item, index) => {
+    const items = (invoice?.items || []).map((rawItem, index) => {
+        const item = rawItem || {};
         const qty = toNumber(item.qty ?? item.quantity);
-        const price = toNumber(item.unitCost ?? item.unitPrice ?? item.price);
+        const price = toNumber(item.unitCost ?? item.unitPrice ?? item.price ?? item.cost);
         const discountAmount = toNumber(item.discountAmount);
-        const taxableAmount = toNumber((qty * price) - discountAmount);
+        const taxableAmount = toNumber(
+            item.taxableAmount ??
+            item.netCost ??
+            item.net ??
+            item.amount ??
+            ((qty * price) - discountAmount)
+        );
         const taxAmt = toNumber(item.taxAmount ?? item.taxAmt);
         const taxPercent = toNumber(item.taxPercent ?? item.taxRate ?? 0);
-        const lineTotal = toNumber(item.lineTotal || taxableAmount + taxAmt);
+        const lineTotal = toNumber(
+            item.lineTotal ??
+            item.total ??
+            item.amountTotal ??
+            (taxableAmount + taxAmt)
+        );
 
         return {
             rowNo: index + 1,

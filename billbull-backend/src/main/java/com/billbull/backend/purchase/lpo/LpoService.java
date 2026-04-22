@@ -8,6 +8,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
+import org.springframework.cache.annotation.CacheEvict;
 import org.springframework.stereotype.Service;
 
 import com.billbull.backend.inventory.product.Product;
@@ -91,6 +92,7 @@ public class LpoService {
 
     /* ================= CREATE ================= */
 
+    @CacheEvict(value = "stockAvailability", allEntries = true)
     public LpoDetailResponse create(LpoRequest request) {
         Lpo lpo = new Lpo();
         lpo.setLpoNumber(generateLpoNumber());
@@ -134,6 +136,7 @@ public class LpoService {
 
     /* ================= UPDATE ================= */
 
+    @CacheEvict(value = "stockAvailability", allEntries = true)
     public LpoDetailResponse update(String lpoNumber, LpoRequest request) {
 
         Lpo lpo = getEntityByNumber(lpoNumber);
@@ -152,6 +155,7 @@ public class LpoService {
 
     /* ================= DELETE ================= */
 
+    @CacheEvict(value = "stockAvailability", allEntries = true)
     public void delete(String lpoNumber) {
 
         Lpo lpo = getEntityByNumber(lpoNumber);
@@ -166,6 +170,7 @@ public class LpoService {
     /* ================= WORKFLOW ================= */
 
     @Transactional
+    @CacheEvict(value = "stockAvailability", allEntries = true)
     public void submitForApproval(Long id) {
 
         Lpo lpo = getScopedLpoById(id);
@@ -179,6 +184,7 @@ public class LpoService {
     }
 
     @Transactional
+    @CacheEvict(value = "stockAvailability", allEntries = true)
     public void approve(Long id, String username, List<String> roles, String remarks) {
 
         Lpo lpo = getScopedLpoById(id);
@@ -196,6 +202,7 @@ public class LpoService {
     }
 
     @Transactional
+    @CacheEvict(value = "stockAvailability", allEntries = true)
     public void rejectById(Long id, String username, List<String> roles, String remarks) {
         Lpo lpo = getScopedLpoById(id);
 
@@ -208,6 +215,7 @@ public class LpoService {
     }
 
     @Transactional
+    @CacheEvict(value = "stockAvailability", allEntries = true)
     public void revertToDraft(Long id) {
         Lpo lpo = getScopedLpoById(id);
 
@@ -538,6 +546,7 @@ public class LpoService {
     }
 
     @Transactional
+    @CacheEvict(value = "stockAvailability", allEntries = true)
     public void postStockFromLpo(Long lpoId) {
 
         Lpo lpo = getScopedLpoById(lpoId);

@@ -53,7 +53,7 @@ import toast from 'react-hot-toast';
 import {
   buildPurchaseInvoicePrintData,
   findVendorRecord,
-  normalizePurchaseTemplate
+  resolvePurchasePrintTemplate
 } from '../../../utils/purchasePrintUtils';
 
 // API IMPORTS
@@ -2641,22 +2641,26 @@ const PurchaseInvoices = () => {
   const handlePrint = async (invoice) => {
     const loadingToast = toast.loading('Preparing print layout...');
     try {
-      const [templates, invoiceDetail] = await Promise.all([
-        getTemplatesByCategory('Purchase Invoice'),
-        getInvoiceById(invoice.dbId)
-      ]);
+      const templatesPromise = getTemplatesByCategory('Purchase Invoice').catch(() => []);
+      let printableInvoice = invoice;
 
-      if (!templates || templates.length === 0) {
-        toast.error('No templates found for Purchase Invoice');
-        return;
+      if (invoice?.dbId) {
+        try {
+          printableInvoice = await getInvoiceById(invoice.dbId);
+        } catch (detailError) {
+          console.warn('Falling back to invoice data already loaded in the UI for printing.', detailError);
+        }
       }
 
-      const defaultTemplate = normalizePurchaseTemplate(
-        templates.find(t => t.isDefault) || templates[0],
-        'Purchase Invoice'
+      const templates = await templatesPromise;
+      const defaultTemplate = resolvePurchasePrintTemplate('Purchase Invoice', templates);
+      const fullVendor = findVendorRecord(
+        [],
+        printableInvoice,
+        printableInvoice?.vendorName,
+        printableInvoice?.vendor
       );
-      const fullVendor = findVendorRecord(vendorList, invoiceDetail, invoiceDetail?.vendorName);
-      const printData = buildPurchaseInvoicePrintData(invoiceDetail, fullVendor, company);
+      const printData = buildPurchaseInvoicePrintData(printableInvoice, fullVendor, company);
 
       const html = generatePrintHtml(defaultTemplate, printData, {
         companyProfile: company,
@@ -2666,7 +2670,8 @@ const PurchaseInvoices = () => {
       printHtml(html);
     } catch (error) {
       console.error("Error printing Invoice:", error);
-      toast.error('Failed to generate print layout');
+      const message = error?.response?.data?.message || error?.message || 'Failed to generate print layout';
+      toast.error(message);
     } finally {
       toast.dismiss(loadingToast);
     }

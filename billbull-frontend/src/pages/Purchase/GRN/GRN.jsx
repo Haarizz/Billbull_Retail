@@ -81,7 +81,7 @@ import toast from 'react-hot-toast';
 import {
   buildGrnPrintData,
   findVendorRecord,
-  normalizePurchaseTemplate
+  resolvePurchasePrintTemplate
 } from '../../../utils/purchasePrintUtils';
 
 // ==========================================
@@ -2109,24 +2109,20 @@ const GRN = () => {
   const handlePrint = async (grn) => {
     const loadingToast = toast.loading('Preparing print layout...');
     try {
-      const templates = await getTemplatesByCategory('Goods Receipt Note');
-
-      if (!templates || templates.length === 0) {
-        toast.error('No templates found for Goods Receipt Note');
-        return;
-      }
-
-      const defaultTemplate = normalizePurchaseTemplate(
-        templates.find(t => t.isDefault) || templates[0],
-        'Goods Receipt Note'
-      );
+      const templates = await getTemplatesByCategory('Goods Receipt Note').catch(() => []);
+      const defaultTemplate = resolvePurchasePrintTemplate('Goods Receipt Note', templates);
 
       // Fetch full GRN details if needed
       let fullGrn = grn;
-      if (!grn.items || grn.items.length === 0) {
-        fullGrn = await getGrnById(grn.id);
+      const grnId = grn?.dbId ?? grn?.id;
+      if ((!grn?.items || grn.items.length === 0) && grnId !== null && grnId !== undefined) {
+        try {
+          fullGrn = await getGrnById(grnId);
+        } catch (detailError) {
+          console.warn('Falling back to GRN data already loaded in the UI for printing.', detailError);
+        }
       }
-      const fullVendor = findVendorRecord(vendors, fullGrn, fullGrn?.vendor, fullGrn?.vendorName);
+      const fullVendor = findVendorRecord([], fullGrn, fullGrn?.vendor, fullGrn?.vendorName);
       const printData = buildGrnPrintData(fullGrn, fullVendor, company);
 
       const html = generatePrintHtml(defaultTemplate, printData, {
@@ -2137,7 +2133,8 @@ const GRN = () => {
       printHtml(html);
     } catch (error) {
       console.error("Error printing GRN:", error);
-      toast.error('Failed to generate print layout');
+      const message = error?.response?.data?.message || error?.message || 'Failed to generate print layout';
+      toast.error(message);
     } finally {
       toast.dismiss(loadingToast);
     }
