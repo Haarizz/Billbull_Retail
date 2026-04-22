@@ -465,6 +465,9 @@ public class GrnService {
                 g.getLocator() != null ? g.getLocator().getName() : null,
                 g.getBin() != null ? g.getBin().getId() : null,
                 g.getBin() != null ? g.getBin().getName() : null,
+                g.getSubtotal(),
+                g.getTaxAmount(),
+                g.getGrandTotal(),
                 g.getItems().stream().map(i -> new GrnItemResponse(
                         i.getId(),
                         i.getProduct().getId(),

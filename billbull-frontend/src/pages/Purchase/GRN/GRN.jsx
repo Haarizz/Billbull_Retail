@@ -1026,7 +1026,9 @@ const EditorView = ({ initialData, onSaveDraft, onSubmitQC, onPost, onPrint, grn
     setItems(items.filter(i => i.id !== id));
   };
 
-  const recalculateItemTotals = (item) => {
+  const calculateGrnItemMetrics = (item) => {
+    const acceptedQty = Number(item.accepted) || 0;
+    const unitCost = Number(item.unitCost) || 0;
     const focQty = Number(item.foc) || 0;
     let focDeduction = 0;
 
@@ -1034,19 +1036,26 @@ const EditorView = ({ initialData, onSaveDraft, onSubmitQC, onPost, onPrint, grn
       const sellingUnit = item.uom;
       const focUnit = item.focUnit;
       if (sellingUnit === focUnit) {
-        focDeduction = item.unitCost * focQty;
+        focDeduction = unitCost * focQty;
       } else {
         const focConvFactor = item.unitConversions[focUnit] || 1;
         const sellingConvFactor = item.unitConversions[sellingUnit] || 1;
         const focInSellingUnit = (focQty * focConvFactor) / sellingConvFactor;
-        focDeduction = item.unitCost * focInSellingUnit;
+        focDeduction = unitCost * focInSellingUnit;
       }
     }
 
-    const grossCost = (Number(item.unitCost) || 0) * (Number(item.accepted) || 0);
+    const grossCost = unitCost * acceptedQty;
     const focAdjustedCost = Math.max(0, grossCost - focDeduction);
     const discAmt = focAdjustedCost * ((Number(item.disc) || 0) / 100);
     const netLineTotal = Math.max(0, focAdjustedCost - discAmt);
+    const taxAmt = netLineTotal * ((Number(item.tax) || 5) / 100);
+
+    return { grossCost, discAmt, netLineTotal, taxAmt };
+  };
+
+  const recalculateItemTotals = (item) => {
+    const { netLineTotal, taxAmt } = calculateGrnItemMetrics(item);
     const acceptedQty = Number(item.accepted) || 0;
 
     // netCost = effective per-unit cost (line value / accepted qty), not gross unit price.
@@ -1056,7 +1065,7 @@ const EditorView = ({ initialData, onSaveDraft, onSubmitQC, onPost, onPrint, grn
     return {
       ...item,
       tax: Number(item.tax) || 5,
-      taxAmt: netLineTotal * ((Number(item.tax) || 5) / 100),
+      taxAmt,
       netCost: effectiveNetCost,
       total: netLineTotal
     };
@@ -1153,13 +1162,15 @@ const EditorView = ({ initialData, onSaveDraft, onSubmitQC, onPost, onPrint, grn
 
   const totals = useMemo(() => {
     return items.reduce((acc, curr) => {
+      const metrics = calculateGrnItemMetrics(curr);
       acc.received += curr.received;
       acc.accepted += curr.accepted;
       acc.rejected += curr.rejected;
       acc.value += curr.total;
+      acc.discount += metrics.discAmt;
       acc.taxAmt += curr.taxAmt || 0;
       return acc;
-    }, { received: 0, accepted: 0, rejected: 0, value: 0, taxAmt: 0 });
+    }, { received: 0, accepted: 0, rejected: 0, value: 0, taxAmt: 0, discount: 0 });
   }, [items]);
 
   // FIX 1: Correct workflow badge logic based on single status
@@ -1774,7 +1785,7 @@ const EditorView = ({ initialData, onSaveDraft, onSubmitQC, onPost, onPrint, grn
               </div>
               <div className="flex justify-between text-green-600">
                 <span className="font-medium">Discount</span>
-                <span className="font-medium">-55.20 AED</span>
+                <span className="font-medium">-{totals.discount.toFixed(2)} AED</span>
               </div>
               <div className="flex justify-between">
                 <span className="text-slate-500">VAT</span>
