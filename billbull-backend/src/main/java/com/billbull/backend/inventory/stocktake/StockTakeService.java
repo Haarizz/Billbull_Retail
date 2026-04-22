@@ -17,6 +17,7 @@ import com.billbull.backend.inventory.product.ProductMediaRepository;
 import com.billbull.backend.inventory.product.ProductRepository;
 import com.billbull.backend.inventory.warehouse.Bin;
 import com.billbull.backend.inventory.warehouse.BinRepository;
+import com.billbull.backend.inventory.warehouse.BinStockService;
 import com.billbull.backend.inventory.warehouse.WarehouseStockService;
 import com.billbull.backend.purchase.stockmovement.StockMovement;
 import com.billbull.backend.purchase.stockmovement.StockMovementRepository;
@@ -34,6 +35,7 @@ public class StockTakeService {
     private final ProductMediaRepository mediaRepo;
     private final ProductBarcodeRepository barcodeRepo;
     private final BinRepository binRepo;
+    private final BinStockService binStockService;
 
     public StockTakeService(
             StockTakeSessionRepository sessionRepo,
@@ -43,7 +45,8 @@ public class StockTakeService {
             StockMovementRepository stockMovementRepo,
             ProductMediaRepository mediaRepo,
             ProductBarcodeRepository barcodeRepo,
-            BinRepository binRepo) {
+            BinRepository binRepo,
+            BinStockService binStockService) {
         this.sessionRepo = sessionRepo;
         this.itemRepo = itemRepo;
         this.warehouseStockService = warehouseStockService;
@@ -52,6 +55,7 @@ public class StockTakeService {
         this.mediaRepo = mediaRepo;
         this.barcodeRepo = barcodeRepo;
         this.binRepo = binRepo;
+        this.binStockService = binStockService;
     }
 
     public StockTakeSession createSession(String warehouseName, Long warehouseId, String type, String countType,
@@ -289,6 +293,11 @@ public class StockTakeService {
                             itemRepo.save(item);
                         }
                     }
+                }
+
+                // Hard capacity check: only block when adding stock into the bin (variance > 0)
+                if (variance > 0 && resolvedBinId != null) {
+                    binStockService.validateBinCapacity(resolvedBinId, variance);
                 }
 
                 StockMovement sm = new StockMovement();

@@ -201,4 +201,26 @@ public class BinStockService {
                 .filter(r -> ((Number) r[1]).intValue() > 0)
                 .count();
     }
+
+    /**
+     * Throws IllegalStateException if adding incomingQty to binId would exceed the bin's capacity.
+     * No-ops when the bin has no capacity defined (null = unlimited).
+     * Call this before any stock-in operation (stock take, GRN, transfer).
+     */
+    public void validateBinCapacity(Long binId, int incomingQty) {
+        Bin bin = binRepository.findById(binId).orElse(null);
+        if (bin == null || bin.getCapacity() == null) return;
+
+        int current = getTotalQuantityByBin(binId);
+        int afterPosting = current + incomingQty;
+
+        if (afterPosting > bin.getCapacity()) {
+            throw new IllegalStateException(
+                "Bin capacity exceeded for bin " + bin.getCode() + ". " +
+                "Max: " + bin.getCapacity() + ", Current: " + current +
+                ", Attempted to add: " + incomingQty +
+                " (would reach " + afterPosting + ")"
+            );
+        }
+    }
 }
