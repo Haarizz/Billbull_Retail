@@ -805,7 +805,9 @@ const EditorView = ({ initialData, onSaveDraft, onSubmitQC, onPost, onPrint, grn
               accepted: pending, // Default accepted to pending
               rejected: 0,
 
-              unitCost: unitPrice,
+              // unitCost = net cost per unit (after discount) — this is what we actually pay.
+              // lpoPrice = original gross price from LPO (reference only).
+              unitCost: netCost,
               lpoPrice: unitPrice,
 
               disc: discount,
@@ -1045,12 +1047,17 @@ const EditorView = ({ initialData, onSaveDraft, onSubmitQC, onPost, onPrint, grn
     const focAdjustedCost = Math.max(0, grossCost - focDeduction);
     const discAmt = focAdjustedCost * ((Number(item.disc) || 0) / 100);
     const netLineTotal = Math.max(0, focAdjustedCost - discAmt);
+    const acceptedQty = Number(item.accepted) || 0;
+
+    // netCost = effective per-unit cost (line value / accepted qty), not gross unit price.
+    // This is the value the invoice should inherit as its unit cost.
+    const effectiveNetCost = acceptedQty > 0 ? netLineTotal / acceptedQty : (Number(item.unitCost) || 0);
 
     return {
       ...item,
       tax: Number(item.tax) || 5,
       taxAmt: netLineTotal * ((Number(item.tax) || 5) / 100),
-      netCost: Number(item.unitCost) || 0,
+      netCost: effectiveNetCost,
       total: netLineTotal
     };
   };
@@ -1846,7 +1853,7 @@ const EditorView = ({ initialData, onSaveDraft, onSubmitQC, onPost, onPrint, grn
 
             {/* Only show Submit QC if Draft */}
             {formData.status === GRN_STATUS.DRAFT && (
-              <button onClick={() => onSubmitQC(formData, items)} className="px-4 py-2 bg-white border border-blue-200 text-blue-600 bg-blue-50 rounded hover:bg-blue-100 font-medium text-slate-700 flex items-center justify-center gap-2 transition-colors">
+              <button onClick={() => onSubmitQC(formData, items)} className="px-4 py-2 bg-[#F5C742] hover:bg-[#E5B732] text-slate-900 rounded font-medium flex items-center justify-center gap-2 transition-colors shadow-sm">
                 <ClipboardCheck className="h-4 w-4" /> Submit for QC
               </button>
             )}
@@ -1953,8 +1960,13 @@ const GRN = () => {
         received: i.received,
         accepted: i.accepted,
         rejected: i.rejected,
+        // unitCost = gross LPO price per unit (for reference/audit).
+        // netCost  = effective per-unit cost after FOC+discount (invoice should use this).
         unitCost: i.unitCost,
         netCost: i.netCost,
+        discountPercent: Number(i.disc) || 0,
+        purchaseTax: Number(i.tax) || 0,
+        taxAmt: Number(i.taxAmt) || 0,
         total: i.total,
         batch: i.batch,
         focQty: Number(i.foc) || 0,

@@ -1117,11 +1117,16 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
       // 6. Map Items and Distribute Missing Tax
       const mappedItems = rawItems.map((item, idx) => {
         const qty = Number(item.accepted ?? item.acceptedQty ?? 0);
-        const cost = Number(item.unitCost ?? item.unit_cost ?? 0);
+        // Prefer netCost (post-discount effective price) over gross unitCost.
+        // This is what the invoice should charge — the price actually agreed after discount/FOC.
+        const cost = Number(item.netCost ?? item.unitCost ?? item.unit_cost ?? 0);
         const lineGross = qty * cost;
 
-        // Distribute tax proportional to line value if specific item tax is missing
-        let itemTaxAmt = Number(item.taxAmount ?? 0);
+        // Preserve the actual per-item tax rate (not a hardcoded 5%).
+        const taxPercent = Number(item.purchaseTax ?? item.taxPercent ?? item.tax ?? 5);
+
+        // Distribute header-level tax proportionally if item-level taxAmt is missing.
+        let itemTaxAmt = Number(item.taxAmt ?? item.taxAmount ?? 0);
         if (itemTaxAmt === 0 && finalTax > 0 && headerSubTotal > 0) {
           itemTaxAmt = (lineGross / headerSubTotal) * finalTax;
         }
@@ -1134,12 +1139,11 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
           image: item.image || item.productImage,
           uom: item.uom,
           qty: qty,
-          cost: cost,
-          // 🔒 BACKEND-TRUTH FIELDS
-          tax: finalTax > 0 ? 5 : 0,
+          cost: cost,                       // netCost — effective per-unit price
+          tax: taxPercent,                  // actual rate, not hardcoded
           taxAmt: itemTaxAmt,
-          taxAmount: itemTaxAmt,     // ✅ Distributed Tax
-          lineTotal: lineGross + itemTaxAmt,
+          taxAmount: itemTaxAmt,
+          lineTotal: (qty * cost) + itemTaxAmt, // qty × netCost + tax
           disc: 0,
           discount: 0,
           foc: Number(item.focQty || 0),
@@ -1308,14 +1312,18 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
   };
 
   const calculateRow = (item) => {
-    // 🔒 GRN-based invoices: DO NOT recompute
+    // GRN-based invoices: discount is already baked into item.cost (= netCost).
+    // gross = qty × netCost is already the net line value — no discount to strip.
     if (invoiceType === SOURCE.GRN) {
+      const gross = item.qty * item.cost;
+      const taxAmt = Number(item.taxAmount ?? item.taxAmt ?? 0);
       return {
-        gross: item.qty * item.cost,
+        gross,
         discAmt: 0,
-        taxAmt: item.taxAmount ?? item.taxAmt ?? 0,
-        total: item.lineTotal ?? (item.qty * item.cost),
-        net: item.qty * item.cost
+        taxAmt,
+        // total = net line + tax (consistent with the lineTotal set in handleGrnSelect)
+        total: gross + taxAmt,
+        net: gross
       };
     }
 
@@ -1363,19 +1371,12 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
       return acc;
     }, { qty: 0, discount: 0, tax: 0, subtotal: 0, grandTotal: 0 });
 
-    if (invoiceType === SOURCE.GRN || invoiceType === SOURCE.LPO) {
-      return {
-        qty: totalsFromItems.qty,
-        discount: invoiceType === SOURCE.LPO ? totalsFromItems.discount : 0,
-        tax: formData.grnTaxTotal || totalsFromItems.tax,
-        subtotal: formData.grnSubTotal || totalsFromItems.subtotal,
-        grandTotal: formData.grnGrandTotal || totalsFromItems.grandTotal
-      };
-    }
-
+    // Always derive totals from item rows.
+    // For GRN/LPO sources, items already carry the correct netCost, taxAmt and lineTotal
+    // so item-driven sums are reliable even for partial GRN scenarios.
+    // We no longer override with stored header totals, which go stale on partial GRNs.
     return totalsFromItems;
-  }, [formData.items, invoiceType, formData.grnSubTotal, formData.grnTaxTotal, formData.grnGrandTotal]);
-  // ^ Added dependencies ensures update when handleGrnSelect finishes
+  }, [formData.items, invoiceType]);
 
 
   const grandTotalWithLanded = totals.grandTotal + (isLandedCostAllowed ? landedCost : 0);
@@ -1475,10 +1476,11 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
       discountPercent: invoiceType === SOURCE.GRN ? 0 : Number(i.discount ?? i.disc ?? 0),
       discountAmount: invoiceType === SOURCE.GRN ? 0 : calculateRow(i).discAmt,
 
-      taxPercent: invoiceType === SOURCE.GRN ? 0 : i.tax,
+      // Preserve actual tax rate — no longer forced to 0 for GRN (backend needs it for audit).
+      taxPercent: i.tax ?? 0,
       taxAmount: invoiceType === SOURCE.GRN ? Number(i.taxAmount ?? i.taxAmt ?? 0) : calculateRow(i).taxAmt,
 
-      lineTotal: invoiceType === SOURCE.GRN ? i.lineTotal : calculateRow(i).total,
+      lineTotal: invoiceType === SOURCE.GRN ? calculateRow(i).total : calculateRow(i).total,
       warehouseName: formData.warehouse,
       remarks: i.remarks || ''
     })),
@@ -2229,7 +2231,7 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
 
                 onSubmitApproval(getInvoicePayload());
               }}
-              className="flex-1 xl:flex-none px-4 py-2 bg-white border border-blue-200 text-blue-600 bg-blue-50 rounded hover:bg-blue-100 font-medium flex items-center justify-center gap-2 transition-colors whitespace-nowrap">
+              className="flex-1 xl:flex-none px-4 py-2 bg-[#F5C742] hover:bg-[#E5B732] text-slate-900 rounded font-medium flex items-center justify-center gap-2 transition-colors whitespace-nowrap shadow-sm">
               <Share2 className="h-3 w-3" /> <span className="hidden sm:inline">Submit Approval</span><span className="sm:hidden">Submit</span>
                 </button>
               </>
