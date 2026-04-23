@@ -47,6 +47,7 @@ import {
 } from 'lucide-react';
 
 import { getImageUrl } from "../../../utils/urlUtils";
+import { getDefaultProductUnit, resolveUnitAmount } from "../../../utils/unitPricing";
 import { createDraftFromLpo } from '../../../api/purchaseInvoiceApi';
 import { ItemDescriptionCell, ItemDescriptionHeader } from '../../../components/ItemDescriptionCell';
 import ItemAddOnsModal from '../../../components/ItemAddOnsModal';
@@ -1046,21 +1047,15 @@ const EditorView = ({ initialData, vendors, warehouses, onSave, onSubmit, onPrin
         // ✅ If unit is being changed, recalculate price based on conversion
         if (field === 'uom' && item.unitConversions) {
           const newUnit = value;
-          if (item.unitPrices && item.unitPrices[newUnit]) {
-            updated.unitPrice = item.unitPrices[newUnit];
-            updated.currentCost = updated.unitPrice;
-          } else {
-            const baseUnit = Object.keys(item.unitConversions).find(u => item.unitConversions[u] === 1);
-            if (baseUnit) {
-              let basePrice = item.unitPrices && item.unitPrices[baseUnit] ? item.unitPrices[baseUnit] : null;
-              if (!basePrice) {
-                const currentConv = item.unitConversions[item.uom] || 1;
-                basePrice = item.unitPrice / currentConv;
-              }
-              updated.unitPrice = basePrice * (item.unitConversions[newUnit] || 1);
-              updated.currentCost = updated.unitPrice;
-            }
-          }
+          updated.unitPrice = resolveUnitAmount({
+            targetUnit: newUnit,
+            amountMap: item.unitCosts || item.unitPrices,
+            unitConversions: item.unitConversions,
+            currentUnit: item.uom,
+            currentAmount: item.unitPrice,
+            fallbackAmount: item.currentCost ?? item.unitPrice
+          });
+          updated.currentCost = updated.unitPrice;
         }
         return updated;
       }
@@ -1096,8 +1091,13 @@ const EditorView = ({ initialData, vendors, warehouses, onSave, onSubmit, onPrin
   };
 
   const handleAddSingleProduct = (product) => {
-    const cost = parseFloat(product.cost) || 0;
-    const defaultUnit = product.unitName || product.unit || (product.availableUnits && product.availableUnits[0]) || 'PCS';
+    const defaultUnit = getDefaultProductUnit(product);
+    const cost = resolveUnitAmount({
+      targetUnit: defaultUnit,
+      amountMap: product.unitCosts || product.unitPrices,
+      unitConversions: product.unitConversions,
+      fallbackAmount: product.cost ?? 0
+    });
     const newItem = {
       id: Date.now(),
       productId: product.id,
@@ -1118,7 +1118,8 @@ const EditorView = ({ initialData, vendors, warehouses, onSave, onSubmit, onPrin
       image: product.primaryImage || product.image || product.thumbnailUrl || product.imageUrl || null,
       availableUnits: product.availableUnits || [defaultUnit],
       unitConversions: product.unitConversions || {},
-      unitPrices: product.unitPrices || {}
+      unitPrices: product.unitPrices || {},
+      unitCosts: product.unitCosts || {}
     };
 
     // If first item is empty, replace it

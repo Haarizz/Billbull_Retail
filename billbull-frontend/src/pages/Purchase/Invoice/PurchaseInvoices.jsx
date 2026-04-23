@@ -40,6 +40,7 @@ import ProductSelector from "../../../components/ProductSelector";
 import SearchableDropdown from "../../../components/SearchableDropdown";
 import VendorSelector from "../../../components/VendorSelector";
 import { getImageUrl } from "../../../utils/urlUtils";
+import { getDefaultProductUnit, resolveUnitAmount } from "../../../utils/unitPricing";
 import { ItemDescriptionCell, ItemDescriptionHeader } from '../../../components/ItemDescriptionCell';
 import ItemAddOnsModal from '../../../components/ItemAddOnsModal'; // BB-026
 import StockAvailabilityModal from '../../../components/StockAvailabilityModal';
@@ -1361,7 +1362,13 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
   };
 
   const handleProductSelect = (product) => {
-    const defaultUnit = product.unitName || product.unit || (product.availableUnits && product.availableUnits[0]) || 'PCS';
+    const defaultUnit = getDefaultProductUnit(product);
+    const resolvedCost = resolveUnitAmount({
+      targetUnit: defaultUnit,
+      amountMap: product.unitCosts || product.unitPrices,
+      unitConversions: product.unitConversions,
+      fallbackAmount: product.cost ?? 0
+    });
     const newItem = {
       id: Date.now(),
       code: product.code || "SKU-NEW",
@@ -1371,7 +1378,7 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
       remarks: product.description || '',
       uom: defaultUnit,
       qty: 1,
-      cost: product.cost || 0,
+      cost: resolvedCost,
       tax: product.taxRate || 5, // Default tax
       taxAmt: 0,
       taxAmount: 0,
@@ -1382,6 +1389,7 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
       availableUnits: product.availableUnits || [defaultUnit],
       unitConversions: product.unitConversions || {},
       unitPrices: product.unitPrices || {},
+      unitCosts: product.unitCosts || {},
       // Internal Tracking
       productId: product.id
     };
@@ -1577,19 +1585,14 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
         // ✅ If unit is being changed, recalculate cost based on conversion
         if (field === 'uom' && i.unitConversions) {
           const newUnit = value;
-          if (i.unitPrices && i.unitPrices[newUnit]) {
-            updated.cost = i.unitPrices[newUnit];
-          } else {
-            const baseUnit = Object.keys(i.unitConversions).find(u => i.unitConversions[u] === 1);
-            if (baseUnit) {
-              let basePrice = i.unitPrices && i.unitPrices[baseUnit] ? i.unitPrices[baseUnit] : null;
-              if (!basePrice) {
-                const currentConv = i.unitConversions[i.uom] || 1;
-                basePrice = i.cost / currentConv;
-              }
-              updated.cost = basePrice * (i.unitConversions[newUnit] || 1);
-            }
-          }
+          updated.cost = resolveUnitAmount({
+            targetUnit: newUnit,
+            amountMap: i.unitCosts || i.unitPrices,
+            unitConversions: i.unitConversions,
+            currentUnit: i.uom,
+            currentAmount: i.cost,
+            fallbackAmount: i.cost
+          });
         }
 
         return updated;

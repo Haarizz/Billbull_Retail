@@ -3,6 +3,7 @@ package com.billbull.backend.inventory.product;
 import java.math.BigDecimal;
 
 public class ProductPackingRequest {
+    private Long id;
     private String level;
     private Long unit; // Unit ID
     private BigDecimal conversion;
@@ -16,6 +17,8 @@ public class ProductPackingRequest {
     private String unitName; // Unit display name for UI
 
     // Getters Setters
+    public Long getId() { return id; }
+    public void setId(Long id) { this.id = id; }
     public String getLevel() { return level; }
     public void setLevel(String level) { this.level = level; }
     public Long getUnit() { return unit; }

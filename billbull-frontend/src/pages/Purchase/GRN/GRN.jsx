@@ -64,6 +64,7 @@ import ProductSelector from '../../../components/ProductSelector';
 import SearchableDropdown from '../../../components/SearchableDropdown';
 import VendorSelector from '../../../components/VendorSelector';
 import { getImageUrl } from '../../../utils/urlUtils';
+import { getDefaultProductUnit, resolveUnitAmount } from '../../../utils/unitPricing';
 import { useBranch } from '../../../context/BranchContext';
 import { ItemDescriptionCell, ItemDescriptionHeader } from '../../../components/ItemDescriptionCell';
 import ItemAddOnsModal from '../../../components/ItemAddOnsModal';
@@ -961,8 +962,13 @@ const EditorView = ({ initialData, onSaveDraft, onSubmitQC, onPost, onPrint, grn
   };
 
   const handleAddSingleProduct = (product) => {
-    const defaultUnit = product.unitName || product.unit || (product.availableUnits && product.availableUnits[0]) || 'PCS';
-    const unitCost = product.cost || product.salesPrice || 0;
+    const defaultUnit = getDefaultProductUnit(product);
+    const unitCost = resolveUnitAmount({
+      targetUnit: defaultUnit,
+      amountMap: product.unitCosts || product.unitPrices,
+      unitConversions: product.unitConversions,
+      fallbackAmount: product.cost ?? product.salesPrice ?? 0
+    });
     const newItem = {
       id: Date.now(),
       productId: product.id,
@@ -989,7 +995,8 @@ const EditorView = ({ initialData, onSaveDraft, onSubmitQC, onPost, onPrint, grn
       focUnit: defaultUnit,
       availableUnits: product.availableUnits || [defaultUnit],
       unitConversions: product.unitConversions || {},
-      unitPrices: product.unitPrices || {}
+      unitPrices: product.unitPrices || {},
+      unitCosts: product.unitCosts || {}
     };
     setItems(prev => [...prev, newItem]);
     setIsProductSelectionOpen(false);
@@ -1136,19 +1143,14 @@ const EditorView = ({ initialData, onSaveDraft, onSubmitQC, onPost, onPrint, grn
         else if (field === 'uom' && item.unitConversions) {
           // ✅ If unit changes, scale the cost
           const newUnit = value;
-          if (item.unitPrices && item.unitPrices[newUnit]) {
-            updated.unitCost = item.unitPrices[newUnit];
-          } else {
-            const baseUnit = Object.keys(item.unitConversions).find(u => item.unitConversions[u] === 1);
-            if (baseUnit) {
-              let basePrice = item.unitPrices && item.unitPrices[baseUnit] ? item.unitPrices[baseUnit] : null;
-              if (!basePrice) {
-                const currentConv = item.unitConversions[item.uom] || 1;
-                basePrice = item.unitCost / currentConv;
-              }
-              updated.unitCost = basePrice * (item.unitConversions[newUnit] || 1);
-            }
-          }
+          updated.unitCost = resolveUnitAmount({
+            targetUnit: newUnit,
+            amountMap: item.unitCosts || item.unitPrices,
+            unitConversions: item.unitConversions,
+            currentUnit: item.uom,
+            currentAmount: item.unitCost,
+            fallbackAmount: item.unitCost
+          });
         }
 
         return recalculateItemTotals(updated);
