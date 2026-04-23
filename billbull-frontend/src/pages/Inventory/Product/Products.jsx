@@ -20,7 +20,6 @@ import {
   createProduct,
   updateProduct,
   deleteProduct,
-  exportProducts,
   importProducts
 } from "../../../api/productsApi";
 import { getBrands, createBrand } from "../../../api/brandsApi";
@@ -34,6 +33,23 @@ import ClassificationDropdown from "../../../components/ClassificationDropdown";
 import { getZones, getLocators, getBins } from "../../../api/warehouseLocationApi";
 import { getVendors } from "../../../api/vendorsApi";
 import { getUnitConversionFactor } from "../../../utils/unitPricing";
+import ExportDropdown from '../../../components/common/ExportDropdown';
+import { exportToExcel, exportToPDF } from '../../../utils/exportUtils';
+
+// ==========================================
+// 1. CONFIGURATION
+// ==========================================
+
+const PRODUCT_COLUMNS = [
+  { header: 'Product', key: 'name', width: 30 },
+  { header: 'Code', key: 'code', width: 15 },
+  { header: 'SKU', key: 'sku', width: 15 },
+  { header: 'Brand', key: 'brandName', width: 15 },
+  { header: 'Department', key: 'departmentName', width: 20 },
+  { header: 'Cost', key: 'cost', width: 12 },
+  { header: 'Retail Price', key: 'retailPrice', width: 15 },
+  { header: 'Status', key: 'status', width: 12 }
+];
 
 // ==========================================
 // 1. DATA CONSTANTS & INITIAL STATE
@@ -185,7 +201,11 @@ const buildProductPayload = (formData) => {
       zone: formData.zone ? { id: Number(formData.zone) } : null,
       locator: formData.locator ? { id: Number(formData.locator) } : null,
       bin: formData.bin ? { id: Number(formData.bin) } : null,
-      packings: formData.packings
+      packings: formData.packings.map((pkg, idx) => ({
+        ...pkg,
+        cost: idx === 0 ? parseFloat(formData.cost || 0) : pkg.cost,
+        price: idx === 0 ? parseFloat(formData.retailPrice || 0) : pkg.price,
+      }))
     }
   };
 };
@@ -359,16 +379,12 @@ const AddProductWizard = ({ onCancel, onSave, initialData, brands: initialBrands
         }
       }
 
-      if (field === 'cost' || field === 'retailPrice' || field === 'defaultUnit') {
-        const baseCost = parseFloat(field === 'cost' ? value : newData.cost) || 0;
-        const basePrice = parseFloat(field === 'retailPrice' ? value : newData.retailPrice) || 0;
+      if (['cost', 'markup', 'retailPrice', 'defaultUnit'].includes(field)) {
+        const baseCost = parseFloat(newData.cost) || 0;
+        const basePrice = parseFloat(newData.retailPrice) || 0;
 
         newData.packings = (newData.packings || []).map((packing, idx) => {
-          const ratio = getUnitConversionFactor(
-            { [packing.unit || newData.defaultUnit || '']: packing.conversion },
-            packing.unit || newData.defaultUnit || '',
-            1
-          );
+          const ratio = parseFloat(packing.conversion) || 1;
 
           return {
             ...packing,
@@ -1189,17 +1205,9 @@ const AddProductWizard = ({ onCancel, onSave, initialData, brands: initialBrands
                         ) : (
                           <input
                             type="number"
-                            min="0"
-                            step="0.01"
+                            readOnly
                             value={pkg.cost ?? ''}
-                            onChange={(e) => {
-                              const val = parseFloat(e.target.value) || 0;
-                              setFormData(prev => ({
-                                ...prev,
-                                packings: prev.packings.map(p => p.id === pkg.id ? { ...p, cost: val } : p)
-                              }));
-                            }}
-                            className="w-24 border border-slate-200 rounded px-2 py-1 outline-none focus:border-[#F5C742] text-slate-700 text-sm"
+                            className="w-24 bg-slate-50 border border-slate-200 text-slate-500 rounded px-2 py-1 outline-none text-sm cursor-not-allowed"
                             placeholder="0.00"
                           />
                         )}
@@ -1210,17 +1218,9 @@ const AddProductWizard = ({ onCancel, onSave, initialData, brands: initialBrands
                         ) : (
                           <input
                             type="number"
-                            min="0"
-                            step="0.01"
+                            readOnly
                             value={pkg.price ?? ''}
-                            onChange={(e) => {
-                              const val = parseFloat(e.target.value) || 0;
-                              setFormData(prev => ({
-                                ...prev,
-                                packings: prev.packings.map(p => p.id === pkg.id ? { ...p, price: val } : p)
-                              }));
-                            }}
-                            className="w-24 border border-slate-200 rounded px-2 py-1 outline-none focus:border-[#F5C742] font-medium text-slate-800 text-sm"
+                            className="w-24 bg-slate-50 border border-slate-200 text-slate-500 font-medium rounded px-2 py-1 outline-none text-sm cursor-not-allowed"
                             placeholder="0.00"
                           />
                         )}
@@ -1889,22 +1889,7 @@ const Products = () => {
     }
   };
 
-  const handleExport = async () => {
-    try {
-      const blob = await exportProducts();
-      const url = window.URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = 'products.xlsx'; // Filename from backend header or default
-      document.body.appendChild(a);
-      a.click();
-      window.URL.revokeObjectURL(url);
-      document.body.removeChild(a);
-    } catch (err) {
-      console.error("Export failed", err);
-      alert("Failed to export products. Please try again.");
-    }
-  };
+
 
   const fileInputRef = useRef(null);
 
@@ -2128,9 +2113,10 @@ const Products = () => {
             <span className="hidden sm:inline">{importModal.status === 'loading' && importModal.fileName ? 'Importing...' : 'Import'}</span>
           </button>
 
-          <button onClick={handleExport} className="inline-flex items-center justify-center text-sm font-medium border bg-white hover:bg-slate-100 h-9 rounded-md gap-1.5 px-3 border-slate-200 text-slate-700 transition-colors">
-            <Download className="h-4 w-4" /> <span className="hidden sm:inline">Export</span>
-          </button>
+          <ExportDropdown
+            onExportExcel={() => exportToExcel(sortedData, PRODUCT_COLUMNS, 'Products')}
+            onExportPdf={() => exportToPDF(sortedData, PRODUCT_COLUMNS, 'Products List', 'Products')}
+          />
         </div>
       </div>
 

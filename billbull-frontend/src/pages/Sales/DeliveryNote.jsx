@@ -40,6 +40,22 @@ import { getTemplatesByCategory } from '../../api/printTemplateApi';
 import { generatePrintHtml, printHtml } from '../../utils/printGenerator';
 import { getImageUrl } from '../../utils/urlUtils';
 import { useCompany } from '../../context/CompanyContext';
+import ExportDropdown from '../../components/common/ExportDropdown';
+import { exportToExcel, exportToPDF } from '../../utils/exportUtils';
+
+// ==========================================
+// 1. CONFIGURATION
+// ==========================================
+
+const DELIVERY_NOTE_COLUMNS = [
+    { header: 'DN Number', key: 'dnNo', width: 15 },
+    { header: 'Date', key: 'date', width: 12 },
+    { header: 'Customer', key: 'customerName', width: 25 },
+    { header: 'SO No', key: 'soNo', width: 15 },
+    { header: 'PI No', key: 'piNo', width: 15 },
+    { header: 'Warehouse', key: 'warehouse', width: 15 },
+    { header: 'Status', key: 'status', width: 12 }
+];
 
 // ==========================================
 // API IMPORTS
@@ -1569,6 +1585,10 @@ const DeliveryNote = () => {
                                         <ChevronDown size={14} className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
                                     </div>
                                 </div>
+                                <ExportDropdown
+                                    onExportExcel={() => exportToExcel(filteredDeliveryNotes, DELIVERY_NOTE_COLUMNS, 'Delivery_Notes')}
+                                    onExportPdf={() => exportToPDF(filteredDeliveryNotes, DELIVERY_NOTE_COLUMNS, 'Delivery Notes', 'Delivery_Notes')}
+                                />
                                 <button
                                     onClick={handleCreateNew}
                                     className="flex items-center justify-center gap-2 px-4 py-2 bg-[#F5C742] rounded-md text-xs font-bold text-slate-900 hover:bg-yellow-400 shadow-sm transition-colors w-full md:w-auto"

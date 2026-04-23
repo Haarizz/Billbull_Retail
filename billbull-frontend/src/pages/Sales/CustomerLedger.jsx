@@ -25,6 +25,22 @@ import {
     normalizeCurrencyValue,
     withFallbackOption
 } from '../../utils/countryCurrencyOptions';
+import ExportDropdown from '../../components/common/ExportDropdown';
+import { exportToExcel, exportToPDF } from '../../utils/exportUtils';
+
+// ==========================================
+// 1. CONFIGURATION
+// ==========================================
+
+const CUSTOMER_COLUMNS = [
+    { header: 'Code', key: 'code', width: 15 },
+    { header: 'Customer Name', key: 'name', width: 30 },
+    { header: 'Group', key: 'group', width: 15 },
+    { header: 'Contact', key: 'contact', width: 20 },
+    { header: 'Email', key: 'email', width: 25 },
+    { header: 'Balance', key: 'balance', width: 15 },
+    { header: 'Status', key: 'status', width: 12 }
+];
 
 // ==========================================
 // 1. ADD ADDRESS MODAL (Nested)
@@ -2335,9 +2351,10 @@ const CustomerLedger = () => {
                         </div>
 
                         <div className="flex flex-wrap gap-2 w-full lg:w-auto">
-                            <button className="flex items-center gap-2 px-3 py-2 bg-white border border-slate-200 rounded-md text-sm text-slate-600 hover:bg-slate-50 transition-colors">
-                                <Download size={16} /> Export
-                            </button>
+                            <ExportDropdown
+                                onExportExcel={() => exportToExcel(filteredCustomers, CUSTOMER_COLUMNS, 'Customers')}
+                                onExportPdf={() => exportToPDF(filteredCustomers, CUSTOMER_COLUMNS, 'Customer List', 'Customers')}
+                            />
                             <button className="flex items-center gap-2 px-3 py-2 bg-white border border-slate-200 rounded-md text-sm text-slate-600 hover:bg-slate-50 transition-colors">
                                 <Upload size={16} /> Import
                             </button>

@@ -56,6 +56,26 @@ import {
   findVendorRecord,
   resolvePurchasePrintTemplate
 } from '../../../utils/purchasePrintUtils';
+import ExportDropdown from '../../../components/common/ExportDropdown';
+import { exportToExcel, exportToPDF } from '../../../utils/exportUtils';
+
+// ==========================================
+// 1. MOCK DATA & CONFIGURATION
+// ==========================================
+
+const INVOICE_COLUMNS = [
+  { header: 'Document No', key: 'id', width: 15 },
+  { header: 'Doc Date', key: 'documentDate', width: 12 },
+  { header: 'Inv Date', key: 'vendorInvoiceDate', width: 12 },
+  { header: 'Vendor', key: 'vendor', width: 25 },
+  { header: 'Source', key: 'source', width: 15 },
+  { header: 'Ref No', key: 'refNo', width: 15 },
+  { header: 'Warehouse', key: 'warehouse', width: 20 },
+  { header: 'Total', key: 'total', width: 15 },
+  { header: 'Tax', key: 'tax', width: 12 },
+  { header: 'Status', key: 'status', width: 12 },
+  { header: 'Payment', key: 'payment', width: 12 }
+];
 
 // API IMPORTS
 import {
@@ -503,7 +523,7 @@ const SchedulePaymentModal = ({ invoice, onClose, onConfirm }) => {
 // SUB-COMPONENTS
 // ==========================================
 
-const InvoiceListView = ({ invoices, activeFilter, setActiveFilter, searchQuery, setSearchQuery, onView, onPrint, onPay, onRefresh, dateRange, setDateRange, vendorFilter, setVendorFilter }) => {
+const InvoiceListView = ({ invoices, filteredInvoices, activeFilter, setActiveFilter, searchQuery, setSearchQuery, onView, onPrint, onPay, onRefresh, dateRange, setDateRange, vendorFilter, setVendorFilter }) => {
   const [showFilters, setShowFilters] = useState(false);
 
   const invoiceStats = useMemo(() => {
@@ -531,40 +551,7 @@ const InvoiceListView = ({ invoices, activeFilter, setActiveFilter, searchQuery,
     };
   }, [invoices]);
 
-  const filteredInvoices = invoices.filter(inv => {
-    // 1. Search Query
-    const matchesSearch = inv.id.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      inv.vendor.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      (inv.vendorInvoiceNo || "").toLowerCase().includes(searchQuery.toLowerCase());
-
-    // 2. Status Filter
-    const normalizedStatus = normalizeInvoiceFilterValue(inv.status);
-    const normalizedPayment = normalizeInvoiceFilterValue(inv.payment);
-    const normalizedFilter = normalizeInvoiceFilterValue(activeFilter);
-
-    const matchesStatus = normalizedFilter === "ALL_INVOICES" ||
-      (normalizedFilter === "TODAY" && isInvoiceToday(inv)) ||
-      (normalizedFilter === "OUTSTANDING" && isOutstandingInvoice(inv)) ||
-      (normalizedFilter === "OVERDUE" && isOverdueInvoice(inv)) ||
-      normalizedStatus === normalizedFilter ||
-      normalizedPayment === normalizedFilter;
-
-    // 3. Date Range Filter
-    let matchesDate = true;
-    if (dateRange?.start) {
-      matchesDate = matchesDate && new Date(inv.date) >= new Date(dateRange.start);
-    }
-    if (dateRange?.end) {
-      matchesDate = matchesDate && new Date(inv.date) <= new Date(dateRange.end);
-    }
-
-    // 4. Vendor Filter
-    let matchesVendor = true;
-    if (vendorFilter) {
-      matchesVendor = inv.vendor.toLowerCase().includes(vendorFilter.toLowerCase());
-    }
-    return matchesSearch && matchesStatus && matchesDate && matchesVendor;
-  }).sort(compareInvoiceRows);
+  // Filter logic moved to parent component for export functionality
 
   const clearFilters = () => {
     setDateRange({ start: "", end: "" });
@@ -745,6 +732,7 @@ const InvoiceListView = ({ invoices, activeFilter, setActiveFilter, searchQuery,
 // ==========================================
 
 const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreatePayment, onSchedulePayment, editInvoice, onPrint, mode = "edit", onBackToList }) => {
+  const navigate = useNavigate();
   // LPO Data Logic
   const [lpoList, setLpoList] = useState([]);
   const [selectedLpo, setSelectedLpo] = useState("");
@@ -1379,11 +1367,11 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
       uom: defaultUnit,
       qty: 1,
       cost: resolvedCost,
-      tax: product.taxRate || 5, // Default tax
+      tax: parseFloat(product.purchaseTax) || parseFloat(product.taxRate) || 5, // Default tax
       taxAmt: 0,
       taxAmount: 0,
-      disc: 0,
-      discount: 0,
+      disc: product.maxDiscount || 0,
+      discount: product.maxDiscount || 0,
       foc: 0,
       focUnit: defaultUnit,
       availableUnits: product.availableUnits || [defaultUnit],
@@ -2060,6 +2048,7 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
                     <th className="p-3 font-medium text-center w-16">Unit</th>
                     <th className="p-3 font-medium text-center w-16">Qty</th>
                     <th className="p-3 font-medium text-right">Unit Cost</th>
+                    <th className="p-3 font-medium text-center w-16">Disc %</th>
                     <th className="p-3 font-medium text-right">Tax Amt</th>
                     <th className="p-3 font-medium text-right">Amount</th>
                     <th className="p-3 font-medium text-center">Actions</th>
@@ -2134,6 +2123,17 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
                               className={`w-16 text-right border border-slate-200 rounded bg-white ${isFormLocked ? 'bg-slate-50' : ''}`}
                             />
                           </td>
+                          <td className="p-3 text-center">
+                            <input
+                              type="number"
+                              disabled={isFormLocked}
+                              value={item.disc ?? item.discount ?? 0}
+                              onChange={(e) => handleInputChange(item.id, 'disc', e.target.value)}
+                              onWheel={e => e.target.blur()}
+                              onPaste={e => e.preventDefault()}
+                              className={`w-14 text-center border border-slate-200 rounded bg-white ${isFormLocked ? 'bg-slate-50' : ''}`}
+                            />
+                          </td>
                           <td className="p-3 text-right">{calc.taxAmt.toFixed(2)}</td>
                           <td className="p-3 text-right font-bold text-[#F5C742]">{calc.total.toFixed(2)}</td>
                           <td className="p-3 text-center">
@@ -2149,7 +2149,7 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
                         {/* Expanded Description Row */}
                         {expandedRows[item.id] && (
                           <tr className="bg-white">
-                            <td colSpan={8} className="px-0 pb-4 pt-1">
+                            <td colSpan={9} className="px-0 pb-4 pt-1">
                               <div className="ml-0 mr-4 p-3 rounded-r-[10px] border-l-[3px] border-[#FFD700] bg-[#FFFDE7]/60 shadow-[inset_0_1px_4px_rgba(0,0,0,0.02)]">
                                 <div className="flex justify-between items-center mb-1.5">
                                   <div className="flex items-center gap-1.5 text-[9px] font-bold text-[#B8860B] tracking-widest uppercase">
@@ -2335,6 +2335,12 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
                 <span>{grandTotalWithLanded.toFixed(2)}</span>
               </div>
             </div>
+            <button
+              onClick={() => navigate('/finance/ledger')}
+              className="w-full mt-2 py-1 border border-slate-200 rounded text-xs font-medium text-slate-500 hover:bg-slate-50 flex items-center justify-center gap-1"
+            >
+              <Eye className="h-3 w-3" /> View Details
+            </button>
           </div>
         </div>
       </div>
@@ -2861,6 +2867,51 @@ const PurchaseInvoices = () => {
     setPaymentInvoice(invoice);
   };
 
+  const filteredInvoices = useMemo(() => {
+    return invoices.filter(inv => {
+      // 1. Search Query
+      const matchesSearch = inv.id.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        inv.vendor.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        (inv.vendorInvoiceNo || "").toLowerCase().includes(searchQuery.toLowerCase());
+
+      // 2. Status Filter
+      const normalizedStatus = normalizeInvoiceFilterValue(inv.status);
+      const normalizedPayment = normalizeInvoiceFilterValue(inv.payment);
+      const normalizedFilter = normalizeInvoiceFilterValue(activeFilter);
+
+      const matchesStatus = normalizedFilter === "ALL_INVOICES" ||
+        (normalizedFilter === "TODAY" && isInvoiceToday(inv)) ||
+        (normalizedFilter === "OUTSTANDING" && isOutstandingInvoice(inv)) ||
+        (normalizedFilter === "OVERDUE" && isOverdueInvoice(inv)) ||
+        normalizedStatus === normalizedFilter ||
+        normalizedPayment === normalizedFilter;
+
+      // 3. Date Range Filter
+      let matchesDate = true;
+      if (dateRange?.start) {
+        matchesDate = matchesDate && new Date(inv.date) >= new Date(dateRange.start);
+      }
+      if (dateRange?.end) {
+        matchesDate = matchesDate && new Date(inv.date) <= new Date(dateRange.end);
+      }
+
+      // 4. Vendor Filter
+      let matchesVendor = true;
+      if (vendorFilter) {
+        matchesVendor = inv.vendor.toLowerCase().includes(vendorFilter.toLowerCase());
+      }
+      return matchesSearch && matchesStatus && matchesDate && matchesVendor;
+    }).sort(compareInvoiceRows);
+  }, [invoices, searchQuery, activeFilter, dateRange, vendorFilter]);
+
+  const handleExportExcel = () => {
+    exportToExcel(filteredInvoices, INVOICE_COLUMNS, 'Purchase_Invoice_List');
+  };
+
+  const handleExportPdf = () => {
+    exportToPDF(filteredInvoices, INVOICE_COLUMNS, 'Purchase Invoices', 'Purchase_Invoice_List');
+  };
+
   const handleConfirmPayment = async (invoice, paymentMode, bankAccount, chequeDate) => {
     try {
       await recordPayment(invoice.dbId, invoice.outstanding, paymentMode, bankAccount, chequeDate);
@@ -2914,6 +2965,7 @@ const PurchaseInvoices = () => {
       case "list":
         return <InvoiceListView
           invoices={invoices}
+          filteredInvoices={filteredInvoices}
           activeFilter={activeFilter}
           setActiveFilter={setActiveFilter}
           searchQuery={searchQuery}
@@ -3014,9 +3066,10 @@ const PurchaseInvoices = () => {
             >
               <ArrowLeft className="h-4 w-4" /> <span className="hidden sm:inline">Back</span>
             </button>
-            <button className="flex-1 sm:flex-none h-8 px-3 border border-slate-300 rounded-md bg-white hover:bg-slate-50 text-slate-700 flex items-center justify-center gap-1.5 text-sm font-medium transition-colors whitespace-nowrap">
-              <Download className="h-4 w-4" /> <span className="hidden sm:inline">Export</span>
-            </button>
+            <ExportDropdown
+              onExportExcel={handleExportExcel}
+              onExportPdf={handleExportPdf}
+            />
             <button
               onClick={() => {
                 setEditInvoice(null);

@@ -65,6 +65,23 @@ import useShortcuts from '../../hooks/useShortcuts';
 
 // ✅ PERMISSIONS
 import { usePermissions } from '../../context/PermissionContext';
+import ExportDropdown from '../../components/common/ExportDropdown';
+import { exportToExcel, exportToPDF } from '../../utils/exportUtils';
+
+// ==========================================
+// 1. CONFIGURATION
+// ==========================================
+
+const SALES_ORDER_COLUMNS = [
+  { header: 'SO No', key: 'soNumber', width: 15 },
+  { header: 'Date', key: 'orderDate', width: 12 },
+  { header: 'Customer', key: 'customerName', width: 25 },
+  { header: 'Quotation', key: 'linkedQuotation', width: 15 },
+  { header: 'PI No', key: 'linkedProforma', width: 15 },
+  { header: 'Total', key: 'orderTotal', width: 15 },
+  { header: 'Advance', key: 'advanceAmount', width: 12 },
+  { header: 'Status', key: 'status', width: 12 }
+];
 
 // ✅ MOBILE CARD COMPONENT
 const MobileCard = ({ order, onClick, getStatusBadge }) => (
@@ -1135,6 +1152,12 @@ const SalesOrders = () => {
                   <option>Confirmed</option>
                   <option>Partially Paid</option>
                 </select>
+                {canExport('sales.order') && (
+                  <ExportDropdown
+                    onExportExcel={() => exportToExcel(ordersList, SALES_ORDER_COLUMNS, 'Sales_Orders')}
+                    onExportPdf={() => exportToPDF(ordersList, SALES_ORDER_COLUMNS, 'Sales Orders', 'Sales_Orders')}
+                  />
+                )}
                 {/* ── VERTICAL: canCreate('sales') ── */}
                 {canCreate('sales.order') && (
                   <button onClick={handleCreateNew} className="flex items-center justify-center gap-1 px-3 py-1.5 bg-yellow-400 text-slate-900 text-xs font-bold rounded hover:bg-yellow-500 whitespace-nowrap flex-1 md:flex-none">

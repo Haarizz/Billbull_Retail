@@ -1,7 +1,7 @@
 import ExcelJS from 'exceljs';
 import { saveAs } from 'file-saver';
-import jsPDF from 'jspdf';
-import 'jspdf-autotable';
+import { jsPDF } from 'jspdf';
+import autoTable from 'jspdf-autotable';
 
 /**
  * Generic function to export JSON data to an Excel file (.xlsx)
@@ -96,7 +96,7 @@ export const exportToPDF = (data, columns, title = 'Report', fileName = 'Export'
         });
 
         // Generate the table
-        doc.autoTable({
+        autoTable(doc, {
             startY: 90,
             head: head,
             body: body,

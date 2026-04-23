@@ -10,6 +10,22 @@ import {
 } from 'lucide-react';
 import StatementPrintPreview from '../../../components/StatementPrintPreview';
 import SearchableDropdown from '../../../components/SearchableDropdown';
+import ExportDropdown from '../../../components/common/ExportDropdown';
+import { exportToExcel, exportToPDF } from '../../../utils/exportUtils';
+
+// ==========================================
+// 1. MOCK DATA & CONFIGURATION
+// ==========================================
+
+const VENDOR_COLUMNS = [
+  { header: 'Code', key: 'code', width: 10 },
+  { header: 'Name', key: 'name', width: 25 },
+  { header: 'Email', key: 'email', width: 20 },
+  { header: 'Phone', key: 'phone', width: 15 },
+  { header: 'Category', key: 'category', width: 15 },
+  { header: 'Status', key: 'status', width: 12 },
+  { header: 'Payable', key: 'balance', width: 15 }
+];
 
 // API IMPORTS
 import {
@@ -1537,6 +1553,14 @@ const VendorListViewWithActions = ({ vendors, loading, onAddNew, onEdit, onDelet
 
 
 
+  const handleExportExcel = () => {
+    exportToExcel(filteredVendors, VENDOR_COLUMNS, 'Vendor_List');
+  };
+
+  const handleExportPdf = () => {
+    exportToPDF(filteredVendors, VENDOR_COLUMNS, 'Vendor List', 'Vendor_List');
+  };
+
   const renderStars = (rating) => (
     <div className="flex text-[#F5C742]">
       {[...Array(5)].map((_, i) => (
@@ -1575,7 +1599,10 @@ const VendorListViewWithActions = ({ vendors, loading, onAddNew, onEdit, onDelet
             {activeTab === "Vendors List" ? (
               <>
                 <button className="inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md text-sm font-medium border bg-white hover:bg-slate-50 h-9 px-4 border-slate-200 text-slate-700 shadow-sm"><Upload className="h-4 w-4" /> Import</button>
-                <button className="inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md text-sm font-medium border bg-white hover:bg-slate-50 h-9 px-4 border-slate-200 text-slate-700 shadow-sm"><Download className="h-4 w-4" /> Export</button>
+                <ExportDropdown
+                  onExportExcel={handleExportExcel}
+                  onExportPdf={handleExportPdf}
+                />
                 <button onClick={onAddNew} className="inline-flex items-center justify-center gap-2 rounded-md text-sm font-bold h-9 px-4 bg-[#F5C742] hover:bg-[#E5B732] text-slate-900 shadow-sm">
                   <Plus className="h-4 w-4" /> New Vendor
                 </button>

@@ -64,6 +64,22 @@ import {
   findVendorRecord,
   normalizePurchaseTemplate
 } from '../../../utils/purchasePrintUtils';
+import ExportDropdown from '../../../components/common/ExportDropdown';
+import { exportToExcel, exportToPDF } from '../../../utils/exportUtils';
+
+// ==========================================
+// 1. MOCK DATA & CONFIGURATION
+// ==========================================
+
+const LPO_COLUMNS = [
+  { header: 'LPO No.', key: 'lpoNumber', width: 15 },
+  { header: 'Vendor', key: 'vendorName', width: 25 },
+  { header: 'Date', key: 'date', width: 12 },
+  { header: 'Total Value', key: 'totalValue', width: 15 },
+  { header: 'Status', key: 'status', width: 15 },
+  { header: 'ETA', key: 'eta', width: 12 },
+  { header: 'Received %', key: 'received', width: 12 }
+];
 
 // API Imports
 import {
@@ -286,7 +302,7 @@ const MobileCard = ({ row, onView }) => (
 // 3. VIEW COMPONENTS
 // ==========================================
 
-const ListView = ({ lpos, onEdit, onView, onPrint, activeFilter, onApprove, onReject, onStockApprove, onStockReject, onProceedToInvoice, searchQuery, setSearchQuery, sortConfig, requestSort, showFilterPanel, setShowFilterPanel, dateRange, setDateRange, selectedVendor, setSelectedVendor, vendors }) => {
+const ListView = ({ lpos, processedData, onEdit, onView, onPrint, activeFilter, onApprove, onReject, onStockApprove, onStockReject, onProceedToInvoice, searchQuery, setSearchQuery, sortConfig, requestSort, showFilterPanel, setShowFilterPanel, dateRange, setDateRange, selectedVendor, setSelectedVendor, vendors }) => {
   const formatDate = (dateString) => {
     if (!dateString) return '-';
     try {
@@ -295,55 +311,6 @@ const ListView = ({ lpos, onEdit, onView, onPrint, activeFilter, onApprove, onRe
       return dateString;
     }
   };
-
-  /* --- Filter & Sort Logic --- */
-  const processedData = useMemo(() => {
-    let data = [...lpos];
-
-    // 1. Filter by Status
-    if (activeFilter !== "All LPOs") {
-      const dbStatus = activeFilter.toUpperCase().replace(/ /g, '_');
-      data = data.filter(l => l.status === dbStatus);
-    }
-
-    // 2. Filter by Search Query
-    if (searchQuery) {
-      const lowerQuery = searchQuery.toLowerCase();
-      data = data.filter(l =>
-        (l.lpoNumber && l.lpoNumber.toLowerCase().includes(lowerQuery)) ||
-        (l.vendorName && l.vendorName.toLowerCase().includes(lowerQuery))
-      );
-    }
-
-    // 3. Filter by Date Range
-    if (dateRange.from) {
-      data = data.filter(l => l.date >= dateRange.from);
-    }
-    if (dateRange.to) {
-      data = data.filter(l => l.date <= dateRange.to);
-    }
-
-    // 4. Filter by Vendor
-    if (selectedVendor) {
-      data = data.filter(l => l.vendorName === selectedVendor || l.vendorCode === selectedVendor);
-    }
-
-    // 5. Sort
-    if (sortConfig && sortConfig.key) {
-      data.sort((a, b) => {
-        if (a[sortConfig.key] < b[sortConfig.key]) {
-          return sortConfig.direction === 'asc' ? -1 : 1;
-        }
-        if (a[sortConfig.key] > b[sortConfig.key]) {
-          return sortConfig.direction === 'asc' ? 1 : -1;
-        }
-        return 0;
-      });
-    }
-
-    return data;
-    return data;
-  }, [lpos, activeFilter, searchQuery, sortConfig, dateRange, selectedVendor]);
 
   return (
     <div className="flex flex-col h-full">
@@ -2501,14 +2468,67 @@ const LPOList = () => {
   };
 
   const executeStockReject = async (dbId) => {
-
-
     // Optimistic update
     setLpos(prevLpos =>
       prevLpos.map(lpo =>
-        lpo.dbId === dbId ? { ...lpo, status: 'CANCELLED' } : lpo
+        lpo.dbId === dbId ? { ...lpo, status: 'REJECTED' } : lpo
       )
     );
+  };
+
+  const processedData = useMemo(() => {
+    let data = [...lpos];
+
+    // 1. Filter by Status
+    if (activeStatusTab !== "All LPOs") {
+      const dbStatus = activeStatusTab.toUpperCase().replace(/ /g, '_');
+      data = data.filter(l => l.status === dbStatus);
+    }
+
+    // 2. Filter by Search Query
+    if (searchQuery) {
+      const lowerQuery = searchQuery.toLowerCase();
+      data = data.filter(l =>
+        (l.lpoNumber && l.lpoNumber.toLowerCase().includes(lowerQuery)) ||
+        (l.vendorName && l.vendorName.toLowerCase().includes(lowerQuery))
+      );
+    }
+
+    // 3. Filter by Date Range
+    if (dateRange.from) {
+      data = data.filter(l => l.date >= dateRange.from);
+    }
+    if (dateRange.to) {
+      data = data.filter(l => l.date <= dateRange.to);
+    }
+
+    // 4. Filter by Vendor
+    if (selectedVendor) {
+      data = data.filter(l => l.vendorName === selectedVendor || l.vendorCode === selectedVendor);
+    }
+
+    // 5. Sort
+    if (sortConfig && sortConfig.key) {
+      data.sort((a, b) => {
+        if (a[sortConfig.key] < b[sortConfig.key]) {
+          return sortConfig.direction === 'asc' ? -1 : 1;
+        }
+        if (a[sortConfig.key] > b[sortConfig.key]) {
+          return sortConfig.direction === 'asc' ? 1 : -1;
+        }
+        return 0;
+      });
+    }
+
+    return data;
+  }, [lpos, activeStatusTab, searchQuery, sortConfig, dateRange, selectedVendor]);
+
+  const handleExportExcel = () => {
+    exportToExcel(processedData, LPO_COLUMNS, 'LPO_List');
+  };
+
+  const handleExportPdf = () => {
+    exportToPDF(processedData, LPO_COLUMNS, 'Local Purchase Orders', 'LPO_List');
   };
 
   return (
@@ -2522,9 +2542,9 @@ const LPOList = () => {
             {/* Title and Controls */}
             <div className="space-y-1">
               <div className="flex items-center gap-2 text-sm text-slate-500">
-                <span>Vendors & Purchases</span>
+                <span>Vendors {"&"} Purchases</span>
                 <ChevronRight size={12} />
-                <span className="font-medium text-slate-900">LPO & Approvals</span>
+                <span className="font-medium text-slate-900">LPO {"&"} Approvals</span>
               </div>
               <div className="flex items-center gap-3">
                 <h1 className="text-2xl font-bold text-slate-900 flex items-center gap-2"><ShoppingCart className="text-[#F5C742]" size={28} /> Local Purchase Orders (LPO)</h1>
@@ -2559,9 +2579,10 @@ const LPOList = () => {
               <button className="flex-1 sm:flex-none h-8 px-3 border border-slate-300 rounded-md bg-white hover:bg-slate-50 text-slate-700 flex items-center justify-center gap-1.5 text-sm font-medium transition-colors">
                 <Upload className="h-4 w-4" /> Import
               </button>
-              <button className="flex-1 sm:flex-none h-8 px-3 border border-slate-300 rounded-md bg-white hover:bg-slate-50 text-slate-700 flex items-center justify-center gap-1.5 text-sm font-medium transition-colors">
-                <Download className="h-4 w-4" /> Export
-              </button>
+              <ExportDropdown
+                onExportExcel={handleExportExcel}
+                onExportPdf={handleExportPdf}
+              />
               <button
                 onClick={handleCreateNew}
                 disabled={loading}
@@ -2648,6 +2669,7 @@ const LPOList = () => {
             {activeNavTab === 'list' && (
               <ListView
                 lpos={lpos}
+                processedData={processedData}
                 activeFilter={activeStatusTab}
                 onEdit={handleEditLPO}
                 onView={handleViewLPO}

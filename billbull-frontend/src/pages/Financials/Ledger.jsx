@@ -39,6 +39,33 @@ import * as reportApi from '../../api/financialReportsBackendApi';
 import { useBranch } from '../../context/BranchContext';
 import { useCompany } from '../../context/CompanyContext';
 import { employeesApi } from '../../api/employeesApi';
+import ExportDropdown from '../../components/common/ExportDropdown';
+import { exportToExcel, exportToPDF } from '../../utils/exportUtils';
+
+// ==========================================
+// 1. MOCK DATA & CONFIGURATION
+// ==========================================
+
+const COA_COLUMNS = [
+  { header: 'Code', key: 'code', width: 10 },
+  { header: 'Account Name', key: 'name', width: 25 },
+  { header: 'Group', key: 'group', width: 15 },
+  { header: 'Type', key: 'accountType', width: 15 },
+  { header: 'Balance', key: 'balance', width: 15 },
+  { header: 'Normal', key: 'normalBalance', width: 10 },
+  { header: 'Kind', key: 'accountKind', width: 10 }
+];
+
+const GL_COLUMNS = [
+  { header: 'Date', key: 'date', width: 12 },
+  { header: 'Voucher No.', key: 'voucher', width: 15 },
+  { header: 'Acc Code', key: 'accCode', width: 10 },
+  { header: 'Acc Name', key: 'accName', width: 20 },
+  { header: 'Particulars', key: 'desc', width: 30 },
+  { header: 'Debit', key: 'debit', width: 12 },
+  { header: 'Credit', key: 'credit', width: 12 },
+  { header: 'Balance', key: 'balance', width: 15 }
+];
 
 // --- HELPER: CUSTOM SELECT COMPONENT ---
 const CustomSelect = ({ label, placeholder, options, value, onChange }) => {
@@ -997,12 +1024,28 @@ const glAccountOptions = accounts
     return a.code.toLowerCase().includes(q) || a.name.toLowerCase().includes(q);
   });
 
-const selectedAccountLabel = glFilterAccount
-  ? (() => {
-      const a = accounts.find(acc => acc.code === glFilterAccount);
-      return a ? `${a.code} - ${a.name}` : glFilterAccount;
-    })()
-  : '';
+  const handleExportExcel = () => {
+    if (activeTab === 'chart') {
+      exportToExcel(accounts, COA_COLUMNS, 'Chart_of_Accounts');
+    } else if (activeTab === 'gl') {
+      exportToExcel(filteredGlData, GL_COLUMNS, 'General_Ledger');
+    }
+  };
+
+  const handleExportPdf = () => {
+    if (activeTab === 'chart') {
+      exportToPDF(accounts, COA_COLUMNS, 'Chart of Accounts', 'Chart_of_Accounts');
+    } else if (activeTab === 'gl') {
+      exportToPDF(filteredGlData, GL_COLUMNS, 'General Ledger', 'General_Ledger');
+    }
+  };
+
+  const selectedAccountLabel = glFilterAccount
+    ? (() => {
+        const a = accounts.find(acc => acc.code === glFilterAccount);
+        return a ? `${a.code} - ${a.name}` : glFilterAccount;
+      })()
+    : '';
 
   return (
     <>
@@ -1019,9 +1062,10 @@ const selectedAccountLabel = glFilterAccount
           <p className="text-xs text-slate-500 mt-1">Manage chart of accounts, general ledger, cost centers, and financial transactions</p>
         </div>
         <div className="flex gap-2">
-          <button className="flex items-center gap-2 px-3 py-2 bg-white border border-slate-200 rounded text-xs font-bold text-slate-600 hover:bg-slate-50 shadow-sm">
-            <FileSpreadsheet size={16} /> Export Excel
-          </button>
+          <ExportDropdown
+            onExportExcel={handleExportExcel}
+            onExportPdf={handleExportPdf}
+          />
 
           {/* QUICK ADD DROPDOWN */}
           <div className="relative group" ref={quickAddRef}>

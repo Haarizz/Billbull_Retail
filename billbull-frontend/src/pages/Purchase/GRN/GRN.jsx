@@ -84,10 +84,24 @@ import {
   findVendorRecord,
   resolvePurchasePrintTemplate
 } from '../../../utils/purchasePrintUtils';
+import ExportDropdown from '../../../components/common/ExportDropdown';
+import { exportToExcel, exportToPDF } from '../../../utils/exportUtils';
 
 // ==========================================
 // 1. MOCK DATA & CONFIGURATION
 // ==========================================
+
+const GRN_COLUMNS = [
+  { header: 'GRN No', key: 'idDisplay', width: 15 },
+  { header: 'Date', key: 'date', width: 12 },
+  { header: 'Vendor', key: 'vendor', width: 25 },
+  { header: 'LPO/DP', key: 'lpoNumber', width: 15 },
+  { header: 'Warehouse', key: 'warehouse', width: 20 },
+  { header: 'Packages', key: 'packages', width: 10 },
+  { header: 'Value', key: 'value', width: 15 },
+  { header: 'Status', key: 'status', width: 15 },
+  { header: 'Inv Status', key: 'invStatus', width: 15 }
+];
 
 const navTabs = [
   { id: "list", label: "GRN List", icon: FileText },
@@ -560,6 +574,7 @@ const CompareLPOModal = ({ isOpen, onClose, items }) => {
 
 // --- EDITOR VIEW (Detailed UI) ---
 const EditorView = ({ initialData, onSaveDraft, onSubmitQC, onPost, onPrint, grnType, setGrnType }) => {
+  const navigate = useNavigate();
   // Mock items linked from LPO
   const [items, setItems] = useState([]);
   const [vendors, setVendors] = useState([]);
@@ -984,10 +999,10 @@ const EditorView = ({ initialData, onSaveDraft, onSubmitQC, onPost, onPrint, grn
       rejected: 0,
       unitCost,
       lpoPrice: 0,
-      disc: 0,
+      disc: product.maxDiscount || 0,
       netCost: unitCost,
-      tax: product.taxRate || 5,
-      taxAmt: unitCost * ((product.taxRate || 5) / 100),
+      tax: parseFloat(product.purchaseTax) || parseFloat(product.taxRate) || 5,
+      taxAmt: unitCost * ((parseFloat(product.purchaseTax) || parseFloat(product.taxRate) || 5) / 100),
       total: unitCost,
       variance: 1, // Received 1 without LPO
       batch: false, // Default to false
@@ -998,7 +1013,7 @@ const EditorView = ({ initialData, onSaveDraft, onSubmitQC, onPost, onPrint, grn
       unitPrices: product.unitPrices || {},
       unitCosts: product.unitCosts || {}
     };
-    setItems(prev => [...prev, newItem]);
+    setItems(prev => [...prev, recalculateItemTotals(newItem)]);
     setIsProductSelectionOpen(false);
   };
 
@@ -1599,6 +1614,7 @@ const EditorView = ({ initialData, onSaveDraft, onSubmitQC, onPost, onPrint, grn
                     <th className="p-3 font-medium text-center text-emerald-600">Accepted</th>
                     <th className="p-3 font-medium text-center text-red-600">Rejected</th>
                     <th className="p-3 font-medium text-right">Unit Cost</th>
+                    <th className="p-3 font-medium text-center w-16">Disc %</th>
                     <th className="p-3 font-medium text-right">Net Cost</th>
                     <th className="p-3 font-medium text-right">Line Total</th>
                     <th className="p-3 font-medium text-center">Actions</th>
@@ -1669,6 +1685,17 @@ const EditorView = ({ initialData, onSaveDraft, onSubmitQC, onPost, onPrint, grn
                           />
                         </td>
                         <td className="p-3 text-right text-slate-500">{item.unitCost.toFixed(2)}</td>
+                        <td className="p-3 text-center">
+                          <input
+                            type="number"
+                            value={item.disc ?? 0}
+                            disabled={isLocked}
+                            onChange={(e) => handleQtyChange(item.id, 'disc', e.target.value)}
+                            onWheel={e => e.target.blur()}
+                            onPaste={e => e.preventDefault()}
+                            className="w-14 text-center border border-slate-200 rounded py-1 outline-none focus:ring-1 focus:ring-emerald-500 font-medium text-slate-700 disabled:opacity-50 bg-white"
+                          />
+                        </td>
                         <td className="p-3 text-right text-slate-700 font-medium">
                           {item.netCost.toFixed(2)}
                         </td>
@@ -1688,7 +1715,7 @@ const EditorView = ({ initialData, onSaveDraft, onSubmitQC, onPost, onPrint, grn
                       {/* Expanded Description Row */}
                       {expandedRows[item.id] && (
                         <tr className="bg-white">
-                          <td colSpan={12} className="px-0 pb-4 pt-1">
+                          <td colSpan={13} className="px-0 pb-4 pt-1">
                             <div className="ml-0 mr-4 p-3 rounded-r-[10px] border-l-[3px] border-[#FFD700] bg-[#FFFDE7]/60 shadow-[inset_0_1px_4px_rgba(0,0,0,0.02)]">
                               <div className="flex justify-between items-center mb-1.5">
                                 <div className="flex items-center gap-1.5 text-[9px] font-bold text-[#B8860B] tracking-widest uppercase">
@@ -1829,11 +1856,14 @@ const EditorView = ({ initialData, onSaveDraft, onSubmitQC, onPost, onPrint, grn
             </div>
             <div className="bg-slate-50 bg-opacity-50 rounded p-3 text-[9px] space-y-1.5 font-mono text-slate-600 border border-slate-100">
               <div className="flex justify-between font-bold text-blue-700 mb-1 border-b border-blue-100 pb-1">GRNI Posting Preview</div>
-              <div className="flex justify-between"><span>Dr. Inventory</span><span>1698.80</span></div>
-              <div className="flex justify-between"><span>Cr. GRNI</span><span>1698.80</span></div>
-              <div className="flex justify-between"><span>Dr. VAT Recoverable</span><span>84.94</span></div>
+              <div className="flex justify-between"><span>Dr. Inventory</span><span>{totals.netTotal.toFixed(2)}</span></div>
+              <div className="flex justify-between"><span>Dr. VAT Recoverable</span><span>{totals.taxTotal.toFixed(2)}</span></div>
+              <div className="flex justify-between font-bold pt-1 border-t border-slate-200 mt-1"><span>Cr. GRNI (Accrued)</span><span>{(totals.netTotal + totals.taxTotal).toFixed(2)}</span></div>
             </div>
-            <button className="w-full mt-2 py-1 border border-slate-200 rounded text-xs font-medium text-slate-500 hover:bg-slate-50 flex items-center justify-center gap-1">
+            <button
+              onClick={() => navigate('/finance/ledger')}
+              className="w-full mt-2 py-1 border border-slate-200 rounded text-xs font-medium text-slate-500 hover:bg-slate-50 flex items-center justify-center gap-1"
+            >
               <Eye className="h-3 w-3" /> View Details
             </button>
           </div>
@@ -2020,6 +2050,32 @@ const GRN = () => {
   };
 
 
+
+
+  const filteredData = useMemo(() => {
+    return grns.filter(item => {
+      if (activeFilter === "All GRNs") return true;
+      if (activeFilter === "Today") {
+        const today = new Date().toISOString().split('T')[0];
+        return item.date === today;
+      }
+      if (activeFilter === "QC Pending") return item.status === GRN_STATUS.QC_PENDING;
+      if (activeFilter === "Pending Invoice") return item.status === GRN_STATUS.POSTED && item.invStatus !== 'Fully Invoiced';
+      if (activeFilter === "With Variance") return item.hasVariance || (item.variance && item.variance !== 0);
+      if (activeFilter === "Completed") return item.status === GRN_STATUS.QC_COMPLETED || item.status === GRN_STATUS.POSTED;
+      if (activeFilter === "Reversed") return item.status === GRN_STATUS.REVERSED;
+      return true;
+    });
+  }, [grns, activeFilter]);
+
+  const handleExportExcel = () => {
+    exportToExcel(filteredData, GRN_COLUMNS, 'GRN_List');
+  };
+
+  const handleExportPdf = () => {
+    exportToPDF(filteredData, GRN_COLUMNS, 'Goods Receipt Notes (GRN)', 'GRN_List');
+  };
+
   const handleSubmitQC = async (formData, items) => {
     // 1. Validation
     if (!items || items.length === 0) {
@@ -2171,7 +2227,7 @@ const GRN = () => {
     switch (activeNavTab) {
       case 'list':
         return <GRNListView
-          data={grns}
+          data={filteredData}
           onView={handleEdit}
           onEdit={handleEdit}
           onDelete={handleDelete}
@@ -2200,7 +2256,7 @@ const GRN = () => {
       // case 'putaway': return <PutawayView />;
       // case 'performance': return <VendorPerformanceView />;
       default: return <GRNListView
-        data={grns}
+        data={filteredData}
         onView={handleEdit}
         onEdit={handleEdit}
         onDelete={handleDelete}
@@ -2248,7 +2304,10 @@ const GRN = () => {
             >
               <ArrowLeft className="h-4 w-4" /> Back
             </button>
-            {/* Import/Export Buttons Removed */}
+            <ExportDropdown
+              onExportExcel={handleExportExcel}
+              onExportPdf={handleExportPdf}
+            />
             <button
               onClick={handleNewGRN}
               className="flex-1 sm:flex-none h-8 px-4 rounded-md bg-[#F5C742] hover:bg-[#E5B732] text-slate-900 flex items-center justify-center gap-1.5 text-sm font-bold shadow-sm transition-colors"

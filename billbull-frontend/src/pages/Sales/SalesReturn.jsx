@@ -31,6 +31,8 @@ import {
    RefreshCw,
    Mail
 } from 'lucide-react';
+import ExportDropdown from '../../components/common/ExportDropdown';
+import { exportToExcel, exportToPDF } from '../../utils/exportUtils';
 
 // ✅ DYNAMIC UI COMPONENTS
 
@@ -47,6 +49,20 @@ import {
 import { getAllSalesInvoices } from '../../api/salesInvoiceApi';
 
 // ==========================================
+// 1. CONFIGURATION
+// ==========================================
+
+const SALES_RETURN_COLUMNS = [
+   { header: 'Return No', key: 'returnNumber', width: 15 },
+   { header: 'Date', key: 'returnDate', width: 12 },
+   { header: 'Customer', key: 'customerName', width: 25 },
+   { header: 'Invoice Ref', key: 'linkedInvoice', width: 15 },
+   { header: 'Reason', key: 'reason', width: 20 },
+   { header: 'Credit Amount', key: 'totalAmount', width: 15 },
+   { header: 'Status', key: 'status', width: 12 }
+];
+
+// ==========================================
 // SALES RETURN MODULE COMPONENT
 // ==========================================
 
@@ -58,6 +74,8 @@ const SalesReturn = () => {
    // --- DATA LIST STATES ---
    const [returnsList, setReturnsList] = useState([]);
    const [invoicesList, setInvoicesList] = useState([]);
+   const [searchQuery, setSearchQuery] = useState('');
+   const [statusFilter, setStatusFilter] = useState('All Status');
 
    // --- FORM STATES ---
    const [returnId, setReturnId] = useState(null);
@@ -360,6 +378,20 @@ const SalesReturn = () => {
    };
 
    // ==========================================
+   // FILTER LOGIC
+   // ==========================================
+   const filteredReturns = returnsList.filter(ret => {
+      const matchesSearch = !searchQuery || 
+         ret.returnNumber.toLowerCase().includes(searchQuery.toLowerCase()) ||
+         ret.customerName.toLowerCase().includes(searchQuery.toLowerCase()) ||
+         ret.customerCode.toLowerCase().includes(searchQuery.toLowerCase());
+      
+      const matchesStatus = statusFilter === 'All Status' || ret.status === statusFilter.toUpperCase();
+      
+      return matchesSearch && matchesStatus;
+   });
+
+   // ==========================================
    // RENDER
    // ==========================================
    return (
@@ -463,7 +495,13 @@ const SalesReturn = () => {
                            <div className="md:col-span-2 relative">
                               <label className="block text-[10px] font-bold text-slate-500 mb-1">Search</label>
                               <Search className="absolute left-3 top-[26px] text-slate-400" size={14} />
-                              <input type="text" placeholder="Search by return no or customer..." className="w-full pl-9 pr-3 py-2 text-xs border border-slate-200 rounded-md focus:outline-none focus:border-[#F5C742]" />
+                              <input 
+                                 type="text" 
+                                 placeholder="Search by return no or customer..." 
+                                 className="w-full pl-9 pr-3 py-2 text-xs border border-slate-200 rounded-md focus:outline-none focus:border-[#F5C742]"
+                                 value={searchQuery}
+                                 onChange={(e) => setSearchQuery(e.target.value)}
+                              />
                            </div>
                            <div>
                               <label className="block text-[10px] font-bold text-slate-500 mb-1">Date Range</label>
@@ -475,20 +513,29 @@ const SalesReturn = () => {
                            </div>
                            <div>
                               <label className="block text-[10px] font-bold text-slate-500 mb-1">Status</label>
-                              <select className="w-full px-3 py-2 text-xs border border-slate-200 rounded-md bg-white text-slate-600 font-medium">
+                              <select 
+                                 className="w-full px-3 py-2 text-xs border border-slate-200 rounded-md bg-white text-slate-600 font-medium"
+                                 value={statusFilter}
+                                 onChange={(e) => setStatusFilter(e.target.value)}
+                              >
                                  <option>All Status</option>
                                  <option>Draft</option>
                                  <option>Approved</option>
+                                 <option>Cancelled</option>
                               </select>
                            </div>
-                           <div className="md:col-span-2">
-                              <button
-                                 onClick={handleCreateNew}
-                                 className="w-full flex items-center justify-center gap-2 px-4 py-2 bg-[#F5C742] rounded-md text-xs font-bold text-slate-900 hover:bg-yellow-400 shadow-sm transition-colors"
-                              >
-                                 <Plus size={14} /> New Sales Return
-                              </button>
-                           </div>
+                            <div className="md:col-span-2 flex gap-2">
+                               <ExportDropdown
+                                   onExportExcel={() => exportToExcel(filteredReturns, SALES_RETURN_COLUMNS, 'Sales_Returns')}
+                                   onExportPdf={() => exportToPDF(filteredReturns, SALES_RETURN_COLUMNS, 'Sales Returns List', 'Sales_Returns')}
+                               />
+                               <button
+                                  onClick={handleCreateNew}
+                                  className="w-full flex items-center justify-center gap-2 px-4 py-2 bg-[#F5C742] rounded-md text-xs font-bold text-slate-900 hover:bg-yellow-400 shadow-sm transition-colors"
+                               >
+                                  <Plus size={14} /> New Sales Return
+                               </button>
+                            </div>
                         </div>
                      </div>
 
@@ -508,7 +555,7 @@ const SalesReturn = () => {
                               </tr>
                            </thead>
                            <tbody className="divide-y divide-slate-100">
-                              {returnsList.map((ret) => (
+                              {filteredReturns.map((ret) => (
                                  <tr key={ret.id} className="hover:bg-slate-50 cursor-pointer group" onClick={() => handleViewReturn(ret)}>
                                     <td className="px-4 py-3 font-bold text-slate-700">{ret.returnNumber}</td>
                                     <td className="px-4 py-3 text-slate-500">{ret.returnDate}</td>
@@ -534,7 +581,7 @@ const SalesReturn = () => {
                                     </td>
                                  </tr>
                               ))}
-                              {returnsList.length === 0 && (
+                              {filteredReturns.length === 0 && (
                                  <tr>
                                     <td colSpan="8" className="text-center py-20">
                                        <div className="flex flex-col items-center justify-center text-slate-400">

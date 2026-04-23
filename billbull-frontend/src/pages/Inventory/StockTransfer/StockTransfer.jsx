@@ -4,6 +4,22 @@ import {
     AlertTriangle, Check, Clock, User, Calendar, ArrowRight, Save, Send, CheckCircle2,
     AlertCircle, X, MoreHorizontal, Eye, Edit, Printer, RefreshCw, Copy, Sparkles, Lightbulb, Info, List, ShieldCheck
 } from 'lucide-react';
+import ExportDropdown from '../../../components/common/ExportDropdown';
+import { exportToExcel, exportToPDF } from '../../../utils/exportUtils';
+
+// ==========================================
+// CONFIGURATION
+// ==========================================
+
+const STOCK_TRANSFER_COLUMNS = [
+    { header: 'Transfer No', key: 'transferNo', width: 20 },
+    { header: 'Date', key: 'transferDate', width: 15 },
+    { header: 'From Warehouse', key: 'fromWarehouseName', width: 25 },
+    { header: 'To Warehouse', key: 'toWarehouseName', width: 25 },
+    { header: 'Status', key: 'status', width: 15 },
+    { header: 'Requested By', key: 'requestedBy', width: 20 },
+    { header: 'Total Value', key: 'totalTransferValue', width: 15 }
+];
 import {
     getWarehouses, getWarehouseProductStock, getAggregateLocationStock,
     getWarehouseZones, getZoneLocators, getLocatorBins
@@ -389,6 +405,10 @@ const TransferHistoryView = ({ data, warehouses, onView, onSend, onPrint }) => {
                     <h3 className="font-bold text-slate-800">Transfer Records</h3>
                 </div>
                 <div className="flex gap-2">
+                    <ExportDropdown
+                        onExportExcel={() => exportToExcel(data, STOCK_TRANSFER_COLUMNS, 'StockTransfers')}
+                        onExportPdf={() => exportToPDF(data, STOCK_TRANSFER_COLUMNS, 'Stock Transfer Records', 'StockTransfers')}
+                    />
                     <div className="relative">
                         <input type="text" placeholder="Search transfers..." className="h-9 w-64 bg-slate-50 border border-slate-200 rounded-lg px-9 text-xs outline-none focus:bg-white focus:ring-1 focus:ring-[#F5C742] transition-all" />
                         <Search size={14} className="absolute left-3 top-2.5 text-slate-400" />

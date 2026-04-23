@@ -34,6 +34,22 @@ import { getTemplatesByCategory } from '../../api/printTemplateApi';
 import { generatePrintHtml, printHtml } from '../../utils/printGenerator';
 import { useCompany } from '../../context/CompanyContext';
 import billBullLogo from '../../assets/billBullLogo.png';
+import ExportDropdown from '../../components/common/ExportDropdown';
+import { exportToExcel, exportToPDF } from '../../utils/exportUtils';
+
+// ==========================================
+// 1. CONFIGURATION
+// ==========================================
+
+const PAYMENT_COLUMNS = [
+    { header: 'Payment No', key: 'paymentNo', width: 15 },
+    { header: 'Date', key: 'date', width: 12 },
+    { header: 'Customer', key: 'customerName', width: 25 },
+    { header: 'Invoice No', key: 'invoiceNo', width: 15 },
+    { header: 'Amount', key: 'amount', width: 15 },
+    { header: 'Mode', key: 'mode', width: 12 },
+    { header: 'Status', key: 'status', width: 12 }
+];
 
 // ==========================================
 // PAYMENT MODULE COMPONENT
@@ -48,6 +64,8 @@ const Payment = () => {
     const [paymentsList, setPaymentsList] = useState([]);
     const [customersList, setCustomersList] = useState([]);
     const [invoicesList, setInvoicesList] = useState([]);
+    const [searchQuery, setSearchQuery] = useState('');
+    const [statusFilter, setStatusFilter] = useState('All Status');
 
     // --- FORM STATES ---
     const [paymentId, setPaymentId] = useState(null);
@@ -478,6 +496,23 @@ const Payment = () => {
     };
 
     // ==========================================
+    // FILTER LOGIC
+    // ==========================================
+    const filteredPayments = useMemo(() => {
+        return paymentsList.filter(p => {
+            const matchesSearch = !searchQuery || 
+                p.paymentNo.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                p.customerName.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                p.customerCode.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                p.invoiceNo.toLowerCase().includes(searchQuery.toLowerCase());
+            
+            const matchesStatus = statusFilter === 'All Status' || p.status === statusFilter;
+            
+            return matchesSearch && matchesStatus;
+        });
+    }, [paymentsList, searchQuery, statusFilter]);
+
+    // ==========================================
     // RENDER
     // ==========================================
     return (
@@ -581,7 +616,13 @@ const Payment = () => {
                                     <div className="md:col-span-2 relative">
                                         <label className="block text-[10px] font-bold text-slate-500 mb-1">Search</label>
                                         <Search className="absolute left-3 top-[26px] text-slate-400" size={14} />
-                                        <input type="text" placeholder="Search payments..." className="w-full pl-9 pr-3 py-2 text-xs border border-slate-200 rounded-md focus:outline-none focus:border-[#F5C742]" />
+                                        <input 
+                                            type="text" 
+                                            placeholder="Search payments..." 
+                                            className="w-full pl-9 pr-3 py-2 text-xs border border-slate-200 rounded-md focus:outline-none focus:border-[#F5C742]" 
+                                            value={searchQuery}
+                                            onChange={(e) => setSearchQuery(e.target.value)}
+                                        />
                                     </div>
                                     <div>
                                         <label className="block text-[10px] font-bold text-slate-500 mb-1">Date Range</label>
@@ -594,14 +635,23 @@ const Payment = () => {
                                     </div>
                                     <div>
                                         <label className="block text-[10px] font-bold text-slate-500 mb-1">Status</label>
-                                        <select className="w-full px-3 py-2 text-xs border border-slate-200 rounded-md bg-white text-slate-600">
+                                        <select 
+                                            className="w-full px-3 py-2 text-xs border border-slate-200 rounded-md bg-white text-slate-600"
+                                            value={statusFilter}
+                                            onChange={(e) => setStatusFilter(e.target.value)}
+                                        >
                                             <option>All Status</option>
                                             <option>Completed</option>
                                             <option>Partial</option>
                                             <option>Pending</option>
+                                            <option>Cancelled</option>
                                         </select>
                                     </div>
-                                    <div>
+                                    <div className="flex gap-2">
+                                        <ExportDropdown
+                                            onExportExcel={() => exportToExcel(filteredPayments, PAYMENT_COLUMNS, 'Sales_Payments')}
+                                            onExportPdf={() => exportToPDF(filteredPayments, PAYMENT_COLUMNS, 'Sales Payments List', 'Sales_Payments')}
+                                        />
                                         <button
                                             onClick={handleCreateNew}
                                             className="w-full flex items-center justify-center gap-2 px-4 py-2 bg-[#F5C742] rounded-md text-xs font-bold text-slate-900 hover:bg-yellow-400 shadow-sm transition-colors"
@@ -629,7 +679,7 @@ const Payment = () => {
                                         </tr>
                                     </thead>
                                     <tbody className="divide-y divide-slate-100">
-                                        {paymentsList.map((payment) => (
+                                        {filteredPayments.map((payment) => (
                                             <tr key={payment.id} className="hover:bg-slate-50 cursor-pointer group" onClick={() => handleViewPayment(payment)}>
                                                 <td className="px-4 py-3 font-medium text-slate-700">{payment.paymentNo}</td>
                                                 <td className="px-4 py-3 text-slate-500">{payment.date}</td>
@@ -658,7 +708,7 @@ const Payment = () => {
                                                 </td>
                                             </tr>
                                         ))}
-                                        {paymentsList.length === 0 && (
+                                        {filteredPayments.length === 0 && (
                                             <tr>
                                                 <td colSpan="10" className="text-center py-8 text-slate-400">No payments found</td>
                                             </tr>

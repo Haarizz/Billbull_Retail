@@ -30,6 +30,8 @@ import {
   AlertTriangle,
   RotateCcw
 } from 'lucide-react';
+import ExportDropdown from '../../components/common/ExportDropdown';
+import { exportToExcel, exportToPDF } from '../../utils/exportUtils';
 
 // Import API functions
 import * as api from '../../api/ledgerApi';
@@ -82,6 +84,43 @@ const CustomSelect = ({ label, placeholder, options, value, onChange }) => {
     </div>
   );
 };
+
+// = ::::::::::::::::::::::::::::::::::::::
+// 1. CONFIGURATION (Standard Export)
+// = ::::::::::::::::::::::::::::::::::::::
+
+const ACCOUNT_COLUMNS = [
+  { header: 'Code', key: 'code', width: 15 },
+  { header: 'Account Name', key: 'name', width: 25 },
+  { header: 'Group', key: 'group', width: 15 },
+  { header: 'Branch', key: 'branch', width: 15 },
+  { header: 'Cost Center', key: 'cc', width: 15 },
+  { header: 'Balance', key: 'balance', width: 20 },
+  { header: 'Status', key: 'status', width: 12 }
+];
+
+const GL_COLUMNS = [
+  { header: 'Date', key: 'date', width: 12 },
+  { header: 'Voucher', key: 'voucher', width: 15 },
+  { header: 'Type', key: 'type', width: 12 },
+  { header: 'Account', key: 'accName', width: 25 },
+  { header: 'Description', key: 'desc', width: 30 },
+  { header: 'Debit', key: 'debit', width: 15 },
+  { header: 'Credit', key: 'credit', width: 15 },
+  { header: 'Balance', key: 'balance', width: 20 }
+];
+
+const COST_CENTER_COLUMNS = [
+  { header: 'Code', key: 'code', width: 15 },
+  { header: 'Name', key: 'name', width: 25 },
+  { header: 'Manager', key: 'manager', width: 20 },
+  { header: 'Branch', key: 'branch', width: 15 },
+  { header: 'Budget', key: 'budget', width: 15 },
+  { header: 'Spent', key: 'spent', width: 15 },
+  { header: 'Status', key: 'status', width: 12 }
+];
+
+const TRANSACTION_COLUMNS = GL_COLUMNS; // Same as GL for now
 
 const Ledger = () => {
   const { branches, defaultBranchName } = useBranch();
@@ -583,9 +622,21 @@ const Ledger = () => {
           <p className="text-xs text-slate-500 mt-1">Manage chart of accounts, general ledger, cost centers, and financial transactions</p>
         </div>
         <div className="flex gap-2">
-          <button className="flex items-center gap-2 px-3 py-2 bg-white border border-slate-200 rounded text-xs font-bold text-slate-600 hover:bg-slate-50 shadow-sm">
-            <FileSpreadsheet size={16} /> Export Excel
-          </button>
+          <ExportDropdown
+            onExportExcel={() => {
+              if (activeTab === 'chart') exportToExcel(filteredAccounts, ACCOUNT_COLUMNS, 'Chart_of_Accounts');
+              else if (activeTab === 'gl') exportToExcel(filteredGlData, GL_COLUMNS, 'General_Ledger');
+              else if (activeTab === 'cost') exportToExcel(costCenters.map(cc => ({ ...cc, ...getCostCenterMetrics(cc.code) })), COST_CENTER_COLUMNS, 'Cost_Centers');
+              else if (activeTab === 'transactions') exportToExcel(glData, TRANSACTION_COLUMNS, 'Transactions_History');
+            }}
+            onExportPdf={() => {
+              if (activeTab === 'chart') exportToPDF(filteredAccounts, ACCOUNT_COLUMNS, 'Chart of Accounts', 'Chart_of_Accounts');
+              else if (activeTab === 'gl') exportToPDF(filteredGlData, GL_COLUMNS, 'General Ledger', 'General_Ledger');
+              else if (activeTab === 'cost') exportToPDF(costCenters.map(cc => ({ ...cc, ...getCostCenterMetrics(cc.code) })), COST_CENTER_COLUMNS, 'Cost Centers', 'Cost_Centers');
+              else if (activeTab === 'transactions') exportToPDF(glData, TRANSACTION_COLUMNS, 'Transactions History', 'Transactions_History');
+            }}
+          />
+          
           
           {/* QUICK ADD DROPDOWN */}
           <div className="relative group" ref={quickAddRef}>
