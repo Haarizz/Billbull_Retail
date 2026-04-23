@@ -190,6 +190,7 @@ const SalesInvoice = () => {
     const [linkedSO, setLinkedSO] = useState('');
     const [linkedDN, setLinkedDN] = useState('');
     const [linkedPI, setLinkedPI] = useState('');
+    const [shippingAddress, setShippingAddress] = useState('');
 
     // Payment Details
     const [paymentMode, setPaymentMode] = useState('Cash');
@@ -713,6 +714,7 @@ const SalesInvoice = () => {
         if (isGeneratedFromDN) return; // Prevent changing customer if locked
 
         setSelectedCustomer(cust);
+        setShippingAddress(cust.shippingAddress || cust.billingAddress || cust.address || '');
         setIsCustomerOpen(false);
         setIsCustomerSearchOpen(false);
 
@@ -1141,6 +1143,7 @@ const SalesInvoice = () => {
         if (items.length > 1) setItems(items.filter(i => i.id !== id));
     };
 
+
     const handleSave = async (newStatus = 'Draft') => {
         if (!selectedCustomer) { alert("Please select a customer"); return; }
 
@@ -1167,6 +1170,7 @@ const SalesInvoice = () => {
             paymentTerms: paymentTerms,
             salesperson: salesperson,
             branch: branch,
+            shippingAddress: shippingAddress,
 
             amountPaid: Number(amountCollected),
             status: newStatus === 'Confirmed' ? 'CONFIRMED' : 'DRAFT',
@@ -1232,6 +1236,7 @@ const SalesInvoice = () => {
             code: invoice.customerCode,
             name: invoice.customerName
         });
+        setShippingAddress(invoice.shippingAddress || '');
 
         setLinkedSO(invoice.linkedSalesOrder || '');
         setLinkedDN(invoice.linkedDeliveryNote || '');
@@ -1397,7 +1402,7 @@ const SalesInvoice = () => {
                     date: dataToPrint.invoiceDate,
                     customer: {
                         name: dataToPrint.customerName || '',
-                        address: fullCustomer?.address || fullCustomer?.billingAddress || '',
+                        address: dataToPrint.shippingAddress || shippingAddress || fullCustomer?.address || fullCustomer?.billingAddress || '',
                         trn: fullCustomer?.trn
                     },
                     items: (dataToPrint.items || []).map(i => ({
@@ -2051,6 +2056,17 @@ const SalesInvoice = () => {
                                                         Outstanding: <span className="font-bold text-slate-700">{selectedCustomer.balance ? Number(selectedCustomer.balance).toFixed(2) : '0.00'} AED</span>
                                                     </div>
                                                 </div>
+                                            </div>
+
+                                            <div className="mt-4 pt-3 border-t border-slate-200">
+                                                <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Billing / Shipping Address</label>
+                                                <textarea
+                                                    value={shippingAddress}
+                                                    onChange={e => setShippingAddress(e.target.value)}
+                                                    rows="2"
+                                                    className="w-full text-[11px] p-2 border border-slate-200 rounded bg-white focus:outline-none focus:border-yellow-400 resize-none"
+                                                    placeholder="Enter address details..."
+                                                />
                                             </div>
 
                                             {salesSettings?.creditLimitPolicy === 'WARNING' &&

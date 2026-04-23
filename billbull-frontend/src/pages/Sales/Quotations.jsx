@@ -1,4 +1,4 @@
-﻿import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import {
     Printer,
@@ -1145,6 +1145,12 @@ const Quotations = () => {
             setToastMessage(`Restored items from ${revision.qtnNoDisplay}`);
             setShowToast(true);
         }
+    };
+
+    const handleSelectCustomer = (cust) => {
+        setCustomer(`${cust.name} - ${cust.code}`);
+        setShippingAddress(cust.shippingAddress || cust.billingAddress || cust.address || '');
+        setIsCustomerSearchOpen(false);
     };
 
 
@@ -2331,9 +2337,7 @@ const Quotations = () => {
                                     <CustomerSelector
                                         isOpen={!isViewMode && isCustomerSearchOpen}
                                         onClose={() => setIsCustomerSearchOpen(false)}
-                                        onSelect={(cust) => {
-                                            setCustomer(`${cust.name} - ${cust.code}`);
-                                        }}
+                                        onSelect={handleSelectCustomer}
                                         customers={customersList}
                                         selectedCode={selectedCustomerData?.code || ''}
                                         onCustomerCreated={refreshData}
