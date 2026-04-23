@@ -8,7 +8,25 @@
  */
 export const getImageUrl = (path) => {
   if (!path) return "";
-  if (path.startsWith("http") || path.startsWith("data:")) return path;
-  const base = import.meta.env.VITE_API_BASE_URL || window.location.origin;
-  return `${base}${path}`;
+  if (
+    path.startsWith("http://") ||
+    path.startsWith("https://") ||
+    path.startsWith("data:") ||
+    path.startsWith("blob:")
+  ) {
+    return path;
+  }
+
+  if (path.startsWith("//")) {
+    return `${window.location.protocol}${path}`;
+  }
+
+  const base = (import.meta.env.VITE_API_BASE_URL || window.location.origin).replace(/\/$/, "");
+  const normalizedPath = String(path).trim();
+
+  if (!normalizedPath) return "";
+
+  return normalizedPath.startsWith("/")
+    ? `${base}${normalizedPath}`
+    : `${base}/${normalizedPath}`;
 };

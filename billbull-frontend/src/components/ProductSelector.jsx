@@ -2,7 +2,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Search, Plus, X, Box, Loader2, ChevronLeft, ChevronRight, Clock, Folder, Package, Tag } from 'lucide-react';
 import { getImageUrl } from '../utils/urlUtils';
-import { getProductsList, createProduct } from '../api/productsApi';
+import { getProductsList, createProduct, getProductById } from '../api/productsApi';
 import { getBrands } from '../api/brandsApi';
 import { getUnits } from '../api/unitsApi';
 const PAGE_SIZE = 15;
@@ -11,16 +11,104 @@ const MAX_RECENT = 5;
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-const getRecent = () => {
-    try { return JSON.parse(localStorage.getItem(RECENT_KEY) || '[]'); }
-    catch { return []; }
+const normalizeProductId = (value) => {
+    const numericId = Number(value);
+    return Number.isInteger(numericId) && numericId > 0 ? numericId : null;
+};
+
+const normalizeRecentIds = (value) => {
+    if (!Array.isArray(value)) return [];
+
+    const normalizedIds = value
+        .map(item => {
+            if (item == null) return null;
+            if (typeof item === 'object') return normalizeProductId(item.id ?? item.productId);
+            return normalizeProductId(item);
+        })
+        .filter(Boolean);
+
+    return [...new Set(normalizedIds)].slice(0, MAX_RECENT);
+};
+
+const persistRecentIds = (ids) => {
+    try {
+        localStorage.setItem(RECENT_KEY, JSON.stringify(normalizeRecentIds(ids)));
+    } catch {
+        // Ignore localStorage write failures in private mode or restricted browsers.
+    }
+};
+
+const getRecentIds = () => {
+    try {
+        const stored = JSON.parse(localStorage.getItem(RECENT_KEY) || '[]');
+        const normalizedIds = normalizeRecentIds(stored);
+
+        // Migrate older localStorage entries that stored full product snapshots.
+        if (JSON.stringify(stored) !== JSON.stringify(normalizedIds)) {
+            persistRecentIds(normalizedIds);
+        }
+
+        return normalizedIds;
+    } catch {
+        return [];
+    }
+};
+
+const normalizeRecentProduct = (product, detail = null) => {
+    const detailProduct = detail?.product || {};
+    const primaryUnitName = detail?.inventory?.defaultUnit?.name || '';
+    const normalizedId = normalizeProductId(product?.id ?? detailProduct?.id);
+    const primaryBarcode = detail?.inventory?.packings?.find?.(packing => packing?.barcode)?.barcode || '';
+    const primaryImage =
+        detail?.primaryImage ||
+        detailProduct?.primaryImage ||
+        product?.primaryImage ||
+        product?.image ||
+        '';
+
+    return {
+        ...detailProduct,
+        ...product,
+        id: normalizedId,
+        name: detailProduct?.name || product?.name || '',
+        code: detailProduct?.code || product?.code || '',
+        sku: detailProduct?.sku || product?.sku || detailProduct?.code || product?.code || '',
+        description:
+            detailProduct?.shortDesc ||
+            detailProduct?.description ||
+            product?.description ||
+            product?.shortDesc ||
+            detailProduct?.name ||
+            product?.name ||
+            '',
+        image: primaryImage,
+        primaryImage,
+        barcode: product?.barcode || primaryBarcode || '',
+        cost: detail?.pricing?.cost ?? product?.cost ?? null,
+        retailPrice: detail?.pricing?.retailPrice ?? product?.retailPrice ?? product?.sellingPrice ?? null,
+        sellingPrice: detail?.pricing?.retailPrice ?? product?.sellingPrice ?? product?.retailPrice ?? null,
+        stock: product?.stock ?? detailProduct?.stock ?? 0,
+        category:
+            product?.category ||
+            product?.departmentName ||
+            detailProduct?.category ||
+            detailProduct?.department?.name ||
+            'General',
+        departmentName: product?.departmentName || detailProduct?.department?.name || null,
+        unitName: product?.unitName || detailProduct?.unitName || detailProduct?.unit || primaryUnitName || '',
+        pricing: detail?.pricing || product?.pricing || null,
+        inventory: detail?.inventory || product?.inventory || null,
+        packings: product?.packings || detail?.inventory?.packings || [],
+    };
 };
 
 const saveRecent = (product) => {
-    const prev = getRecent().filter(p => p.id !== product.id);
-    // Store the complete product object to retain necessary fields (price, discount, etc.) later
-    const next = [product, ...prev].slice(0, MAX_RECENT);
-    localStorage.setItem(RECENT_KEY, JSON.stringify(next));
+    const productId = normalizeProductId(product?.id);
+    if (!productId) return [];
+
+    const next = [productId, ...getRecentIds().filter(id => id !== productId)].slice(0, MAX_RECENT);
+    persistRecentIds(next);
+    return next;
 };
 
 const StockBadge = ({ stock }) => {
@@ -237,15 +325,54 @@ const ProductSelector = ({
         }
     }, [customFetchFn]);
 
+    const loadRecentProducts = useCallback(async (isActive = () => true) => {
+        const recentIds = getRecentIds();
+        if (!recentIds.length) {
+            if (isActive()) setRecentProducts([]);
+            return;
+        }
+
+        const detailResults = await Promise.all(
+            recentIds.map(async (id) => {
+                try {
+                    const detail = await getProductById(id);
+                    return normalizeRecentProduct({ id }, detail);
+                } catch (error) {
+                    console.error(`Failed to refresh recent product ${id}:`, error);
+                    return null;
+                }
+            })
+        );
+
+        const detailMap = new Map(
+            detailResults
+                .filter(product => Number.isInteger(product?.id))
+                .map(product => [product.id, product])
+        );
+        const nextRecentProducts = recentIds
+            .map(id => detailMap.get(id))
+            .filter(Boolean)
+            .slice(0, MAX_RECENT);
+
+        persistRecentIds(nextRecentProducts.map(product => product.id));
+
+        if (isActive()) {
+            setRecentProducts(nextRecentProducts);
+        }
+    }, []);
+
     // Reset + load when modal opens; clean up on close
     useEffect(() => {
+        let active = true;
+
         if (isOpen) {
             setSearchQuery('');
             setPage(0);
             setInitialLoad(true);
             setProducts([]);
             setFocusedIdx(-1);
-            setRecentProducts(getRecent());
+            setRecentProducts([]);
+            loadRecentProducts(() => active);
             fetchProducts('', 0, warehouseId);
             setTimeout(() => searchInputRef.current?.focus(), 50);
         } else {
@@ -255,8 +382,13 @@ const ProductSelector = ({
             setTotalFound(0);
             setTotalPages(0);
             setInitialLoad(true);
+            setRecentProducts([]);
         }
-    }, [isOpen, warehouseId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+        return () => {
+            active = false;
+        };
+    }, [isOpen, warehouseId, loadRecentProducts]); // eslint-disable-line react-hooks/exhaustive-deps
 
     // Debounce search → always reset to page 0
     useEffect(() => {
@@ -314,6 +446,13 @@ const ProductSelector = ({
 
     const handleSelect = (product) => {
         saveRecent(product);
+        setRecentProducts(prev => {
+            const normalizedProduct = normalizeRecentProduct(product);
+            return [
+                normalizedProduct,
+                ...prev.filter(item => item.id !== normalizedProduct.id)
+            ].slice(0, MAX_RECENT);
+        });
         onSelect(product);
     };
 

@@ -6,6 +6,7 @@ import com.billbull.backend.inventory.warehouse.Locator;
 import com.billbull.backend.inventory.warehouse.Warehouse;
 import com.billbull.backend.inventory.warehouse.Zone;
 import jakarta.persistence.*;
+import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.List;
@@ -67,6 +68,18 @@ public class StockTransfer extends BaseEntity {
     private String driverName;
     private LocalDate dispatchDate;
     private LocalDate arrivalDate;
+
+    @Column(precision = 15, scale = 2)
+    private BigDecimal transportCharge = BigDecimal.ZERO;
+
+    @Column(precision = 15, scale = 2)
+    private BigDecimal additionalCharges = BigDecimal.ZERO;
+
+    @Column(precision = 15, scale = 2)
+    private BigDecimal inventoryValue = BigDecimal.ZERO;
+
+    @Column(precision = 15, scale = 2)
+    private BigDecimal totalTransferValue = BigDecimal.ZERO;
 
     @OneToMany(mappedBy = "stockTransfer", cascade = CascadeType.ALL, orphanRemoval = true)
     private List<StockTransferItem> items = new ArrayList<>();
@@ -230,6 +243,38 @@ public class StockTransfer extends BaseEntity {
 
     public void setArrivalDate(LocalDate arrivalDate) {
         this.arrivalDate = arrivalDate;
+    }
+
+    public BigDecimal getTransportCharge() {
+        return transportCharge;
+    }
+
+    public void setTransportCharge(BigDecimal transportCharge) {
+        this.transportCharge = transportCharge;
+    }
+
+    public BigDecimal getAdditionalCharges() {
+        return additionalCharges;
+    }
+
+    public void setAdditionalCharges(BigDecimal additionalCharges) {
+        this.additionalCharges = additionalCharges;
+    }
+
+    public BigDecimal getInventoryValue() {
+        return inventoryValue;
+    }
+
+    public void setInventoryValue(BigDecimal inventoryValue) {
+        this.inventoryValue = inventoryValue;
+    }
+
+    public BigDecimal getTotalTransferValue() {
+        return totalTransferValue;
+    }
+
+    public void setTotalTransferValue(BigDecimal totalTransferValue) {
+        this.totalTransferValue = totalTransferValue;
     }
 
     public List<StockTransferItem> getItems() {

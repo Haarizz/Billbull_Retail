@@ -12,7 +12,7 @@ import {
 import {
     getStockTransfers, createStockTransfer, updateStockTransfer,
     deleteStockTransfer, sendStockTransfer, receiveStockTransfer,
-    requestStockTransferApproval, cancelStockTransfer
+    requestStockTransferApproval, cancelStockTransfer, getStockTransferCostPreview
 } from '../../../api/stockTransferApi';
 import { toast } from 'react-hot-toast';
 import ProductSelector from '../../../components/ProductSelector';
@@ -23,6 +23,67 @@ import ProductSelector from '../../../components/ProductSelector';
 
 const transferReasons = ["Stock Rebalancing", "Low Stock Alert", "Seasonal Demand", "Store Opening", "Return to Warehouse", "Quality Issue", "Other"];
 const transportModes = ["Vehicle", "Courier", "Manual", "Internal"];
+
+const parseFiniteNumber = (value) => {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+};
+
+const toNumber = (value, fallback = 0) => {
+    const parsed = parseFiniteNumber(value);
+    return parsed ?? fallback;
+};
+
+const formatCurrency = (value) => `AED ${toNumber(value).toLocaleString(undefined, {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2
+})}`;
+
+const recalculateItemFinancials = (item) => {
+    const quantity = toNumber(item.quantity);
+    const unitCost = parseFiniteNumber(item.unitCost);
+    return {
+        ...item,
+        unitCost,
+        lineValue: unitCost == null ? null : Number((unitCost * quantity).toFixed(2))
+    };
+};
+
+const applyCostPreviewToItems = (targetItems, previewItems = []) => {
+    const previewMap = new Map(
+        (previewItems || []).map(item => [Number(item.productId), item])
+    );
+
+    return targetItems.map(item => {
+        const preview = previewMap.get(Number(item.productId));
+        if (!preview) {
+            return recalculateItemFinancials(item);
+        }
+
+        return recalculateItemFinancials({
+            ...item,
+            unitCost: preview.costAvailable ? parseFiniteNumber(preview.unitCost) : null,
+            costSource: preview.costSource || null,
+            costAvailable: Boolean(preview.costAvailable)
+        });
+    });
+};
+
+const calculateTransferTotals = (items, transportCharge, additionalCharges) => {
+    const inventoryValue = items.reduce((sum, item) => sum + toNumber(item.lineValue), 0);
+    const qty = items.reduce((sum, item) => sum + toNumber(item.quantity), 0);
+    const totalCharges = toNumber(transportCharge) + toNumber(additionalCharges);
+    return {
+        qty,
+        items: items.length,
+        inventoryValue,
+        totalCharges,
+        totalValue: inventoryValue + totalCharges,
+        avgCostPerUnit: qty > 0 ? inventoryValue / qty : 0,
+        warningsCount: items.reduce((sum, item) => sum + (item.status === 'Insufficient' ? 1 : 0), 0),
+        missingCostCount: items.reduce((sum, item) => sum + (item.productId && !item.costAvailable ? 1 : 0), 0)
+    };
+};
 
 // ==========================================
 // HELPER COMPONENTS
@@ -153,6 +214,21 @@ const ViewTransferModal = ({ isOpen, onClose, data }) => {
                         </div>
                     </div>
 
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                        <div className="bg-blue-50/60 rounded-xl p-4 border border-blue-100/60">
+                            <p className="text-[10px] font-bold text-blue-500 uppercase mb-1">Inventory Value</p>
+                            <p className="text-xl font-bold text-slate-800">{formatCurrency(data.inventoryValue)}</p>
+                        </div>
+                        <div className="bg-orange-50/60 rounded-xl p-4 border border-orange-100/60">
+                            <p className="text-[10px] font-bold text-orange-500 uppercase mb-1">Logistics Charges</p>
+                            <p className="text-xl font-bold text-slate-800">{formatCurrency(toNumber(data.transportCharge) + toNumber(data.additionalCharges))}</p>
+                        </div>
+                        <div className="bg-emerald-50/60 rounded-xl p-4 border border-emerald-100/60">
+                            <p className="text-[10px] font-bold text-emerald-500 uppercase mb-1">Total Transfer Value</p>
+                            <p className="text-xl font-bold text-slate-800">{formatCurrency(data.totalTransferValue)}</p>
+                        </div>
+                    </div>
+
                     {/* Items Table */}
                     <div className="space-y-4">
                         <div className="flex items-center justify-between">
@@ -167,6 +243,8 @@ const ViewTransferModal = ({ isOpen, onClose, data }) => {
                                         <th className="px-4 py-3">Batch/Lot</th>
                                         <th className="px-4 py-3 text-center">Qty</th>
                                         <th className="px-4 py-3 text-center">UoM</th>
+                                        <th className="px-4 py-3 text-right">Unit Cost</th>
+                                        <th className="px-4 py-3 text-right">Line Value</th>
                                     </tr>
                                 </thead>
                                 <tbody className="divide-y divide-slate-50">
@@ -181,6 +259,8 @@ const ViewTransferModal = ({ isOpen, onClose, data }) => {
                                             <td className="px-4 py-3 font-mono text-slate-500">{item.batchNumber || '---'}</td>
                                             <td className="px-4 py-3 text-center font-bold text-slate-800">{item.quantity}</td>
                                             <td className="px-4 py-3 text-center"><span className="bg-slate-100 px-2 py-0.5 rounded font-bold">{item.uom}</span></td>
+                                            <td className="px-4 py-3 text-right font-semibold text-slate-700">{item.unitCostAtSend != null ? formatCurrency(item.unitCostAtSend) : 'Pending'}</td>
+                                            <td className="px-4 py-3 text-right font-bold text-slate-800">{formatCurrency(item.receivedLineValue ?? item.lineValue)}</td>
                                         </tr>
                                     ))}
                                 </tbody>
@@ -420,6 +500,10 @@ const ReceiveTransferView = ({ data, onReceive }) => {
                                 <span className="font-bold text-slate-700">{transfer.items?.length || 0} Products</span>
                             </div>
                             <div className="flex justify-between text-xs">
+                                <span className="text-slate-500">Transfer Value:</span>
+                                <span className="font-bold text-slate-700">{formatCurrency(transfer.totalTransferValue)}</span>
+                            </div>
+                            <div className="flex justify-between text-xs">
                                 <span className="text-slate-500">Sent Date:</span>
                                 <span className="font-bold text-slate-700">{transfer.transferDate}</span>
                             </div>
@@ -549,6 +633,35 @@ const CreateTransferView = ({ warehouses, onSubmit }) => {
         }
     }, [formData.toLocatorId]);
 
+    const loadCostPreview = async (targetItems, warehouseId) => {
+        if (!targetItems.length) return [];
+
+        if (!warehouseId) {
+            return targetItems.map(item => recalculateItemFinancials({
+                ...item,
+                unitCost: null,
+                costSource: null,
+                costAvailable: false
+            }));
+        }
+
+        try {
+            const preview = await getStockTransferCostPreview(
+                warehouseId,
+                targetItems.map(item => Number(item.productId)).filter(Boolean)
+            );
+            return applyCostPreviewToItems(targetItems, preview?.items || []);
+        } catch (error) {
+            console.error("Failed to load stock transfer cost preview:", error);
+            return targetItems.map(item => recalculateItemFinancials({
+                ...item,
+                unitCost: null,
+                costSource: null,
+                costAvailable: false
+            }));
+        }
+    };
+
     const refreshAllItemsStock = async () => {
         const { fromWarehouseId, fromZoneId, fromLocatorId, fromBinId, toWarehouseId, toZoneId, toLocatorId, toBinId } = formData;
         if (!fromWarehouseId) return;
@@ -606,7 +719,8 @@ const CreateTransferView = ({ warehouses, onSubmit }) => {
             return item;
         }));
 
-        setItems(updatedItems);
+        const pricedItems = await loadCostPreview(updatedItems, fromWarehouseId);
+        setItems(pricedItems);
     };
 
     const handleAddSingleProduct = async (productData) => {
@@ -627,7 +741,11 @@ const CreateTransferView = ({ warehouses, onSubmit }) => {
             available: 0,
             quantity: 1,
             batchNumber: "",
-            status: "Pending" // Will be validated by refresh
+            status: "Pending",
+            unitCost: null,
+            lineValue: null,
+            costSource: null,
+            costAvailable: false
         };
 
         const newItems = [...items, newItem];
@@ -637,18 +755,37 @@ const CreateTransferView = ({ warehouses, onSubmit }) => {
         // Fetch stock for this newly added item immediately
         if (formData.fromWarehouseId) {
             try {
-                const stock = await getWarehouseProductStock(formData.fromWarehouseId, productData.id, {
-                    zoneId: formData.fromZoneId,
-                    locatorId: formData.fromLocatorId,
-                    binId: formData.fromBinId
-                });
-                setItems(prev => prev.map(i => i.id === newItem.id ? {
+                const [stockResult, previewResult] = await Promise.allSettled([
+                    getWarehouseProductStock(formData.fromWarehouseId, productData.id, {
+                        zoneId: formData.fromZoneId,
+                        locatorId: formData.fromLocatorId,
+                        binId: formData.fromBinId
+                    }),
+                    getStockTransferCostPreview(formData.fromWarehouseId, [productData.id])
+                ]);
+
+                const stock = stockResult.status === 'fulfilled' ? stockResult.value : 0;
+                const previewItem = previewResult.status === 'fulfilled'
+                    ? previewResult.value?.items?.[0]
+                    : null;
+
+                setItems(prev => prev.map(i => i.id === newItem.id ? recalculateItemFinancials({
                     ...i,
                     available: stock,
-                    status: i.quantity > 0 ? (i.quantity <= stock ? "Valid" : "Insufficient") : "Valid"
-                } : i));
+                    status: i.quantity > 0 ? (i.quantity <= stock ? "Valid" : "Insufficient") : "Valid",
+                    unitCost: previewItem?.costAvailable ? parseFiniteNumber(previewItem.unitCost) : null,
+                    costSource: previewItem?.costSource || null,
+                    costAvailable: Boolean(previewItem?.costAvailable)
+                }) : i));
             } catch (e) {
-                setItems(prev => prev.map(i => i.id === newItem.id ? { ...i, available: 0, status: "Error" } : i));
+                setItems(prev => prev.map(i => i.id === newItem.id ? recalculateItemFinancials({
+                    ...i,
+                    available: 0,
+                    status: "Error",
+                    unitCost: null,
+                    costSource: null,
+                    costAvailable: false
+                }) : i));
             }
         }
     };
@@ -663,7 +800,7 @@ const CreateTransferView = ({ warehouses, onSubmit }) => {
                 if (field === "quantity" && value > 0) {
                     updated.status = value <= updated.available ? "Valid" : "Insufficient";
                 }
-                return updated;
+                return recalculateItemFinancials(updated);
             }
             return i;
         });
@@ -672,30 +809,44 @@ const CreateTransferView = ({ warehouses, onSubmit }) => {
 
         if (field === "productId" && value && formData.fromWarehouseId) {
             try {
-                const stock = await getWarehouseProductStock(formData.fromWarehouseId, value, {
-                    zoneId: formData.fromZoneId,
-                    locatorId: formData.fromLocatorId,
-                    binId: formData.fromBinId
-                });
-                setItems(prev => prev.map(i => i.id === id ? { ...i, available: stock, status: i.quantity > 0 ? (i.quantity <= stock ? "Valid" : "Insufficient") : "Valid" } : i));
+                const [stockResult, previewResult] = await Promise.allSettled([
+                    getWarehouseProductStock(formData.fromWarehouseId, value, {
+                        zoneId: formData.fromZoneId,
+                        locatorId: formData.fromLocatorId,
+                        binId: formData.fromBinId
+                    }),
+                    getStockTransferCostPreview(formData.fromWarehouseId, [value])
+                ]);
+
+                const stock = stockResult.status === 'fulfilled' ? stockResult.value : 0;
+                const previewItem = previewResult.status === 'fulfilled'
+                    ? previewResult.value?.items?.[0]
+                    : null;
+
+                setItems(prev => prev.map(i => i.id === id ? recalculateItemFinancials({
+                    ...i,
+                    available: stock,
+                    status: i.quantity > 0 ? (i.quantity <= stock ? "Valid" : "Insufficient") : "Valid",
+                    unitCost: previewItem?.costAvailable ? parseFiniteNumber(previewItem.unitCost) : null,
+                    costSource: previewItem?.costSource || null,
+                    costAvailable: Boolean(previewItem?.costAvailable)
+                }) : i));
             } catch (e) {
-                setItems(prev => prev.map(i => i.id === id ? { ...i, available: 0, status: "Error" } : i));
+                setItems(prev => prev.map(i => i.id === id ? recalculateItemFinancials({
+                    ...i,
+                    available: 0,
+                    status: "Error",
+                    unitCost: null,
+                    costSource: null,
+                    costAvailable: false
+                }) : i));
             }
         }
     };
 
     const totals = useMemo(() => {
-        return items.reduce((acc, item) => {
-            const qty = Number(item.quantity) || 0;
-            const price = 16.61; // Indicative avg cost (mock for Phase-1)
-            return {
-                qty: acc.qty + qty,
-                items: acc.items + 1,
-                totalValue: acc.totalValue + (qty * price),
-                warningsCount: acc.warningsCount + (item.status === 'Insufficient' ? 1 : 0)
-            };
-        }, { qty: 0, items: 0, totalValue: 0, warningsCount: 0 });
-    }, [items]);
+        return calculateTransferTotals(items, formData.transportCharge, formData.additionalCharges);
+    }, [items, formData.transportCharge, formData.additionalCharges]);
 
     const preparePayload = (statusOverride) => {
         if (!formData.fromWarehouseId || !formData.toWarehouseId) {
@@ -1113,7 +1264,10 @@ const CreateTransferView = ({ warehouses, onSubmit }) => {
                         </div>
                         <div className="bg-purple-50/50 rounded-xl p-4 border border-purple-100/50">
                             <p className="text-[10px] font-bold text-purple-500 uppercase mb-1">Transfer Value</p>
-                            <p className="text-2xl font-bold text-slate-800">AED {totals.totalValue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
+                            <p className="text-2xl font-bold text-slate-800">{formatCurrency(totals.totalValue)}</p>
+                            <p className="text-[10px] text-purple-500 mt-1">
+                                {totals.totalCharges > 0 ? `Includes ${formatCurrency(totals.totalCharges)} logistics charges` : 'Inventory value only'}
+                            </p>
                         </div>
                         <div className={`${totals.warningsCount > 0 ? 'bg-amber-50/50 border-amber-100/50' : 'bg-slate-50/50 border-slate-100/50'} rounded-xl p-4 border`}>
                             <p className={`text-[10px] font-bold ${totals.warningsCount > 0 ? 'text-amber-500' : 'text-slate-400'} uppercase mb-1`}>Warnings</p>
@@ -1178,15 +1332,15 @@ const CreateTransferView = ({ warehouses, onSubmit }) => {
                     <div className="grid grid-cols-1 gap-3">
                         <StatCard
                             label="Total Transfer Value"
-                            value={`AED ${totals.totalValue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
-                            subtext="Indicative value based on avg cost"
+                            value={formatCurrency(totals.totalValue)}
+                            subtext={totals.totalCharges > 0 ? `Includes ${formatCurrency(totals.totalCharges)} landed charges` : "Based on source warehouse cost"}
                             icon={Package}
                             color="blue"
                         />
                         <StatCard
                             label="Avg Cost Per Unit"
-                            value="AED 16.61"
-                            subtext="Combined lineage cost"
+                            value={totals.qty > 0 && totals.missingCostCount === 0 ? formatCurrency(totals.avgCostPerUnit) : (totals.inventoryValue > 0 ? formatCurrency(totals.avgCostPerUnit) : 'Pending')}
+                            subtext={totals.missingCostCount > 0 ? `${totals.missingCostCount} item(s) need source cost` : "Weighted avg from source warehouse"}
                             icon={RefreshCw}
                             color="emerald"
                         />

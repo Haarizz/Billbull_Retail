@@ -394,14 +394,9 @@ export default function TaxCompliance() {
 
             {/* HEADER */}
             <header className="mb-4 flex flex-col md:flex-row md:items-center justify-between gap-4">
-                <div className="flex items-center gap-3">
-                    <div className="bg-[#F5C742] p-2 rounded-lg text-white shadow-sm">
-                        <DollarSign size={20} />
-                    </div>
-                    <div>
-                        <h1 className="text-xl font-bold text-slate-800 flex items-center gap-2"><FileCheck className="text-[#F5C742]" size={28} /> Tax Compliance Dashboard</h1>
-                        <p className="text-xs text-slate-500">Manage Corporate Tax, VAT, and Excise Tax compliance</p>
-                    </div>
+                <div>
+                    <h1 className="text-xl font-bold text-slate-800 flex items-center gap-2"><FileCheck className="text-[#F5C742]" size={28} /> Tax Compliance Dashboard</h1>
+                    <p className="text-xs text-slate-500">Manage Corporate Tax, VAT, and Excise Tax compliance</p>
                 </div>
                 <div className="flex gap-3">
                     <button className="flex items-center gap-2 bg-white border border-slate-200 text-slate-700 px-3 py-1.5 rounded-lg text-xs font-medium hover:bg-slate-50 shadow-sm transition">

@@ -24,6 +24,13 @@ public class StockTransferController {
         return service.list();
     }
 
+    @GetMapping("/cost-preview")
+    public StockTransferCostPreviewResponse getCostPreview(
+            @RequestParam Long warehouseId,
+            @RequestParam List<Long> productIds) {
+        return service.getCostPreview(warehouseId, productIds);
+    }
+
     @GetMapping("/{id}")
     public StockTransferResponse get(@PathVariable Long id) {
         return service.get(id);

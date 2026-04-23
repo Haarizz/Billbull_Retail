@@ -16,6 +16,8 @@ import com.billbull.backend.financials.generalledger.JournalLine;
 import com.billbull.backend.financials.generalledger.JournalEntryRepository;
 import com.billbull.backend.financials.generalledger.JournalEntryService;
 import com.billbull.backend.financials.receiptvoucher.ReceiptVoucher;
+import com.billbull.backend.inventory.stocktransfer.StockTransfer;
+import com.billbull.backend.inventory.warehouse.Warehouse;
 import com.billbull.backend.purchase.grn.GrnEntity;
 import com.billbull.backend.purchase.invoice.PurchaseInvoice;
 import com.billbull.backend.purchase.payment.PaymentVoucher;
@@ -347,6 +349,99 @@ public class PostingEngineService {
         }
 
         // =========================================================
+        // STOCK TRANSFER
+        // =========================================================
+
+        /**
+         * Inter-branch stock transfer send:
+         *   Dr Inventory (1120) [Transit cost center]
+         *   Cr Inventory (1120) [Source branch cost center]
+         *
+         * Total inventory stays unchanged at entity level, but the branch
+         * dimension moves the value into an in-transit bucket until receipt.
+         */
+        @Transactional
+        public JournalEntry createJournalFromStockTransferSent(StockTransfer transfer) {
+                BigDecimal inventoryValue = nvl(transfer.getInventoryValue());
+                if (!isInterBranchTransfer(transfer) || inventoryValue.compareTo(BigDecimal.ZERO) <= 0) {
+                        return null;
+                }
+
+                String ref = "ST-SEND-" + transfer.getTransferNo();
+                if (isDuplicate(ref)) return null;
+
+                String sourceCostCenter = resolveWarehouseCostCenter(transfer.getFromWarehouse());
+                String transitCostCenter = resolveTransitCostCenter(transfer);
+                JournalEntry entry = createBaseEntry(
+                                transfer.getDispatchDate() != null ? transfer.getDispatchDate() : LocalDate.now(),
+                                ref,
+                                "Stock Transfer Sent " + transfer.getTransferNo());
+                entry.setReferenceType("STOCK_TRANSFER_SEND");
+                entry.setReferenceId(transfer.getId());
+
+                addLine(entry, "Inventory", ACC_INVENTORY,
+                                "Inventory in transit - " + transfer.getTransferNo(),
+                                inventoryValue, BigDecimal.ZERO, transitCostCenter);
+                addLine(entry, "Inventory", ACC_INVENTORY,
+                                "Source inventory relief - " + transfer.getTransferNo(),
+                                BigDecimal.ZERO, inventoryValue, sourceCostCenter);
+
+                return post(entry);
+        }
+
+        /**
+         * Stock transfer receipt:
+         *   Inter-branch receipt:
+         *     Dr Inventory (1120) [Destination branch cost center]
+         *     Cr Inventory (1120) [Transit cost center]
+         *
+         *   Capitalized logistics:
+         *     Dr Inventory (1120) [Destination branch cost center]
+         *     Cr Accounts Payable (2101)
+         */
+        @Transactional
+        public JournalEntry createJournalFromStockTransferReceived(StockTransfer transfer) {
+                BigDecimal inventoryValue = nvl(transfer.getInventoryValue());
+                BigDecimal charges = nvl(transfer.getTransportCharge()).add(nvl(transfer.getAdditionalCharges()));
+
+                if (inventoryValue.compareTo(BigDecimal.ZERO) <= 0 && charges.compareTo(BigDecimal.ZERO) <= 0) {
+                        return null;
+                }
+
+                String ref = "ST-RECV-" + transfer.getTransferNo();
+                if (isDuplicate(ref)) return null;
+
+                String destinationCostCenter = resolveWarehouseCostCenter(transfer.getToWarehouse());
+                JournalEntry entry = createBaseEntry(
+                                transfer.getArrivalDate() != null ? transfer.getArrivalDate() : LocalDate.now(),
+                                ref,
+                                "Stock Transfer Received " + transfer.getTransferNo());
+                entry.setReferenceType("STOCK_TRANSFER_RECEIVE");
+                entry.setReferenceId(transfer.getId());
+
+                if (isInterBranchTransfer(transfer) && inventoryValue.compareTo(BigDecimal.ZERO) > 0) {
+                        String transitCostCenter = resolveTransitCostCenter(transfer);
+                        addLine(entry, "Inventory", ACC_INVENTORY,
+                                        "Destination inventory receipt - " + transfer.getTransferNo(),
+                                        inventoryValue, BigDecimal.ZERO, destinationCostCenter);
+                        addLine(entry, "Inventory", ACC_INVENTORY,
+                                        "Clear in-transit inventory - " + transfer.getTransferNo(),
+                                        BigDecimal.ZERO, inventoryValue, transitCostCenter);
+                }
+
+                if (charges.compareTo(BigDecimal.ZERO) > 0) {
+                        addLine(entry, "Inventory", ACC_INVENTORY,
+                                        "Capitalize transfer charges - " + transfer.getTransferNo(),
+                                        charges, BigDecimal.ZERO, destinationCostCenter);
+                        addLine(entry, "Accounts Payable", ACC_ACCOUNTS_PAYABLE,
+                                        "Accrue transfer charges - " + transfer.getTransferNo(),
+                                        BigDecimal.ZERO, charges, destinationCostCenter);
+                }
+
+                return entry.getLines().isEmpty() ? null : post(entry);
+        }
+
+        // =========================================================
         // EXPENSE
         // =========================================================
 
@@ -604,12 +699,18 @@ public class PostingEngineService {
 
         private void addLine(JournalEntry entry, String accountName, String accountCode,
                         String description, BigDecimal debit, BigDecimal credit) {
+                addLine(entry, accountName, accountCode, description, debit, credit, null);
+        }
+
+        private void addLine(JournalEntry entry, String accountName, String accountCode,
+                        String description, BigDecimal debit, BigDecimal credit, String costCenter) {
                 JournalLine line = new JournalLine();
                 line.setAccount(accountName);
                 line.setAccountCode(accountCode);
                 line.setDescription(description);
                 line.setDebit(debit   != null ? debit   : BigDecimal.ZERO);
                 line.setCredit(credit != null ? credit  : BigDecimal.ZERO);
+                line.setCostCenter(costCenter);
                 entry.addLine(line);
         }
 
@@ -622,6 +723,45 @@ public class PostingEngineService {
         /** Null-safe BigDecimal — returns ZERO when source is null. */
         private static BigDecimal nvl(BigDecimal value) {
                 return value != null ? value : BigDecimal.ZERO;
+        }
+
+        private boolean isInterBranchTransfer(StockTransfer transfer) {
+                if (transfer == null || transfer.getFromWarehouse() == null || transfer.getToWarehouse() == null) {
+                        return false;
+                }
+
+                if (transfer.getFromWarehouse().getBranch() == null || transfer.getToWarehouse().getBranch() == null) {
+                        return false;
+                }
+
+                return !java.util.Objects.equals(
+                                transfer.getFromWarehouse().getBranch().getId(),
+                                transfer.getToWarehouse().getBranch().getId());
+        }
+
+        private String resolveWarehouseCostCenter(Warehouse warehouse) {
+                if (warehouse == null) {
+                        return "Unassigned";
+                }
+                if (warehouse.getBranch() == null) {
+                        return warehouse.getName() != null ? warehouse.getName() : "Unassigned";
+                }
+
+                String branchCode = warehouse.getBranch().getCode();
+                String branchName = warehouse.getBranch().getName();
+                if (branchCode != null && !branchCode.isBlank()) {
+                        return branchName != null && !branchName.isBlank()
+                                        ? branchCode + " - " + branchName
+                                        : branchCode;
+                }
+                return branchName != null && !branchName.isBlank() ? branchName : warehouse.getName();
+        }
+
+        private String resolveTransitCostCenter(StockTransfer transfer) {
+                return "IN_TRANSIT: "
+                                + resolveWarehouseCostCenter(transfer.getFromWarehouse())
+                                + " -> "
+                                + resolveWarehouseCostCenter(transfer.getToWarehouse());
         }
 
         private AccountSelection resolveIncomingPaymentAccount(String paymentMode) {

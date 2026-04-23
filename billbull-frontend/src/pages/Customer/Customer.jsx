@@ -257,10 +257,7 @@ const InquiryList = ({ data, onAddNew, onView, onDelete, onRefresh, isLoading })
             <ChevronRight className="h-4 w-4" />
             <span className="text-slate-900 font-medium">Inquiries</span>
           </div>
-          <div className="flex items-center gap-2">
-            <Users className="h-6 w-6 text-[#F5C742]" />
-            <h1 className="text-2xl md:text-3xl font-bold tracking-tight text-slate-900 flex items-center gap-2"><Users className="text-[#F5C742]" size={28} /> Customer Inquiries</h1>
-          </div>
+          <h1 className="text-2xl md:text-3xl font-bold tracking-tight text-slate-900 flex items-center gap-2"><Users className="text-[#F5C742]" size={28} /> Customer Inquiries</h1>
           <p className="text-sm md:text-base text-slate-500">Manage walk-in, WhatsApp, phone & online inquiries.</p>
         </div>
 
