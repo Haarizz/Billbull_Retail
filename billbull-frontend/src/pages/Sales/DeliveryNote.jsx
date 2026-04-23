@@ -89,6 +89,36 @@ const DeliveryNote = () => {
     const [searchTerm, setSearchTerm] = useState('');
     const [filterStatus, setFilterStatus] = useState('All');
     const [sortConfig, setSortConfig] = useState({ key: null, direction: 'desc' });
+    const [pickingSearchTerm, setPickingSearchTerm] = useState('');
+    const [selectedPickingId, setSelectedPickingId] = useState(null);
+    const [pickingScanValue, setPickingScanValue] = useState('');
+    const [pickingScanFeedback, setPickingScanFeedback] = useState(null);
+    const [pickedItemsByNote, setPickedItemsByNote] = useState({});
+    const pickingScanInputRef = React.useRef(null);
+
+    const matchesPickingSearch = (dn, lowerSearch) => {
+        if (!lowerSearch) return true;
+
+        const searchableValues = [
+            dn.dnNo,
+            dn.customerName,
+            dn.customerCode,
+            dn.soNo,
+            dn.siNo,
+            dn.linkedSalesInvoiceNumber,
+            dn.warehouse,
+            ...(dn.items || []).flatMap(item => [
+                item.code,
+                item.barcode,
+                item.desc,
+                item.remarks
+            ])
+        ];
+
+        return searchableValues.some(value =>
+            value && String(value).toLowerCase().includes(lowerSearch)
+        );
+    };
 
     const filteredDeliveryNotes = useMemo(() => {
         let data = [...deliveryNotesList];
@@ -137,6 +167,30 @@ const DeliveryNote = () => {
         return data;
     }, [deliveryNotesList, searchTerm, filterStatus, sortConfig]);
 
+    const pickingNotes = useMemo(
+        () => deliveryNotesList.filter(dn => dn.type === 'Picking'),
+        [deliveryNotesList]
+    );
+
+    const activePickingNotes = useMemo(() => {
+        const lower = pickingSearchTerm.trim().toLowerCase();
+        return pickingNotes.filter(dn =>
+            dn.status === 'DRAFT' && matchesPickingSearch(dn, lower)
+        );
+    }, [pickingNotes, pickingSearchTerm]);
+
+    const pickingHistoryNotes = useMemo(() => {
+        const lower = pickingSearchTerm.trim().toLowerCase();
+        return pickingNotes.filter(dn =>
+            dn.status !== 'DRAFT' && matchesPickingSearch(dn, lower)
+        );
+    }, [pickingNotes, pickingSearchTerm]);
+
+    const selectedPickingNote = useMemo(
+        () => activePickingNotes.find(dn => dn.id === selectedPickingId) || activePickingNotes[0] || null,
+        [activePickingNotes, selectedPickingId]
+    );
+
     const handleSort = (key) => {
         let direction = 'desc';
         if (sortConfig.key === key && sortConfig.direction === 'desc') {
@@ -144,6 +198,27 @@ const DeliveryNote = () => {
         }
         setSortConfig({ key, direction });
     };
+
+    useEffect(() => {
+        if (activePickingNotes.length === 0) {
+            setSelectedPickingId(null);
+            return;
+        }
+
+        if (!activePickingNotes.some(note => note.id === selectedPickingId)) {
+            setSelectedPickingId(activePickingNotes[0].id);
+        }
+    }, [activePickingNotes, selectedPickingId]);
+
+    useEffect(() => {
+        if (activeTab !== 'picking' || !selectedPickingNote) return;
+
+        const timer = window.setTimeout(() => {
+            pickingScanInputRef.current?.focus();
+        }, 80);
+
+        return () => window.clearTimeout(timer);
+    }, [activeTab, selectedPickingNote]);
 
     const [customersList, setCustomersList] = useState([]);
     const [salesOrdersList, setSalesOrdersList] = useState([]);
@@ -374,6 +449,152 @@ const DeliveryNote = () => {
 
     // Helper
     const capitalize = s => s ? s.charAt(0) + s.slice(1).toLowerCase() : '';
+
+    const getRequiredPickingQty = (item) => Math.max(Number(item?.currentQty) || 0, 0);
+
+    const getPickedQty = (noteId, itemId) =>
+        Number(pickedItemsByNote[noteId]?.[itemId] || 0);
+
+    const updatePickedQty = (noteId, itemId, nextQty, maxQty) => {
+        const clampedQty = Math.max(0, Math.min(Number(nextQty) || 0, Math.max(0, Number(maxQty) || 0)));
+
+        setPickedItemsByNote(prev => {
+            const updated = { ...prev };
+            const noteProgress = { ...(updated[noteId] || {}) };
+
+            if (clampedQty === 0) {
+                delete noteProgress[itemId];
+            } else {
+                noteProgress[itemId] = clampedQty;
+            }
+
+            if (Object.keys(noteProgress).length === 0) {
+                delete updated[noteId];
+            } else {
+                updated[noteId] = noteProgress;
+            }
+
+            return updated;
+        });
+    };
+
+    const getPickingProgress = (note) => {
+        const itemsForNote = Array.isArray(note?.items) ? note.items : [];
+        const requiredQty = itemsForNote.reduce((sum, item) => sum + getRequiredPickingQty(item), 0);
+        const pickedQty = itemsForNote.reduce((sum, item) => sum + Math.min(getPickedQty(note.id, item.id), getRequiredPickingQty(item)), 0);
+        const totalLines = itemsForNote.length;
+        const completedLines = itemsForNote.filter(item => getPickedQty(note.id, item.id) >= getRequiredPickingQty(item)).length;
+
+        return {
+            requiredQty,
+            pickedQty,
+            remainingQty: Math.max(requiredQty - pickedQty, 0),
+            totalLines,
+            completedLines,
+            percent: requiredQty > 0 ? Math.min(100, Math.round((pickedQty / requiredQty) * 100)) : 0,
+            isComplete: requiredQty > 0 ? pickedQty >= requiredQty : false
+        };
+    };
+
+    const handleManualPickAdjust = (note, item, delta) => {
+        const maxQty = getRequiredPickingQty(item);
+        const currentPicked = getPickedQty(note.id, item.id);
+        const nextQty = Math.max(0, Math.min(maxQty, currentPicked + delta));
+
+        updatePickedQty(note.id, item.id, nextQty, maxQty);
+        setPickingScanFeedback({
+            kind: 'success',
+            message: `${item.code || item.desc || 'Line item'} updated to ${nextQty}/${maxQty} picked for ${note.dnNo}.`
+        });
+    };
+
+    const handlePickingScanSubmit = (event) => {
+        event.preventDefault();
+
+        if (!selectedPickingNote) {
+            setPickingScanFeedback({
+                kind: 'error',
+                message: 'No active Picking note is selected. Choose a draft note first.'
+            });
+            return;
+        }
+
+        const scanValue = pickingScanValue.trim().toLowerCase();
+        if (!scanValue) {
+            setPickingScanFeedback({
+                kind: 'error',
+                message: 'Scan or enter a barcode before submitting.'
+            });
+            return;
+        }
+
+        const matchedItem = (selectedPickingNote.items || []).find(item => {
+            const candidates = [item.barcode, item.code]
+                .filter(Boolean)
+                .map(value => String(value).trim().toLowerCase());
+
+            return candidates.includes(scanValue);
+        });
+
+        if (!matchedItem) {
+            setPickingScanFeedback({
+                kind: 'error',
+                message: `No matching barcode or item code was found in ${selectedPickingNote.dnNo}.`
+            });
+            return;
+        }
+
+        const requiredQty = getRequiredPickingQty(matchedItem);
+        const currentPicked = getPickedQty(selectedPickingNote.id, matchedItem.id);
+
+        if (currentPicked >= requiredQty) {
+            setPickingScanFeedback({
+                kind: 'success',
+                message: `${matchedItem.code || matchedItem.desc || 'Item'} is already fully picked for ${selectedPickingNote.dnNo}.`
+            });
+            setPickingScanValue('');
+            return;
+        }
+
+        const nextQty = currentPicked + 1;
+        updatePickedQty(selectedPickingNote.id, matchedItem.id, nextQty, requiredQty);
+        setPickingScanValue('');
+        setPickingScanFeedback({
+            kind: 'success',
+            message: `${matchedItem.code || matchedItem.desc || 'Item'} picked ${nextQty}/${requiredQty} for ${selectedPickingNote.dnNo}.`
+        });
+        window.setTimeout(() => pickingScanInputRef.current?.focus(), 0);
+    };
+
+    const handleDispatchPickingNote = async (note) => {
+        const progress = getPickingProgress(note);
+
+        if (!progress.isComplete) {
+            alert(`Finish scanning all Picking quantities before dispatching ${note.dnNo}.`);
+            return;
+        }
+
+        if (!window.confirm(`Advance ${note.dnNo} to Dispatched?`)) {
+            return;
+        }
+
+        try {
+            await advanceDeliveryNoteStatus(note.id, '');
+            setPickingScanFeedback({
+                kind: 'success',
+                message: `${note.dnNo} was advanced to Dispatched and moved to Picking history.`
+            });
+            setPickingScanValue('');
+            await loadDeliveryNotes();
+        } catch (error) {
+            console.error('Failed to dispatch Picking note', error);
+            setPickingScanFeedback({
+                kind: 'error',
+                message: `Failed to advance ${note.dnNo} to Dispatched.`
+            });
+            alert('Failed to advance Picking note to Dispatched.');
+        }
+    };
 
     const createBlankDeliveryItem = () => ({
         id: Date.now() + Math.random(),
@@ -1003,6 +1224,10 @@ const DeliveryNote = () => {
     const { totalQty, totalBoxes } = calculateStats();
     const hasItemData = items.some(item => item.code || item.desc);
     const itemLineCount = items.filter(item => item.code || item.desc).length;
+    const selectedPickingProgress = selectedPickingNote
+        ? getPickingProgress(selectedPickingNote)
+        : { requiredQty: 0, pickedQty: 0, remainingQty: 0, completedLines: 0, totalLines: 0, percent: 0, isComplete: false };
+    const activePickingQty = activePickingNotes.reduce((sum, note) => sum + getPickingProgress(note).requiredQty, 0);
 
     const [isPrinting, setIsPrinting] = useState(false);
 
@@ -1870,17 +2095,478 @@ const DeliveryNote = () => {
 
                     {/* ================= VIEW: PICKING ================= */}
                     {activeTab === 'picking' && (
-                        <div className="bg-white rounded-lg border border-slate-200 shadow-sm p-8 text-center min-h-[400px] flex flex-col items-center justify-center">
-                            <div className="bg-slate-100 p-4 rounded-full mb-4">
-                                <ClipboardList size={32} className="text-slate-400" />
+                        <div className="space-y-6">
+                            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                                <div className="bg-white rounded-lg border border-slate-200 shadow-sm p-4">
+                                    <div className="text-[11px] font-bold uppercase tracking-wider text-slate-400 mb-2">Active Pick Lists</div>
+                                    <div className="text-2xl font-black text-slate-800">{activePickingNotes.length}</div>
+                                    <div className="text-xs text-slate-500 mt-1">Draft Picking notes waiting for warehouse action.</div>
+                                </div>
+                                <div className="bg-white rounded-lg border border-slate-200 shadow-sm p-4">
+                                    <div className="text-[11px] font-bold uppercase tracking-wider text-slate-400 mb-2">Queued Quantity</div>
+                                    <div className="text-2xl font-black text-slate-800">{activePickingQty}</div>
+                                    <div className="text-xs text-slate-500 mt-1">Total units across all active Picking documents.</div>
+                                </div>
+                                <div className="bg-white rounded-lg border border-slate-200 shadow-sm p-4">
+                                    <div className="text-[11px] font-bold uppercase tracking-wider text-slate-400 mb-2">History</div>
+                                    <div className="text-2xl font-black text-slate-800">{pickingHistoryNotes.length}</div>
+                                    <div className="text-xs text-slate-500 mt-1">Delivered and dispatched Picking notes remain visible here.</div>
+                                </div>
                             </div>
-                            <h3 className="text-lg font-bold text-slate-700">Picking List Module</h3>
-                            <p className="text-sm text-slate-500 mt-2 max-w-md">
-                                This module allows warehouse staff to view pending items, scan barcodes, and mark items as "Picked" before generating the final Delivery Note.
-                            </p>
-                            <button className="mt-6 px-4 py-2 bg-white border border-slate-300 rounded text-sm font-medium text-slate-600 hover:bg-slate-50">
-                                View Pending Pick Lists
-                            </button>
+
+                            <div className="bg-white rounded-lg border border-slate-200 shadow-sm p-4 md:p-5 space-y-4">
+                                <div className="flex flex-col xl:flex-row xl:items-center xl:justify-between gap-4">
+                                    <div>
+                                        <h3 className="text-lg font-bold text-slate-800">Warehouse Picking Queue</h3>
+                                        <p className="text-sm text-slate-500 mt-1">
+                                            Sales invoices now generate Picking notes. Fast Sale notes land in history as delivered, while workflow notes stay draft until the warehouse finishes picking and dispatches them.
+                                        </p>
+                                    </div>
+
+                                    <form onSubmit={handlePickingScanSubmit} className="flex flex-col sm:flex-row gap-2 xl:min-w-[440px]">
+                                        <div className="relative flex-1">
+                                            <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={14} />
+                                            <input
+                                                ref={pickingScanInputRef}
+                                                type="text"
+                                                value={pickingScanValue}
+                                                onChange={(e) => setPickingScanValue(e.target.value)}
+                                                placeholder={selectedPickingNote ? `Scan barcode for ${selectedPickingNote.dnNo}` : 'Select a Picking note to start scanning'}
+                                                className="w-full pl-9 pr-3 py-2.5 border border-slate-200 rounded-md text-xs focus:outline-none focus:border-[#F5C742] disabled:bg-slate-50"
+                                                disabled={!selectedPickingNote}
+                                            />
+                                        </div>
+                                        <button
+                                            type="submit"
+                                            disabled={!selectedPickingNote}
+                                            className="px-4 py-2.5 bg-[#F5C742] text-slate-900 rounded-md text-xs font-bold hover:bg-yellow-400 disabled:opacity-50 disabled:cursor-not-allowed"
+                                        >
+                                            Scan Item
+                                        </button>
+                                    </form>
+                                </div>
+
+                                <div className="flex flex-col lg:flex-row gap-3">
+                                    <div className="relative flex-1">
+                                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={14} />
+                                        <input
+                                            type="text"
+                                            value={pickingSearchTerm}
+                                            onChange={(e) => setPickingSearchTerm(e.target.value)}
+                                            placeholder="Filter by DN, customer, invoice, item code, or barcode"
+                                            className="w-full pl-9 pr-3 py-2 border border-slate-200 rounded-md text-xs focus:outline-none focus:border-[#F5C742]"
+                                        />
+                                    </div>
+                                    <button
+                                        onClick={() => {
+                                            setPickingSearchTerm('');
+                                            setPickingScanFeedback(null);
+                                        }}
+                                        className="px-4 py-2 border border-slate-200 rounded-md text-xs font-medium text-slate-600 hover:bg-slate-50"
+                                    >
+                                        Clear Filter
+                                    </button>
+                                </div>
+
+                                {pickingScanFeedback && (
+                                    <div className={`flex items-start gap-2 rounded-lg border px-3 py-2.5 ${
+                                        pickingScanFeedback.kind === 'success'
+                                            ? 'bg-emerald-50 border-emerald-200 text-emerald-700'
+                                            : 'bg-red-50 border-red-200 text-red-700'
+                                    }`}>
+                                        {pickingScanFeedback.kind === 'success' ? (
+                                            <CheckCircle2 size={14} className="shrink-0 mt-0.5" />
+                                        ) : (
+                                            <AlertCircle size={14} className="shrink-0 mt-0.5" />
+                                        )}
+                                        <p className="text-xs font-medium">{pickingScanFeedback.message}</p>
+                                    </div>
+                                )}
+
+                                <div className="hidden md:block overflow-x-auto">
+                                    <table className="w-full text-xs text-left">
+                                        <thead className="bg-[#F7F7FA] text-slate-500 font-semibold border-b border-slate-200">
+                                            <tr>
+                                                <th className="px-4 py-3">Picking Note</th>
+                                                <th className="px-4 py-3">Customer</th>
+                                                <th className="px-4 py-3">Invoice</th>
+                                                <th className="px-4 py-3">Warehouse</th>
+                                                <th className="px-4 py-3 text-center">Qty</th>
+                                                <th className="px-4 py-3 text-center">Progress</th>
+                                                <th className="px-4 py-3 text-right">Actions</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody className="divide-y divide-slate-100">
+                                            {activePickingNotes.map((note) => {
+                                                const progress = getPickingProgress(note);
+                                                const isSelected = selectedPickingNote?.id === note.id;
+
+                                                return (
+                                                    <tr
+                                                        key={note.id}
+                                                        onClick={() => {
+                                                            setSelectedPickingId(note.id);
+                                                            setPickingScanFeedback(null);
+                                                        }}
+                                                        className={`cursor-pointer transition-colors ${isSelected ? 'bg-yellow-50/70' : 'hover:bg-slate-50'}`}
+                                                    >
+                                                        <td className="px-4 py-3">
+                                                            <div className="font-bold text-slate-700 flex items-center gap-2">
+                                                                {note.dnNo}
+                                                                <span className="text-[10px] font-bold text-blue-600 bg-blue-50 px-2 py-0.5 rounded border border-blue-100">Picking</span>
+                                                            </div>
+                                                            <div className="text-[10px] text-slate-400 mt-1">{note.date}</div>
+                                                        </td>
+                                                        <td className="px-4 py-3">
+                                                            <div className="font-medium text-slate-700">{note.customerName}</div>
+                                                            <div className="text-[10px] text-slate-400">{note.customerCode}</div>
+                                                        </td>
+                                                        <td className="px-4 py-3 text-slate-500">{note.siNo || note.linkedSalesInvoiceNumber || '-'}</td>
+                                                        <td className="px-4 py-3 text-slate-500">{note.warehouse || '-'}</td>
+                                                        <td className="px-4 py-3 text-center font-bold text-slate-700">{progress.requiredQty}</td>
+                                                        <td className="px-4 py-3">
+                                                            <div className="flex items-center gap-3">
+                                                                <div className="flex-1 h-2 rounded-full bg-slate-100 overflow-hidden">
+                                                                    <div className="h-full bg-emerald-500 transition-all" style={{ width: `${progress.percent}%` }} />
+                                                                </div>
+                                                                <span className="text-[11px] font-bold text-slate-600 min-w-[78px] text-right">
+                                                                    {progress.pickedQty}/{progress.requiredQty}
+                                                                </span>
+                                                            </div>
+                                                        </td>
+                                                        <td className="px-4 py-3">
+                                                            <div className="flex justify-end gap-2" onClick={(e) => e.stopPropagation()}>
+                                                                <button
+                                                                    onClick={() => handleRowClick(note)}
+                                                                    className="px-3 py-1.5 border border-slate-200 rounded text-[11px] font-medium text-slate-600 hover:bg-slate-50"
+                                                                >
+                                                                    Open Note
+                                                                </button>
+                                                                <button
+                                                                    onClick={() => handleDispatchPickingNote(note)}
+                                                                    disabled={!progress.isComplete}
+                                                                    className="px-3 py-1.5 bg-slate-900 text-white rounded text-[11px] font-bold hover:bg-slate-800 disabled:opacity-40 disabled:cursor-not-allowed"
+                                                                >
+                                                                    Dispatch
+                                                                </button>
+                                                            </div>
+                                                        </td>
+                                                    </tr>
+                                                );
+                                            })}
+                                            {activePickingNotes.length === 0 && (
+                                                <tr>
+                                                    <td colSpan="7" className="px-4 py-10 text-center text-slate-400">
+                                                        No draft Picking notes match the current filter.
+                                                    </td>
+                                                </tr>
+                                            )}
+                                        </tbody>
+                                    </table>
+                                </div>
+
+                                <div className="md:hidden space-y-3">
+                                    {activePickingNotes.length === 0 ? (
+                                        <div className="text-center py-8 text-slate-400 italic">No draft Picking notes match the current filter.</div>
+                                    ) : activePickingNotes.map(note => {
+                                        const progress = getPickingProgress(note);
+                                        const isSelected = selectedPickingNote?.id === note.id;
+
+                                        return (
+                                            <div
+                                                key={note.id}
+                                                onClick={() => {
+                                                    setSelectedPickingId(note.id);
+                                                    setPickingScanFeedback(null);
+                                                }}
+                                                className={`rounded-lg border p-4 shadow-sm ${isSelected ? 'border-yellow-300 bg-yellow-50/70' : 'border-slate-200 bg-white'}`}
+                                            >
+                                                <div className="flex items-start justify-between gap-3">
+                                                    <div>
+                                                        <div className="font-bold text-slate-800">{note.dnNo}</div>
+                                                        <div className="text-[11px] text-slate-500 mt-1">{note.customerName}</div>
+                                                        <div className="text-[10px] text-slate-400 mt-1">{note.siNo || note.linkedSalesInvoiceNumber || 'No invoice link'}</div>
+                                                    </div>
+                                                    <span className="text-[10px] font-bold text-blue-600 bg-blue-50 px-2 py-1 rounded border border-blue-100">Picking</span>
+                                                </div>
+
+                                                <div className="mt-3 flex items-center gap-3">
+                                                    <div className="flex-1 h-2 rounded-full bg-slate-100 overflow-hidden">
+                                                        <div className="h-full bg-emerald-500 transition-all" style={{ width: `${progress.percent}%` }} />
+                                                    </div>
+                                                    <span className="text-[11px] font-bold text-slate-600">{progress.pickedQty}/{progress.requiredQty}</span>
+                                                </div>
+
+                                                <div className="mt-3 flex gap-2">
+                                                    <button
+                                                        onClick={(e) => {
+                                                            e.stopPropagation();
+                                                            handleRowClick(note);
+                                                        }}
+                                                        className="flex-1 px-3 py-2 border border-slate-200 rounded text-[11px] font-medium text-slate-600 hover:bg-slate-50"
+                                                    >
+                                                        Open Note
+                                                    </button>
+                                                    <button
+                                                        onClick={(e) => {
+                                                            e.stopPropagation();
+                                                            handleDispatchPickingNote(note);
+                                                        }}
+                                                        disabled={!progress.isComplete}
+                                                        className="flex-1 px-3 py-2 bg-slate-900 text-white rounded text-[11px] font-bold hover:bg-slate-800 disabled:opacity-40 disabled:cursor-not-allowed"
+                                                    >
+                                                        Dispatch
+                                                    </button>
+                                                </div>
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+                            </div>
+
+                            <div className="grid grid-cols-1 xl:grid-cols-[1.6fr,0.9fr] gap-6">
+                                <div className="bg-white rounded-lg border border-slate-200 shadow-sm p-4 md:p-5">
+                                    <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3 mb-4">
+                                        <div>
+                                            <h3 className="text-base font-bold text-slate-800">Selected Picking Detail</h3>
+                                            <p className="text-sm text-slate-500 mt-1">Scan barcodes or adjust picked counts line by line before dispatch.</p>
+                                        </div>
+                                        {selectedPickingNote && (
+                                            <button
+                                                onClick={() => handleRowClick(selectedPickingNote)}
+                                                className="inline-flex items-center gap-2 px-3 py-2 border border-slate-200 rounded-md text-xs font-medium text-slate-600 hover:bg-slate-50"
+                                            >
+                                                <Eye size={14} />
+                                                Open Full Delivery Note
+                                            </button>
+                                        )}
+                                    </div>
+
+                                    {!selectedPickingNote ? (
+                                        <div className="min-h-[260px] flex flex-col items-center justify-center text-center text-slate-400">
+                                            <div className="bg-slate-100 p-4 rounded-full mb-4">
+                                                <ClipboardList size={28} className="text-slate-400" />
+                                            </div>
+                                            <p className="text-sm font-medium">There is no active draft Picking note to work on right now.</p>
+                                            <p className="text-xs text-slate-400 mt-2">Fast Sale notes skip this queue and appear in Picking history after delivery.</p>
+                                        </div>
+                                    ) : (
+                                        <div className="space-y-4">
+                                            <div className="rounded-xl border border-slate-200 bg-slate-50/70 p-4">
+                                                <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
+                                                    <div>
+                                                        <div className="flex items-center gap-2">
+                                                            <h4 className="text-lg font-bold text-slate-800">{selectedPickingNote.dnNo}</h4>
+                                                            <span className="text-[10px] font-bold text-blue-600 bg-blue-50 px-2 py-1 rounded border border-blue-100">Picking</span>
+                                                        </div>
+                                                        <div className="text-sm text-slate-500 mt-1">
+                                                            {selectedPickingNote.customerName} ({selectedPickingNote.customerCode}){selectedPickingNote.siNo ? ` • ${selectedPickingNote.siNo}` : ''}
+                                                        </div>
+                                                        <div className="text-xs text-slate-400 mt-1">
+                                                            Warehouse: {selectedPickingNote.warehouse || '-'} • Date: {selectedPickingNote.date}
+                                                        </div>
+                                                    </div>
+
+                                                    <div className="min-w-[220px]">
+                                                        <div className="flex justify-between text-xs font-medium text-slate-500 mb-2">
+                                                            <span>Picked Progress</span>
+                                                            <span>{selectedPickingProgress.pickedQty}/{selectedPickingProgress.requiredQty}</span>
+                                                        </div>
+                                                        <div className="h-2.5 rounded-full bg-slate-200 overflow-hidden">
+                                                            <div className="h-full bg-emerald-500 transition-all" style={{ width: `${selectedPickingProgress.percent}%` }} />
+                                                        </div>
+                                                        <div className="text-[11px] text-slate-500 mt-2">
+                                                            {selectedPickingProgress.completedLines}/{selectedPickingProgress.totalLines} lines complete
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            </div>
+
+                                            <div className="overflow-x-auto">
+                                                <table className="w-full text-xs text-left min-w-[760px]">
+                                                    <thead className="bg-[#F7F7FA] text-slate-500 font-semibold border-b border-slate-200">
+                                                        <tr>
+                                                            <th className="px-4 py-3">Item</th>
+                                                            <th className="px-4 py-3">Barcode</th>
+                                                            <th className="px-4 py-3 text-center">Required</th>
+                                                            <th className="px-4 py-3 text-center">Picked</th>
+                                                            <th className="px-4 py-3 text-center">Remaining</th>
+                                                            <th className="px-4 py-3 text-right">Quick Pick</th>
+                                                        </tr>
+                                                    </thead>
+                                                    <tbody className="divide-y divide-slate-100">
+                                                        {(selectedPickingNote.items || []).map(item => {
+                                                            const requiredQty = getRequiredPickingQty(item);
+                                                            const pickedQty = getPickedQty(selectedPickingNote.id, item.id);
+                                                            const remainingQty = Math.max(requiredQty - pickedQty, 0);
+
+                                                            return (
+                                                                <tr key={item.id} className="hover:bg-slate-50/70">
+                                                                    <td className="px-4 py-3">
+                                                                        <div className="font-medium text-slate-700">{item.code || item.desc || '-'}</div>
+                                                                        <div className="text-[10px] text-slate-400 mt-1">{item.desc || item.remarks || 'No description'}</div>
+                                                                    </td>
+                                                                    <td className="px-4 py-3 text-slate-500">
+                                                                        {item.barcode || <span className="text-slate-300">No barcode</span>}
+                                                                    </td>
+                                                                    <td className="px-4 py-3 text-center font-bold text-slate-700">{requiredQty}</td>
+                                                                    <td className="px-4 py-3 text-center">
+                                                                        <span className={`px-2 py-1 rounded text-[11px] font-bold border ${
+                                                                            pickedQty >= requiredQty
+                                                                                ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                                                                                : 'bg-amber-50 text-amber-700 border-amber-200'
+                                                                        }`}>
+                                                                            {pickedQty}
+                                                                        </span>
+                                                                    </td>
+                                                                    <td className="px-4 py-3 text-center font-medium text-slate-500">{remainingQty}</td>
+                                                                    <td className="px-4 py-3">
+                                                                        <div className="flex justify-end items-center gap-2">
+                                                                            <button
+                                                                                onClick={() => handleManualPickAdjust(selectedPickingNote, item, -1)}
+                                                                                disabled={pickedQty === 0}
+                                                                                className="w-8 h-8 rounded border border-slate-200 text-slate-600 font-bold hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed"
+                                                                            >
+                                                                                -
+                                                                            </button>
+                                                                            <button
+                                                                                onClick={() => handleManualPickAdjust(selectedPickingNote, item, 1)}
+                                                                                disabled={pickedQty >= requiredQty}
+                                                                                className="w-8 h-8 rounded bg-[#F5C742] text-slate-900 font-bold hover:bg-yellow-400 disabled:opacity-40 disabled:cursor-not-allowed"
+                                                                            >
+                                                                                +
+                                                                            </button>
+                                                                        </div>
+                                                                    </td>
+                                                                </tr>
+                                                            );
+                                                        })}
+                                                    </tbody>
+                                                </table>
+                                            </div>
+                                        </div>
+                                    )}
+                                </div>
+
+                                <div className="space-y-4">
+                                    <div className="bg-white rounded-lg border border-slate-200 shadow-sm p-4">
+                                        <h3 className="text-sm font-bold text-slate-800 mb-3">Warehouse Workflow</h3>
+                                        <div className="space-y-3 text-xs text-slate-500">
+                                            <div className="rounded-lg border border-slate-100 bg-slate-50 p-3">
+                                                Scan each barcode to move Picking quantities forward one unit at a time.
+                                            </div>
+                                            <div className="rounded-lg border border-slate-100 bg-slate-50 p-3">
+                                                The Dispatch action stays manual and only unlocks after all required quantities are marked picked.
+                                            </div>
+                                            <div className="rounded-lg border border-slate-100 bg-slate-50 p-3">
+                                                Fast Sale notes bypass the active queue but remain visible below in Picking history for audit.
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    {selectedPickingNote && (
+                                        <div className="bg-white rounded-lg border border-slate-200 shadow-sm p-4">
+                                            <div className="flex items-center justify-between gap-3 mb-3">
+                                                <h3 className="text-sm font-bold text-slate-800">Ready To Dispatch</h3>
+                                                {selectedPickingProgress.isComplete ? (
+                                                    <span className="text-[10px] font-bold text-emerald-700 bg-emerald-50 px-2 py-1 rounded border border-emerald-200">Complete</span>
+                                                ) : (
+                                                    <span className="text-[10px] font-bold text-amber-700 bg-amber-50 px-2 py-1 rounded border border-amber-200">In Progress</span>
+                                                )}
+                                            </div>
+                                            <p className="text-xs text-slate-500 leading-5">
+                                                {selectedPickingProgress.isComplete
+                                                    ? `${selectedPickingNote.dnNo} is fully picked and ready to move to Dispatched.`
+                                                    : `${selectedPickingProgress.remainingQty} unit(s) are still waiting to be picked on ${selectedPickingNote.dnNo}.`}
+                                            </p>
+                                            <button
+                                                onClick={() => handleDispatchPickingNote(selectedPickingNote)}
+                                                disabled={!selectedPickingProgress.isComplete}
+                                                className="mt-4 w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-slate-900 text-white rounded-md text-xs font-bold hover:bg-slate-800 disabled:opacity-40 disabled:cursor-not-allowed"
+                                            >
+                                                <Truck size={14} />
+                                                Advance To Dispatched
+                                            </button>
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+
+                            <div className="bg-white rounded-lg border border-slate-200 shadow-sm p-4 md:p-5">
+                                <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3 mb-4">
+                                    <div>
+                                        <h3 className="text-base font-bold text-slate-800">Picking History</h3>
+                                        <p className="text-sm text-slate-500 mt-1">Delivered fast-sale notes and dispatched workflow notes remain visible for review.</p>
+                                    </div>
+                                </div>
+
+                                <div className="overflow-x-auto hidden md:block">
+                                    <table className="w-full text-xs text-left">
+                                        <thead className="bg-[#F7F7FA] text-slate-500 font-semibold border-b border-slate-200">
+                                            <tr>
+                                                <th className="px-4 py-3">Picking Note</th>
+                                                <th className="px-4 py-3">Customer</th>
+                                                <th className="px-4 py-3">Invoice</th>
+                                                <th className="px-4 py-3">Status</th>
+                                                <th className="px-4 py-3">Date</th>
+                                                <th className="px-4 py-3 text-right">Action</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody className="divide-y divide-slate-100">
+                                            {pickingHistoryNotes.map(note => (
+                                                <tr key={note.id} className="hover:bg-slate-50">
+                                                    <td className="px-4 py-3 font-bold text-slate-700">{note.dnNo}</td>
+                                                    <td className="px-4 py-3">
+                                                        <div className="font-medium text-slate-700">{note.customerName}</div>
+                                                        <div className="text-[10px] text-slate-400">{note.customerCode}</div>
+                                                    </td>
+                                                    <td className="px-4 py-3 text-slate-500">{note.siNo || note.linkedSalesInvoiceNumber || '-'}</td>
+                                                    <td className="px-4 py-3">{renderStatusBadge(note.status)}</td>
+                                                    <td className="px-4 py-3 text-slate-500">{note.date}</td>
+                                                    <td className="px-4 py-3 text-right">
+                                                        <button
+                                                            onClick={() => handleRowClick(note)}
+                                                            className="px-3 py-1.5 border border-slate-200 rounded text-[11px] font-medium text-slate-600 hover:bg-slate-50"
+                                                        >
+                                                            View Note
+                                                        </button>
+                                                    </td>
+                                                </tr>
+                                            ))}
+                                            {pickingHistoryNotes.length === 0 && (
+                                                <tr>
+                                                    <td colSpan="6" className="px-4 py-10 text-center text-slate-400">
+                                                        No Picking history records match the current filter yet.
+                                                    </td>
+                                                </tr>
+                                            )}
+                                        </tbody>
+                                    </table>
+                                </div>
+
+                                <div className="md:hidden space-y-3">
+                                    {pickingHistoryNotes.length === 0 ? (
+                                        <div className="text-center py-8 text-slate-400 italic">No Picking history records match the current filter yet.</div>
+                                    ) : pickingHistoryNotes.map(note => (
+                                        <div key={note.id} className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
+                                            <div className="flex items-start justify-between gap-3">
+                                                <div>
+                                                    <div className="font-bold text-slate-800">{note.dnNo}</div>
+                                                    <div className="text-[11px] text-slate-500 mt-1">{note.customerName}</div>
+                                                    <div className="text-[10px] text-slate-400 mt-1">{note.siNo || note.linkedSalesInvoiceNumber || 'No invoice link'}</div>
+                                                </div>
+                                                {renderStatusBadge(note.status)}
+                                            </div>
+                                            <button
+                                                onClick={() => handleRowClick(note)}
+                                                className="mt-3 w-full px-3 py-2 border border-slate-200 rounded text-[11px] font-medium text-slate-600 hover:bg-slate-50"
+                                            >
+                                                View Note
+                                            </button>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
                         </div>
                     )}
 

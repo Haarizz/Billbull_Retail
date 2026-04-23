@@ -69,6 +69,12 @@ public class SalesInvoice {
     @Enumerated(EnumType.STRING)
     private DeliveryStatus deliveryStatus = DeliveryStatus.PENDING;
 
+    @Transient
+    private Boolean requirePickingNote = Boolean.TRUE;
+
+    @Transient
+    private String requestedFulfillmentType = "Picking";
+
     @OneToMany(mappedBy = "salesInvoice", cascade = CascadeType.ALL, orphanRemoval = true)
     @JsonManagedReference
     private List<SalesInvoiceItem> items;
@@ -297,5 +303,21 @@ public class SalesInvoice {
 
     public void setDeliveryStatus(DeliveryStatus deliveryStatus) {
         this.deliveryStatus = deliveryStatus;
+    }
+
+    public Boolean getRequirePickingNote() {
+        return requirePickingNote;
+    }
+
+    public void setRequirePickingNote(Boolean requirePickingNote) {
+        this.requirePickingNote = requirePickingNote;
+    }
+
+    public String getRequestedFulfillmentType() {
+        return requestedFulfillmentType;
+    }
+
+    public void setRequestedFulfillmentType(String requestedFulfillmentType) {
+        this.requestedFulfillmentType = requestedFulfillmentType;
     }
 }
