@@ -79,6 +79,7 @@ import billBullLogo from '../../assets/billBullLogo.png';
 import { getTemplatesByCategory } from '../../api/printTemplateApi';
 import { generatePrintHtml, printHtml } from '../../utils/printGenerator';
 import { getImageUrl } from '../../utils/urlUtils';
+import { getDefaultProductUnit, resolveUnitAmount } from '../../utils/unitPricing';
 import { useCompany } from '../../context/CompanyContext';
 import { useBranch } from '../../context/BranchContext';
 
@@ -736,24 +737,14 @@ const Quotations = () => {
                 if (field === 'unit' && item.unitConversions) {
                     const newUnit = value;
 
-                    // Check if we have a direct price for this unit
-                    if (item.unitPrices && item.unitPrices[newUnit]) {
-                        updatedItem.price = item.unitPrices[newUnit];
-
-                    } else {
-                        // Calculate price based on conversion ratio
-                        const baseUnit = Object.keys(item.unitConversions).find(u => item.unitConversions[u] === 1);
-
-                        if (baseUnit) {
-                            let basePrice = item.unitPrices && item.unitPrices[baseUnit] ? item.unitPrices[baseUnit] : null;
-                            if (!basePrice) {
-                                const currentUnitConversion = item.unitConversions[item.unit] || 1;
-                                basePrice = item.price / currentUnitConversion;
-                            }
-                            const newUnitConversion = item.unitConversions[newUnit] || 1;
-                            updatedItem.price = basePrice * newUnitConversion;
-                        }
-                    }
+                    updatedItem.price = resolveUnitAmount({
+                        targetUnit: newUnit,
+                        amountMap: item.unitPrices,
+                        unitConversions: item.unitConversions,
+                        currentUnit: item.unit,
+                        currentAmount: item.price,
+                        fallbackAmount: item.price
+                    });
                 }
 
                 return calculateRow(updatedItem);
@@ -788,7 +779,13 @@ const Quotations = () => {
 
     const handleAddSingleProduct = (product) => {
         if (isViewMode) return;
-        const price = parseFloat(product.retailPrice) || parseFloat(product.sellingPrice) || 0;
+        const defaultUnit = getDefaultProductUnit(product);
+        const price = resolveUnitAmount({
+            targetUnit: defaultUnit,
+            amountMap: product.unitPrices,
+            unitConversions: product.unitConversions,
+            fallbackAmount: product.retailPrice ?? product.sellingPrice ?? 0
+        });
         const cost = parseFloat(product.cost) || 0;
         const disc = parseFloat(product.maxDiscount) || 0;
         const tax = parseFloat(product.salesTax) || 5;
@@ -798,12 +795,12 @@ const Quotations = () => {
             barcode: product.barcode || '',
             image: product.primaryImage || product.image || '', // ✅ Set Image URL
             desc: product.description || product.name,
-            unit: product.unitName || product.unit || (product.availableUnits && product.availableUnits[0]) || 'PCS',
+            unit: defaultUnit,
             qty: 1,
             price: price,
             cost: cost, // ✅ Capture Cost
             foc: 0,
-            focUnit: product.unitName || product.unit || (product.availableUnits && product.availableUnits[0]) || 'PCS',
+            focUnit: defaultUnit,
             availableUnits: product.availableUnits || ['PCS'],
             unitConversions: product.unitConversions || {},
             unitPrices: product.unitPrices || {},

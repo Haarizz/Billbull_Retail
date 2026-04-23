@@ -33,6 +33,7 @@ import { getWarehouses } from "../../../api/warehouseApi";
 import ClassificationDropdown from "../../../components/ClassificationDropdown";
 import { getZones, getLocators, getBins } from "../../../api/warehouseLocationApi";
 import { getVendors } from "../../../api/vendorsApi";
+import { getUnitConversionFactor } from "../../../utils/unitPricing";
 
 // ==========================================
 // 1. DATA CONSTANTS & INITIAL STATE
@@ -356,6 +357,27 @@ const AddProductWizard = ({ onCancel, onSave, initialData, brands: initialBrands
           const newPrice = cost + (cost * (markupPct / 100));
           newData.retailPrice = newPrice.toFixed(2);
         }
+      }
+
+      if (field === 'cost' || field === 'retailPrice' || field === 'defaultUnit') {
+        const baseCost = parseFloat(field === 'cost' ? value : newData.cost) || 0;
+        const basePrice = parseFloat(field === 'retailPrice' ? value : newData.retailPrice) || 0;
+
+        newData.packings = (newData.packings || []).map((packing, idx) => {
+          const ratio = getUnitConversionFactor(
+            { [packing.unit || newData.defaultUnit || '']: packing.conversion },
+            packing.unit || newData.defaultUnit || '',
+            1
+          );
+
+          return {
+            ...packing,
+            unit: idx === 0 ? (newData.defaultUnit || packing.unit) : packing.unit,
+            baseQty: ratio,
+            cost: parseFloat((baseCost * ratio).toFixed(4)),
+            price: parseFloat((basePrice * ratio).toFixed(4))
+          };
+        });
       }
       return newData;
     });
@@ -1088,9 +1110,19 @@ const AddProductWizard = ({ onCancel, onSave, initialData, brands: initialBrands
                               }
                             }
 
-                            const updatedPackings = formData.packings.map(p =>
-                              p.id === pkg.id ? { ...p, unit: selectedUnitId, conversion: autoConversion } : p
-                            );
+                            const updatedPackings = formData.packings.map(p => {
+                              if (p.id !== pkg.id) return p;
+                              const basePrice = parseFloat(formData.retailPrice || 0);
+                              const baseCost = parseFloat(formData.cost || 0);
+                              return {
+                                ...p,
+                                unit: selectedUnitId,
+                                conversion: autoConversion,
+                                baseQty: autoConversion,
+                                cost: parseFloat((baseCost * autoConversion).toFixed(4)),
+                                price: parseFloat((basePrice * autoConversion).toFixed(4))
+                              };
+                            });
                             setFormData(prev => ({ ...prev, packings: updatedPackings }));
                           }}
                           onCreateNew={(name) => handleInlineCreate(`packingUnit-${pkg.id}`, name)}
@@ -1123,8 +1155,34 @@ const AddProductWizard = ({ onCancel, onSave, initialData, brands: initialBrands
                         />
                       </td>
                       <td className="p-3 font-mono">{pkg.baseQty}</td>
-                      <td className="p-3 text-center"><input type="checkbox" defaultChecked={pkg.isSale} className="accent-[#F5C742]" /></td>
-                      <td className="p-3 text-center"><input type="checkbox" defaultChecked={pkg.isPurchase} className="accent-[#F5C742]" /></td>
+                      <td className="p-3 text-center">
+                        <input
+                          type="checkbox"
+                          checked={!!pkg.isSale}
+                          onChange={(e) => {
+                            const checked = e.target.checked;
+                            setFormData(prev => ({
+                              ...prev,
+                              packings: prev.packings.map(p => p.id === pkg.id ? { ...p, isSale: checked } : p)
+                            }));
+                          }}
+                          className="accent-[#F5C742]"
+                        />
+                      </td>
+                      <td className="p-3 text-center">
+                        <input
+                          type="checkbox"
+                          checked={!!pkg.isPurchase}
+                          onChange={(e) => {
+                            const checked = e.target.checked;
+                            setFormData(prev => ({
+                              ...prev,
+                              packings: prev.packings.map(p => p.id === pkg.id ? { ...p, isPurchase: checked } : p)
+                            }));
+                          }}
+                          className="accent-[#F5C742]"
+                        />
+                      </td>
                       <td className="p-3">
                         {idx === 0 ? (
                           <span className="text-slate-400 text-xs">{parseFloat(formData.cost || 0).toFixed(2)}</span>
@@ -1932,9 +1990,16 @@ const Products = () => {
         bin: inventory?.bin ? inventory.bin.id : '',
 
         packings: inventory?.packings && inventory.packings.length > 0
-          ? inventory.packings.map(p => ({
+          ? inventory.packings.map((p, index) => ({
+            ...INITIAL_FORM_STATE.packings[0],
             ...p,
-            unit: p.unit ? p.unit.id : ''
+            id: p.id || Date.now() + index,
+            unit: p.unit || '',
+            conversion: p.conversion ?? 1,
+            baseQty: p.baseQty ?? p.conversion ?? 1,
+            cost: p.cost ?? 0,
+            price: p.price ?? 0,
+            barcode: p.barcode || ''
           }))
           : [{ ...INITIAL_FORM_STATE.packings[0] }]
       };

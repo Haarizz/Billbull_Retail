@@ -57,6 +57,25 @@ const getRecentIds = () => {
 const normalizeRecentProduct = (product, detail = null) => {
     const detailProduct = detail?.product || {};
     const primaryUnitName = detail?.inventory?.defaultUnit?.name || '';
+    const detailPackings = Array.isArray(detail?.inventory?.packings) ? detail.inventory.packings : [];
+    const derivedUnits = detailPackings
+        .map(packing => packing?.unitName || packing?.unit?.name)
+        .filter(Boolean);
+    const derivedConversions = detailPackings.reduce((acc, packing) => {
+        const unitName = packing?.unitName || packing?.unit?.name;
+        if (unitName && packing?.conversion != null) acc[unitName] = packing.conversion;
+        return acc;
+    }, {});
+    const derivedPrices = detailPackings.reduce((acc, packing) => {
+        const unitName = packing?.unitName || packing?.unit?.name;
+        if (unitName && packing?.price != null) acc[unitName] = packing.price;
+        return acc;
+    }, {});
+    const derivedCosts = detailPackings.reduce((acc, packing) => {
+        const unitName = packing?.unitName || packing?.unit?.name;
+        if (unitName && packing?.cost != null) acc[unitName] = packing.cost;
+        return acc;
+    }, {});
     const normalizedId = normalizeProductId(product?.id ?? detailProduct?.id);
     const primaryBarcode = detail?.inventory?.packings?.find?.(packing => packing?.barcode)?.barcode || '';
     const primaryImage =
@@ -96,6 +115,10 @@ const normalizeRecentProduct = (product, detail = null) => {
             'General',
         departmentName: product?.departmentName || detailProduct?.department?.name || null,
         unitName: product?.unitName || detailProduct?.unitName || detailProduct?.unit || primaryUnitName || '',
+        availableUnits: product?.availableUnits || derivedUnits,
+        unitConversions: product?.unitConversions || derivedConversions,
+        unitPrices: product?.unitPrices || derivedPrices,
+        unitCosts: product?.unitCosts || derivedCosts,
         pricing: detail?.pricing || product?.pricing || null,
         inventory: detail?.inventory || product?.inventory || null,
         packings: product?.packings || detail?.inventory?.packings || [],

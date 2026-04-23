@@ -57,6 +57,7 @@ import { getWarehouses } from '../../api/warehouseApi';
 import { getTemplatesByCategory } from '../../api/printTemplateApi';
 import { generatePrintHtml, printHtml } from '../../utils/printGenerator';
 import { getImageUrl } from '../../utils/urlUtils';
+import { getDefaultProductUnit, resolveUnitAmount } from '../../utils/unitPricing';
 import billBullLogo from '../../assets/billBullLogo.png';
 import { useCompany } from '../../context/CompanyContext';
 import { useBranch } from '../../context/BranchContext';
@@ -1051,21 +1052,14 @@ const SalesInvoice = () => {
                 // ✅ If unit is being changed, recalculate price based on conversion
                 if (field === 'unit' && item.unitConversions) {
                     const newUnit = value;
-
-                    if (item.unitPrices && item.unitPrices[newUnit]) {
-                        updatedItem.price = item.unitPrices[newUnit];
-                    } else {
-                        const baseUnit = Object.keys(item.unitConversions).find(u => item.unitConversions[u] === 1);
-                        if (baseUnit) {
-                            let basePrice = item.unitPrices && item.unitPrices[baseUnit] ? item.unitPrices[baseUnit] : null;
-                            if (!basePrice) {
-                                const currentUnitConversion = item.unitConversions[item.unit] || 1;
-                                basePrice = item.price / currentUnitConversion;
-                            }
-                            const newUnitConversion = item.unitConversions[newUnit] || 1;
-                            updatedItem.price = basePrice * newUnitConversion;
-                        }
-                    }
+                    updatedItem.price = resolveUnitAmount({
+                        targetUnit: newUnit,
+                        amountMap: item.unitPrices,
+                        unitConversions: item.unitConversions,
+                        currentUnit: item.unit,
+                        currentAmount: item.price,
+                        fallbackAmount: item.retailPrice ?? item.sellingPrice ?? item.price
+                    });
 
                     // BB-025: Do not auto-compute cost from price on unit change
                 }
@@ -1079,11 +1073,18 @@ const SalesInvoice = () => {
 
     // ✅ PRODUCT SELECTOR HANDLER
     const handleAddSingleProduct = (product) => {
+        const defaultUnit = getDefaultProductUnit(product);
         // Use explicit null/undefined checks so that a master price of 0 does not
         // fall through to a sellingPrice from a different data path.
         const rawRetail = product.retailPrice != null ? parseFloat(product.retailPrice) : NaN;
         const rawSelling = product.sellingPrice != null ? parseFloat(product.sellingPrice) : NaN;
-        const price = !isNaN(rawRetail) ? rawRetail : (!isNaN(rawSelling) ? rawSelling : 0);
+        const masterPrice = !isNaN(rawRetail) ? rawRetail : (!isNaN(rawSelling) ? rawSelling : 0);
+        const price = resolveUnitAmount({
+            targetUnit: defaultUnit,
+            amountMap: product.unitPrices,
+            unitConversions: product.unitConversions,
+            fallbackAmount: masterPrice
+        });
         const disc = parseFloat(product.maxDiscount) || 0;
         const tax = parseFloat(product.salesTax) || 5;
         // Only carry through cost if the master explicitly has a non-null value
@@ -1099,14 +1100,16 @@ const SalesInvoice = () => {
             desc: product.shortDesc || product.description || '',
             sku: product.sku || '',
             localName: product.localName || '',
-            unit: product.unitName || product.unit || (product.availableUnits && product.availableUnits[0]) || 'PCS',
+            unit: defaultUnit,
             qty: 1,
             price: price,
             foc: 0,
-            focUnit: product.unitName || product.unit || (product.availableUnits && product.availableUnits[0]) || 'PCS',
+            focUnit: defaultUnit,
             availableUnits: product.availableUnits || ['PCS'],
             unitConversions: product.unitConversions || {},
             unitPrices: product.unitPrices || {},
+            retailPrice: masterPrice,
+            sellingPrice: masterPrice,
             disc: disc,
             tax: tax,
             taxAmt: 0,
