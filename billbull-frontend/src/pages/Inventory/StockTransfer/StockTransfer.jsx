@@ -14,8 +14,11 @@ import {
     deleteStockTransfer, sendStockTransfer, receiveStockTransfer,
     requestStockTransferApproval, cancelStockTransfer, getStockTransferCostPreview
 } from '../../../api/stockTransferApi';
+import { getCompanyProfile } from '../../../api/companyProfileApi';
 import { toast } from 'react-hot-toast';
 import ProductSelector from '../../../components/ProductSelector';
+import { printHtml } from '../../../utils/printGenerator';
+import { getImageUrl } from '../../../utils/urlUtils';
 
 // ==========================================
 // CONSTANTS
@@ -120,7 +123,7 @@ const StatusBadge = ({ status }) => {
     );
 };
 
-const ViewTransferModal = ({ isOpen, onClose, data }) => {
+const ViewTransferModal = ({ isOpen, onClose, data, onPrint }) => {
     if (!isOpen || !data) return null;
 
     return (
@@ -272,8 +275,8 @@ const ViewTransferModal = ({ isOpen, onClose, data }) => {
                 {/* Footer */}
                 <div className="px-8 py-5 border-t border-slate-100 flex justify-end gap-3 bg-slate-50/30">
                     <button onClick={onClose} className="px-6 py-2 border border-slate-200 text-slate-600 rounded-lg h-10 text-xs font-bold hover:bg-white transition-all">Close Details</button>
-                    {data.status === 'SENT' && (
-                        <button className="px-6 py-2 bg-slate-900 text-white rounded-lg h-10 text-xs font-bold hover:bg-slate-800 shadow-md shadow-slate-200 transition-all flex items-center gap-2">
+                    {(data.status === 'SENT' || data.status === 'RECEIVED') && (
+                        <button onClick={() => onPrint(data)} className="px-6 py-2 bg-slate-900 text-white rounded-lg h-10 text-xs font-bold hover:bg-slate-800 shadow-md shadow-slate-200 transition-all flex items-center gap-2">
                             <Printer size={14} className="text-[#F5C742]" /> Print Gate Pass
                         </button>
                     )}
@@ -377,7 +380,7 @@ const ChecklistItem = ({ checked, label }) => (
 // TRANSFER HISTORY VIEW (Enhanced)
 // ==========================================
 
-const TransferHistoryView = ({ data, warehouses, onView, onSend }) => {
+const TransferHistoryView = ({ data, warehouses, onView, onSend, onPrint }) => {
     return (
         <div className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
             <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between">
@@ -448,7 +451,7 @@ const TransferHistoryView = ({ data, warehouses, onView, onSend }) => {
                                                 <Send size={12} className="text-[#F5C742]" /> Send
                                             </button>
                                         )}
-                                        <button className="p-2 text-slate-400 hover:text-slate-600 hover:bg-white rounded-lg border border-transparent hover:border-slate-200 transition-all opacity-0 group-hover:opacity-100">
+                                        <button onClick={() => onPrint(row)} className="p-2 text-slate-400 hover:text-slate-600 hover:bg-white rounded-lg border border-transparent hover:border-slate-200 transition-all opacity-0 group-hover:opacity-100">
                                             <Printer size={16} />
                                         </button>
                                     </div>
@@ -1478,6 +1481,171 @@ const StockTransfer = () => {
         setIsViewModalOpen(true);
     };
 
+    const handlePrintGatePass = async (data) => {
+        const generatedAt = new Date().toLocaleString();
+        
+        let company = {};
+        try {
+            const res = await getCompanyProfile();
+            company = res?.data || res || {};
+        } catch (e) {
+            console.error("Failed to fetch company profile for print", e);
+        }
+
+        const logoPath = company.logoUrl || company.logoPath || company.logo;
+        const resolvedLogoUrl = logoPath ? getImageUrl(logoPath) : '';
+        const logoHtml = resolvedLogoUrl ? `<img src="${resolvedLogoUrl}" alt="Company Logo" style="max-height: 80px; max-width: 150px; object-fit: contain; margin-bottom: 10px;" />` : '';
+
+        const htmlContent = `
+            <!DOCTYPE html>
+            <html lang="en">
+            <head>
+                <meta charset="UTF-8" />
+                <title>Gate Pass - ${data.transferNo}</title>
+                <style>
+                    @page { size: A4; margin: 20mm; }
+                    body { font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; color: #1e293b; font-size: 12px; line-height: 1.5; margin: 0; padding: 0; }
+                    .header { border-bottom: 2px solid #e2e8f0; padding-bottom: 20px; margin-bottom: 30px; display: flex; justify-content: space-between; align-items: flex-start; }
+                    .title { font-size: 24px; font-weight: bold; color: #0f172a; margin: 0; text-transform: uppercase; letter-spacing: 1px; }
+                    
+                    .info-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 30px; }
+                    .info-box { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 15px; }
+                    .info-box h4 { margin: 0 0 10px 0; font-size: 10px; text-transform: uppercase; color: #64748b; letter-spacing: 0.5px; }
+                    .info-box p { margin: 5px 0; font-size: 12px; font-weight: 500; color: #1e293b; }
+                    .info-box span { color: #64748b; font-weight: normal; }
+                    
+                    table.details-table { width: 100%; border-collapse: collapse; margin-bottom: 30px; }
+                    table.details-table th { background: #f1f5f9; text-align: left; padding: 12px; font-size: 11px; text-transform: uppercase; color: #475569; border-bottom: 2px solid #cbd5e1; }
+                    table.details-table td { padding: 12px; font-size: 12px; border-bottom: 1px solid #e2e8f0; color: #334155; }
+                    .text-right { text-align: right; }
+                    .text-center { text-align: center; }
+                    
+                    .totals { width: 300px; float: right; margin-bottom: 40px; }
+                    .totals-row { display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid #e2e8f0; }
+                    .totals-row.grand { font-weight: bold; font-size: 14px; border-bottom: 2px solid #cbd5e1; border-top: 2px solid #cbd5e1; padding: 12px 0; color: #0f172a; }
+                    
+                    .signatures { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 20px; margin-top: 60px; clear: both; }
+                    .sig-box { text-align: center; }
+                    .sig-line { border-top: 1px solid #94a3b8; margin-top: 50px; padding-top: 8px; font-size: 11px; color: #64748b; font-weight: bold; text-transform: uppercase; }
+                    
+                    .footer { text-align: center; margin-top: 40px; padding-top: 20px; border-top: 1px solid #e2e8f0; font-size: 10px; color: #94a3b8; }
+                </style>
+            </head>
+            <body>
+                <div class="header">
+                    <div>
+                        <h1 class="title" style="margin-bottom: 20px;">STOCK TRANSFER / GATE PASS</h1>
+                        <table style="width: auto; border: none; margin: 0; border-collapse: collapse;">
+                            <tr>
+                                <td style="padding: 2px 15px 2px 0; border: none; font-size: 10px; font-weight: bold; color: #64748b;">DOCUMENT NO</td>
+                                <td style="padding: 2px 0; border: none; font-size: 11px; font-weight: bold; color: #1e293b;">${data.transferNo}</td>
+                            </tr>
+                            <tr>
+                                <td style="padding: 2px 15px 2px 0; border: none; font-size: 10px; font-weight: bold; color: #64748b;">DATE</td>
+                                <td style="padding: 2px 0; border: none; font-size: 11px; font-weight: bold; color: #1e293b;">${data.transferDate}</td>
+                            </tr>
+                            <tr>
+                                <td style="padding: 2px 15px 2px 0; border: none; font-size: 10px; font-weight: bold; color: #64748b;">STATUS</td>
+                                <td style="padding: 2px 0; border: none; font-size: 11px; font-weight: bold; color: #1e293b; text-transform: uppercase;">${data.status}</td>
+                            </tr>
+                        </table>
+                    </div>
+                    <div style="text-align: right; max-width: 300px;">
+                        ${logoHtml}
+                        <div style="font-weight: bold; font-size: 14px; margin-bottom: 4px;">${company.companyName || company.name || ''}</div>
+                        <div style="color: #4b5563; font-size: 11px; margin-bottom: 2px; white-space: pre-wrap;">${company.address || ''}</div>
+                        ${company.phone ? `<div style="color: #4b5563; font-size: 11px; margin-bottom: 2px;">${company.phone}</div>` : ''}
+                        ${company.email ? `<div style="color: #4b5563; font-size: 11px; margin-bottom: 2px;">${company.email}</div>` : ''}
+                        ${company.trn ? `<div style="color: #4b5563; font-size: 11px; margin-bottom: 2px;">TRN: ${company.trn}</div>` : ''}
+                    </div>
+                </div>
+
+                <div class="info-grid">
+                    <div class="info-box">
+                        <h4>From (Source)</h4>
+                        <p>Warehouse: <span>${data.fromWarehouseName || 'N/A'}</span></p>
+                        <p>Zone: <span>${data.fromZoneName || 'N/A'}</span></p>
+                        <p>Locator: <span>${data.fromLocatorName || 'N/A'}</span></p>
+                    </div>
+                    <div class="info-box">
+                        <h4>To (Destination)</h4>
+                        <p>Warehouse: <span>${data.toWarehouseName || 'N/A'}</span></p>
+                        <p>Zone: <span>${data.toZoneName || 'N/A'}</span></p>
+                        <p>Locator: <span>${data.toLocatorName || 'N/A'}</span></p>
+                    </div>
+                    <div class="info-box">
+                        <h4>Logistics Details</h4>
+                        <p>Transport Mode: <span>${data.transportMode || 'N/A'}</span></p>
+                        <p>Vehicle No: <span>${data.vehicleNo || 'N/A'}</span></p>
+                        <p>Driver: <span>${data.driverName || 'Not Assigned'}</span></p>
+                    </div>
+                    <div class="info-box">
+                        <h4>Movement Info</h4>
+                        <p>Reason: <span>${data.reason || 'N/A'}</span></p>
+                        <p>Reference: <span>${data.referenceDoc || 'None'}</span></p>
+                        <p>Dispatch: <span>${data.dispatchDate || 'Pending'}</span></p>
+                    </div>
+                </div>
+
+                <table class="details-table">
+                    <thead>
+                        <tr>
+                            <th>#</th>
+                            <th>Product / Item Code</th>
+                            <th>Batch / Lot</th>
+                            <th class="text-center">Qty</th>
+                            <th class="text-center">UoM</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${(data.items || []).map((item, index) => `
+                            <tr>
+                                <td>${index + 1}</td>
+                                <td>
+                                    <strong>${item.productName}</strong><br>
+                                    <span style="font-size: 10px; color: #64748b;">${item.productCode}</span>
+                                </td>
+                                <td>${item.batchNumber || '---'}</td>
+                                <td class="text-center"><strong>${item.quantity}</strong></td>
+                                <td class="text-center">${item.uom}</td>
+                            </tr>
+                        `).join('')}
+                    </tbody>
+                </table>
+
+                <div class="totals">
+                    <div class="totals-row">
+                        <span>Total Items:</span>
+                        <strong>${data.items?.length || 0}</strong>
+                    </div>
+                    <div class="totals-row grand">
+                        <span>Total Quantity:</span>
+                        <span>${data.items?.reduce((sum, item) => sum + Number(item.quantity), 0) || 0}</span>
+                    </div>
+                </div>
+
+                <div class="signatures">
+                    <div class="sig-box">
+                        <div class="sig-line">Prepared By</div>
+                        <p style="font-size: 10px; color: #64748b; margin-top: 5px;">${data.requestedBy || 'System'}</p>
+                    </div>
+                    <div class="sig-box">
+                        <div class="sig-line">Driver / Transporter</div>
+                    </div>
+                    <div class="sig-box">
+                        <div class="sig-line">Received By</div>
+                    </div>
+                </div>
+
+                <div class="footer">
+                    Gate Pass Generated by BillBull ERP System at ${generatedAt}
+                </div>
+            </body>
+            </html>
+        `;
+        printHtml(htmlContent);
+    };
+
     const handleNewTransfer = () => setActiveTab("create");
 
     return (
@@ -1540,6 +1708,7 @@ const StockTransfer = () => {
                                 warehouses={warehouses}
                                 onView={handleViewTransfer}
                                 onSend={handleSendTransfer}
+                                onPrint={handlePrintGatePass}
                             />
                         )}
                         {activeTab === "receive" && (
@@ -1556,6 +1725,7 @@ const StockTransfer = () => {
                 isOpen={isViewModalOpen}
                 onClose={() => setIsViewModalOpen(false)}
                 data={selectedTransfer}
+                onPrint={handlePrintGatePass}
             />
         </div>
     );

@@ -165,7 +165,7 @@ const Dashboard = () => {
     const hasLoadedRef = useRef(false);
     const [username, setUsername] = useState("Admin");
     const [currentTime, setCurrentTime] = useState(new Date());
-    const [timeRange, setTimeRange] = useState("Today");
+    const [timeRange, setTimeRange] = useState("All Time");
     const [searchTerm, setSearchTerm] = useState("");
     const [isRefreshing, setIsRefreshing] = useState(false);
     const [loading, setLoading] = useState(true);
@@ -350,8 +350,7 @@ const Dashboard = () => {
             <header className="bg-white border-b border-slate-200 sticky top-0 z-30 px-6 py-4 shadow-sm">
                 <div className="flex flex-col xl:flex-row justify-between items-center gap-4">
                     <div className="w-full xl:w-auto">
-                        <div className="flex items-center gap-2 mb-1">
-                            <LayoutGrid className="w-5 h-5 text-[#F5C742]" />
+                        <div className="mb-1">
                             <h1 className="text-xl font-bold text-slate-800 flex items-center gap-2"><LayoutGrid className="text-[#F5C742]" size={28} /> BillBull Dashboard</h1>
                         </div>
                         <div className="text-xs text-slate-500 mb-1">Welcome back, {username}</div>
