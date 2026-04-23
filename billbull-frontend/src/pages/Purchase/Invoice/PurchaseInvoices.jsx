@@ -106,6 +106,56 @@ const compareInvoiceRows = (left, right) => {
   return (right.id || "").localeCompare(left.id || "");
 };
 
+const normalizeInvoiceFilterValue = (value) =>
+  String(value || "")
+    .trim()
+    .toUpperCase()
+    .replace(/\s+/g, "_");
+
+const toDateOnlyString = (value) => {
+  if (!value) return "";
+  if (value instanceof Date) {
+    return `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, "0")}-${String(value.getDate()).padStart(2, "0")}`;
+  }
+
+  const parsed = new Date(value);
+  if (!Number.isNaN(parsed.getTime())) {
+    return `${parsed.getFullYear()}-${String(parsed.getMonth() + 1).padStart(2, "0")}-${String(parsed.getDate()).padStart(2, "0")}`;
+  }
+
+  return String(value).split("T")[0];
+};
+
+const isPendingApprovalInvoice = (invoice) =>
+  normalizeInvoiceFilterValue(invoice?.status) === "PENDING_APPROVAL";
+
+const isDraftInvoice = (invoice) =>
+  normalizeInvoiceFilterValue(invoice?.status) === "DRAFT";
+
+const isOutstandingInvoice = (invoice) =>
+  Number(invoice?.outstanding || 0) > 0 && !isDraftInvoice(invoice);
+
+const isInvoiceToday = (invoice) =>
+  toDateOnlyString(invoice?.documentDate || invoice?.date) === toDateOnlyString(new Date());
+
+const isOverdueInvoice = (invoice) =>
+  Boolean(invoice?.dueDate) &&
+  toDateOnlyString(invoice.dueDate) < toDateOnlyString(new Date()) &&
+  isOutstandingInvoice(invoice);
+
+const PURCHASE_INVOICE_FILTER_TABS = [
+  "All Invoices",
+  "Today",
+  "Draft",
+  "Pending Approval",
+  "Posted",
+  "Outstanding",
+  "Overdue",
+  "Partially Paid",
+  "Paid",
+  "Reversed"
+];
+
 // ==========================================
 // DATA MAPPING HELPER (BACKEND -> UI)
 // ==========================================
@@ -455,6 +505,31 @@ const SchedulePaymentModal = ({ invoice, onClose, onConfirm }) => {
 const InvoiceListView = ({ invoices, activeFilter, setActiveFilter, searchQuery, setSearchQuery, onView, onPrint, onPay, onRefresh, dateRange, setDateRange, vendorFilter, setVendorFilter }) => {
   const [showFilters, setShowFilters] = useState(false);
 
+  const invoiceStats = useMemo(() => {
+    const todayInvoices = invoices.filter(isInvoiceToday);
+    const pendingApprovalInvoices = invoices.filter(isPendingApprovalInvoice);
+    const outstandingInvoices = invoices.filter(isOutstandingInvoice);
+    const overdueInvoices = invoices.filter(isOverdueInvoice);
+
+    return {
+      today: {
+        count: todayInvoices.length,
+        amount: todayInvoices.reduce((sum, invoice) => sum + (Number(invoice.total) || 0), 0)
+      },
+      pendingApproval: {
+        count: pendingApprovalInvoices.length,
+        amount: pendingApprovalInvoices.reduce((sum, invoice) => sum + (Number(invoice.total) || 0), 0)
+      },
+      outstanding: {
+        count: outstandingInvoices.length,
+        amount: outstandingInvoices.reduce((sum, invoice) => sum + (Number(invoice.outstanding) || 0), 0)
+      },
+      overdue: {
+        count: overdueInvoices.length
+      }
+    };
+  }, [invoices]);
+
   const filteredInvoices = invoices.filter(inv => {
     // 1. Search Query
     const matchesSearch = inv.id.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -462,11 +537,14 @@ const InvoiceListView = ({ invoices, activeFilter, setActiveFilter, searchQuery,
       (inv.vendorInvoiceNo || "").toLowerCase().includes(searchQuery.toLowerCase());
 
     // 2. Status Filter
-    const normalizedStatus = inv.status.toUpperCase().replace(/ /g, "_");
-    const normalizedPayment = inv.payment.toUpperCase().replace(/ /g, "_");
-    const normalizedFilter = activeFilter.toUpperCase().replace(/ /g, "_");
+    const normalizedStatus = normalizeInvoiceFilterValue(inv.status);
+    const normalizedPayment = normalizeInvoiceFilterValue(inv.payment);
+    const normalizedFilter = normalizeInvoiceFilterValue(activeFilter);
 
-    const matchesStatus = activeFilter === "All Invoices" ||
+    const matchesStatus = normalizedFilter === "ALL_INVOICES" ||
+      (normalizedFilter === "TODAY" && isInvoiceToday(inv)) ||
+      (normalizedFilter === "OUTSTANDING" && isOutstandingInvoice(inv)) ||
+      (normalizedFilter === "OVERDUE" && isOverdueInvoice(inv)) ||
       normalizedStatus === normalizedFilter ||
       normalizedPayment === normalizedFilter;
 
@@ -499,73 +577,72 @@ const InvoiceListView = ({ invoices, activeFilter, setActiveFilter, searchQuery,
       {/* Stats Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         {/* Card 1: Today */}
-        <div className="bg-white p-4 rounded-lg border border-slate-200 shadow-sm border-l-4 border-l-blue-500">
+        <button
+          type="button"
+          onClick={() => setActiveFilter("Today")}
+          className={`bg-white p-4 rounded-lg border shadow-sm border-l-4 border-l-blue-500 text-left transition-all hover:-translate-y-0.5 hover:shadow-md ${
+            activeFilter === "Today" ? "border-blue-300 ring-2 ring-blue-100" : "border-slate-200"
+          }`}
+        >
           <div className="text-sm font-medium text-slate-500">Invoices Today</div>
           <div className="mt-2 flex items-baseline gap-2">
-            <span className="text-2xl font-bold text-blue-600">
-              {invoices.filter(i => {
-                const today = new Date();
-                const localToday = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
-                return i.date === localToday;
-              }).length}
-            </span>
+            <span className="text-2xl font-bold text-blue-600">{invoiceStats.today.count}</span>
             <span className="text-xs text-slate-400">
-              AED {invoices
-                .filter(i => {
-                  const today = new Date();
-                  const localToday = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
-                  return i.date === localToday;
-                })
-                .reduce((sum, i) => sum + (Number(i.total) || 0), 0)
-                .toLocaleString()}
+              AED {invoiceStats.today.amount.toLocaleString()}
             </span>
           </div>
-        </div>
+        </button>
 
         {/* Card 2: Pending Approval */}
-        <div className="bg-white p-4 rounded-lg border border-slate-200 shadow-sm border-l-4 border-l-yellow-500">
+        <button
+          type="button"
+          onClick={() => setActiveFilter("Pending Approval")}
+          className={`bg-white p-4 rounded-lg border shadow-sm border-l-4 border-l-yellow-500 text-left transition-all hover:-translate-y-0.5 hover:shadow-md ${
+            activeFilter === "Pending Approval" ? "border-yellow-300 ring-2 ring-yellow-100" : "border-slate-200"
+          }`}
+        >
           <div className="text-sm font-medium text-slate-500">Pending Approval</div>
           <div className="mt-2 flex items-baseline gap-2">
-            <span className="text-2xl font-bold text-yellow-600">
-              {invoices.filter(i => i.status === 'Pending Approval' || i.status === 'PENDING_APPROVAL').length}
-            </span>
+            <span className="text-2xl font-bold text-yellow-600">{invoiceStats.pendingApproval.count}</span>
             <span className="text-xs text-slate-400">
-              AED {invoices
-                .filter(i => i.status === 'Pending Approval' || i.status === 'PENDING_APPROVAL')
-                .reduce((sum, i) => sum + (Number(i.total) || 0), 0)
-                .toLocaleString()}
+              AED {invoiceStats.pendingApproval.amount.toLocaleString()}
             </span>
           </div>
-        </div>
+        </button>
 
         {/* Card 3: Total Outstanding */}
-        <div className="bg-white p-4 rounded-lg border border-slate-200 shadow-sm border-l-4 border-l-red-500">
+        <button
+          type="button"
+          onClick={() => setActiveFilter("Outstanding")}
+          className={`bg-white p-4 rounded-lg border shadow-sm border-l-4 border-l-red-500 text-left transition-all hover:-translate-y-0.5 hover:shadow-md ${
+            activeFilter === "Outstanding" ? "border-red-300 ring-2 ring-red-100" : "border-slate-200"
+          }`}
+        >
           <div className="text-sm font-medium text-slate-500">Total Outstanding</div>
           <div className="mt-2 flex items-baseline gap-2">
-            <span className="text-2xl font-bold text-red-600">
-              {invoices.filter(i => i.outstanding > 0 && i.status !== 'Draft' && i.status !== 'DRAFT').length}
-            </span>
+            <span className="text-2xl font-bold text-red-600">{invoiceStats.outstanding.count}</span>
             <span className="text-xs text-slate-400">
-              AED {invoices
-                .filter(i => i.outstanding > 0 && i.status !== 'Draft' && i.status !== 'DRAFT')
-                .reduce((sum, i) => sum + (Number(i.outstanding) || 0), 0)
-                .toLocaleString()}
+              AED {invoiceStats.outstanding.amount.toLocaleString()}
             </span>
           </div>
-        </div>
+        </button>
 
         {/* Card 4: Overdue (Demo Logic: Due Date < Today) */}
-        <div className="bg-white p-4 rounded-lg border border-slate-200 shadow-sm border-l-4 border-l-orange-500">
+        <button
+          type="button"
+          onClick={() => setActiveFilter("Overdue")}
+          className={`bg-white p-4 rounded-lg border shadow-sm border-l-4 border-l-orange-500 text-left transition-all hover:-translate-y-0.5 hover:shadow-md ${
+            activeFilter === "Overdue" ? "border-orange-300 ring-2 ring-orange-100" : "border-slate-200"
+          }`}
+        >
           <div className="text-sm font-medium text-slate-500">Overdue</div>
           <div className="mt-2 flex items-baseline gap-2">
-            <span className="text-2xl font-bold text-orange-600">
-              {invoices.filter(i => i.dueDate && new Date(i.dueDate) < new Date() && i.outstanding > 0).length}
-            </span>
+            <span className="text-2xl font-bold text-orange-600">{invoiceStats.overdue.count}</span>
             <span className="text-xs text-slate-400">
               Needs Attention
             </span>
           </div>
-        </div>
+        </button>
       </div>
 
       {/* Filter Panel */}
@@ -2981,7 +3058,7 @@ const PurchaseInvoices = () => {
 
         {activeNavTab === 'list' && (
           <div className="flex items-center gap-2 overflow-x-auto pb-1 no-scrollbar mb-4 -mx-4 px-4 md:mx-0 md:px-0">
-            {["All Invoices", "Draft", "Pending Approval", "Posted", "Partially Paid", "Paid", "Reversed"].map((tab, idx) => (
+            {PURCHASE_INVOICE_FILTER_TABS.map((tab) => (
               <button
                 key={tab}
                 onClick={() => setActiveFilter(tab)}

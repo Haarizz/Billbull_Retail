@@ -371,14 +371,9 @@ const Messaging = () => {
             {/* Header */}
             <div className="px-6 py-4 bg-white border-b border-slate-200">
                 <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-                    <div className="flex items-center gap-3">
-                        <div className="p-1.5 bg-yellow-100 rounded-lg text-yellow-600">
-                            <MessageSquare className="h-5 w-5" />
-                        </div>
-                        <div>
-                            <h1 className="text-xl font-bold text-slate-900 flex items-center gap-2"><MessageSquare className="text-[#F5C742]" size={28} /> Messaging</h1>
-                            <p className="text-xs text-slate-500">Send transactional alerts, promotional messages, and automated notifications across WhatsApp, SMS & Email.</p>
-                        </div>
+                    <div>
+                        <h1 className="text-xl font-bold text-slate-900 flex items-center gap-2"><MessageSquare className="text-[#F5C742]" size={28} /> Messaging</h1>
+                        <p className="text-xs text-slate-500">Send transactional alerts, promotional messages, and automated notifications across WhatsApp, SMS & Email.</p>
                     </div>
                     <div className="flex items-center gap-2">
                         <button

@@ -1785,6 +1785,7 @@ const ACCESS_STATUS = {
 };
 
 const EmployeeAccessPanel = ({ employee, onClose }) => {
+  const { branches, formatBranchLabel } = useBranch();
   const [accessData, setAccessData]     = useState(null);
   const [loading, setLoading]           = useState(true);
   const [actionLoading, setActionLoading] = useState(false);
@@ -1798,6 +1799,27 @@ const EmployeeAccessPanel = ({ employee, onClose }) => {
   const [rolesLoading, setRolesLoading] = useState(false);
   const [rolesSaving, setRolesSaving]   = useState(false);
   const [rolesLayout, setRolesLayout]   = useState('vertical'); // 'vertical' | 'horizontal'
+
+  const resolvedEmployeeBranch = useMemo(() => {
+    const branchLabel = normalizeOptionLabel(employee?.branch);
+    if (!branchLabel) {
+      return null;
+    }
+
+    const normalizedLabel = branchLabel.toLowerCase();
+
+    return branches.find((branch) => {
+      const branchName = normalizeOptionLabel(branch?.name)?.toLowerCase();
+      const branchCode = normalizeOptionLabel(branch?.code)?.toLowerCase();
+      const formattedLabel = normalizeOptionLabel(formatBranchLabel(branch))?.toLowerCase();
+
+      return (
+        normalizedLabel === branchName ||
+        normalizedLabel === branchCode ||
+        normalizedLabel === formattedLabel
+      );
+    }) || null;
+  }, [branches, employee?.branch, formatBranchLabel]);
 
   // ── data loading ──────────────────────────────────────────
   const loadAccess = async () => {
@@ -1843,6 +1865,7 @@ const EmployeeAccessPanel = ({ employee, onClose }) => {
       fullName: employee.name,
       phone:    employee.rawPhone || '',
       linkedEmployeeId: employee.id,
+      branchId: accessData?.branchId || resolvedEmployeeBranch?.id || null,
       roleIds: [],
     });
   });

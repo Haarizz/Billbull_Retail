@@ -88,36 +88,39 @@ public class UserService {
     public UserSafeDto createUser(UserCreateRequest request) {
         validateUsernameAvailable(request.getUsername());
 
+        Employee linkedEmployee = null;
+        if (request.getLinkedEmployeeId() != null) {
+            linkedEmployee = employeeRepository.findById(request.getLinkedEmployeeId())
+                    .orElseThrow(() -> new RuntimeException(
+                            "Employee not found with id: " + request.getLinkedEmployeeId()));
+        }
+
         User user = new User();
         user.setUsername(request.getUsername().trim());
         user.setPassword(encodeRequiredPassword(request.getPassword(), "Password"));
         user.setFullName(request.getFullName());
         user.setEmail(request.getEmail());
         user.setPhone(request.getPhone());
-        user.setBranch(resolveRequiredBranch(request.getBranchId()));
+        user.setBranch(resolveBranchForLinkedUserCreate(request.getBranchId(), linkedEmployee));
 
         user.setRoles(resolveRoles(request.getRoleIds()));
 
         // Link employee if provided
-        if (request.getLinkedEmployeeId() != null) {
-            Employee employee = employeeRepository.findById(request.getLinkedEmployeeId())
-                    .orElseThrow(() -> new RuntimeException(
-                            "Employee not found with id: " + request.getLinkedEmployeeId()));
-
+        if (linkedEmployee != null) {
             // Ensure employee is active (per business rule)
-            if (!"Active".equals(employee.getStatus())) {
+            if (!"Active".equals(linkedEmployee.getStatus())) {
                 throw new RuntimeException(
-                        "Cannot create access for employee with status: " + employee.getStatus() +
+                        "Cannot create access for employee with status: " + linkedEmployee.getStatus() +
                         ". Employee must be Active.");
             }
 
             // Ensure employee is not already linked to another user
-            if (userRepository.findByLinkedEmployee_Id(request.getLinkedEmployeeId()).isPresent()) {
+            if (userRepository.findByLinkedEmployee_Id(linkedEmployee.getId()).isPresent()) {
                 throw new RuntimeException(
                         "Employee is already linked to a user account.");
             }
 
-            user.setLinkedEmployee(employee);
+            user.setLinkedEmployee(linkedEmployee);
         }
 
         return new UserSafeDto(userRepository.save(user));
@@ -324,6 +327,18 @@ public class UserService {
                 .orElseThrow(() -> new RuntimeException("Branch not found with id: " + branchId));
     }
 
+    private Branch resolveBranchForLinkedUserCreate(Long requestedBranchId, Employee linkedEmployee) {
+        if (requestedBranchId != null) {
+            return resolveRequiredBranch(requestedBranchId);
+        }
+
+        if (linkedEmployee != null) {
+            return resolveBranchForEmployeeAccess(linkedEmployee, null);
+        }
+
+        return resolveRequiredBranch(null);
+    }
+
     private Branch resolveBranchForEmployeeAccess(Employee employee, Long requestedBranchId) {
         if (requestedBranchId != null) {
             return resolveRequiredBranch(requestedBranchId);
@@ -333,10 +348,40 @@ public class UserService {
             String label = employee.getBranch().trim();
             return branchRepository.findByCodeIgnoreCase(label)
                     .or(() -> branchRepository.findByNameIgnoreCase(label))
+                    .or(() -> resolveBranchFromFormattedLabel(label))
                     .orElseThrow(() -> new RuntimeException(
                             "Branch assignment is required before creating employee login access."));
         }
 
         throw new RuntimeException("Branch assignment is required before creating employee login access.");
+    }
+
+    private Optional<Branch> resolveBranchFromFormattedLabel(String label) {
+        if (label == null || label.isBlank()) {
+            return Optional.empty();
+        }
+
+        int openParenIndex = label.lastIndexOf('(');
+        int closeParenIndex = label.lastIndexOf(')');
+
+        if (openParenIndex < 0 || closeParenIndex <= openParenIndex) {
+            return Optional.empty();
+        }
+
+        String code = label.substring(openParenIndex + 1, closeParenIndex).trim();
+        String name = label.substring(0, openParenIndex).trim();
+
+        if (!code.isBlank()) {
+            Optional<Branch> byCode = branchRepository.findByCodeIgnoreCase(code);
+            if (byCode.isPresent()) {
+                return byCode;
+            }
+        }
+
+        if (!name.isBlank()) {
+            return branchRepository.findByNameIgnoreCase(name);
+        }
+
+        return Optional.empty();
     }
 }

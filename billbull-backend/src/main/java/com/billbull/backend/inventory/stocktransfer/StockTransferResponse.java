@@ -1,5 +1,6 @@
 package com.billbull.backend.inventory.stocktransfer;
 
+import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.List;
 
@@ -34,6 +35,10 @@ public class StockTransferResponse {
     public String driverName;
     public LocalDate dispatchDate;
     public LocalDate arrivalDate;
+    public BigDecimal transportCharge;
+    public BigDecimal additionalCharges;
+    public BigDecimal inventoryValue;
+    public BigDecimal totalTransferValue;
     public List<StockTransferItemResponse> items;
 
     public static class StockTransferItemResponse {
@@ -45,5 +50,9 @@ public class StockTransferResponse {
         public Integer quantity;
         public Integer receivedQty;
         public String uom;
+        public BigDecimal unitCostAtSend;
+        public BigDecimal lineValue;
+        public BigDecimal allocatedCharge;
+        public BigDecimal receivedLineValue;
     }
 }

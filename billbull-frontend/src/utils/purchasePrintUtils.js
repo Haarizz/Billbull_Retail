@@ -98,11 +98,13 @@ export const getPurchaseDefaultDisplayOptions = (category, overrides = {}) => {
         {
             ...DEFAULT_TEMPLATE_DISPLAY_OPTIONS,
             showTerms: !isVoucher,
+            showItemImage: !isVoucher,
             ...overrides
         },
         {
             ...DEFAULT_TEMPLATE_DISPLAY_OPTIONS,
-            showTerms: !isVoucher
+            showTerms: !isVoucher,
+            showItemImage: !isVoucher
         }
     );
 };

@@ -46,6 +46,11 @@ const formatCurrency = (currency, value) => `${currency} ${formatNumber(value)}`
 
 const joinAddress = (...parts) => compactValues(parts).join(', ');
 
+const resolveDocumentImageUrl = (value) => {
+    const imagePath = firstNonEmpty(value);
+    return imagePath ? getImageUrl(imagePath) : '';
+};
+
 const resolveLogoUrl = (companyProfile = {}) => {
     const logoPath =
         companyProfile.logoUrl ||
@@ -54,7 +59,7 @@ const resolveLogoUrl = (companyProfile = {}) => {
         companyProfile.logoPath ||
         '';
 
-    return logoPath ? getImageUrl(logoPath) : null;
+    return resolveDocumentImageUrl(logoPath) || null;
 };
 
 export const normalizeDocumentCompanyProfile = (companyProfile = {}) => {
@@ -144,7 +149,7 @@ const normaliseItem = (item = {}) => {
         localName: item.localName || item.arabicName || '',
         name: item.name || item.item || description.title || '-',
         description,
-        image: item.image || item.imageUrl || '',
+        image: resolveDocumentImageUrl(item.image || item.imageUrl || ''),
         unit: item.unit || item.uom || '',
         qty,
         price,
@@ -250,7 +255,7 @@ const buildDescriptionCell = (item, displayOptions = {}, columnOptions = {}) => 
 
     return `
         <div class="description-wrap">
-            ${showImage ? `<img src="${item.image}" class="item-thumb" alt="" />` : ''}
+            ${showImage ? `<img src="${escapeHtml(item.image)}" class="item-thumb" alt="" />` : ''}
             <div class="description-copy">
                 <div class="description-title">${escapeHtml(item.description.title || item.name || '-')}</div>
                 ${combinedLines.map((line) => `<div class="description-line">${escapeHtml(line)}</div>`).join('')}

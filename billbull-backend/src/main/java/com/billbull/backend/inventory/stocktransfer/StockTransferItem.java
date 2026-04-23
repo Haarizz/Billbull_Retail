@@ -2,6 +2,7 @@ package com.billbull.backend.inventory.stocktransfer;
 
 import com.billbull.backend.inventory.product.Product;
 import jakarta.persistence.*;
+import java.math.BigDecimal;
 
 @Entity
 @Table(name = "stock_transfer_items")
@@ -23,6 +24,15 @@ public class StockTransferItem {
     private Integer quantity;
     private Integer receivedQty;
     private String uom;
+
+    @Column(precision = 15, scale = 4)
+    private BigDecimal unitCostAtSend;
+
+    @Column(precision = 15, scale = 2)
+    private BigDecimal lineValue;
+
+    @Column(precision = 15, scale = 2)
+    private BigDecimal allocatedCharge = BigDecimal.ZERO;
 
     // Getters & Setters
     public Long getId() {
@@ -79,5 +89,29 @@ public class StockTransferItem {
 
     public void setUom(String uom) {
         this.uom = uom;
+    }
+
+    public BigDecimal getUnitCostAtSend() {
+        return unitCostAtSend;
+    }
+
+    public void setUnitCostAtSend(BigDecimal unitCostAtSend) {
+        this.unitCostAtSend = unitCostAtSend;
+    }
+
+    public BigDecimal getLineValue() {
+        return lineValue;
+    }
+
+    public void setLineValue(BigDecimal lineValue) {
+        this.lineValue = lineValue;
+    }
+
+    public BigDecimal getAllocatedCharge() {
+        return allocatedCharge;
+    }
+
+    public void setAllocatedCharge(BigDecimal allocatedCharge) {
+        this.allocatedCharge = allocatedCharge;
     }
 }
