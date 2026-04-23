@@ -1072,7 +1072,7 @@ const SalesOrders = () => {
           <p className="text-xs text-slate-500">Approved quotations & proforma invoices converted into sales orders.</p>
         </div>
         {/* ── VERTICAL: canExport('sales') for Print/Email/WhatsApp/SMS ── */}
-        {canExport('sales') && (
+        {canExport('sales.order') && (
           <div className="flex flex-wrap gap-2">
             {['Email', 'WhatsApp', 'SMS', 'Print'].map((label) => (
               <button key={label} onClick={label === 'Print' ? handlePrintClick : undefined} disabled={label === 'Print' && isPrinting} className="flex items-center gap-1 px-3 py-1.5 bg-white border border-slate-200 rounded text-xs font-medium text-slate-600 hover:bg-slate-50 shadow-sm disabled:opacity-50">
@@ -1096,7 +1096,7 @@ const SalesOrders = () => {
           Sales Order List
         </button>
         {/* ── VERTICAL: canCreate('sales') ── */}
-        {canCreate('sales') && (
+        {canCreate('sales.order') && (
           <button
             onClick={handleCreateNew}
             className={`px-4 py-1.5 text-xs font-bold rounded-md transition-colors ${activeTab === 'create' ? 'bg-white shadow-sm border border-slate-200 text-slate-900' : 'text-slate-500 hover:text-slate-700'}`}
@@ -1123,7 +1123,7 @@ const SalesOrders = () => {
                   <option>Partially Paid</option>
                 </select>
                 {/* ── VERTICAL: canCreate('sales') ── */}
-                {canCreate('sales') && (
+                {canCreate('sales.order') && (
                   <button onClick={handleCreateNew} className="flex items-center justify-center gap-1 px-3 py-1.5 bg-yellow-400 text-slate-900 text-xs font-bold rounded hover:bg-yellow-500 whitespace-nowrap flex-1 md:flex-none">
                     <Plus size={14} /> New Sales Order
                   </button>
@@ -1550,7 +1550,7 @@ const SalesOrders = () => {
                           <td className="p-2 text-center align-middle">
                             <div className="flex items-center justify-center gap-1.5">
                               {/* ── VERTICAL: canEdit('sales') for delete line item ── */}
-                              {!isLocked && canEdit('sales') && (
+                              {!isLocked && canEdit('sales.order') && (
                                 <button onClick={() => handleDeleteItem(item.id)} className="p-1.5 text-red-500 border border-red-100 hover:bg-red-50 rounded transition-colors group">
                                   <Trash2 size={14} className="group-hover:scale-110 transition-transform" />
                                 </button>

@@ -87,13 +87,7 @@ const buildPreviewImage = (label, accent, base = '#f8fafc') => {
 };
 
 const getSalesDefaultDisplayOptions = (overrides = {}) =>
-    sanitizeTemplateDisplayOptions(
-        {
-            ...DEFAULT_TEMPLATE_DISPLAY_OPTIONS,
-            ...overrides
-        },
-        DEFAULT_TEMPLATE_DISPLAY_OPTIONS
-    );
+    sanitizeTemplateDisplayOptions(overrides, DEFAULT_TEMPLATE_DISPLAY_OPTIONS);
 
 const getSalesDefaultColumns = (category, overrides = {}) => {
     const categoryDefaults = {
@@ -104,13 +98,7 @@ const getSalesDefaultColumns = (category, overrides = {}) => {
         unitPrice: category !== 'Delivery Note (DO/DN)'
     };
 
-    return sanitizeTemplateColumns(
-        {
-            ...categoryDefaults,
-            ...overrides
-        },
-        categoryDefaults
-    );
+    return sanitizeTemplateColumns(overrides, categoryDefaults);
 };
 
 const normalizeSalesTemplate = (template, category = template?.category) => ({
