@@ -415,8 +415,17 @@ public class PostingEngineService {
                                 "Receipt from " + receipt.getMemberName());
                 addLine(entry, settlementAccount.name, settlementAccount.code,
                                 "Receipt - " + ref, receipt.getAmount(), BigDecimal.ZERO);
-                addLine(entry, "Accounts Receivable", ACC_ACCOUNTS_RECEIVABLE,
-                                "Customer payment", BigDecimal.ZERO, receipt.getAmount());
+
+                // Use Customer Advance account for advances, otherwise use AR
+                String creditAccount = ACC_ACCOUNTS_RECEIVABLE;
+                String creditName    = "Accounts Receivable";
+                if (receipt.getPurpose() == com.billbull.backend.financials.receiptvoucher.ReceiptPurpose.ADVANCE_RECEIVED) {
+                        creditAccount = ACC_CUSTOMER_ADVANCE;
+                        creditName    = "Customer Advance";
+                }
+
+                addLine(entry, creditName, creditAccount,
+                                "Customer payment - " + receipt.getPurpose(), BigDecimal.ZERO, receipt.getAmount());
                 return post(entry);
         }
 

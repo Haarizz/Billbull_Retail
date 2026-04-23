@@ -10,6 +10,7 @@ public class ProformaItemRequest {
     public BigDecimal quantity;
     public BigDecimal price;
     public BigDecimal taxPercent;
+    public BigDecimal discountPercent;
     public Integer foc;
     public String focUnit;
     public String remarks;

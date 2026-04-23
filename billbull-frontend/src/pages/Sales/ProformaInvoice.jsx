@@ -1,4 +1,4 @@
-﻿import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   FileText,
   Plus,
@@ -56,6 +56,9 @@ import {
   getProformaById
 } from "../../api/proformaApi";
 
+import { receiptVoucherApi } from "../../api/receiptVoucherApi";
+import { useBranch } from "../../context/BranchContext";
+
 // âœ… PRODUCT SELECTOR
 import ProductSelector from '../../components/ProductSelector';
 
@@ -75,6 +78,7 @@ import ItemAddOnsModal from '../../components/ItemAddOnsModal';
 
 const ProformaInvoice = () => {
   const { company } = useCompany();
+  const { defaultBranchName } = useBranch();
   const [activeTab, setActiveTab] = useState('list');
   const [piId, setPiId] = useState(null);
 
@@ -217,9 +221,34 @@ const ProformaInvoice = () => {
   // Notes
   const [notesToCustomer, setNotesToCustomer] = useState('');
   const [internalNotes, setInternalNotes] = useState('');
+  const [isSaving, setIsSaving] = useState(false);
 
   // Summary Calcs
-  const subTotal = items.reduce((sum, item) => sum + (Number(item.total) || 0), 0);
+  const grossTotal = items.reduce((sum, item) => sum + (Number(item.qty) * Number(item.price) || 0), 0);
+  const totalItemDiscount = items.reduce((sum, item) => {
+    const qty = Number(item.qty) || 0;
+    const price = Number(item.price) || 0;
+    const focQty = Number(item.foc) || 0;
+    const discPercent = Number(item.disc) || 0;
+
+    const grossAmount = price * qty;
+    let focDeduction = 0;
+    if (focQty > 0 && item.focUnit && item.unitConversions) {
+      const sellingUnit = item.unit;
+      const focUnit = item.focUnit;
+      if (sellingUnit === focUnit) {
+        focDeduction = price * focQty;
+      } else {
+        const focConversion = item.unitConversions[focUnit] || 1;
+        const sellingConversion = item.unitConversions[sellingUnit] || 1;
+        focDeduction = price * (focQty * focConversion / sellingConversion);
+      }
+    }
+    const preDiscountAmount = Math.max(0, grossAmount - focDeduction);
+    return sum + (preDiscountAmount * (discPercent / 100));
+  }, 0);
+
+  const subTotal = grossTotal - totalItemDiscount; // Taxable Subtotal
   const [billDiscount, setBillDiscount] = useState(0);
   const billDiscountAmount = (subTotal * billDiscount) / 100;
   const totalTax = items.reduce((sum, item) => sum + (Number(item.taxAmt) || 0), 0);
@@ -484,10 +513,11 @@ const ProformaInvoice = () => {
         : [resolvedUnit],
       unitConversions: item.unitConversions || {},
       unitPrices: item.unitPrices || {},
-      disc: Number(item.disc ?? item.discount ?? item.discountPercent) || 0,
+      disc: Number(item.disc ?? item.discount ?? item.discountPercent ?? item.discPercent) || 0,
       tax: Number(item.tax ?? item.taxRate ?? item.taxPercent) || 5,
       taxAmt: Number(item.taxAmt ?? item.taxAmount) || 0,
-      total: Number(item.total ?? item.lineTotal) || 0
+      total: Number(item.total ?? item.lineTotal) || 0,
+      billDiscount: Number(item.billDiscount) || 0
     };
 
     return calculateRow(normalized);
@@ -609,6 +639,7 @@ const ProformaInvoice = () => {
 
       setLinkedQuote(full.quotationNo || "");
       setLinkedSO(full.salesOrderNo || "");
+      setBillDiscount(Number(full.billDiscount) || 0);
       setSourceType(full.quotationNo ? 'Quotation' : full.salesOrderNo ? 'Sales Order' : 'None');
       setSourceSearch('');
 
@@ -632,7 +663,10 @@ const ProformaInvoice = () => {
   };
 
   const handleCreateNew = () => {
-    setPiNumber('PI-' + Math.floor(Math.random() * 100000));
+    const now = new Date();
+    const dateStr = now.toISOString().split('T')[0].split('-').join('');
+    const timeStr = now.getHours().toString().padStart(2, '0') + now.getMinutes().toString().padStart(2, '0');
+    setPiNumber(`PI-${dateStr}-${timeStr}`);
     setStatus('DRAFT');
     setPiId(null);
     setIsReadOnly(false);
@@ -653,26 +687,27 @@ const ProformaInvoice = () => {
     setActiveTab('create');
   };
 
-  // âœ… STEP 6: SAVE DRAFT -> REAL API
-  const handleSaveDraft = async () => {
-    if (!selectedCustomer) return alert("Please select a customer.");
-
-    const validItems = items.filter(i => i.code || i.desc);
-    if (validItems.length === 0) return alert("Please add at least one item.");
-
+  // ✅ STEP 6: SAVE DRAFT -> REAL API
+  const handleSaveDraft = async (advanceOverride = null) => {
+    setIsSaving(true);
     try {
+      const validItems = items.filter(i => i.code || i.desc);
+
+      const finalAdvance = advanceOverride !== null ? Number(advanceOverride) : Number(advanceAmount);
+
       const payload = {
         piNumber,
         piDate,
         validUntil,
-        customerId: selectedCustomer.id,
+        customerId: selectedCustomer?.id === 'WALKIN-ID' ? null : selectedCustomer?.id,
         customerCode: selectedCustomer.code,
         customerName: selectedCustomer.name,
         customerTrn: selectedCustomer.trn,
         quotationNo: linkedQuote || null,
         salesOrderNo: linkedSO || null,
         paymentMethod,
-        advancePaid: Number(advanceAmount),
+        advancePaid: finalAdvance,
+        billDiscount: Number(billDiscount),
         paymentNotes,
         notesToCustomer,
         shippingAddress,
@@ -684,6 +719,7 @@ const ProformaInvoice = () => {
           quantity: Number(i.qty),
           price: Number(i.price),
           taxPercent: Number(i.tax),
+          discountPercent: Number(i.disc),
           foc: Number(i.foc) || 0,
           focUnit: i.focUnit || i.unit,
           remarks: i.remarks || ''
@@ -691,36 +727,101 @@ const ProformaInvoice = () => {
       };
 
       const saved = piId ? await updateProforma(piId, payload) : await createProforma(payload);
-      setPiId(saved?.id || piId);
-      alert(piId ? "Draft updated successfully" : "Draft saved successfully");
+      const currentPiId = saved?.id || piId;
+      setPiId(currentPiId);
 
-      // Refresh list
-      const refreshed = await getAllProformas();
-      setProformaList(refreshed);
+      // Refresh list immediately to get accurate balance on list view
+      const refreshedList = await getAllProformas();
+      setProformaList(refreshedList);
+
+      // âœ… If payment override is provided and balance is now 0, auto-issue
+      const subTotalItems = payload.items.reduce((acc, it) => {
+        const lineGross = it.quantity * it.price;
+        const lineDisc = lineGross * (it.discountPercent / 100);
+        const taxable = lineGross - lineDisc;
+        const lineTax = taxable * (it.taxPercent / 100);
+        return acc + taxable + lineTax;
+      }, 0);
+      const finalGrandTotal = subTotalItems * (1 - (Number(billDiscount) / 100));
+
+      if (advanceOverride !== null && Number(finalAdvance) >= (finalGrandTotal - 1)) { // Allowing minor rounding gap
+        await issueProforma(currentPiId);
+        alert("Payment received and Proforma issued successfully!");
+      } else {
+        alert(piId ? "Draft updated successfully" : "Draft saved successfully");
+      }
+
       setActiveTab("list");
     } catch (err) {
       console.error(err);
-      alert("Failed to save draft");
+      if (err.response?.status === 409) {
+        alert("Conflict Error (409): This PI Number might already exist or the record is in a state that cannot be updated. Try creating a new one.");
+      } else {
+        alert("Failed to save draft");
+      }
+    } finally {
+      setIsSaving(false);
     }
   };
 
-  // âœ… STEP 7: ISSUE PI -> REAL API
+  // ✅ STEP 7: ISSUE PI -> REAL API (WITH AUTO-SAVE)
   const handleIssuePI = async () => {
     if (!selectedCustomer) {
       return alert("Select customer first");
     }
 
     if (balanceDue > 0) {
-      return alert("Cannot Issue PI. Full payment is required.");
+      return alert(`Cannot Issue PI. Full payment is required. Current Balance Due: AED ${balanceDue.toFixed(2)}`);
     }
 
-    // Need an ID to issue
-    if (!piId) {
-      return alert("Please save the Draft first before issuing.");
-    }
-
+    setIsSaving(true);
     try {
-      await issueProforma(piId);
+      // 1. Auto-save current state as draft first to ensure the backend has latest data (including payments)
+      const validItems = items.filter(i => i.code || i.desc);
+      const payload = {
+        piNumber,
+        piDate,
+        validUntil,
+        customerId: selectedCustomer?.id === 'WALKIN-ID' ? null : selectedCustomer?.id,
+        customerCode: selectedCustomer.code,
+        customerName: selectedCustomer.name,
+        customerTrn: selectedCustomer.trn,
+        quotationNo: linkedQuote || null,
+        salesOrderNo: linkedSO || null,
+        paymentMethod,
+        advancePaid: Number(advanceAmount),
+        billDiscount: Number(billDiscount),
+        paymentNotes,
+        notesToCustomer,
+        shippingAddress,
+        items: validItems.map(i => ({
+          itemCode: i.code,
+          barcode: i.barcode || '',
+          description: i.desc,
+          unit: i.unit,
+          quantity: Number(i.qty),
+          price: Number(i.price),
+          taxPercent: Number(i.tax),
+          discountPercent: Number(i.disc),
+          foc: Number(i.foc) || 0,
+          focUnit: i.focUnit || i.unit,
+          remarks: i.remarks || ''
+        }))
+      };
+
+      let currentId = piId;
+      if (!currentId) {
+        const saved = await createProforma(payload);
+        currentId = saved?.id;
+        setPiId(currentId);
+      } else {
+        await updateProforma(currentId, payload);
+      }
+
+      if (!currentId) throw new Error("Failed to secure PI ID before issuing");
+
+      // 2. Now perform the actual Issue
+      await issueProforma(currentId);
       alert(`Proforma ${piNumber} issued successfully`);
 
       const refreshed = await getAllProformas();
@@ -728,7 +829,13 @@ const ProformaInvoice = () => {
       setActiveTab("list");
     } catch (err) {
       console.error(err);
-      alert("Failed to issue Proforma");
+      if (err.response?.status === 409) {
+        alert("Conflict Error (409): The backend rejected this issue. This usually happens if the PI Number is already taken or if the document is already in a state that cannot be modified. Try generating a new PI number.");
+      } else {
+        alert(err.message || "Failed to issue Proforma");
+      }
+    } finally {
+      setIsSaving(false);
     }
   };
 
@@ -744,15 +851,51 @@ const ProformaInvoice = () => {
     setIsPaymentModalOpen(true);
   };
 
-  const handleAddPaymentFromModal = () => {
-    if (!modalPaymentAmount || Number(modalPaymentAmount) <= 0) {
-      return alert("Please enter a valid amount.");
-    }
-    setAdvanceAmount(prev => Number(prev) + Number(modalPaymentAmount));
+  const handleAddPaymentFromModal = async () => {
+    const amount = Number(modalPaymentAmount);
+    if (!amount || amount <= 0) return alert("Enter valid amount");
+
+    // 1. Update UI State
+    const newAdvance = Number(advanceAmount) + amount;
+    setAdvanceAmount(newAdvance);
     setPaymentMethod(modalPaymentMode);
-    setPaymentRef(modalPaymentRef);
     setPaymentNotes(modalNotes);
     setIsPaymentModalOpen(false);
+
+    // 2. Create a Receipt Voucher (Hit the Financials)
+    try {
+      const rvData = {
+        date: modalPaymentDate,
+        branch: defaultBranchName || 'Main Branch',
+        memberName: selectedCustomer?.name || 'Walk-in Customer',
+        category: 'Customer Advance',
+        amount: amount,
+        paymentMode: modalPaymentMode,
+        reference: `Advance for PI: ${piNumber}`,
+        notes: modalNotes || 'Automated receipt from Proforma Invoice module',
+        status: 'Completed',
+        purpose: 'ADVANCE_RECEIVED',
+        bankAccount: modalBankAccount || null,
+        chequeDate: modalChequeDate || null
+      };
+
+      const formData = new FormData();
+      formData.append('data', JSON.stringify(rvData));
+
+      await receiptVoucherApi.create(formData);
+    } catch (err) {
+      console.error("Failed to post Receipt Voucher to financials", err);
+    }
+
+    // 3. Auto-save document to ensure payment is tracked in the record immediately
+    // If it's a new document, it will create one; otherwise, update
+    try {
+      setTimeout(() => {
+        handleSaveDraft(newAdvance); // PASS THE NEW AMOUNT DIRECTLY TO AVOID STALE STATE
+      }, 100);
+    } catch (err) {
+      console.error("Auto-save failed on payment", err);
+    }
   };
 
   const handleNewRevision = () => {
@@ -1054,7 +1197,13 @@ const ProformaInvoice = () => {
                     <div className="grid grid-cols-2 gap-3">
                       <div className="flex flex-col col-span-2 sm:col-span-1">
                         <label className="text-xs font-semibold text-slate-500 mb-1">PI Number</label>
-                        <input type="text" value={piNumber} readOnly className="text-sm p-1.5 bg-slate-50 border border-slate-200/50 rounded text-slate-700" />
+                        <input
+                          type="text"
+                          value={piNumber}
+                          onChange={(e) => setPiNumber(e.target.value)}
+                          className="text-sm p-1.5 bg-white border border-slate-300 rounded text-slate-700 focus:border-yellow-400 outline-none"
+                          placeholder="e.g. PI-1001"
+                        />
                       </div>
                       <div className="flex flex-col col-span-2 sm:col-span-1">
                         <label className="text-xs font-semibold text-slate-500 mb-1">PI Date <span className="text-red-500">*</span></label>
@@ -1481,8 +1630,16 @@ const ProformaInvoice = () => {
                   <div className="p-5 space-y-4">
                     <div className="space-y-2 text-xs">
                       <div className="flex justify-between text-slate-600">
+                        <span>Gross Amount</span>
+                        <span className="font-medium">{grossTotal.toFixed(2)} AED</span>
+                      </div>
+                      <div className="flex justify-between text-red-500">
+                        <span>Item Discount</span>
+                        <span className="font-medium">-{totalItemDiscount.toFixed(2)} AED</span>
+                      </div>
+                      <div className="flex justify-between text-slate-800 font-bold border-t border-slate-100 pt-1">
                         <span>Sub Total</span>
-                        <span className="font-medium">{subTotal.toFixed(2)} AED</span>
+                        <span>{subTotal.toFixed(2)} AED</span>
                       </div>
                       <div className="flex justify-between text-slate-600 items-center">
                         <div className="flex items-center gap-2">
@@ -1494,10 +1651,12 @@ const ProformaInvoice = () => {
                             onChange={(e) => setBillDiscount(Number(e.target.value))}
                           />
                         </div>
-                        <span className="font-medium">-{billDiscountAmount.toFixed(2)} AED</span>
+                        <span className="font-medium">
+                          {billDiscountAmount > 0 ? `-${billDiscountAmount.toFixed(2)}` : '0.00'} AED
+                        </span>
                       </div>
                       <div className="flex justify-between text-slate-600">
-                        <span>Tax Total (5%)</span>
+                        <span>Tax Total</span>
                         <span className="font-medium">{totalTax.toFixed(2)} AED</span>
                       </div>
                     </div>
@@ -1614,16 +1773,18 @@ const ProformaInvoice = () => {
               <div className="flex gap-2">
                 <button
                   onClick={handleSaveDraft}
-                  className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-slate-300 text-slate-700 rounded text-xs font-bold hover:bg-slate-50 transition-colors shadow-sm"
+                  disabled={isSaving}
+                  className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-slate-300 text-slate-700 rounded text-xs font-bold hover:bg-slate-50 transition-colors shadow-sm disabled:opacity-50"
                 >
-                  <Save size={14} /> Save Draft
+                  <Save size={14} /> {isSaving ? 'Saving...' : 'Save Draft'}
                 </button>
                 {status !== 'ISSUED' && (
                   <button
                     onClick={handleIssuePI}
-                    className="flex items-center gap-1.5 px-5 py-1.5 bg-yellow-400 text-slate-900 rounded text-xs font-bold hover:bg-yellow-500 transition-all shadow-sm"
+                    disabled={isSaving}
+                    className="flex items-center gap-1.5 px-5 py-1.5 bg-yellow-400 text-slate-900 rounded text-xs font-bold hover:bg-yellow-500 transition-all shadow-sm disabled:opacity-50"
                   >
-                    <CheckCircle2 size={14} /> Issue Proforma
+                    <CheckCircle2 size={14} /> {isSaving ? 'Processing...' : 'Issue Proforma'}
                   </button>
                 )}
                 <button

@@ -1288,7 +1288,8 @@ const SalesInvoice = () => {
     // ✅ MODAL HANDLERS
     const handleOpenPaymentModal = (invRow) => {
         // Support being called from the list (with invRow) or from the editor (no arg)
-        if (invRow) {
+        // Check for specific properties to ensure it's not a React event object
+        if (invRow && (invRow.id || invRow.invoiceNumber)) {
             handleLoadInvoice(invRow);
         }
         // Use server-side balance if available (authoritative), otherwise compute locally
@@ -1634,7 +1635,7 @@ const SalesInvoice = () => {
                                             <CheckCircle2 className="h-4 w-4" /> Confirm
                                         </button>
                                         <button
-                                            onClick={handleOpenPaymentModal}
+                                            onClick={() => handleOpenPaymentModal()}
                                             className="flex-1 sm:flex-none h-8 px-3 border border-slate-300 rounded-md bg-white hover:bg-slate-50 text-slate-700 flex items-center justify-center gap-1.5 text-sm font-medium transition-colors"
                                         >
                                             <DollarSign className="h-4 w-4" /> Pay
@@ -1883,7 +1884,7 @@ const SalesInvoice = () => {
                                             <CheckCircle2 size={14} /> Confirm
                                         </button>
                                         <button
-                                            onClick={handleOpenPaymentModal}
+                                            onClick={() => handleOpenPaymentModal()}
                                             className="flex items-center justify-center gap-1 px-3 py-1.5 bg-white border border-slate-200 rounded text-xs font-bold text-slate-600 hover:bg-slate-50 flex-1 md:flex-none"
                                         >
                                             <DollarSign size={14} /> Pay
@@ -2031,7 +2032,8 @@ const SalesInvoice = () => {
                                             <span className="flex-1 truncate">{selectedCustomer ? `${selectedCustomer.code} - ${selectedCustomer.name}` : 'Search customer...'}</span>
                                         </div>
 
-                                    </div>                                    {selectedCustomer && (
+                                    </div>
+                                    {selectedCustomer && (
                                         <div className="bg-slate-50 border border-slate-200 rounded p-3 text-xs mt-3">
                                             <div className="flex justify-between items-start">
                                                 <div>
@@ -2366,25 +2368,6 @@ const SalesInvoice = () => {
                                                 <span>Net Invoice Amount</span>
                                                 <span>AED {netTotal.toFixed(2)}</span>
                                             </div>
-
-                                            {/* Internal Margin Summary */}
-                                            <div className="bg-slate-50 p-3 rounded border border-slate-100 mt-4">
-                                                <div className="flex justify-between text-xs text-slate-500 mb-2">
-                                                    <span>Internal Margin Summary</span>
-                                                </div>
-                                                <div className="flex justify-between text-xs text-slate-600 mb-1">
-                                                    <span>Total Cost</span>
-                                                    <span>AED {totalCost.toFixed(2)}</span>
-                                                </div>
-                                                <div className="flex justify-between text-xs text-emerald-600 font-bold mb-1">
-                                                    <span>Total Profit</span>
-                                                    <span>AED {totalProfit.toFixed(2)}</span>
-                                                </div>
-                                                <div className="flex justify-between text-xs text-emerald-600 font-bold">
-                                                    <span>Margin %</span>
-                                                    <span>{marginPercent.toFixed(1)}%</span>
-                                                </div>
-                                            </div>
                                         </div>
 
                                         {/* RIGHT: Payment */}
@@ -2421,51 +2404,8 @@ const SalesInvoice = () => {
                                     </div>
                                 </div>
 
-                                {/* 7. ITEM INTELLIGENCE (BOTTOM SUMMARY) */}
-                                <div className="bg-gradient-to-r from-slate-800 to-slate-900 p-5 rounded-lg shadow-lg border-l-4 border-[#F5C742] mt-4">
-                                    <div className="flex items-center justify-between">
-                                        <h3 className="text-sm font-bold text-white flex items-center gap-2">
-                                            <AlertCircle size={16} className="text-[#F5C742]" />
-                                            Item Intelligence
-                                        </h3>
-                                        {focusedItemCode && (
-                                            <div className="px-3 py-1 bg-white/10 rounded-full text-[10px] text-white/70 font-medium tracking-wide">
-                                                Currently viewing: <span className="text-[#F5C742] font-medium">{focusedItemCode}</span>
-                                            </div>
-                                        )}
-                                    </div>
-                                    {!focusedItemCode ? (
-                                        <div className="text-center py-6 text-white/30 text-xs italic flex flex-col items-center gap-2">
-                                            Focus an item row to view real-time pricing analysis and warehouse-level stock reservations.
-                                        </div>
-                                    ) : (() => {
-                                        const _locs = focusedItemStock?.locations || [];
-                                        const _totalAvailable = _locs.reduce((s, l) => s + (l.available || 0), 0);
-                                        return (
-                                        <div className="mt-4 grid grid-cols-1 md:grid-cols-3 gap-6 text-white">
-                                            <div className="bg-white/5 p-3 rounded-md border border-white/5">
-                                                <div className="text-[10px] text-white/40 font-bold uppercase mb-1">Stock Position</div>
-                                                <div className="text-lg font-black">{_totalAvailable} <span className="text-[10px] font-normal text-white/40 ml-1">Available</span></div>
-                                            </div>
-                                            <div className="bg-white/5 p-3 rounded-md border border-white/5">
-                                                <div className="text-[10px] text-white/40 font-bold uppercase mb-1">Pricing Trend</div>
-                                                <div className="text-lg font-black">
-                                                    {focusedItemPriceHistory.length > 0 ? (
-                                                        <>AED {Number(focusedItemPriceHistory[0].rate).toFixed(2)} <span className="text-[10px] font-normal text-emerald-400 ml-1">Last Rate</span></>
-                                                    ) : <span className="text-white/20">N/A</span>}
-                                                </div>
-                                            </div>
-                                            <div className="bg-white/5 p-3 rounded-md border border-white/5">
-                                                <div className="text-[10px] text-white/40 font-bold uppercase mb-1">Status</div>
-                                                <div className="flex items-center gap-2 mt-1">
-                                                    <div className={`w-2 h-2 rounded-full ${_totalAvailable > 0 ? 'bg-emerald-500' : 'bg-red-500'}`}></div>
-                                                    <span className="text-sm font-bold">{_totalAvailable > 0 ? 'In Stock' : 'Out of Stock'}</span>
-                                                </div>
-                                            </div>
-                                        </div>
-                                        );
-                                    })()}
-                                </div>
+                                {/* BOTTOM SPACE FOR SPACING */}
+                                <div className="h-4"></div>
 
                                 {/* SIDEBAR - INTELLIGENCE PANELS */}
                                 <div className="space-y-5 xl:sticky xl:top-6">
@@ -2496,7 +2436,7 @@ const SalesInvoice = () => {
                                 <button onClick={() => handleSave('Confirmed')} className="flex items-center gap-1.5 px-3 py-1.5 bg-[#F5C742] text-slate-900 rounded text-xs font-bold hover:bg-yellow-500 transition-colors shadow-sm">
                                     <CheckCircle2 size={14} /> Confirm
                                 </button>
-                                <button onClick={handleOpenPaymentModal} className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-slate-300 text-slate-700 rounded text-xs font-bold hover:bg-slate-50 transition-colors shadow-sm">
+                                <button onClick={() => handleOpenPaymentModal()} className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-slate-300 text-slate-700 rounded text-xs font-bold hover:bg-slate-50 transition-colors shadow-sm">
                                     <DollarSign size={14} /> Pay
                                 </button>
                                 <button onClick={() => handlePrintClick()} disabled={isPrinting} className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-slate-300 text-slate-700 rounded text-xs font-bold hover:bg-slate-50 transition-colors shadow-sm disabled:opacity-50">

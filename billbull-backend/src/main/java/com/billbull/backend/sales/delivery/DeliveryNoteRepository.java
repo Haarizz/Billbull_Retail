@@ -7,6 +7,15 @@ import java.math.BigDecimal;
 import java.util.List;
 
 public interface DeliveryNoteRepository extends JpaRepository<DeliveryNote, Long> {
+  @Query("""
+          SELECT i.itemCode, COALESCE(SUM(i.currentQty), 0)
+          FROM DeliveryNote dn JOIN dn.items i
+          WHERE i.itemCode IN :productCodes
+            AND dn.proformaNo IS NOT NULL
+            AND dn.status IN ('DRAFT', 'DISPATCHED')
+          GROUP BY i.itemCode
+      """)
+  List<Object[]> sumReservedQtyForProformasByProduct(@Param("productCodes") List<String> productCodes);
 
   @Query("""
           SELECT COALESCE(SUM(i.currentQty), 0)
@@ -69,4 +78,10 @@ public interface DeliveryNoteRepository extends JpaRepository<DeliveryNote, Long
    * or retries that were blocked before the financialPosted flag was introduced).
    */
   List<DeliveryNote> findByStatusAndFinancialPostedFalse(DeliveryNoteStatus status);
+
+  @Query("SELECT COUNT(dn) > 0 FROM DeliveryNote dn WHERE dn.proformaNo = :piNo AND dn.status <> com.billbull.backend.sales.delivery.DeliveryNoteStatus.CANCELLED")
+  boolean existsActiveByProformaNo(@Param("piNo") String piNo);
+
+  @Query("SELECT COUNT(dn) > 0 FROM DeliveryNote dn WHERE dn.salesOrderNo = :soNo AND dn.status <> com.billbull.backend.sales.delivery.DeliveryNoteStatus.CANCELLED")
+  boolean existsActiveBySalesOrderNo(@Param("soNo") String soNo);
 }

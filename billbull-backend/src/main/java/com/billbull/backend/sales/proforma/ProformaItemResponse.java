@@ -9,9 +9,10 @@ public class ProformaItemResponse {
 	private String barcode;
 	private String description;
 	private String unit;
-	private Integer quantity;
+	private BigDecimal quantity;
 	private BigDecimal price;
 	private BigDecimal taxPercent;
+	private BigDecimal discountPercent;
 	private BigDecimal lineTotal;
 	private Integer foc;
 	private String focUnit;
@@ -38,7 +39,7 @@ public class ProformaItemResponse {
 		return unit;
 	}
 
-	public Integer getQuantity() {
+	public BigDecimal getQuantity() {
 		return quantity;
 	}
 
@@ -86,7 +87,7 @@ public class ProformaItemResponse {
 		this.unit = unit;
 	}
 
-	public void setQuantity(Integer quantity) {
+	public void setQuantity(BigDecimal quantity) {
 		this.quantity = quantity;
 	}
 
@@ -96,6 +97,14 @@ public class ProformaItemResponse {
 
 	public void setTaxPercent(BigDecimal taxPercent) {
 		this.taxPercent = taxPercent;
+	}
+
+	public BigDecimal getDiscountPercent() {
+		return discountPercent;
+	}
+
+	public void setDiscountPercent(BigDecimal discountPercent) {
+		this.discountPercent = discountPercent;
 	}
 
 	public void setLineTotal(BigDecimal lineTotal) {

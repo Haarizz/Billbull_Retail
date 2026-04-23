@@ -20,6 +20,7 @@ public class ProformaResponse {
     private String salesOrderNo;
 
     private BigDecimal subTotal;
+    private BigDecimal billDiscount;
     private BigDecimal taxTotal;
     private BigDecimal grandTotal;
 
@@ -76,6 +77,14 @@ public class ProformaResponse {
 
 	public BigDecimal getSubTotal() {
 		return subTotal;
+	}
+
+	public BigDecimal getBillDiscount() {
+		return billDiscount;
+	}
+
+	public void setBillDiscount(BigDecimal billDiscount) {
+		this.billDiscount = billDiscount;
 	}
 
 	public BigDecimal getTaxTotal() {

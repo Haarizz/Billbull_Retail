@@ -1,4 +1,4 @@
-﻿import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
     Truck,
     Package,
@@ -47,6 +47,7 @@ import { useCompany } from '../../context/CompanyContext';
 import { getAllCustomers } from '../../api/customerledgerApi';
 import { getAllSalesOrders } from '../../api/salesorderApi';
 import { getAllSalesInvoices } from '../../api/salesInvoiceApi';
+import { getAllProformas, getProformaById } from '../../api/proformaApi';
 import { getWarehouses, getWarehouseStock, getWarehouseBins } from '../../api/warehouseApi';
 // âœ… IMPORT STOCK API
 import { getStockAvailability } from '../../api/stockAvailabilityApi'; // âœ… NEW API for LIVE STOCK
@@ -223,6 +224,7 @@ const DeliveryNote = () => {
     const [customersList, setCustomersList] = useState([]);
     const [salesOrdersList, setSalesOrdersList] = useState([]);
     const [salesInvoicesList, setSalesInvoicesList] = useState([]);
+    const [proformasList, setProformasList] = useState([]);
     const [warehousesList, setWarehousesList] = useState([]);
     const [binsList, setBinsList] = useState([]);
 
@@ -246,10 +248,11 @@ const DeliveryNote = () => {
     const [isCustomerOpen, setIsCustomerOpen] = useState(false);
     const [isCustomerSearchOpen, setIsCustomerSearchOpen] = useState(false);
 
-    const [sourceType, setSourceType] = useState('SO'); // 'SO' | 'SI'
+    const [sourceType, setSourceType] = useState('SO'); // 'SO' | 'PI' | 'SI'
     const [linkedSO, setLinkedSO] = useState('');
     const [isSOOpen, setIsSOOpen] = useState(false);
     const [linkedPI, setLinkedPI] = useState('');
+    const [isPIOpen, setIsPIOpen] = useState(false);
     const [linkedSI, setLinkedSI] = useState('');
     const [isSIOpen, setIsSIOpen] = useState(false);
 
@@ -751,16 +754,18 @@ const DeliveryNote = () => {
     useEffect(() => {
         const fetchMasterData = async () => {
             try {
-                const [custData, soData, siData, whData] = await Promise.all([
+                const [custData, soData, siData, whData, piData] = await Promise.all([
                     getAllCustomers(),
                     getAllSalesOrders(),
                     getAllSalesInvoices(),
-                    getWarehouses()
+                    getWarehouses(),
+                    getAllProformas()
                 ]);
 
                 setCustomersList(Array.isArray(custData) ? custData : []);
                 setSalesOrdersList(Array.isArray(soData) ? soData : []);
                 setSalesInvoicesList(Array.isArray(siData) ? siData : []);
+                setProformasList(Array.isArray(piData) ? piData : []);
 
                 const whs = Array.isArray(whData) ? whData : [];
                 setWarehousesList(whs);
@@ -882,9 +887,9 @@ const DeliveryNote = () => {
         setTrackingNo(dn.trackingNo || '');
         setShippingAddress(dn.shippingAddress || '');
         setLinkedSO(dn.soNo || '');
-        setLinkedPI(dn.piNo || '');
+        setLinkedPI(dn.piNo && dn.piNo !== '-' ? dn.piNo : '');
         setLinkedSI(dn.siNo || '');
-        setSourceType(dn.siNo ? 'SI' : 'SO');
+        setSourceType(dn.siNo ? 'SI' : (dn.piNo && dn.piNo !== '-') ? 'PI' : 'SO');
 
         const custObj = customersList.find(c => c.code === dn.customerCode) || { code: dn.customerCode, name: dn.customerName };
         setSelectedCustomer(custObj);
@@ -965,7 +970,12 @@ const DeliveryNote = () => {
         if (isLockedForEdit) return;
         setLinkedSO(so.soNumber);
         setLinkedPI(so.linkedProforma || '');
+        setLinkedSI('');
+        setSourceDocumentType('SALES_ORDER');
+        setSourceDocumentId(so.id);
         setIsSOOpen(false);
+        setIsPIOpen(false);
+        setIsSIOpen(false);
 
         if (so.shippingAddress) {
             setShippingAddress(so.shippingAddress);
@@ -986,13 +996,41 @@ const DeliveryNote = () => {
     const handleSelectSI = (si) => {
         if (isLockedForEdit) return;
         setLinkedSI(si.invoiceNumber || si.invoiceNo || si.id);
+        setLinkedSO('');
+        setLinkedPI('');
+        setSourceDocumentType('SALES_INVOICE');
+        setSourceDocumentId(si.id);
         setIsSIOpen(false);
+        setIsSOOpen(false);
+        setIsPIOpen(false);
 
         if (si.shippingAddress) setShippingAddress(si.shippingAddress);
 
         const siItems = si.items || si.invoiceItems || [];
         if (siItems.length > 0) {
             const mappedItems = siItems.map((item, index) =>
+                normalizeDeliveryItem({
+                    ...item,
+                    stock: warehouseStockMap[item.itemCode || item.code] || 0
+                }, Date.now() + index + Math.random())
+            );
+            setItems(mappedItems.length > 0 ? mappedItems : [createBlankDeliveryItem()]);
+        }
+    };
+
+    const handleSelectPI = (pi) => {
+        if (isLockedForEdit) return;
+        setLinkedPI(pi.piNumber);
+        setSourceDocumentType('PROFORMA');
+        setSourceDocumentId(pi.id);
+        setIsPIOpen(false);
+
+        if (pi.shippingAddress) {
+            setShippingAddress(pi.shippingAddress);
+        }
+
+        if (pi.items && pi.items.length > 0) {
+            const mappedItems = pi.items.map((item, index) =>
                 normalizeDeliveryItem({
                     ...item,
                     stock: warehouseStockMap[item.itemCode || item.code] || 0
@@ -1136,6 +1174,8 @@ const DeliveryNote = () => {
             salesOrderNo: sourceType === 'SO' ? linkedSO : '',
             proformaNo: linkedPI,
             linkedSalesInvoiceNumber: sourceType === 'SI' ? linkedSI : '',
+            sourceDocumentType: sourceDocumentType,
+            sourceDocumentId: sourceDocumentId,
 
             warehouseId: selectedWh.id, // âœ… NOW VALID
 
@@ -1720,10 +1760,18 @@ const DeliveryNote = () => {
                                                         <button
                                                             type="button"
                                                             disabled={isLockedForEdit}
-                                                            onClick={() => { if (!isLockedForEdit) { setSourceType('SO'); setLinkedSI(''); setItems([]); } }}
+                                                            onClick={() => { if (!isLockedForEdit) { setSourceType('SO'); setLinkedSI(''); setLinkedPI(''); setItems([]); } }}
                                                             className={`flex-1 py-1.5 transition-colors ${sourceType === 'SO' ? 'bg-yellow-400 text-slate-900' : 'bg-white text-slate-500 hover:bg-slate-50'} disabled:opacity-60`}
                                                         >
                                                             Sales Order
+                                                        </button>
+                                                        <button
+                                                            type="button"
+                                                            disabled={isLockedForEdit}
+                                                            onClick={() => { if (!isLockedForEdit) { setSourceType('PI'); setLinkedSO(''); setLinkedSI(''); setItems([]); } }}
+                                                            className={`flex-1 py-1.5 border-l border-slate-200 transition-colors ${sourceType === 'PI' ? 'bg-yellow-400 text-slate-900' : 'bg-white text-slate-500 hover:bg-slate-50'} disabled:opacity-60`}
+                                                        >
+                                                            Pro-forma
                                                         </button>
                                                         <button
                                                             type="button"
@@ -1737,7 +1785,7 @@ const DeliveryNote = () => {
                                                 </div>
 
                                                 {/* Conditional Source Dropdown */}
-                                                {sourceType === 'SO' ? (
+                                                {sourceType === 'SO' && (
                                                     <div className="relative">
                                                         <label className="text-xs font-semibold text-slate-500 mb-1 block">Source Sales Order</label>
                                                         <div
@@ -1746,6 +1794,7 @@ const DeliveryNote = () => {
                                                                     e.stopPropagation();
                                                                     setIsSOOpen(!isSOOpen);
                                                                     setIsSIOpen(false);
+                                                                    setIsPIOpen(false);
                                                                 }
                                                             }}
                                                             className={`w-full text-xs p-2 border border-slate-300/50 rounded flex justify-between items-center ${selectedCustomer && !isLockedForEdit ? 'bg-white cursor-pointer hover:border-yellow-400' : 'bg-slate-50 cursor-not-allowed text-slate-400'}`}
@@ -1755,18 +1804,88 @@ const DeliveryNote = () => {
                                                         </div>
                                                         {isSOOpen && !isLockedForEdit && (
                                                             <div className="absolute top-full left-0 w-full bg-white border border-slate-200 rounded shadow-lg z-30 mt-1 max-h-48 overflow-y-auto">
-                                                                {salesOrdersList.filter(so => so.customerCode === selectedCustomer?.code).map(so => (
+                                                                {salesOrdersList.filter(so => {
+                                                                    const isTargetCust = so.customerCode === selectedCustomer?.code;
+                                                                    const hasAlreadyDN = deliveryNotesList.some(dn => 
+                                                                        dn.id !== currentDnId && 
+                                                                        dn.soNo === so.soNumber && 
+                                                                        dn.status !== 'CANCELLED'
+                                                                    );
+                                                                    return isTargetCust && !hasAlreadyDN;
+                                                                }).map(so => (
                                                                     <div key={so.id} onClick={() => handleSelectSO(so)} className="px-3 py-2 text-xs hover:bg-slate-50 cursor-pointer border-b border-slate-50">
                                                                         <span className="font-bold">{so.soNumber}</span> <span className="text-slate-400">({so.orderDate})</span>
                                                                     </div>
                                                                 ))}
-                                                                {salesOrdersList.filter(so => so.customerCode === selectedCustomer?.code).length === 0 && (
+                                                                {salesOrdersList.filter(so => {
+                                                                    const isTargetCust = so.customerCode === selectedCustomer?.code;
+                                                                    const hasAlreadyDN = deliveryNotesList.some(dn => 
+                                                                        dn.id !== currentDnId && 
+                                                                        dn.soNo === so.soNumber && 
+                                                                        dn.status !== 'CANCELLED'
+                                                                    );
+                                                                    return isTargetCust && !hasAlreadyDN;
+                                                                }).length === 0 && (
                                                                     <div className="px-3 py-2 text-xs text-slate-400">No Sales Orders found</div>
                                                                 )}
                                                             </div>
                                                         )}
                                                     </div>
-                                                ) : (
+                                                )}
+
+                                                {sourceType === 'PI' && (
+                                                    <div className="relative">
+                                                        <label className="text-xs font-semibold text-slate-500 mb-1 block">Source Pro-forma Invoice</label>
+                                                        <div
+                                                            onClick={(e) => {
+                                                                if (selectedCustomer && !isLockedForEdit) {
+                                                                    e.stopPropagation();
+                                                                    setIsPIOpen(!isPIOpen);
+                                                                    setIsSOOpen(false);
+                                                                    setIsSIOpen(false);
+                                                                }
+                                                            }}
+                                                            className={`w-full text-xs p-2 border border-slate-300/50 rounded flex justify-between items-center ${selectedCustomer && !isLockedForEdit ? 'bg-white cursor-pointer hover:border-yellow-400' : 'bg-slate-50 cursor-not-allowed text-slate-400'}`}
+                                                        >
+                                                            <span className="truncate">{linkedPI || (selectedCustomer ? 'Select Pro-forma...' : 'Select Customer First')}</span>
+                                                            <ChevronDown size={14} className="text-slate-400 shrink-0" />
+                                                        </div>
+                                                        {isPIOpen && !isLockedForEdit && (
+                                                            <div className="absolute top-full left-0 w-full bg-white border border-slate-200 rounded shadow-lg z-30 mt-1 max-h-48 overflow-y-auto">
+                                                                {proformasList
+                                                                    .filter(pi => {
+                                                                        const isTargetCust = (pi.customerCode === selectedCustomer?.code || pi.customer?.code === selectedCustomer?.code);
+                                                                        const isIssued = pi.status === 'ISSUED';
+                                                                        const hasAlreadyDN = deliveryNotesList.some(dn => 
+                                                                            dn.id !== currentDnId && 
+                                                                            dn.piNo === (pi.piNumber || pi.piNo) && 
+                                                                            dn.status !== 'CANCELLED'
+                                                                        );
+                                                                        return isTargetCust && isIssued && !hasAlreadyDN;
+                                                                    })
+                                                                    .map(pi => (
+                                                                        <div key={pi.id} onClick={() => handleSelectPI(pi)} className="px-3 py-2 text-xs hover:bg-slate-50 cursor-pointer border-b border-slate-50">
+                                                                            <span className="font-bold">{pi.piNo || pi.piNumber}</span> <span className="text-slate-400">({pi.date || pi.piDate})</span>
+                                                                        </div>
+                                                                    ))}
+                                                                {proformasList.filter(pi => {
+                                                                    const isTargetCust = (pi.customerCode === selectedCustomer?.code || pi.customer?.code === selectedCustomer?.code);
+                                                                    const isIssued = pi.status === 'ISSUED';
+                                                                    const hasAlreadyDN = deliveryNotesList.some(dn => 
+                                                                        dn.id !== currentDnId && 
+                                                                        dn.piNo === (pi.piNumber || pi.piNo) && 
+                                                                        dn.status !== 'CANCELLED'
+                                                                    );
+                                                                    return isTargetCust && isIssued && !hasAlreadyDN;
+                                                                }).length === 0 && (
+                                                                    <div className="px-3 py-2 text-xs text-slate-400">No Issued Pro-formas found</div>
+                                                                )}
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                )}
+
+                                                {sourceType === 'SI' && (
                                                     <div className="relative">
                                                         <label className="text-xs font-semibold text-slate-500 mb-1 block">Source Sales Invoice</label>
                                                         <div
@@ -1775,6 +1894,7 @@ const DeliveryNote = () => {
                                                                     e.stopPropagation();
                                                                     setIsSIOpen(!isSIOpen);
                                                                     setIsSOOpen(false);
+                                                                    setIsPIOpen(false);
                                                                 }
                                                             }}
                                                             className={`w-full text-xs p-2 border border-slate-300/50 rounded flex justify-between items-center ${selectedCustomer && !isLockedForEdit ? 'bg-white cursor-pointer hover:border-yellow-400' : 'bg-slate-50 cursor-not-allowed text-slate-400'}`}
@@ -1784,12 +1904,28 @@ const DeliveryNote = () => {
                                                         </div>
                                                         {isSIOpen && !isLockedForEdit && (
                                                             <div className="absolute top-full left-0 w-full bg-white border border-slate-200 rounded shadow-lg z-30 mt-1 max-h-48 overflow-y-auto">
-                                                                {salesInvoicesList.filter(si => si.customerCode === selectedCustomer?.code || si.customer?.code === selectedCustomer?.code).map(si => (
+                                                                {salesInvoicesList.filter(si => {
+                                                                    const isTargetCust = si.customerCode === selectedCustomer?.code || si.customer?.code === selectedCustomer?.code;
+                                                                    const hasAlreadyDN = deliveryNotesList.some(dn => 
+                                                                        dn.id !== currentDnId && 
+                                                                        dn.siNo === (si.invoiceNumber || si.invoiceNo) && 
+                                                                        dn.status !== 'CANCELLED'
+                                                                    );
+                                                                    return isTargetCust && !hasAlreadyDN;
+                                                                }).map(si => (
                                                                     <div key={si.id} onClick={() => handleSelectSI(si)} className="px-3 py-2 text-xs hover:bg-slate-50 cursor-pointer border-b border-slate-50">
                                                                         <span className="font-bold">{si.invoiceNumber || si.invoiceNo}</span> <span className="text-slate-400">({si.invoiceDate || si.date})</span>
                                                                     </div>
                                                                 ))}
-                                                                {salesInvoicesList.filter(si => si.customerCode === selectedCustomer?.code || si.customer?.code === selectedCustomer?.code).length === 0 && (
+                                                                {salesInvoicesList.filter(si => {
+                                                                    const isTargetCust = si.customerCode === selectedCustomer?.code || si.customer?.code === selectedCustomer?.code;
+                                                                    const hasAlreadyDN = deliveryNotesList.some(dn => 
+                                                                        dn.id !== currentDnId && 
+                                                                        dn.siNo === (si.invoiceNumber || si.invoiceNo) && 
+                                                                        dn.status !== 'CANCELLED'
+                                                                    );
+                                                                    return isTargetCust && !hasAlreadyDN;
+                                                                }).length === 0 && (
                                                                     <div className="px-3 py-2 text-xs text-slate-400">No Sales Invoices found</div>
                                                                 )}
                                                             </div>

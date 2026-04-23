@@ -40,6 +40,7 @@ public class ProformaInvoice {
 
     // ---- Totals ----
     private BigDecimal subTotal;
+    private BigDecimal billDiscount;
     private BigDecimal taxTotal;
     private BigDecimal grandTotal;
 
@@ -120,6 +121,14 @@ public class ProformaInvoice {
 
 	public BigDecimal getSubTotal() {
 		return subTotal;
+	}
+
+	public BigDecimal getBillDiscount() {
+		return billDiscount;
+	}
+
+	public void setBillDiscount(BigDecimal billDiscount) {
+		this.billDiscount = billDiscount;
 	}
 
 	public BigDecimal getTaxTotal() {
