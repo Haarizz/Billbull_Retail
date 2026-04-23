@@ -420,7 +420,7 @@ const ProformaInvoice = () => {
           })),
           totals: {
             subTotal,
-            tax: taxTotal,
+            tax: totalTax,
             grandTotal,
             currency: 'AED',
             billDiscount: 0,

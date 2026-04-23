@@ -1289,6 +1289,10 @@ const DeliveryNote = () => {
             if (defaultTemplate) {
                 const fullCustomer = customersList.find(c => c.code === selectedCustomer?.code);
 
+                const subTotal = items.reduce((sum, i) => sum + (Number(i.taxableAmount) || 0), 0);
+                const totalTax = items.reduce((sum, i) => sum + (Number(i.taxAmt) || 0), 0);
+                const grandTotal = items.reduce((sum, i) => sum + (Number(i.total) || 0), 0);
+
                 const printData = {
                     title: 'DELIVERY NOTE',
                     docNo: dnNumber,
@@ -1300,22 +1304,29 @@ const DeliveryNote = () => {
                     },
                     items: items.map(i => ({
                         code: i.code,
-                        name: i.name || '',
-                        desc: (i.desc || '') + (i.boxes ? ` (${i.boxes} Boxes)` : ''),
+                        name: i.desc || '', // Using desc as name for the template title
+                        desc: (i.remarks || '') + (i.boxes ? ` (${i.boxes} Boxes)` : ''), // Using remarks for the sub-description
                         sku: i.sku || '',
                         localName: i.localName || '',
+                        barcode: i.barcode || '',
                         unit: i.unit,
                         qty: i.currentQty,
-                        price: 0,
-                        disc: 0,
-                        tax: 0,
-                        taxAmt: 0,
-                        total: 0
+                        price: Number(i.price) || 0,
+                        disc: Number(i.disc) || 0,
+                        tax: Number(i.tax) || 0,
+                        taxAmt: Number(i.taxAmt) || 0,
+                        total: Number(i.total) || 0,
+                        image: i.image ? getImageUrl(i.image) : ''
                     })),
-                    totals: {},
+                    totals: {
+                        subTotal,
+                        tax: totalTax,
+                        grandTotal,
+                        currency: 'AED'
+                    },
                     meta: {
                         status: status,
-                        reference: `SO: ${linkedSO || '-'} | PI: ${linkedPI || '-'}`,
+                        reference: `SO: ${linkedSO || '-'} | PI: ${linkedPI || '-'} | SI: ${linkedSI || '-'}`,
                         notes: `Warehouse: ${warehouse} | Driver: ${driverName || '-'} | Vehicle: ${vehicleNo || '-'} | Tracking: ${trackingNo || '-'}`
                     }
                 };
