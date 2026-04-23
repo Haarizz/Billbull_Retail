@@ -201,8 +201,7 @@ const AddProductWizard = ({ onCancel, onSave, initialData, brands: initialBrands
   const [brands, setBrandsLocal] = useState(initialBrands || []);
   const [departments, setDeptsLocal] = useState(initialDepts || []);
   const [units, setUnitsLocal] = useState(initialUnits || []);
-  // Quick-add modal state (used for Unit only; Brand/Dept/SubDept/Category use inline create)
-  const [quickAdd, setQuickAdd] = useState({ open: false, type: null, name: '', saving: false });
+
   // Inline-create loading indicator — stores which field type is currently being saved
   const [creatingType, setCreatingType] = useState(null);
   // Local category list — no backend entity, stored per session
@@ -362,39 +361,7 @@ const AddProductWizard = ({ onCancel, onSave, initialData, brands: initialBrands
     });
   };
 
-  // BB-002: Quick-add handler for Brand / Department / Sub-Department / Unit
-  const handleQuickAddSave = async () => {
-    const { type, name } = quickAdd;
-    if (!name.trim()) return;
-    setQuickAdd(prev => ({ ...prev, saving: true }));
-    try {
-      if (type === 'brand') {
-        // QA-001: truncate code to 10 chars (DB column limit) and force active=true
-        const rawCode = name.trim().toUpperCase().replace(/[^A-Z0-9]/g, '_');
-        const created = await createBrand({ name: name.trim(), code: rawCode.substring(0, 10), active: true });
-        setBrandsLocal(prev => [...prev, created]);
-        handleInputChange('brand', created.id);
-      } else if (type === 'department') {
-        const created = await createDepartment({ name: name.trim() });
-        setDeptsLocal(prev => [...prev, created]);
-        handleInputChange('department', created.id);
-      } else if (type === 'subdepartment') {
-        if (!formData.department) { alert('Select a department first.'); setQuickAdd(prev => ({ ...prev, saving: false })); return; }
-        const created = await createSubDepartment({ name: name.trim(), departmentId: Number(formData.department) });
-        setSubDepartments(prev => [...prev, created]);
-        handleInputChange('subDepartment', created.id);
-      } else if (type === 'unit') {
-        const created = await createUnit({ name: name.trim(), abbreviation: name.trim().substring(0, 5).toUpperCase() });
-        setUnitsLocal(prev => [...prev, created]);
-        handleInputChange('defaultUnit', created.id);
-      }
-      setQuickAdd({ open: false, type: null, name: '', saving: false });
-    } catch (err) {
-      console.error('Quick-add failed', err);
-      alert('Failed to create. Please try again.');
-      setQuickAdd(prev => ({ ...prev, saving: false }));
-    }
-  };
+
 
   // Inline create handler — used by ClassificationDropdown for Brand/Dept/SubDept/Category
   const handleInlineCreate = async (type, name) => {
@@ -415,12 +382,30 @@ const AddProductWizard = ({ onCancel, onSave, initialData, brands: initialBrands
         const created = await createSubDepartment({ name: name.trim(), departmentId: Number(formData.department) });
         setSubDepartments(prev => [...prev, created]);
         handleInputChange('subDepartment', created.id);
+      } else if (type === 'defaultUnit' || type === 'reorderUnit' || type === 'unit' || type.startsWith('packingUnit-')) {
+        const created = await createUnit({ name: name.trim(), abbreviation: name.trim().substring(0, 5).toUpperCase() });
+        setUnitsLocal(prev => [...prev, created]);
+        if (type === 'defaultUnit' || type === 'reorderUnit') {
+          handleInputChange(type, created.id);
+        } else if (type.startsWith('packingUnit-')) {
+          const pkgId = type.split('-')[1];
+          const unitName = created.name.toLowerCase();
+          let autoConversion = 1;
+          if (unitName.includes('piece') || unitName.includes('pcs') || unitName.includes('pc')) autoConversion = 1;
+          else if (unitName.includes('outer')) autoConversion = 6;
+          else if (unitName.includes('box')) autoConversion = 12;
+          else if (unitName.includes('carton') || unitName.includes('ctn')) autoConversion = 48;
+
+          setFormData(prev => ({
+            ...prev,
+            packings: prev.packings.map(p =>
+              String(p.id) === String(pkgId) ? { ...p, unit: created.id, conversion: autoConversion } : p
+            )
+          }));
+        }
       } else if (type === 'category') {
-        // No backend entity — persist only in local session state
         const newCat = name.trim();
-        setCategoriesLocal(prev =>
-          prev.includes(newCat) ? prev : [...prev, newCat]
-        );
+        setCategoriesLocal(prev => prev.includes(newCat) ? prev : [...prev, newCat]);
         handleInputChange('category', newCat);
       }
     } catch (err) {
@@ -941,15 +926,15 @@ const AddProductWizard = ({ onCancel, onSave, initialData, brands: initialBrands
                 <h3 className="font-semibold text-lg mb-4 flex items-center gap-2"><Layers className="h-5 w-5 text-slate-400" /> Stock Controls</h3>
                 <div className="space-y-4">
                   <div className="space-y-1.5">
-                    <div className="flex items-center justify-between">
-                      <label className="text-xs font-semibold text-slate-500">Default Unit <span className="text-red-500">*</span></label>
-                      <button type="button" onClick={() => setQuickAdd({ open: true, type: 'unit', name: '', saving: false })} className="flex items-center gap-0.5 text-xs text-[#F5C742] hover:text-[#E5B732] font-semibold">
-                        <PlusCircle size={13} /> New Unit
-                      </button>
-                    </div>
-                    <select value={formData.defaultUnit} onChange={(e) => handleInputChange('defaultUnit', e.target.value)} className="w-full border border-slate-200 rounded-md px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-[#F5C742]/50">
-                      {units.map(u => <option key={u.id} value={u.id}>{u.name} ({u.symbol || u.name})</option>)}
-                    </select>
+                    <label className="text-xs font-semibold text-slate-500">Default Unit <span className="text-red-500">*</span></label>
+                    <ClassificationDropdown
+                      options={units.map(u => ({ value: u.id, label: `${u.name} (${u.abbreviation || u.name})` }))}
+                      value={formData.defaultUnit}
+                      onChange={(val) => handleInputChange('defaultUnit', val)}
+                      onCreateNew={(name) => handleInlineCreate('defaultUnit', name)}
+                      placeholder="Select Default Unit…"
+                      creating={creatingType === 'defaultUnit'}
+                    />
                   </div>
                   <div className="grid grid-cols-2 gap-6">
                     <div className="space-y-1.5">
@@ -958,9 +943,14 @@ const AddProductWizard = ({ onCancel, onSave, initialData, brands: initialBrands
                     </div>
                     <div className="space-y-1.5">
                       <label className="text-xs font-semibold text-slate-500">Reorder Unit</label>
-                      <select value={formData.reorderUnit} onChange={(e) => handleInputChange('reorderUnit', e.target.value)} className="w-full border border-slate-200 rounded-md px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-[#F5C742]/50">
-                        {units.map(u => <option key={u.id} value={u.id}>{u.name} ({u.symbol})</option>)}
-                      </select>
+                      <ClassificationDropdown
+                        options={units.map(u => ({ value: u.id, label: `${u.name} (${u.abbreviation || u.name})` }))}
+                        value={formData.reorderUnit}
+                        onChange={(val) => handleInputChange('reorderUnit', val)}
+                        onCreateNew={(name) => handleInlineCreate('reorderUnit', name)}
+                        placeholder="Select Reorder Unit…"
+                        creating={creatingType === 'reorderUnit'}
+                      />
                     </div>
                   </div>
                   <div className="space-y-1.5">
@@ -1077,10 +1067,10 @@ const AddProductWizard = ({ onCancel, onSave, initialData, brands: initialBrands
                     <tr key={pkg.id} className="border-b last:border-0 hover:bg-slate-50 transition-colors">
                       <td className="p-3"><span className="px-2 py-1 bg-slate-100 rounded text-xs font-mono">{pkg.level}</span></td>
                       <td className="p-3 font-medium">
-                        <select
+                        <ClassificationDropdown
+                          options={units.map(u => ({ value: u.id, label: u.name }))}
                           value={pkg.unit}
-                          onChange={(e) => {
-                            const selectedUnitId = e.target.value;
+                          onChange={(selectedUnitId) => {
                             const selectedUnit = units.find(u => u.id == selectedUnitId);
 
                             // Auto-fill conversion ratio based on unit name
@@ -1103,10 +1093,10 @@ const AddProductWizard = ({ onCancel, onSave, initialData, brands: initialBrands
                             );
                             setFormData(prev => ({ ...prev, packings: updatedPackings }));
                           }}
-                          className="border border-slate-200 rounded px-2 py-1 bg-white outline-none focus:border-[#F5C742]"
-                        >
-                          {units.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
-                        </select>
+                          onCreateNew={(name) => handleInlineCreate(`packingUnit-${pkg.id}`, name)}
+                          placeholder="Select Unit…"
+                          creating={creatingType === `packingUnit-${pkg.id}`}
+                        />
                       </td>
                       <td className="p-3">
                         <input
@@ -1298,44 +1288,7 @@ const AddProductWizard = ({ onCancel, onSave, initialData, brands: initialBrands
           </div>
         </div>
       </div>
-      {/* BB-002: Quick-Add Mini-Modal */}
-      {quickAdd.open && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm">
-          <div className="bg-white rounded-xl shadow-2xl w-full max-w-sm p-6 animate-in zoom-in-95 duration-150">
-            <h3 className="font-bold text-slate-800 mb-1 text-base">
-              {quickAdd.type === 'brand' && 'Add New Brand'}
-              {quickAdd.type === 'department' && 'Add New Department'}
-              {quickAdd.type === 'subdepartment' && 'Add New Sub-Department'}
-              {quickAdd.type === 'unit' && 'Add New Unit'}
-            </h3>
-            <p className="text-xs text-slate-400 mb-4">It will be created and auto-selected.</p>
-            <label className="text-xs font-semibold text-slate-500 mb-1 block">Name *</label>
-            <input
-              autoFocus
-              type="text"
-              value={quickAdd.name}
-              onChange={e => setQuickAdd(prev => ({ ...prev, name: e.target.value }))}
-              onKeyDown={e => { if (e.key === 'Enter') handleQuickAddSave(); if (e.key === 'Escape') setQuickAdd({ open: false, type: null, name: '', saving: false }); }}
-              placeholder={`Enter ${quickAdd.type === 'subdepartment' ? 'sub-department' : quickAdd.type} name`}
-              className="w-full border border-slate-200 rounded-md px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-[#F5C742]/50 mb-4"
-            />
-            <div className="flex gap-2 justify-end">
-              <button onClick={() => setQuickAdd({ open: false, type: null, name: '', saving: false })} className="px-4 py-2 text-sm text-slate-600 border border-slate-200 rounded-md hover:bg-slate-50">
-                Cancel
-              </button>
-              <button
-                onClick={handleQuickAddSave}
-                disabled={!quickAdd.name.trim() || quickAdd.saving}
-                className="flex items-center gap-1.5 px-4 py-2 bg-[#F5C742] hover:bg-[#E5B732] text-slate-900 text-sm font-bold rounded-md disabled:opacity-50"
-              >
-                {quickAdd.saving ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} />}
-                Create
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-    </div >
+    </div>
   );
 };
 
