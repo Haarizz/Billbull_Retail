@@ -9,6 +9,24 @@ import {
     Check, XCircle, Image as ImageIcon, FileDown, Package, AlertTriangle, Trash2,
     PlusCircle, MinusCircle, Activity
 } from 'lucide-react';
+import ExportDropdown from '../../../components/common/ExportDropdown';
+import { exportToExcel, exportToPDF } from '../../../utils/exportUtils';
+
+// ==========================================
+// CONFIGURATION
+// ==========================================
+
+const STOCK_TAKING_COLUMNS = [
+    { header: 'Session ID', key: 'id', width: 20 },
+    { header: 'Warehouse', key: 'warehouse', width: 20 },
+    { header: 'Created By', key: 'createdBy', width: 20 },
+    { header: 'Started On', key: 'startedOn', width: 15 },
+    { header: 'Status', key: 'status', width: 15 },
+    { header: 'Progress', key: 'progress', width: 12 },
+    { header: 'Total', key: 'total', width: 12 },
+    { header: 'Variance Qty', key: 'totalVarianceQty', width: 15 },
+    { header: 'Variance Value', key: 'totalVarianceValue', width: 15 }
+];
 import { getImageUrl } from '../../../utils/urlUtils';
 import ExcelJS from 'exceljs';
 import { getWarehouses, getWarehouseStock, getWarehouseProductStock, getWarehouseBins } from '../../../api/warehouseApi';
@@ -413,9 +431,10 @@ const ListView = ({
                     >
                         <Plus className="h-3.5 w-3.5" /> New Stock Take
                     </button>
-                    <button className="inline-flex items-center justify-center gap-2 h-8 px-3 rounded-md border border-slate-200 bg-white hover:bg-slate-50 text-xs font-medium text-slate-700 transition-colors">
-                        <Download className="h-3.5 w-3.5" /> Export
-                    </button>
+                    <ExportDropdown
+                        onExportExcel={() => exportToExcel(filteredSessions, STOCK_TAKING_COLUMNS, 'StockTaking')}
+                        onExportPdf={() => exportToPDF(filteredSessions, STOCK_TAKING_COLUMNS, 'Stock Taking Sessions', 'StockTaking')}
+                    />
                 </div>
             </div>
 

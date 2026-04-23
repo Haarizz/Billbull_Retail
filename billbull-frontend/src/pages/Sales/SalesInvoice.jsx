@@ -61,6 +61,23 @@ import { getDefaultProductUnit, resolveUnitAmount } from '../../utils/unitPricin
 import billBullLogo from '../../assets/billBullLogo.png';
 import { useCompany } from '../../context/CompanyContext';
 import { useBranch } from '../../context/BranchContext';
+import ExportDropdown from '../../components/common/ExportDropdown';
+import { exportToExcel, exportToPDF } from '../../utils/exportUtils';
+
+// ==========================================
+// 1. CONFIGURATION
+// ==========================================
+
+const SALES_INVOICE_COLUMNS = [
+    { header: 'Invoice No', key: 'invoiceNumber', width: 15 },
+    { header: 'Date', key: 'invoiceDate', width: 12 },
+    { header: 'Customer', key: 'customerName', width: 25 },
+    { header: 'Pay Mode', key: 'paymentMode', width: 12 },
+    { header: 'Total', key: 'invoiceTotal', width: 15 },
+    { header: 'Paid', key: 'amountPaid', width: 15 },
+    { header: 'Balance', key: 'balance', width: 15 },
+    { header: 'Status', key: 'status', width: 12 }
+];
 
 // ✅ PRODUCT SELECTOR
 import ProductSelector from '../../components/ProductSelector';
@@ -1662,12 +1679,18 @@ const SalesInvoice = () => {
                                 )}
 
                                 {activeTab === 'list' && (
-                                    <button
-                                        onClick={() => handleCreateNew('STANDARD_FLOW')}
-                                        className="flex-1 sm:flex-none h-8 px-4 rounded-md bg-[#F5C742] hover:bg-[#E5B732] text-slate-900 flex items-center justify-center gap-1.5 text-sm font-bold shadow-sm transition-colors"
-                                    >
-                                        <Plus className="h-4 w-4" /> Create New
-                                    </button>
+                                    <>
+                                        <ExportDropdown
+                                            onExportExcel={() => exportToExcel(filteredInvoices, SALES_INVOICE_COLUMNS, 'Sales_Invoices')}
+                                            onExportPdf={() => exportToPDF(filteredInvoices, SALES_INVOICE_COLUMNS, 'Sales Invoices', 'Sales_Invoices')}
+                                        />
+                                        <button
+                                            onClick={() => handleCreateNew('STANDARD_FLOW')}
+                                            className="flex-1 sm:flex-none h-8 px-4 rounded-md bg-[#F5C742] hover:bg-[#E5B732] text-slate-900 flex items-center justify-center gap-1.5 text-sm font-bold shadow-sm transition-colors"
+                                        >
+                                            <Plus className="h-4 w-4" /> Create New
+                                        </button>
+                                    </>
                                 )}
                             </div>
                         </div>

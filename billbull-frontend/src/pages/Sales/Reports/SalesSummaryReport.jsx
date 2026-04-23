@@ -7,8 +7,23 @@ import {
 } from 'lucide-react';
 import { getAllSalesInvoices } from '../../../api/salesInvoiceApi';
 import toast from 'react-hot-toast';
+import ExportDropdown from '../../../components/common/ExportDropdown';
+import { exportToExcel, exportToPDF } from '../../../utils/exportUtils';
 
 const formatCurrency = (val) => `AED ${parseFloat(val || 0).toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',')}`;
+
+// ==========================================
+// 1. CONFIGURATION
+// ==========================================
+
+const SALES_SUMMARY_COLUMNS = [
+    { header: 'Invoice No', key: 'invoiceNumber', width: 15 },
+    { header: 'Date', key: 'invoiceDate', width: 12 },
+    { header: 'Customer', key: 'customerName', width: 25 },
+    { header: 'Status', key: 'status', width: 12 },
+    { header: 'Grand Total', key: 'invoiceTotal', width: 15 },
+    { header: 'Tax', key: 'taxTotal', width: 12 }
+];
 
 const SalesSummaryReport = () => {
     const [invoices, setInvoices] = useState([]);
@@ -78,18 +93,7 @@ const SalesSummaryReport = () => {
         return Object.values(map).sort((a, b) => b.total - a.total);
     }, [filtered, groupBy]);
 
-    const handleExport = () => {
-        const headers = ['Invoice No', 'Date', 'Customer', 'Status', 'Grand Total', 'Tax'];
-        const rows = filtered.map(i => [
-            i.invoiceNumber || '', i.invoiceDate || '', i.customerName || '',
-            i.status || '', i.invoiceTotal || 0, i.taxTotal || 0
-        ]);
-        const csv = [headers, ...rows].map(r => r.join(',')).join('\n');
-        const blob = new Blob([csv], { type: 'text/csv' });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a'); a.href = url;
-        a.download = `sales_summary_${dateFrom}_to_${dateTo}.csv`; a.click();
-    };
+
 
     return (
         <div className="flex h-screen bg-slate-50 overflow-hidden font-sans">
@@ -203,13 +207,10 @@ const SalesSummaryReport = () => {
                     >
                         <RefreshCw size={13} /> Refresh
                     </button>
-                    <button
-                        type="button"
-                        onClick={handleExport}
-                        className="flex-1 h-9 bg-[#F5C742] border border-[#F5C742] rounded-lg text-xs font-bold text-slate-900 hover:brightness-95 flex items-center justify-center gap-2"
-                    >
-                        <Download size={13} /> Export CSV
-                    </button>
+                        <ExportDropdown
+                            onExportExcel={() => exportToExcel(filtered, SALES_SUMMARY_COLUMNS, `Sales_Summary_${dateFrom}_to_${dateTo}`)}
+                            onExportPdf={() => exportToPDF(filtered, SALES_SUMMARY_COLUMNS, 'Sales Summary Report', `Sales_Summary_${dateFrom}_to_${dateTo}`)}
+                        />
                 </div>
             </aside>
 

@@ -82,6 +82,20 @@ import { getImageUrl } from '../../utils/urlUtils';
 import { getDefaultProductUnit, resolveUnitAmount } from '../../utils/unitPricing';
 import { useCompany } from '../../context/CompanyContext';
 import { useBranch } from '../../context/BranchContext';
+import ExportDropdown from '../../components/common/ExportDropdown';
+import { exportToExcel, exportToPDF } from '../../utils/exportUtils';
+
+// ==========================================
+// 1. CONFIGURATION
+// ==========================================
+
+const QUOTATION_COLUMNS = [
+    { header: 'Quotation No', key: 'qtnNo', width: 15 },
+    { header: 'Date', key: 'date', width: 12 },
+    { header: 'Customer', key: 'customer', width: 25 },
+    { header: 'Total', key: 'total', width: 15 },
+    { header: 'Status', key: 'status', width: 12 }
+];
 
 const WORLD_CURRENCY_CODES = [
     "AED", "AFN", "ALL", "AMD", "ANG", "AOA", "ARS", "AUD", "AWG", "AZN", "BAM", "BBD",
@@ -1920,6 +1934,10 @@ const Quotations = () => {
                                     <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={14} />
                                 </div>
 
+                                <ExportDropdown
+                                    onExportExcel={() => exportToExcel(filteredQuotations, QUOTATION_COLUMNS, 'Quotations')}
+                                    onExportPdf={() => exportToPDF(filteredQuotations, QUOTATION_COLUMNS, 'Quotations List', 'Quotations')}
+                                />
                                 <button onClick={handleCreateNew} className="flex items-center justify-center gap-1 px-4 py-2 bg-yellow-400 text-slate-900 text-sm font-bold rounded-lg hover:bg-yellow-500 transition-colors shadow-sm whitespace-nowrap">
                                     <Plus size={16} /> Create New
                                 </button>

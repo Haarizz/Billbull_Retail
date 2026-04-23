@@ -59,6 +59,22 @@ import {
 
 import { receiptVoucherApi } from "../../api/receiptVoucherApi";
 import { useBranch } from "../../context/BranchContext";
+import ExportDropdown from '../../components/common/ExportDropdown';
+import { exportToExcel, exportToPDF } from '../../utils/exportUtils';
+
+// ==========================================
+// 1. CONFIGURATION
+// ==========================================
+
+const PROFORMA_COLUMNS = [
+  { header: 'PI Number', key: 'piNumber', width: 15 },
+  { header: 'Date', key: 'piDate', width: 12 },
+  { header: 'Customer', key: 'customerName', width: 25 },
+  { header: 'Valid Until', key: 'validUntil', width: 12 },
+  { header: 'Total', key: 'total', width: 15 },
+  { header: 'Paid', key: 'advancePaid', width: 12 },
+  { header: 'Status', key: 'status', width: 12 }
+];
 
 // âœ… PRODUCT SELECTOR
 import ProductSelector from '../../components/ProductSelector';
@@ -1111,7 +1127,10 @@ const ProformaInvoice = () => {
                   </select>
                   <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={14} />
                 </div>
-
+                <ExportDropdown
+                  onExportExcel={() => exportToExcel(filteredProformas, PROFORMA_COLUMNS, 'Proforma_Invoices')}
+                  onExportPdf={() => exportToPDF(filteredProformas, PROFORMA_COLUMNS, 'Proforma Invoices', 'Proforma_Invoices')}
+                />
                 <button onClick={handleCreateNew} className="flex items-center justify-center gap-1 px-4 py-2 bg-yellow-400 text-slate-900 text-sm font-bold rounded-lg hover:bg-yellow-500 transition-colors shadow-sm whitespace-nowrap">
                   <Plus size={16} /> Create New
                 </button>
