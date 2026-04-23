@@ -31,15 +31,15 @@ public class SalesSettings {
     /**
      * Controls the global sales execution mode.
      *
-     * WORKFLOW_DRIVEN (default): full pipeline with manual Delivery Note lifecycle.
-     * FAST_SALE: invoice creation auto-completes delivery and stock deduction instantly.
+     * FAST_SALE (default): invoice creation auto-completes delivery and stock deduction instantly.
+     * WORKFLOW_DRIVEN: full pipeline with manual Delivery Note lifecycle.
      *
      * columnDefinition ensures Hibernate generates a DB-level DEFAULT so that the
      * existing singleton row receives WORKFLOW_DRIVEN when the column is first added.
      */
     @Enumerated(EnumType.STRING)
-    @Column(nullable = false, length = 20, columnDefinition = "varchar(20) default 'WORKFLOW_DRIVEN'")
-    private SalesMode salesMode = SalesMode.WORKFLOW_DRIVEN;
+    @Column(nullable = false, length = 20, columnDefinition = "varchar(20) default 'FAST_SALE'")
+    private SalesMode salesMode = SalesMode.FAST_SALE;
 
     // ------------------------------------------------
     // Getters & Setters

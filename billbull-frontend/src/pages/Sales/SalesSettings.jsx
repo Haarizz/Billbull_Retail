@@ -14,7 +14,7 @@ const SalesSettings = () => {
     // Settings state
     const [stockCheckRequired, setStockCheckRequired] = useState(false);
     const [creditLimitPolicy, setCreditLimitPolicy] = useState('NO_IMPACT');
-    const [salesMode, setSalesMode] = useState('WORKFLOW_DRIVEN');
+    const [salesMode, setSalesMode] = useState('FAST_SALE');
 
     // Load settings on mount
     useEffect(() => {

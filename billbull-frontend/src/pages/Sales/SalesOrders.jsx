@@ -800,6 +800,12 @@ const SalesOrders = () => {
     }
   };
 
+  const handleSelectCustomer = (cust) => {
+    setSelectedCustomer(cust);
+    setShippingAddress(cust.shippingAddress || cust.billingAddress || cust.address || '');
+    setIsCustomerSearchOpen(false);
+  };
+
   const handleFileUpload = (e) => {
     const file = e.target.files[0];
     if (file) {
@@ -832,7 +838,11 @@ const SalesOrders = () => {
       const matchedCustomer = customersList.find(c =>
         qtn.customer.includes(c.name) || qtn.customer.includes(c.code)
       );
-      setSelectedCustomer(matchedCustomer || buildFallbackCustomer(qtn.customer));
+      const cust = matchedCustomer || buildFallbackCustomer(qtn.customer);
+      setSelectedCustomer(cust);
+      if (cust.address || cust.shippingAddress || cust.billingAddress) {
+        setShippingAddress(cust.shippingAddress || cust.billingAddress || cust.address || '');
+      }
     }
 
     applyLinkedDocumentItems(qtn.items || []);
@@ -855,9 +865,11 @@ const SalesOrders = () => {
       || (proforma.customerName && customer.name === proforma.customerName)
     );
 
-    setSelectedCustomer(
-      matchedCustomer || buildFallbackCustomer(proforma.customerName, proforma.customerCode)
-    );
+    const cust = matchedCustomer || buildFallbackCustomer(proforma.customerName, proforma.customerCode);
+    setSelectedCustomer(cust);
+    if (cust.address || cust.shippingAddress || cust.billingAddress) {
+      setShippingAddress(cust.shippingAddress || cust.billingAddress || cust.address || '');
+    }
 
     applyLinkedDocumentItems(proforma.items || []);
 
@@ -1340,7 +1352,7 @@ const SalesOrders = () => {
               <CustomerSelector
                 isOpen={isCustomerSearchOpen}
                 onClose={() => setIsCustomerSearchOpen(false)}
-                onSelect={(cust) => setSelectedCustomer(cust)}
+                onSelect={handleSelectCustomer}
                 customers={customersList}
                 selectedCode={selectedCustomer?.code || ''}
                 onCustomerCreated={fetchAllData}
