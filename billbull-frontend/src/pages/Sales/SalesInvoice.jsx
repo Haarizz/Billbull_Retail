@@ -41,7 +41,7 @@ import {
 import { getAllCustomers } from '../../api/customerledgerApi';
 import { getAllSalesOrders } from '../../api/salesorderApi';
 import { getAllProformas } from '../../api/proformaApi';
-import { getDeliveryNotes, getUninvoicedDNsForCustomer } from '../../api/deliveryNoteApi';
+import { getDeliveryNotes, getPickingNotes, getUninvoicedDNsForCustomer } from '../../api/deliveryNoteApi';
 import { getEmployeeNames } from '../../api/employeeApi';
 import {
     getAllSalesInvoices,
@@ -210,6 +210,7 @@ const SalesInvoice = () => {
     // Payment Calculation State
     const [amountCollected, setAmountCollected] = useState(0);
     const [invoiceBalance, setInvoiceBalance] = useState(null); // server-side remaining balance
+    const [pickingNoteVerification, setPickingNoteVerification] = useState(null);
 
     // ✅ MODAL STATES
     const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
@@ -571,6 +572,51 @@ const SalesInvoice = () => {
         }
     };
 
+    const verifyPickingNoteAfterSave = async (savedInvoice) => {
+        if (!savedInvoice?.id) {
+            return null;
+        }
+
+        const expectedStatus =
+            salesSettings?.salesMode === 'FAST_SALE' || salesType === 'DIRECT_SALE'
+                ? 'DELIVERED'
+                : 'DRAFT';
+
+        try {
+            const pickingNotes = await getPickingNotes();
+            const generatedNote = pickingNotes.find(note =>
+                note?.sourceDocumentType === 'SALES_INVOICE' &&
+                (note?.sourceDocumentId === savedInvoice.id
+                    || note?.linkedSalesInvoiceNumber === savedInvoice.invoiceNumber)
+            );
+
+            if (!generatedNote) {
+                const message = `Picking note verification failed. No Picking document was found for invoice ${savedInvoice.invoiceNumber}.`;
+                setPickingNoteVerification({ kind: 'error', message });
+                return null;
+            }
+
+            if (generatedNote.status !== expectedStatus) {
+                const message = `Picking note created, but status is ${generatedNote.status} instead of expected ${expectedStatus} for invoice ${savedInvoice.invoiceNumber}.`;
+                setPickingNoteVerification({ kind: 'error', message });
+                return generatedNote;
+            }
+
+            setPickingNoteVerification({
+                kind: 'success',
+                message: `Picking note ${generatedNote.dnNumber} verified as ${generatedNote.status}.`
+            });
+            return generatedNote;
+        } catch (error) {
+            console.error("Failed to verify Picking note", error);
+            setPickingNoteVerification({
+                kind: 'error',
+                message: `Unable to verify the generated Picking note for invoice ${savedInvoice.invoiceNumber}.`
+            });
+            return null;
+        }
+    };
+
     // Add state for expandable rows
     const [expandedRows, setExpandedRows] = useState({});
 
@@ -632,6 +678,7 @@ const SalesInvoice = () => {
     // ==========================================
     const handleCreateNew = async (type = 'STANDARD_FLOW') => {
         setInvoiceId(null); // Reset ID for new creation
+        setPickingNoteVerification(null);
         try {
             const nextNumber = await getNextInvoiceNumber();
             setInvoiceNo(nextNumber);
@@ -1124,6 +1171,8 @@ const SalesInvoice = () => {
             amountPaid: Number(amountCollected),
             status: newStatus === 'Confirmed' ? 'CONFIRMED' : 'DRAFT',
             salesType: salesType,
+            requirePickingNote: true,
+            requestedFulfillmentType: 'Picking',
 
             items: items.map(i => ({
                 id: (i.id > 1000000000000) ? null : i.id,
@@ -1161,6 +1210,8 @@ const SalesInvoice = () => {
                 setStatus('POSTED');
             }
 
+            await verifyPickingNoteAfterSave(savedInvoice);
+
             await fetchInvoices();
             setActiveTab('list');
         } catch (e) {
@@ -1171,6 +1222,7 @@ const SalesInvoice = () => {
 
     // ✅ Load existing invoice for editing
     const handleLoadInvoice = (invoice) => {
+        setPickingNoteVerification(null);
         setInvoiceId(invoice.id);
         setInvoiceNo(invoice.invoiceNumber);
         setInvoiceDate(invoice.invoiceDate);
@@ -1777,7 +1829,28 @@ const SalesInvoice = () => {
                                 <div className="flex items-center gap-2.5 px-4 py-3 rounded-xl bg-amber-50 border border-amber-200">
                                     <Zap size={14} className="text-amber-500 shrink-0" />
                                     <p className="text-xs text-amber-700">
-                                        <strong>Fast Sale Mode is active.</strong> Saving this invoice will automatically create the Delivery Note, deduct stock, and recognise revenue in one step. Ensure every line item has a warehouse assigned.
+                                        <strong>Fast Sale Mode is active.</strong> Saving this invoice will automatically create a Picking delivery note, mark it delivered, deduct stock, and recognise revenue in one step. Ensure every line item has a warehouse assigned.
+                                    </p>
+                                </div>
+                            )}
+
+                            {pickingNoteVerification && (
+                                <div className={`flex items-center gap-2.5 px-4 py-3 rounded-xl border ${
+                                    pickingNoteVerification.kind === 'success'
+                                        ? 'bg-emerald-50 border-emerald-200'
+                                        : 'bg-red-50 border-red-200'
+                                }`}>
+                                    {pickingNoteVerification.kind === 'success' ? (
+                                        <CheckCircle2 size={14} className="text-emerald-500 shrink-0" />
+                                    ) : (
+                                        <AlertCircle size={14} className="text-red-500 shrink-0" />
+                                    )}
+                                    <p className={`text-xs ${
+                                        pickingNoteVerification.kind === 'success'
+                                            ? 'text-emerald-700'
+                                            : 'text-red-700'
+                                    }`}>
+                                        <strong>Picking verification:</strong> {pickingNoteVerification.message}
                                     </p>
                                 </div>
                             )}
