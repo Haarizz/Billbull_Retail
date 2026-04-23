@@ -25,6 +25,7 @@ public class WarehouseStockService {
     private final BinRepository binRepo;
     private final com.billbull.backend.sales.salesorder.SalesOrderRepository salesOrderRepo;
     private final com.billbull.backend.sales.delivery.DeliveryNoteRepository deliveryNoteRepo;
+    private final com.billbull.backend.sales.proforma.ProformaRepository proformaRepo;
 
     public WarehouseStockService(
             StockMovementRepository stockRepo,
@@ -35,7 +36,8 @@ public class WarehouseStockService {
             BinRepository binRepo,
             com.billbull.backend.sales.quotation.QuotationRepository quotationRepo,
             com.billbull.backend.sales.salesorder.SalesOrderRepository salesOrderRepo,
-            com.billbull.backend.sales.delivery.DeliveryNoteRepository deliveryNoteRepo) {
+            com.billbull.backend.sales.delivery.DeliveryNoteRepository deliveryNoteRepo,
+            com.billbull.backend.sales.proforma.ProformaRepository proformaRepo) {
         this.stockRepo = stockRepo;
         this.productRepo = productRepo;
         this.warehouseRepo = warehouseRepo;
@@ -44,6 +46,7 @@ public class WarehouseStockService {
         this.binRepo = binRepo;
         this.salesOrderRepo = salesOrderRepo;
         this.deliveryNoteRepo = deliveryNoteRepo;
+        this.proformaRepo = proformaRepo;
     }
 
     private Map<Long, Integer> getGlobalReservedMap(List<Product> products) {
@@ -54,11 +57,32 @@ public class WarehouseStockService {
         List<String> productCodes = products.stream().map(Product::getCode).collect(Collectors.toList());
         Map<String, Integer> codeMap = new HashMap<>();
 
+        // Sales Order Reservations
         List<Object[]> soReservations = salesOrderRepo.sumReservedQuantityForProducts(productCodes);
         for (Object[] row : soReservations) {
             String code = (String) row[0];
             int qty = ((Number) row[1]).intValue();
             codeMap.put(code, codeMap.getOrDefault(code, 0) + qty);
+        }
+
+        // Proforma Invoice Reservations
+        List<Object[]> piReservations = proformaRepo.sumReservedQuantityForProducts(productCodes);
+        for (Object[] row : piReservations) {
+            String code = (String) row[0];
+            int qty = ((Number) row[1]).intValue();
+            codeMap.put(code, codeMap.getOrDefault(code, 0) + qty);
+        }
+
+        // --- DEDUPLICATION ---
+        // Once a Delivery Note is created for a Proforma, the DN (associated with a warehouse)
+        // takes over the reservation. We must subtract those quantities from the "Global"
+        // PI pool to avoid double-counting and incorrect proportional distribution.
+        List<Object[]> piDeductions = deliveryNoteRepo.sumReservedQtyForProformasByProduct(productCodes);
+        for (Object[] row : piDeductions) {
+            String code = (String) row[0];
+            int qty = ((Number) row[1]).intValue();
+            int current = codeMap.getOrDefault(code, 0);
+            codeMap.put(code, Math.max(0, current - qty));
         }
 
         Map<Long, Integer> map = new HashMap<>();

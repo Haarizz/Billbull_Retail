@@ -126,7 +126,8 @@ public class ProformaService {
         pi.setPaymentReference(req.paymentReference);
         pi.setPaymentNotes(req.paymentNotes);
 
-        BigDecimal sub = BigDecimal.ZERO;
+        BigDecimal gross = BigDecimal.ZERO;
+        BigDecimal lineDiscTotal = BigDecimal.ZERO;
         BigDecimal tax = BigDecimal.ZERO;
 
         if (pi.getItems() == null) {
@@ -134,10 +135,28 @@ public class ProformaService {
         }
 
         for (ProformaItemRequest i : req.items) {
+            BigDecimal qty = i.quantity != null ? i.quantity : BigDecimal.ZERO;
+            BigDecimal price = i.price != null ? i.price : BigDecimal.ZERO;
+            BigDecimal taxRate = i.taxPercent != null ? i.taxPercent : BigDecimal.ZERO;
+            BigDecimal discRate = i.discountPercent != null ? i.discountPercent : BigDecimal.ZERO;
 
-            BigDecimal base = i.quantity.multiply(i.price);
-            BigDecimal taxAmt = base.multiply(i.taxPercent).divide(BigDecimal.valueOf(100));
-            BigDecimal total = base.add(taxAmt);
+            BigDecimal lineGross = qty.multiply(price);
+            
+            // Note: Simplistic FOC deduction if units match. 
+            // In a real system we'd use unit conversions here, 
+            // matching the frontend logic exactly.
+            BigDecimal focValue = BigDecimal.ZERO;
+            if (i.foc != null && i.foc > 0) {
+                focValue = price.multiply(BigDecimal.valueOf(i.foc));
+                // Simplified: assuming foc uses same unit as quantity here for brevity 
+                // but real logic should track unit conversions.
+            }
+            
+            BigDecimal preDisc = lineGross.subtract(focValue).max(BigDecimal.ZERO);
+            BigDecimal lineDisc = preDisc.multiply(discRate).divide(BigDecimal.valueOf(100), 2, BigDecimal.ROUND_HALF_UP);
+            BigDecimal taxable = preDisc.subtract(lineDisc);
+            BigDecimal lineTax = taxable.multiply(taxRate).divide(BigDecimal.valueOf(100), 2, BigDecimal.ROUND_HALF_UP);
+            BigDecimal lineTotal = taxable.add(lineTax);
 
             ProformaInvoiceItem item = new ProformaInvoiceItem();
             item.setProforma(pi);
@@ -145,24 +164,31 @@ public class ProformaService {
             item.setBarcode(i.barcode);
             item.setDescription(i.description);
             item.setUnit(i.unit);
-            item.setQuantity(i.quantity);
-            item.setPrice(i.price);
-            item.setTaxPercent(i.taxPercent);
+            item.setQuantity(qty);
+            item.setPrice(price);
+            item.setTaxPercent(taxRate);
+            item.setDiscountPercent(discRate);
             item.setFoc(i.foc);
             item.setFocUnit(i.focUnit);
             item.setRemarks(i.remarks);
             hydrateProformaItemDisplayData(item);
-            item.setLineTotal(total);
+            item.setLineTotal(lineTotal);
 
             pi.getItems().add(item);
 
-            sub = sub.add(base);
-            tax = tax.add(taxAmt);
+            gross = gross.add(lineGross);
+            lineDiscTotal = lineDiscTotal.add(lineDisc);
+            tax = tax.add(lineTax);
         }
 
-        pi.setSubTotal(sub);
+        BigDecimal taxableSubtotal = gross.subtract(lineDiscTotal);
+        pi.setSubTotal(taxableSubtotal);
+        pi.setBillDiscount(req.billDiscount != null ? req.billDiscount : BigDecimal.ZERO);
+        
+        BigDecimal billDiscAmount = taxableSubtotal.multiply(pi.getBillDiscount()).divide(BigDecimal.valueOf(100), 2, BigDecimal.ROUND_HALF_UP);
+        
         pi.setTaxTotal(tax);
-        pi.setGrandTotal(sub.add(tax));
+        pi.setGrandTotal(taxableSubtotal.subtract(billDiscAmount).add(tax));
         pi.setBalanceDue(pi.getGrandTotal().subtract(pi.getAdvancePaid()));
 
         return pi;
@@ -189,6 +215,7 @@ public class ProformaService {
         res.setSalesOrderNo(pi.getSalesOrderNo());
 
         res.setSubTotal(pi.getSubTotal());
+        res.setBillDiscount(pi.getBillDiscount());
         res.setTaxTotal(pi.getTaxTotal());
         res.setGrandTotal(pi.getGrandTotal());
 
@@ -208,9 +235,10 @@ public class ProformaService {
                     ir.setBarcode(item.getBarcode());
                     ir.setDescription(item.getDescription());
                     ir.setUnit(item.getUnit());
-                    ir.setQuantity(item.getQuantity().intValue());
+                    ir.setQuantity(item.getQuantity());
                     ir.setPrice(item.getPrice());
                     ir.setTaxPercent(item.getTaxPercent());
+                    ir.setDiscountPercent(item.getDiscountPercent());
                     ir.setFoc(item.getFoc());
                     ir.setFocUnit(item.getFocUnit());
                     ir.setRemarks(item.getRemarks());

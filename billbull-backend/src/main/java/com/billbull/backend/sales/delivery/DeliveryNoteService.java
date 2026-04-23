@@ -170,6 +170,18 @@ public class DeliveryNoteService {
     /* ================= CREATE / UPDATE ================= */
 
     public DeliveryNoteResponse create(DeliveryNoteRequest req) {
+        if (req.proformaNo != null && !req.proformaNo.trim().isEmpty() && !"-".equals(req.proformaNo)) {
+            if (repo.existsActiveByProformaNo(req.proformaNo)) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, 
+                    "An active Delivery Note already exists for Proforma: " + req.proformaNo);
+            }
+        }
+        if (req.salesOrderNo != null && !req.salesOrderNo.trim().isEmpty()) {
+            if (repo.existsActiveBySalesOrderNo(req.salesOrderNo)) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, 
+                    "An active Delivery Note already exists for Sales Order: " + req.salesOrderNo);
+            }
+        }
         DeliveryNote dn = new DeliveryNote();
         mapToEntity(req, dn);
         dn.setStatus(DeliveryNoteStatus.DRAFT);

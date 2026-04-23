@@ -26,6 +26,7 @@ public class ProformaInvoiceItem {
 	private BigDecimal quantity;
 	private BigDecimal price;
 	private BigDecimal taxPercent;
+	private BigDecimal discountPercent;
 	private BigDecimal lineTotal;
 	private Integer foc;
 	private String focUnit;
@@ -106,6 +107,14 @@ public class ProformaInvoiceItem {
 
 	public void setTaxPercent(BigDecimal taxPercent) {
 		this.taxPercent = taxPercent;
+	}
+
+	public BigDecimal getDiscountPercent() {
+		return discountPercent;
+	}
+
+	public void setDiscountPercent(BigDecimal discountPercent) {
+		this.discountPercent = discountPercent;
 	}
 
 	public void setLineTotal(BigDecimal lineTotal) {

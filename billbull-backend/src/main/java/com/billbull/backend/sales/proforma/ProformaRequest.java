@@ -22,6 +22,7 @@ public class ProformaRequest {
     public BigDecimal advancePaid;
     public String paymentReference;
     public String paymentNotes;
+    public BigDecimal billDiscount;
 
     public List<ProformaItemRequest> items;
 }
