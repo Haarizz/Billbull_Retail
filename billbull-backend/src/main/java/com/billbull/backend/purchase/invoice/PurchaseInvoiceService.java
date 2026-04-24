@@ -343,6 +343,19 @@ public class PurchaseInvoiceService {
             throw new IllegalArgumentException("Vendor invoice number is required before submitting for approval");
         }
 
+        if (invoice.getWarehouse() == null) {
+            throw new IllegalArgumentException("Warehouse is required before submitting invoice for approval");
+        }
+        if (invoice.getZone() == null) {
+            throw new IllegalArgumentException("Zone is required before submitting invoice for approval");
+        }
+        if (invoice.getLocator() == null) {
+            throw new IllegalArgumentException("Locator is required before submitting invoice for approval");
+        }
+        if (invoice.getBin() == null) {
+            throw new IllegalArgumentException("Bin is required before submitting invoice for approval");
+        }
+
         invoice.setStatus(InvoiceStatus.PENDING_APPROVAL);
         invoice.setSubmittedBy(username);
         invoice.setSubmittedAt(LocalDateTime.now());

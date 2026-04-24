@@ -1309,6 +1309,24 @@ const EditorView = ({ initialData, vendors, warehouses, onSave, onSubmit, onPrin
         return;
       }
 
+      if (!formData.zoneId) {
+        alert("Please select a zone");
+        setLoading(false);
+        return;
+      }
+
+      if (!formData.locatorId) {
+        alert("Please select a locator");
+        setLoading(false);
+        return;
+      }
+
+      if (!formData.binId) {
+        alert("Please select a bin");
+        setLoading(false);
+        return;
+      }
+
       await onSubmit(payload);
     } catch (error) {
       console.error('Submit failed:', error);

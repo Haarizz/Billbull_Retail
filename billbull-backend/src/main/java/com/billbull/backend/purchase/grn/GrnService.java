@@ -362,6 +362,16 @@ public class GrnService {
             throw new IllegalStateException("Only DRAFT GRN can be submitted for QC");
         }
 
+        if (g.getZone() == null) {
+            throw new IllegalArgumentException("Zone is required before submitting GRN for QC");
+        }
+        if (g.getLocator() == null) {
+            throw new IllegalArgumentException("Locator is required before submitting GRN for QC");
+        }
+        if (g.getBin() == null) {
+            throw new IllegalArgumentException("Bin is required before submitting GRN for QC");
+        }
+
         g.setStatus(GrnStatus.QC_PENDING);
         g.setQcStatus(QcStatus.IN_PROGRESS);
     }

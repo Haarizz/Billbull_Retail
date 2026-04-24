@@ -2785,6 +2785,11 @@ const PurchaseInvoices = () => {
   };
 
   const handleSubmitApproval = async (payload) => {
+    if (!payload.warehouseId) { alert("Please select a warehouse before submitting."); return; }
+    if (!payload.zoneId) { alert("Please select a zone before submitting."); return; }
+    if (!payload.locatorId) { alert("Please select a locator before submitting."); return; }
+    if (!payload.binId) { alert("Please select a bin before submitting."); return; }
+
     try {
       const invoiceId = await handleSaveDraft(payload);
       if (!invoiceId) return;
