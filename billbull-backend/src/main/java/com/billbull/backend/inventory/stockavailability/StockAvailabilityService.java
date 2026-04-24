@@ -13,8 +13,6 @@ import com.billbull.backend.purchase.lpo.LpoItemRepository;
 import com.billbull.backend.purchase.lpo.LpoStatus;
 import com.billbull.backend.purchase.grn.GrnRepository;
 import com.billbull.backend.purchase.grn.GrnSourceType;
-import org.springframework.cache.annotation.Cacheable;
-import org.springframework.cache.annotation.CacheEvict;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
@@ -49,12 +47,12 @@ public class StockAvailabilityService {
         this.grnRepository = grnRepository;
     }
 
-    @Cacheable(value = "stockAvailability", key = "#itemCode")
+
     public StockAvailabilityResponse getStockAvailability(String itemCode) {
         return getStockAvailability(itemCode, null, null, null, null);
     }
 
-    @Cacheable(value = "stockAvailability")
+
     public StockAvailabilityResponse getStockAvailability(String itemCode, Long warehouseId, Long zoneId, Long locatorId,
             Long binId) {
         // Return empty structured response instead of throwing Exception
@@ -199,8 +197,4 @@ public class StockAvailabilityService {
         return "Selected Bin";
     }
 
-    @CacheEvict(value = "stockAvailability", allEntries = true)
-    public void clearCache() {
-        // Method for manual cache eviction or trigger from other services
-    }
 }
