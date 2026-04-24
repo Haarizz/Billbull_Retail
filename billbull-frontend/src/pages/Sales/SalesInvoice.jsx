@@ -271,15 +271,18 @@ const SalesInvoice = () => {
     };
 
     // ✅ GLOBAL SHORTCUTS
+    const normalizedInvoiceStatus = String(status || '').toUpperCase();
+    const isReadOnlyInvoice = Boolean(invoiceId) && !['', 'DRAFT', 'CANCELLED'].includes(normalizedInvoiceStatus);
+
     useShortcuts({
         'ctrl+p': (e) => {
-            if (activeTab === 'create') setIsProductSelectorOpen(prev => !prev);
+            if (activeTab === 'create' && !isReadOnlyInvoice) setIsProductSelectorOpen(prev => !prev);
         },
         'ctrl+s': (e) => {
             if (activeTab === 'create') handleSave('Draft');
         },
         'alt+c': (e) => {
-            if (activeTab === 'create') setIsCustomerSearchOpen(prev => !prev);
+            if (activeTab === 'create' && !isReadOnlyInvoice && !isGeneratedFromDN) setIsCustomerSearchOpen(prev => !prev);
         }
     });
 
@@ -729,6 +732,7 @@ const SalesInvoice = () => {
     };
 
     const handleSelectCustomer = async (cust) => {
+        if (isReadOnlyInvoice) return;
         if (isGeneratedFromDN) return; // Prevent changing customer if locked
 
         setSelectedCustomer(cust);
@@ -856,6 +860,7 @@ const SalesInvoice = () => {
     // AUTO-FILL FROM LINKED DOCUMENTS
     // ===========================================
     const handleSOChange = (soNumber) => {
+        if (isReadOnlyInvoice) return;
         setLinkedSO(soNumber);
         if (!soNumber) return;
 
@@ -890,6 +895,7 @@ const SalesInvoice = () => {
     };
 
     const handleDNChange = (dnNumber) => {
+        if (isReadOnlyInvoice) return;
         setLinkedDN(dnNumber);
         if (!dnNumber) return;
 
@@ -1063,6 +1069,7 @@ const SalesInvoice = () => {
     };
 
     const handleItemChange = (id, field, value) => {
+        if (isReadOnlyInvoice) return;
         setItems(items.map(item => {
             if (item.id === id) {
                 let updatedItem = { ...item, [field]: value };
@@ -1092,6 +1099,7 @@ const SalesInvoice = () => {
 
     // ✅ PRODUCT SELECTOR HANDLER
     const handleAddSingleProduct = (product) => {
+        if (isReadOnlyInvoice) return;
         const defaultUnit = getDefaultProductUnit(product);
         // Use explicit null/undefined checks so that a master price of 0 does not
         // fall through to a sellingPrice from a different data path.
@@ -1156,15 +1164,21 @@ const SalesInvoice = () => {
     };
 
     const handleAddItem = () => {
+        if (isReadOnlyInvoice) return;
         setItems([...items, { id: Date.now(), code: '', name: '', unit: 'PCS', qty: 0, price: 0, disc: 0, tax: 5, taxAmt: 0, gross: 0, net: 0, cost: 0, warehouseId: defaultBranch?.defaultWarehouseId || (warehousesList.length > 0 ? warehousesList[0].id : '') }]);
     };
 
     const handleDeleteItem = (id) => {
+        if (isReadOnlyInvoice) return;
         if (items.length > 1) setItems(items.filter(i => i.id !== id));
     };
 
 
     const handleSave = async (newStatus = 'Draft') => {
+        if (isReadOnlyInvoice) {
+            alert("This invoice is view-only because it has already been completed.");
+            return;
+        }
         if (!selectedCustomer) { alert("Please select a customer"); return; }
 
         // Build payload for backend
@@ -1201,6 +1215,7 @@ const SalesInvoice = () => {
             items: items.map(i => ({
                 id: (i.id > 1000000000000) ? null : i.id,
                 itemCode: i.code,
+                barcode: i.barcode || '',
                 image: i.image,
                 itemName: i.name,
                 description: i.desc || '',
@@ -1285,12 +1300,14 @@ const SalesInvoice = () => {
             setItems(invoice.items.map(i => ({
                 id: i.id || Date.now() + Math.random(),
                 code: i.itemCode,
+                barcode: i.barcode || i.itemBarcode || '',
                 image: i.image || '',
                 name: i.itemName || '',
                 desc: i.description || '',
                 sku: i.sku || '',
                 localName: i.localName || '',
                 unit: i.unit,
+                availableUnits: i.availableUnits || [i.unit || 'PCS'],
                 qty: i.quantity,
                 price: i.price,
                 cost: i.cost || 0,
@@ -1300,6 +1317,7 @@ const SalesInvoice = () => {
                 gross: i.grossAmount || 0,
                 net: i.netAmount || 0,
                 foc: i.foc || 0,
+                focUnit: i.focUnit || i.unit || 'PCS',
                 gp: 0,
                 warehouseId: i.warehouseId || ''
             })));
@@ -1478,6 +1496,7 @@ const SalesInvoice = () => {
         if (s === 'OVERDUE') return <span className="bg-red-100 text-red-700 px-2 py-0.5 rounded text-[10px] font-bold">Overdue</span>;
         if (s === 'PARTIALLY_PAID') return <span className="bg-orange-100 text-orange-700 px-2 py-0.5 rounded text-[10px] font-bold">Partially Paid</span>;
         if (s === 'CONFIRMED') return <span className="bg-blue-100 text-blue-700 px-2 py-0.5 rounded text-[10px] font-bold">Confirmed</span>;
+        if (s === 'COMPLETED') return <span className="bg-emerald-100 text-emerald-700 px-2 py-0.5 rounded text-[10px] font-bold">Completed</span>;
         return <span className="bg-slate-100 text-slate-600 px-2 py-0.5 rounded text-[10px] font-bold">{statusVal || 'Draft'}</span>;
     };
 
@@ -1550,6 +1569,7 @@ const SalesInvoice = () => {
             <ItemAddOnsModal
                 item={selectedAddonItem}
                 onClose={() => setSelectedAddonItem(null)}
+                isReadOnly={isReadOnlyInvoice}
                 onSave={(updated) => {
                     setItems(prev => prev.map(i => i.id === updated.id ? updated : i));
                     setSelectedAddonItem(null);
@@ -1927,7 +1947,14 @@ const SalesInvoice = () => {
 
                                 {/* 2. INVOICE DETAILS FORM */}
                                 <div className="bg-white p-4 rounded-lg border border-slate-200 shadow-sm">
-                                    <h3 className="text-sm font-bold text-slate-700 mb-4">Invoice Details</h3>
+                                    <div className="flex items-center justify-between gap-3 mb-4">
+                                        <h3 className="text-sm font-bold text-slate-700">Invoice Details</h3>
+                                        {isReadOnlyInvoice && (
+                                            <span className="text-[10px] font-bold px-2 py-1 rounded border border-slate-200 bg-slate-50 text-slate-600">
+                                                View Only
+                                            </span>
+                                        )}
+                                    </div>
                                     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-2 gap-4">
 
                                         <div>
@@ -1937,23 +1964,23 @@ const SalesInvoice = () => {
 
                                         <div>
                                             <label className="block text-xs font-bold text-slate-700 mb-1">Invoice Date</label>
-                                            <input type="date" value={invoiceDate} onChange={e => setInvoiceDate(e.target.value)} className="w-full text-xs p-2 border border-slate-200 rounded focus:border-[#F5C742] outline-none" />
+                                            <input type="date" value={invoiceDate} onChange={e => setInvoiceDate(e.target.value)} disabled={isReadOnlyInvoice} className="w-full text-xs p-2 border border-slate-200 rounded focus:border-[#F5C742] outline-none disabled:bg-slate-50 disabled:text-slate-500" />
                                         </div>
 
                                         <div>
                                             <label className="block text-xs font-bold text-slate-700 mb-1">Due Date</label>
-                                            <input type="date" value={deliveryDate} onChange={e => setDeliveryDate(e.target.value)} className="w-full text-xs p-2 border border-slate-200 rounded focus:border-[#F5C742] outline-none" />
+                                            <input type="date" value={deliveryDate} onChange={e => setDeliveryDate(e.target.value)} disabled={isReadOnlyInvoice} className="w-full text-xs p-2 border border-slate-200 rounded focus:border-[#F5C742] outline-none disabled:bg-slate-50 disabled:text-slate-500" />
                                         </div>
 
                                         <div>
                                             <label className="block text-xs font-bold text-slate-700 mb-1">Reference</label>
-                                            <input type="text" value={reference} onChange={e => setReference(e.target.value)} placeholder="e.g. PO Number" className="w-full text-xs p-2 border border-slate-200 rounded focus:border-[#F5C742] outline-none" />
+                                            <input type="text" value={reference} onChange={e => setReference(e.target.value)} readOnly={isReadOnlyInvoice} placeholder="e.g. PO Number" className="w-full text-xs p-2 border border-slate-200 rounded focus:border-[#F5C742] outline-none read-only:bg-slate-50 read-only:text-slate-500" />
                                         </div>
 
                                         <div>
                                             <label className="block text-xs font-bold text-slate-700 mb-1">Payment Terms</label>
                                             <div className="relative">
-                                                <select value={paymentTerms} onChange={e => setPaymentTerms(e.target.value)} className="w-full text-xs p-2 border border-slate-200 rounded bg-white appearance-none focus:outline-none focus:border-[#F5C742]">
+                                                <select value={paymentTerms} onChange={e => setPaymentTerms(e.target.value)} disabled={isReadOnlyInvoice} className="w-full text-xs p-2 border border-slate-200 rounded bg-white appearance-none focus:outline-none focus:border-[#F5C742] disabled:bg-slate-50 disabled:text-slate-500">
                                                     <option>Immediate</option>
                                                     <option>Net 30</option>
                                                     <option>Net 60</option>
@@ -1967,13 +1994,14 @@ const SalesInvoice = () => {
                                             <div className="relative">
                                                 <select
                                                     value={invoiceTypeUI}
+                                                    disabled={isReadOnlyInvoice}
                                                     onChange={e => {
                                                         setInvoiceTypeUI(e.target.value);
                                                         setSalesType(e.target.value === 'Direct Sale' ? 'DIRECT_SALE' : 'STANDARD_FLOW');
                                                         // Reset links when switching type
                                                         setLinkedSO(''); setLinkedDN(''); setLinkedPI('');
                                                     }}
-                                                    className="w-full text-xs p-2 border border-slate-200 rounded bg-white appearance-none focus:outline-none focus:border-[#F5C742]">
+                                                    className="w-full text-xs p-2 border border-slate-200 rounded bg-white appearance-none focus:outline-none focus:border-[#F5C742] disabled:bg-slate-50 disabled:text-slate-500">
                                                     <option>Direct Sale</option>
                                                     <option>Against Sales Order</option>
                                                     <option>Against Delivery Note</option>
@@ -1988,7 +2016,7 @@ const SalesInvoice = () => {
                                             <div>
                                                 <label className="block text-xs font-bold text-slate-700 mb-1">Sales Order</label>
                                                 <div className="relative">
-                                                    <select value={linkedSO} onChange={e => handleSOChange(e.target.value)} className="w-full text-xs p-2 border border-slate-200 rounded bg-white appearance-none focus:outline-none focus:border-[#F5C742]">
+                                                    <select value={linkedSO} onChange={e => handleSOChange(e.target.value)} disabled={isReadOnlyInvoice} className="w-full text-xs p-2 border border-slate-200 rounded bg-white appearance-none focus:outline-none focus:border-[#F5C742] disabled:bg-slate-50 disabled:text-slate-500">
                                                         <option value="">Select SO...</option>
                                                         {salesOrdersList.filter(s => s.status !== 'CANCELLED').map(s => <option key={s.id} value={s.soNumber}>{s.soNumber} - {s.customerName}</option>)}
                                                     </select>
@@ -2001,7 +2029,7 @@ const SalesInvoice = () => {
                                             <div>
                                                 <label className="block text-xs font-bold text-slate-700 mb-1">Delivery Note</label>
                                                 <div className="relative">
-                                                    <select value={linkedDN} onChange={e => handleDNChange(e.target.value)} className="w-full text-xs p-2 border border-slate-200 rounded bg-white appearance-none focus:outline-none focus:border-[#F5C742]">
+                                                    <select value={linkedDN} onChange={e => handleDNChange(e.target.value)} disabled={isReadOnlyInvoice} className="w-full text-xs p-2 border border-slate-200 rounded bg-white appearance-none focus:outline-none focus:border-[#F5C742] disabled:bg-slate-50 disabled:text-slate-500">
                                                         <option value="">Select DN...</option>
                                                         {deliveryNotesList.filter(d => d.status !== 'CANCELLED').map(d => <option key={d.id} value={d.dnNumber}>{d.dnNumber} - {d.customerName}</option>)}
                                                     </select>
@@ -2014,7 +2042,7 @@ const SalesInvoice = () => {
                                             <div>
                                                 <label className="block text-xs font-bold text-slate-700 mb-1">Proforma Invoice</label>
                                                 <div className="relative">
-                                                    <select value={linkedPI} onChange={e => setLinkedPI(e.target.value)} className="w-full text-xs p-2 border border-slate-200 rounded bg-white appearance-none focus:outline-none focus:border-[#F5C742]">
+                                                    <select value={linkedPI} onChange={e => setLinkedPI(e.target.value)} disabled={isReadOnlyInvoice} className="w-full text-xs p-2 border border-slate-200 rounded bg-white appearance-none focus:outline-none focus:border-[#F5C742] disabled:bg-slate-50 disabled:text-slate-500">
                                                         <option value="">Select PI...</option>
                                                         {proformaList.filter(p => p.status !== 'CANCELLED').map(p => <option key={p.id} value={p.proformaNo}>{p.proformaNo} - {p.customerName}</option>)}
                                                     </select>
@@ -2035,7 +2063,7 @@ const SalesInvoice = () => {
                                         <div>
                                             <label className="block text-xs font-bold text-slate-700 mb-1">Salesperson</label>
                                             <div className="relative">
-                                                <select value={salesperson} onChange={e => setSalesperson(e.target.value)} className="w-full text-xs p-2 border border-slate-200 rounded bg-white appearance-none focus:outline-none focus:border-[#F5C742]">
+                                                <select value={salesperson} onChange={e => setSalesperson(e.target.value)} disabled={isReadOnlyInvoice} className="w-full text-xs p-2 border border-slate-200 rounded bg-white appearance-none focus:outline-none focus:border-[#F5C742] disabled:bg-slate-50 disabled:text-slate-500">
                                                     <option value="">Select salesperson...</option>
                                                     {employeesList.map(emp => (
                                                         <option key={emp.id} value={emp.name}>{emp.name}</option>
@@ -2056,8 +2084,8 @@ const SalesInvoice = () => {
                                     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-2 gap-4 mb-4">
 
                                         <div
-                                            onClick={() => { if (!isGeneratedFromDN) setIsCustomerSearchOpen(true) }}
-                                            className={`w-full text-xs p-2 border border-slate-200 rounded flex items-center gap-2 ${isGeneratedFromDN ? 'bg-slate-50 cursor-not-allowed opacity-80 text-slate-500' : 'bg-white cursor-pointer hover:border-yellow-400'} transition-colors h-9`}
+                                            onClick={() => { if (!isGeneratedFromDN && !isReadOnlyInvoice) setIsCustomerSearchOpen(true) }}
+                                            className={`w-full text-xs p-2 border border-slate-200 rounded flex items-center gap-2 ${(isGeneratedFromDN || isReadOnlyInvoice) ? 'bg-slate-50 cursor-not-allowed opacity-80 text-slate-500' : 'bg-white cursor-pointer hover:border-yellow-400'} transition-colors h-9`}
                                         >
                                             <Search size={14} className="text-slate-400 shrink-0" />
                                             <span className="flex-1 truncate">{selectedCustomer ? `${selectedCustomer.code} - ${selectedCustomer.name}` : 'Search customer...'}</span>
@@ -2089,8 +2117,9 @@ const SalesInvoice = () => {
                                                 <textarea
                                                     value={shippingAddress}
                                                     onChange={e => setShippingAddress(e.target.value)}
+                                                    readOnly={isReadOnlyInvoice}
                                                     rows="2"
-                                                    className="w-full text-[11px] p-2 border border-slate-200 rounded bg-white focus:outline-none focus:border-yellow-400 resize-none"
+                                                    className="w-full text-[11px] p-2 border border-slate-200 rounded bg-white focus:outline-none focus:border-yellow-400 resize-none read-only:bg-slate-50 read-only:text-slate-500"
                                                     placeholder="Enter address details..."
                                                 />
                                             </div>
@@ -2134,7 +2163,7 @@ const SalesInvoice = () => {
                                         <h3 className="text-[13px] font-bold text-slate-700">Invoice Items {isGeneratedFromDN && <span className="ml-2 text-[10px] bg-purple-100 text-purple-700 px-2 py-0.5 rounded font-medium border border-purple-200">Generated from DNs</span>}</h3>
                                         <div className="flex items-center gap-2">
                                             {/* ✅ SELECT FROM CATALOG BUTTON */}
-                                            {!isGeneratedFromDN && (
+                                            {!isGeneratedFromDN && !isReadOnlyInvoice && (
                                                 <button
                                                     onClick={() => setIsProductSelectorOpen(true)}
                                                     className="flex items-center gap-1 px-2.5 py-1 bg-yellow-400 text-slate-900 text-[11px] font-semibold rounded hover:bg-yellow-500"
@@ -2147,7 +2176,7 @@ const SalesInvoice = () => {
                                     <div className="border border-slate-100 rounded-lg overflow-hidden">
                                         {/* Show more rows (closer to the left column height), then scroll inside for long invoices */}
                                         <div className="min-h-[320px] md:min-h-[420px] xl:min-h-[520px] max-h-[380px] md:max-h-[520px] xl:max-h-[680px] overflow-auto">
-                                            <table className="w-full text-[11px] text-left min-w-[1000px]">
+                                            <table className="w-full text-[11px] text-left min-w-[860px]">
                                                 <thead className="sticky top-0 z-10 bg-[#FBFBFD] border-b border-slate-200 text-[10px] font-semibold text-slate-600">
                                                 <tr>
                                                     <th className="px-3 py-2 w-8 text-center text-slate-400">#</th>
@@ -2163,9 +2192,7 @@ const SalesInvoice = () => {
                                                     {salesType === 'DIRECT_SALE' && (
                                                         <th className="px-3 py-2 w-32 text-left">Warehouse</th>
                                                     )}
-                                                    <th className="px-3 py-2 w-16 text-center">Foc</th>
                                                     <th className="px-3 py-2 w-20 text-right">Price</th>
-                                                    <th className="px-3 py-2 w-16 text-right">Discount</th>
                                                     <th className="px-3 py-2 w-16 text-right">Tax rate</th>
                                                     <th className="px-3 py-2 w-20 text-right">Tax amount</th>
                                                     <th className="px-3 py-2 w-24 text-right">Line total</th>
@@ -2194,6 +2221,7 @@ const SalesInvoice = () => {
                                                                     onCheckStock={() => { setSelectedStockItem(item); setIsItemStockModalOpen(true); }}
                                                                     onOpenSettings={() => setSelectedAddonItem({ ...item })}
                                                                     showSettings={true}
+                                                                    isReadOnly={isReadOnlyInvoice}
                                                                     page="salesInvoice"
                                                                 />
 
@@ -2203,7 +2231,8 @@ const SalesInvoice = () => {
                                                             <td className="px-3 py-2 text-center">
 
                                                                 <select
-                                                                    className="w-full bg-transparent outline-none text-center text-xs text-slate-600 appearance-none font-medium cursor-pointer"
+                                                                    disabled={isReadOnlyInvoice || isGeneratedFromDN}
+                                                                    className="w-full bg-transparent outline-none text-center text-xs text-slate-600 appearance-none font-medium cursor-pointer disabled:text-slate-400 disabled:cursor-not-allowed"
                                                                     value={item.unit}
                                                                     onChange={(e) => handleItemChange(item.id, 'unit', e.target.value)}
                                                                 >
@@ -2216,11 +2245,11 @@ const SalesInvoice = () => {
                                                             <td className="px-3 py-2 text-center">
 
                                                                 <input
-                                                                    disabled={isGeneratedFromDN}
+                                                                    disabled={isGeneratedFromDN || isReadOnlyInvoice}
                                                                     id={`qty-${item.id}`}
                                                                     type="number"
                                                                     min="1"
-                                                                    className={`w-full bg-transparent border-b border-transparent hover:border-slate-200 focus:border-yellow-400/50 text-center outline-none font-semibold text-xs transition-colors py-1 ${isGeneratedFromDN ? 'text-slate-400 cursor-not-allowed' : 'text-slate-700'}`}
+                                                                    className={`w-full bg-transparent border-b border-transparent hover:border-slate-200 focus:border-yellow-400/50 text-center outline-none font-semibold text-xs transition-colors py-1 ${(isGeneratedFromDN || isReadOnlyInvoice) ? 'text-slate-400 cursor-not-allowed' : 'text-slate-700'}`}
                                                                     value={item.qty === 0 ? '' : item.qty}
                                                                     onChange={(e) => handleItemChange(item.id, 'qty', e.target.value)}
                                                                     placeholder="0"
@@ -2233,7 +2262,8 @@ const SalesInvoice = () => {
                                                                 <td className="px-3 py-2">
 
                                                                     <select
-                                                                        className="w-full bg-transparent border-b border-transparent hover:border-slate-200 focus:border-yellow-400/50 outline-none text-xs font-semibold text-slate-700 transition-colors py-1 appearance-none cursor-pointer"
+                                                                        disabled={isReadOnlyInvoice}
+                                                                        className="w-full bg-transparent border-b border-transparent hover:border-slate-200 focus:border-yellow-400/50 outline-none text-xs font-semibold text-slate-700 transition-colors py-1 appearance-none cursor-pointer disabled:text-slate-400 disabled:cursor-not-allowed"
                                                                         value={item.warehouseId || ''}
                                                                         onChange={(e) => handleItemChange(item.id, 'warehouseId', e.target.value)}
                                                                     >
@@ -2247,7 +2277,7 @@ const SalesInvoice = () => {
                                                             )}
 
                                                             {/* FOC */}
-                                                            <td className="px-3 py-2 text-center align-top">
+                                                            <td className="hidden px-3 py-2 text-center align-top">
 
                                                                 <div className="flex flex-col gap-1">
                                                                     <input
@@ -2272,9 +2302,9 @@ const SalesInvoice = () => {
                                                             <td className="px-3 py-2 text-right">
 
                                                                 <input
-                                                                    disabled={isGeneratedFromDN}
+                                                                    disabled={isGeneratedFromDN || isReadOnlyInvoice}
                                                                     type="number"
-                                                                    className={`w-full text-right bg-transparent border-b border-transparent hover:border-slate-200 focus:border-yellow-400/50 outline-none font-semibold text-xs transition-colors py-1 ${isGeneratedFromDN ? 'text-slate-400 cursor-not-allowed' : 'text-slate-700'}`}
+                                                                    className={`w-full text-right bg-transparent border-b border-transparent hover:border-slate-200 focus:border-yellow-400/50 outline-none font-semibold text-xs transition-colors py-1 ${(isGeneratedFromDN || isReadOnlyInvoice) ? 'text-slate-400 cursor-not-allowed' : 'text-slate-700'}`}
                                                                     value={item.price === 0 ? '' : item.price}
                                                                     onChange={(e) => handleItemChange(item.id, 'price', e.target.value)}
                                                                     placeholder="0.00"
@@ -2283,12 +2313,12 @@ const SalesInvoice = () => {
                                                             </td>
 
                                                             {/* Disc % */}
-                                                            <td className="px-3 py-2 text-right">
+                                                            <td className="hidden px-3 py-2 text-right">
 
                                                                 <input
-                                                                    disabled={isGeneratedFromDN}
+                                                                    disabled={isGeneratedFromDN || isReadOnlyInvoice}
                                                                     type="number"
-                                                                    className={`w-full text-right bg-transparent border-b border-transparent hover:border-slate-200 focus:border-yellow-400/50 outline-none font-semibold text-xs transition-colors py-1 ${isGeneratedFromDN ? 'text-slate-400 cursor-not-allowed' : 'text-slate-700'}`}
+                                                                    className={`w-full text-right bg-transparent border-b border-transparent hover:border-slate-200 focus:border-yellow-400/50 outline-none font-semibold text-xs transition-colors py-1 ${(isGeneratedFromDN || isReadOnlyInvoice) ? 'text-slate-400 cursor-not-allowed' : 'text-slate-700'}`}
                                                                     value={item.disc === 0 ? '' : item.disc}
                                                                     onChange={(e) => handleItemChange(item.id, 'disc', e.target.value)}
                                                                     placeholder="0"
@@ -2300,9 +2330,9 @@ const SalesInvoice = () => {
                                                             <td className="px-3 py-2 text-right">
 
                                                                 <input
-                                                                    disabled={isGeneratedFromDN}
+                                                                    disabled={isGeneratedFromDN || isReadOnlyInvoice}
                                                                     type="number"
-                                                                    className={`w-full text-right bg-transparent border-b border-transparent hover:border-slate-200 focus:border-yellow-400/50 outline-none font-semibold text-xs transition-colors py-1 ${isGeneratedFromDN ? 'text-slate-400 cursor-not-allowed' : 'text-slate-700'}`}
+                                                                    className={`w-full text-right bg-transparent border-b border-transparent hover:border-slate-200 focus:border-yellow-400/50 outline-none font-semibold text-xs transition-colors py-1 ${(isGeneratedFromDN || isReadOnlyInvoice) ? 'text-slate-400 cursor-not-allowed' : 'text-slate-700'}`}
                                                                     value={item.tax === 0 ? '' : item.tax}
                                                                     onChange={(e) => handleItemChange(item.id, 'tax', e.target.value)}
                                                                     placeholder="5"
@@ -2329,7 +2359,7 @@ const SalesInvoice = () => {
                                                             {/* Remarks / Action */}
                                                             <td className="px-3 py-2 text-center">
                                                                 <div className="flex items-center justify-center">
-                                                                    {!isGeneratedFromDN && (
+                                                                    {!isGeneratedFromDN && !isReadOnlyInvoice && (
                                                                         <button onClick={() => handleDeleteItem(item.id)} className="text-slate-300 hover:text-red-500 transition-colors">
                                                                             <Trash2 size={16} />
                                                                         </button>
@@ -2342,7 +2372,7 @@ const SalesInvoice = () => {
                                                         {expandedRows[item.id] && (
                                                             <tr className="bg-white">
                                                                 <td></td>
-                                                                <td colSpan={salesType === 'DIRECT_SALE' ? 11 : 10} className="px-0 pb-4 pt-1">
+                                                                <td colSpan={salesType === 'DIRECT_SALE' ? 9 : 8} className="px-0 pb-4 pt-1">
                                                                     <div className="ml-[60px] mr-4 p-3 rounded-r-[10px] border-l-[3px] border-[#FFD700] bg-[#FFFDE7]/60 shadow-[inset_0_1px_4px_rgba(0,0,0,0.02)]">
                                                                         <div className="flex justify-between items-center mb-1.5">
                                                                             <div className="flex items-center gap-1.5 text-[9px] font-bold text-[#B8860B] tracking-widest uppercase">
@@ -2354,7 +2384,8 @@ const SalesInvoice = () => {
                                                                         </div>
                                                                         <textarea
                                                                             rows="1"
-                                                                            className="w-full bg-transparent text-[11px] text-slate-600 outline-none placeholder:text-yellow-700/30 resize-none font-medium leading-relaxed"
+                                                                            readOnly={isReadOnlyInvoice}
+                                                                            className="w-full bg-transparent text-[11px] text-slate-600 outline-none placeholder:text-yellow-700/30 resize-none font-medium leading-relaxed read-only:text-slate-500"
                                                                             value={item.remarks || ''}
                                                                             onChange={(e) => handleItemChange(item.id, 'remarks', e.target.value)}
                                                                             placeholder="Enter product description — auto-loaded from product master, fully editable..."
@@ -2379,8 +2410,8 @@ const SalesInvoice = () => {
                                 <div className="bg-white p-5 rounded-lg border border-slate-200 shadow-sm">
                                     <h3 className="text-sm font-bold text-slate-700 mb-3">Notes & Communications</h3>
                                     <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                                        <textarea rows="2" className="w-full text-xs p-2 border border-slate-200 rounded resize-none focus:outline-none focus:border-[#F5C742]" placeholder="Thank you for your business!"></textarea>
-                                        <textarea rows="2" className="w-full text-xs p-2 border border-slate-200 rounded resize-none focus:outline-none focus:border-[#F5C742]" placeholder="e.g., Special discount approved by manager"></textarea>
+                                        <textarea rows="2" readOnly={isReadOnlyInvoice} className="w-full text-xs p-2 border border-slate-200 rounded resize-none focus:outline-none focus:border-[#F5C742] read-only:bg-slate-50 read-only:text-slate-500" placeholder="Thank you for your business!"></textarea>
+                                        <textarea rows="2" readOnly={isReadOnlyInvoice} className="w-full text-xs p-2 border border-slate-200 rounded resize-none focus:outline-none focus:border-[#F5C742] read-only:bg-slate-50 read-only:text-slate-500" placeholder="e.g., Special discount approved by manager"></textarea>
                                     </div>
                                 </div>
                             </div>
@@ -2428,8 +2459,9 @@ const SalesInvoice = () => {
                                                 <input
                                                     type="number"
                                                     value={amountCollected}
+                                                    disabled={isReadOnlyInvoice}
                                                     onChange={e => setAmountCollected(Number(e.target.value))}
-                                                    className="w-20 text-right border-b border-slate-300 focus:border-emerald-500 outline-none text-emerald-600 bg-transparent"
+                                                    className="w-20 text-right border-b border-slate-300 focus:border-emerald-500 outline-none text-emerald-600 bg-transparent disabled:text-slate-400 disabled:cursor-not-allowed"
                                                 />
                                             </div>
 
@@ -2472,12 +2504,16 @@ const SalesInvoice = () => {
                             </div>
 
                             <div className="flex gap-2">
-                                <button onClick={() => handleSave('Draft')} className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-slate-300 text-slate-700 rounded text-xs font-bold hover:bg-slate-50 transition-colors shadow-sm">
-                                    <Save size={14} /> Save Draft
-                                </button>
-                                <button onClick={() => handleSave('Confirmed')} className="flex items-center gap-1.5 px-3 py-1.5 bg-[#F5C742] text-slate-900 rounded text-xs font-bold hover:bg-yellow-500 transition-colors shadow-sm">
-                                    <CheckCircle2 size={14} /> Confirm
-                                </button>
+                                {!isReadOnlyInvoice && (
+                                    <button onClick={() => handleSave('Draft')} className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-slate-300 text-slate-700 rounded text-xs font-bold hover:bg-slate-50 transition-colors shadow-sm">
+                                        <Save size={14} /> Save Draft
+                                    </button>
+                                )}
+                                {!isReadOnlyInvoice && (
+                                    <button onClick={() => handleSave('Confirmed')} className="flex items-center gap-1.5 px-3 py-1.5 bg-[#F5C742] text-slate-900 rounded text-xs font-bold hover:bg-yellow-500 transition-colors shadow-sm">
+                                        <CheckCircle2 size={14} /> Confirm
+                                    </button>
+                                )}
                                 <button onClick={() => handleOpenPaymentModal()} className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-slate-300 text-slate-700 rounded text-xs font-bold hover:bg-slate-50 transition-colors shadow-sm">
                                     <DollarSign size={14} /> Pay
                                 </button>
