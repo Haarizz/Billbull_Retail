@@ -26,11 +26,11 @@ export const usersApi = {
     api.put(`/api/users/${id}`, payload).then((r) => r.data),
 
   /**
-   * Assign roles to a user.
-   * roleIds: number[]
+   * Assign roles to a user with an optional primary role.
+   * roleIds: number[], primaryRoleId: number | null
    */
-  assignRoles: (id, roleIds) =>
-    api.post(`/api/users/${id}/roles`, roleIds).then((r) => r.data),
+  assignRoles: (id, roleIds, primaryRoleId = null) =>
+    api.post(`/api/users/${id}/roles`, { roleIds, primaryRoleId }).then((r) => r.data),
 
   /**
    * Freeze user (set isActive=false). Returns 409 if last active ADMIN.

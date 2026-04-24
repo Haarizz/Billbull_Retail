@@ -77,10 +77,10 @@ public class UserController {
     @PreAuthorize("hasRole('ADMIN')")
     public ResponseEntity<UserSafeDto> assignRoles(
             @PathVariable Long id,
-            @RequestBody Set<Long> roleIds,
+            @RequestBody RoleAssignmentRequest request,
             HttpServletRequest httpRequest) {
         auditLogService.logAllowedAccess("/api/users/" + id + "/roles", "POST", httpRequest);
-        return ResponseEntity.ok(userService.assignRoles(id, roleIds));
+        return ResponseEntity.ok(userService.assignRoles(id, request.getRoleIds(), request.getPrimaryRoleId()));
     }
 
     /**

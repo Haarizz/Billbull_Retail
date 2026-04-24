@@ -15,6 +15,7 @@ public class UserSafeDto {
     private String email;
     private String phone;
     private List<String> roles;
+    private String primaryRoleName;
     private boolean active;
     private Long linkedEmployeeId;
     private String linkedEmployeeCode;
@@ -34,6 +35,7 @@ public class UserSafeDto {
         this.roles = user.getRoles().stream()
                 .map(r -> r.getName())
                 .collect(Collectors.toList());
+        this.primaryRoleName = user.getPrimaryRole() != null ? user.getPrimaryRole().getName() : null;
         this.active = user.isActive();
         this.createdAt = user.getCreatedAt();
 
@@ -61,6 +63,7 @@ public class UserSafeDto {
     public String getEmail() { return email; }
     public String getPhone() { return phone; }
     public List<String> getRoles() { return roles; }
+    public String getPrimaryRoleName() { return primaryRoleName; }
     public boolean isActive() { return active; }
     public Long getLinkedEmployeeId() { return linkedEmployeeId; }
     public String getLinkedEmployeeCode() { return linkedEmployeeCode; }

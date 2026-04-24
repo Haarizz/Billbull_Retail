@@ -30,7 +30,9 @@ public class UserProfileDto {
         this.jobTitle = user.getJobTitle();
         this.department = user.getDepartment();
         this.avatarUrl = user.getAvatarUrl();
-        this.role = user.getRoles().isEmpty() ? "" : user.getRoles().iterator().next().getName();
+        this.role = user.getPrimaryRole() != null
+                ? user.getPrimaryRole().getName()
+                : (user.getRoles().isEmpty() ? "" : user.getRoles().iterator().next().getName());
         this.employeeId = user.getEmployeeId();
         this.joinDate = user.getJoinDate();
         if (user.getBranch() != null) {

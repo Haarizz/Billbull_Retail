@@ -46,17 +46,22 @@ public class AuthController {
 
         String token = jwtUtil.generateToken(user);
 
-        String mainRole = user.getRoles().stream()
-                .map(com.billbull.backend.role.Role::getName)
-                .findFirst()
-                .orElse("USER");
+        // Primary role is the canonical role for sidebar fallback and login redirect.
+        // If no primary role is set, pick the first role from the set as default.
+        String primaryRole = user.getPrimaryRole() != null
+                ? user.getPrimaryRole().getName()
+                : user.getRoles().stream()
+                        .map(com.billbull.backend.role.Role::getName)
+                        .findFirst()
+                        .orElse("USER");
 
-        System.out.println("Login - User: " + user.getUsername() + " Role: " + mainRole);
+        System.out.println("Login - User: " + user.getUsername() + " Primary: " + primaryRole);
 
         return new LoginResponse(
                 token,
                 user.getUsername(),
-                mainRole,
+                primaryRole,  // `role` field now always equals primaryRole
+                primaryRole,
                 user.getBranch() != null ? user.getBranch().getId() : null,
                 user.getBranch() != null ? user.getBranch().getName() : null,
                 user.getBranch() != null ? user.getBranch().getCode() : null,
