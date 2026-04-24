@@ -95,11 +95,12 @@ public class PostingEngineService {
          * Purchase Invoice posting.
          *
          * AGAINST_GRN scenario (invoice received after GRN):
-         *   Dr GRN Clearing (2103) [grandTotal] — clears the GRN accrual
+         *   Dr GRN Clearing (2103) [grandTotal - landedCost] — clears the GRN accrual
+         *   Dr Inventory (1120)    [landedCost]              — capitalizes landed cost
          *   Cr Accounts Payable (2101) [grandTotal]
          *
          * DIRECT / AGAINST_LPO scenario:
-         *   Dr Inventory (1120) [subTotal + landedCost]
+         *   Dr Inventory (1120) [grandTotal - taxTotal]
          *   Dr VAT Input (1130) [taxTotal]  (if > 0)
          *   Cr Accounts Payable (2101) [grandTotal]
          */
@@ -111,7 +112,6 @@ public class PostingEngineService {
                 JournalEntry entry = createBaseEntry(invoice.getInvoiceDate(), ref,
                                 "Purchase Invoice " + ref);
 
-                BigDecimal subTotal   = nvl(invoice.getSubTotal());
                 BigDecimal taxTotal   = nvl(invoice.getTaxTotal());
                 BigDecimal landedCost = nvl(invoice.getLandedCost());
                 BigDecimal grandTotal = nvl(invoice.getGrandTotal());
@@ -120,13 +120,26 @@ public class PostingEngineService {
                                 && invoice.getGrnId() != null;
 
                 if (isAgainstGrn) {
+                        BigDecimal grnClearingAmt = grandTotal.subtract(landedCost);
+                        if (grnClearingAmt.compareTo(BigDecimal.ZERO) < 0) {
+                                grnClearingAmt = BigDecimal.ZERO;
+                        }
                         addLine(entry, "GRN Clearing", ACC_GRN_CLEARING,
                                         "Clear GRN Liability - " + ref,
-                                        grandTotal, BigDecimal.ZERO);
+                                        grnClearingAmt, BigDecimal.ZERO);
+                        if (landedCost.compareTo(BigDecimal.ZERO) > 0) {
+                                addLine(entry, "Inventory", ACC_INVENTORY,
+                                                "Capitalize landed cost - " + ref,
+                                                landedCost, BigDecimal.ZERO);
+                        }
                 } else {
+                        BigDecimal inventoryAmt = grandTotal.subtract(taxTotal);
+                        if (inventoryAmt.compareTo(BigDecimal.ZERO) < 0) {
+                                inventoryAmt = BigDecimal.ZERO;
+                        }
                         addLine(entry, "Inventory", ACC_INVENTORY,
                                         "Direct inventory purchase - " + ref,
-                                        subTotal.add(landedCost), BigDecimal.ZERO);
+                                        inventoryAmt, BigDecimal.ZERO);
                         if (taxTotal.compareTo(BigDecimal.ZERO) > 0) {
                                 addLine(entry, "VAT Input", ACC_VAT_INPUT,
                                                 "VAT - " + ref,
