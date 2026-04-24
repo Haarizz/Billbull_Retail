@@ -14,26 +14,33 @@ import com.billbull.backend.inventory.product.ProductBarcode;
 import com.billbull.backend.inventory.product.ProductBarcodeRepository;
 import com.billbull.backend.inventory.product.ProductMediaRepository;
 import com.billbull.backend.inventory.product.ProductRepository;
+import com.billbull.backend.inventory.warehouse.Warehouse;
+import com.billbull.backend.settings.branch.Branch;
+import com.billbull.backend.settings.branch.BranchAccessService;
 import com.billbull.backend.util.DocumentOrderingUtil;
 
 @Service
 @Transactional
 public class ProformaService {
+    private static final BigDecimal ISSUE_BALANCE_TOLERANCE = new BigDecimal("0.01");
 
     private final ProformaRepository repo;
     private final ProductRepository productRepo;
     private final ProductBarcodeRepository barcodeRepo;
     private final ProductMediaRepository productMediaRepository;
+    private final BranchAccessService branchAccessService;
 
     public ProformaService(
             ProformaRepository repo,
             ProductRepository productRepo,
             ProductBarcodeRepository barcodeRepo,
-            ProductMediaRepository productMediaRepository) {
+            ProductMediaRepository productMediaRepository,
+            BranchAccessService branchAccessService) {
         this.repo = repo;
         this.productRepo = productRepo;
         this.barcodeRepo = barcodeRepo;
         this.productMediaRepository = productMediaRepository;
+        this.branchAccessService = branchAccessService;
     }
 
     /* ================= CREATE ================= */
@@ -95,8 +102,26 @@ public class ProformaService {
         ProformaInvoice pi = repo.findById(id)
                 .orElseThrow(() -> new RuntimeException("Proforma not found"));
 
-        if (pi.getBalanceDue().compareTo(BigDecimal.ZERO) > 0) {
-            throw new IllegalStateException("Full payment required");
+        if (pi.getWarehouse() == null) {
+            Warehouse defaultWarehouse = resolveDefaultWarehouse();
+            if (defaultWarehouse == null) {
+                throw new IllegalStateException(
+                        "Default warehouse is not configured for the current branch. Set it before issuing the proforma.");
+            }
+            pi.setWarehouse(defaultWarehouse);
+        }
+
+        if (pi.getStatus() == ProformaStatus.ISSUED) {
+            return toResponse(pi);
+        }
+
+        BigDecimal balanceDue = pi.getBalanceDue() != null ? pi.getBalanceDue() : BigDecimal.ZERO;
+        if (balanceDue.compareTo(ISSUE_BALANCE_TOLERANCE) > 0) {
+            throw new IllegalStateException("Full payment required. Remaining balance: " + balanceDue);
+        }
+
+        if (balanceDue.compareTo(BigDecimal.ZERO) > 0) {
+            pi.setBalanceDue(BigDecimal.ZERO);
         }
 
         pi.setStatus(ProformaStatus.ISSUED);
@@ -108,6 +133,10 @@ public class ProformaService {
     /* ================= ENTITY BUILDER ================= */
 
     private ProformaInvoice buildEntity(ProformaRequest req, ProformaInvoice pi) {
+        Warehouse defaultWarehouse = resolveDefaultWarehouse();
+        if (defaultWarehouse != null) {
+            pi.setWarehouse(defaultWarehouse);
+        }
 
         pi.setPiNumber(req.piNumber);
         pi.setPiDate(req.piDate);
@@ -213,6 +242,8 @@ public class ProformaService {
 
         res.setQuotationNo(pi.getQuotationNo());
         res.setSalesOrderNo(pi.getSalesOrderNo());
+        res.setWarehouseId(pi.getWarehouse() != null ? pi.getWarehouse().getId() : null);
+        res.setWarehouseName(pi.getWarehouse() != null ? pi.getWarehouse().getName() : null);
 
         res.setSubTotal(pi.getSubTotal());
         res.setBillDiscount(pi.getBillDiscount());
@@ -301,5 +332,10 @@ public class ProformaService {
         if (item.getRemarks() == null || item.getRemarks().isBlank()) {
             item.setRemarks(item.getDescription());
         }
+    }
+
+    private Warehouse resolveDefaultWarehouse() {
+        Branch currentBranch = branchAccessService.getCurrentUserBranchOrNull();
+        return currentBranch != null ? currentBranch.getDefaultWarehouse() : null;
     }
 }
