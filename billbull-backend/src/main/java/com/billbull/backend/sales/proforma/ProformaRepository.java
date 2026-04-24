@@ -46,4 +46,18 @@ public interface ProformaRepository extends JpaRepository<ProformaInvoice, Long>
               AND pi.status = com.billbull.backend.sales.proforma.ProformaStatus.ISSUED
         """)
     BigDecimal sumReservedQuantity(@Param("productCode") String productCode);
+
+    // Returns (itemCode, productId, requiredQtyInBaseUnits) for all items on a proforma.
+    // Used to validate available stock before issuing.
+    @Query("""
+            SELECT pi_item.itemCode, p.id, COALESCE(SUM(pi_item.quantity * COALESCE(pp.conversion, 1)), 0)
+            FROM ProformaInvoice pi JOIN pi.items pi_item
+            JOIN com.billbull.backend.inventory.product.Product p
+                ON p.code = pi_item.itemCode AND p.isActive = true
+            LEFT JOIN com.billbull.backend.inventory.product.ProductPacking pp
+                ON pp.product.id = p.id AND LOWER(pp.unit.name) = LOWER(pi_item.unit) AND pp.isActive = true
+            WHERE pi.id = :proformaId
+            GROUP BY pi_item.itemCode, p.id
+        """)
+    List<Object[]> getRequiredStockByProduct(@Param("proformaId") Long proformaId);
 }
