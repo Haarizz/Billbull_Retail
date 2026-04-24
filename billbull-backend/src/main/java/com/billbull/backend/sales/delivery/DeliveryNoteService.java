@@ -173,6 +173,7 @@ public class DeliveryNoteService {
 
     /* ================= CREATE / UPDATE ================= */
 
+    @CacheEvict(value = "stockAvailability", allEntries = true)
     public DeliveryNoteResponse create(DeliveryNoteRequest req) {
         if (req.proformaNo != null && !req.proformaNo.trim().isEmpty() && !"-".equals(req.proformaNo)) {
             if (repo.existsActiveByProformaNo(req.proformaNo)) {
@@ -438,6 +439,7 @@ public class DeliveryNoteService {
         }
     }
 
+    @CacheEvict(value = "stockAvailability", allEntries = true)
     @Transactional(rollbackFor = Exception.class)
     public DeliveryNoteResponse cancel(Long id) {
         DeliveryNote dn = getEntity(id);

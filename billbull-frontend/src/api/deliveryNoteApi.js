@@ -7,7 +7,10 @@ export const getDeliveryNotes = () =>
 export const getPickingNotes = async (deliveryNotes = null) => {
   const notes = deliveryNotes ?? await getDeliveryNotes();
   return Array.isArray(notes)
-    ? notes.filter(note => note?.type === "Picking")
+    ? notes.filter(note =>
+        note?.type === "Picking" ||
+        (note?.type === "Before Sale" && note?.proformaNo)
+      )
     : [];
 };
 

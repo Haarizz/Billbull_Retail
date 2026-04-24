@@ -121,6 +121,7 @@ const DeliveryNote = () => {
             dn.customerName,
             dn.customerCode,
             dn.soNo,
+            dn.piNo,
             dn.siNo,
             dn.linkedSalesInvoiceNumber,
             dn.warehouse,
@@ -185,7 +186,10 @@ const DeliveryNote = () => {
     }, [deliveryNotesList, searchTerm, filterStatus, sortConfig]);
 
     const pickingNotes = useMemo(
-        () => deliveryNotesList.filter(dn => dn.type === 'Picking'),
+        () => deliveryNotesList.filter(dn =>
+            dn.type === 'Picking' ||
+            (dn.type === 'Before Sale' && dn.piNo && dn.piNo !== '-')
+        ),
         [deliveryNotesList]
     );
 

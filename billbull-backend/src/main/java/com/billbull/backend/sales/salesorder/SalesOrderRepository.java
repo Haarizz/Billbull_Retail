@@ -26,6 +26,12 @@ public interface SalesOrderRepository extends JpaRepository<SalesOrder, Long> {
               com.billbull.backend.sales.salesorder.SalesOrderStatus.CONFIRMED,
               com.billbull.backend.sales.salesorder.SalesOrderStatus.PARTIALLY_PAID
             )
+            AND NOT EXISTS (
+              SELECT 1 FROM com.billbull.backend.sales.delivery.DeliveryNote dn
+              WHERE dn.salesOrderNo = so.soNumber
+                AND dn.status <> com.billbull.backend.sales.delivery.DeliveryNoteStatus.CANCELLED
+            )
+
       """)
   BigDecimal sumReservedQuantity(@Param("productCode") String productCode);
 
@@ -41,6 +47,12 @@ public interface SalesOrderRepository extends JpaRepository<SalesOrder, Long> {
               com.billbull.backend.sales.salesorder.SalesOrderStatus.CONFIRMED,
               com.billbull.backend.sales.salesorder.SalesOrderStatus.PARTIALLY_PAID
             )
+            AND NOT EXISTS (
+              SELECT 1 FROM com.billbull.backend.sales.delivery.DeliveryNote dn
+              WHERE dn.salesOrderNo = so.soNumber
+                AND dn.status <> com.billbull.backend.sales.delivery.DeliveryNoteStatus.CANCELLED
+            )
+
           GROUP BY p.id
       """)
   List<Object[]> sumReservedQuantityForProducts(@Param("productCodes") List<String> productCodes);
@@ -57,6 +69,12 @@ public interface SalesOrderRepository extends JpaRepository<SalesOrder, Long> {
               com.billbull.backend.sales.salesorder.SalesOrderStatus.CONFIRMED,
               com.billbull.backend.sales.salesorder.SalesOrderStatus.PARTIALLY_PAID
             )
+            AND NOT EXISTS (
+              SELECT 1 FROM com.billbull.backend.sales.delivery.DeliveryNote dn
+              WHERE dn.salesOrderNo = so.soNumber
+                AND dn.status <> com.billbull.backend.sales.delivery.DeliveryNoteStatus.CANCELLED
+            )
+
           GROUP BY p.id, so.warehouse.id
       """)
   List<Object[]> sumReservedQuantityForProductsByWarehouse(@Param("productCodes") List<String> productCodes);
