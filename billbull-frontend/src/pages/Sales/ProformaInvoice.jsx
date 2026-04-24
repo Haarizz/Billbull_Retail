@@ -95,9 +95,10 @@ import ItemAddOnsModal from '../../components/ItemAddOnsModal';
 
 const ProformaInvoice = () => {
   const { company } = useCompany();
-  const { defaultBranchName } = useBranch();
+  const { defaultBranch, defaultBranchName } = useBranch();
   const [activeTab, setActiveTab] = useState('list');
   const [piId, setPiId] = useState(null);
+  const [reservationWarehouseId, setReservationWarehouseId] = useState(null);
 
   // --- DATA LIST STATES (Fetched from APIs) ---
   const [customersList, setCustomersList] = useState([]);
@@ -214,6 +215,12 @@ const ProformaInvoice = () => {
 
   // âœ… LIVE STOCK CACHE FOR ITEM AVAILABILITY PANEL
   const [liveStockMap, setLiveStockMap] = useState({});
+
+  useEffect(() => {
+    if (!piId) {
+      setReservationWarehouseId(defaultBranch?.defaultWarehouseId || null);
+    }
+  }, [defaultBranch?.defaultWarehouseId, piId]);
 
   // Item Add-Ons Modal State
   const [selectedAddonItem, setSelectedAddonItem] = useState(null);
@@ -633,9 +640,8 @@ const ProformaInvoice = () => {
   // âœ… STEP 8: LOAD PI ON ROW CLICK (REAL DATA)
   const handleRowClick = async (pi) => {
     try {
-      // Use the pi object passed from the list directly
-      // this avoids relying on getProformaById if it doesn't return items.
-      const full = pi;
+      const latest = await getProformaById(pi.id).catch(() => null);
+      const full = latest && latest.id ? latest : pi;
       setPiId(full.id);
 
       setPiNumber(full.piNumber);
@@ -655,6 +661,7 @@ const ProformaInvoice = () => {
 
       setLinkedQuote(full.quotationNo || "");
       setLinkedSO(full.salesOrderNo || "");
+      setReservationWarehouseId(full.warehouseId || defaultBranch?.defaultWarehouseId || null);
       setBillDiscount(Number(full.billDiscount) || 0);
       setSourceType(full.quotationNo ? 'Quotation' : full.salesOrderNo ? 'Sales Order' : 'None');
       setSourceSearch('');
@@ -686,6 +693,7 @@ const ProformaInvoice = () => {
     setStatus('DRAFT');
     setPiId(null);
     setIsReadOnly(false);
+    setReservationWarehouseId(defaultBranch?.defaultWarehouseId || null);
     setVersion(1);
     setItems([createBlankProformaItem()]);
     setAdvanceAmount(0);
@@ -745,23 +753,25 @@ const ProformaInvoice = () => {
       const saved = piId ? await updateProforma(piId, payload) : await createProforma(payload);
       const currentPiId = saved?.id || piId;
       setPiId(currentPiId);
+      setReservationWarehouseId(saved?.warehouseId || reservationWarehouseId || defaultBranch?.defaultWarehouseId || null);
 
       // Refresh list immediately to get accurate balance on list view
       const refreshedList = await getAllProformas();
       setProformaList(refreshedList);
 
       // âœ… If payment override is provided and balance is now 0, auto-issue
-      const subTotalItems = payload.items.reduce((acc, it) => {
-        const lineGross = it.quantity * it.price;
-        const lineDisc = lineGross * (it.discountPercent / 100);
-        const taxable = lineGross - lineDisc;
-        const lineTax = taxable * (it.taxPercent / 100);
-        return acc + taxable + lineTax;
-      }, 0);
-      const finalGrandTotal = subTotalItems * (1 - (Number(billDiscount) / 100));
+      const backendBalanceDue = Number(saved?.balanceDue ?? NaN);
+      const canAutoIssue = Number.isFinite(backendBalanceDue)
+        ? backendBalanceDue <= 0.01
+        : balanceDue <= 0.01;
 
-      if (advanceOverride !== null && Number(finalAdvance) >= (finalGrandTotal - 1)) { // Allowing minor rounding gap
-        await issueProforma(currentPiId);
+      if (advanceOverride !== null && canAutoIssue) {
+        const issued = await issueProforma(currentPiId);
+        setStatus(issued?.status || "ISSUED");
+        setIsReadOnly(true);
+        setReservationWarehouseId(issued?.warehouseId || reservationWarehouseId || defaultBranch?.defaultWarehouseId || null);
+        const issuedList = await getAllProformas();
+        setProformaList(issuedList);
         alert("Payment received and Proforma issued successfully!");
       } else {
         alert(piId ? "Draft updated successfully" : "Draft saved successfully");
@@ -770,11 +780,8 @@ const ProformaInvoice = () => {
       setActiveTab("list");
     } catch (err) {
       console.error(err);
-      if (err.response?.status === 409) {
-        alert("Conflict Error (409): This PI Number might already exist or the record is in a state that cannot be updated. Try creating a new one.");
-      } else {
-        alert("Failed to save draft");
-      }
+      const backendMessage = err.response?.data?.message || err.response?.data || err.message;
+      alert(backendMessage || "Failed to save draft");
     } finally {
       setIsSaving(false);
     }
@@ -786,7 +793,12 @@ const ProformaInvoice = () => {
       return alert("Select customer first");
     }
 
-    if (balanceDue > 0) {
+    if (status === "ISSUED") {
+      setIsReadOnly(true);
+      return alert(`Proforma ${piNumber} is already issued.`);
+    }
+
+    if (balanceDue > 0.01) {
       return alert(`Cannot Issue PI. Full payment is required. Current Balance Due: AED ${balanceDue.toFixed(2)}`);
     }
 
@@ -830,14 +842,27 @@ const ProformaInvoice = () => {
         const saved = await createProforma(payload);
         currentId = saved?.id;
         setPiId(currentId);
+        setReservationWarehouseId(saved?.warehouseId || reservationWarehouseId || defaultBranch?.defaultWarehouseId || null);
       } else {
+        const latest = await getProformaById(currentId);
+        if (latest?.status === "ISSUED") {
+          setStatus("ISSUED");
+          setIsReadOnly(true);
+          setReservationWarehouseId(latest?.warehouseId || reservationWarehouseId || defaultBranch?.defaultWarehouseId || null);
+          const refreshed = await getAllProformas();
+          setProformaList(refreshed);
+          return alert(`Proforma ${latest.piNumber || piNumber} is already issued.`);
+        }
         await updateProforma(currentId, payload);
       }
 
       if (!currentId) throw new Error("Failed to secure PI ID before issuing");
 
       // 2. Now perform the actual Issue
-      await issueProforma(currentId);
+      const issued = await issueProforma(currentId);
+      setStatus(issued?.status || "ISSUED");
+      setIsReadOnly(true);
+      setReservationWarehouseId(issued?.warehouseId || reservationWarehouseId || defaultBranch?.defaultWarehouseId || null);
       alert(`Proforma ${piNumber} issued successfully`);
 
       const refreshed = await getAllProformas();
@@ -845,11 +870,8 @@ const ProformaInvoice = () => {
       setActiveTab("list");
     } catch (err) {
       console.error(err);
-      if (err.response?.status === 409) {
-        alert("Conflict Error (409): The backend rejected this issue. This usually happens if the PI Number is already taken or if the document is already in a state that cannot be modified. Try generating a new PI number.");
-      } else {
-        alert(err.message || "Failed to issue Proforma");
-      }
+      const backendMessage = err.response?.data?.message || err.response?.data || err.message;
+      alert(backendMessage || "Failed to issue Proforma");
     } finally {
       setIsSaving(false);
     }
@@ -1502,7 +1524,10 @@ const ProformaInvoice = () => {
                                   onItemChange={handleItemChange}
                                   onFocusCode={() => setFocusedItem(item)}
                                   onOpenProductSelection={!isReadOnly ? () => setIsProductSelectorOpen(true) : undefined}
-                                  onCheckStock={() => { setSelectedStockItem(item); setIsItemStockModalOpen(true); }}
+                                  onCheckStock={() => {
+                                    setSelectedStockItem(item);
+                                    setIsItemStockModalOpen(true);
+                                  }}
                                   onOpenSettings={(selectedItem) => setSelectedAddonItem({ ...selectedItem })}
                                   showSettings={Boolean(item.code || item.desc || item.remarks)}
                                   showTaxDiscount={true}

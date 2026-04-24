@@ -18,6 +18,8 @@ public class ProformaResponse {
 
     private String quotationNo;
     private String salesOrderNo;
+    private Long warehouseId;
+    private String warehouseName;
 
     private BigDecimal subTotal;
     private BigDecimal billDiscount;
@@ -73,6 +75,14 @@ public class ProformaResponse {
 
 	public String getSalesOrderNo() {
 		return salesOrderNo;
+	}
+
+	public Long getWarehouseId() {
+		return warehouseId;
+	}
+
+	public String getWarehouseName() {
+		return warehouseName;
 	}
 
 	public BigDecimal getSubTotal() {
@@ -161,6 +171,14 @@ public class ProformaResponse {
 
 	public void setSalesOrderNo(String salesOrderNo) {
 		this.salesOrderNo = salesOrderNo;
+	}
+
+	public void setWarehouseId(Long warehouseId) {
+		this.warehouseId = warehouseId;
+	}
+
+	public void setWarehouseName(String warehouseName) {
+		this.warehouseName = warehouseName;
 	}
 
 	public void setSubTotal(BigDecimal subTotal) {
