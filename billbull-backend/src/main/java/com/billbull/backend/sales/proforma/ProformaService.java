@@ -15,6 +15,7 @@ import com.billbull.backend.inventory.product.ProductBarcodeRepository;
 import com.billbull.backend.inventory.product.ProductMediaRepository;
 import com.billbull.backend.inventory.product.ProductRepository;
 import com.billbull.backend.inventory.warehouse.Warehouse;
+import com.billbull.backend.inventory.warehouse.WarehouseStockService;
 import com.billbull.backend.settings.branch.Branch;
 import com.billbull.backend.settings.branch.BranchAccessService;
 import com.billbull.backend.util.DocumentOrderingUtil;
@@ -29,18 +30,21 @@ public class ProformaService {
     private final ProductBarcodeRepository barcodeRepo;
     private final ProductMediaRepository productMediaRepository;
     private final BranchAccessService branchAccessService;
+    private final WarehouseStockService warehouseStockService;
 
     public ProformaService(
             ProformaRepository repo,
             ProductRepository productRepo,
             ProductBarcodeRepository barcodeRepo,
             ProductMediaRepository productMediaRepository,
-            BranchAccessService branchAccessService) {
+            BranchAccessService branchAccessService,
+            WarehouseStockService warehouseStockService) {
         this.repo = repo;
         this.productRepo = productRepo;
         this.barcodeRepo = barcodeRepo;
         this.productMediaRepository = productMediaRepository;
         this.branchAccessService = branchAccessService;
+        this.warehouseStockService = warehouseStockService;
     }
 
     /* ================= CREATE ================= */
@@ -92,6 +96,11 @@ public class ProformaService {
     /* ================= DELETE ================= */
 
     public void delete(Long id) {
+        ProformaInvoice pi = repo.findById(id)
+                .orElseThrow(() -> new RuntimeException("Proforma not found"));
+        if (pi.getStatus() == ProformaStatus.ISSUED) {
+            throw new IllegalStateException("Issued proforma cannot be deleted. Cancel it first.");
+        }
         repo.deleteById(id);
     }
 
@@ -115,6 +124,10 @@ public class ProformaService {
             return toResponse(pi);
         }
 
+        if (pi.getStatus() == ProformaStatus.CANCELLED) {
+            throw new IllegalStateException("Cancelled proforma cannot be issued.");
+        }
+
         BigDecimal balanceDue = pi.getBalanceDue() != null ? pi.getBalanceDue() : BigDecimal.ZERO;
         if (balanceDue.compareTo(ISSUE_BALANCE_TOLERANCE) > 0) {
             throw new IllegalStateException("Full payment required. Remaining balance: " + balanceDue);
@@ -124,9 +137,25 @@ public class ProformaService {
             pi.setBalanceDue(BigDecimal.ZERO);
         }
 
+        validateStockAvailability(pi);
+
         pi.setStatus(ProformaStatus.ISSUED);
         pi.setIssuedAt(java.time.LocalDateTime.now());
 
+        return toResponse(repo.save(pi));
+    }
+
+    /* ================= CANCEL ================= */
+
+    public ProformaResponse cancel(Long id) {
+        ProformaInvoice pi = repo.findById(id)
+                .orElseThrow(() -> new RuntimeException("Proforma not found"));
+
+        if (pi.getStatus() == ProformaStatus.CANCELLED) {
+            return toResponse(pi);
+        }
+
+        pi.setStatus(ProformaStatus.CANCELLED);
         return toResponse(repo.save(pi));
     }
 
@@ -331,6 +360,34 @@ public class ProformaService {
 
         if (item.getRemarks() == null || item.getRemarks().isBlank()) {
             item.setRemarks(item.getDescription());
+        }
+    }
+
+    private void validateStockAvailability(ProformaInvoice pi) {
+        Warehouse warehouse = pi.getWarehouse();
+        if (warehouse == null) {
+            return;
+        }
+
+        List<Object[]> requiredStock = repo.getRequiredStockByProduct(pi.getId());
+        List<String> shortfall = new ArrayList<>();
+
+        for (Object[] row : requiredStock) {
+            String itemCode = (String) row[0];
+            Long productId = (Long) row[1];
+            BigDecimal required = new BigDecimal(row[2].toString());
+
+            BigDecimal available = warehouseStockService.getAvailableStock(warehouse.getId(), productId);
+            if (available.compareTo(required) < 0) {
+                shortfall.add(itemCode + " (need " + required.stripTrailingZeros().toPlainString()
+                        + ", available " + available.stripTrailingZeros().toPlainString() + ")");
+            }
+        }
+
+        if (!shortfall.isEmpty()) {
+            throw new IllegalStateException(
+                    "Insufficient stock in warehouse '" + warehouse.getName() + "' for: "
+                    + String.join(", ", shortfall));
         }
     }
 
