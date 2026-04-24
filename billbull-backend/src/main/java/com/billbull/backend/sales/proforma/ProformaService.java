@@ -6,6 +6,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
+import org.springframework.cache.annotation.CacheEvict;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -106,6 +107,7 @@ public class ProformaService {
 
     /* ================= ISSUE ================= */
 
+    @CacheEvict(value = "stockAvailability", allEntries = true)
     public ProformaResponse issue(Long id) {
 
         ProformaInvoice pi = repo.findById(id)
@@ -147,6 +149,7 @@ public class ProformaService {
 
     /* ================= CANCEL ================= */
 
+    @CacheEvict(value = "stockAvailability", allEntries = true)
     public ProformaResponse cancel(Long id) {
         ProformaInvoice pi = repo.findById(id)
                 .orElseThrow(() -> new RuntimeException("Proforma not found"));

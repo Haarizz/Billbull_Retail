@@ -284,7 +284,11 @@ const ProformaInvoice = () => {
   useEffect(() => {
     if (focusedItem && focusedItem.code) {
       if (!liveStockMap[focusedItem.code]) {
-        getStockAvailability(focusedItem.code)
+        const warehouseFilter = reservationWarehouseId || defaultBranch?.defaultWarehouseId;
+        getStockAvailability(
+          focusedItem.code,
+          warehouseFilter ? { warehouseId: warehouseFilter } : {}
+        )
           .then(data => {
             if (data && data.locations) {
               const totalAvail = data.locations.reduce((sum, loc) => sum + (loc.available || 0), 0);
@@ -302,7 +306,7 @@ const ProformaInvoice = () => {
           .catch(err => console.error("Failed to fetch live stock for Proforma", err));
       }
     }
-  }, [focusedItem]); // INTENTIONAL: NOT including liveStockMap to avoid loops
+  }, [focusedItem, reservationWarehouseId]); // eslint-disable-line react-hooks/exhaustive-deps
 
 
   // --- 1. FETCH DATA ON MOUNT ---
@@ -662,6 +666,7 @@ const ProformaInvoice = () => {
       setLinkedQuote(full.quotationNo || "");
       setLinkedSO(full.salesOrderNo || "");
       setReservationWarehouseId(full.warehouseId || defaultBranch?.defaultWarehouseId || null);
+      setLiveStockMap({});
       setBillDiscount(Number(full.billDiscount) || 0);
       setSourceType(full.quotationNo ? 'Quotation' : full.salesOrderNo ? 'Sales Order' : 'None');
       setSourceSearch('');
@@ -694,6 +699,7 @@ const ProformaInvoice = () => {
     setPiId(null);
     setIsReadOnly(false);
     setReservationWarehouseId(defaultBranch?.defaultWarehouseId || null);
+    setLiveStockMap({});
     setVersion(1);
     setItems([createBlankProformaItem()]);
     setAdvanceAmount(0);
@@ -754,6 +760,7 @@ const ProformaInvoice = () => {
       const currentPiId = saved?.id || piId;
       setPiId(currentPiId);
       setReservationWarehouseId(saved?.warehouseId || reservationWarehouseId || defaultBranch?.defaultWarehouseId || null);
+      setLiveStockMap({});
 
       // Refresh list immediately to get accurate balance on list view
       const refreshedList = await getAllProformas();
@@ -770,6 +777,7 @@ const ProformaInvoice = () => {
         setStatus(issued?.status || "ISSUED");
         setIsReadOnly(true);
         setReservationWarehouseId(issued?.warehouseId || reservationWarehouseId || defaultBranch?.defaultWarehouseId || null);
+        setLiveStockMap({});
         const issuedList = await getAllProformas();
         setProformaList(issuedList);
         alert("Payment received and Proforma issued successfully!");
@@ -863,6 +871,7 @@ const ProformaInvoice = () => {
       setStatus(issued?.status || "ISSUED");
       setIsReadOnly(true);
       setReservationWarehouseId(issued?.warehouseId || reservationWarehouseId || defaultBranch?.defaultWarehouseId || null);
+      setLiveStockMap({});
       alert(`Proforma ${piNumber} issued successfully`);
 
       const refreshed = await getAllProformas();
