@@ -2093,6 +2093,21 @@ const GRN = () => {
       return;
     }
 
+    if (!formData.zoneId) {
+      alert("Validation Failed: Zone is required.");
+      return;
+    }
+
+    if (!formData.locatorId) {
+      alert("Validation Failed: Locator is required.");
+      return;
+    }
+
+    if (!formData.binId) {
+      alert("Validation Failed: Bin is required.");
+      return;
+    }
+
     try {
       const saved = await persistGrn(formData, items, GRN_STATUS.QC_PENDING);
       setCurrentGrnData(saved);

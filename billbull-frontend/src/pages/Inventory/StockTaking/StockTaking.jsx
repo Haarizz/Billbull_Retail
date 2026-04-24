@@ -1867,6 +1867,12 @@ const StockTaking = () => {
     const handleSubmitApproval = async () => {
         if (!selectedSession) return;
 
+        const itemsWithoutBin = (selectedSession.items || []).filter(item => !item.binId);
+        if (itemsWithoutBin.length > 0) {
+            showNotif('warning', 'Bin Required', `${itemsWithoutBin.length} item(s) are missing a bin assignment. Please assign a bin to all items before submitting.`);
+            return;
+        }
+
         try {
             await submitForApproval(selectedSession.sessionId);
             fetchSessions();

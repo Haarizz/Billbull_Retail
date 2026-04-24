@@ -238,6 +238,13 @@ public class StockTakeService {
 
     public StockTakeSession submitForApproval(String sessionId) {
         StockTakeSession session = getSession(sessionId);
+
+        boolean anyItemMissingBin = session.getItems().stream()
+                .anyMatch(item -> item.getBinId() == null);
+        if (anyItemMissingBin) {
+            throw new IllegalStateException("All items must have a bin assigned before submitting for approval");
+        }
+
         session.setStatus(StockTakeSession.StockTakeStatus.PENDING_APPROVAL);
         return sessionRepo.save(session);
     }

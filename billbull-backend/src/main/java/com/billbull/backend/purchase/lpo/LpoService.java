@@ -179,6 +179,16 @@ public class LpoService {
             throw new IllegalStateException("Only DRAFT LPO can be submitted");
         }
 
+        if (lpo.getZone() == null) {
+            throw new IllegalArgumentException("Zone is required before submitting LPO for approval");
+        }
+        if (lpo.getLocator() == null) {
+            throw new IllegalArgumentException("Locator is required before submitting LPO for approval");
+        }
+        if (lpo.getBin() == null) {
+            throw new IllegalArgumentException("Bin is required before submitting LPO for approval");
+        }
+
         lpo.setStatus(LpoStatus.PENDING_APPROVAL);
         approvalWorkflowService.initializeApproval(lpo);
     }
