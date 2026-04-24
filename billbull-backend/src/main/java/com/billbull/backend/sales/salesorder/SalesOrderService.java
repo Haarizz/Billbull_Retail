@@ -14,6 +14,9 @@ import java.util.Map;
 import java.math.RoundingMode;
 
 import com.billbull.backend.inventory.product.ProductMediaRepository;
+import com.billbull.backend.inventory.warehouse.Warehouse;
+import com.billbull.backend.settings.branch.Branch;
+import com.billbull.backend.settings.branch.BranchAccessService;
 import com.billbull.backend.util.DocumentOrderingUtil;
 
 @Service
@@ -26,6 +29,7 @@ public class SalesOrderService {
     private final com.billbull.backend.inventory.product.ProductBarcodeRepository barcodeRepo;
     private final ProductMediaRepository productMediaRepository;
     private final com.billbull.backend.inventory.product.ProductPackingRepository packingRepo;
+    private final BranchAccessService branchAccessService;
 
     public SalesOrderService(
             SalesOrderRepository orderRepo,
@@ -34,7 +38,8 @@ public class SalesOrderService {
             com.billbull.backend.inventory.product.ProductRepository productRepo,
             com.billbull.backend.inventory.product.ProductBarcodeRepository barcodeRepo,
             ProductMediaRepository productMediaRepository,
-            com.billbull.backend.inventory.product.ProductPackingRepository packingRepo) {
+            com.billbull.backend.inventory.product.ProductPackingRepository packingRepo,
+            BranchAccessService branchAccessService) {
         this.orderRepo = orderRepo;
         this.quotationRepo = quotationRepo;
         this.warehouseStockService = warehouseStockService;
@@ -42,6 +47,7 @@ public class SalesOrderService {
         this.barcodeRepo = barcodeRepo;
         this.productMediaRepository = productMediaRepository;
         this.packingRepo = packingRepo;
+        this.branchAccessService = branchAccessService;
     }
 
     // ----------------------------
@@ -53,6 +59,9 @@ public class SalesOrderService {
     })
     @Transactional(rollbackFor = Exception.class)
     public SalesOrder save(SalesOrder order) {
+        Branch currentBranch = branchAccessService.getRequiredCurrentUserBranch();
+        Warehouse reservationWarehouse = resolveReservationWarehouse(order, currentBranch);
+        order.setWarehouse(reservationWarehouse);
 
         order.setLinkedQuotation(normalizeOptional(order.getLinkedQuotation()));
         order.setLinkedProforma(normalizeOptional(order.getLinkedProforma()));
@@ -140,6 +149,30 @@ public class SalesOrderService {
         }
 
         return saved;
+    }
+
+    private Warehouse resolveReservationWarehouse(SalesOrder order, Branch currentBranch) {
+        if (order == null) {
+            throw new IllegalStateException("Sales Order payload is missing.");
+        }
+
+        if (order.getId() != null) {
+            Warehouse existingWarehouse = orderRepo.findById(order.getId())
+                    .map(SalesOrder::getWarehouse)
+                    .orElse(null);
+            if (existingWarehouse != null) {
+                return existingWarehouse;
+            }
+        }
+
+        Warehouse branchDefaultWarehouse = currentBranch.getDefaultWarehouse();
+        if (branchDefaultWarehouse == null) {
+            throw new IllegalStateException(
+                    "No default warehouse is configured for branch " + currentBranch.getName()
+                            + ". Set a default warehouse before confirming sales orders.");
+        }
+
+        return branchDefaultWarehouse;
     }
 
     private String normalizeOptional(String value) {

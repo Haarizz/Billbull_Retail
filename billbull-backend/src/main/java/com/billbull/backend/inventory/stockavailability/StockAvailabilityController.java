@@ -17,8 +17,18 @@ public class StockAvailabilityController {
 
     @GetMapping("/by-code/{itemCode}")
     @PreAuthorize("hasAnyRole('SALES','INVENTORY','ADMIN')")
-    public ResponseEntity<StockAvailabilityResponse> getStockAvailability(@PathVariable String itemCode) {
-        StockAvailabilityResponse response = stockAvailabilityService.getStockAvailability(itemCode);
+    public ResponseEntity<StockAvailabilityResponse> getStockAvailability(
+            @PathVariable String itemCode,
+            @RequestParam(required = false) Long warehouseId,
+            @RequestParam(required = false) Long zoneId,
+            @RequestParam(required = false) Long locatorId,
+            @RequestParam(required = false) Long binId) {
+        StockAvailabilityResponse response = stockAvailabilityService.getStockAvailability(
+                itemCode,
+                warehouseId,
+                zoneId,
+                locatorId,
+                binId);
         return ResponseEntity.ok(response);
     }
 }
