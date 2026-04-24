@@ -13,6 +13,8 @@ import org.springframework.stereotype.Service;
 import com.billbull.backend.inventory.product.Product;
 import com.billbull.backend.inventory.product.ProductRepository;
 import com.billbull.backend.purchase.stockmovement.StockMovementRepository;
+import com.billbull.backend.settings.branch.Branch;
+import com.billbull.backend.settings.branch.BranchAccessService;
 
 @Service
 public class WarehouseStockService {
@@ -26,6 +28,7 @@ public class WarehouseStockService {
     private final com.billbull.backend.sales.salesorder.SalesOrderRepository salesOrderRepo;
     private final com.billbull.backend.sales.delivery.DeliveryNoteRepository deliveryNoteRepo;
     private final com.billbull.backend.sales.proforma.ProformaRepository proformaRepo;
+    private final BranchAccessService branchAccessService;
 
     public WarehouseStockService(
             StockMovementRepository stockRepo,
@@ -37,7 +40,8 @@ public class WarehouseStockService {
             com.billbull.backend.sales.quotation.QuotationRepository quotationRepo,
             com.billbull.backend.sales.salesorder.SalesOrderRepository salesOrderRepo,
             com.billbull.backend.sales.delivery.DeliveryNoteRepository deliveryNoteRepo,
-            com.billbull.backend.sales.proforma.ProformaRepository proformaRepo) {
+            com.billbull.backend.sales.proforma.ProformaRepository proformaRepo,
+            BranchAccessService branchAccessService) {
         this.stockRepo = stockRepo;
         this.productRepo = productRepo;
         this.warehouseRepo = warehouseRepo;
@@ -47,9 +51,10 @@ public class WarehouseStockService {
         this.salesOrderRepo = salesOrderRepo;
         this.deliveryNoteRepo = deliveryNoteRepo;
         this.proformaRepo = proformaRepo;
+        this.branchAccessService = branchAccessService;
     }
 
-    private Map<Long, Integer> getGlobalReservedMap(List<Product> products) {
+    private Map<Long, Integer> getGlobalProformaReservedMap(List<Product> products) {
         if (products == null || products.isEmpty()) {
             return new HashMap<>();
         }
@@ -58,14 +63,6 @@ public class WarehouseStockService {
         List<Long> productIds = products.stream().map(Product::getId).collect(Collectors.toList());
         // All quantities are in base units (converted via ProductPacking.conversion in each query).
         Map<Long, Integer> reservedMap = new HashMap<>();
-
-        // Sales Order reservations — returns [productId, baseQty]
-        List<Object[]> soReservations = salesOrderRepo.sumReservedQuantityForProducts(productCodes);
-        for (Object[] row : soReservations) {
-            Long productId = (Long) row[0];
-            int qty = ((Number) row[1]).intValue();
-            reservedMap.put(productId, reservedMap.getOrDefault(productId, 0) + qty);
-        }
 
         // Proforma Invoice reservations — returns [productId, baseQty]
         List<Object[]> piReservations = proformaRepo.sumReservedQuantityForProducts(productCodes);
@@ -88,6 +85,14 @@ public class WarehouseStockService {
         }
 
         return reservedMap;
+    }
+
+    private Long getDefaultReservationWarehouseId() {
+        Branch branch = branchAccessService.getCurrentUserBranchOrNull();
+        if (branch == null || branch.getDefaultWarehouse() == null) {
+            return null;
+        }
+        return branch.getDefaultWarehouse().getId();
     }
 
     private int safeInt(BigDecimal value) {
@@ -188,14 +193,37 @@ public class WarehouseStockService {
             return allocations;
         }
 
-        Map<Long, Integer> globalReservedMap = getGlobalReservedMap(products);
+        List<String> productCodes = products.stream().map(Product::getCode).toList();
+        Long fallbackWarehouseId = getDefaultReservationWarehouseId();
+
+        for (Object[] row : salesOrderRepo.sumReservedQuantityForProductsByWarehouse(productCodes)) {
+            Long productId = (Long) row[0];
+            Long warehouseId = (Long) row[1];
+            int reservedQty = ((Number) row[2]).intValue();
+
+            Long targetWarehouseId = warehouseId != null ? warehouseId : fallbackWarehouseId;
+            if (targetWarehouseId == null || reservedQty <= 0) {
+                continue;
+            }
+
+            allocations
+                    .computeIfAbsent(productId, ignored -> new HashMap<>())
+                    .merge(targetWarehouseId, reservedQty, Integer::sum);
+        }
+
+        Map<Long, Integer> globalProformaReservedMap = getGlobalProformaReservedMap(products);
         Map<Long, Map<Long, Integer>> warehouseOnHandMap = buildWarehouseOnHandMap(
                 products.stream().map(Product::getId).toList());
 
         for (Product product : products) {
             Map<Long, Integer> onHandByWarehouse = warehouseOnHandMap.getOrDefault(product.getId(), Collections.emptyMap());
-            int globalReserved = globalReservedMap.getOrDefault(product.getId(), 0);
-            allocations.put(product.getId(), allocateReservedByLargestRemainder(onHandByWarehouse, globalReserved));
+            int globalReserved = globalProformaReservedMap.getOrDefault(product.getId(), 0);
+            Map<Long, Integer> proformaAllocations = allocateReservedByLargestRemainder(onHandByWarehouse, globalReserved);
+
+            Map<Long, Integer> reservationAllocations = allocations.computeIfAbsent(product.getId(), ignored -> new HashMap<>());
+            for (Map.Entry<Long, Integer> entry : proformaAllocations.entrySet()) {
+                reservationAllocations.merge(entry.getKey(), entry.getValue(), Integer::sum);
+            }
         }
 
         return allocations;

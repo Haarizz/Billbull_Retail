@@ -45,6 +45,22 @@ public interface SalesOrderRepository extends JpaRepository<SalesOrder, Long> {
       """)
   List<Object[]> sumReservedQuantityForProducts(@Param("productCodes") List<String> productCodes);
 
+  @Query("""
+          SELECT p.id, so.warehouse.id, COALESCE(SUM(si.quantity * COALESCE(pp.conversion, 1)), 0)
+          FROM SalesOrder so JOIN so.items si
+          JOIN com.billbull.backend.inventory.product.Product p
+              ON p.code = si.itemCode AND p.isActive = true
+          LEFT JOIN com.billbull.backend.inventory.product.ProductPacking pp
+              ON pp.product.id = p.id AND LOWER(pp.unit.name) = LOWER(si.unit) AND pp.isActive = true
+          WHERE si.itemCode IN :productCodes
+            AND so.status IN (
+              com.billbull.backend.sales.salesorder.SalesOrderStatus.CONFIRMED,
+              com.billbull.backend.sales.salesorder.SalesOrderStatus.PARTIALLY_PAID
+            )
+          GROUP BY p.id, so.warehouse.id
+      """)
+  List<Object[]> sumReservedQuantityForProductsByWarehouse(@Param("productCodes") List<String> productCodes);
+
   java.util.Optional<SalesOrder> findBySoNumber(String soNumber);
 
   boolean existsByCustomerCode(String customerCode);

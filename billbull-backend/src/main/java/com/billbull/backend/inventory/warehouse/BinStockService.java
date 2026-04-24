@@ -48,49 +48,48 @@ public class BinStockService {
             return 0;
         }
 
-        class Share {
+        class BinAllocation {
             Long binId;
             int onHand;
             int allocated;
-            double remainder;
         }
 
-        List<Share> shares = new ArrayList<>();
-        int totalOnHand = 0;
-
+        List<BinAllocation> bins = new ArrayList<>();
         for (Object[] row : warehouseBinRows) {
             int onHand = ((Number) row[2]).intValue();
             if (onHand <= 0) {
                 continue;
             }
 
-            Share share = new Share();
-            share.binId = (Long) row[1];
-            share.onHand = onHand;
-            shares.add(share);
-            totalOnHand += onHand;
+            BinAllocation allocation = new BinAllocation();
+            allocation.binId = (Long) row[1];
+            allocation.onHand = onHand;
+            bins.add(allocation);
         }
 
-        if (totalOnHand <= 0 || shares.isEmpty()) {
+        if (bins.isEmpty()) {
             return 0;
         }
 
-        int totalAssigned = 0;
-        for (Share share : shares) {
-            double fractional = ((double) share.onHand / totalOnHand) * totalReserved;
-            share.allocated = (int) Math.floor(fractional);
-            share.remainder = fractional - share.allocated;
-            totalAssigned += share.allocated;
-        }
+        BinAllocation singleBinFit = bins.stream()
+                .filter(bin -> bin.onHand >= totalReserved)
+                .sorted((left, right) -> {
+                    int onHandCompare = Integer.compare(left.onHand, right.onHand);
+                    if (onHandCompare != 0) {
+                        return onHandCompare;
+                    }
 
-        int remaining = totalReserved - totalAssigned;
-        if (remaining > 0) {
-            shares.sort((left, right) -> {
-                int remainderCompare = Double.compare(right.remainder, left.remainder);
-                if (remainderCompare != 0) {
-                    return remainderCompare;
-                }
+                    long leftKey = left.binId != null ? left.binId : Long.MAX_VALUE;
+                    long rightKey = right.binId != null ? right.binId : Long.MAX_VALUE;
+                    return Long.compare(leftKey, rightKey);
+                })
+                .findFirst()
+                .orElse(null);
 
+        if (singleBinFit != null) {
+            singleBinFit.allocated = totalReserved;
+        } else {
+            bins.sort((left, right) -> {
                 int onHandCompare = Integer.compare(right.onHand, left.onHand);
                 if (onHandCompare != 0) {
                     return onHandCompare;
@@ -101,14 +100,19 @@ public class BinStockService {
                 return Long.compare(leftKey, rightKey);
             });
 
-            for (int i = 0; i < remaining && i < shares.size(); i++) {
-                shares.get(i).allocated += 1;
+            int remaining = totalReserved;
+            for (BinAllocation bin : bins) {
+                if (remaining <= 0) {
+                    break;
+                }
+                bin.allocated = Math.min(bin.onHand, remaining);
+                remaining -= bin.allocated;
             }
         }
 
-        return shares.stream()
-                .filter(share -> selectedBinId.equals(share.binId))
-                .mapToInt(share -> share.allocated)
+        return bins.stream()
+                .filter(bin -> selectedBinId.equals(bin.binId))
+                .mapToInt(bin -> bin.allocated)
                 .findFirst()
                 .orElse(0);
     }
