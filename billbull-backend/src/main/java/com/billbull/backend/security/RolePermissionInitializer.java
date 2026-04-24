@@ -28,12 +28,14 @@ public class RolePermissionInitializer implements ApplicationRunner {
 
     @Override
     public void run(ApplicationArguments args) {
-        // ADMIN: full access to all modules
+        // ADMIN: full access to all modules — force-upsert so the DB always reflects
+        // full access on startup. This prevents accidental lockout while still allowing
+        // the UI toggles to restrict access between restarts.
         roleRepository.findByName("ADMIN").ifPresent(role -> {
             String[] allModules = {"sales", "inventory", "purchases", "finance",
                                    "hr", "customer", "dashboard", "userManagement"};
             for (String module : allModules) {
-                seedIfAbsent(role, module, true, true, true, true, true);
+                seedOrUpdate(role, module, true, true, true, true, true);
             }
         });
 
@@ -83,5 +85,27 @@ public class RolePermissionInitializer implements ApplicationRunner {
             rp.setCanExport(export);
             rolePermissionRepository.save(rp);
         }
+    }
+
+    /** Always creates or overwrites the row — used for ADMIN to prevent accidental lockout. */
+    private void seedOrUpdate(
+            Role role, String module,
+            boolean view, boolean create, boolean edit,
+            boolean approve, boolean export) {
+
+        RolePermission rp = rolePermissionRepository
+                .findByRoleAndModule(role, module)
+                .orElseGet(() -> {
+                    RolePermission n = new RolePermission();
+                    n.setRole(role);
+                    n.setModule(module);
+                    return n;
+                });
+        rp.setCanView(view);
+        rp.setCanCreate(create);
+        rp.setCanEdit(edit);
+        rp.setCanApprove(approve);
+        rp.setCanExport(export);
+        rolePermissionRepository.save(rp);
     }
 }

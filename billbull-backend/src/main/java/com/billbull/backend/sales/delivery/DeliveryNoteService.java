@@ -14,6 +14,7 @@ import com.billbull.backend.inventory.product.Product;
 import com.billbull.backend.inventory.product.ProductBarcode;
 import com.billbull.backend.inventory.product.ProductBarcodeRepository;
 import com.billbull.backend.inventory.product.ProductMediaRepository;
+import com.billbull.backend.inventory.product.ProductPackingRepository;
 import com.billbull.backend.inventory.product.ProductRepository;
 import com.billbull.backend.inventory.warehouse.Warehouse;
 import com.billbull.backend.inventory.warehouse.WarehouseRepository;
@@ -56,6 +57,7 @@ public class DeliveryNoteService {
     private final ProductBarcodeRepository barcodeRepo;
     private final ProductMediaRepository productMediaRepository;
     private final BranchAccessService branchAccessService;
+    private final ProductPackingRepository packingRepo;
 
     public DeliveryNoteService(
             DeliveryNoteRepository repo,
@@ -71,7 +73,8 @@ public class DeliveryNoteService {
             SalesInvoiceRepository salesInvoiceRepo,
             ProductBarcodeRepository barcodeRepo,
             ProductMediaRepository productMediaRepository,
-            BranchAccessService branchAccessService) {
+            BranchAccessService branchAccessService,
+            ProductPackingRepository packingRepo) {
         this.repo = repo;
         this.warehouseStockService = warehouseStockService;
         this.productRepo = productRepo;
@@ -86,6 +89,7 @@ public class DeliveryNoteService {
         this.barcodeRepo = barcodeRepo;
         this.productMediaRepository = productMediaRepository;
         this.branchAccessService = branchAccessService;
+        this.packingRepo = packingRepo;
     }
 
     private DeliveryNoteResponse toResponse(DeliveryNote dn) {
@@ -260,7 +264,11 @@ public class DeliveryNoteService {
 
                 int qty = item.getCurrentQty() != null ? item.getCurrentQty() : 0;
                 int foc = item.getFoc() != null ? item.getFoc() : 0;
-                BigDecimal requested = BigDecimal.valueOf((long) qty + foc);
+                int baseQty = resolveBaseQty(item.getProduct().getId(), item.getUnit(), qty);
+                String effectiveFocUnit = (item.getFocUnit() != null && !item.getFocUnit().isBlank())
+                        ? item.getFocUnit() : item.getUnit();
+                int baseFoc = resolveBaseQty(item.getProduct().getId(), effectiveFocUnit, foc);
+                BigDecimal requested = BigDecimal.valueOf((long) baseQty + baseFoc);
 
                 if (available.compareTo(requested) < 0) {
                     throw new IllegalStateException(
@@ -317,7 +325,11 @@ public class DeliveryNoteService {
 
                 int qty = item.getCurrentQty() != null ? item.getCurrentQty() : 0;
                 int foc = item.getFoc() != null ? item.getFoc() : 0;
-                BigDecimal requested = BigDecimal.valueOf((long) qty + foc);
+                int baseQty = resolveBaseQty(item.getProduct().getId(), item.getUnit(), qty);
+                String effectiveFocUnit = (item.getFocUnit() != null && !item.getFocUnit().isBlank())
+                        ? item.getFocUnit() : item.getUnit();
+                int baseFoc = resolveBaseQty(item.getProduct().getId(), effectiveFocUnit, foc);
+                BigDecimal requested = BigDecimal.valueOf((long) baseQty + baseFoc);
 
                 // HARD VALIDATION WITH RECORD LOCK: check exact physical stock before deducting
                 BigDecimal physicalAvailable = stockMovementService.getAvailableStockForUpdate(
@@ -334,7 +346,7 @@ public class DeliveryNoteService {
                 // BIN-SPLIT DEDUCTION: spread the outbound qty across bins in descending
                 // stock order. This prevents negative bin stock when a single bin cannot
                 // cover the full ordered quantity.
-                int totalToDeduct = qty + foc;
+                int totalToDeduct = baseQty + baseFoc;
 
                 if (item.getBinId() != null) {
                     // Explicit bin chosen — deduct entirely from that bin (single movement)
@@ -436,6 +448,10 @@ public class DeliveryNoteService {
                 for (DeliveryNoteItem item : dn.getItems()) {
                     int qty = item.getCurrentQty() != null ? item.getCurrentQty() : 0;
                     int foc = item.getFoc() != null ? item.getFoc() : 0;
+                    int baseQty = resolveBaseQty(item.getProduct().getId(), item.getUnit(), qty);
+                    String effectiveFocUnit = (item.getFocUnit() != null && !item.getFocUnit().isBlank())
+                            ? item.getFocUnit() : item.getUnit();
+                    int baseFoc = resolveBaseQty(item.getProduct().getId(), effectiveFocUnit, foc);
 
                     Long binId = item.getBinId();
                     Long zoneId = null;
@@ -459,7 +475,7 @@ public class DeliveryNoteService {
                             binId,
                             zoneId,
                             locatorId,
-                            qty + foc,
+                            baseQty + baseFoc,
                             dn.getDnNumber() + "-REV");
                 }
             }
@@ -530,8 +546,12 @@ public class DeliveryNoteService {
         BigDecimal totalCogs = BigDecimal.ZERO;
 
         for (DeliveryNoteItem dnItem : dn.getItems()) {
-            int deliveredQty = (dnItem.getCurrentQty() != null ? dnItem.getCurrentQty() : 0)
-                    + (dnItem.getFoc() != null ? dnItem.getFoc() : 0);
+            int rawQty = (dnItem.getCurrentQty() != null ? dnItem.getCurrentQty() : 0);
+            int rawFoc = (dnItem.getFoc() != null ? dnItem.getFoc() : 0);
+            String effectiveFocUnit = (dnItem.getFocUnit() != null && !dnItem.getFocUnit().isBlank())
+                    ? dnItem.getFocUnit() : dnItem.getUnit();
+            int deliveredQty = resolveBaseQty(dnItem.getProduct().getId(), dnItem.getUnit(), rawQty)
+                    + resolveBaseQty(dnItem.getProduct().getId(), effectiveFocUnit, rawFoc);
             if (deliveredQty <= 0) continue;
 
             // FIX 2 — Cost source: try weighted average from stock ledger first,
@@ -746,19 +766,23 @@ public class DeliveryNoteService {
             item.setRemarks(item.getDescription());
         }
 
-        // Populate price/cost from product pricing when not stored on the item
-        // (covers DNs created before price fields were added to the schema)
-        if (item.getPrice() == null && product.getPricing() != null) {
-            java.math.BigDecimal retail = product.getPricing().getRetailPrice();
-            if (retail != null) {
-                item.setPrice(retail.doubleValue());
+        // Populate price from packing-level price first, then fall back to product retail price.
+        if (item.getPrice() == null) {
+            java.math.BigDecimal packingPrice = lookupPackingPrice(product.getId(), item.getUnit());
+            if (packingPrice != null) {
+                item.setPrice(packingPrice.doubleValue());
+            } else if (product.getPricing() != null && product.getPricing().getRetailPrice() != null) {
+                item.setPrice(product.getPricing().getRetailPrice().doubleValue());
             }
         }
 
-        if (item.getCost() == null && product.getPricing() != null) {
-            java.math.BigDecimal cost = product.getPricing().getCost();
-            if (cost != null) {
-                item.setCost(cost.doubleValue());
+        // Populate cost from packing-level cost first, then fall back to product cost.
+        if (item.getCost() == null) {
+            java.math.BigDecimal packingCost = lookupPackingCost(product.getId(), item.getUnit());
+            if (packingCost != null) {
+                item.setCost(packingCost.doubleValue());
+            } else if (product.getPricing() != null && product.getPricing().getCost() != null) {
+                item.setCost(product.getPricing().getCost().doubleValue());
             }
         }
     }
@@ -1053,6 +1077,41 @@ public class DeliveryNoteService {
 
     public boolean existsByDnNumber(String dnNumber) {
         return repo.existsByDnNumber(dnNumber);
+    }
+
+    private java.math.BigDecimal lookupPackingPrice(Long productId, String unitName) {
+        if (unitName == null || unitName.isBlank()) return null;
+        return packingRepo.findByProductId(productId).stream()
+                .filter(p -> p.getUnit() != null && unitName.equalsIgnoreCase(p.getUnit().getName()))
+                .findFirst()
+                .map(com.billbull.backend.inventory.product.ProductPacking::getPrice)
+                .orElse(null);
+    }
+
+    private java.math.BigDecimal lookupPackingCost(Long productId, String unitName) {
+        if (unitName == null || unitName.isBlank()) return null;
+        return packingRepo.findByProductId(productId).stream()
+                .filter(p -> p.getUnit() != null && unitName.equalsIgnoreCase(p.getUnit().getName()))
+                .findFirst()
+                .map(com.billbull.backend.inventory.product.ProductPacking::getCost)
+                .orElse(null);
+    }
+
+    /**
+     * Converts a document-level qty (in the item's unit) to base stock units
+     * using the matching ProductPacking conversion factor.
+     * Falls back to the raw qty when no packing is found (i.e. the unit IS the base unit).
+     */
+    private int resolveBaseQty(Long productId, String unitName, int qty) {
+        if (qty <= 0 || unitName == null || unitName.isBlank()) return qty;
+        return packingRepo.findByProductId(productId).stream()
+                .filter(p -> p.getUnit() != null && unitName.equalsIgnoreCase(p.getUnit().getName()))
+                .findFirst()
+                .map(p -> p.getConversion() != null
+                        ? BigDecimal.valueOf(qty).multiply(p.getConversion())
+                                .setScale(0, java.math.RoundingMode.HALF_UP).intValue()
+                        : qty)
+                .orElse(qty);
     }
 
     @Transactional(readOnly = true)
