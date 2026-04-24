@@ -19,6 +19,7 @@ public class EmployeeAccessDto {
     private boolean userActive;
     private boolean pendingEmployeeActivation;
     private List<String> assignedRoles;
+    private String primaryRoleName;
     private Long branchId;
     private String branchName;
     private String branchCode;
@@ -56,6 +57,9 @@ public class EmployeeAccessDto {
 
     public List<String> getAssignedRoles() { return assignedRoles; }
     public void setAssignedRoles(List<String> assignedRoles) { this.assignedRoles = assignedRoles; }
+
+    public String getPrimaryRoleName() { return primaryRoleName; }
+    public void setPrimaryRoleName(String primaryRoleName) { this.primaryRoleName = primaryRoleName; }
 
     public Long getBranchId() { return branchId; }
     public void setBranchId(Long branchId) { this.branchId = branchId; }

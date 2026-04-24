@@ -41,7 +41,8 @@ import {
   UserX,
   UserCheck,
   LayoutList,
-  LayoutGrid
+  LayoutGrid,
+  Star
 } from 'lucide-react';
 
 // Import the API helpers
@@ -1796,6 +1797,7 @@ const EmployeeAccessPanel = ({ employee, onClose }) => {
   const [showRoles, setShowRoles]       = useState(false);
   const [allRoles, setAllRoles]         = useState([]);       // [{ id, name }]
   const [selectedIds, setSelectedIds]   = useState(new Set()); // role ids currently checked
+  const [primaryRoleId, setPrimaryRoleId] = useState(null);   // starred primary role id
   const [rolesLoading, setRolesLoading] = useState(false);
   const [rolesSaving, setRolesSaving]   = useState(false);
   const [rolesLayout, setRolesLayout]   = useState('vertical'); // 'vertical' | 'horizontal'
@@ -1896,6 +1898,11 @@ const EmployeeAccessPanel = ({ employee, onClose }) => {
       const currentNames = new Set(accessData?.assignedRoles || []);
       const preSelected  = new Set(roles.filter(r => currentNames.has(r.name)).map(r => r.id));
       setSelectedIds(preSelected);
+      // Pre-populate primary role
+      const currentPrimary = accessData?.primaryRoleName
+        ? roles.find(r => r.name === accessData.primaryRoleName)?.id ?? null
+        : null;
+      setPrimaryRoleId(currentPrimary);
     } catch (e) {
       setInlineError(e.response?.data?.message || e.message || 'Failed to load roles');
       setShowRoles(false);
@@ -1907,7 +1914,13 @@ const EmployeeAccessPanel = ({ employee, onClose }) => {
   const toggleRole = (id) => {
     setSelectedIds(prev => {
       const next = new Set(prev);
-      next.has(id) ? next.delete(id) : next.add(id);
+      if (next.has(id)) {
+        next.delete(id);
+        // Clear primary if deselecting it
+        if (primaryRoleId === id) setPrimaryRoleId(null);
+      } else {
+        next.add(id);
+      }
       return next;
     });
   };
@@ -1916,7 +1929,7 @@ const EmployeeAccessPanel = ({ employee, onClose }) => {
     setRolesSaving(true);
     setInlineError(null);
     try {
-      await usersApi.assignRoles(accessData.linkedUserId, [...selectedIds]);
+      await usersApi.assignRoles(accessData.linkedUserId, [...selectedIds], primaryRoleId);
       await loadAccess();
       setShowRoles(false);
     } catch (e) {
@@ -2025,6 +2038,7 @@ const EmployeeAccessPanel = ({ employee, onClose }) => {
                 <div className="space-y-1.5">
                   {allRoles.map(role => {
                     const checked = selectedIds.has(role.id);
+                    const isPrimary = primaryRoleId === role.id;
                     return (
                       <label key={role.id}
                         className={`flex items-center gap-3 p-3 rounded-lg border cursor-pointer transition-all select-none
@@ -2042,7 +2056,15 @@ const EmployeeAccessPanel = ({ employee, onClose }) => {
                             {role.name}
                           </span>
                         </div>
-                        {checked && <Check size={14} className="text-yellow-600 shrink-0" />}
+                        {checked && (
+                          <button
+                            type="button"
+                            onClick={e => { e.preventDefault(); setPrimaryRoleId(isPrimary ? null : role.id); }}
+                            title={isPrimary ? 'Remove as primary role' : 'Set as primary role'}
+                            className="shrink-0 p-0.5 rounded transition-colors">
+                            <Star size={14} className={isPrimary ? 'fill-yellow-500 text-yellow-500' : 'text-slate-300 hover:text-yellow-400'} />
+                          </button>
+                        )}
                       </label>
                     );
                   })}
@@ -2052,6 +2074,7 @@ const EmployeeAccessPanel = ({ employee, onClose }) => {
                 <div className="grid grid-cols-2 gap-2">
                   {allRoles.map(role => {
                     const checked = selectedIds.has(role.id);
+                    const isPrimary = primaryRoleId === role.id;
                     return (
                       <label key={role.id}
                         className={`relative flex flex-col items-center gap-2 p-3 rounded-lg border cursor-pointer transition-all select-none text-center
@@ -2069,6 +2092,16 @@ const EmployeeAccessPanel = ({ employee, onClose }) => {
                           <span className="absolute top-1.5 right-1.5 w-4 h-4 flex items-center justify-center rounded-full bg-[#F5C742]">
                             <Check size={10} className="text-slate-900" />
                           </span>
+                        )}
+                        {/* Star for primary role in bottom-left */}
+                        {checked && (
+                          <button
+                            type="button"
+                            onClick={e => { e.preventDefault(); setPrimaryRoleId(isPrimary ? null : role.id); }}
+                            title={isPrimary ? 'Remove as primary role' : 'Set as primary role'}
+                            className="absolute bottom-1.5 left-1.5 p-0.5 rounded transition-colors">
+                            <Star size={12} className={isPrimary ? 'fill-yellow-500 text-yellow-500' : 'text-slate-300 hover:text-yellow-400'} />
+                          </button>
                         )}
                         {/* Role initial avatar */}
                         <span className={`w-9 h-9 flex items-center justify-center rounded-full text-sm font-bold ${roleBadge[role.name] || 'bg-slate-100 text-slate-600'}`}>

@@ -203,7 +203,7 @@ public class UserService {
      * Assign roles to user (prevents privilege escalation and last-admin removal).
      */
     @Transactional
-    public UserSafeDto assignRoles(Long userId, Set<Long> roleIds) {
+    public UserSafeDto assignRoles(Long userId, Set<Long> roleIds, Long primaryRoleId) {
         User user = findUserById(userId);
 
         boolean hadAdminRole = user.getRoles().stream()
@@ -225,6 +225,18 @@ public class UserService {
         }
 
         user.setRoles(newRoles);
+
+        // Set primary role — must be one of the assigned roles
+        if (primaryRoleId != null) {
+            Role primary = newRoles.stream()
+                    .filter(r -> r.getId().equals(primaryRoleId))
+                    .findFirst()
+                    .orElseThrow(() -> new IllegalArgumentException("Primary role must be one of the assigned roles"));
+            user.setPrimaryRole(primary);
+        } else {
+            user.setPrimaryRole(null);
+        }
+
         return new UserSafeDto(userRepository.save(user));
     }
 

@@ -54,6 +54,10 @@ public class User extends BaseEntity {
     @JoinTable(name = "user_roles", joinColumns = @JoinColumn(name = "user_id"), inverseJoinColumns = @JoinColumn(name = "role_id"))
     private Set<Role> roles = new HashSet<>();
 
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "primary_role_id")
+    private Role primaryRole;
+
     // --- getters & setters ---
 
     public Long getId() {
@@ -178,5 +182,13 @@ public class User extends BaseEntity {
 
     public void setBranch(Branch branch) {
         this.branch = branch;
+    }
+
+    public Role getPrimaryRole() {
+        return primaryRole;
+    }
+
+    public void setPrimaryRole(Role primaryRole) {
+        this.primaryRole = primaryRole;
     }
 }

@@ -19,7 +19,7 @@ public interface UserRepository extends JpaRepository<User, Long> {
 
     Optional<User> findByEmail(String email);
 
-    @Query("SELECT u FROM User u LEFT JOIN FETCH u.branch WHERE u.linkedEmployee.id = :employeeId")
+    @Query("SELECT u FROM User u LEFT JOIN FETCH u.branch LEFT JOIN FETCH u.primaryRole WHERE u.linkedEmployee.id = :employeeId")
     Optional<User> findByLinkedEmployee_Id(@Param("employeeId") Long employeeId);
 
     List<User> findByBranchIsNull();

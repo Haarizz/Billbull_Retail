@@ -712,10 +712,13 @@ const Sidebar = ({ children }) => {
             .filter(item => {
               // Items with no module (My Profile) are always visible
               if (!item.module) return true;
-              // While permissions are loading, fall back to role-based check so
-              // the sidebar isn't blank during the brief API fetch
+              // While permissions are loading, fall back to primaryRole check so
+              // the sidebar isn't blank during the brief API fetch.
+              // We use primaryRole (not all JWT roles) to prevent modules from
+              // other non-primary roles from flashing before permissions load.
               if (!permissionsLoaded) {
-                return !item.roles || item.roles.some(r => hasRole(r));
+                const primaryRole = sessionStorage.getItem('primaryRole');
+                return !item.roles || (primaryRole && item.roles.includes(primaryRole));
               }
               // ── HORIZONTAL ACCESS ──
               // canView(module) is the single source of truth once loaded
