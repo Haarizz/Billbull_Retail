@@ -22,6 +22,7 @@ import com.billbull.backend.financials.generalledger.postingengine.PostingEngine
 import com.billbull.backend.financials.receiptvoucher.ReceiptPurpose;
 import com.billbull.backend.financials.receiptvoucher.ReceiptVoucher;
 import com.billbull.backend.financials.receiptvoucher.ReceiptVoucherService;
+import com.billbull.backend.inventory.product.ProductBarcodeRepository;
 import com.billbull.backend.sales.customerledger.CustomerRepository;
 import com.billbull.backend.inventory.product.ProductMediaRepository;
 import com.billbull.backend.inventory.product.ProductRepository;
@@ -46,6 +47,7 @@ public class SalesInvoiceService {
     private final StockAvailabilityService stockAvailabilityService;
     private final ReceiptVoucherService receiptVoucherService;
     private final ProductRepository productRepo;
+    private final ProductBarcodeRepository barcodeRepo;
     private final ProductMediaRepository productMediaRepository;
     private final com.billbull.backend.sales.salesorder.SalesOrderRepository salesOrderRepository;
     private final CustomerRepository customerRepository;
@@ -59,6 +61,7 @@ public class SalesInvoiceService {
             StockAvailabilityService stockAvailabilityService,
             ReceiptVoucherService receiptVoucherService,
             ProductRepository productRepo,
+            ProductBarcodeRepository barcodeRepo,
             ProductMediaRepository productMediaRepository,
             com.billbull.backend.sales.salesorder.SalesOrderRepository salesOrderRepository,
             CustomerRepository customerRepository,
@@ -71,6 +74,7 @@ public class SalesInvoiceService {
         this.stockAvailabilityService = stockAvailabilityService;
         this.receiptVoucherService = receiptVoucherService;
         this.productRepo = productRepo;
+        this.barcodeRepo = barcodeRepo;
         this.productMediaRepository = productMediaRepository;
         this.salesOrderRepository = salesOrderRepository;
         this.customerRepository = customerRepository;
@@ -288,6 +292,7 @@ public class SalesInvoiceService {
     // ----------------------------
     private void enrichItems(java.util.List<SalesInvoiceItem> items) {
         if (items == null || items.isEmpty()) return;
+        Map<Long, String> barcodeMap = new HashMap<>();
         for (SalesInvoiceItem item : items) {
             if (item.getItemCode() == null || item.getItemCode().isBlank()) continue;
             productRepo.findByCodeAndIsActiveTrue(item.getItemCode()).ifPresent(p -> {
@@ -295,6 +300,16 @@ public class SalesInvoiceService {
                 if (item.getLocalName() == null || item.getLocalName().isBlank()) item.setLocalName(p.getLocalName());
                 if (item.getDescription() == null || item.getDescription().isBlank()) item.setDescription(p.getShortDesc());
                 if (item.getItemName() == null || item.getItemName().isBlank()) item.setItemName(p.getName());
+                if (item.getBarcode() == null || item.getBarcode().isBlank()) {
+                    String barcode = barcodeMap.computeIfAbsent(
+                            p.getId(),
+                            productId -> barcodeRepo.findByProductId(productId).stream()
+                                    .map(com.billbull.backend.inventory.product.ProductBarcode::getBarcode)
+                                    .filter(value -> value != null && !value.isBlank())
+                                    .findFirst()
+                                    .orElse(null));
+                    item.setBarcode(barcode);
+                }
             });
         }
 
@@ -671,7 +686,7 @@ public class SalesInvoiceService {
             for (SalesInvoiceItem item : invoice.getItems()) {
                 DeliveryNoteItemRequest iReq = new DeliveryNoteItemRequest();
                 iReq.itemCode = item.getItemCode();
-                iReq.barcode = null;
+                iReq.barcode = item.getBarcode();
                 iReq.description = item.getDescription() != null && !item.getDescription().isBlank()
                         ? item.getDescription()
                         : item.getItemName();
