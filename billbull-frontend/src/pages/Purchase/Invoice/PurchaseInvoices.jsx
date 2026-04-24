@@ -824,8 +824,8 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
     }
   });
 
-  // Variable to check if Landed Cost is allowed
-  const isLandedCostAllowed = invoiceType !== SOURCE.GRN;
+  // Recommended accounting treatment also allows landed cost capture for GRN invoices.
+  const isLandedCostAllowed = true;
 
   const productBarcodeIndex = useMemo(() => {
     const index = new Map();
@@ -1553,6 +1553,9 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
 
 
   const grandTotalWithLanded = summaryTotals.grandTotal + (isLandedCostAllowed ? landedCost : 0);
+  const preDiscountSubtotal = summaryTotals.subtotal + summaryTotals.discount;
+  const taxableAmount = summaryTotals.subtotal;
+  const landedCostBreakdown = landedCostItems.filter((item) => Number(item.cost) > 0);
 
   const handleAddItem = () => {
     setIsProductSelectorOpen(true);
@@ -1624,8 +1627,7 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
     discountTotal: summaryTotals.discount,
     taxTotal: invoiceType === SOURCE.GRN ? summaryTotals.tax : totals.tax,
 
-    // Force Landed Cost 0 for GRN
-    landedCost: isLandedCostAllowed ? landedCost : 0,
+    landedCost: landedCost,
     grandTotal: grandTotalWithLanded,
 
     dueDate: formData.dueDate,
@@ -1654,11 +1656,11 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
     })),
 
     // Mapped Costs - Empty array for GRN
-    landedCosts: isLandedCostAllowed ? landedCostItems.map(lc => ({
+    landedCosts: landedCostItems.map(lc => ({
       costName: lc.name,
       description: lc.desc,
       amount: lc.cost
-    })) : [],
+    })),
 
     // NLC Fields
     freight: Number(formData.freight || 0),
@@ -2284,20 +2286,30 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
             <div className="space-y-2 text-xs border-t border-slate-100 pt-3">
               <div className="flex justify-between">
                 <span className="text-slate-500 font-medium">Subtotal</span>
-                <span className="font-medium">{summaryTotals.subtotal.toFixed(2)}</span>
+                <span className="font-medium">{preDiscountSubtotal.toFixed(2)}</span>
               </div>
               <div className="flex justify-between text-green-600">
                 <span className="font-medium">Discount</span>
-                <span className="font-medium">{summaryTotals.discount.toFixed(2)}</span>
+                <span className="font-medium">- {summaryTotals.discount.toFixed(2)}</span>
               </div>
               <div className="flex justify-between">
-                <span className="text-slate-500">Tax</span>
+                <span className="text-slate-500">Taxable Amount</span>
+                <span className="font-medium">{taxableAmount.toFixed(2)}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-slate-500">VAT</span>
                 <span className="font-medium">{summaryTotals.tax.toFixed(2)}</span>
               </div>
               <div className="flex justify-between text-red-500">
-                <span className="font-medium">Landed Cost</span>
-                <span className="font-medium">{isLandedCostAllowed ? landedCost.toFixed(2) : "0.00"}</span>
+                <span className="font-medium">Landed Costs</span>
+                <span className="font-medium">{landedCost.toFixed(2)}</span>
               </div>
+              {landedCostBreakdown.map((costItem) => (
+                <div key={`summary-${costItem.id}`} className="flex justify-between text-[11px] text-slate-500 pl-3">
+                  <span>{costItem.type || costItem.name}</span>
+                  <span>{Number(costItem.cost).toFixed(2)}</span>
+                </div>
+              ))}
               <div className="flex justify-between text-base pt-2 border-t border-slate-100 mt-2">
                 <span className="font-bold text-slate-800">Grand Total</span>
                 <span className="font-bold text-[#F5C742]">{grandTotalWithLanded.toFixed(2)} AED</span>
@@ -2315,20 +2327,29 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
               <div className="flex justify-between font-bold border-b border-slate-200 pb-1 mb-1 text-slate-800">
                 <span>Posting Preview</span>
               </div>
-              {invoiceType !== SOURCE.GRN && (
+              {invoiceType === SOURCE.GRN ? (
+                <div className="flex justify-between">
+                  <span>Dr. GRN Clearing</span>
+                  <span>{summaryTotals.grandTotal.toFixed(2)}</span>
+                </div>
+              ) : (
                 <div className="flex justify-between">
                   <span>Dr. Inventory</span>
-                  <span>{summaryTotals.subtotal.toFixed(2)}</span>
+                  <span>{(taxableAmount + landedCost).toFixed(2)}</span>
                 </div>
               )}
-
-              {summaryTotals.tax > 0 && (
+              {invoiceType !== SOURCE.GRN && summaryTotals.tax > 0 && (
                 <div className="flex justify-between">
                   <span>Dr. VAT Recoverable</span>
                   <span>{summaryTotals.tax.toFixed(2)}</span>
                 </div>
               )}
-
+              {invoiceType === SOURCE.GRN && landedCost > 0 && (
+                <div className="flex justify-between">
+                  <span>Dr. Inventory</span>
+                  <span>{landedCost.toFixed(2)}</span>
+                </div>
+              )}
 
               <div className="flex justify-between">
                 <span>Cr. Accounts Payable</span>

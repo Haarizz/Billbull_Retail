@@ -1,6 +1,7 @@
 package com.billbull.backend.purchase.invoice;
 
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
@@ -112,6 +113,46 @@ public class PurchaseInvoiceService {
                         ? uomCost.divide(p.getConversion(), 4, java.math.RoundingMode.HALF_UP)
                         : uomCost)
                 .orElse(uomCost);
+    }
+
+    private BigDecimal nvl(BigDecimal value) {
+        return value != null ? value : BigDecimal.ZERO;
+    }
+
+    private List<BigDecimal> calculateLandedCostShares(PurchaseInvoice invoice) {
+        List<PurchaseInvoiceItem> items = invoice.getItems() != null ? invoice.getItems() : List.of();
+        BigDecimal landedCostTotal = nvl(invoice.getLandedCost());
+        if (items.isEmpty() || landedCostTotal.compareTo(BigDecimal.ZERO) <= 0) {
+            return java.util.Collections.nCopies(items.size(), BigDecimal.ZERO);
+        }
+
+        List<BigDecimal> lineValues = new ArrayList<>(items.size());
+        BigDecimal totalLineValue = BigDecimal.ZERO;
+        for (PurchaseInvoiceItem item : items) {
+            BigDecimal lineValue = nvl(item.getUnitCost())
+                    .multiply(BigDecimal.valueOf(item.getQty() != null ? item.getQty() : 0));
+            lineValues.add(lineValue);
+            totalLineValue = totalLineValue.add(lineValue);
+        }
+
+        if (totalLineValue.compareTo(BigDecimal.ZERO) <= 0) {
+            return java.util.Collections.nCopies(items.size(), BigDecimal.ZERO);
+        }
+
+        List<BigDecimal> shares = new ArrayList<>(items.size());
+        BigDecimal allocated = BigDecimal.ZERO;
+        for (int i = 0; i < items.size(); i++) {
+            BigDecimal share;
+            if (i == items.size() - 1) {
+                share = landedCostTotal.subtract(allocated);
+            } else {
+                share = landedCostTotal.multiply(lineValues.get(i))
+                        .divide(totalLineValue, 4, RoundingMode.HALF_UP);
+                allocated = allocated.add(share);
+            }
+            shares.add(share.max(BigDecimal.ZERO));
+        }
+        return shares;
     }
 
     /* ================= VENDOR INVOICE NO VALIDATION ================= */
@@ -396,55 +437,51 @@ public class PurchaseInvoiceService {
         // ─────────────────────────────────────────────────────────────────────────
         boolean isAgainstGrn = "AGAINST_GRN".equalsIgnoreCase(invoice.getSourceType())
                 && invoice.getGrnId() != null;
+        List<BigDecimal> landedCostShares = calculateLandedCostShares(invoice);
 
         if (isAgainstGrn) {
             // Validate the GRN still exists
             grnRepo.findById(invoice.getGrnId())
                     .orElseThrow(() -> new IllegalStateException(
                             "Referenced GRN #" + invoice.getGrnId() + " not found"));
-            // Stock already posted via GRN approval — nothing to do here.
+        } else if (invoice.getWarehouse() == null) {
+            throw new IllegalStateException(
+                    "Warehouse is required before stock can be posted. " +
+                            "Please update the invoice with a valid warehouse.");
+        }
 
-        } else {
-            // DIRECT or AGAINST_LPO → post stock now
+        Long warehouseId = invoice.getWarehouse() != null ? invoice.getWarehouse().getId() : null;
+        Long zoneId = invoice.getZone() != null ? invoice.getZone().getId() : null;
+        Long locatorId = invoice.getLocator() != null ? invoice.getLocator().getId() : null;
+        Long binId = invoice.getBin() != null ? invoice.getBin().getId() : null;
 
-            // Guard: warehouse must be selected before posting stock
-            if (invoice.getWarehouse() == null) {
+        for (int index = 0; index < invoice.getItems().size(); index++) {
+            PurchaseInvoiceItem item = invoice.getItems().get(index);
+
+            var productOpt = productRepository.findByCodeAndIsActiveTrue(item.getItemCode());
+            if (productOpt.isEmpty()) {
                 throw new IllegalStateException(
-                        "Warehouse is required before stock can be posted. " +
-                                "Please update the invoice with a valid warehouse.");
+                        "Product not found for code '" + item.getItemCode() +
+                                "'. Cannot process invoice " + invoice.getInvoiceNumber());
             }
 
-            // Resolve full location hierarchy from invoice
-            Long warehouseId = invoice.getWarehouse().getId();
-            Long zoneId = invoice.getZone() != null ? invoice.getZone().getId() : null;
-            Long locatorId = invoice.getLocator() != null ? invoice.getLocator().getId() : null;
-            Long binId = invoice.getBin() != null ? invoice.getBin().getId() : null;
+            int qty = item.getQty() != null ? item.getQty() : 0;
+            if (qty <= 0) {
+                continue;
+            }
 
-            for (PurchaseInvoiceItem item : invoice.getItems()) {
+            Long productId = productOpt.get().getId();
+            int baseQty = resolveBaseQty(productId, item.getUom(), qty);
+            if (baseQty <= 0) {
+                continue;
+            }
 
-                // Resolve product by item code (must exist and be active)
-                var productOpt = productRepository.findByCodeAndIsActiveTrue(item.getItemCode());
-                if (productOpt.isEmpty()) {
-                    throw new IllegalStateException(
-                            "Product not found for code '" + item.getItemCode() +
-                                    "'. Cannot post stock for invoice " + invoice.getInvoiceNumber());
-                }
+            int currentQty = binStockRepository.findByProductId(productId)
+                    .stream()
+                    .mapToInt(bs -> bs.getQuantity() != null ? bs.getQuantity() : 0)
+                    .sum();
 
-                int qty = item.getQty() != null ? item.getQty() : 0;
-                if (qty <= 0)
-                    continue; // Skip zero-qty lines
-
-                Long productId = productOpt.get().getId();
-
-                // Convert document qty (in purchase UOM) to base stock units
-                int baseQty = resolveBaseQty(productId, item.getUom(), qty);
-
-                // Capture existing on-hand qty BEFORE posting (needed for WAC)
-                int existingQty = binStockRepository.findByProductId(productId)
-                        .stream()
-                        .mapToInt(bs -> bs.getQuantity() != null ? bs.getQuantity() : 0)
-                        .sum();
-
+            if (!isAgainstGrn) {
                 stockService.postInboundStock(
                         StockSourceType.DIRECT_PURCHASE,
                         invoice.getId(),
@@ -455,27 +492,41 @@ public class PurchaseInvoiceService {
                         binId,
                         baseQty,
                         invoice.getInvoiceNumber());
-
-                // BB-031: Update product cost using weighted-average cost (WAC).
-                // unitCost on the invoice is cost per purchase UOM; divide by conversion
-                // to get cost per base unit before feeding it into WAC.
-                if (item.getUnitCost() != null && item.getUnitCost().compareTo(BigDecimal.ZERO) > 0) {
-                    BigDecimal baseUnitCost = resolveBaseUnitCost(productId, item.getUom(), item.getUnitCost());
-                    productPricingRepository.findByProductId(productId).ifPresent(pricing -> {
-                        BigDecimal existingCost = pricing.getCost() != null ? pricing.getCost() : BigDecimal.ZERO;
-                        BigDecimal incomingQtyBD = BigDecimal.valueOf(baseQty);
-                        BigDecimal existingQtyBD = BigDecimal.valueOf(existingQty);
-                        BigDecimal totalQty = existingQtyBD.add(incomingQtyBD);
-                        BigDecimal newCost = totalQty.compareTo(BigDecimal.ZERO) > 0
-                                ? existingQtyBD.multiply(existingCost).add(incomingQtyBD.multiply(baseUnitCost))
-                                        .divide(totalQty, 4, java.math.RoundingMode.HALF_UP)
-                                : baseUnitCost;
-                        pricing.setCost(newCost);
-                        productPricingRepository.save(pricing);
-                    });
-                }
             }
 
+            BigDecimal landedCostShare = index < landedCostShares.size()
+                    ? landedCostShares.get(index)
+                    : BigDecimal.ZERO;
+
+            if (nvl(item.getUnitCost()).compareTo(BigDecimal.ZERO) > 0
+                    || landedCostShare.compareTo(BigDecimal.ZERO) > 0) {
+                BigDecimal baseUnitCost = nvl(resolveBaseUnitCost(productId, item.getUom(), nvl(item.getUnitCost())));
+                BigDecimal landedCostPerBaseUnit = landedCostShare.divide(
+                        BigDecimal.valueOf(baseQty),
+                        4,
+                        RoundingMode.HALF_UP);
+                BigDecimal enrichedBaseUnitCost = baseUnitCost.add(landedCostPerBaseUnit);
+
+                int qtyBeforeThisInvoice = isAgainstGrn
+                        ? Math.max(currentQty - baseQty, 0)
+                        : currentQty;
+
+                productPricingRepository.findByProductId(productId).ifPresent(pricing -> {
+                    BigDecimal existingCost = pricing.getCost() != null ? pricing.getCost() : BigDecimal.ZERO;
+                    BigDecimal incomingQtyBD = BigDecimal.valueOf(baseQty);
+                    BigDecimal existingQtyBD = BigDecimal.valueOf(qtyBeforeThisInvoice);
+                    BigDecimal totalQty = existingQtyBD.add(incomingQtyBD);
+                    BigDecimal newCost = totalQty.compareTo(BigDecimal.ZERO) > 0
+                            ? existingQtyBD.multiply(existingCost).add(incomingQtyBD.multiply(enrichedBaseUnitCost))
+                                    .divide(totalQty, 4, RoundingMode.HALF_UP)
+                            : enrichedBaseUnitCost;
+                    pricing.setCost(newCost);
+                    productPricingRepository.save(pricing);
+                });
+            }
+        }
+
+        if (!isAgainstGrn) {
             invoice.setStockPosted(true);
         }
 
