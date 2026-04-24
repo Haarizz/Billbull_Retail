@@ -55,42 +55,39 @@ public class WarehouseStockService {
         }
 
         List<String> productCodes = products.stream().map(Product::getCode).collect(Collectors.toList());
-        Map<String, Integer> codeMap = new HashMap<>();
+        List<Long> productIds = products.stream().map(Product::getId).collect(Collectors.toList());
+        // All quantities are in base units (converted via ProductPacking.conversion in each query).
+        Map<Long, Integer> reservedMap = new HashMap<>();
 
-        // Sales Order Reservations
+        // Sales Order reservations — returns [productId, baseQty]
         List<Object[]> soReservations = salesOrderRepo.sumReservedQuantityForProducts(productCodes);
         for (Object[] row : soReservations) {
-            String code = (String) row[0];
+            Long productId = (Long) row[0];
             int qty = ((Number) row[1]).intValue();
-            codeMap.put(code, codeMap.getOrDefault(code, 0) + qty);
+            reservedMap.put(productId, reservedMap.getOrDefault(productId, 0) + qty);
         }
 
-        // Proforma Invoice Reservations
+        // Proforma Invoice reservations — returns [productId, baseQty]
         List<Object[]> piReservations = proformaRepo.sumReservedQuantityForProducts(productCodes);
         for (Object[] row : piReservations) {
-            String code = (String) row[0];
+            Long productId = (Long) row[0];
             int qty = ((Number) row[1]).intValue();
-            codeMap.put(code, codeMap.getOrDefault(code, 0) + qty);
+            reservedMap.put(productId, reservedMap.getOrDefault(productId, 0) + qty);
         }
 
         // --- DEDUPLICATION ---
         // Once a Delivery Note is created for a Proforma, the DN (associated with a warehouse)
-        // takes over the reservation. We must subtract those quantities from the "Global"
-        // PI pool to avoid double-counting and incorrect proportional distribution.
-        List<Object[]> piDeductions = deliveryNoteRepo.sumReservedQtyForProformasByProduct(productCodes);
+        // takes over the reservation. Subtract those base-unit quantities from the PI pool
+        // to avoid double-counting. Query now takes productIds and returns base quantities.
+        List<Object[]> piDeductions = deliveryNoteRepo.sumReservedQtyForProformasByProduct(productIds);
         for (Object[] row : piDeductions) {
-            String code = (String) row[0];
+            Long productId = (Long) row[0];
             int qty = ((Number) row[1]).intValue();
-            int current = codeMap.getOrDefault(code, 0);
-            codeMap.put(code, Math.max(0, current - qty));
+            int current = reservedMap.getOrDefault(productId, 0);
+            reservedMap.put(productId, Math.max(0, current - qty));
         }
 
-        Map<Long, Integer> map = new HashMap<>();
-        for (Product product : products) {
-            map.put(product.getId(), codeMap.getOrDefault(product.getCode(), 0));
-        }
-
-        return map;
+        return reservedMap;
     }
 
     private int safeInt(BigDecimal value) {

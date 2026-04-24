@@ -13,6 +13,7 @@ import org.springframework.cache.annotation.Caching;
 
 import com.billbull.backend.inventory.product.Product;
 import com.billbull.backend.inventory.product.ProductBarcodeRepository;
+import com.billbull.backend.inventory.product.ProductPackingRepository;
 import com.billbull.backend.inventory.product.ProductRepository;
 import com.billbull.backend.inventory.warehouse.Warehouse;
 import com.billbull.backend.inventory.warehouse.WarehouseRepository;
@@ -48,6 +49,7 @@ public class GrnService {
     private final ProductMediaRepository productMediaRepo;
     private final ProductBarcodeRepository productBarcodeRepo;
     private final BranchAccessService branchAccessService;
+    private final ProductPackingRepository packingRepository;
 
     public GrnService(
             StockMovementService stockMovementService,
@@ -62,7 +64,8 @@ public class GrnService {
             com.billbull.backend.financials.generalledger.postingengine.PostingEngineService postingEngineService,
             ProductMediaRepository productMediaRepo,
             ProductBarcodeRepository productBarcodeRepo,
-            BranchAccessService branchAccessService) {
+            BranchAccessService branchAccessService,
+            ProductPackingRepository packingRepository) {
         this.stockMovementService = stockMovementService;
         this.grnRepo = grnRepo;
         this.warehouseRepo = warehouseRepo;
@@ -77,6 +80,21 @@ public class GrnService {
         this.productMediaRepo = productMediaRepo;
         this.productBarcodeRepo = productBarcodeRepo;
         this.branchAccessService = branchAccessService;
+        this.packingRepository = packingRepository;
+    }
+
+    /* ================= UOM CONVERSION HELPERS ================= */
+
+    private int resolveBaseQty(Long productId, String unitName, int qty) {
+        if (qty <= 0 || unitName == null || unitName.isBlank()) return qty;
+        return packingRepository.findByProductId(productId).stream()
+                .filter(p -> p.getUnit() != null && unitName.equalsIgnoreCase(p.getUnit().getName()))
+                .findFirst()
+                .map(p -> p.getConversion() != null
+                        ? BigDecimal.valueOf(qty).multiply(p.getConversion())
+                                .setScale(0, RoundingMode.HALF_UP).intValue()
+                        : qty)
+                .orElse(qty);
     }
 
     /* ================= CREATE / UPDATE ================= */
@@ -406,18 +424,22 @@ public class GrnService {
                 continue; // Skip rejected/zero items
             }
 
+            Long productId = item.getProduct().getId();
+            int baseAccepted = resolveBaseQty(productId, item.getUom(), accepted);
+            int baseFoc = resolveBaseQty(productId, item.getFocUnit(), foc);
+
             // Use per-item bin override if provided, otherwise fall back to GRN header bin
-            Long effectiveBinId = productBinMap.getOrDefault(item.getProduct().getId(), grnBinId);
+            Long effectiveBinId = productBinMap.getOrDefault(productId, grnBinId);
 
             stockMovementService.postInboundStock(
                     StockSourceType.GRN,
                     grn.getId(),
-                    item.getProduct().getId(),
+                    productId,
                     grn.getWarehouse().getId(),
                     grnZoneId, // Zone from GRN header
                     grnLocatorId, // Locator from GRN header
                     effectiveBinId, // Per-item override or GRN-level bin
-                    accepted + foc,
+                    baseAccepted + baseFoc,
                     grn.getGrnNo());
         }
 

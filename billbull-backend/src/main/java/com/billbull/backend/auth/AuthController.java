@@ -77,6 +77,7 @@ public class AuthController {
         return new UserProfileDto(user);
     }
 
+    @Transactional
     @org.springframework.web.bind.annotation.PutMapping(value = "/profile", consumes = org.springframework.http.MediaType.MULTIPART_FORM_DATA_VALUE)
     public UserProfileDto updateProfile(
             org.springframework.security.core.Authentication authentication,

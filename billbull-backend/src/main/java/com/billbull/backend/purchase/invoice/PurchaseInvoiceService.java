@@ -13,6 +13,7 @@ import org.springframework.stereotype.Service;
 import com.billbull.backend.financials.generalledger.postingengine.PostingEngineService;
 import com.billbull.backend.inventory.product.ProductMediaRepository;
 import com.billbull.backend.inventory.product.ProductBarcodeRepository;
+import com.billbull.backend.inventory.product.ProductPackingRepository;
 import com.billbull.backend.inventory.product.ProductPricingRepository;
 import com.billbull.backend.inventory.product.ProductRepository;
 import com.billbull.backend.inventory.warehouse.BinRepository;
@@ -56,6 +57,7 @@ public class PurchaseInvoiceService {
     private final ProductMediaRepository productMediaRepository;
     private final ProductBarcodeRepository productBarcodeRepository;
     private final BranchAccessService branchAccessService;
+    private final ProductPackingRepository packingRepository;
 
     public PurchaseInvoiceService(PurchaseInvoiceRepository repository, GrnRepository grnRepo,
             PostingEngineService postingEngineService, StockMovementService stockService,
@@ -65,7 +67,8 @@ public class PurchaseInvoiceService {
             LpoRepository lpoRepository, PaymentVoucherService paymentVoucherService,
             ProductMediaRepository productMediaRepository,
             ProductBarcodeRepository productBarcodeRepository,
-            BranchAccessService branchAccessService) {
+            BranchAccessService branchAccessService,
+            ProductPackingRepository packingRepository) {
         super();
         this.repository = repository;
         this.grnRepo = grnRepo;
@@ -83,6 +86,32 @@ public class PurchaseInvoiceService {
         this.productMediaRepository = productMediaRepository;
         this.productBarcodeRepository = productBarcodeRepository;
         this.branchAccessService = branchAccessService;
+        this.packingRepository = packingRepository;
+    }
+
+    /* ================= UOM CONVERSION HELPERS ================= */
+
+    private int resolveBaseQty(Long productId, String unitName, int qty) {
+        if (qty <= 0 || unitName == null || unitName.isBlank()) return qty;
+        return packingRepository.findByProductId(productId).stream()
+                .filter(p -> p.getUnit() != null && unitName.equalsIgnoreCase(p.getUnit().getName()))
+                .findFirst()
+                .map(p -> p.getConversion() != null
+                        ? BigDecimal.valueOf(qty).multiply(p.getConversion())
+                                .setScale(0, java.math.RoundingMode.HALF_UP).intValue()
+                        : qty)
+                .orElse(qty);
+    }
+
+    private BigDecimal resolveBaseUnitCost(Long productId, String unitName, BigDecimal uomCost) {
+        if (uomCost == null || unitName == null || unitName.isBlank()) return uomCost;
+        return packingRepository.findByProductId(productId).stream()
+                .filter(p -> p.getUnit() != null && unitName.equalsIgnoreCase(p.getUnit().getName()))
+                .findFirst()
+                .map(p -> (p.getConversion() != null && p.getConversion().compareTo(BigDecimal.ZERO) > 0)
+                        ? uomCost.divide(p.getConversion(), 4, java.math.RoundingMode.HALF_UP)
+                        : uomCost)
+                .orElse(uomCost);
     }
 
     /* ================= VENDOR INVOICE NO VALIDATION ================= */
@@ -394,6 +423,9 @@ public class PurchaseInvoiceService {
 
                 Long productId = productOpt.get().getId();
 
+                // Convert document qty (in purchase UOM) to base stock units
+                int baseQty = resolveBaseQty(productId, item.getUom(), qty);
+
                 // Capture existing on-hand qty BEFORE posting (needed for WAC)
                 int existingQty = binStockRepository.findByProductId(productId)
                         .stream()
@@ -408,21 +440,23 @@ public class PurchaseInvoiceService {
                         zoneId,
                         locatorId,
                         binId,
-                        qty,
+                        baseQty,
                         invoice.getInvoiceNumber());
 
-                // BB-031: Update product cost using weighted-average cost (WAC)
+                // BB-031: Update product cost using weighted-average cost (WAC).
+                // unitCost on the invoice is cost per purchase UOM; divide by conversion
+                // to get cost per base unit before feeding it into WAC.
                 if (item.getUnitCost() != null && item.getUnitCost().compareTo(BigDecimal.ZERO) > 0) {
+                    BigDecimal baseUnitCost = resolveBaseUnitCost(productId, item.getUom(), item.getUnitCost());
                     productPricingRepository.findByProductId(productId).ifPresent(pricing -> {
                         BigDecimal existingCost = pricing.getCost() != null ? pricing.getCost() : BigDecimal.ZERO;
-                        BigDecimal incomingCost = item.getUnitCost();
-                        BigDecimal incomingQtyBD = BigDecimal.valueOf(qty);
+                        BigDecimal incomingQtyBD = BigDecimal.valueOf(baseQty);
                         BigDecimal existingQtyBD = BigDecimal.valueOf(existingQty);
                         BigDecimal totalQty = existingQtyBD.add(incomingQtyBD);
                         BigDecimal newCost = totalQty.compareTo(BigDecimal.ZERO) > 0
-                                ? existingQtyBD.multiply(existingCost).add(incomingQtyBD.multiply(incomingCost))
+                                ? existingQtyBD.multiply(existingCost).add(incomingQtyBD.multiply(baseUnitCost))
                                         .divide(totalQty, 4, java.math.RoundingMode.HALF_UP)
-                                : incomingCost;
+                                : baseUnitCost;
                         pricing.setCost(newCost);
                         productPricingRepository.save(pricing);
                     });

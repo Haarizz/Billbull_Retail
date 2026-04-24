@@ -11,6 +11,8 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
+import java.math.RoundingMode;
+
 import com.billbull.backend.inventory.product.ProductMediaRepository;
 import com.billbull.backend.util.DocumentOrderingUtil;
 
@@ -23,6 +25,7 @@ public class SalesOrderService {
     private final com.billbull.backend.inventory.product.ProductRepository productRepo;
     private final com.billbull.backend.inventory.product.ProductBarcodeRepository barcodeRepo;
     private final ProductMediaRepository productMediaRepository;
+    private final com.billbull.backend.inventory.product.ProductPackingRepository packingRepo;
 
     public SalesOrderService(
             SalesOrderRepository orderRepo,
@@ -30,13 +33,15 @@ public class SalesOrderService {
             com.billbull.backend.inventory.warehouse.WarehouseStockService warehouseStockService,
             com.billbull.backend.inventory.product.ProductRepository productRepo,
             com.billbull.backend.inventory.product.ProductBarcodeRepository barcodeRepo,
-            ProductMediaRepository productMediaRepository) {
+            ProductMediaRepository productMediaRepository,
+            com.billbull.backend.inventory.product.ProductPackingRepository packingRepo) {
         this.orderRepo = orderRepo;
         this.quotationRepo = quotationRepo;
         this.warehouseStockService = warehouseStockService;
         this.productRepo = productRepo;
         this.barcodeRepo = barcodeRepo;
         this.productMediaRepository = productMediaRepository;
+        this.packingRepo = packingRepo;
     }
 
     // ----------------------------
@@ -78,10 +83,13 @@ public class SalesOrderService {
                                 order.getWarehouse().getId(),
                                 product.getId());
 
-                        if (available.compareTo(java.math.BigDecimal.valueOf(item.getQuantity())) < 0) {
+                        // Convert requested quantity to base units so the comparison is against
+                        // the StockMovement ledger (which always stores base units).
+                        int baseRequired = resolvePackingBaseQty(product.getId(), item.getUnit(), item.getQuantity());
+                        if (available.compareTo(java.math.BigDecimal.valueOf(baseRequired)) < 0) {
                             throw new IllegalStateException(
                                     "Insufficient available stock for item " + item.getItemCode() +
-                                            ". Available: " + available + ", Required: " + item.getQuantity());
+                                            ". Available: " + available + ", Required (base units): " + baseRequired);
                         }
                     }
                 }
@@ -296,5 +304,46 @@ public class SalesOrderService {
                 item.setBarcode(barcode);
             }
         }
+
+        // Hydrate price: packing-level price first, then product retail price
+        if (item.getPrice() == null) {
+            java.math.BigDecimal packingPrice = lookupPackingValue(product.getId(), item.getUnit(), true);
+            if (packingPrice != null) {
+                item.setPrice(packingPrice.doubleValue());
+            } else if (product.getPricing() != null && product.getPricing().getRetailPrice() != null) {
+                item.setPrice(product.getPricing().getRetailPrice().doubleValue());
+            }
+        }
+
+        // Hydrate cost: packing-level cost first, then product cost
+        if (item.getCost() == null) {
+            java.math.BigDecimal packingCost = lookupPackingValue(product.getId(), item.getUnit(), false);
+            if (packingCost != null) {
+                item.setCost(packingCost.doubleValue());
+            } else if (product.getPricing() != null && product.getPricing().getCost() != null) {
+                item.setCost(product.getPricing().getCost().doubleValue());
+            }
+        }
+    }
+
+    private java.math.BigDecimal lookupPackingValue(Long productId, String unitName, boolean isPrice) {
+        if (unitName == null || unitName.isBlank()) return null;
+        return packingRepo.findByProductId(productId).stream()
+                .filter(p -> p.getUnit() != null && unitName.equalsIgnoreCase(p.getUnit().getName()))
+                .findFirst()
+                .map(p -> isPrice ? p.getPrice() : p.getCost())
+                .orElse(null);
+    }
+
+    private int resolvePackingBaseQty(Long productId, String unitName, int qty) {
+        if (qty <= 0 || unitName == null || unitName.isBlank()) return qty;
+        return packingRepo.findByProductId(productId).stream()
+                .filter(p -> p.getUnit() != null && unitName.equalsIgnoreCase(p.getUnit().getName()))
+                .findFirst()
+                .map(p -> p.getConversion() != null
+                        ? p.getConversion().multiply(java.math.BigDecimal.valueOf(qty))
+                                .setScale(0, RoundingMode.HALF_UP).intValue()
+                        : qty)
+                .orElse(qty);
     }
 }
