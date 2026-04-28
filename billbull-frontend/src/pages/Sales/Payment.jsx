@@ -232,7 +232,7 @@ const Payment = () => {
                     subTotal: amount,
                     tax: 0,
                     grandTotal: amount,
-                    currency: 'AED',
+                    currency: company?.currencySymbol || company?.currency || 'AED',
                     billDiscount: 0,
                     billDiscountAmount: 0,
                 },

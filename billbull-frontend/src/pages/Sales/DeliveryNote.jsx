@@ -1329,6 +1329,7 @@ const DeliveryNote = () => {
                         sku: i.sku || '',
                         localName: i.localName || '',
                         barcode: i.barcode || '',
+                        location: warehouse || '',
                         unit: i.unit,
                         qty: i.currentQty,
                         price: Number(i.price) || 0,
@@ -1342,12 +1343,13 @@ const DeliveryNote = () => {
                         subTotal,
                         tax: totalTax,
                         grandTotal,
-                        currency: 'AED'
+                        currency: company?.currencySymbol || company?.currency || 'AED'
                     },
                     meta: {
                         status: status,
                         reference: `SO: ${linkedSO || '-'} | PI: ${linkedPI || '-'} | SI: ${linkedSI || '-'}`,
-                        notes: `Warehouse: ${warehouse} | Driver: ${driverName || '-'} | Vehicle: ${vehicleNo || '-'} | Tracking: ${trackingNo || '-'}`
+                        location: warehouse || '',
+                        notes: `Driver: ${driverName || '-'} | Vehicle: ${vehicleNo || '-'} | Tracking: ${trackingNo || '-'}`
                     }
                 };
 

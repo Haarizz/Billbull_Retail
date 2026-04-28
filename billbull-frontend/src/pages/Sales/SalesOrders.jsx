@@ -689,6 +689,8 @@ const SalesOrders = () => {
             sku: i.sku || '',
             localName: i.localName || '',
             barcode: i.barcode || '',
+            salesPerson: '',
+            location: '',
             unit: i.unit,
             qty: Number(i.qty),
             price: Number(i.price),
@@ -702,7 +704,7 @@ const SalesOrders = () => {
             subTotal,
             tax: totalTax,
             grandTotal: orderTotal,
-            currency: 'AED',
+            currency: company?.currencySymbol || company?.currency || 'AED',
             billDiscount: 0,
             billDiscountAmount: 0
           },

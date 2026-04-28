@@ -437,6 +437,8 @@ const ProformaInvoice = () => {
             desc: i.desc || '',
             sku: i.sku || '',
             localName: i.localName || '',
+            barcode: i.barcode || '',
+            location: defaultBranchName || '',
             unit: i.unit,
             qty: Number(i.qty),
             price: Number(i.price),
@@ -450,7 +452,7 @@ const ProformaInvoice = () => {
             subTotal,
             tax: totalTax,
             grandTotal,
-            currency: 'AED',
+            currency: company?.currencySymbol || company?.currency || 'AED',
             billDiscount: 0,
             billDiscountAmount: 0
           },
@@ -459,7 +461,8 @@ const ProformaInvoice = () => {
             paymentTerm: paymentMethod,
             status,
             notes: paymentNotes,
-            reference: `Quote: ${linkedQuote || '-'} | SO: ${linkedSO || '-'}`
+            reference: `Quote: ${linkedQuote || '-'} | SO: ${linkedSO || '-'}`,
+            location: defaultBranchName || ''
           }
         };
 

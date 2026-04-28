@@ -376,90 +376,75 @@ const TemplateDesigner = ({ category, onCancel, onSave, initialData, previewComp
                                 <FaListUl />
                                 <h3 className="font-bold text-gray-900 text-sm">Table Columns</h3>
                             </div>
-                            <p className="text-xs text-gray-500 mb-3">Select columns to display in item table:</p>
+                            <p className="text-xs text-gray-500 mb-3">Select columns to display in the item table:</p>
                             <div className="space-y-3">
-                                <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider pt-1">Product Details</p>
+
+                                <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider pt-1">Item Identity</p>
                                 <label className="flex items-center gap-2 cursor-pointer">
-                                    <input
-                                        type="checkbox"
-                                        checked={!!columns.productId}
-                                        onChange={() => handleColumnChange('productId')}
-                                        className="w-4 h-4 text-yellow-500 rounded border-gray-300 focus:ring-yellow-400"
-                                    />
-                                    <span className="text-sm text-gray-700 font-medium">Product ID</span>
+                                    <input type="checkbox" checked={columns.description !== false} onChange={() => handleColumnChange('description')} className="w-4 h-4 text-yellow-500 rounded border-gray-300 focus:ring-yellow-400" />
+                                    <span className="text-sm text-gray-700 font-medium">Description of Product / Services</span>
                                 </label>
                                 <label className="flex items-center gap-2 cursor-pointer">
-                                    <input
-                                        type="checkbox"
-                                        checked={!!columns.sku}
-                                        onChange={() => handleColumnChange('sku')}
-                                        className="w-4 h-4 text-yellow-500 rounded border-gray-300 focus:ring-yellow-400"
-                                    />
+                                    <input type="checkbox" checked={!!columns.productId} onChange={() => handleColumnChange('productId')} className="w-4 h-4 text-yellow-500 rounded border-gray-300 focus:ring-yellow-400" />
+                                    <span className="text-sm text-gray-700 font-medium">Item Code</span>
+                                </label>
+                                <label className="flex items-center gap-2 cursor-pointer">
+                                    <input type="checkbox" checked={!!columns.sku} onChange={() => handleColumnChange('sku')} className="w-4 h-4 text-yellow-500 rounded border-gray-300 focus:ring-yellow-400" />
                                     <span className="text-sm text-gray-700 font-medium">SKU</span>
                                 </label>
                                 <label className="flex items-center gap-2 cursor-pointer">
-                                    <input
-                                        type="checkbox"
-                                        checked={!!columns.arabicName}
-                                        onChange={() => handleColumnChange('arabicName')}
-                                        className="w-4 h-4 text-yellow-500 rounded border-gray-300 focus:ring-yellow-400"
-                                    />
+                                    <input type="checkbox" checked={!!columns.barcode} onChange={() => handleColumnChange('barcode')} className="w-4 h-4 text-yellow-500 rounded border-gray-300 focus:ring-yellow-400" />
+                                    <span className="text-sm text-gray-700 font-medium">Item Barcode</span>
+                                </label>
+                                <label className="flex items-center gap-2 cursor-pointer">
+                                    <input type="checkbox" checked={!!columns.arabicName} onChange={() => handleColumnChange('arabicName')} className="w-4 h-4 text-yellow-500 rounded border-gray-300 focus:ring-yellow-400" />
                                     <span className="text-sm text-gray-700 font-medium">Arabic Name</span>
                                 </label>
-                                <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider pt-1">Line Item</p>
+
+                                <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider pt-2">Quantities & Pricing</p>
                                 <label className="flex items-center gap-2 cursor-pointer">
-                                    <input
-                                        type="checkbox"
-                                        checked={columns.description !== false}
-                                        onChange={() => handleColumnChange('description')}
-                                        className="w-4 h-4 text-yellow-500 rounded border-gray-300 focus:ring-yellow-400"
-                                    />
-                                    <span className="text-sm text-gray-700 font-medium">Description</span>
-                                </label>
-                                <label className="flex items-center gap-2 cursor-pointer">
-                                    <input
-                                        type="checkbox"
-                                        checked={!!columns.qty}
-                                        onChange={() => handleColumnChange('qty')}
-                                        className="w-4 h-4 text-yellow-500 rounded border-gray-300 focus:ring-yellow-400"
-                                    />
+                                    <input type="checkbox" checked={!!columns.qty} onChange={() => handleColumnChange('qty')} className="w-4 h-4 text-yellow-500 rounded border-gray-300 focus:ring-yellow-400" />
                                     <span className="text-sm text-gray-700 font-medium">Qty</span>
                                 </label>
                                 <label className="flex items-center gap-2 cursor-pointer">
-                                    <input
-                                        type="checkbox"
-                                        checked={!!columns.unitPrice}
-                                        onChange={() => handleColumnChange('unitPrice')}
-                                        className="w-4 h-4 text-yellow-500 rounded border-gray-300 focus:ring-yellow-400"
-                                    />
+                                    <input type="checkbox" checked={!!columns.unitPrice} onChange={() => handleColumnChange('unitPrice')} className="w-4 h-4 text-yellow-500 rounded border-gray-300 focus:ring-yellow-400" />
                                     <span className="text-sm text-gray-700 font-medium">Unit Price</span>
                                 </label>
                                 <label className="flex items-center gap-2 cursor-pointer">
-                                    <input
-                                        type="checkbox"
-                                        checked={!!columns.discount}
-                                        onChange={() => handleColumnChange('discount')}
-                                        className="w-4 h-4 text-yellow-500 rounded border-gray-300 focus:ring-yellow-400"
-                                    />
-                                    <span className="text-sm text-gray-700 font-medium">Discount</span>
+                                    <input type="checkbox" checked={!!columns.taxableAmount} onChange={() => handleColumnChange('taxableAmount')} className="w-4 h-4 text-yellow-500 rounded border-gray-300 focus:ring-yellow-400" />
+                                    <span className="text-sm text-gray-700 font-medium">Taxable Amount</span>
                                 </label>
                                 <label className="flex items-center gap-2 cursor-pointer">
-                                    <input
-                                        type="checkbox"
-                                        checked={!!columns.tax}
-                                        onChange={() => handleColumnChange('tax')}
-                                        className="w-4 h-4 text-yellow-500 rounded border-gray-300 focus:ring-yellow-400"
-                                    />
-                                    <span className="text-sm text-gray-700 font-medium">Tax</span>
+                                    <input type="checkbox" checked={columns.total !== false} onChange={() => handleColumnChange('total')} className="w-4 h-4 text-yellow-500 rounded border-gray-300 focus:ring-yellow-400" />
+                                    <span className="text-sm text-gray-700 font-medium">Line Total</span>
+                                </label>
+
+                                <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider pt-2">Discount & Tax</p>
+                                <label className="flex items-center gap-2 cursor-pointer">
+                                    <input type="checkbox" checked={!!columns.discount} onChange={() => handleColumnChange('discount')} className="w-4 h-4 text-yellow-500 rounded border-gray-300 focus:ring-yellow-400" />
+                                    <span className="text-sm text-gray-700 font-medium">Discount % (in Taxable Amount col)</span>
                                 </label>
                                 <label className="flex items-center gap-2 cursor-pointer">
-                                    <input
-                                        type="checkbox"
-                                        checked={columns.total !== false}
-                                        onChange={() => handleColumnChange('total')}
-                                        className="w-4 h-4 text-yellow-500 rounded border-gray-300 focus:ring-yellow-400"
-                                    />
-                                    <span className="text-sm text-gray-700 font-medium">Total</span>
+                                    <input type="checkbox" checked={!!columns.discountPercent} onChange={() => handleColumnChange('discountPercent')} className="w-4 h-4 text-yellow-500 rounded border-gray-300 focus:ring-yellow-400" />
+                                    <span className="text-sm text-gray-700 font-medium">Discount % (separate column)</span>
+                                </label>
+                                <label className="flex items-center gap-2 cursor-pointer">
+                                    <input type="checkbox" checked={!!columns.tax} onChange={() => handleColumnChange('tax')} className="w-4 h-4 text-yellow-500 rounded border-gray-300 focus:ring-yellow-400" />
+                                    <span className="text-sm text-gray-700 font-medium">VAT Amount</span>
+                                </label>
+                                <label className="flex items-center gap-2 cursor-pointer">
+                                    <input type="checkbox" checked={!!columns.taxPercent} onChange={() => handleColumnChange('taxPercent')} className="w-4 h-4 text-yellow-500 rounded border-gray-300 focus:ring-yellow-400" />
+                                    <span className="text-sm text-gray-700 font-medium">Tax % (separate column)</span>
+                                </label>
+
+                                <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider pt-2">Document / Line Info</p>
+                                <label className="flex items-center gap-2 cursor-pointer">
+                                    <input type="checkbox" checked={!!columns.salesPerson} onChange={() => handleColumnChange('salesPerson')} className="w-4 h-4 text-yellow-500 rounded border-gray-300 focus:ring-yellow-400" />
+                                    <span className="text-sm text-gray-700 font-medium">Sales Person</span>
+                                </label>
+                                <label className="flex items-center gap-2 cursor-pointer">
+                                    <input type="checkbox" checked={!!columns.location} onChange={() => handleColumnChange('location')} className="w-4 h-4 text-yellow-500 rounded border-gray-300 focus:ring-yellow-400" />
+                                    <span className="text-sm text-gray-700 font-medium">Location / Branch</span>
                                 </label>
                             </div>
                         </div>
