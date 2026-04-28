@@ -421,7 +421,7 @@ const AddProductWizard = ({ onCancel, onSave, initialData, brands: initialBrands
         setSubDepartments(prev => [...prev, created]);
         handleInputChange('subDepartment', created.id);
       } else if (type === 'defaultUnit' || type === 'reorderUnit' || type === 'unit' || type.startsWith('packingUnit-')) {
-        const created = await createUnit({ name: name.trim(), abbreviation: name.trim().substring(0, 5).toUpperCase() });
+        const created = await createUnit({ name: name.trim(), symbol: name.trim().substring(0, 5).toUpperCase() });
         setUnitsLocal(prev => [...prev, created]);
         if (type === 'defaultUnit' || type === 'reorderUnit') {
           handleInputChange(type, created.id);

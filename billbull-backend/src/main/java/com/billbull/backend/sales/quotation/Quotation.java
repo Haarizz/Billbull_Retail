@@ -46,6 +46,7 @@ public class Quotation {
     private BigDecimal subTotal;
     private BigDecimal taxAmount;
     private BigDecimal totalAmount;
+    private BigDecimal billDiscount;
 
     // ---------------- RELATIONSHIPS ----------------
 
@@ -124,6 +125,9 @@ public class Quotation {
 
     public BigDecimal getTotalAmount() { return totalAmount; }
     public void setTotalAmount(BigDecimal totalAmount) { this.totalAmount = totalAmount; }
+
+    public BigDecimal getBillDiscount() { return billDiscount; }
+    public void setBillDiscount(BigDecimal billDiscount) { this.billDiscount = billDiscount; }
 
     public List<QuotationItem> getItems() { return items; }
     public void setItems(List<QuotationItem> items) { this.items = items; }

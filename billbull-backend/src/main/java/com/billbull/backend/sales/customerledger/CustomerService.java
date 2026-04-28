@@ -144,10 +144,26 @@ public class CustomerService {
         // Saved Addresses
         if (dto.getSavedAddresses() != null) {
             customer.getSavedAddresses().clear();
+            // Enforce at most one default address
+            boolean foundDefault = false;
             for (SavedAddress addr : dto.getSavedAddresses()) {
+                if (addr.isDefault() && !foundDefault) {
+                    foundDefault = true;
+                } else {
+                    addr.setDefault(false);
+                }
                 addr.setCustomer(customer);
                 customer.getSavedAddresses().add(addr);
             }
+            // Sync denormalised field so the customer list response always has it
+            String defaultAddr = dto.getSavedAddresses().stream()
+                    .filter(SavedAddress::isDefault)
+                    .findFirst()
+                    .map(a -> java.util.stream.Stream.of(a.getAddress1(), a.getAddress2(), a.getCity(), a.getCountry())
+                            .filter(s -> s != null && !s.isBlank())
+                            .collect(java.util.stream.Collectors.joining(", ")))
+                    .orElse(null);
+            customer.setDefaultShippingAddress(defaultAddr);
         }
 
         // Opening Invoices

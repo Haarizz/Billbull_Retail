@@ -61,6 +61,7 @@ import {
 } from '../../../api/warehouseApi';
 import { getProducts } from '../../../api/productsApi'; // Import getProducts
 import ProductSelector from '../../../components/ProductSelector';
+import FastEntryPanel from '../../../components/FastEntryPanel';
 import SearchableDropdown from '../../../components/SearchableDropdown';
 import VendorSelector from '../../../components/VendorSelector';
 import { getImageUrl } from '../../../utils/urlUtils';
@@ -603,6 +604,7 @@ const EditorView = ({ initialData, onSaveDraft, onSubmitQC, onPost, onPrint, grn
   const [lpoList, setLpoList] = useState([]);
   const [products, setProducts] = useState([]); // State for products
   const [isProductSelectionOpen, setIsProductSelectionOpen] = useState(false); // State for Product Selector
+  const [isFastEntryOpen, setIsFastEntryOpen] = useState(false);
 
   // Add state for expandable rows
   const [expandedRows, setExpandedRows] = useState({});
@@ -1015,6 +1017,42 @@ const EditorView = ({ initialData, onSaveDraft, onSubmitQC, onPost, onPrint, grn
     };
     setItems(prev => [...prev, recalculateItemTotals(newItem)]);
     setIsProductSelectionOpen(false);
+  };
+  const handleFastEntryAdd = (product, qty, price, disc) => {
+    if (isLocked) return;
+    const defaultUnit = getDefaultProductUnit(product);
+    const unitCost = price;
+    const netCost = unitCost * (1 - disc / 100);
+    const newItem = {
+      id: Date.now(),
+      productId: product.id,
+      code: product.code,
+      barcode: product.barcode || '',
+      name: product.description || product.name,
+      image: product.primaryImage || product.image || product.thumbnailUrl || product.imageUrl || null,
+      remarks: product.description || '',
+      uom: defaultUnit,
+      lpoQty: 0,
+      received: qty,
+      accepted: qty,
+      rejected: 0,
+      unitCost,
+      lpoPrice: 0,
+      disc,
+      netCost,
+      tax: parseFloat(product.purchaseTax) || parseFloat(product.taxRate) || 5,
+      taxAmt: netCost * ((parseFloat(product.purchaseTax) || parseFloat(product.taxRate) || 5) / 100),
+      total: netCost * qty,
+      variance: qty,
+      batch: false,
+      foc: 0,
+      focUnit: defaultUnit,
+      availableUnits: product.availableUnits || [defaultUnit],
+      unitConversions: product.unitConversions || {},
+      unitPrices: product.unitPrices || {},
+      unitCosts: product.unitCosts || {}
+    };
+    setItems(prev => [...prev, recalculateItemTotals ? recalculateItemTotals(newItem) : newItem]);
   };
 
   // Add Row Handler
@@ -1589,6 +1627,12 @@ const EditorView = ({ initialData, onSaveDraft, onSubmitQC, onPost, onPrint, grn
                     >
                       <Plus className="h-3 w-3" /> Select from Products
                     </button>
+                    <button
+                      onClick={() => setIsFastEntryOpen(true)}
+                      className="px-3 py-1.5 bg-white border border-slate-200 rounded text-xs font-medium text-slate-600 hover:bg-slate-50 flex items-center gap-1"
+                    >
+                      <Zap className="h-3 w-3 fill-yellow-400 text-yellow-400" /> Fast Entry
+                    </button>
                     {/* Add Row Button Removed */}
                   </>
                 )}
@@ -1943,6 +1987,12 @@ const EditorView = ({ initialData, onSaveDraft, onSubmitQC, onPost, onPrint, grn
         onClose={() => setIsProductSelectionOpen(false)}
         onSelect={handleAddSingleProduct}
         actionLabel="Add to GRN"
+      />
+      {/* Fast Entry Panel */}
+      <FastEntryPanel
+        isOpen={!isLocked && isFastEntryOpen}
+        onClose={() => setIsFastEntryOpen(false)}
+        onAddItem={handleFastEntryAdd}
       />
 
       {/* Compare LPO Modal */}

@@ -37,6 +37,7 @@ public class CustomerDTO {
     private String warehouse;
     
     private String billingAddress;
+    private String defaultShippingAddress;
     private String notes;
     private String avatar; // Base64 string from frontend
     private BigDecimal balance;
@@ -107,6 +108,8 @@ public class CustomerDTO {
     public void setWarehouse(String warehouse) { this.warehouse = warehouse; }
     public String getBillingAddress() { return billingAddress; }
     public void setBillingAddress(String billingAddress) { this.billingAddress = billingAddress; }
+    public String getDefaultShippingAddress() { return defaultShippingAddress; }
+    public void setDefaultShippingAddress(String defaultShippingAddress) { this.defaultShippingAddress = defaultShippingAddress; }
     public String getNotes() { return notes; }
     public void setNotes(String notes) { this.notes = notes; }
     public String getAvatar() { return avatar; }

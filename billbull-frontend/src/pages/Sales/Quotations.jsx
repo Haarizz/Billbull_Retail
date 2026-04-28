@@ -33,7 +33,8 @@ import {
     ChevronRight,
     ArrowLeft,
     SlidersHorizontal,
-    MoreVertical
+    MoreVertical,
+    Zap
 } from 'lucide-react';
 
 // ✅ API IMPORTS
@@ -61,9 +62,11 @@ import { ItemDescriptionCell, ItemDescriptionHeader } from '../../components/Ite
 
 // ✅ PRODUCT SELECTOR — self-fetching, server-side search
 import ProductSelector from '../../components/ProductSelector';
+import FastEntryPanel from '../../components/FastEntryPanel';
 
 // ✅ CUSTOMER SELECTOR — search modal + new customer
 import CustomerSelector from '../../components/CustomerSelector';
+import CustomerShippingPanel from '../../components/CustomerShippingPanel';
 
 // ✅ SHARED Item Add-Ons modal (BB-026)
 import ItemAddOnsModal from '../../components/ItemAddOnsModal';
@@ -311,6 +314,7 @@ const Quotations = () => {
     // --- PRODUCT SELECTION STATES ---
     const [isProductSelectionOpen, setIsProductSelectionOpen] = useState(false);
     const [selectedProductIds, setSelectedProductIds] = useState([]);
+    const [isFastEntryOpen, setIsFastEntryOpen] = useState(false);
 
     // --- DROPDOWN STATES ---
     const [currency, setCurrency] = useState('AED');
@@ -852,6 +856,40 @@ const Quotations = () => {
         }, 100);
     };
 
+    const handleFastEntryAdd = (product, qty, price, disc) => {
+        const defaultUnit = getDefaultProductUnit(product);
+        const cost = parseFloat(product.cost) || 0;
+        const tax = parseFloat(product.salesTax) || 5;
+        const rawItem = {
+            id: Date.now() + Math.random(),
+            code: product.code,
+            barcode: product.barcode || '',
+            image: product.primaryImage || product.image || '',
+            desc: product.description || product.name,
+            unit: defaultUnit,
+            qty,
+            price,
+            cost,
+            foc: 0,
+            focUnit: defaultUnit,
+            availableUnits: product.availableUnits || ['PCS'],
+            unitConversions: product.unitConversions || {},
+            unitPrices: product.unitPrices || {},
+            disc,
+            netPrice: price * (1 - disc / 100),
+            tax,
+            taxAmt: 0,
+            total: 0,
+            remarks: product.description || '',
+            isProductSelected: true,
+        };
+        const newItem = calculateRow(rawItem);
+        setItems(prev => {
+            const isFirstItemEmpty = prev.length === 1 && !prev[0].code && !prev[0].desc;
+            return isFirstItemEmpty ? [newItem] : [...prev, newItem];
+        });
+    };
+
     // --- STOCK CHECK MODAL LOGIC ---
     const handleCheckItemStock = (item) => {
         setSelectedStockItem({
@@ -1160,7 +1198,11 @@ const Quotations = () => {
 
     const handleSelectCustomer = (cust) => {
         setCustomer(`${cust.name} - ${cust.code}`);
-        setShippingAddress(cust.shippingAddress || cust.billingAddress || cust.address || '');
+        const _defaultAddr = (cust.savedAddresses || []).find(a => a.isDefault);
+            const _resolvedAddr = _defaultAddr
+                ? [_defaultAddr.address1, _defaultAddr.address2, _defaultAddr.city, _defaultAddr.country].filter(Boolean).join(', ')
+                : (cust.defaultShippingAddress || cust.shippingAddress || cust.billingAddress || cust.address || '');
+            setShippingAddress(_resolvedAddr);
         setIsCustomerSearchOpen(false);
     };
 
@@ -2302,86 +2344,48 @@ const Quotations = () => {
                                     </div>
                                 </div>
 
-                                {/* 2. Customer Card */}
-                                <div className="bg-white rounded-lg border border-slate-200/50 p-4 shadow-sm z-10 relative">
-                                    <div className="flex justify-between items-center mb-4 border-b border-slate-100/50 pb-2">
-                                        <h3 className="text-sm font-bold text-slate-800 flex items-center gap-2">
-                                            <User size={16} className="text-yellow-500" /> Customer
-                                        </h3>
-                                    </div>
+                                {/* 2. Customer + Shipping — unified panel */}
+                                <CustomerShippingPanel
+                                    selectedCustomer={selectedCustomerData}
+                                    onOpenCustomerSearch={() => setIsCustomerSearchOpen(true)}
+                                    shippingAddress={shippingAddress}
+                                    onShippingChange={setShippingAddress}
+                                    deliveryType={deliveryType}
+                                    onDeliveryTypeChange={setDeliveryType}
+                                    expectedDispatch={expectedDispatch}
+                                    onExpectedDispatchChange={setExpectedDispatch}
+                                    isReadOnly={isViewMode}
+                                    currency={currency}
+                                />
 
+                                {/* CustomerSelector modal (unchanged) */}
+                                <CustomerSelector
+                                    isOpen={!isViewMode && isCustomerSearchOpen}
+                                    onClose={() => setIsCustomerSearchOpen(false)}
+                                    onSelect={handleSelectCustomer}
+                                    customers={customersList}
+                                    selectedCode={selectedCustomerData?.code || ''}
+                                    onCustomerCreated={refreshData}
+                                />
 
-                                    <div className="mb-3 relative">
-                                        <label className="text-xs font-semibold text-slate-500 mb-1 block">Select Customer</label>
-                                        <div
-                                            className={`w-full text-sm p-2 border border-slate-300/50 rounded text-slate-700 bg-white flex items-center gap-2 transition-colors ${isViewMode ? 'cursor-not-allowed bg-slate-50 text-slate-500' : 'cursor-pointer hover:border-yellow-400'}`}
-                                            onClick={() => { if (!isViewMode) setIsCustomerSearchOpen(true); }}
-                                        >
-                                            <Search size={14} className="text-slate-400 shrink-0" />
-                                            <span className="flex-1 truncate">{selectedCustomerData ? `${selectedCustomerData.code} - ${selectedCustomerData.name}` : 'Search customer...'}</span>
-                                        </div>
-                                    </div>
-
-
-                                    {/* DYNAMIC CUSTOMER DATA DISPLAY */}
-                                    {selectedCustomerData && (
-                                        <div className="bg-slate-50 border border-slate-200/50 rounded p-3 text-sm animate-in fade-in zoom-in-95 duration-200">
-                                            <div className="flex justify-between items-start">
-                                                <div>
-                                                    <div className="text-xs text-slate-500 font-semibold mb-1">Customer Group</div>
-                                                    <div className="bg-white border border-slate-200/50 px-2 py-0.5 rounded text-xs inline-block mb-3 text-slate-600">
-                                                        {selectedCustomerData.groupType || selectedCustomerData.group || 'General'}
-                                                    </div>
-
-                                                    <div className="font-bold text-slate-800">{selectedCustomerData.name}</div>
-                                                    <div className="text-xs text-slate-500">Code: {selectedCustomerData.code}</div>
-                                                    <div className="text-xs text-slate-500">Tax ID: {selectedCustomerData.trn || 'N/A'}</div>
-                                                    <div className="text-xs text-slate-500">Phone: {selectedCustomerData.mobile || selectedCustomerData.phone || 'N/A'}</div>
-                                                </div>
-                                                <div className="text-right">
-                                                    <span className={`text-[10px] font-bold px-2 py-0.5 rounded border ${selectedCustomerData.creditStatus === 'Good' ? 'bg-emerald-100 text-emerald-700 border-emerald-200' : 'bg-yellow-100 text-yellow-700 border-yellow-200'}`}>
-                                                        Credit: {selectedCustomerData.creditStatus || 'N/A'}
-                                                    </span>
-                                                    <div className="text-xs text-slate-500 mt-2">Terms: {selectedCustomerData.payTerms || 'Cash'}</div>
-                                                    <div className="text-xs text-slate-500 mt-1">
-                                                        Outstanding: <span className="font-semibold text-slate-700">{selectedCustomerData.balance ? Number(selectedCustomerData.balance).toFixed(2) : '0.00'} AED</span>
-                                                    </div>
-                                                </div>
-                                            </div>
-                                        </div>
-                                    )}
-
-                                    {/* CUSTOMER SELECTOR MODAL */}
-                                    <CustomerSelector
-                                        isOpen={!isViewMode && isCustomerSearchOpen}
-                                        onClose={() => setIsCustomerSearchOpen(false)}
-                                        onSelect={handleSelectCustomer}
-                                        customers={customersList}
-                                        selectedCode={selectedCustomerData?.code || ''}
-                                        onCustomerCreated={refreshData}
-                                    />
-                                </div>
-
-                                {/* Right Column: Payment Terms & Shipping Details (merged to left col) */}
                                 {/* Payment Terms */}
-                                <div className="bg-white rounded-lg border border-slate-200/50 p-4 shadow-sm h-fit relative">
+                                <div className="bg-white rounded-xl border border-slate-200 p-4 shadow-sm relative">
                                     <h3 className="text-xs font-bold text-slate-700 mb-3">Payment Terms</h3>
-
                                     <div className="flex flex-col relative">
                                         <label className="text-[10px] font-semibold text-slate-500 mb-1">Terms</label>
                                         <div
-                                            className={`w-full text-xs p-2 border border-slate-300/50 rounded text-slate-700 bg-white flex justify-between items-center ${isViewMode ? 'cursor-not-allowed bg-slate-50 text-slate-500' : 'cursor-pointer'}`}
+                                            className={`w-full text-xs p-2 border border-slate-200 rounded-lg text-slate-700 bg-white flex justify-between items-center ${isViewMode ? 'cursor-not-allowed bg-slate-50 text-slate-500' : 'cursor-pointer hover:border-yellow-400'}`}
                                             onClick={(e) => { if (isViewMode) return; e.stopPropagation(); setIsPaymentTermOpen(!isPaymentTermOpen); }}
                                         >
                                             {paymentTerm} <ChevronDown size={12} className="text-slate-400" />
                                         </div>
                                         {isPaymentTermOpen && !isViewMode && (
-                                            <div className="absolute top-full left-0 w-full bg-white border border-slate-200 rounded shadow-lg z-20 mt-1">
+                                            <div className="absolute top-full left-0 w-full bg-white border border-slate-200 rounded-lg shadow-lg z-20 mt-1 overflow-hidden">
                                                 {['Cash', '7 Days', '30 Days', '60 Days', 'Custom'].map(opt => (
                                                     <div
                                                         key={opt}
                                                         onClick={() => { setPaymentTerm(opt); setIsPaymentTermOpen(false); }}
-                                                        className={`px-3 py-2 text-xs cursor-pointer flex justify-between items-center hover:bg-slate-50 ${paymentTerm === opt ? 'bg-red-500 text-white hover:bg-red-600' : 'text-slate-700'}`}
+                                                        className={`px-3 py-2 text-xs cursor-pointer flex justify-between items-center hover:bg-slate-50 ${paymentTerm === opt ? 'bg-yellow-50 text-yellow-700 font-semibold' : 'text-slate-700'}`}
                                                     >
                                                         {opt} {paymentTerm === opt && <Check size={12} />}
                                                     </div>
@@ -2389,53 +2393,7 @@ const Quotations = () => {
                                             </div>
                                         )}
                                     </div>
-
                                 </div>
-
-                                {/* Shipping Details */}
-                                <div className="bg-white rounded-lg border border-slate-200/50 p-4 shadow-sm h-fit">
-                                    <h3 className="text-xs font-bold text-slate-700 mb-3">Shipping Details</h3>
-                                    <div className="grid grid-cols-2 gap-4 mb-3">
-
-                                        <div className="flex flex-col relative">
-                                            <label className="text-[10px] font-semibold text-slate-500 mb-1">Type</label>
-                                            <div
-                                                className={`w-full text-xs p-2 border border-slate-300/50 rounded text-slate-700 bg-white flex justify-between items-center ${isViewMode ? 'cursor-not-allowed bg-slate-50 text-slate-500' : 'cursor-pointer'}`}
-                                                onClick={(e) => { if (isViewMode) return; e.stopPropagation(); setIsDeliveryTypeOpen(!isDeliveryTypeOpen); }}
-                                            >
-                                                {deliveryType} <ChevronDown size={12} className="text-slate-400" />
-                                            </div>
-                                            {isDeliveryTypeOpen && !isViewMode && (
-                                                <div className="absolute top-full left-0 w-full bg-white border border-slate-200 rounded shadow-lg z-20 mt-1">
-                                                    {['Delivery', 'Pickup'].map(opt => (
-                                                        <div
-                                                            key={opt}
-                                                            onClick={() => { setDeliveryType(opt); setIsDeliveryTypeOpen(false); }}
-                                                            className={`px-3 py-2 text-xs cursor-pointer flex justify-between items-center hover:bg-slate-50 ${deliveryType === opt ? 'bg-red-500 text-white hover:bg-red-600' : 'text-slate-700'}`}
-                                                        >
-                                                            {opt} {deliveryType === opt && <Check size={12} />}
-                                                        </div>
-                                                    ))}
-                                                </div>
-                                            )}
-                                        </div>
-
-
-                                        <div className="flex flex-col">
-                                            <label className="text-[10px] font-semibold text-slate-500 mb-1">Expected Dispatch</label>
-                                            <input type="date" value={expectedDispatch} onChange={(e) => setExpectedDispatch(e.target.value)} disabled={isViewMode} className="text-xs p-2 border border-slate-300/50 rounded text-slate-700 disabled:bg-slate-50 disabled:text-slate-500 disabled:cursor-not-allowed" />
-                                        </div>
-
-                                    </div>
-
-                                    <div className="flex flex-col">
-                                        <label className="text-[10px] font-semibold text-slate-500 mb-1">Shipping Address</label>
-                                        <textarea rows="2" value={shippingAddress} onChange={(e) => setShippingAddress(e.target.value)} readOnly={isViewMode} className="w-full text-xs p-2 border border-slate-300/50 rounded resize-none read-only:bg-slate-50 read-only:text-slate-500" />
-                                    </div>
-
-                                </div>
-
-
 
                             </div> {/* End Left Column */}
 
@@ -2454,6 +2412,12 @@ const Quotations = () => {
                                                 className="flex items-center gap-1 px-3 py-1.5 bg-yellow-400 text-slate-900 text-xs font-medium rounded hover:bg-yellow-500"
                                             >
                                                 <Plus size={14} /> Select from Products
+                                            </button>
+                                            <button
+                                                onClick={() => setIsFastEntryOpen(true)}
+                                                className="flex items-center gap-1 px-3 py-1.5 bg-[#1a2e1a] text-white text-xs font-medium rounded hover:bg-[#243d24]"
+                                            >
+                                                <Zap size={13} className="fill-yellow-400 text-yellow-400" /> Fast Entry
                                             </button>
                                             </div>
                                         )}
@@ -3089,6 +3053,14 @@ const Quotations = () => {
                     onSelect={handleAddSingleProduct}
                     title="Select Items from Products / Services"
                     actionLabel="Add to Quotation"
+                />
+
+                <FastEntryPanel
+                    isOpen={!isViewMode && isFastEntryOpen}
+                    onClose={() => setIsFastEntryOpen(false)}
+                    onAddItem={handleFastEntryAdd}
+                    mode="sales"
+                    currency={currency}
                 />
 
                 {/* --- PRINT TEMPLATE PICKER MODAL --- */}
