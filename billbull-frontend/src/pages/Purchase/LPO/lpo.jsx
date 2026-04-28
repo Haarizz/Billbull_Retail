@@ -111,7 +111,6 @@ import { useBranch } from '../../../context/BranchContext';
 // ==========================================
 import SearchableDropdown from '../../../components/SearchableDropdown';
 import ProductSelector from '../../../components/ProductSelector';
-import FastEntryPanel from '../../../components/FastEntryPanel';
 import VendorSelector from '../../../components/VendorSelector';
 
 const statusTabs = [
@@ -872,6 +871,29 @@ const HistoryView = ({ lpos }) => {
 
 const EditorView = ({ initialData, vendors, warehouses, onSave, onSubmit, onPrint, onRevert, isReadOnly, followUpNotes }) => {
   // --- Editor Logic ---
+  const createBlankLpoItem = () => ({
+    id: Date.now() + Math.random(),
+    productId: null,
+    code: '',
+    barcode: '',
+    name: '',
+    uom: '',
+    lastPrice: 0,
+    currentCost: 0,
+    qty: 1,
+    unitPrice: 0,
+    disc: 0,
+    foc: 0,
+    focUnit: '',
+    tax: 5,
+    taxAmt: 0,
+    remarks: '',
+    image: null,
+    availableUnits: [],
+    unitConversions: {},
+    unitPrices: {}
+  });
+
   const defaultState = {
     id: '',
     lpoNumber: '',
@@ -888,16 +910,13 @@ const EditorView = ({ initialData, vendors, warehouses, onSave, onSubmit, onPrin
     purchaseType: "REGULAR",
     buyerAssigned: "SYSTEM",
     referenceDocument: "",
-    items: [
-      { id: Date.now(), productId: null, code: '', barcode: '', name: '', uom: '', lastPrice: 0, currentCost: 0, qty: 1, unitPrice: 0, disc: 0, foc: 0, focUnit: '', tax: 5, taxAmt: 0, remarks: '', image: null, availableUnits: [], unitConversions: {}, unitPrices: {} }
-    ]
+    items: [createBlankLpoItem()]
   };
 
   const [formData, setFormData] = useState(defaultState);
   const [isVendorSearchOpen, setIsVendorSearchOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [isProductSelectionOpen, setIsProductSelectionOpen] = useState(false);
-  const [isFastEntryOpen, setIsFastEntryOpen] = useState(false);
   const [expandedRows, setExpandedRows] = useState({});
   const [selectedAddonItem, setSelectedAddonItem] = useState(null);
   const [selectedStockItem, setSelectedStockItem] = useState(null);
@@ -1175,8 +1194,8 @@ const EditorView = ({ initialData, vendors, warehouses, onSave, onSubmit, onPrin
   };
 
   const handleRemoveItem = (id) => {
-    if (formData.items.length <= 1) return; // Keep at least one item
-    setFormData({ ...formData, items: formData.items.filter(item => item.id !== id) });
+    const nextItems = formData.items.filter(item => item.id !== id);
+    setFormData({ ...formData, items: nextItems.length > 0 ? nextItems : [createBlankLpoItem()] });
   };
 
   // Calculations
@@ -1649,12 +1668,6 @@ const EditorView = ({ initialData, vendors, warehouses, onSave, onSubmit, onPrin
                     >
                       <Plus className="h-3 w-3" /> Select from Products
                     </button>
-                    <button
-                      onClick={() => setIsFastEntryOpen(true)}
-                      className="px-3 py-1.5 bg-[#1a2e1a] text-white text-xs font-medium rounded hover:bg-[#243d24] flex items-center gap-1"
-                    >
-                      <Zap className="h-3 w-3 fill-yellow-400 text-yellow-400" /> Fast Entry
-                    </button>
                     <button onClick={handleAddItem} className="px-3 py-1.5 border border-slate-200 rounded text-xs font-medium text-slate-600 hover:bg-slate-50 flex items-center gap-1">
                       <Plus className="h-3 w-3" /> Add Row
                     </button>
@@ -1675,10 +1688,8 @@ const EditorView = ({ initialData, vendors, warehouses, onSave, onSubmit, onPrin
                       />
                     </th>
                     <th className="p-3 font-medium text-center w-16">Unit</th>
-                    <th className="p-3 font-medium text-right w-20">Last Price</th>
                     <th className="p-3 font-medium text-center w-16">Order Qty</th>
                     <th className="p-3 font-medium text-center w-20">Unit Price</th>
-                    <th className="p-3 font-medium text-center w-16">Disc %</th>
                     <th className="p-3 font-medium text-right">Amount</th>
                     <th className="p-3 font-medium text-center">Actions</th>
                   </tr>
@@ -1713,9 +1724,6 @@ const EditorView = ({ initialData, vendors, warehouses, onSave, onSubmit, onPrin
                             {(item.availableUnits || [item.uom || 'PCS']).map(u => <option key={u} value={u}>{u}</option>)}
                           </select>
                         </td>
-                        <td className="p-3 text-right text-slate-400">
-                          {Number(item.lastPrice).toFixed(2)}
-                        </td>
                         <td className="p-3">
                           <input
                             type="number"
@@ -1745,20 +1753,6 @@ const EditorView = ({ initialData, vendors, warehouses, onSave, onSubmit, onPrin
                             />
                           </div>
                         </td>
-                        <td className="p-3">
-                          <input
-                            type="number"
-                            min="0"
-                            max="100"
-                            value={item.disc}
-                            onChange={(e) => handleItemChange(item.id, 'disc', e.target.value)}
-                            // Prevent Scroll & Paste
-                            onWheel={e => e.target.blur()}
-                            onPaste={e => e.preventDefault()}
-                            disabled={isReadOnly}
-                            className="w-12 text-center border border-slate-200 rounded p-1 text-xs disabled:bg-slate-50 disabled:text-slate-500"
-                          />
-                        </td>
                         <td className="p-3 text-right font-bold text-[#F5C742]">
                           {item.lineTotal.toFixed(2)}
                         </td>
@@ -1766,7 +1760,7 @@ const EditorView = ({ initialData, vendors, warehouses, onSave, onSubmit, onPrin
                           <button
                             onClick={() => handleRemoveItem(item.id)}
                             className="text-red-400 hover:text-red-600 disabled:opacity-50 disabled:cursor-not-allowed"
-                            disabled={formData.items.length <= 1 || isReadOnly}
+                            disabled={isReadOnly}
                           >
                             <Trash2 className="h-3.5 w-3.5" />
                           </button>
@@ -1776,7 +1770,7 @@ const EditorView = ({ initialData, vendors, warehouses, onSave, onSubmit, onPrin
                       {/* Expanded Description Row */}
                       {expandedRows[item.id] && (
                         <tr className="bg-white">
-                          <td colSpan={9} className="px-0 pb-4 pt-1">
+                          <td colSpan={7} className="px-0 pb-4 pt-1">
                             <div className="ml-0 mr-4 p-3 rounded-r-[10px] border-l-[3px] border-[#FFD700] bg-[#FFFDE7]/60 shadow-[inset_0_1px_4px_rgba(0,0,0,0.02)]">
                               <div className="flex justify-between items-center mb-1.5">
                                 <div className="flex items-center gap-1.5 text-[9px] font-bold text-[#B8860B] tracking-widest uppercase">
@@ -2157,15 +2151,9 @@ const EditorView = ({ initialData, vendors, warehouses, onSave, onSubmit, onPrin
         isOpen={isProductSelectionOpen}
         onClose={() => setIsProductSelectionOpen(false)}
         onSelect={handleAddSingleProduct}
+        onInlineAdd={handleFastEntryAdd}
         actionLabel="Add to LPO"
-      />
-
-      <FastEntryPanel
-        isOpen={!isReadOnly && isFastEntryOpen}
-        onClose={() => setIsFastEntryOpen(false)}
-        onAddItem={handleFastEntryAdd}
         mode="purchase"
-        currency="AED"
       />
 
       {/* Item Add-Ons Modal */}

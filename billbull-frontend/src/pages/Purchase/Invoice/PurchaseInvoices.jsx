@@ -37,7 +37,6 @@ import {
   ChevronUp
 } from "lucide-react";
 import ProductSelector from "../../../components/ProductSelector";
-import FastEntryPanel from "../../../components/FastEntryPanel";
 import SearchableDropdown from "../../../components/SearchableDropdown";
 import VendorSelector from "../../../components/VendorSelector";
 import { getImageUrl } from "../../../utils/urlUtils";
@@ -759,7 +758,6 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
 
   // UI State
   const [isProductSelectorOpen, setIsProductSelectorOpen] = useState(false);
-  const [isFastEntryOpen, setIsFastEntryOpen] = useState(false);
   const [selectedAddonItem, setSelectedAddonItem] = useState(null); // BB-026
   const [selectedStockItem, setSelectedStockItem] = useState(null);
   const [isItemStockModalOpen, setIsItemStockModalOpen] = useState(false);
@@ -2058,12 +2056,6 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
                   <Plus className="h-3 w-3" /> Select from Products
                 </button>
                 <button
-                  onClick={() => setIsFastEntryOpen(true)}
-                  disabled={isFormLocked}
-                  className={`flex-1 sm:flex-none px-3 py-1.5 bg-[#1a2e1a] text-white rounded text-xs font-bold hover:bg-[#243d24] flex items-center justify-center gap-1 shadow-sm ${isFormLocked ? 'opacity-50 cursor-not-allowed' : ''}`}>
-                  <Zap className="h-3 w-3 fill-yellow-400 text-yellow-400" /> Fast Entry
-                </button>
-                <button
                   onClick={() => setIsProductSelectorOpen(true)}
                   disabled={isFormLocked}
                   className="hidden" // Hidden proxy
@@ -2087,8 +2079,6 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
                     <th className="p-3 font-medium text-center w-16">Unit</th>
                     <th className="p-3 font-medium text-center w-16">Qty</th>
                     <th className="p-3 font-medium text-right">Unit Cost</th>
-                    <th className="p-3 font-medium text-center w-16">Disc %</th>
-                    <th className="p-3 font-medium text-right">Tax Amt</th>
                     <th className="p-3 font-medium text-right">Amount</th>
                     <th className="p-3 font-medium text-center">Actions</th>
                   </tr>
@@ -2162,18 +2152,6 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
                               className={`w-16 text-right border border-slate-200 rounded bg-white ${isFormLocked ? 'bg-slate-50' : ''}`}
                             />
                           </td>
-                          <td className="p-3 text-center">
-                            <input
-                              type="number"
-                              disabled={isFormLocked}
-                              value={item.disc ?? item.discount ?? 0}
-                              onChange={(e) => handleInputChange(item.id, 'disc', e.target.value)}
-                              onWheel={e => e.target.blur()}
-                              onPaste={e => e.preventDefault()}
-                              className={`w-14 text-center border border-slate-200 rounded bg-white ${isFormLocked ? 'bg-slate-50' : ''}`}
-                            />
-                          </td>
-                          <td className="p-3 text-right">{calc.taxAmt.toFixed(2)}</td>
                           <td className="p-3 text-right font-bold text-[#F5C742]">{calc.total.toFixed(2)}</td>
                           <td className="p-3 text-center">
                             <button
@@ -2188,7 +2166,7 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
                         {/* Expanded Description Row */}
                         {expandedRows[item.id] && (
                           <tr className="bg-white">
-                            <td colSpan={9} className="px-0 pb-4 pt-1">
+                            <td colSpan={7} className="px-0 pb-4 pt-1">
                               <div className="ml-0 mr-4 p-3 rounded-r-[10px] border-l-[3px] border-[#FFD700] bg-[#FFFDE7]/60 shadow-[inset_0_1px_4px_rgba(0,0,0,0.02)]">
                                 <div className="flex justify-between items-center mb-1.5">
                                   <div className="flex items-center gap-1.5 text-[9px] font-bold text-[#B8860B] tracking-widest uppercase">
@@ -2487,15 +2465,9 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
         isOpen={isProductSelectorOpen}
         onClose={() => setIsProductSelectorOpen(false)}
         onSelect={handleProductSelect}
+        onInlineAdd={handleFastEntryAdd}
         actionLabel="Add to Invoice"
-      />
-
-      <FastEntryPanel
-        isOpen={!isFormLocked && isFastEntryOpen}
-        onClose={() => setIsFastEntryOpen(false)}
-        onAddItem={handleFastEntryAdd}
         mode="purchase"
-        currency="AED"
       />
 
       {/* BB-026: Item Add-Ons Modal */}
