@@ -37,6 +37,7 @@ import {
   ChevronUp
 } from "lucide-react";
 import ProductSelector from "../../../components/ProductSelector";
+import FastEntryPanel from "../../../components/FastEntryPanel";
 import SearchableDropdown from "../../../components/SearchableDropdown";
 import VendorSelector from "../../../components/VendorSelector";
 import { getImageUrl } from "../../../utils/urlUtils";
@@ -757,6 +758,7 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
 
   // UI State
   const [isProductSelectorOpen, setIsProductSelectorOpen] = useState(false);
+  const [isFastEntryOpen, setIsFastEntryOpen] = useState(false);
   const [selectedAddonItem, setSelectedAddonItem] = useState(null); // BB-026
   const [selectedStockItem, setSelectedStockItem] = useState(null);
   const [isItemStockModalOpen, setIsItemStockModalOpen] = useState(false);
@@ -1385,6 +1387,34 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
     setIsProductSelectorOpen(false);
   };
 
+  const handleFastEntryAdd = (product, qty, price, disc) => {
+    if (isFormLocked) return;
+    const defaultUnit = getDefaultProductUnit(product);
+    const newItem = {
+      id: Date.now(),
+      code: product.code || 'SKU-NEW',
+      barcode: product.barcode || '',
+      name: product.description || product.name || 'New Item',
+      image: product.primaryImage || product.image || null,
+      remarks: product.description || '',
+      uom: defaultUnit,
+      qty,
+      cost: price,
+      tax: parseFloat(product.purchaseTax) || parseFloat(product.taxRate) || 5,
+      taxAmt: 0,
+      taxAmount: 0,
+      disc,
+      discount: disc,
+      foc: 0,
+      focUnit: defaultUnit,
+      availableUnits: product.availableUnits || [defaultUnit],
+      unitConversions: product.unitConversions || {},
+      unitPrices: product.unitPrices || {},
+      unitCosts: product.unitCosts || {},
+      productId: product.id,
+    };
+    setFormData(prev => ({ ...prev, items: [...prev.items, newItem] }));
+  };
 
   // Standardized Locking Logic
   const isAgainstSource =
@@ -2027,6 +2057,12 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
                   <Plus className="h-3 w-3" /> Select from Products
                 </button>
                 <button
+                  onClick={() => setIsFastEntryOpen(true)}
+                  disabled={isFormLocked}
+                  className={`flex-1 sm:flex-none px-3 py-1.5 bg-[#1a2e1a] text-white rounded text-xs font-bold hover:bg-[#243d24] flex items-center justify-center gap-1 shadow-sm ${isFormLocked ? 'opacity-50 cursor-not-allowed' : ''}`}>
+                  <Zap className="h-3 w-3 fill-yellow-400 text-yellow-400" /> Fast Entry
+                </button>
+                <button
                   onClick={() => setIsProductSelectorOpen(true)}
                   disabled={isFormLocked}
                   className="hidden" // Hidden proxy
@@ -2452,6 +2488,15 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
         onSelect={handleProductSelect}
         actionLabel="Add to Invoice"
       />
+
+      <FastEntryPanel
+        isOpen={!isFormLocked && isFastEntryOpen}
+        onClose={() => setIsFastEntryOpen(false)}
+        onAddItem={handleFastEntryAdd}
+        mode="purchase"
+        currency="AED"
+      />
+
       {/* BB-026: Item Add-Ons Modal */}
       <ItemAddOnsModal
         item={selectedAddonItem}

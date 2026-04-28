@@ -25,7 +25,8 @@ import {
   Trash2,
   Paperclip,
   Save,
-  ChevronRight
+  ChevronRight,
+  Zap
 } from 'lucide-react';
 
 // ✅ API IMPORTS
@@ -49,9 +50,11 @@ import { useCompany } from '../../context/CompanyContext';
 
 // ✅ PRODUCT SELECTOR
 import ProductSelector from '../../components/ProductSelector';
+import FastEntryPanel from '../../components/FastEntryPanel';
 
 // ✅ CUSTOMER SELECTOR
 import CustomerSelector from '../../components/CustomerSelector';
+import CustomerShippingPanel from '../../components/CustomerShippingPanel';
 
 // ✅ GLOBAL COMPONENTS
 import { ItemDescriptionCell, ItemDescriptionHeader } from '../../components/ItemDescriptionCell';
@@ -219,6 +222,7 @@ const SalesOrders = () => {
 
   // ✅ PRODUCT SELECTOR STATE
   const [isProductSelectorOpen, setIsProductSelectorOpen] = useState(false);
+  const [isFastEntryOpen, setIsFastEntryOpen] = useState(false);
 
   // Items
   const [items, setItems] = useState([createBlankOrderItem()]);
@@ -556,6 +560,41 @@ const SalesOrders = () => {
     setIsProductSelectorOpen(false); // ✅ Close modal after adding
   };
 
+  const handleFastEntryAdd = (product, qty, price, disc) => {
+    if (isLocked) return;
+    const defaultUnit = getDefaultProductUnit(product);
+    const cost = parseFloat(product.cost) || 0;
+    const tax = parseFloat(product.salesTax) || 5;
+    const rawItem = {
+      id: Date.now() + Math.random(),
+      code: product.code,
+      barcode: product.barcode || '',
+      image: product.primaryImage || product.image || '',
+      desc: product.description || product.name,
+      unit: defaultUnit,
+      qty,
+      price,
+      cost,
+      foc: 0,
+      focUnit: defaultUnit,
+      availableUnits: product.availableUnits || ['PCS'],
+      unitConversions: product.unitConversions || {},
+      unitPrices: product.unitPrices || {},
+      disc,
+      netPrice: price * (1 - disc / 100),
+      tax,
+      taxAmt: 0,
+      total: 0,
+      remarks: product.description || '',
+      isProductSelected: true,
+    };
+    const newItem = calculateRow(rawItem);
+    setItems(prev => {
+      const isFirstItemEmpty = prev.length === 1 && !prev[0].code && !prev[0].desc;
+      return isFirstItemEmpty ? [newItem] : [...prev, newItem];
+    });
+  };
+
   const buildFallbackCustomer = (name, code = '') => ({
     code,
     name: name || code || 'Linked Customer',
@@ -826,7 +865,11 @@ const SalesOrders = () => {
 
   const handleSelectCustomer = (cust) => {
     setSelectedCustomer(cust);
-    setShippingAddress(cust.shippingAddress || cust.billingAddress || cust.address || '');
+    const _defaultAddr = (cust.savedAddresses || []).find(a => a.isDefault);
+      const _resolvedAddr = _defaultAddr
+          ? [_defaultAddr.address1, _defaultAddr.address2, _defaultAddr.city, _defaultAddr.country].filter(Boolean).join(', ')
+          : (cust.defaultShippingAddress || cust.shippingAddress || cust.billingAddress || cust.address || '');
+      setShippingAddress(_resolvedAddr);
     setIsCustomerSearchOpen(false);
   };
 
@@ -865,7 +908,11 @@ const SalesOrders = () => {
       const cust = matchedCustomer || buildFallbackCustomer(qtn.customer);
       setSelectedCustomer(cust);
       if (cust.address || cust.shippingAddress || cust.billingAddress) {
-        setShippingAddress(cust.shippingAddress || cust.billingAddress || cust.address || '');
+        const _defaultAddr = (cust.savedAddresses || []).find(a => a.isDefault);
+      const _resolvedAddr = _defaultAddr
+          ? [_defaultAddr.address1, _defaultAddr.address2, _defaultAddr.city, _defaultAddr.country].filter(Boolean).join(', ')
+          : (cust.defaultShippingAddress || cust.shippingAddress || cust.billingAddress || cust.address || '');
+      setShippingAddress(_resolvedAddr);
       }
     }
 
@@ -892,7 +939,11 @@ const SalesOrders = () => {
     const cust = matchedCustomer || buildFallbackCustomer(proforma.customerName, proforma.customerCode);
     setSelectedCustomer(cust);
     if (cust.address || cust.shippingAddress || cust.billingAddress) {
-      setShippingAddress(cust.shippingAddress || cust.billingAddress || cust.address || '');
+      const _defaultAddr = (cust.savedAddresses || []).find(a => a.isDefault);
+      const _resolvedAddr = _defaultAddr
+          ? [_defaultAddr.address1, _defaultAddr.address2, _defaultAddr.city, _defaultAddr.country].filter(Boolean).join(', ')
+          : (cust.defaultShippingAddress || cust.shippingAddress || cust.billingAddress || cust.address || '');
+      setShippingAddress(_resolvedAddr);
     }
 
     applyLinkedDocumentItems(proforma.items || []);
@@ -1076,6 +1127,14 @@ const SalesOrders = () => {
         onSelect={handleAddSingleProduct}
         title="Select Items from Products / Services"
         actionLabel="Add to Order"
+      />
+
+      <FastEntryPanel
+        isOpen={!isLocked && isFastEntryOpen}
+        onClose={() => setIsFastEntryOpen(false)}
+        onAddItem={handleFastEntryAdd}
+        mode="sales"
+        currency="AED"
       />
 
       {/* ✅ STOCK AVAILABILITY MODAL */}
@@ -1320,67 +1379,35 @@ const SalesOrders = () => {
               </div>
             </div>
 
-            <div className="bg-white rounded-lg border border-slate-200 shadow-sm p-5 relative z-20">
-              <div className="flex justify-between items-center mb-4">
-                <h3 className="text-sm font-bold text-slate-800 flex items-center gap-2">
-                  <User size={16} className="text-yellow-500" /> Customer
-                </h3>
-              </div>
+            <CustomerShippingPanel
+                selectedCustomer={selectedCustomer}
+                onOpenCustomerSearch={() => { if (!hasLinkedDocument && !isLocked) setIsCustomerSearchOpen(true); }}
+                shippingAddress={shippingAddress}
+                onShippingChange={setShippingAddress}
+                deliveryType={deliveryType}
+                onDeliveryTypeChange={setDeliveryType}
+                expectedDispatch={expectedDelivery}
+                onExpectedDispatchChange={setExpectedDelivery}
+                isReadOnly={isLocked}
+                currency="AED"
+            />
 
-              <div className="mb-4">
-                <label className="block text-xs font-semibold text-slate-500 mb-1">Select Customer</label>
-
-                <div
-                  className={`w-full text-xs p-2 border border-slate-200 rounded text-slate-700 flex items-center gap-2 ${hasLinkedDocument || isLocked ? 'bg-slate-50 cursor-not-allowed' : 'bg-white cursor-pointer hover:border-yellow-400'} transition-colors`}
-                  onClick={() => {
-                    if (!hasLinkedDocument && !isLocked) setIsCustomerSearchOpen(true);
-                  }}
-                >
-                  <Search size={14} className="text-slate-400 shrink-0" />
-                  <span className="flex-1 truncate">{selectedCustomer ? [selectedCustomer.code, selectedCustomer.name].filter(Boolean).join(' - ') : 'Search customer...'}</span>
-                </div>
-              </div>
-
-              {selectedCustomer && (
-                <>
-                  <div className="mb-4">
-                    <label className="block text-xs font-semibold text-slate-500 mb-1">Customer Group</label>
-                    <div className="w-full text-xs p-2 bg-slate-50 border border-slate-200 rounded text-slate-700">
-                      {selectedCustomer.group || selectedCustomer.groupType || 'General'}
-                    </div>
-                  </div>
-
-                  <div className="bg-slate-50 border border-slate-200 rounded-md p-4">
-                    <div className="flex justify-between items-start">
-                      <div>
-                        <div className="font-bold text-slate-800 text-sm mb-1">{selectedCustomer.name}</div>
-                        <div className="text-xs text-slate-500">Code: {selectedCustomer.code}</div>
-                        <div className="text-xs text-slate-500">TRN: {selectedCustomer.trn || 'N/A'}</div>
-                        <div className="text-xs text-slate-500">Phone: {selectedCustomer.phone || selectedCustomer.mobile || 'N/A'}</div>
-                      </div>
-                      <div className="text-right">
-                        <span className={`inline-block px-2 py-0.5 rounded text-[10px] font-bold border mb-2 ${selectedCustomer.creditStatus === 'Good' ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-orange-50 text-orange-700 border-orange-200'}`}>
-                          Credit: {selectedCustomer.creditStatus || 'N/A'}
-                        </span>
-                        <div className="text-xs text-slate-500">Terms: {selectedCustomer.payTerms || 'Cash'}</div>
-                        <div className="text-xs text-slate-500 mt-1">
-                          Outstanding: <span className="font-bold text-slate-700">{selectedCustomer.balance ? Number(selectedCustomer.balance).toFixed(2) : '0.00'} AED</span>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                </>
-              )}
-
-              {/* CUSTOMER SELECTOR MODAL */}
-              <CustomerSelector
+            {/* CUSTOMER SELECTOR MODAL */}
+            <CustomerSelector
                 isOpen={isCustomerSearchOpen}
                 onClose={() => setIsCustomerSearchOpen(false)}
                 onSelect={handleSelectCustomer}
                 customers={customersList}
                 selectedCode={selectedCustomer?.code || ''}
                 onCustomerCreated={fetchAllData}
-              />
+            />
+
+            {/* Delivery Instructions */}
+            <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-5">
+              <h3 className="text-sm font-bold text-slate-800 flex items-center gap-2 mb-3">
+                Delivery Instructions
+              </h3>
+              <textarea rows="3" disabled={isLocked} value={deliveryInstructions} onChange={(e) => setDeliveryInstructions(e.target.value)} className="w-full text-xs p-2 border border-slate-200 rounded resize-none focus:border-yellow-400 outline-none" />
             </div>
 
             {/* 4. ATTACHMENTS (Moved to Left Column) */}
@@ -1411,40 +1438,6 @@ const SalesOrders = () => {
                 </div>
               </div>
             </div>
-
-            {/* 5. DELIVERY & SHIPPING */}
-            <div className="bg-white rounded-lg border border-slate-200 shadow-sm p-5">
-              <h3 className="text-sm font-bold text-slate-800 flex items-center gap-2 mb-4">
-                <Truck size={16} className="text-yellow-500" /> Delivery & Shipping
-              </h3>
-              <div className="grid grid-cols-2 gap-6">
-                <div>
-                  <label className="block text-xs font-semibold text-slate-500 mb-1">Delivery Type</label>
-                  <select
-                    value={deliveryType}
-                    disabled={isLocked}
-                    onChange={(e) => setDeliveryType(e.target.value)}
-                    className="w-full text-xs p-2 border border-slate-200 rounded focus:border-yellow-400 outline-none bg-white"
-                  >
-                    <option>Delivery</option>
-                    <option>Pickup</option>
-                    <option>Courier</option>
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-xs font-semibold text-slate-500 mb-1">Expected Delivery</label>
-                  <input type="date" disabled={isLocked} value={expectedDelivery} onChange={(e) => setExpectedDelivery(e.target.value)} className="w-full text-xs p-2 border border-slate-200 rounded focus:border-yellow-400 outline-none" />
-                </div>
-                <div>
-                  <label className="block text-xs font-semibold text-slate-500 mb-1">Shipping Address</label>
-                  <textarea rows="3" disabled={isLocked} value={shippingAddress} onChange={(e) => setShippingAddress(e.target.value)} className="w-full text-xs p-2 border border-slate-200 rounded resize-none focus:border-yellow-400 outline-none"></textarea>
-                </div>
-                <div>
-                  <label className="block text-xs font-semibold text-slate-500 mb-1">Delivery Instructions</label>
-                  <textarea rows="3" disabled={isLocked} value={deliveryInstructions} onChange={(e) => setDeliveryInstructions(e.target.value)} className="w-full text-xs p-2 border border-slate-200 rounded resize-none focus:border-yellow-400 outline-none"></textarea>
-                </div>
-              </div>
-            </div>
           </div> {/* End Left Column */}
 
           {/* ======================= MIDDLE COLUMN ======================= */}
@@ -1472,6 +1465,12 @@ const SalesOrders = () => {
                       className="flex items-center gap-1 px-3 py-1.5 bg-yellow-400 text-slate-900 text-xs font-medium rounded hover:bg-yellow-500"
                     >
                       <Plus size={14} /> Select from Products
+                    </button>
+                    <button
+                      onClick={() => setIsFastEntryOpen(true)}
+                      className="flex items-center gap-1 px-3 py-1.5 bg-[#1a2e1a] text-white text-xs font-medium rounded hover:bg-[#243d24]"
+                    >
+                      <Zap size={13} className="fill-yellow-400 text-yellow-400" /> Fast Entry
                     </button>
                   </div>
                 )}

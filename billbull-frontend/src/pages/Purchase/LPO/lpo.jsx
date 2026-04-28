@@ -111,6 +111,7 @@ import { useBranch } from '../../../context/BranchContext';
 // ==========================================
 import SearchableDropdown from '../../../components/SearchableDropdown';
 import ProductSelector from '../../../components/ProductSelector';
+import FastEntryPanel from '../../../components/FastEntryPanel';
 import VendorSelector from '../../../components/VendorSelector';
 
 const statusTabs = [
@@ -896,6 +897,7 @@ const EditorView = ({ initialData, vendors, warehouses, onSave, onSubmit, onPrin
   const [isVendorSearchOpen, setIsVendorSearchOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [isProductSelectionOpen, setIsProductSelectionOpen] = useState(false);
+  const [isFastEntryOpen, setIsFastEntryOpen] = useState(false);
   const [expandedRows, setExpandedRows] = useState({});
   const [selectedAddonItem, setSelectedAddonItem] = useState(null);
   const [selectedStockItem, setSelectedStockItem] = useState(null);
@@ -1095,6 +1097,36 @@ const EditorView = ({ initialData, vendors, warehouses, onSave, onSubmit, onPrin
 
     setFormData({ ...formData, items: updatedItems });
     setIsProductSelectionOpen(false);
+  };
+
+  const handleFastEntryAdd = (product, qty, price, disc) => {
+    if (isReadOnly) return;
+    const defaultUnit = getDefaultProductUnit(product);
+    const newItem = {
+      id: Date.now(),
+      productId: product.id,
+      code: product.code,
+      barcode: product.barcode || '',
+      name: product.description || product.name,
+      uom: defaultUnit,
+      lastPrice: price,
+      currentCost: price,
+      qty,
+      unitPrice: price,
+      disc,
+      foc: 0,
+      focUnit: defaultUnit,
+      tax: parseFloat(product.purchaseTax) || 5,
+      taxAmt: 0,
+      remarks: product.description || '',
+      image: product.primaryImage || product.image || null,
+      availableUnits: product.availableUnits || [defaultUnit],
+      unitConversions: product.unitConversions || {},
+      unitPrices: product.unitPrices || {},
+      unitCosts: product.unitCosts || {},
+    };
+    const isFirstItemEmpty = formData.items.length === 1 && !formData.items[0].productId;
+    setFormData({ ...formData, items: isFirstItemEmpty ? [newItem] : [...formData.items, newItem] });
   };
 
   const getAddonModalItem = (item) => {
@@ -1617,6 +1649,12 @@ const EditorView = ({ initialData, vendors, warehouses, onSave, onSubmit, onPrin
                     >
                       <Plus className="h-3 w-3" /> Select from Products
                     </button>
+                    <button
+                      onClick={() => setIsFastEntryOpen(true)}
+                      className="px-3 py-1.5 bg-[#1a2e1a] text-white text-xs font-medium rounded hover:bg-[#243d24] flex items-center gap-1"
+                    >
+                      <Zap className="h-3 w-3 fill-yellow-400 text-yellow-400" /> Fast Entry
+                    </button>
                     <button onClick={handleAddItem} className="px-3 py-1.5 border border-slate-200 rounded text-xs font-medium text-slate-600 hover:bg-slate-50 flex items-center gap-1">
                       <Plus className="h-3 w-3" /> Add Row
                     </button>
@@ -2120,6 +2158,14 @@ const EditorView = ({ initialData, vendors, warehouses, onSave, onSubmit, onPrin
         onClose={() => setIsProductSelectionOpen(false)}
         onSelect={handleAddSingleProduct}
         actionLabel="Add to LPO"
+      />
+
+      <FastEntryPanel
+        isOpen={!isReadOnly && isFastEntryOpen}
+        onClose={() => setIsFastEntryOpen(false)}
+        onAddItem={handleFastEntryAdd}
+        mode="purchase"
+        currency="AED"
       />
 
       {/* Item Add-Ons Modal */}

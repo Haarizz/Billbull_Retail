@@ -28,6 +28,9 @@ public class SavedAddress {
     private String country;
     private String mapLink;
 
+    @Column(name = "is_default")
+    private Boolean defaultAddress = false;
+
     // --- ADD GETTER & SETTER FOR CUSTOMER ---
     public Customer getCustomer() { return customer; }
     public void setCustomer(Customer customer) { this.customer = customer; }
@@ -52,4 +55,7 @@ public class SavedAddress {
     public void setCountry(String country) { this.country = country; }
     public String getMapLink() { return mapLink; }
     public void setMapLink(String mapLink) { this.mapLink = mapLink; }
+    // Boolean.TRUE.equals() handles null safely for existing rows with NULL in DB
+    public boolean isDefault() { return Boolean.TRUE.equals(defaultAddress); }
+    public void setDefault(boolean isDefault) { this.defaultAddress = isDefault; }
 }

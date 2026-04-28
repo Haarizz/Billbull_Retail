@@ -78,6 +78,9 @@ public class Customer {
     private String billingAddress;
 
     @Column(length = 1000)
+    private String defaultShippingAddress;
+
+    @Column(length = 1000)
     private String notes;
 
     // =========================
@@ -226,6 +229,9 @@ public class Customer {
 
     public String getBillingAddress() { return billingAddress; }
     public void setBillingAddress(String billingAddress) { this.billingAddress = billingAddress; }
+
+    public String getDefaultShippingAddress() { return defaultShippingAddress; }
+    public void setDefaultShippingAddress(String defaultShippingAddress) { this.defaultShippingAddress = defaultShippingAddress; }
 
     public String getNotes() { return notes; }
     public void setNotes(String notes) { this.notes = notes; }

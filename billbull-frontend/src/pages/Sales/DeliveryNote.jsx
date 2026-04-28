@@ -29,7 +29,8 @@ import {
     History,
     Eye,
     TrendingUp,
-    ShoppingCart
+    ShoppingCart,
+    Zap
 } from 'lucide-react';
 
 // ==========================================
@@ -80,9 +81,11 @@ import {
 
 // âœ… PRODUCT SELECTOR
 import ProductSelector from '../../components/ProductSelector';
+import FastEntryPanel from '../../components/FastEntryPanel';
 
 // âœ… CUSTOMER SELECTOR
 import CustomerSelector from '../../components/CustomerSelector';
+import CustomerShippingPanel from '../../components/CustomerShippingPanel';
 
 // âœ… STOCK AVAILABILITY MODAL
 import StockAvailabilityModal from '../../components/StockAvailabilityModal';
@@ -325,6 +328,7 @@ const DeliveryNote = () => {
 
     // âœ… PRODUCT SELECTOR STATE
     const [isProductSelectorOpen, setIsProductSelectorOpen] = useState(false);
+    const [isFastEntryOpen, setIsFastEntryOpen] = useState(false);
 
     // --- SIDEBAR COMPONENTS ---
     const StockSidebarPanel = ({ stock, isLoading, itemCode }) => {
@@ -979,7 +983,11 @@ const DeliveryNote = () => {
         if (isLockedForEdit) return;
         setSelectedCustomer(cust);
         setIsCustomerOpen(false);
-        setShippingAddress(cust.shippingAddress || cust.billingAddress || cust.address || '');
+        const _defaultAddr = (cust.savedAddresses || []).find(a => a.isDefault);
+            const _resolvedAddr = _defaultAddr
+                ? [_defaultAddr.address1, _defaultAddr.address2, _defaultAddr.city, _defaultAddr.country].filter(Boolean).join(', ')
+                : (cust.defaultShippingAddress || cust.shippingAddress || cust.billingAddress || cust.address || '');
+            setShippingAddress(_resolvedAddr);
         setLinkedSO('');
         setLinkedPI('');
         setLinkedSI('');
@@ -1090,6 +1098,36 @@ const DeliveryNote = () => {
         });
         setIsProductSelectorOpen(false); // âœ… Close modal after adding
     };
+    const handleFastEntryAdd = (product, qty, price, disc) => {
+        if (isLockedForEdit) return;
+        const newItem = normalizeDeliveryItem({
+            id: Date.now() + Math.random(),
+            code: product.code || product.itemCode || '',
+            barcode: product.barcode || '',
+            image: product.primaryImage || product.image || product.thumbnailUrl || product.imageUrl || '',
+            desc: product.description || product.name,
+            unit: product.unitName || product.unit || 'PCS',
+            orderedQty: qty,
+            prevDelivered: 0,
+            currentQty: qty,
+            boxes: Math.ceil(qty / 10) || 1,
+            foc: 0,
+            focUnit: product.unitName || product.unit || 'PCS',
+            price,
+            tax: Number(product.taxPercent || product.salesTax) || 5,
+            disc,
+            taxAmt: 0,
+            margin: 0,
+            remarks: product.description || '',
+            stock: warehouseStockMap[product.code] || 0
+        });
+
+        setItems(prev => {
+            const isFirstItemEmpty = prev.length === 1 && !prev[0].code && !prev[0].desc;
+            return isFirstItemEmpty ? [newItem] : [...prev, newItem];
+        });
+    };
+    // 
 
     // âœ… 8. HARD BLOCK INVALID QTY
     const recomputeItemTotals = (item) => {
@@ -1427,6 +1465,7 @@ const DeliveryNote = () => {
     );
 
     return (
+        <>
         <div className="flex min-h-screen bg-[#F7F7FA] font-sans relative" onClick={() => { setIsCustomerOpen(false); setIsSOOpen(false); setIsSIOpen(false); }}>
 
             {/* âœ… PRODUCT SELECTOR MODAL */}
@@ -1761,65 +1800,41 @@ const DeliveryNote = () => {
                                         </div>
                                     </div>
 
-                                    {/* 2. Customer & Reference */}
-                                    <div className="bg-white rounded-lg border border-slate-200/50 shadow-sm relative z-20">
-                                        <div className="px-5 py-3 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
-                                            <h3 className="text-sm font-bold text-slate-800 flex items-center gap-2">
-                                                <User size={16} className="text-yellow-600" /> Customer Details
-                                            </h3>
+                                    {/* 2. Customer + Shipping unified panel */}
+                                    <CustomerShippingPanel
+                                        selectedCustomer={selectedCustomer}
+                                        onOpenCustomerSearch={() => { if (!isLockedForEdit) setIsCustomerSearchOpen(true); }}
+                                        shippingAddress={shippingAddress}
+                                        onShippingChange={setShippingAddress}
+                                        isReadOnly={isLockedForEdit}
+                                        currency="AED"
+                                    />
+
+                                    {/* CustomerSelector modal */}
+                                    <CustomerSelector
+                                        isOpen={isCustomerSearchOpen}
+                                        onClose={() => setIsCustomerSearchOpen(false)}
+                                        onSelect={handleSelectCustomer}
+                                        customers={customersList}
+                                        selectedCode={selectedCustomer?.code || ''}
+                                        onCustomerCreated={async () => {
+                                            const data = await getAllCustomers();
+                                            setCustomersList(Array.isArray(data) ? data : []);
+                                        }}
+                                    />
+
+                                    {/* Source Document */}
+                                    <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-5 space-y-4">
+                                        <h3 className="text-xs font-bold text-slate-700">Source Document</h3>
+                                        <div>
+                                            <label className="text-xs font-semibold text-slate-500 mb-1 block">Source Document Type</label>
+                                            <div className="flex rounded-md border border-slate-200 overflow-hidden text-xs font-bold">
+                                                <button type="button" disabled={isLockedForEdit} onClick={() => { if (!isLockedForEdit) { setSourceType('SO'); setLinkedSI(''); setLinkedPI(''); setItems([]); } }} className={`flex-1 py-1.5 transition-colors ${sourceType === 'SO' ? 'bg-yellow-400 text-slate-900' : 'bg-white text-slate-500 hover:bg-slate-50'} disabled:opacity-60`}>Sales Order</button>
+                                                <button type="button" disabled={isLockedForEdit} onClick={() => { if (!isLockedForEdit) { setSourceType('PI'); setLinkedSO(''); setLinkedSI(''); setItems([]); } }} className={`flex-1 py-1.5 border-l border-slate-200 transition-colors ${sourceType === 'PI' ? 'bg-yellow-400 text-slate-900' : 'bg-white text-slate-500 hover:bg-slate-50'} disabled:opacity-60`}>Pro-forma</button>
+                                                <button type="button" disabled={isLockedForEdit} onClick={() => { if (!isLockedForEdit) { setSourceType('SI'); setLinkedSO(''); setLinkedPI(''); setItems([]); } }} className={`flex-1 py-1.5 border-l border-slate-200 transition-colors ${sourceType === 'SI' ? 'bg-yellow-400 text-slate-900' : 'bg-white text-slate-500 hover:bg-slate-50'} disabled:opacity-60`}>Sales Invoice</button>
+                                            </div>
                                         </div>
-                                        <div className="p-5">
-                                            <div className="flex flex-col space-y-4">
-
-                                                <div className="relative">
-                                                    <label className="text-xs font-semibold text-slate-500 mb-1">Customer <span className="text-red-500">*</span></label>
-                                                    <div
-                                                        onClick={(e) => {
-                                                            if (!isLockedForEdit) {
-                                                                e.stopPropagation();
-                                                                setIsCustomerSearchOpen(true);
-                                                            }
-                                                        }}
-                                                        className={`w-full text-xs p-2 border border-slate-300/50 rounded flex items-center gap-2 ${isLockedForEdit ? 'cursor-not-allowed bg-slate-50 text-slate-400' : 'cursor-pointer hover:border-yellow-400 bg-white'} transition-colors`}
-                                                    >
-                                                        <Search size={14} className="text-slate-400 shrink-0" />
-                                                        <span className="flex-1 truncate">{selectedCustomer ? `${selectedCustomer.code} - ${selectedCustomer.name}` : 'Search customer...'}</span>
-                                                    </div>
-                                                </div>
-
-
-                                                {/* Source Type Toggle */}
-                                                <div>
-                                                    <label className="text-xs font-semibold text-slate-500 mb-1 block">Source Document Type</label>
-                                                    <div className="flex rounded-md border border-slate-200 overflow-hidden text-xs font-bold">
-                                                        <button
-                                                            type="button"
-                                                            disabled={isLockedForEdit}
-                                                            onClick={() => { if (!isLockedForEdit) { setSourceType('SO'); setLinkedSI(''); setLinkedPI(''); setItems([]); } }}
-                                                            className={`flex-1 py-1.5 transition-colors ${sourceType === 'SO' ? 'bg-yellow-400 text-slate-900' : 'bg-white text-slate-500 hover:bg-slate-50'} disabled:opacity-60`}
-                                                        >
-                                                            Sales Order
-                                                        </button>
-                                                        <button
-                                                            type="button"
-                                                            disabled={isLockedForEdit}
-                                                            onClick={() => { if (!isLockedForEdit) { setSourceType('PI'); setLinkedSO(''); setLinkedSI(''); setItems([]); } }}
-                                                            className={`flex-1 py-1.5 border-l border-slate-200 transition-colors ${sourceType === 'PI' ? 'bg-yellow-400 text-slate-900' : 'bg-white text-slate-500 hover:bg-slate-50'} disabled:opacity-60`}
-                                                        >
-                                                            Pro-forma
-                                                        </button>
-                                                        <button
-                                                            type="button"
-                                                            disabled={isLockedForEdit}
-                                                            onClick={() => { if (!isLockedForEdit) { setSourceType('SI'); setLinkedSO(''); setLinkedPI(''); setItems([]); } }}
-                                                            className={`flex-1 py-1.5 border-l border-slate-200 transition-colors ${sourceType === 'SI' ? 'bg-yellow-400 text-slate-900' : 'bg-white text-slate-500 hover:bg-slate-50'} disabled:opacity-60`}
-                                                        >
-                                                            Sales Invoice
-                                                        </button>
-                                                    </div>
-                                                </div>
-
-                                                {/* Conditional Source Dropdown */}
+                                        {/* Conditional Source Dropdown */}
                                                 {sourceType === 'SO' && (
                                                     <div className="relative">
                                                         <label className="text-xs font-semibold text-slate-500 mb-1 block">Source Sales Order</label>
@@ -1967,8 +1982,6 @@ const DeliveryNote = () => {
                                                         )}
                                                     </div>
                                                 )}
-                                            </div>
-                                        </div>
                                     </div>
 
                                     {/* 3. Logistics Info */}
@@ -2020,12 +2033,20 @@ const DeliveryNote = () => {
                                                     <span className="text-xs font-medium text-red-500 bg-red-50 px-2 py-1 rounded">No items found</span>
                                                 )}
                                                 {!isLockedForEdit && (
-                                                    <button
-                                                        onClick={() => setIsProductSelectorOpen(true)}
-                                                        className="flex items-center gap-1 px-3 py-1.5 bg-yellow-400 text-slate-900 text-xs font-medium rounded hover:bg-yellow-500"
-                                                    >
-                                                        <Plus size={14} /> Select from Products
-                                                    </button>
+                                                    <div className="flex items-center gap-2">
+                                                        <button
+                                                            onClick={() => setIsProductSelectorOpen(true)}
+                                                            className="flex items-center gap-1 px-3 py-1.5 bg-yellow-400 text-slate-900 text-xs font-medium rounded hover:bg-yellow-500"
+                                                        >
+                                                            <Plus size={14} /> Select from Products
+                                                        </button>
+                                                        <button
+                                                            onClick={() => setIsFastEntryOpen(true)}
+                                                            className="flex items-center gap-1 px-3 py-1.5 bg-white border border-slate-200 text-slate-700 text-xs font-medium rounded hover:bg-slate-50 shadow-sm"
+                                                        >
+                                                            <Zap size={13} className="fill-yellow-400 text-yellow-400" /> Fast Entry
+                                                        </button>
+                                                    </div>
                                                 )}
                                             </div>
                                         </div>
@@ -2903,6 +2924,14 @@ const DeliveryNote = () => {
             </div>
 
         </div>
+
+      {/* FAST ENTRY PANEL */}
+      <FastEntryPanel
+        isOpen={!isLockedForEdit && isFastEntryOpen}
+        onClose={() => setIsFastEntryOpen(false)}
+        onAddItem={handleFastEntryAdd}
+      />
+        </>
     );
 };
 

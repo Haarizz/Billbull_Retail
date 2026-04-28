@@ -503,6 +503,16 @@ const AddCustomerModal = ({ isOpen, onClose, customerToEdit, onSaveCustomer }) =
         }
     };
 
+    const handleSetDefaultAddress = (idx) => {
+        setFormData(prev => ({
+            ...prev,
+            savedAddresses: prev.savedAddresses.map((addr, i) => ({
+                ...addr,
+                isDefault: i === idx
+            }))
+        }));
+    };
+
     const handleSaveInvoice = (data) => {
         if (editingInvoiceIdx !== null) {
             setFormData(prev => {
@@ -776,15 +786,31 @@ const AddCustomerModal = ({ isOpen, onClose, customerToEdit, onSaveCustomer }) =
                             {formData.savedAddresses.length > 0 ? (
                                 <div className="grid grid-cols-1 gap-3">
                                     {formData.savedAddresses.map((addr, idx) => (
-                                        <div key={idx} className="p-3 border border-slate-100 rounded bg-slate-50 flex justify-between items-start group">
+                                        <div key={idx} className={`p-3 border rounded flex justify-between items-start group transition-all ${addr.isDefault ? 'border-yellow-300 bg-yellow-50/60' : 'border-slate-100 bg-slate-50'}`}>
                                             <div className="flex items-start gap-2">
-                                                <MapPin size={14} className="text-slate-400 mt-0.5 flex-shrink-0" />
+                                                <MapPin size={14} className={`mt-0.5 flex-shrink-0 ${addr.isDefault ? 'text-yellow-500' : 'text-slate-400'}`} />
                                                 <div>
-                                                    <div className="font-bold text-sm text-slate-700">{addr.name}</div>
+                                                    <div className="flex items-center gap-2">
+                                                        <div className="font-bold text-sm text-slate-700">{addr.name}</div>
+                                                        {addr.isDefault && (
+                                                            <span className="inline-flex items-center gap-1 text-[10px] font-bold px-1.5 py-0.5 bg-yellow-400 text-slate-900 rounded">
+                                                                ★ Default
+                                                            </span>
+                                                        )}
+                                                    </div>
                                                     <div className="text-xs text-slate-500">{addr.address1}, {addr.city}</div>
                                                 </div>
                                             </div>
                                             <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                                {!addr.isDefault && (
+                                                    <button
+                                                        onClick={() => handleSetDefaultAddress(idx)}
+                                                        title="Set as Default"
+                                                        className="p-1.5 text-slate-400 hover:text-yellow-500 rounded hover:bg-yellow-50 flex items-center gap-1 text-xs font-medium"
+                                                    >
+                                                        ☆ Default
+                                                    </button>
+                                                )}
                                                 <button onClick={() => { setEditingAddressIdx(idx); setIsAddressModalOpen(true); }} className="p-1.5 text-slate-400 hover:text-blue-600 rounded hover:bg-blue-50"><Edit size={14} /></button>
                                                 <button onClick={() => handleDeleteAddress(idx)} className="p-1.5 text-slate-400 hover:text-red-500 rounded hover:bg-red-50"><Trash2 size={14} /></button>
                                             </div>
@@ -832,7 +858,7 @@ const AddCustomerModal = ({ isOpen, onClose, customerToEdit, onSaveCustomer }) =
                             <div className="bg-blue-50 border border-blue-100 rounded-lg p-4 flex justify-between items-center mb-8">
                                 <span className="text-sm font-medium text-blue-800">Total Opening Balance</span>
                                 <span className="text-xl font-bold text-blue-700">
-                                    AED {formData.openingInvoices.reduce((acc, curr) => acc + Number(curr.amount || 0), 0).toFixed(2)}
+                                    AED {formData.openingInvoices.reduce((acc, curr) => acc + Number(curr.outstanding || curr.amount || 0), 0).toFixed(2)}
                                 </span>
                             </div>
 
@@ -845,7 +871,7 @@ const AddCustomerModal = ({ isOpen, onClose, customerToEdit, onSaveCustomer }) =
                                                 <div className="text-xs text-slate-400">{inv.date}</div>
                                             </div>
                                             <div className="flex items-center gap-2">
-                                                <span className="font-mono text-slate-800">AED {inv.amount}</span>
+                                                <span className="font-mono text-slate-800">AED {inv.outstanding || inv.amount}</span>
                                                 <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                                                     <button onClick={() => { setEditingInvoiceIdx(idx); setIsInvoiceModalOpen(true); }} className="p-1.5 text-slate-400 hover:text-blue-600 rounded hover:bg-blue-50"><Edit size={14} /></button>
                                                     <button onClick={() => handleDeleteInvoice(idx)} className="p-1.5 text-slate-400 hover:text-red-500 rounded hover:bg-red-50"><Trash2 size={14} /></button>

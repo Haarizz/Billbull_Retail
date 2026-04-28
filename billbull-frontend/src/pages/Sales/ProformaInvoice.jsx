@@ -31,7 +31,8 @@ import {
   X,
   Info,
   Paperclip,
-  ShoppingCart as ShoppingCartIcon
+  ShoppingCart as ShoppingCartIcon,
+  Zap
 } from 'lucide-react';
 
 import { useMemo } from 'react';
@@ -78,9 +79,11 @@ const PROFORMA_COLUMNS = [
 
 // âœ… PRODUCT SELECTOR
 import ProductSelector from '../../components/ProductSelector';
+import FastEntryPanel from '../../components/FastEntryPanel';
 
 // âœ… CUSTOMER SELECTOR
 import CustomerSelector from '../../components/CustomerSelector';
+import CustomerShippingPanel from '../../components/CustomerShippingPanel';
 
 // âœ… STOCK AVAILABILITY MODAL
 import StockAvailabilityModal from '../../components/StockAvailabilityModal';
@@ -138,6 +141,7 @@ const ProformaInvoice = () => {
 
   // âœ… PRODUCT SELECTOR STATE
   const [isProductSelectorOpen, setIsProductSelectorOpen] = useState(false);
+  const [isFastEntryOpen, setIsFastEntryOpen] = useState(false);
 
   const createBlankProformaItem = () => ({
     id: Date.now() + Math.random(),
@@ -592,6 +596,40 @@ const ProformaInvoice = () => {
     });
 
     setIsProductSelectorOpen(false); // âœ… Close modal after adding
+  };
+
+  const handleFastEntryAdd = (product, qty, price, disc) => {
+    if (isReadOnly) return;
+    const defaultUnit = getDefaultProductUnit(product);
+    const cost = parseFloat(product.cost) || 0;
+    const tax = parseFloat(product.salesTax || product.taxPercent) || 5;
+
+    const newItem = normalizeProformaItem({
+      id: Date.now() + Math.random(),
+      code: product.code,
+      barcode: product.barcode || '',
+      image: product.primaryImage || product.image || product.thumbnailUrl || product.imageUrl || '',
+      desc: product.description || product.name,
+      remarks: product.description || product.remarks || '',
+      unit: defaultUnit,
+      qty,
+      price,
+      cost,
+      foc: 0,
+      focUnit: defaultUnit,
+      availableUnits: product.availableUnits || ['PCS'],
+      unitConversions: product.unitConversions || {},
+      unitPrices: product.unitPrices || {},
+      disc,
+      tax,
+      taxAmt: 0,
+      total: 0
+    });
+
+    setItems(prev => {
+      const isFirstItemEmpty = prev.length === 1 && !prev[0].code && !prev[0].desc;
+      return isFirstItemEmpty ? [newItem] : [...prev, newItem];
+    });
   };
 
   const handleAddItem = () => {
@@ -1403,72 +1441,34 @@ const ProformaInvoice = () => {
                   </div>
                 </div>
 
-                {/* 2. Customer Details Card */}
-                <div className="bg-white rounded-lg border border-slate-200/50 shadow-sm relative">
-                  <div className="px-5 py-3 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
-                    <h3 className="text-sm font-bold text-slate-800 flex items-center gap-2">
-                      Customer Details
-                    </h3>
-                  </div>
-                  <div className="p-5">
-                    <div className="space-y-4">
-                      <div className="relative">
-                        <label className="text-xs font-semibold text-slate-500 mb-2 block">Customer <span className="text-red-500">*</span></label>
-                        <div
-                          className="w-full text-sm p-1.5 border border-slate-300/50 rounded flex items-center gap-3 cursor-pointer hover:border-yellow-400 transition-colors bg-white shadow-sm"
-                          onClick={() => setIsCustomerSearchOpen(true)}
-                        >
-                          <Search size={16} className="text-slate-400 shrink-0" />
-                          <span className="flex-1 truncate font-medium text-slate-700">
-                            {selectedCustomer ? `${selectedCustomer.code} - ${selectedCustomer.name}` : 'Search customer...'}
-                          </span>
-                        </div>
-                      </div>
+                <CustomerShippingPanel
+                    selectedCustomer={selectedCustomer}
+                    onOpenCustomerSearch={() => setIsCustomerSearchOpen(true)}
+                    shippingAddress={shippingAddress}
+                    onShippingChange={setShippingAddress}
+                    isReadOnly={isReadOnly}
+                    currency="AED"
+                />
 
-                      {selectedCustomer && (
-                        <div className="bg-slate-50 border border-slate-200/50 rounded p-3 text-sm animate-in fade-in zoom-in-95 duration-200">
-                          <div className="flex justify-between items-start">
-                            <div className="space-y-1">
-                              <div className="font-bold text-slate-800">{selectedCustomer.name}</div>
-                              <div className="text-xs text-slate-500">Code: {selectedCustomer.code}</div>
-                              <div className="text-xs text-slate-500">TRN: {selectedCustomer.trn || 'N/A'}</div>
-                              <div className="text-xs text-slate-500">Phone: {selectedCustomer.mobile || selectedCustomer.phone || 'N/A'}</div>
-                            </div>
-                            <div className="text-right">
-                              <span className={`text-[10px] font-bold px-2 py-0.5 rounded border ${selectedCustomer.creditStatus === 'Good' ? 'bg-emerald-100 text-emerald-700 border-emerald-200' : 'bg-red-50 text-red-700 border-red-100'}`}>
-                                Credit: {selectedCustomer.creditStatus === 'Good' ? 'Healthy' : 'Review'}
-                              </span>
-                            </div>
-                          </div>
-                        </div>
-                      )}
-
-                      <div className="border-t border-slate-100/50 pt-3">
-                        <label className="text-xs font-semibold text-slate-500 mb-2 block">Shipping Address</label>
-                        <textarea
-                          rows="3"
-                          value={shippingAddress}
-                          onChange={(e) => setShippingAddress(e.target.value)}
-                          className="w-full text-sm p-2 border border-slate-300/50 rounded outline-none focus:border-yellow-400 transition-colors resize-none placeholder:text-slate-300 bg-white"
-                          placeholder="Enter shipping details if different from registered address..."
-                        ></textarea>
-                      </div>
-                    </div>
-                  </div>
-
-                  <CustomerSelector
+                <CustomerSelector
                     isOpen={isCustomerSearchOpen}
                     onClose={() => setIsCustomerSearchOpen(false)}
-                    onSelect={(cust) => setSelectedCustomer(cust)}
+                    onSelect={(cust) => {
+                      setSelectedCustomer(cust);
+                      const _defaultAddr = (cust.savedAddresses || []).find(a => a.isDefault);
+                      const _resolvedAddr = _defaultAddr
+                          ? [_defaultAddr.address1, _defaultAddr.address2, _defaultAddr.city, _defaultAddr.country].filter(Boolean).join(', ')
+                          : (cust.defaultShippingAddress || cust.shippingAddress || cust.billingAddress || cust.address || '');
+                      setShippingAddress(_resolvedAddr);
+                    }}
                     customers={customersList}
                     selectedCode={selectedCustomer?.code || ''}
                     onCustomerCreated={async () => {
                       const data = await getAllCustomers();
                       setCustomersList(Array.isArray(data) ? data : []);
                     }}
-                  />
-                </div>
-              </div>
+                />
+              </div> {/* End Left Column */}
 
               {/* --- MIDDLE COLUMN: ITEMS & NOTES --- */}
               <div className="xl:col-span-2 space-y-4">
@@ -1479,12 +1479,20 @@ const ProformaInvoice = () => {
                       <ShoppingCart size={16} className="text-yellow-500" /> Proforma Invoice Items
                     </h3>
                     {!isReadOnly && (
-                      <button
-                        onClick={() => setIsProductSelectorOpen(true)}
-                        className="flex items-center gap-1 px-3 py-1.5 bg-yellow-400 text-slate-900 text-xs font-medium rounded hover:bg-yellow-500"
-                      >
-                        <Plus size={14} /> Select from Products
-                      </button>
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={() => setIsProductSelectorOpen(true)}
+                          className="flex items-center gap-1 px-3 py-1.5 bg-yellow-400 text-slate-900 text-xs font-medium rounded hover:bg-yellow-500"
+                        >
+                          <Plus size={14} /> Select from Products
+                        </button>
+                        <button
+                          onClick={() => setIsFastEntryOpen(true)}
+                          className="flex items-center gap-1 px-3 py-1.5 bg-white border border-slate-200 text-slate-700 text-xs font-medium rounded hover:bg-slate-50 shadow-sm"
+                        >
+                          <Zap size={13} className="fill-yellow-400 text-yellow-400" /> Fast Entry
+                        </button>
+                      </div>
                     )}
                   </div>
 
@@ -1985,6 +1993,13 @@ const ProformaInvoice = () => {
           </div>
         </div>
       )}
+
+      {/* FAST ENTRY PANEL */}
+      <FastEntryPanel
+        isOpen={!isReadOnly && isFastEntryOpen}
+        onClose={() => setIsFastEntryOpen(false)}
+        onAddItem={handleFastEntryAdd}
+      />
     </div >
   );
 };

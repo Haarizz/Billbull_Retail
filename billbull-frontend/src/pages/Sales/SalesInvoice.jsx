@@ -81,9 +81,11 @@ const SALES_INVOICE_COLUMNS = [
 
 // ✅ PRODUCT SELECTOR
 import ProductSelector from '../../components/ProductSelector';
+import FastEntryPanel from '../../components/FastEntryPanel';
 
 // ✅ CUSTOMER SELECTOR
 import CustomerSelector from '../../components/CustomerSelector';
+import CustomerShippingPanel from '../../components/CustomerShippingPanel';
 import { ItemDescriptionCell, ItemDescriptionHeader } from '../../components/ItemDescriptionCell';
 
 // ✅ STOCK AVAILABILITY MODAL
@@ -224,6 +226,7 @@ const SalesInvoice = () => {
 
     // ✅ PRODUCT SELECTOR STATE
     const [isProductSelectorOpen, setIsProductSelectorOpen] = useState(false);
+    const [isFastEntryOpen, setIsFastEntryOpen] = useState(false);
     const [selectedAddonItem, setSelectedAddonItem] = useState(null); // BB-026
 
     // Payment Calculation State
@@ -736,7 +739,11 @@ const SalesInvoice = () => {
         if (isGeneratedFromDN) return; // Prevent changing customer if locked
 
         setSelectedCustomer(cust);
-        setShippingAddress(cust.shippingAddress || cust.billingAddress || cust.address || '');
+        const _defaultAddr = (cust.savedAddresses || []).find(a => a.isDefault);
+        const _resolvedAddr = _defaultAddr
+            ? [_defaultAddr.address1, _defaultAddr.address2, _defaultAddr.city, _defaultAddr.country].filter(Boolean).join(', ')
+            : (cust.defaultShippingAddress || cust.shippingAddress || cust.billingAddress || cust.address || '');
+        setShippingAddress(_resolvedAddr);
         setIsCustomerOpen(false);
         setIsCustomerSearchOpen(false);
 
@@ -1163,6 +1170,46 @@ const SalesInvoice = () => {
         setIsProductSelectorOpen(false); // ✅ Close modal after adding
     };
 
+    const handleFastEntryAdd = (product, qty, price, disc) => {
+        if (isReadOnlyInvoice) return;
+        const defaultUnit = getDefaultProductUnit(product);
+        const tax = parseFloat(product.salesTax) || 5;
+        const cost = product.cost != null ? parseFloat(product.cost) : 0;
+        const rawItem = {
+            id: Date.now() + Math.random(),
+            code: product.code || '',
+            barcode: product.barcode || '',
+            image: product.primaryImage || product.image || '',
+            name: product.name || '',
+            desc: product.shortDesc || product.description || '',
+            unit: defaultUnit,
+            qty,
+            price,
+            foc: 0,
+            focUnit: defaultUnit,
+            availableUnits: product.availableUnits || ['PCS'],
+            unitConversions: product.unitConversions || {},
+            unitPrices: product.unitPrices || {},
+            retailPrice: price,
+            sellingPrice: price,
+            disc,
+            tax,
+            taxAmt: 0,
+            gross: 0,
+            net: 0,
+            cost,
+            gp: 0,
+            remarks: product.description || '',
+            warehouseId: defaultBranch?.defaultWarehouseId || (warehousesList.length > 0 ? warehousesList[0].id : ''),
+        };
+        const newItem = calculateRow(rawItem);
+        if (newItem.code) fetchItemContext(newItem.code);
+        setItems(prev => {
+            const hasData = prev.some(i => i.code || i.name);
+            return hasData ? [...prev, newItem] : [newItem];
+        });
+    };
+
     const handleAddItem = () => {
         if (isReadOnlyInvoice) return;
         setItems([...items, { id: Date.now(), code: '', name: '', unit: 'PCS', qty: 0, price: 0, disc: 0, tax: 5, taxAmt: 0, gross: 0, net: 0, cost: 0, warehouseId: defaultBranch?.defaultWarehouseId || (warehousesList.length > 0 ? warehousesList[0].id : '') }]);
@@ -1556,6 +1603,14 @@ const SalesInvoice = () => {
                 onSelect={handleAddSingleProduct}
                 title="Select Items from Products / Services"
                 actionLabel="Add to Invoice"
+            />
+
+            <FastEntryPanel
+                isOpen={!isReadOnlyInvoice && isFastEntryOpen}
+                onClose={() => setIsFastEntryOpen(false)}
+                onAddItem={handleFastEntryAdd}
+                mode="sales"
+                currency="AED"
             />
 
             {/* ✅ STOCK AVAILABILITY MODAL */}
@@ -2076,83 +2131,42 @@ const SalesInvoice = () => {
                                     </div>
                                 </div>
 
-                                {/* 3. CUSTOMER SECTION */}
-                                <div className="bg-white p-5 rounded-lg border border-slate-200 shadow-sm relative z-20">
-                                    <div className="flex justify-between items-center mb-4">
-                                        <h3 className="text-sm font-bold text-slate-700">Customer & Shipping</h3>
+                                {/* 3. CUSTOMER + SHIPPING — unified panel */}
+                                <CustomerShippingPanel
+                                    selectedCustomer={selectedCustomer}
+                                    onOpenCustomerSearch={() => { if (!isGeneratedFromDN && !isReadOnlyInvoice) setIsCustomerSearchOpen(true); }}
+                                    shippingAddress={shippingAddress}
+                                    onShippingChange={setShippingAddress}
+                                    isReadOnly={isReadOnlyInvoice}
+                                    currency="AED"
+                                />
+
+                                {/* Credit warning (kept outside panel so it's always visible) */}
+                                {selectedCustomer && salesSettings?.creditLimitPolicy === 'WARNING' &&
+                                    selectedCustomer.creditLimitAmount > 0 &&
+                                    (Number(selectedCustomer.balance || 0) + netTotal) > selectedCustomer.creditLimitAmount && (
+                                    <div className="p-2.5 bg-yellow-50 shadow-sm border border-yellow-200 rounded-md text-yellow-800 text-[11px] leading-relaxed flex items-start gap-2">
+                                        <AlertCircle size={14} className="mt-0.5 shrink-0 text-yellow-600" />
+                                        <p>
+                                            <strong>Credit Warning:</strong> The projected outstanding balance
+                                            ({(Number(selectedCustomer.balance || 0) + netTotal).toFixed(2)} AED) exceeds this customer's
+                                            credit limit of {Number(selectedCustomer.creditLimitAmount).toFixed(2)} AED.
+                                        </p>
                                     </div>
-                                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-2 gap-4 mb-4">
+                                )}
 
-                                        <div
-                                            onClick={() => { if (!isGeneratedFromDN && !isReadOnlyInvoice) setIsCustomerSearchOpen(true) }}
-                                            className={`w-full text-xs p-2 border border-slate-200 rounded flex items-center gap-2 ${(isGeneratedFromDN || isReadOnlyInvoice) ? 'bg-slate-50 cursor-not-allowed opacity-80 text-slate-500' : 'bg-white cursor-pointer hover:border-yellow-400'} transition-colors h-9`}
-                                        >
-                                            <Search size={14} className="text-slate-400 shrink-0" />
-                                            <span className="flex-1 truncate">{selectedCustomer ? `${selectedCustomer.code} - ${selectedCustomer.name}` : 'Search customer...'}</span>
-                                        </div>
-
-                                    </div>
-                                    {selectedCustomer && (
-                                        <div className="bg-slate-50 border border-slate-200 rounded p-3 text-xs mt-3">
-                                            <div className="flex justify-between items-start">
-                                                <div>
-                                                    <div className="font-bold text-slate-700">{selectedCustomer.name}</div>
-                                                    <div className="text-slate-500">Code: {selectedCustomer.code}</div>
-                                                    <div className="text-slate-500">TRN: {selectedCustomer.trn || 'N/A'}</div>
-                                                    <div className="text-slate-500">Phone: {selectedCustomer.mobile || selectedCustomer.phone || 'N/A'}</div>
-                                                </div>
-                                                <div className="text-right">
-                                                    <span className={`inline-block px-2 py-0.5 rounded text-[10px] font-bold border mb-1 ${selectedCustomer.creditStatus === 'Good' ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-orange-50 text-orange-700 border-orange-200'}`}>
-                                                        Credit: {selectedCustomer.creditStatus || 'N/A'}
-                                                    </span>
-                                                    <div className="text-slate-500">Terms: {selectedCustomer.payTerms || 'Cash'}</div>
-                                                    <div className="text-slate-500 mt-1">
-                                                        Outstanding: <span className="font-bold text-slate-700">{selectedCustomer.balance ? Number(selectedCustomer.balance).toFixed(2) : '0.00'} AED</span>
-                                                    </div>
-                                                </div>
-                                            </div>
-
-                                            <div className="mt-4 pt-3 border-t border-slate-200">
-                                                <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Billing / Shipping Address</label>
-                                                <textarea
-                                                    value={shippingAddress}
-                                                    onChange={e => setShippingAddress(e.target.value)}
-                                                    readOnly={isReadOnlyInvoice}
-                                                    rows="2"
-                                                    className="w-full text-[11px] p-2 border border-slate-200 rounded bg-white focus:outline-none focus:border-yellow-400 resize-none read-only:bg-slate-50 read-only:text-slate-500"
-                                                    placeholder="Enter address details..."
-                                                />
-                                            </div>
-
-                                            {salesSettings?.creditLimitPolicy === 'WARNING' &&
-                                                selectedCustomer.creditLimitAmount > 0 &&
-                                                (Number(selectedCustomer.balance || 0) + netTotal) > selectedCustomer.creditLimitAmount && (
-                                                    <div className="mt-3 p-2.5 bg-yellow-50 shadow-sm border border-yellow-200 rounded-md text-yellow-800 text-[11px] leading-relaxed flex items-start gap-2">
-                                                        <AlertCircle size={14} className="mt-0.5 shrink-0 text-yellow-600" />
-                                                        <p>
-                                                            <strong>Credit Warning:</strong> The projected outstanding balance
-                                                            ({(Number(selectedCustomer.balance || 0) + netTotal).toFixed(2)} AED) exceeds this customer's
-                                                            credit limit of {Number(selectedCustomer.creditLimitAmount).toFixed(2)} AED.
-                                                        </p>
-                                                    </div>
-                                                )}
-
-                                        </div>
-                                    )}
-
-                                    {/* CUSTOMER SELECTOR MODAL */}
-                                    <CustomerSelector
-                                        isOpen={isCustomerSearchOpen}
-                                        onClose={() => setIsCustomerSearchOpen(false)}
-                                        onSelect={(cust) => { handleSelectCustomer(cust); setIsCustomerSearchOpen(false); }}
-                                        customers={customersList}
-                                        selectedCode={selectedCustomer?.code || ''}
-                                        onCustomerCreated={async () => {
-                                            const data = await getAllCustomers();
-                                            setCustomersList(Array.isArray(data) ? data : []);
-                                        }}
-                                    />
-                                </div>
+                                {/* CUSTOMER SELECTOR MODAL */}
+                                <CustomerSelector
+                                    isOpen={isCustomerSearchOpen}
+                                    onClose={() => setIsCustomerSearchOpen(false)}
+                                    onSelect={(cust) => { handleSelectCustomer(cust); setIsCustomerSearchOpen(false); }}
+                                    customers={customersList}
+                                    selectedCode={selectedCustomer?.code || ''}
+                                    onCustomerCreated={async () => {
+                                        const data = await getAllCustomers();
+                                        setCustomersList(Array.isArray(data) ? data : []);
+                                    }}
+                                />
                             </div>
 
                             {/* MIDDLE COLUMN */}
@@ -2164,12 +2178,20 @@ const SalesInvoice = () => {
                                         <div className="flex items-center gap-2">
                                             {/* ✅ SELECT FROM CATALOG BUTTON */}
                                             {!isGeneratedFromDN && !isReadOnlyInvoice && (
+                                                <>
                                                 <button
                                                     onClick={() => setIsProductSelectorOpen(true)}
                                                     className="flex items-center gap-1 px-2.5 py-1 bg-yellow-400 text-slate-900 text-[11px] font-semibold rounded hover:bg-yellow-500"
                                                 >
                                                     <Plus size={14} /> Select from Catalog
                                                 </button>
+                                                <button
+                                                    onClick={() => setIsFastEntryOpen(true)}
+                                                    className="flex items-center gap-1 px-2.5 py-1 bg-[#1a2e1a] text-white text-[11px] font-semibold rounded hover:bg-[#243d24]"
+                                                >
+                                                    <Zap size={12} className="fill-yellow-400 text-yellow-400" /> Fast Entry
+                                                </button>
+                                                </>
                                             )}
                                         </div>
                                     </div>
