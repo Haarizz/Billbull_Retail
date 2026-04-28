@@ -31,10 +31,12 @@ import {
     ChevronRight,
     Copy,
     Trash,
+    Zap
 } from 'lucide-react';
 
 import { employeesApi } from '../../api/employeesApi';
 import { receiptVoucherApi } from '../../api/receiptVoucherApi';
+import { generateDocFilename } from '../../utils/filenameUtils';
 import { getImageUrl } from '../../utils/urlUtils';
 import { useBranch } from '../../context/BranchContext';
 import { useCompany } from '../../context/CompanyContext';
@@ -459,10 +461,19 @@ const ReceiptVoucher = () => {
     };
 
     const handlePrint = (receipt) => {
-        // Ideally this would print a specific receipt template
-        // For now, we simulate by invoking browser print, usually printing the whole page
-        // A real app would open a new window with just the receipt content
-        window.print();
+        const originalTitle = document.title;
+        try {
+            document.title = generateDocFilename(
+                'Receipt Voucher',
+                receipt.id,
+                receipt.member,
+                receipt.date,
+                currency
+            );
+            window.print();
+        } finally {
+            document.title = originalTitle;
+        }
         setOpenActionId(null);
     };
 

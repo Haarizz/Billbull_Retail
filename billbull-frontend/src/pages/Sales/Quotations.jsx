@@ -87,6 +87,7 @@ import { useCompany } from '../../context/CompanyContext';
 import { useBranch } from '../../context/BranchContext';
 import ExportDropdown from '../../components/common/ExportDropdown';
 import { exportToExcel, exportToPDF } from '../../utils/exportUtils';
+import { generateDocFilename } from '../../utils/filenameUtils';
 
 // ==========================================
 // 1. CONFIGURATION
@@ -520,6 +521,7 @@ const Quotations = () => {
             items: data.items.map(i => ({
                 id: i.id || Math.random(),
                 code: i.itemCode,
+                name: i.itemName || i.name || '',
                 barcode: i.barcode || '',
                 // ✅ FIX: Check both primaryImage (from backend) and image
                 image: i.primaryImage || i.image || '',
@@ -810,6 +812,7 @@ const Quotations = () => {
         const rawItem = {
             id: Date.now() + Math.random(),
             code: product.code,
+            name: product.name || '',
             barcode: product.barcode || '',
             image: product.primaryImage || product.image || '', // ✅ Set Image URL
             desc: product.description || product.name,
@@ -863,6 +866,7 @@ const Quotations = () => {
         const rawItem = {
             id: Date.now() + Math.random(),
             code: product.code,
+            name: product.name || '',
             barcode: product.barcode || '',
             image: product.primaryImage || product.image || '',
             desc: product.description || product.name,
@@ -1167,9 +1171,10 @@ const Quotations = () => {
             const recalculated = revision.items.map((i, idx) => ({
                 id: Date.now() + idx,
                 code: i.code || i.itemCode || '',
+                name: i.name || i.productName || i.itemName || '',
                 barcode: i.barcode || '',
                 image: i.image || i.primaryImage || '',
-                desc: i.desc || i.description || i.name || '',
+                desc: i.desc || i.description || '',
                 unit: i.unit || 'PCS',
                 qty: Number(i.qty || i.quantity) || 1,
                 price: Number(i.price) || 0,
@@ -1375,6 +1380,7 @@ const Quotations = () => {
                     code: i.code,
                     name: i.name || i.productName || '',
                     desc: i.desc || '',
+                    remarks: i.remarks || '',
                     sku: i.sku || i.productSku || '',
                     localName: i.localName || i.productLocalName || '',
                     barcode: i.barcode || '',
@@ -1569,6 +1575,7 @@ const Quotations = () => {
                         code: i.code,
                         name: i.name || i.productName || '',
                         desc: i.desc || '',
+                        remarks: i.remarks || '',
                         sku: i.sku || i.productSku || '',
                         localName: i.localName || i.productLocalName || '',
                         barcode: i.barcode || '',
@@ -1693,7 +1700,7 @@ const Quotations = () => {
 <html>
 <head>
     <meta charset="UTF-8">
-    <title>Quotation - ${qtnNo}</title>
+    <title>${generateDocFilename('Quotation', qtnNo, customerName, qtnDate, currency)}</title>
     <style>
         @page { size: A4; margin: 15mm; }
         * { box-sizing: border-box; margin: 0; padding: 0; }

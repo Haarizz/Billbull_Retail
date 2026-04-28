@@ -28,14 +28,7 @@ const getViewportDimensions = (paperSize, orientation, previewMode) => {
 
     const base = PAPER_DIMENSIONS[paperSize] || PAPER_DIMENSIONS.A4;
     const isLandscape = orientation === 'Landscape';
-    const page = isLandscape
-        ? { width: base.height, height: base.width }
-        : base;
-
-    return {
-        width: page.width + PREVIEW_FRAME_PADDING.width,
-        height: page.height + PREVIEW_FRAME_PADDING.height
-    };
+    return isLandscape ? { width: base.height, height: base.width } : base;
 };
 
 const DocumentPreviewCanvas = ({

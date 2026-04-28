@@ -5,6 +5,7 @@ import {
     sanitizeTemplateColumns,
     sanitizeTemplateDisplayOptions
 } from './printTemplateConfig';
+import { generateDocFilename } from './filenameUtils';
 
 const PURCHASE_TEMPLATE_CATEGORIES = new Set([
     'Local Purchase Order',
@@ -157,8 +158,10 @@ const normaliseDescription = (item = {}) => {
     }
 
     return {
-        title: item.name || item.item || '-',
-        details: compactValues(item.desc, typeof item.description === 'string' ? item.description : '')
+        title: item.name || item.item || item.desc || '-',
+        details: compactValues(
+            item.remarks || item.desc || (typeof item.description === 'string' ? item.description : '')
+        )
     };
 };
 
@@ -202,19 +205,20 @@ const getColumnDefaults = (category, isPurchaseDocument) =>
         }
         : DEFAULT_TEMPLATE_COLUMNS;
 
-const createColumnModel = (rawColumns = {}, isPurchaseDocument = false, category = '') => {
-    sanitizeTemplateColumns(rawColumns, getColumnDefaults(category, isPurchaseDocument));
-
+const createColumnModel = (rawColumns = {}) => {
+    const c = rawColumns;
     return [
-        { key: 'index', label: '#', align: 'center', width: '30px', enabled: true },
-        { key: 'description', label: 'Product/Services', align: 'left', width: '24%', enabled: true },
-        { key: 'details', label: 'Description of Product/Services', align: 'left', width: '30%', enabled: true },
-        { key: 'qty', label: 'Qty', align: 'right', width: '48px', enabled: true },
-        { key: 'unitPrice', label: 'Unit Price', align: 'right', width: '82px', enabled: true },
-        { key: 'taxableAmount', label: 'Taxable Amount', align: 'right', width: '104px', enabled: true },
-        { key: 'tax', label: 'VAT Amount', align: 'right', width: '82px', enabled: true },
-        { key: 'total', label: 'Line Total', align: 'right', width: '96px', enabled: true }
-    ].filter((column) => column.enabled);
+        { key: 'index',         label: '#',                               align: 'center', width: '3%',  enabled: true },
+        { key: 'description',   label: 'Product/Services',                align: 'left',   width: '22%', enabled: true },
+        { key: 'details',       label: 'Description of Product/Services', align: 'left',   width: '30%', enabled: c.description !== false },
+        { key: 'qty',           label: 'Qty',                             align: 'right',  width: '6%',  enabled: c.qty !== false },
+        { key: 'unitPrice',     label: 'Unit Price',                      align: 'right',  width: '9%',  enabled: c.unitPrice !== false },
+        { key: 'taxableAmount', label: 'Taxable Amount',                  align: 'right',  width: '12%', enabled: Boolean(c.taxableAmount) },
+        { key: 'discountPercent', label: 'Discount %',                    align: 'center', width: '7%',  enabled: Boolean(c.discountPercent) },
+        { key: 'tax',           label: 'VAT Amount',                      align: 'right',  width: '9%',  enabled: c.tax !== false },
+        { key: 'taxPercent',    label: 'Tax %',                           align: 'center', width: '6%',  enabled: Boolean(c.taxPercent) },
+        { key: 'total',         label: 'Line Total',                      align: 'right',  width: '9%',  enabled: c.total !== false },
+    ].filter((col) => col.enabled);
 };
 
 const buildItemDetailLines = (item, columnOptions = {}) =>
@@ -230,33 +234,31 @@ const buildItemDetailLines = (item, columnOptions = {}) =>
         return true;
     });
 
-const buildDescriptionCell = (item, displayOptions = {}, columnOptions = {}) => {
+const buildDescriptionCell = (item, displayOptions = {}) => {
     const showImage = displayOptions.showItemImage && item.image;
-    const detailLines = columnOptions.description === false ? buildItemDetailLines(item, columnOptions) : [];
     const metadataLines = [
-        columnOptions.productId && item.code ? item.code : '',
-        columnOptions.barcode && item.barcode ? item.barcode : '',
-        columnOptions.sku && item.sku ? item.sku : '',
-        columnOptions.arabicName && item.localName ? item.localName : ''
+        item.code     ? item.code      : '',
+        item.sku      ? item.sku       : '',
+        item.barcode  ? item.barcode   : '',
+        item.localName ? item.localName : ''
     ].filter(Boolean);
-    const combinedLines = [...metadataLines, ...detailLines];
 
     return `
         <div class="description-wrap">
             ${showImage ? `<img src="${escapeHtml(item.image)}" class="item-thumb" alt="" />` : ''}
             <div class="description-copy">
                 <div class="description-title">${escapeHtml(item.description.title || item.name || '-')}</div>
-                ${combinedLines.map((line) => `<div class="description-line">${escapeHtml(line)}</div>`).join('')}
+                ${metadataLines.map((line) => `<div class="description-line">${escapeHtml(line)}</div>`).join('')}
             </div>
         </div>
     `;
 };
 
-const buildDetailsCell = (item, columnOptions = {}) => {
-    const detailLines = buildItemDetailLines(item, columnOptions);
-    return detailLines.length > 0
-        ? detailLines.map((line) => `<div class="desc-detail-line">${escapeHtml(line)}</div>`).join('')
-        : '<div class="desc-detail-line">-</div>';
+const buildDetailsCell = (item) => {
+    const lines = (item.description.details || []).filter(Boolean);
+    return lines.length > 0
+        ? lines.map((line) => `<div class="desc-detail-line">${escapeHtml(line)}</div>`).join('')
+        : '';
 };
 
 const renderTableCell = (column, item, index, displayOptions = {}, columnOptions = {}) => {
@@ -264,9 +266,9 @@ const renderTableCell = (column, item, index, displayOptions = {}, columnOptions
         case 'index':
             return `<td class="table-cell cell-center cell-index">${index + 1}</td>`;
         case 'description':
-            return `<td class="table-cell cell-description">${buildDescriptionCell(item, displayOptions, columnOptions)}</td>`;
+            return `<td class="table-cell cell-description">${buildDescriptionCell(item, displayOptions)}</td>`;
         case 'details':
-            return `<td class="table-cell cell-details">${buildDetailsCell(item, columnOptions)}</td>`;
+            return `<td class="table-cell cell-details">${buildDetailsCell(item)}</td>`;
         case 'salesPerson':
             return `<td class="table-cell">${escapeHtml(item.salesPerson || '-')}</td>`;
         case 'location':
@@ -352,8 +354,7 @@ const buildTotalsTable = (layout) => {
     const row = (label, amount, className = '') => `
         <tr class="${className}">
             <td class="tot-label">${label}</td>
-            <td class="tot-currency">${currency}</td>
-            <td class="tot-amount">${formatNumber(amount)}</td>
+            <td class="tot-amount">${currency} ${formatNumber(amount)}</td>
         </tr>
     `;
 
@@ -364,8 +365,7 @@ const buildTotalsTable = (layout) => {
                 ${discountAmount > 0 ? `
                     <tr class="amount-negative">
                         <td class="tot-label">Discount${discountPercent > 0 ? ` (${formatNumber(discountPercent, 0)}%)` : ''}</td>
-                        <td class="tot-currency">${currency}</td>
-                        <td class="tot-amount">- ${formatNumber(discountAmount)}</td>
+                        <td class="tot-amount">${currency} - ${formatNumber(discountAmount)}</td>
                     </tr>
                 ` : ''}
                 ${row('Total VAT', layout.totals.tax)}
@@ -404,15 +404,19 @@ const buildSummarySection = (layout) => {
 
     return `
         <section class="summary-section">
-            <div class="summary-notes">
-                <div class="summary-label">Notes</div>
-                ${hasNotes ? `<div class="notes-copy">${escapeHtml(layout.notes)}</div>` : '<div class="notes-copy notes-copy-empty"></div>'}
-                ${hasTerms ? `
-                    <div class="summary-label summary-label-terms">Terms &amp; Conditions</div>
-                    <div class="notes-copy">${escapeHtml(layout.terms)}</div>
-                ` : ''}
-            </div>
-            ${totalsTable ? `<div class="summary-totals">${totalsTable}</div>` : '<div></div>'}
+            ${totalsTable ? `<div class="summary-totals">${totalsTable}</div>` : ''}
+            ${(hasNotes || hasTerms) ? `
+                <div class="summary-notes">
+                    ${hasNotes ? `
+                        <div class="summary-label">Notes</div>
+                        <div class="notes-copy">${escapeHtml(layout.notes)}</div>
+                    ` : ''}
+                    ${hasTerms ? `
+                        <div class="summary-label${hasNotes ? ' summary-label-terms' : ''}">Terms &amp; Conditions</div>
+                        <div class="notes-copy">${escapeHtml(layout.terms)}</div>
+                    ` : ''}
+                </div>
+            ` : ''}
         </section>
     `;
 };
@@ -453,7 +457,7 @@ const resolveLayoutDate = (layout) =>
 
 const buildPrintDateStamp = (layout, renderTarget) =>
     renderTarget === 'print'
-        ? `<div class="print-date-stamp">${escapeHtml(resolveLayoutDate(layout))}</div>`
+        ? `<div class="print-date-stamp">Printed: ${escapeHtml(new Date().toISOString().slice(0, 10))}</div>`
         : '';
 
 const buildHeaderAddon = (layout) =>
@@ -856,12 +860,12 @@ const buildCoreStyles = () => `
         min-width: 0;
     }
     .item-thumb {
-        width: 44px;
-        height: 44px;
-        max-width: 44px;
-        max-height: 44px;
+        width: 64px;
+        height: 64px;
+        max-width: 64px;
+        max-height: 64px;
         object-fit: contain;
-        flex: 0 0 44px;
+        flex: 0 0 64px;
         background: transparent;
     }
     .description-copy {
@@ -880,15 +884,12 @@ const buildCoreStyles = () => `
         margin-top: 1px;
     }
     .summary-section {
-        display: grid;
-        grid-template-columns: minmax(0, 1fr) minmax(260px, 340px);
-        gap: 32px;
-        align-items: start;
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
         padding-top: 16px;
     }
-    .summary-notes {
-        min-height: 80px;
-    }
+    .summary-notes {}
     .summary-label {
         color: #9ca3af;
         font-weight: 700;
@@ -909,35 +910,31 @@ const buildCoreStyles = () => `
         justify-content: flex-end;
     }
     .totals-table {
-        width: 100%;
+        width: auto;
         border-collapse: collapse;
     }
     .totals-table td {
-        padding: 8px 0;
+        padding: 5px 0;
         border: 0;
     }
     .tot-label {
         color: #111827;
         font-weight: 700;
         text-align: right;
-        padding-right: 16px;
-    }
-    .tot-currency {
-        color: #111827;
-        font-weight: 700;
-        text-align: center;
-        width: 48px;
+        padding-right: 12px;
         white-space: nowrap;
     }
     .tot-amount {
         color: #111827;
         text-align: right;
         font-weight: 700;
-        min-width: 104px;
+        min-width: 80px;
         white-space: nowrap;
     }
     .grand-total-row td {
-        padding-top: 12px;
+        padding-top: 6px;
+        font-weight: 700;
+        font-size: 11px;
     }
     .balance-due-row td {
         font-weight: 700;
@@ -1002,16 +999,16 @@ const buildCoreStyles = () => `
         line-height: 1;
     }
     .print-date-stamp {
-        position: absolute;
-        left: 12mm;
-        bottom: 5mm;
-        color: #111827;
+        margin-top: 16px;
+        padding-top: 8px;
+        border-top: 1px solid #e0e0e0;
+        color: #6b7280;
+        text-align: left;
     }
     .page-num::before { content: counter(page); }
     .page-total::before { content: counter(pages); }
     @media (max-width: 720px) {
         .document-header,
-        .summary-section,
         .signature-grid {
             grid-template-columns: 1fr;
         }
@@ -1135,7 +1132,7 @@ const normalisePurchaseLayout = (template, data, companyProfile, renderTarget) =
         }
     );
     const columnOptions = sanitizeTemplateColumns(template.columns, getColumnDefaults(template.category, true));
-    const columnModel = createColumnModel(columnOptions, true, template.category);
+    const columnModel = createColumnModel(columnOptions);
     const currency = resolveCurrency(company, data.totals || {}, data.summaryAmount || {});
     const headerMeta = Array.isArray(data.headerMeta) ? data.headerMeta.filter((row) => row?.value) : [];
     const references = Array.isArray(data.references) ? data.references.filter((row) => row?.value) : [];
@@ -1223,7 +1220,7 @@ const normaliseGenericLayout = (template, data, companyProfile, renderTarget) =>
     const company = normalizeDocumentCompanyProfile(companyProfile);
     const displayOptions = sanitizeTemplateDisplayOptions(template.displayOptions);
     const columnOptions = sanitizeTemplateColumns(template.columns, getColumnDefaults(template.category, false));
-    const columnModel = createColumnModel(columnOptions, false, template.category);
+    const columnModel = createColumnModel(columnOptions);
     const currency = resolveCurrency(company, data.totals || {}, {});
     const customer = data.customer || {};
     const documentSalesPerson = firstNonEmpty(data.meta?.salesPerson, data.meta?.salesperson, data.meta?.accountExecutive);
@@ -1245,9 +1242,9 @@ const normaliseGenericLayout = (template, data, companyProfile, renderTarget) =>
     const highlightValue = totals.balanceDue > 0 ? totals.balanceDue : totals.grandTotal;
     const referenceRows = [
         data.meta?.poNumber ? { label: 'P.O Number', value: data.meta.poNumber } : null,
-        data.meta?.accountExecutive ? { label: 'Account Executive', value: data.meta.accountExecutive } : null,
+        columnOptions.salesPerson && documentSalesPerson ? { label: 'Sales Person', value: documentSalesPerson } : null,
         data.meta?.reference ? { label: 'Reference', value: data.meta.reference } : null,
-        data.meta?.location ? { label: 'Location / Store', value: data.meta.location } : null
+        columnOptions.location && documentLocation ? { label: 'Location / Branch', value: documentLocation } : null
     ].filter(Boolean);
 
     return {
@@ -1308,7 +1305,14 @@ const buildDocumentHtml = (template, data, options = {}, renderTarget = 'print')
     const styles = renderTarget === 'email'
         ? `${buildCoreStyles()}${buildEmailStyles()}`
         : `${buildCoreStyles()}${buildPrintStyles(template.paperSize || 'A4', template.orientation || 'Portrait')}`;
-    const documentTitle = renderTarget === 'print' ? '' : `${layout.title} - ${layout.docNo}`;
+    
+    const documentTitle = generateDocFilename(
+        layout.title,
+        layout.docNo,
+        layout.party?.name,
+        resolveLayoutDate(layout),
+        layout.currency
+    );
 
     return `
         <!DOCTYPE html>
@@ -1329,10 +1333,10 @@ const buildDocumentHtml = (template, data, options = {}, renderTarget = 'print')
                     ${buildItemsTable(layout)}
                     ${buildSummarySection(layout)}
                     ${buildSignatureBlock(layout)}
+                    ${buildPrintDateStamp(layout, renderTarget)}
                 </main>
                 ${buildFooterBar(layout, renderTarget, options.billBullLogo)}
                 ${buildFooterAddon(layout)}
-                ${buildPrintDateStamp(layout, renderTarget)}
                 ${buildWatermark(layout.status)}
             </div>
         </body>

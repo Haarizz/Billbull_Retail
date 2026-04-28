@@ -59,6 +59,7 @@ import {
 } from '../../../utils/purchasePrintUtils';
 import ExportDropdown from '../../../components/common/ExportDropdown';
 import { exportToExcel, exportToPDF } from '../../../utils/exportUtils';
+import { generateReportFilename } from '../../../utils/filenameUtils';
 
 // ==========================================
 // 1. MOCK DATA & CONFIGURATION
@@ -2976,11 +2977,11 @@ const PurchaseInvoices = () => {
   }, [invoices, searchQuery, activeFilter, dateRange, vendorFilter]);
 
   const handleExportExcel = () => {
-    exportToExcel(filteredInvoices, INVOICE_COLUMNS, 'Purchase_Invoice_List');
+    exportToExcel(filteredInvoices, INVOICE_COLUMNS, generateReportFilename('Purchase_Invoice_List'));
   };
 
   const handleExportPdf = () => {
-    exportToPDF(filteredInvoices, INVOICE_COLUMNS, 'Purchase Invoices', 'Purchase_Invoice_List');
+    exportToPDF(filteredInvoices, INVOICE_COLUMNS, 'Purchase Invoices', generateReportFilename('Purchase_Invoice_List'));
   };
 
   const handleConfirmPayment = async (invoice, paymentMode, bankAccount, chequeDate) => {
