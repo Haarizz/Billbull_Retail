@@ -533,10 +533,11 @@ const ProformaInvoice = () => {
     const normalized = {
       id: item.id || fallbackId,
       code: item.code || item.itemCode || '',
+      name: item.name || item.itemName || item.productName || '',
       barcode: item.barcode || item.itemBarcode || '',
       image: item.primaryImage || item.image || item.thumbnailUrl || item.imageUrl || '',
-      desc: item.desc || item.description || item.name || '',
-      remarks: item.remarks || item.description || item.desc || item.name || '',
+      desc: item.desc || item.description || '',
+      remarks: item.remarks || item.description || item.desc || '',
       unit: resolvedUnit,
       qty: Number(item.qty ?? item.quantity) || 0,
       price: Number(item.price) || 0,
@@ -574,6 +575,7 @@ const ProformaInvoice = () => {
     const newItem = normalizeProformaItem({
       id: Date.now() + Math.random(),
       code: product.code,
+      name: product.name || '',
       barcode: product.barcode || '',
       image: product.primaryImage || product.image || product.thumbnailUrl || product.imageUrl || '',
       desc: product.description || product.name,
@@ -610,6 +612,7 @@ const ProformaInvoice = () => {
     const newItem = normalizeProformaItem({
       id: Date.now() + Math.random(),
       code: product.code,
+      name: product.name || '',
       barcode: product.barcode || '',
       image: product.primaryImage || product.image || product.thumbnailUrl || product.imageUrl || '',
       desc: product.description || product.name,

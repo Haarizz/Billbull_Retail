@@ -12,6 +12,7 @@ import StatementPrintPreview from '../../../components/StatementPrintPreview';
 import SearchableDropdown from '../../../components/SearchableDropdown';
 import ExportDropdown from '../../../components/common/ExportDropdown';
 import { exportToExcel, exportToPDF } from '../../../utils/exportUtils';
+import { generateSOAFilename } from '../../../utils/filenameUtils';
 
 // ==========================================
 // 1. MOCK DATA & CONFIGURATION
@@ -793,7 +794,20 @@ const VendorSoA = ({ vendors }) => {
   }, [selectedVendorName]);
 
   const handlePrint = () => {
-    window.print();
+    const originalTitle = document.title;
+    try {
+      const filename = generateSOAFilename(
+        selectedVendorDetails?.name || selectedVendorName,
+        selectedVendorDetails?.code || 'N/A',
+        startDate,
+        endDate,
+        currency
+      );
+      document.title = filename;
+      window.print();
+    } finally {
+      document.title = originalTitle;
+    }
   };
 
   const selectedVendorDetails = vendors.find(v => v.name === selectedVendorName);

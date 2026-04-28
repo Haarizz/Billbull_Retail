@@ -17,6 +17,7 @@ import {
     TrendingUp,
     Wallet
 } from 'lucide-react';
+import { generateReportFilename } from '../../utils/filenameUtils';
 import {
     Area,
     AreaChart,
@@ -431,7 +432,13 @@ const FinancialReports = () => {
     }, [dateRange]);
 
     const handlePrint = () => {
-        window.print();
+        const originalTitle = document.title;
+        try {
+            document.title = generateReportFilename(activeTab.charAt(0).toUpperCase() + activeTab.slice(1) + ' Report');
+            window.print();
+        } finally {
+            document.title = originalTitle;
+        }
     };
 
     const buildProfitLossRows = () => {
@@ -631,7 +638,7 @@ const FinancialReports = () => {
         const encodedUri = encodeURI(csvContent);
         const link = document.createElement('a');
         link.setAttribute('href', encodedUri);
-        link.setAttribute('download', `${activeTab}_report_${new Date().toISOString().split('T')[0]}.csv`);
+        link.setAttribute('download', `${generateReportFilename(activeTab.charAt(0).toUpperCase() + activeTab.slice(1) + ' Report')}.csv`);
         document.body.appendChild(link);
         link.click();
         document.body.removeChild(link);

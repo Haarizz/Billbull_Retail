@@ -202,6 +202,7 @@ const buildSalesPreviewData = (category, companyProfile = {}) => {
             validTillLabel: category === "Quotation" ? "Valid Until" : "Due Date",
             reference: "SO-SAMPLE-0001",
             location: "DXB-01",
+            salesPerson: "Demo User",
             poNumber: "PO-SAMPLE-001",
             accountExecutive: "Mr. Demo User",
             notes: "Thank you for your business.",

@@ -685,10 +685,11 @@ const DeliveryNote = () => {
         return {
             id: item.id || fallbackId,
             code: resolvedCode,
+            name: item.name || item.itemName || item.productName || '',
             barcode: item.barcode || item.itemBarcode || '',
             image: item.primaryImage || item.image || item.thumbnailUrl || item.imageUrl || '',
-            desc: item.desc || item.description || item.name || '',
-            remarks: item.remarks || item.description || item.desc || item.name || '',
+            desc: item.desc || item.description || '',
+            remarks: item.remarks || item.description || item.desc || '',
             unit: resolvedUnit,
             availableUnits: Array.isArray(item.availableUnits) && item.availableUnits.length > 0
                 ? item.availableUnits
@@ -1362,8 +1363,8 @@ const DeliveryNote = () => {
                     },
                     items: items.map(i => ({
                         code: i.code,
-                        name: i.desc || '', // Using desc as name for the template title
-                        desc: (i.remarks || '') + (i.boxes ? ` (${i.boxes} Boxes)` : ''), // Using remarks for the sub-description
+                        name: i.name || i.desc || '',
+                        desc: (i.remarks || i.desc || '') + (i.boxes ? ` (${i.boxes} Boxes)` : ''),
                         sku: i.sku || '',
                         localName: i.localName || '',
                         barcode: i.barcode || '',

@@ -27,6 +27,7 @@ import {
 } from '../../utils/countryCurrencyOptions';
 import ExportDropdown from '../../components/common/ExportDropdown';
 import { exportToExcel, exportToPDF } from '../../utils/exportUtils';
+import { generateSOAFilename } from '../../utils/filenameUtils';
 
 // ==========================================
 // 1. CONFIGURATION
@@ -1834,6 +1835,8 @@ const ReceiveMoneyView = () => {
 };
 
 const CustomerSOAView = ({ customers = [] }) => {
+    const { company } = useCompany();
+    const currency = company?.currency || 'AED';
     const defaultStartDate = `${new Date().getFullYear()}-01-01`;
     const defaultEndDate = new Date().toISOString().split('T')[0];
 
@@ -1870,7 +1873,20 @@ const CustomerSOAView = ({ customers = [] }) => {
     }, [selectedCustomerCode]);
 
     const handlePrint = () => {
-        window.print();
+        const originalTitle = document.title;
+        try {
+            const filename = generateSOAFilename(
+                selectedCustomerDetails?.name || 'Customer',
+                selectedCustomerDetails?.code || selectedCustomerCode || 'N/A',
+                startDate,
+                endDate,
+                currency
+            );
+            document.title = filename;
+            window.print();
+        } finally {
+            document.title = originalTitle;
+        }
     };
 
     const selectedCustomerDetails = useMemo(

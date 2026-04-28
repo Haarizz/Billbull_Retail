@@ -2,6 +2,7 @@ import {
     generateDocumentEmailHtml,
     generateDocumentPrintHtml
 } from './documentTemplateRenderer';
+import { generateReportFilename } from './filenameUtils';
 
 const escapeHtml = (value) =>
     String(value ?? '')
@@ -111,7 +112,7 @@ export const generateReportPrintHtml = (_template, reportTitle, columns, data, c
         <html lang="en">
         <head>
             <meta charset="UTF-8" />
-            <title>${escapeHtml(reportTitle)}</title>
+            <title>${escapeHtml(generateReportFilename(reportTitle))}</title>
             <style>${pageStyles}</style>
         </head>
         <body>
