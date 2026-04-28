@@ -61,7 +61,6 @@ import {
 } from '../../../api/warehouseApi';
 import { getProducts } from '../../../api/productsApi'; // Import getProducts
 import ProductSelector from '../../../components/ProductSelector';
-import FastEntryPanel from '../../../components/FastEntryPanel';
 import SearchableDropdown from '../../../components/SearchableDropdown';
 import VendorSelector from '../../../components/VendorSelector';
 import { getImageUrl } from '../../../utils/urlUtils';
@@ -604,7 +603,6 @@ const EditorView = ({ initialData, onSaveDraft, onSubmitQC, onPost, onPrint, grn
   const [lpoList, setLpoList] = useState([]);
   const [products, setProducts] = useState([]); // State for products
   const [isProductSelectionOpen, setIsProductSelectionOpen] = useState(false); // State for Product Selector
-  const [isFastEntryOpen, setIsFastEntryOpen] = useState(false);
 
   // Add state for expandable rows
   const [expandedRows, setExpandedRows] = useState({});
@@ -1627,12 +1625,6 @@ const EditorView = ({ initialData, onSaveDraft, onSubmitQC, onPost, onPrint, grn
                     >
                       <Plus className="h-3 w-3" /> Select from Products
                     </button>
-                    <button
-                      onClick={() => setIsFastEntryOpen(true)}
-                      className="px-3 py-1.5 bg-white border border-slate-200 rounded text-xs font-medium text-slate-600 hover:bg-slate-50 flex items-center gap-1"
-                    >
-                      <Zap className="h-3 w-3 fill-yellow-400 text-yellow-400" /> Fast Entry
-                    </button>
                     {/* Add Row Button Removed */}
                   </>
                 )}
@@ -1658,15 +1650,13 @@ const EditorView = ({ initialData, onSaveDraft, onSubmitQC, onPost, onPrint, grn
                     <th className="p-3 font-medium text-center text-emerald-600">Accepted</th>
                     <th className="p-3 font-medium text-center text-red-600">Rejected</th>
                     <th className="p-3 font-medium text-right">Unit Cost</th>
-                    <th className="p-3 font-medium text-center w-16">Disc %</th>
-                    <th className="p-3 font-medium text-right">Net Cost</th>
                     <th className="p-3 font-medium text-right">Line Total</th>
                     <th className="p-3 font-medium text-center">Actions</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-50">
                   {items.length === 0 ? (
-                    <tr><td colSpan="12" className="p-8 text-center text-slate-400">No items added. {grnType === "Against LPO" || grnType === "Against Direct Purchase" ? "Select a document to load items or use Select from Products." : "Click Select from Products to add items."}</td></tr>
+                    <tr><td colSpan="10" className="p-8 text-center text-slate-400">No items added. {grnType === "Against LPO" || grnType === "Against Direct Purchase" ? "Select a document to load items or use Select from Products." : "Click Select from Products to add items."}</td></tr>
                   ) : items.map((item, index) => (
                     <React.Fragment key={item.id}>
                       <tr className="hover:bg-slate-50 group">
@@ -1729,20 +1719,6 @@ const EditorView = ({ initialData, onSaveDraft, onSubmitQC, onPost, onPrint, grn
                           />
                         </td>
                         <td className="p-3 text-right text-slate-500">{item.unitCost.toFixed(2)}</td>
-                        <td className="p-3 text-center">
-                          <input
-                            type="number"
-                            value={item.disc ?? 0}
-                            disabled={isLocked}
-                            onChange={(e) => handleQtyChange(item.id, 'disc', e.target.value)}
-                            onWheel={e => e.target.blur()}
-                            onPaste={e => e.preventDefault()}
-                            className="w-14 text-center border border-slate-200 rounded py-1 outline-none focus:ring-1 focus:ring-emerald-500 font-medium text-slate-700 disabled:opacity-50 bg-white"
-                          />
-                        </td>
-                        <td className="p-3 text-right text-slate-700 font-medium">
-                          {item.netCost.toFixed(2)}
-                        </td>
                         <td className="p-3 text-right font-bold text-[#F5C742]">{item.total.toFixed(2)}</td>
                         <td className="p-3 text-center">
                           {!isLocked && (
@@ -1759,7 +1735,7 @@ const EditorView = ({ initialData, onSaveDraft, onSubmitQC, onPost, onPrint, grn
                       {/* Expanded Description Row */}
                       {expandedRows[item.id] && (
                         <tr className="bg-white">
-                          <td colSpan={13} className="px-0 pb-4 pt-1">
+                          <td colSpan={10} className="px-0 pb-4 pt-1">
                             <div className="ml-0 mr-4 p-3 rounded-r-[10px] border-l-[3px] border-[#FFD700] bg-[#FFFDE7]/60 shadow-[inset_0_1px_4px_rgba(0,0,0,0.02)]">
                               <div className="flex justify-between items-center mb-1.5">
                                 <div className="flex items-center gap-1.5 text-[9px] font-bold text-[#B8860B] tracking-widest uppercase">
@@ -1986,13 +1962,9 @@ const EditorView = ({ initialData, onSaveDraft, onSubmitQC, onPost, onPrint, grn
         isOpen={isProductSelectionOpen}
         onClose={() => setIsProductSelectionOpen(false)}
         onSelect={handleAddSingleProduct}
+        onInlineAdd={handleFastEntryAdd}
         actionLabel="Add to GRN"
-      />
-      {/* Fast Entry Panel */}
-      <FastEntryPanel
-        isOpen={!isLocked && isFastEntryOpen}
-        onClose={() => setIsFastEntryOpen(false)}
-        onAddItem={handleFastEntryAdd}
+        mode="purchase"
       />
 
       {/* Compare LPO Modal */}

@@ -81,7 +81,6 @@ const SALES_INVOICE_COLUMNS = [
 
 // ✅ PRODUCT SELECTOR
 import ProductSelector from '../../components/ProductSelector';
-import FastEntryPanel from '../../components/FastEntryPanel';
 
 // ✅ CUSTOMER SELECTOR
 import CustomerSelector from '../../components/CustomerSelector';
@@ -218,6 +217,23 @@ const SalesInvoice = () => {
     const [salesperson, setSalesperson] = useState('');
     const [employeesList, setEmployeesList] = useState([]);
     const [branch, setBranch] = useState(defaultBranch?.name || '');
+    const createBlankInvoiceItem = () => ({
+        id: Date.now() + Math.random(),
+        code: '',
+        image: '',
+        name: '',
+        unit: 'PCS',
+        qty: 0,
+        price: 0,
+        disc: 0,
+        tax: 5,
+        taxAmt: 0,
+        gross: 0,
+        net: 0,
+        cost: 0,
+        gp: 0,
+        warehouseId: defaultBranch?.defaultWarehouseId || (warehousesList.length > 0 ? warehousesList[0].id : '')
+    });
 
     // Items
     const [items, setItems] = useState([
@@ -226,7 +242,6 @@ const SalesInvoice = () => {
 
     // ✅ PRODUCT SELECTOR STATE
     const [isProductSelectorOpen, setIsProductSelectorOpen] = useState(false);
-    const [isFastEntryOpen, setIsFastEntryOpen] = useState(false);
     const [selectedAddonItem, setSelectedAddonItem] = useState(null); // BB-026
 
     // Payment Calculation State
@@ -1217,7 +1232,8 @@ const SalesInvoice = () => {
 
     const handleDeleteItem = (id) => {
         if (isReadOnlyInvoice) return;
-        if (items.length > 1) setItems(items.filter(i => i.id !== id));
+        const nextItems = items.filter(i => i.id !== id);
+        setItems(nextItems.length > 0 ? nextItems : [createBlankInvoiceItem()]);
     };
 
 
@@ -1605,16 +1621,10 @@ const SalesInvoice = () => {
                 isOpen={isProductSelectorOpen}
                 onClose={() => setIsProductSelectorOpen(false)}
                 onSelect={handleAddSingleProduct}
+                onInlineAdd={handleFastEntryAdd}
                 title="Select Items from Products / Services"
                 actionLabel="Add to Invoice"
-            />
-
-            <FastEntryPanel
-                isOpen={!isReadOnlyInvoice && isFastEntryOpen}
-                onClose={() => setIsFastEntryOpen(false)}
-                onAddItem={handleFastEntryAdd}
                 mode="sales"
-                currency="AED"
             />
 
             {/* ✅ STOCK AVAILABILITY MODAL */}
@@ -2189,12 +2199,6 @@ const SalesInvoice = () => {
                                                 >
                                                     <Plus size={14} /> Select from Catalog
                                                 </button>
-                                                <button
-                                                    onClick={() => setIsFastEntryOpen(true)}
-                                                    className="flex items-center gap-1 px-2.5 py-1 bg-[#1a2e1a] text-white text-[11px] font-semibold rounded hover:bg-[#243d24]"
-                                                >
-                                                    <Zap size={12} className="fill-yellow-400 text-yellow-400" /> Fast Entry
-                                                </button>
                                                 </>
                                             )}
                                         </div>
@@ -2219,8 +2223,6 @@ const SalesInvoice = () => {
                                                         <th className="px-3 py-2 w-32 text-left">Warehouse</th>
                                                     )}
                                                     <th className="px-3 py-2 w-20 text-right">Price</th>
-                                                    <th className="px-3 py-2 w-16 text-right">Tax rate</th>
-                                                    <th className="px-3 py-2 w-20 text-right">Tax amount</th>
                                                     <th className="px-3 py-2 w-24 text-right">Line total</th>
                                                     <th className="px-3 py-2 w-16 text-center">Remarks</th>
                                                 </tr>
@@ -2352,27 +2354,6 @@ const SalesInvoice = () => {
 
                                                             </td>
 
-                                                            {/* Tax % */}
-                                                            <td className="px-3 py-2 text-right">
-
-                                                                <input
-                                                                    disabled={isGeneratedFromDN || isReadOnlyInvoice}
-                                                                    type="number"
-                                                                    className={`w-full text-right bg-transparent border-b border-transparent hover:border-slate-200 focus:border-yellow-400/50 outline-none font-semibold text-xs transition-colors py-1 ${(isGeneratedFromDN || isReadOnlyInvoice) ? 'text-slate-400 cursor-not-allowed' : 'text-slate-700'}`}
-                                                                    value={item.tax === 0 ? '' : item.tax}
-                                                                    onChange={(e) => handleItemChange(item.id, 'tax', e.target.value)}
-                                                                    placeholder="5"
-                                                                />
-
-                                                            </td>
-
-                                                            {/* Tax Amt */}
-                                                            <td className="px-3 py-2 text-right text-slate-500">
-
-                                                                {((item.taxAmt) || 0).toFixed(2)}
-
-                                                            </td>
-
                                                             {/* Line Total */}
                                                             <td className="px-3 py-2 text-right">
 
@@ -2398,7 +2379,7 @@ const SalesInvoice = () => {
                                                         {expandedRows[item.id] && (
                                                             <tr className="bg-white">
                                                                 <td></td>
-                                                                <td colSpan={salesType === 'DIRECT_SALE' ? 9 : 8} className="px-0 pb-4 pt-1">
+                                                                <td colSpan={salesType === 'DIRECT_SALE' ? 7 : 6} className="px-0 pb-4 pt-1">
                                                                     <div className="ml-[60px] mr-4 p-3 rounded-r-[10px] border-l-[3px] border-[#FFD700] bg-[#FFFDE7]/60 shadow-[inset_0_1px_4px_rgba(0,0,0,0.02)]">
                                                                         <div className="flex justify-between items-center mb-1.5">
                                                                             <div className="flex items-center gap-1.5 text-[9px] font-bold text-[#B8860B] tracking-widest uppercase">

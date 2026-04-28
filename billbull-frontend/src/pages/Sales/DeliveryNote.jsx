@@ -29,8 +29,7 @@ import {
     History,
     Eye,
     TrendingUp,
-    ShoppingCart,
-    Zap
+    ShoppingCart
 } from 'lucide-react';
 
 // ==========================================
@@ -81,7 +80,6 @@ import {
 
 // âœ… PRODUCT SELECTOR
 import ProductSelector from '../../components/ProductSelector';
-import FastEntryPanel from '../../components/FastEntryPanel';
 
 // âœ… CUSTOMER SELECTOR
 import CustomerSelector from '../../components/CustomerSelector';
@@ -328,7 +326,6 @@ const DeliveryNote = () => {
 
     // âœ… PRODUCT SELECTOR STATE
     const [isProductSelectorOpen, setIsProductSelectorOpen] = useState(false);
-    const [isFastEntryOpen, setIsFastEntryOpen] = useState(false);
 
     // --- SIDEBAR COMPONENTS ---
     const StockSidebarPanel = ({ stock, isLoading, itemCode }) => {
@@ -1476,8 +1473,10 @@ const DeliveryNote = () => {
                 isOpen={isProductSelectorOpen}
                 onClose={() => setIsProductSelectorOpen(false)}
                 onSelect={handleAddSingleProduct}
+                onInlineAdd={handleFastEntryAdd}
                 title="Select Items from Products / Services"
                 actionLabel="Add to Delivery Note"
+                mode="sales"
             />
 
             {/* âœ… STOCK AVAILABILITY MODAL */}
@@ -2042,12 +2041,6 @@ const DeliveryNote = () => {
                                                             className="flex items-center gap-1 px-3 py-1.5 bg-yellow-400 text-slate-900 text-xs font-medium rounded hover:bg-yellow-500"
                                                         >
                                                             <Plus size={14} /> Select from Products
-                                                        </button>
-                                                        <button
-                                                            onClick={() => setIsFastEntryOpen(true)}
-                                                            className="flex items-center gap-1 px-3 py-1.5 bg-white border border-slate-200 text-slate-700 text-xs font-medium rounded hover:bg-slate-50 shadow-sm"
-                                                        >
-                                                            <Zap size={13} className="fill-yellow-400 text-yellow-400" /> Fast Entry
                                                         </button>
                                                     </div>
                                                 )}
@@ -2928,12 +2921,6 @@ const DeliveryNote = () => {
 
         </div>
 
-      {/* FAST ENTRY PANEL */}
-      <FastEntryPanel
-        isOpen={!isLockedForEdit && isFastEntryOpen}
-        onClose={() => setIsFastEntryOpen(false)}
-        onAddItem={handleFastEntryAdd}
-      />
         </>
     );
 };

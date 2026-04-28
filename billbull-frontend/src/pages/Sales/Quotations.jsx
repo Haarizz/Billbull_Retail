@@ -33,8 +33,7 @@ import {
     ChevronRight,
     ArrowLeft,
     SlidersHorizontal,
-    MoreVertical,
-    Zap
+    MoreVertical
 } from 'lucide-react';
 
 // ✅ API IMPORTS
@@ -62,7 +61,6 @@ import { ItemDescriptionCell, ItemDescriptionHeader } from '../../components/Ite
 
 // ✅ PRODUCT SELECTOR — self-fetching, server-side search
 import ProductSelector from '../../components/ProductSelector';
-import FastEntryPanel from '../../components/FastEntryPanel';
 
 // ✅ CUSTOMER SELECTOR — search modal + new customer
 import CustomerSelector from '../../components/CustomerSelector';
@@ -315,7 +313,6 @@ const Quotations = () => {
     // --- PRODUCT SELECTION STATES ---
     const [isProductSelectionOpen, setIsProductSelectionOpen] = useState(false);
     const [selectedProductIds, setSelectedProductIds] = useState([]);
-    const [isFastEntryOpen, setIsFastEntryOpen] = useState(false);
 
     // --- DROPDOWN STATES ---
     const [currency, setCurrency] = useState('AED');
@@ -428,6 +425,24 @@ const Quotations = () => {
     const [items, setItems] = useState([
         { id: Date.now(), code: '', image: '', desc: '', unit: 'PCS', qty: 0, price: 0, foc: 0, focUnit: 'PCS', availableUnits: ['PCS'], disc: 0, tax: 5, taxAmt: 0.00, total: 0.00, remarks: '', isProductSelected: false }
     ]);
+    const createBlankQuotationItem = () => ({
+        id: Date.now() + Math.random(),
+        code: '',
+        image: '',
+        desc: '',
+        unit: 'PCS',
+        qty: 0,
+        price: 0,
+        foc: 0,
+        focUnit: 'PCS',
+        availableUnits: ['PCS'],
+        disc: 0,
+        tax: 5,
+        taxAmt: 0.00,
+        total: 0.00,
+        remarks: '',
+        isProductSelected: false
+    });
 
     // ✅ GLOBAL SHORTCUTS
     useShortcuts({
@@ -962,7 +977,9 @@ const Quotations = () => {
 
     const handleDeleteItem = (id) => {
         if (isViewMode) return;
-        setItems(items.filter(item => item.id !== id));
+        const nextItems = items.filter(item => item.id !== id);
+        setItems(nextItems.length > 0 ? nextItems : [createBlankQuotationItem()]);
+        if (focusedRowId === id) setFocusedRowId(null);
     };
 
     // ✅ UPDATED CALCULATIONS
@@ -2420,12 +2437,6 @@ const Quotations = () => {
                                             >
                                                 <Plus size={14} /> Select from Products
                                             </button>
-                                            <button
-                                                onClick={() => setIsFastEntryOpen(true)}
-                                                className="flex items-center gap-1 px-3 py-1.5 bg-[#1a2e1a] text-white text-xs font-medium rounded hover:bg-[#243d24]"
-                                            >
-                                                <Zap size={13} className="fill-yellow-400 text-yellow-400" /> Fast Entry
-                                            </button>
                                             </div>
                                         )}
                                     </div>
@@ -3058,16 +3069,10 @@ const Quotations = () => {
                     isOpen={!isViewMode && isProductSelectionOpen}
                     onClose={() => setIsProductSelectionOpen(false)}
                     onSelect={handleAddSingleProduct}
+                    onInlineAdd={handleFastEntryAdd}
                     title="Select Items from Products / Services"
                     actionLabel="Add to Quotation"
-                />
-
-                <FastEntryPanel
-                    isOpen={!isViewMode && isFastEntryOpen}
-                    onClose={() => setIsFastEntryOpen(false)}
-                    onAddItem={handleFastEntryAdd}
                     mode="sales"
-                    currency={currency}
                 />
 
                 {/* --- PRINT TEMPLATE PICKER MODAL --- */}

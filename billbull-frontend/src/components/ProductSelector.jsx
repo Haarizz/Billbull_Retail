@@ -299,8 +299,10 @@ const ProductSelector = ({
     isOpen,
     onClose,
     onSelect,
+    onInlineAdd = null,
     title = 'Select Items from Products / Services',
     actionLabel = 'Add to Quotation',
+    mode = 'sales',
     warehouseId = null,
     customFetchFn = null,  // (search, page, pageSize, signal) => Promise<{ content, totalPages, totalElements }>
 }) => {
@@ -314,11 +316,21 @@ const ProductSelector = ({
     const [focusedIdx, setFocusedIdx] = useState(-1);   // keyboard nav index
     const [recentProducts, setRecentProducts] = useState([]);
     const [showQuickAdd, setShowQuickAdd] = useState(false);
+    const [selectedProduct, setSelectedProduct] = useState(null);
+    const [entryQty, setEntryQty] = useState('1');
+    const [entryPrice, setEntryPrice] = useState('');
+    const [entryDisc, setEntryDisc] = useState('0');
 
     const debounceRef = useRef(null);
     const abortRef = useRef(null);   // AbortController for current in-flight request
     const searchInputRef = useRef(null);
     const listRef = useRef(null);
+    const qtyInputRef = useRef(null);
+    const priceInputRef = useRef(null);
+    const discInputRef = useRef(null);
+
+    const inlineEntryEnabled = typeof onInlineAdd === 'function';
+    const priceLabel = mode === 'purchase' ? 'Cost' : 'Price';
 
     // ── Fetch (with AbortController) ─────────────────────────────────────────
     const fetchProducts = useCallback(async (query, pageNum, whId) => {
@@ -335,7 +347,7 @@ const ProductSelector = ({
             setTotalFound(data.totalElements || 0);
             setTotalPages(data.totalPages || 0);
             setPage(data.page ?? pageNum);
-            setFocusedIdx(-1);
+            setFocusedIdx((data.content || []).length > 0 ? 0 : -1);
         } catch (err) {
             if (err.name !== 'AbortError' && err.name !== 'CanceledError') {
                 console.error('ProductSelector fetch error:', err);
@@ -384,6 +396,103 @@ const ProductSelector = ({
         }
     }, []);
 
+    const syncRecentProducts = useCallback((product) => {
+        const normalizedProduct = normalizeRecentProduct(product);
+        setRecentProducts(prev => [
+            normalizedProduct,
+            ...prev.filter(item => item.id !== normalizedProduct.id)
+        ].slice(0, MAX_RECENT));
+    }, []);
+
+    const clearInlineEntry = useCallback((nextSearch = '') => {
+        setSelectedProduct(null);
+        setEntryQty('1');
+        setEntryPrice('');
+        setEntryDisc('0');
+        setSearchQuery(nextSearch);
+        setTimeout(() => searchInputRef.current?.focus(), 60);
+    }, []);
+
+    const getInlineDefaults = useCallback((product) => {
+        const normalizedProduct = normalizeRecentProduct(product);
+        const rawDefaultPrice = mode === 'purchase'
+            ? normalizedProduct.cost
+            : normalizedProduct.retailPrice ?? normalizedProduct.sellingPrice;
+        const parsedDefaultPrice = parseFloat(rawDefaultPrice);
+        const parsedDefaultDiscount = parseFloat(normalizedProduct.maxDiscount ?? 0);
+
+        return {
+            normalizedProduct,
+            qty: 1,
+            price: Number.isFinite(parsedDefaultPrice) ? parsedDefaultPrice : 0,
+            disc: Number.isFinite(parsedDefaultDiscount) ? parsedDefaultDiscount : 0,
+        };
+    }, [mode]);
+
+    const primeInlineEntry = useCallback((product) => {
+        const defaults = getInlineDefaults(product);
+
+        setSelectedProduct(defaults.normalizedProduct);
+        setEntryQty(String(defaults.qty));
+        setEntryPrice(String(defaults.price));
+        setEntryDisc(String(defaults.disc));
+        setTimeout(() => qtyInputRef.current?.focus(), 60);
+    }, [getInlineDefaults]);
+
+    const handleImmediateSelect = useCallback((product) => {
+        saveRecent(product);
+        syncRecentProducts(product);
+        onSelect(product);
+    }, [onSelect, syncRecentProducts]);
+
+    const handleInlineAdd = useCallback(() => {
+        if (!selectedProduct || !inlineEntryEnabled) return;
+
+        const parsedQty = parseFloat(entryQty) || 1;
+        const parsedPrice = parseFloat(entryPrice) || 0;
+        const parsedDisc = parseFloat(entryDisc) || 0;
+
+        onInlineAdd(selectedProduct, parsedQty, parsedPrice, parsedDisc);
+        saveRecent(selectedProduct);
+        syncRecentProducts(selectedProduct);
+        clearInlineEntry('');
+        fetchProducts('', 0, warehouseId);
+    }, [
+        clearInlineEntry,
+        entryDisc,
+        entryPrice,
+        entryQty,
+        fetchProducts,
+        inlineEntryEnabled,
+        onInlineAdd,
+        selectedProduct,
+        syncRecentProducts,
+        warehouseId,
+    ]);
+
+    const handleInlineButtonAdd = useCallback((product) => {
+        if (!inlineEntryEnabled) {
+            handleImmediateSelect(product);
+            return;
+        }
+
+        const defaults = getInlineDefaults(product);
+        onInlineAdd(defaults.normalizedProduct, defaults.qty, defaults.price, defaults.disc);
+        saveRecent(defaults.normalizedProduct);
+        syncRecentProducts(defaults.normalizedProduct);
+        clearInlineEntry('');
+        fetchProducts('', 0, warehouseId);
+    }, [
+        clearInlineEntry,
+        fetchProducts,
+        getInlineDefaults,
+        handleImmediateSelect,
+        inlineEntryEnabled,
+        onInlineAdd,
+        syncRecentProducts,
+        warehouseId,
+    ]);
+
     // Reset + load when modal opens; clean up on close
     useEffect(() => {
         let active = true;
@@ -395,6 +504,10 @@ const ProductSelector = ({
             setProducts([]);
             setFocusedIdx(-1);
             setRecentProducts([]);
+            setSelectedProduct(null);
+            setEntryQty('1');
+            setEntryPrice('');
+            setEntryDisc('0');
             loadRecentProducts(() => active);
             fetchProducts('', 0, warehouseId);
             setTimeout(() => searchInputRef.current?.focus(), 50);
@@ -406,6 +519,10 @@ const ProductSelector = ({
             setTotalPages(0);
             setInitialLoad(true);
             setRecentProducts([]);
+            setSelectedProduct(null);
+            setEntryQty('1');
+            setEntryPrice('');
+            setEntryDisc('0');
         }
 
         return () => {
@@ -427,6 +544,14 @@ const ProductSelector = ({
     // ── Keyboard navigation ──────────────────────────────────────────────────
     const handleKeyDown = (e) => {
         if (!isOpen) return;
+
+        if (e.key === 'Escape') {
+            e.preventDefault();
+            onClose();
+            return;
+        }
+
+        if (e.target !== searchInputRef.current) return;
 
         switch (e.key) {
             case 'ArrowDown':
@@ -452,10 +577,6 @@ const ProductSelector = ({
                     handleSelect(products[focusedIdx]);
                 }
                 break;
-            case 'Escape':
-                e.preventDefault();
-                onClose();
-                break;
             default:
                 break;
         }
@@ -467,17 +588,14 @@ const ProductSelector = ({
         fetchProducts(searchQuery, newPage, warehouseId);
     };
 
-    const handleSelect = (product) => {
-        saveRecent(product);
-        setRecentProducts(prev => {
-            const normalizedProduct = normalizeRecentProduct(product);
-            return [
-                normalizedProduct,
-                ...prev.filter(item => item.id !== normalizedProduct.id)
-            ].slice(0, MAX_RECENT);
-        });
-        onSelect(product);
-    };
+    const handleSelect = useCallback((product) => {
+        if (inlineEntryEnabled) {
+            primeInlineEntry(product);
+            return;
+        }
+
+        handleImmediateSelect(product);
+    }, [handleImmediateSelect, inlineEntryEnabled, primeInlineEntry]);
 
     if (!isOpen) return null;
 
@@ -498,7 +616,15 @@ const ProductSelector = ({
                         <div>
                             <h2 className="text-[17px] font-bold text-slate-800 mb-1">{title}</h2>
                             <p className="text-[12px] text-slate-500">
-                                Search below or use <kbd className="px-1 py-0.5 border rounded bg-slate-50 text-[10px] font-sans">↑</kbd> <kbd className="px-1 py-0.5 border rounded bg-slate-50 text-[10px] font-sans">↓</kbd> <kbd className="px-1 py-0.5 border rounded bg-slate-50 text-[10px] font-sans">Enter</kbd> <kbd className="px-1 py-0.5 border rounded bg-slate-50 text-[10px] font-sans">Esc</kbd> to navigate.
+                                {inlineEntryEnabled ? (
+                                    <>
+                                        Type a product, press <kbd className="px-1 py-0.5 border rounded bg-slate-50 text-[10px] font-sans">Enter</kbd>, use <kbd className="px-1 py-0.5 border rounded bg-slate-50 text-[10px] font-sans">Tab</kbd> to move through qty and {priceLabel.toLowerCase()}, then <kbd className="px-1 py-0.5 border rounded bg-slate-50 text-[10px] font-sans">Tab</kbd> again to add the item.
+                                    </>
+                                ) : (
+                                    <>
+                                        Search below or use <kbd className="px-1 py-0.5 border rounded bg-slate-50 text-[10px] font-sans">↑</kbd> <kbd className="px-1 py-0.5 border rounded bg-slate-50 text-[10px] font-sans">↓</kbd> <kbd className="px-1 py-0.5 border rounded bg-slate-50 text-[10px] font-sans">Enter</kbd> <kbd className="px-1 py-0.5 border rounded bg-slate-50 text-[10px] font-sans">Esc</kbd> to navigate.
+                                    </>
+                                )}
                             </p>
                         </div>
                         <button onClick={onClose} className="text-slate-400 hover:text-slate-600 p-1">
@@ -530,6 +656,91 @@ const ProductSelector = ({
                             <Plus size={16} /> New Product
                         </button>
                     </div>
+
+                    {inlineEntryEnabled && selectedProduct && (
+                        <div className="rounded-lg border border-amber-200 bg-amber-50/70 p-3 space-y-3">
+                            <div className="flex items-start justify-between gap-3">
+                                <div className="min-w-0">
+                                    <div className="text-[12px] font-bold text-slate-800 truncate">
+                                        {selectedProduct.name}
+                                    </div>
+                                    <div className="text-[11px] text-slate-500 truncate">
+                                        {selectedProduct.code || 'No code'} {selectedProduct.unitName ? `· ${selectedProduct.unitName}` : ''}
+                                    </div>
+                                </div>
+                                <button
+                                    type="button"
+                                    onClick={() => clearInlineEntry(searchQuery)}
+                                    className="shrink-0 text-slate-400 hover:text-slate-600 p-1"
+                                    title="Clear selected product"
+                                >
+                                    <X size={14} />
+                                </button>
+                            </div>
+
+                            <div className="grid grid-cols-3 gap-3">
+                                <label className="space-y-1">
+                                    <span className="block text-[11px] font-semibold text-slate-500">Qty</span>
+                                    <input
+                                        ref={qtyInputRef}
+                                        type="number"
+                                        min="0.001"
+                                        step="1"
+                                        value={entryQty}
+                                        onChange={(e) => setEntryQty(e.target.value)}
+                                        onKeyDown={(e) => {
+                                            if (e.key === 'Enter' || e.key === 'Tab') {
+                                                e.preventDefault();
+                                                priceInputRef.current?.focus();
+                                                priceInputRef.current?.select?.();
+                                            }
+                                        }}
+                                        className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-50"
+                                    />
+                                </label>
+
+                                <label className="space-y-1">
+                                    <span className="block text-[11px] font-semibold text-slate-500">{priceLabel}</span>
+                                    <input
+                                        ref={priceInputRef}
+                                        type="number"
+                                        min="0"
+                                        step="0.01"
+                                        value={entryPrice}
+                                        onChange={(e) => setEntryPrice(e.target.value)}
+                                        onKeyDown={(e) => {
+                                            if (e.key === 'Enter' || e.key === 'Tab') {
+                                                e.preventDefault();
+                                                discInputRef.current?.focus();
+                                                discInputRef.current?.select?.();
+                                            }
+                                        }}
+                                        className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-50"
+                                    />
+                                </label>
+
+                                <label className="space-y-1">
+                                    <span className="block text-[11px] font-semibold text-slate-500">Disc %</span>
+                                    <input
+                                        ref={discInputRef}
+                                        type="number"
+                                        min="0"
+                                        max="100"
+                                        step="0.01"
+                                        value={entryDisc}
+                                        onChange={(e) => setEntryDisc(e.target.value)}
+                                        onKeyDown={(e) => {
+                                            if (e.key === 'Enter' || e.key === 'Tab') {
+                                                e.preventDefault();
+                                                handleInlineAdd();
+                                            }
+                                        }}
+                                        className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-50"
+                                    />
+                                </label>
+                            </div>
+                        </div>
+                    )}
                 </div>
 
                 {/* ── Quick Add Modal Overlay ── */}
@@ -673,10 +884,10 @@ const ProductSelector = ({
                                             {gp != null && <div className="text-[9px] text-slate-400">GP: {gp}</div>}
                                         </div>
                                         <button
-                                            onClick={(e) => { e.stopPropagation(); handleSelect(product); }}
+                                            onClick={(e) => { e.stopPropagation(); handleInlineButtonAdd(product); }}
                                             className="bg-[#FFD700] text-slate-800 px-4 py-1.5 rounded-md text-[11px] font-bold flex items-center gap-1.5 hover:bg-[#FACC15] transition-colors shadow-sm"
                                         >
-                                            <Plus size={12} strokeWidth={2.5} /> {actionLabel}
+                                            <Plus size={12} strokeWidth={2.5} /> {inlineEntryEnabled ? 'Select' : actionLabel}
                                         </button>
                                     </div>
                                 </div>

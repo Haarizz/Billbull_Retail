@@ -31,8 +31,7 @@ import {
   X,
   Info,
   Paperclip,
-  ShoppingCart as ShoppingCartIcon,
-  Zap
+  ShoppingCart as ShoppingCartIcon
 } from 'lucide-react';
 
 import { useMemo } from 'react';
@@ -79,7 +78,6 @@ const PROFORMA_COLUMNS = [
 
 // âœ… PRODUCT SELECTOR
 import ProductSelector from '../../components/ProductSelector';
-import FastEntryPanel from '../../components/FastEntryPanel';
 
 // âœ… CUSTOMER SELECTOR
 import CustomerSelector from '../../components/CustomerSelector';
@@ -141,7 +139,6 @@ const ProformaInvoice = () => {
 
   // âœ… PRODUCT SELECTOR STATE
   const [isProductSelectorOpen, setIsProductSelectorOpen] = useState(false);
-  const [isFastEntryOpen, setIsFastEntryOpen] = useState(false);
 
   const createBlankProformaItem = () => ({
     id: Date.now() + Math.random(),
@@ -645,7 +642,9 @@ const ProformaInvoice = () => {
 
   const handleDeleteItem = (id) => {
     if (isReadOnly) return;
-    if (items.length > 1) setItems(items.filter(i => i.id !== id));
+    const nextItems = items.filter(i => i.id !== id);
+    setItems(nextItems.length > 0 ? nextItems : [createBlankProformaItem()]);
+    if (focusedItem && focusedItem.id === id) setFocusedItem(null);
   };
 
   const handleItemChange = (id, field, value) => {
@@ -1093,8 +1092,10 @@ const ProformaInvoice = () => {
           isOpen={isProductSelectorOpen}
           onClose={() => setIsProductSelectorOpen(false)}
           onSelect={handleAddSingleProduct}
+          onInlineAdd={handleFastEntryAdd}
           title="Select Items"
           actionLabel="Add to PI"
+          mode="sales"
         />
         <StockAvailabilityModal
           isOpen={isItemStockModalOpen}
@@ -1491,12 +1492,6 @@ const ProformaInvoice = () => {
                           className="flex items-center gap-1 px-3 py-1.5 bg-yellow-400 text-slate-900 text-xs font-medium rounded hover:bg-yellow-500"
                         >
                           <Plus size={14} /> Select from Products
-                        </button>
-                        <button
-                          onClick={() => setIsFastEntryOpen(true)}
-                          className="flex items-center gap-1 px-3 py-1.5 bg-white border border-slate-200 text-slate-700 text-xs font-medium rounded hover:bg-slate-50 shadow-sm"
-                        >
-                          <Zap size={13} className="fill-yellow-400 text-yellow-400" /> Fast Entry
                         </button>
                       </div>
                     )}
@@ -2000,12 +1995,6 @@ const ProformaInvoice = () => {
         </div>
       )}
 
-      {/* FAST ENTRY PANEL */}
-      <FastEntryPanel
-        isOpen={!isReadOnly && isFastEntryOpen}
-        onClose={() => setIsFastEntryOpen(false)}
-        onAddItem={handleFastEntryAdd}
-      />
     </div >
   );
 };

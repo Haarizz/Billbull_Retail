@@ -25,8 +25,7 @@ import {
   Trash2,
   Paperclip,
   Save,
-  ChevronRight,
-  Zap
+  ChevronRight
 } from 'lucide-react';
 
 // ✅ API IMPORTS
@@ -50,7 +49,6 @@ import { useCompany } from '../../context/CompanyContext';
 
 // ✅ PRODUCT SELECTOR
 import ProductSelector from '../../components/ProductSelector';
-import FastEntryPanel from '../../components/FastEntryPanel';
 
 // ✅ CUSTOMER SELECTOR
 import CustomerSelector from '../../components/CustomerSelector';
@@ -222,7 +220,6 @@ const SalesOrders = () => {
 
   // ✅ PRODUCT SELECTOR STATE
   const [isProductSelectorOpen, setIsProductSelectorOpen] = useState(false);
-  const [isFastEntryOpen, setIsFastEntryOpen] = useState(false);
 
   // Items
   const [items, setItems] = useState([createBlankOrderItem()]);
@@ -1087,11 +1084,10 @@ const SalesOrders = () => {
 
   const handleDeleteItem = (id) => {
     if (isLocked) return;
-    if (items.length > 1) {
-      setItems(items.filter(i => i.id !== id));
-      if (focusedItem && focusedItem.id === id) {
-        setFocusedItem(null);
-      }
+    const nextItems = items.filter(i => i.id !== id);
+    setItems(nextItems.length > 0 ? nextItems : [createBlankOrderItem()]);
+    if (focusedItem && focusedItem.id === id) {
+      setFocusedItem(null);
     }
   };
 
@@ -1130,16 +1126,10 @@ const SalesOrders = () => {
         isOpen={isProductSelectorOpen}
         onClose={() => setIsProductSelectorOpen(false)}
         onSelect={handleAddSingleProduct}
+        onInlineAdd={handleFastEntryAdd}
         title="Select Items from Products / Services"
         actionLabel="Add to Order"
-      />
-
-      <FastEntryPanel
-        isOpen={!isLocked && isFastEntryOpen}
-        onClose={() => setIsFastEntryOpen(false)}
-        onAddItem={handleFastEntryAdd}
         mode="sales"
-        currency="AED"
       />
 
       {/* ✅ STOCK AVAILABILITY MODAL */}
@@ -1470,12 +1460,6 @@ const SalesOrders = () => {
                       className="flex items-center gap-1 px-3 py-1.5 bg-yellow-400 text-slate-900 text-xs font-medium rounded hover:bg-yellow-500"
                     >
                       <Plus size={14} /> Select from Products
-                    </button>
-                    <button
-                      onClick={() => setIsFastEntryOpen(true)}
-                      className="flex items-center gap-1 px-3 py-1.5 bg-[#1a2e1a] text-white text-xs font-medium rounded hover:bg-[#243d24]"
-                    >
-                      <Zap size={13} className="fill-yellow-400 text-yellow-400" /> Fast Entry
                     </button>
                   </div>
                 )}
