@@ -116,6 +116,7 @@ export const getPurchaseDefaultColumns = (category, overrides = {}) => {
             ...DEFAULT_TEMPLATE_COLUMNS,
             qty: !isVoucher,
             unitPrice: !isVoucher,
+            taxableAmount: !isVoucher,
             tax: category === "Purchase Invoice",
             ...overrides
         },
@@ -123,6 +124,7 @@ export const getPurchaseDefaultColumns = (category, overrides = {}) => {
             ...DEFAULT_TEMPLATE_COLUMNS,
             qty: !isVoucher,
             unitPrice: !isVoucher,
+            taxableAmount: !isVoucher,
             tax: category === "Purchase Invoice"
         }
     );

@@ -329,6 +329,7 @@ const SalesReturn = () => {
             items: (ret.items || []).map(item => ({
                name: item.itemName || item.itemCode || '',
                description: { title: item.itemName || item.itemCode || '', details: item.itemCode ? [`Code: ${item.itemCode}`] : [] },
+               code: item.itemCode || '',
                unit: item.unit || 'PCS',
                qty: Number(item.returnQty),
                price: Number(item.price),
@@ -341,7 +342,7 @@ const SalesReturn = () => {
                subTotal,
                tax: taxAmt,
                grandTotal,
-               currency: 'AED',
+               currency: company?.currencySymbol || company?.currency || 'AED',
                billDiscount: 0,
                billDiscountAmount: 0,
             },

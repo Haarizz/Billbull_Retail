@@ -1530,6 +1530,8 @@ const Quotations = () => {
                         sku: i.sku || i.productSku || '',
                         localName: i.localName || i.productLocalName || '',
                         barcode: i.barcode || '',
+                        salesPerson: '',
+                        location: quotationBranch?.location || '',
                         unit: i.unit,
                         qty: Number(i.qty),
                         price: Number(i.price),
@@ -1543,7 +1545,7 @@ const Quotations = () => {
                         subTotal,
                         tax: totalTax,
                         grandTotal,
-                        currency,
+                        currency: currency || company?.currencySymbol || company?.currency || 'AED',
                         billDiscount,
                         billDiscountAmount
                     },
@@ -1552,7 +1554,8 @@ const Quotations = () => {
                         paymentTerm,
                         status,
                         notes: notesToCustomer,
-                        reference: ''
+                        reference: quotationBranch?.code || '',
+                        location: branchLocationDisplay || quotationBranch?.location || ''
                     }
                 };
 

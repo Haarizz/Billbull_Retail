@@ -151,21 +151,30 @@ export const printHtml = (htmlContent) => {
         return;
     }
 
+    let hasPrinted = false;
+    const printDate = new Date().toISOString().slice(0, 10);
+    const runPrint = () => {
+        if (hasPrinted || printWindow.closed) return;
+        hasPrinted = true;
+        printWindow.focus();
+        printWindow.print();
+    };
+
     printWindow.document.open();
     printWindow.document.write(htmlContent);
     printWindow.document.close();
 
+    try {
+        printWindow.history.replaceState(null, '', `/print/${printDate}`);
+    } catch {
+        // Browser print helpers may block history changes in some contexts.
+    }
+
     printWindow.onload = () => {
-        setTimeout(() => {
-            printWindow.focus();
-            printWindow.print();
-        }, 300);
+        setTimeout(runPrint, 300);
     };
 
     setTimeout(() => {
-        if (printWindow && !printWindow.closed) {
-            printWindow.focus();
-            printWindow.print();
-        }
+        runPrint();
     }, 900);
 };

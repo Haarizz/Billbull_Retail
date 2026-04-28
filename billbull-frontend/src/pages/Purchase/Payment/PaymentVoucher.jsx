@@ -510,7 +510,7 @@ const PaymentVoucher = () => {
                     subTotal: voucher.amountVal,
                     tax: 0,
                     grandTotal: voucher.amountVal,
-                    currency: 'AED'
+                    currency: company?.currencySymbol || company?.currency || 'AED'
                 },
                 meta: {
                     status: voucher.status,
@@ -520,8 +520,8 @@ const PaymentVoucher = () => {
             };
 
             const html = generatePrintHtml(defaultTemplate, printData, {
-                nestLogo: nestLogo,
-                billBullLogo: billBullLogo
+                companyProfile: company,
+                billBullLogo
             });
 
             printHtml(html);

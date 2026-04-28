@@ -1450,6 +1450,8 @@ const SalesInvoice = () => {
                         sku: i.sku || i.productSku || '',
                         localName: i.localName || i.productLocalName || '',
                         barcode: i.barcode || i.itemBarcode || '',
+                        salesPerson: dataToPrint.salesperson || '',
+                        location: dataToPrint.branch || '',
                         unit: i.unit,
                         qty: Number(i.quantity || i.qty),
                         price: Number(i.price),
@@ -1463,7 +1465,7 @@ const SalesInvoice = () => {
                         subTotal: Number(dataToPrint.subTotal),
                         tax: Number(dataToPrint.totalTax || dataToPrint.taxTotal),
                         grandTotal: Number(dataToPrint.invoiceTotal || dataToPrint.netTotal),
-                        currency: 'AED',
+                        currency: dataToPrint.currency || company?.currencySymbol || company?.currency || 'AED',
                         billDiscount: Number(dataToPrint.totalDiscount || 0),
                         billDiscountAmount: 0
                     },
@@ -1471,7 +1473,9 @@ const SalesInvoice = () => {
                         status: dataToPrint.status,
                         paymentTerm: dataToPrint.paymentTerms,
                         reference: `SO: ${dataToPrint.linkedSalesOrder || '-'} | DN: ${dataToPrint.linkedDeliveryNote || '-'}`,
-                        notes: `Branch: ${dataToPrint.branch || '-'} | Salesperson: ${dataToPrint.salesperson || '-'}`
+                        location: dataToPrint.branch || '',
+                        salesPerson: dataToPrint.salesperson || '',
+                        notes: dataToPrint.notes || ''
                     }
                 };
 
