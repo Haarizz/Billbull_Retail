@@ -1,6 +1,7 @@
 package com.billbull.backend.sales.customerledger;
 
 import com.fasterxml.jackson.annotation.JsonIgnore;
+import com.fasterxml.jackson.annotation.JsonProperty;
 import jakarta.persistence.*;
 
 @Entity
@@ -56,6 +57,9 @@ public class SavedAddress {
     public String getMapLink() { return mapLink; }
     public void setMapLink(String mapLink) { this.mapLink = mapLink; }
     // Boolean.TRUE.equals() handles null safely for existing rows with NULL in DB
+    @JsonProperty("isDefault")
     public boolean isDefault() { return Boolean.TRUE.equals(defaultAddress); }
+
+    @JsonProperty("isDefault")
     public void setDefault(boolean isDefault) { this.defaultAddress = isDefault; }
 }

@@ -24,8 +24,8 @@ export const formatDateForFilename = (dateSource) => {
  */
 export const sanitizeForFilename = (str) => {
     if (!str) return 'Unknown';
-    // Remove spaces and keep alphanumeric characters
-    return str.replace(/\s+/g, '').replace(/[^a-z0-9]/gi, '');
+    // Remove spaces and keep alphanumeric characters, underscores, and dashes
+    return str.replace(/\s+/g, '').replace(/[^a-z0-9_-]/gi, '');
 };
 
 /**

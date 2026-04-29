@@ -36,10 +36,12 @@ import {
 
 import { employeesApi } from '../../api/employeesApi';
 import { receiptVoucherApi } from '../../api/receiptVoucherApi';
-import { generateDocFilename } from '../../utils/filenameUtils';
+import { generateDocFilename, generateReportFilename } from '../../utils/filenameUtils';
+import { usePrintDocument } from '../../hooks/usePrintDocument';
 import { getImageUrl } from '../../utils/urlUtils';
 import { useBranch } from '../../context/BranchContext';
 import { useCompany } from '../../context/CompanyContext';
+import { exportToExcel, exportToPDF } from '../../utils/exportUtils';
 
 // --- HELPER: CUSTOM SELECT ---
 const CustomSelect = ({ placeholder, options, value, onChange }) => {
@@ -92,6 +94,7 @@ const CustomSelect = ({ placeholder, options, value, onChange }) => {
 
 // --- COMPONENT: RECEIPT VOUCHER ---
 const ReceiptVoucher = () => {
+    const { print } = usePrintDocument();
     const { branchNames, defaultBranchName } = useBranch();
     const { company } = useCompany();
     const currency = company?.currency || 'AED';
@@ -105,6 +108,17 @@ const ReceiptVoucher = () => {
     // --- DATA STATES ---
     const [employees, setEmployees] = useState([]);
     const [isLoadingEmployees, setIsLoadingEmployees] = useState(false);
+
+    const RECEIPT_COLUMNS = [
+        { header: 'ID', key: 'id', width: 10 },
+        { header: 'Date', key: 'date', width: 12 },
+        { header: 'Member', key: 'member', width: 25 },
+        { header: 'Source', key: 'source', width: 15 },
+        { header: 'Branch', key: 'branch', width: 15 },
+        { header: 'Amount', key: 'amount', width: 12 },
+        { header: 'Mode', key: 'mode', width: 10 },
+        { header: 'Status', key: 'status', width: 12 }
+    ];
 
     // --- FORM STATE ---
     const [receipts, setReceipts] = useState([]);
@@ -461,19 +475,14 @@ const ReceiptVoucher = () => {
     };
 
     const handlePrint = (receipt) => {
-        const originalTitle = document.title;
-        try {
-            document.title = generateDocFilename(
-                'Receipt Voucher',
-                receipt.id,
-                receipt.member,
-                receipt.date,
-                currency
-            );
-            window.print();
-        } finally {
-            document.title = originalTitle;
-        }
+        const title = generateDocFilename(
+            'Receipt Voucher',
+            receipt.id,
+            receipt.member,
+            receipt.date,
+            currency
+        );
+        print(title);
         setOpenActionId(null);
     };
 
@@ -594,6 +603,14 @@ const ReceiptVoucher = () => {
         });
     }, [receipts, filterDate, searchQuery, filterSource, filterStatus, filterPayment, filterBranch, filterDateRange]);
 
+    const handleExportExcel = () => {
+        exportToExcel(filteredReceipts, RECEIPT_COLUMNS, 'Receipt_Vouchers');
+    };
+
+    const handleExportPdf = () => {
+        exportToPDF(filteredReceipts, RECEIPT_COLUMNS, 'Receipt Vouchers', 'Receipt_Vouchers');
+    };
+
 
     return (
         <div className="min-h-screen bg-slate-50 font-sans text-slate-800 p-4 lg:p-6 relative overflow-x-hidden">
@@ -608,10 +625,16 @@ const ReceiptVoucher = () => {
                     <div className="text-[10px] text-slate-400 mt-1">Financials &rarr; <span className="font-semibold text-slate-600">Receipt Voucher</span></div>
                 </div>
                 <div className="flex gap-2">
-                    <button className="flex items-center gap-2 px-3 py-2 bg-white border border-slate-200 rounded text-xs font-bold text-slate-600 hover:bg-slate-50 shadow-sm">
+                    <button 
+                        onClick={handleExportExcel}
+                        className="flex items-center gap-2 px-3 py-2 bg-white border border-slate-200 rounded text-xs font-bold text-slate-600 hover:bg-slate-50 shadow-sm"
+                    >
                         <FileSpreadsheet size={16} /> Export Excel
                     </button>
-                    <button className="flex items-center gap-2 px-3 py-2 bg-white border border-slate-200 rounded text-xs font-bold text-slate-600 hover:bg-slate-50 shadow-sm">
+                    <button 
+                        onClick={handleExportPdf}
+                        className="flex items-center gap-2 px-3 py-2 bg-white border border-slate-200 rounded text-xs font-bold text-slate-600 hover:bg-slate-50 shadow-sm"
+                    >
                         <Download size={16} /> Export PDF
                     </button>
                     <button

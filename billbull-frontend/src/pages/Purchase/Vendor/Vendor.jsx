@@ -13,6 +13,7 @@ import SearchableDropdown from '../../../components/SearchableDropdown';
 import ExportDropdown from '../../../components/common/ExportDropdown';
 import { exportToExcel, exportToPDF } from '../../../utils/exportUtils';
 import { generateSOAFilename } from '../../../utils/filenameUtils';
+import { usePrintDocument } from '../../../hooks/usePrintDocument';
 
 // ==========================================
 // 1. MOCK DATA & CONFIGURATION
@@ -756,6 +757,7 @@ const PayInvoices = ({ vendors, initialVendor }) => {
 
 const VendorSoA = ({ vendors }) => {
   const { company } = useCompany();
+  const { print } = usePrintDocument();
   const currency = company?.currency || 'AED';
   const defaultStartDate = `${new Date().getFullYear()}-01-01`;
   const defaultEndDate = new Date().toISOString().split('T')[0];
@@ -794,20 +796,36 @@ const VendorSoA = ({ vendors }) => {
   }, [selectedVendorName]);
 
   const handlePrint = () => {
-    const originalTitle = document.title;
-    try {
-      const filename = generateSOAFilename(
-        selectedVendorDetails?.name || selectedVendorName,
-        selectedVendorDetails?.code || 'N/A',
-        startDate,
-        endDate,
-        currency
-      );
-      document.title = filename;
-      window.print();
-    } finally {
-      document.title = originalTitle;
-    }
+    const filename = generateSOAFilename(
+      selectedVendorDetails?.name || selectedVendorName,
+      selectedVendorDetails?.code || 'N/A',
+      startDate,
+      endDate,
+      currency
+    );
+    print(filename);
+  };
+
+  const handleExportExcel = () => {
+    if (!statementData) return;
+    const filename = generateSOAFilename(
+      selectedVendorDetails?.name || selectedVendorName,
+      selectedVendorDetails?.code || 'N/A',
+      startDate,
+      endDate,
+      currency
+    );
+
+    const columns = [
+      { header: 'Date', key: 'date', width: 12 },
+      { header: 'Reference', key: 'reference', width: 15 },
+      { header: 'Description', key: 'description', width: 25 },
+      { header: 'Debit', key: 'debit', width: 12 },
+      { header: 'Credit', key: 'credit', width: 12 },
+      { header: 'Balance', key: 'balance', width: 12 }
+    ];
+
+    exportToExcel(statementData.transactions || [], columns, filename);
   };
 
   const selectedVendorDetails = vendors.find(v => v.name === selectedVendorName);
@@ -861,6 +879,9 @@ const VendorSoA = ({ vendors }) => {
           </button>
           <button onClick={handlePrint} className="px-4 py-2 border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 text-sm font-medium rounded-md shadow-sm flex items-center gap-2">
             <Printer className="h-4 w-4" /> Print
+          </button>
+          <button onClick={handleExportExcel} disabled={!statementData} className="px-4 py-2 border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 text-sm font-medium rounded-md shadow-sm flex items-center gap-2 disabled:opacity-50">
+            <Download className="h-4 w-4" /> Export Excel
           </button>
         </div>
       </div>

@@ -18,6 +18,7 @@ import {
     Wallet
 } from 'lucide-react';
 import { generateReportFilename } from '../../utils/filenameUtils';
+import { usePrintDocument } from '../../hooks/usePrintDocument';
 import {
     Area,
     AreaChart,
@@ -66,6 +67,7 @@ const createReportStatus = () => REPORT_KEYS.reduce((acc, key) => {
 const COLORS = ['#3B82F6', '#F43F5E', '#10B981', '#F59E0B', '#8B5CF6', '#EC4899', '#14B8A6', '#F97316'];
 
 const FinancialReports = () => {
+    const { print } = usePrintDocument();
     const [activeTab, setActiveTab] = useState('overview');
     const [loading, setLoading] = useState(true);
     const [dateRange, setDateRange] = useState('thisMonth');
@@ -432,13 +434,9 @@ const FinancialReports = () => {
     }, [dateRange]);
 
     const handlePrint = () => {
-        const originalTitle = document.title;
-        try {
-            document.title = generateReportFilename(activeTab.charAt(0).toUpperCase() + activeTab.slice(1) + ' Report');
-            window.print();
-        } finally {
-            document.title = originalTitle;
-        }
+        const reportName = activeTab.charAt(0).toUpperCase() + activeTab.slice(1);
+        const title = generateDocFilename('Financial Report', reportName, 'BillBull', dateRange.from || new Date(), company?.currency || 'AED');
+        print(title);
     };
 
     const buildProfitLossRows = () => {
@@ -638,7 +636,9 @@ const FinancialReports = () => {
         const encodedUri = encodeURI(csvContent);
         const link = document.createElement('a');
         link.setAttribute('href', encodedUri);
-        link.setAttribute('download', `${generateReportFilename(activeTab.charAt(0).toUpperCase() + activeTab.slice(1) + ' Report')}.csv`);
+        const reportName = activeTab.charAt(0).toUpperCase() + activeTab.slice(1);
+        const fileName = generateDocFilename('Financial Report', reportName, 'BillBull', dateRange.from || new Date(), company?.currency || 'AED');
+        link.setAttribute('download', `${fileName}.csv`);
         document.body.appendChild(link);
         link.click();
         document.body.removeChild(link);

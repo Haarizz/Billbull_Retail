@@ -40,6 +40,8 @@ import { getTemplatesByCategory } from '../../api/printTemplateApi';
 import { generatePrintHtml, printHtml } from '../../utils/printGenerator';
 import { getImageUrl } from '../../utils/urlUtils';
 import { useCompany } from '../../context/CompanyContext';
+import { generateDocFilename } from '../../utils/filenameUtils';
+import { usePrintDocument } from '../../hooks/usePrintDocument';
 import ExportDropdown from '../../components/common/ExportDropdown';
 import { exportToExcel, exportToPDF } from '../../utils/exportUtils';
 
@@ -97,6 +99,7 @@ import { ItemDescriptionCell, ItemDescriptionHeader } from '../../components/Ite
 import ItemAddOnsModal from '../../components/ItemAddOnsModal';
 
 const DeliveryNote = () => {
+    const { print } = usePrintDocument();
     const { company } = useCompany();
     const [activeTab, setActiveTab] = useState('list');
     const [currentDnId, setCurrentDnId] = useState(null); // Tracks editing vs creating
@@ -1393,11 +1396,13 @@ const DeliveryNote = () => {
                 printHtml(html);
             } else {
                 console.warn("No default print template found. Using browser print.");
-                window.print();
+                const title = generateDocFilename('Delivery Note', dnNo, customerName, dnDate, company?.currency || 'AED');
+                print(title);
             }
         } catch (error) {
             console.error("Print error:", error);
-            window.print();
+            const title = generateDocFilename('Delivery Note', dnNo, customerName, dnDate, company?.currency || 'AED');
+            print(title);
         } finally {
             setIsPrinting(false);
         }

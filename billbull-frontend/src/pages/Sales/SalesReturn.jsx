@@ -33,6 +33,8 @@ import {
 } from 'lucide-react';
 import ExportDropdown from '../../components/common/ExportDropdown';
 import { exportToExcel, exportToPDF } from '../../utils/exportUtils';
+import { generateDocFilename } from '../../utils/filenameUtils';
+import { usePrintDocument } from '../../hooks/usePrintDocument';
 
 // ✅ DYNAMIC UI COMPONENTS
 
@@ -67,6 +69,7 @@ const SALES_RETURN_COLUMNS = [
 // ==========================================
 
 const SalesReturn = () => {
+   const { print } = usePrintDocument();
    const { company } = useCompany();
    const [activeTab, setActiveTab] = useState('list');
    const [isLoading, setIsLoading] = useState(false);
