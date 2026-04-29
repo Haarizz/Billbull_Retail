@@ -5,6 +5,7 @@ import {
     sanitizeTemplateColumns,
     sanitizeTemplateDisplayOptions
 } from './printTemplateConfig';
+import { summarizePurchaseItems } from './documentSummaryUtils';
 
 const PURCHASE_TEMPLATE_TERMS = {
     "Local Purchase Order": `1. Delivery: Goods must be delivered within the specified time frame.
@@ -314,15 +315,26 @@ export const buildLpoPrintData = (lpo, vendor, companyProfile) => {
         };
     });
 
-    const subTotal = toNumber(lpo?.subtotal || items.reduce((sum, item) => sum + item.taxableAmount, 0));
-    const tax = toNumber(lpo?.tax);
-    const grandTotal = toNumber(lpo?.grandTotal || subTotal + tax);
+    const itemSummary = summarizePurchaseItems(lpo?.items || []);
+    const hasItemRows = items.length > 0;
+    const subTotal = hasItemRows
+        ? Math.max(itemSummary.preDiscountSubtotal, toNumber(lpo?.subtotal))
+        : toNumber(lpo?.subtotal);
+    const discountAmount = hasItemRows
+        ? Math.max(itemSummary.discountTotal, toNumber(lpo?.discount))
+        : toNumber(lpo?.discount);
+    const tax = hasItemRows
+        ? Math.max(itemSummary.tax, toNumber(lpo?.tax))
+        : toNumber(lpo?.tax);
+    const grandTotal = hasItemRows
+        ? Math.max(itemSummary.grandTotal, toNumber(lpo?.grandTotal))
+        : toNumber(lpo?.grandTotal || subTotal + tax);
     const totals = buildTotals(
         {
             subTotal,
             tax,
             grandTotal,
-            discountAmount: toNumber(lpo?.discount),
+            discountAmount,
         },
         companyProfile,
         vendor
@@ -482,13 +494,24 @@ export const buildPurchaseInvoicePrintData = (invoice, vendor, companyProfile) =
         };
     });
 
+    const itemSummary = summarizePurchaseItems(invoice?.items || []);
+    const hasItemRows = items.length > 0;
     const totals = buildTotals(
         {
-            subTotal: toNumber(invoice?.subTotal || items.reduce((sum, item) => sum + item.taxableAmount, 0)),
-            tax: toNumber(invoice?.taxTotal || items.reduce((sum, item) => sum + item.taxAmt, 0)),
-            grandTotal: toNumber(invoice?.grandTotal || items.reduce((sum, item) => sum + item.total, 0)),
+            subTotal: hasItemRows
+                ? Math.max(itemSummary.preDiscountSubtotal, toNumber(invoice?.subTotal))
+                : toNumber(invoice?.subTotal),
+            tax: hasItemRows
+                ? Math.max(itemSummary.tax, toNumber(invoice?.taxTotal))
+                : toNumber(invoice?.taxTotal),
+            grandTotal: hasItemRows
+                ? Math.max(itemSummary.grandTotal, toNumber(invoice?.grandTotal))
+                : toNumber(invoice?.grandTotal),
             amountPaid: toNumber(invoice?.amountPaid),
             balanceDue: toNumber(invoice?.balanceDue),
+            discountAmount: hasItemRows
+                ? Math.max(itemSummary.discountTotal, toNumber(invoice?.discountTotal))
+                : toNumber(invoice?.discountTotal),
         },
         companyProfile,
         vendor

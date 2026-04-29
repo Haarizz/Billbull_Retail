@@ -67,6 +67,7 @@ import ProductSelector from '../../components/ProductSelector';
 // ✅ CUSTOMER SELECTOR — search modal + new customer
 import CustomerSelector from '../../components/CustomerSelector';
 import CustomerShippingPanel from '../../components/CustomerShippingPanel';
+import CurrencyAmount from '../../components/CurrencyAmount';
 
 // ✅ SHARED Item Add-Ons modal (BB-026)
 import ItemAddOnsModal from '../../components/ItemAddOnsModal';
@@ -83,6 +84,7 @@ import { getTemplatesByCategory } from '../../api/printTemplateApi';
 import { generatePrintHtml, printHtml } from '../../utils/printGenerator';
 import { getImageUrl } from '../../utils/urlUtils';
 import { getDefaultProductUnit, resolveUnitAmount } from '../../utils/unitPricing';
+import { summarizeSalesItems } from '../../utils/documentSummaryUtils';
 import { useCompany } from '../../context/CompanyContext';
 import { useBranch } from '../../context/BranchContext';
 import ExportDropdown from '../../components/common/ExportDropdown';
@@ -993,13 +995,14 @@ const Quotations = () => {
     };
 
     // ✅ UPDATED CALCULATIONS
-    const sumOfLineTotals = items.reduce((acc, item) => acc + item.total, 0);
-    const totalTax = items.reduce((acc, item) => acc + item.taxAmt, 0);
-    const subTotal = sumOfLineTotals - totalTax;
-
-    const billDiscountAmount = subTotal * (billDiscount / 100);
-
-    const grandTotal = subTotal - billDiscountAmount + totalTax;
+    const quotationSummary = useMemo(
+        () => summarizeSalesItems(items, billDiscount),
+        [items, billDiscount]
+    );
+    const subTotal = quotationSummary.subTotal;
+    const totalTax = quotationSummary.tax;
+    const billDiscountAmount = quotationSummary.billDiscountAmount;
+    const grandTotal = quotationSummary.grandTotal;
 
     // ------------------------------------------------------------------
     // ✅ LOGIC FOR WORKFLOW & REVISIONS
@@ -1432,6 +1435,8 @@ const Quotations = () => {
         try {
             const templates = await getTemplatesByCategory('Quotation');
             const defaultTemplate = templates.find(t => t.isDefault);
+            const resolvedBillDiscount = Number(qtn.billDiscount || 0);
+            const resolvedSummary = summarizeSalesItems(qtn.items || [], resolvedBillDiscount);
             const printData = {
                 title: 'QUOTATION',
                 docNo: qtn.qtnNo,
@@ -1455,12 +1460,12 @@ const Quotations = () => {
                     image: i.image ? getImageUrl(i.image) : ''
                 })),
                 totals: {
-                    subTotal: (qtn.items || []).reduce((s, i) => s + (Number(i.price) * Number(i.qty) * (1 - Number(i.disc) / 100)), 0),
-                    tax: (qtn.items || []).reduce((s, i) => s + Number(i.taxAmt || 0), 0),
-                    grandTotal: qtn.total || 0,
+                    subTotal: resolvedSummary.subTotal,
+                    tax: resolvedSummary.tax,
+                    grandTotal: resolvedSummary.grandTotal,
                     currency: qtn.currency,
-                    billDiscount: qtn.billDiscount || 0,
-                    billDiscountAmount: 0
+                    billDiscount: resolvedBillDiscount,
+                    billDiscountAmount: resolvedSummary.billDiscountAmount
                 },
                 meta: { validTill: qtn.validTill, paymentTerm: qtn.paymentTerm, status: qtn.status, notes: qtn.notesToCustomer, reference: '' }
             };
@@ -2734,10 +2739,10 @@ const Quotations = () => {
                                 {/* 5. Summary & Footer */}
                                 <div className="bg-white rounded-lg border border-slate-200/50 p-4 shadow-sm mb-4 md:mb-6">
                                     <h3 className="text-xs font-bold text-slate-700 mb-3 border-b border-slate-100/50 pb-2">Quotation Summary</h3>
-                                    <div className="space-y-2 text-xs">
+                                    <div className="space-y-2 text-xs" data-bb-skip-aed-symbol="true">
                                         <div className="flex justify-between text-slate-600">
                                             <span>Subtotal</span>
-                                            <span className="font-medium">{subTotal.toFixed(2)} AED</span>
+                                            <CurrencyAmount value={subTotal} currency={currency} className="font-medium" />
                                         </div>
                                         <div className="flex justify-between text-slate-600 items-center">
                                             <span className="flex items-center gap-2">
@@ -2752,15 +2757,15 @@ const Quotations = () => {
                                                     onChange={(e) => setBillDiscount(Number(e.target.value))}
                                                 /> %
                                             </span>
-                                            <span className="font-medium">- {billDiscountAmount.toFixed(2)} AED</span>
+                                            <span className="font-medium">- <CurrencyAmount value={billDiscountAmount} currency={currency} /></span>
                                         </div>
                                         <div className="flex justify-between text-slate-600">
                                             <span>Tax Total</span>
-                                            <span className="font-medium">{totalTax.toFixed(2)} AED</span>
+                                            <CurrencyAmount value={totalTax} currency={currency} className="font-medium" />
                                         </div>
                                         <div className="flex justify-between text-emerald-600 text-sm font-bold border-t border-slate-100/50 pt-2 mt-2">
                                             <span>Grand Total</span>
-                                            <span>{grandTotal.toFixed(2)} AED</span>
+                                            <CurrencyAmount value={grandTotal} currency={currency} />
                                         </div>
                                     </div>
 
@@ -2853,17 +2858,17 @@ const Quotations = () => {
                                     <h3 className="text-xs font-bold text-slate-800 mb-3 flex items-center gap-2">
                                         <Info size={14} className="text-yellow-600" /> Profitability Analysis
                                     </h3>
-                                    <div className="space-y-3">
+                                    <div className="space-y-3" data-bb-skip-aed-symbol="true">
                                         <div className="flex justify-between items-center text-xs border-b border-slate-100 pb-2">
                                             <span className="text-slate-500 font-semibold">Total Cost</span>
                                             {(() => {
                                                 const totalCost = items.reduce((sum, item) => sum + ((item.cost || 0) * (item.qty || 0)), 0);
-                                                return <span className="font-bold text-slate-700">{totalCost.toFixed(2)} AED</span>;
+                                                return <CurrencyAmount value={totalCost} currency={currency} className="font-bold text-slate-700" />;
                                             })()}
                                         </div>
                                         <div className="flex justify-between items-center text-xs border-b border-slate-100 pb-2">
                                             <span className="text-slate-500 font-semibold">Net Revenue</span>
-                                            <span className="font-bold text-slate-700">{subTotal.toFixed(2)} AED</span>
+                                            <CurrencyAmount value={subTotal} currency={currency} className="font-bold text-slate-700" />
                                         </div>
                                         <div className="flex justify-between items-center text-xs pt-1">
                                             <span className="text-slate-500 font-semibold">Margin</span>
@@ -2873,7 +2878,7 @@ const Quotations = () => {
                                                 const marginPercent = subTotal > 0 ? (margin / subTotal) * 100 : 0;
                                                 return (
                                                     <div className={`font-bold flex items-center gap-1.5 ${marginPercent < 15 ? 'text-orange-500' : 'text-emerald-600'}`}>
-                                                        <span>{margin.toFixed(2)} AED</span>
+                                                        <CurrencyAmount value={margin} currency={currency} />
                                                         <span className="text-[10px] bg-slate-100 px-1.5 py-0.5 rounded text-slate-600">({marginPercent.toFixed(1)}%)</span>
                                                     </div>
                                                 );

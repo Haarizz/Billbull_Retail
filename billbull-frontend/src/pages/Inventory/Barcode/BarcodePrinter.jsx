@@ -15,6 +15,11 @@ import { getBarcodeTemplates, createBarcodeTemplate, updateBarcodeTemplate, dele
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useCompany } from "../../../context/CompanyContext";
 import { getImageUrl } from "../../../utils/urlUtils";
+import {
+    hasCurrencySymbolImage,
+    resolveCurrencyDisplayCode,
+    UAE_DIRHAM_SYMBOL_IMAGE
+} from "../../../utils/countryCurrencyOptions";
 
 const TEMPLATES = [
     {
@@ -67,10 +72,113 @@ const TEMPLATES = [
     },
 ];
 
+const formatCurrencyAmount = (value, decimals = 2) => {
+    const numericValue = Number(value);
+
+    if (Number.isFinite(numericValue)) {
+        return numericValue.toLocaleString('en-AE', {
+            minimumFractionDigits: decimals,
+            maximumFractionDigits: decimals
+        });
+    }
+
+    const fallback = String(value ?? '').trim();
+    return fallback || Number(0).toFixed(decimals);
+};
+
+const CurrencySymbol = ({ currencyCode, currencyLabel }) => {
+    if (hasCurrencySymbolImage(currencyCode || currencyLabel)) {
+        return (
+            <img
+                src={UAE_DIRHAM_SYMBOL_IMAGE}
+                alt={currencyCode || currencyLabel || 'Currency'}
+                data-bb-currency-image="true"
+                style={{
+                    display: 'inline-block',
+                    height: '0.82em',
+                    width: 'auto',
+                    maxWidth: '1.05em',
+                    verticalAlign: '-0.08em'
+                }}
+            />
+        );
+    }
+
+    return <>{currencyLabel}</>;
+};
+
+const CurrencyAmount = ({ value, currencyCode, currencyLabel, decimals = 2 }) => (
+    <>
+        <CurrencySymbol currencyCode={currencyCode} currencyLabel={currencyLabel} /> {formatCurrencyAmount(value, decimals)}
+    </>
+);
+
+const PRINT_PAGE_WIDTH_MM = 210;
+const PRINT_PAGE_HEIGHT_MM = 297;
+const PRINT_PAGE_MARGIN_MM = 6;
+const PRINT_LABEL_GAP_MM = 2;
+
+const getTemplateMetrics = (template) => {
+    const labelWidthMm = Math.max(1, Number(template?.width) || 40);
+    const labelHeightMm = Math.max(1, Number(template?.height) || 25);
+    const usableWidthMm = PRINT_PAGE_WIDTH_MM - (PRINT_PAGE_MARGIN_MM * 2);
+    const usableHeightMm = PRINT_PAGE_HEIGHT_MM - (PRINT_PAGE_MARGIN_MM * 2);
+    const cols = Math.max(1, Math.floor((usableWidthMm + PRINT_LABEL_GAP_MM) / (labelWidthMm + PRINT_LABEL_GAP_MM)));
+    const rows = Math.max(1, Math.floor((usableHeightMm + PRINT_LABEL_GAP_MM) / (labelHeightMm + PRINT_LABEL_GAP_MM)));
+    const labelsPerPage = Math.max(1, cols * rows);
+
+    return {
+        cols,
+        rows,
+        labelWidthMm,
+        labelHeightMm,
+        gapMm: PRINT_LABEL_GAP_MM,
+        rowGapMm: PRINT_LABEL_GAP_MM,
+        pageWidthMm: PRINT_PAGE_WIDTH_MM,
+        pageHeightMm: PRINT_PAGE_HEIGHT_MM,
+        pageInnerWidthMm: usableWidthMm,
+        pageInnerHeightMm: usableHeightMm,
+        paddingMm: PRINT_PAGE_MARGIN_MM,
+        labelsPerPage
+    };
+};
+
+const getBarcodeRenderOptions = (template) => {
+    const height = Number(template?.height) || 25;
+    const width = Number(template?.width) || 40;
+    const isSmallHeight = height <= 25;
+
+    return {
+        format: "CODE128",
+        width: width < 50 ? 1.4 : 1.8,
+        height: isSmallHeight ? 32 : (height < 30 ? 40 : 55),
+        displayValue: false,
+        fontSize: isSmallHeight ? 10 : 12,
+        margin: 0
+    };
+};
+
+const renderBarcodesInRoot = (root, options) => {
+    if (!root?.querySelectorAll) return;
+
+    root.querySelectorAll('svg[data-barcode]').forEach((svg) => {
+        const barcodeValue = svg.getAttribute('data-barcode');
+        if (!barcodeValue) return;
+
+        try {
+            JsBarcode(svg, barcodeValue, options);
+        } catch (error) {
+            console.error("Barcode generation failed:", barcodeValue, error);
+        }
+    });
+};
+
 const BarcodePrinter = () => {
     const location = useLocation();
     const navigate = useNavigate();
     const { company } = useCompany();
+    const currencyCode = company?.currency || 'AED';
+    const currencyLabel = resolveCurrencyDisplayCode(company || {});
     const [products, setProducts] = useState([]);
     const [filteredProducts, setFilteredProducts] = useState([]);
     const [cart, setCart] = useState([]);
@@ -341,51 +449,17 @@ const BarcodePrinter = () => {
     useEffect(() => {
         setPreviewPage(1);
 
-        const generateBarcode = (selector, barcodeValue, width = 1.5, height = 40) => {
-            try {
-                if (barcodeValue) {
-                    JsBarcode(selector, barcodeValue, {
-                        format: "CODE128",
-                        width: width,
-                        height: height,
-                        displayValue: false,
-                        fontSize: 12,
-                        margin: 0
-                    });
-                }
-            } catch (e) { console.error("Barcode gen error for", selector, e); }
-        };
-
         const t = templates.find(temp => temp.id === selectedTemplate) || editingTemplate; // Check editingTemplate too
         if (!t) return;
 
         // If template is QR, don't generate standard barcodes as we use an icon
         if (t.name.toLowerCase().includes('qr')) return;
 
-        // Calculate suitable barcode dimensions
-        // For 40x25mm: 25mm height is very tight.
-        // Need to be very aggressive with space.
-        const isSmallHeight = t.height <= 25;
-        const barcodeHeight = isSmallHeight ? 32 : (t.height < 30 ? 40 : 55);
-        const barcodeWidth = t.width < 50 ? 1.4 : 1.8;
-        const fontSize = isSmallHeight ? 10 : 12;
-        const margin = isSmallHeight ? 0 : 0;
-
-        setTimeout(() => {
-            if (cart.length > 0) {
-                cart.forEach((item) => {
-                    // Use item.barcode if available for both selector and value to match renderLabels
-                    const selector = `.barcode-${item.barcode || item.product.id}`;
-                    const value = item.barcode || getBarcodeValue(item.product);
-                    generateBarcode(selector, value, barcodeWidth, barcodeHeight, fontSize, margin);
-                });
-            } else {
-                // Generate sample barcode for the main preview (empty cart)
-                generateBarcode(".barcode-sample", "123456789012", barcodeWidth, barcodeHeight, fontSize, margin);
-            }
-            // Always generate for the template manager canvas which uses barcode value as class
-            generateBarcode(".barcode-123456789012", "123456789012", barcodeWidth, barcodeHeight, fontSize, margin);
+        const timeoutId = setTimeout(() => {
+            renderBarcodesInRoot(document, getBarcodeRenderOptions(t));
         }, 0);
+
+        return () => clearTimeout(timeoutId);
     }, [cart, selectedTemplate, templates, editingTemplate]); // Added editingTemplate dependency
 
     const loadProducts = () => {
@@ -590,6 +664,10 @@ const BarcodePrinter = () => {
 
     const handlePrint = () => {
         const printContent = document.getElementById('print-area');
+        const t = templates.find(temp => temp.id === selectedTemplate) || editingTemplate;
+        if (!printContent || !t) return;
+
+        const metrics = getTemplateMetrics(t);
         const iframe = document.createElement('iframe');
         Object.assign(iframe.style, { position: 'fixed', right: '0', bottom: '0', width: '0', height: '0', border: '0' });
         document.body.appendChild(iframe);
@@ -597,14 +675,67 @@ const BarcodePrinter = () => {
         const doc = iframe.contentWindow.document;
         const styles = `
             <style>
-                @page { margin: 0; size: auto; }
-                body { margin: 0; padding: 0; background: white; font-family: sans-serif; }
-                .print-page { page-break-after: always; display: flex; flex-wrap: wrap; align-content: flex-start; }
-                .print-label { box-sizing: border-box; display: flex; flex-col; align-items: center; justify-content: center; text-align: center; border: 1px dashed #ddd; page-break-inside: avoid; overflow: hidden; }
-                svg { max-width: 90%; max-height: 50%; display: block; margin: 0 auto; }
-                .label-name { font-size: 8px; font-weight: bold; width: 100%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding: 0 1mm; margin-bottom: 0px; line-height: 1.1; }
-                .label-code { font-size: 7px; font-family: monospace; line-height: 1; }
-                .label-price { font-size: 10px; font-weight: bold; margin-top: 1px; line-height: 1; }
+                @page { margin: 0; size: ${metrics.pageWidthMm}mm ${metrics.pageHeightMm}mm; }
+                html, body {
+                    margin: 0;
+                    padding: 0;
+                    background: white;
+                    width: ${metrics.pageWidthMm}mm;
+                    min-width: ${metrics.pageWidthMm}mm;
+                    font-family: sans-serif;
+                    -webkit-print-color-adjust: exact;
+                    print-color-adjust: exact;
+                }
+                body {
+                    overflow: hidden;
+                }
+                .print-page {
+                    box-sizing: border-box;
+                    width: ${metrics.pageWidthMm}mm !important;
+                    min-width: ${metrics.pageWidthMm}mm;
+                    min-height: ${metrics.pageHeightMm}mm;
+                    padding: ${metrics.paddingMm}mm;
+                    display: grid !important;
+                    grid-template-columns: repeat(${metrics.cols}, ${metrics.labelWidthMm}mm);
+                    grid-auto-rows: ${metrics.labelHeightMm}mm;
+                    column-gap: ${metrics.gapMm}mm;
+                    row-gap: ${metrics.rowGapMm}mm;
+                    align-content: start;
+                    justify-content: start;
+                    justify-items: start;
+                    page-break-after: always;
+                    break-after: page;
+                }
+                .print-page:last-child { page-break-after: auto; break-after: auto; }
+                .print-label {
+                    box-sizing: border-box;
+                    width: ${metrics.labelWidthMm}mm !important;
+                    height: ${metrics.labelHeightMm}mm !important;
+                    display: flex;
+                    flex-direction: column;
+                    align-items: stretch;
+                    justify-content: flex-start;
+                    text-align: left;
+                    padding: 1mm;
+                    border: 1px dashed #ddd;
+                    page-break-inside: avoid;
+                    break-inside: avoid;
+                    overflow: hidden;
+                    background: white;
+                }
+                svg { width: 100%; max-width: 100%; max-height: 50%; display: block; margin: 0; }
+                .label-name { font-size: 8px; font-weight: bold; width: 100%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding: 0; margin-bottom: 0px; line-height: 1.1; text-align: center; }
+                .label-code { font-size: 7px; font-family: monospace; line-height: 1; width: 100%; text-align: center; }
+                .label-price { font-size: 10px; font-weight: bold; margin-top: 1px; line-height: 1; width: 100%; text-align: center; }
+                .label-unit { width: 100%; text-align: center; }
+                img:not([data-bb-currency-image="true"]) { max-width: 100%; }
+                [data-bb-currency-image="true"] {
+                    display: inline-block;
+                    height: 0.82em !important;
+                    width: auto !important;
+                    max-width: 1.05em !important;
+                    vertical-align: -0.08em;
+                }
             </style>
         `;
 
@@ -614,10 +745,18 @@ const BarcodePrinter = () => {
         doc.write('</body></html>');
         doc.close();
 
+        setTimeout(() => {
+            renderBarcodesInRoot(doc, getBarcodeRenderOptions(t));
+        }, 50);
+
         iframe.contentWindow.focus();
         setTimeout(() => {
             iframe.contentWindow.print();
-            setTimeout(() => document.body.removeChild(iframe), 1000);
+            setTimeout(() => {
+                if (iframe.parentNode) {
+                    iframe.parentNode.removeChild(iframe);
+                }
+            }, 1000);
         }, 500);
     };
 
@@ -662,83 +801,140 @@ const BarcodePrinter = () => {
         const nameMarginBottom = isSmallHeight ? '0px' : '1px';
         const priceMarginTop = isSmallHeight ? '0px' : '1px';
 
+        const renderLabelCard = (item, key, compactPreview = false) => (
+            <div
+                key={key}
+                className="print-label bg-white border border-slate-200"
+                style={{
+                    width: `${t.width}mm`,
+                    height: `${t.height}mm`,
+                    marginBottom: compactPreview ? '4px' : '0',
+                    marginRight: compactPreview ? '4px' : '0',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    alignItems: compactPreview ? 'center' : 'stretch',
+                    justifyContent: compactPreview ? 'center' : 'flex-start',
+                    textAlign: compactPreview ? 'center' : 'left',
+                    padding: compactPreview ? '0' : '1mm',
+                    boxSizing: 'border-box'
+                }}
+            >
+                {isEnabled('company') && (
+                    <div className="label-name" style={{ fontSize: codeFontSize, marginBottom: '2px', fontWeight: 'bold', textTransform: 'uppercase' }}>{item.product.company || companyName}</div>
+                )}
+
+                {isEnabled('name') && (
+                    <div className="label-name" style={{ fontSize: nameFontSize, marginBottom: nameMarginBottom }}>{item.product.name}</div>
+                )}
+
+                {isEnabled('brandName') && (item.product.brand?.name || item.product.brandName) && (
+                    <div className="label-code" style={{ fontSize: codeFontSize, marginBottom: '1px', fontWeight: 'bold' }}>{item.product.brand?.name || item.product.brandName}</div>
+                )}
+
+                {isEnabled('itemCode') && item.product.code && (
+                    <div className="label-code" style={{ fontSize: codeFontSize, marginBottom: '1px' }}>Code: {item.product.code}</div>
+                )}
+
+                {isEnabled('qr') ? (
+                    <div className="flex items-center justify-center flex-1 w-full p-0.5">
+                        <img
+                            src={`https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=${encodeURIComponent(JSON.stringify({
+                                id: item.product.id,
+                                name: item.product.name,
+                                price: item.product.retailPrice || item.product.price || '0.00',
+                                barcode: item.barcode || getBarcodeValue(item.product),
+                                sku: item.product.sku || item.product.code,
+                                company: item.product.company || companyName
+                            }))}`}
+                            alt="QR Code"
+                            className="w-full h-full object-contain"
+                        />
+                    </div>
+                ) : isEnabled('barcode') && (
+                    <svg
+                        className="w-full"
+                        data-barcode={item.barcode || getBarcodeValue(item.product)}
+                        style={{ maxHeight: barcodeMaxHeight, maxWidth: '100%' }}
+                    ></svg>
+                )}
+
+                {isEnabled('barcode') && (
+                    <div className="label-code" style={{ fontSize: barcodeFontSize, marginTop: '1px', letterSpacing: '0.08em', fontWeight: 'bold' }}>{item.barcode || getBarcodeValue(item.product)}</div>
+                )}
+
+                {isEnabled('sku') && (
+                    <div className="label-code" style={{ fontSize: codeFontSize, marginTop: '1px' }}>{item.product.sku}</div>
+                )}
+
+                {isEnabled('unit') && (item.unit || item.product?.unit || item.product?.unitName) && (
+                    <div className="label-unit" style={{ fontSize: codeFontSize, marginTop: '1px', opacity: 0.8 }}>{item.unit || item.product?.unit || item.product?.unitName}</div>
+                )}
+
+                {isEnabled('price') && (
+                    <div className="label-price" style={{ fontSize: priceFontSize, marginTop: priceMarginTop }}>
+                        <CurrencyAmount
+                            value={item.product.retailPrice || item.product.price || '0.00'}
+                            currencyCode={currencyCode}
+                            currencyLabel={currencyLabel}
+                        />
+                    </div>
+                )}
+            </div>
+        );
+
+        if (!isPreview) {
+            const metrics = getTemplateMetrics(t);
+            const pagedItems = [];
+
+            for (let i = 0; i < allItems.length; i += metrics.labelsPerPage) {
+                pagedItems.push(allItems.slice(i, i + metrics.labelsPerPage));
+            }
+
+            return (
+                <>
+                    {pagedItems.map((pageItems, pageIndex) => (
+                        <div
+                            key={`page-${pageIndex}`}
+                            className="print-page"
+                            style={{
+                                width: `${metrics.pageWidthMm}mm`,
+                                minHeight: `${metrics.pageHeightMm}mm`,
+                                padding: `${metrics.paddingMm}mm`,
+                                display: 'grid',
+                                gridTemplateColumns: `repeat(${metrics.cols}, ${metrics.labelWidthMm}mm)`,
+                                gridAutoRows: `${metrics.labelHeightMm}mm`,
+                                columnGap: `${metrics.gapMm}mm`,
+                                rowGap: `${metrics.rowGapMm}mm`,
+                                justifyContent: 'start',
+                                justifyItems: 'start',
+                                alignContent: 'start',
+                                boxSizing: 'border-box',
+                                pageBreakAfter: pageIndex < pagedItems.length - 1 ? 'always' : 'auto',
+                                breakAfter: pageIndex < pagedItems.length - 1 ? 'page' : 'auto'
+                            }}
+                        >
+                            {pageItems.map((item, itemIndex) => renderLabelCard(item, `${pageIndex}-${itemIndex}`, false))}
+                        </div>
+                    ))}
+                </>
+            );
+        }
+
         const cols = t.perPage || 1;
-        // Calculate required width: label width * cols + gaps (approx 2mm gap per column)
         const totalPrintWidth = (t.width * cols) + ((cols - 1) * 2) + 2;
 
         return (
             <div className={`print-page ${isPreview ? 'flex flex-wrap gap-1 content-start justify-center' : ''}`} style={{ width: isPreview ? '100%' : `${totalPrintWidth}mm` }}>
-                {allItems.map((item, idx) => (
-                    <div
-                        key={idx}
-                        className="print-label bg-white border border-slate-200"
-                        style={{
-                            width: `${t.width}mm`,
-                            height: `${t.height}mm`,
-                            marginBottom: isPreview ? '4px' : '0',
-                            marginRight: isPreview ? '4px' : '0',
-                            display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center'
-                        }}
-                    >
-                        {isEnabled('company') && (
-                            <div className="label-name" style={{ fontSize: codeFontSize, marginBottom: '2px', fontWeight: 'bold', textTransform: 'uppercase' }}>{item.product.company || companyName}</div>
-                        )}
-
-                        {isEnabled('name') && (
-                            <div className="label-name" style={{ fontSize: nameFontSize, marginBottom: nameMarginBottom }}>{item.product.name}</div>
-                        )}
-
-                        {isEnabled('brandName') && (item.product.brand?.name || item.product.brandName) && (
-                            <div className="label-code" style={{ fontSize: codeFontSize, marginBottom: '1px', fontWeight: 'bold' }}>{item.product.brand?.name || item.product.brandName}</div>
-                        )}
-
-                        {isEnabled('itemCode') && item.product.code && (
-                            <div className="label-code" style={{ fontSize: codeFontSize, marginBottom: '1px' }}>Code: {item.product.code}</div>
-                        )}
-
-                        {isEnabled('qr') ? (
-                            <div className="flex items-center justify-center flex-1 w-full p-0.5">
-                                <img
-                                    src={`https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=${encodeURIComponent(JSON.stringify({
-                                        id: item.product.id,
-                                        name: item.product.name,
-                                        price: item.product.retailPrice || item.product.price || '0.00',
-                                        barcode: item.barcode || getBarcodeValue(item.product),
-                                        sku: item.product.sku || item.product.code,
-                                        company: item.product.company || companyName
-                                    }))}`}
-                                    alt="QR Code"
-                                    className="w-full h-full object-contain"
-                                />
-                            </div>
-                        ) : isEnabled('barcode') && (
-                            <svg className={`barcode-${item.barcode || item.product.id} w-full`} data-barcode={item.barcode || getBarcodeValue(item.product)} style={{ maxHeight: barcodeMaxHeight, maxWidth: '100%' }}></svg>
-                        )}
-
-                        {isEnabled('barcode') && (
-                            <div className="label-code" style={{ fontSize: barcodeFontSize, marginTop: '1px', letterSpacing: '0.08em', fontWeight: 'bold' }}>{item.barcode || getBarcodeValue(item.product)}</div>
-                        )}
-
-                        {isEnabled('sku') && (
-                            <div className="label-code" style={{ fontSize: codeFontSize, marginTop: '1px' }}>{item.product.sku}</div>
-                        )}
-
-                        {/* BB-008: Show unit on the label */}
-                        {isEnabled('unit') && (item.unit || item.product?.unit || item.product?.unitName) && (
-                            <div className="label-unit" style={{ fontSize: codeFontSize, marginTop: '1px', opacity: 0.8 }}>{item.unit || item.product?.unit || item.product?.unitName}</div>
-                        )}
-
-                        {isEnabled('price') && (
-                            <div className="label-price" style={{ fontSize: priceFontSize, marginTop: priceMarginTop }}>AED {item.product.retailPrice || item.product.price || '0.00'}</div>
-                        )}
-                    </div>
-                ))}
+                {allItems.map((item, idx) => renderLabelCard(item, idx, true))}
             </div>
         );
     };
 
     return (
-        <div className="flex flex-col h-screen bg-slate-50 font-sans text-slate-900 overflow-hidden">
+        <div
+            className="flex flex-col h-screen bg-slate-50 font-sans text-slate-900 overflow-hidden"
+            data-bb-skip-aed-symbol="true"
+        >
             {/* Header */}
             <div className="bg-white border-b border-slate-200 px-4 lg:px-6 py-4 flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4 lg:gap-0 shrink-0">
                 <div>
@@ -981,7 +1177,11 @@ const BarcodePrinter = () => {
                                                                 )}
                                                             </div>
                                                             <div className="font-bold text-[#F5C742]">
-                                                                AED {item.product.retailPrice || item.product.price || '0.00'}
+                                                                <CurrencyAmount
+                                                                    value={item.product.retailPrice || item.product.price || '0.00'}
+                                                                    currencyCode={currencyCode}
+                                                                    currencyLabel={currencyLabel}
+                                                                />
                                                             </div>
                                                         </div>
 
@@ -1203,7 +1403,11 @@ const BarcodePrinter = () => {
                                                             {po.items.length} Items
                                                         </p>
                                                         <p className="text-xs font-bold text-[#F5C742]">
-                                                            Total: AED {po.grandTotal || '0.00'}
+                                                            Total: <CurrencyAmount
+                                                                value={po.grandTotal || '0.00'}
+                                                                currencyCode={currencyCode}
+                                                                currencyLabel={currencyLabel}
+                                                            />
                                                         </p>
                                                     </div>
 
@@ -1271,7 +1475,11 @@ const BarcodePrinter = () => {
 
                                                                     {/* Unit Cost */}
                                                                     <div className="col-span-2 text-right font-mono font-bold text-[#F5C742]">
-                                                                        AED {item.unitCost}
+                                                                        <CurrencyAmount
+                                                                            value={item.unitCost}
+                                                                            currencyCode={currencyCode}
+                                                                            currencyLabel={currencyLabel}
+                                                                        />
                                                                     </div>
                                                                 </div>
                                                             );
