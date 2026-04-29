@@ -6,6 +6,7 @@ import {
     sanitizeTemplateDisplayOptions
 } from './printTemplateConfig';
 import { generateDocFilename } from './filenameUtils';
+import { hasCurrencySymbolImage, UAE_DIRHAM_SYMBOL_IMAGE } from './countryCurrencyOptions';
 
 const PURCHASE_TEMPLATE_CATEGORIES = new Set([
     'Local Purchase Order',
@@ -68,6 +69,14 @@ const escapeHtml = (value) =>
         .replace(/"/g, '&quot;')
         .replace(/'/g, '&#39;');
 
+const renderCurrencySymbol = (value) => {
+    if (hasCurrencySymbolImage(value)) {
+        return `<img src="${escapeHtml(UAE_DIRHAM_SYMBOL_IMAGE)}" alt="AED" style="height:0.82em;width:auto;display:inline-block;vertical-align:-0.08em;margin:0 0.12em;" />`;
+    }
+
+    return escapeHtml(value);
+};
+
 const formatNumber = (value, decimals = 2) =>
     asNumber(value).toLocaleString('en-AE', {
         minimumFractionDigits: decimals,
@@ -107,6 +116,10 @@ export const normalizeDocumentCompanyProfile = (companyProfile = {}) => {
         joinAddress(companyProfile.address, companyProfile.city, companyProfile.country),
         companyProfile.address
     );
+    const currencyCode = firstNonEmpty(companyProfile.currency, 'AED');
+    const currencyValue = hasCurrencySymbolImage(currencyCode)
+        ? currencyCode
+        : firstNonEmpty(companyProfile.currencySymbol, currencyCode, 'AED');
 
     return {
         ...companyProfile,
@@ -121,19 +134,24 @@ export const normalizeDocumentCompanyProfile = (companyProfile = {}) => {
         stampUrl: resolveStampUrl(companyProfile),
         showStampInPrint: companyProfile.showStampInPrint !== false,
         showStampInEmail: companyProfile.showStampInEmail !== false,
-        currency: firstNonEmpty(companyProfile.currencySymbol, companyProfile.currency, 'AED'),
-        currencySymbol: firstNonEmpty(companyProfile.currencySymbol, companyProfile.currency, 'AED')
+        currency: currencyValue,
+        currencySymbol: currencyValue
     };
 };
 
-const resolveCurrency = (companyProfile = {}, totals = {}, summaryAmount = {}) =>
-    firstNonEmpty(
-        totals.currency,
-        summaryAmount.currency,
-        companyProfile.currencySymbol,
-        companyProfile.currency,
-        'AED'
-    );
+const resolveCurrency = (companyProfile = {}, totals = {}, summaryAmount = {}) => {
+    const documentCurrency = firstNonEmpty(totals.currency, summaryAmount.currency);
+    if (hasCurrencySymbolImage(documentCurrency)) {
+        return documentCurrency;
+    }
+
+    const companyCurrencyCode = firstNonEmpty(companyProfile.currency);
+    if (hasCurrencySymbolImage(companyCurrencyCode)) {
+        return companyCurrencyCode;
+    }
+
+    return firstNonEmpty(documentCurrency, companyProfile.currencySymbol, companyProfile.currency, 'AED');
+};
 
 const resolveCompanyVars = (html, company) => {
     if (!html) return '';
@@ -361,7 +379,7 @@ const buildTotalsTable = (layout) => {
     const discountPercent = asNumber(layout.totals.billDiscount ?? 0);
     const amountPaid = asNumber(layout.totals.amountPaid ?? 0);
     const balanceDue = asNumber(layout.totals.balanceDue ?? Math.max(asNumber(layout.totals.grandTotal) - amountPaid, 0));
-    const currency = escapeHtml(layout.currency);
+    const currency = renderCurrencySymbol(layout.currency);
 
     const row = (label, amount, className = '') => `
         <tr class="${className}">
@@ -502,7 +520,7 @@ const buildGrandTotal = (layout) => {
     return `
         <div class="grand-total-display">
             <div class="grand-total-label">${escapeHtml(layout.highlight.label || 'Grand Total')}</div>
-            <div class="grand-total-value">${escapeHtml(layout.currency)} ${formatNumber(layout.highlight.value)}</div>
+            <div class="grand-total-value">${renderCurrencySymbol(layout.currency)} ${formatNumber(layout.highlight.value)}</div>
         </div>
     `;
 };

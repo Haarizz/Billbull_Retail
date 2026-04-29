@@ -40,10 +40,12 @@ import {
 import { fetchStatementOfAccount } from '../../../api/financialsApi';
 import { useCompany } from '../../../context/CompanyContext';
 import {
+  formatCurrencyDisplay,
   getCountryOptions,
   getCurrencyOptions,
   normalizeCountryValue,
   normalizeCurrencyValue,
+  resolveCurrencyDisplayCode,
   withFallbackOption
 } from '../../../utils/countryCurrencyOptions';
 
@@ -1496,17 +1498,12 @@ const Vendor = () => {
 // Sub-Component: ListView with Actions wired
 const VendorListViewWithActions = ({ vendors, loading, onAddNew, onEdit, onDelete }) => {
   const { company } = useCompany();
-  const companyCurrency = company?.currency || 'AED';
+  const currencyLabel = resolveCurrencyDisplayCode(company);
   const [activeTab, setActiveTab] = useState("Vendors List");
   const [payInvoicesVendor, setPayInvoicesVendor] = useState(null);
   const [searchTerm, setSearchTerm] = useState("");
   const [filterStatus, setFilterStatus] = useState("All Status");
   const [filterCategory, setFilterCategory] = useState("All Categories");
-
-  // Format Currency Helper
-  const formatCurrency = (amount) => {
-    return `${companyCurrency} ${new Intl.NumberFormat('en-AE', { maximumFractionDigits: 0 }).format(amount)}`;
-  };
 
   // Calculate Stats
   const totalVendors = vendors.length;
@@ -1533,7 +1530,7 @@ const VendorListViewWithActions = ({ vendors, loading, onAddNew, onEdit, onDelet
   const stats = [
     { label: "Total Vendors", value: totalVendors.toString(), icon: Users, color: "blue", bg: "from-blue-50 to-blue-100", border: "border-blue-500", iconColor: "text-blue-500" },
     { label: "Active", value: activeVendors.toString(), icon: CheckCircle2, color: "green", bg: "from-green-50 to-green-100", border: "border-green-500", iconColor: "text-green-500" },
-    { label: "Total Payables", value: widthFormattedPayables(totalPayables), icon: DollarSign, color: "orange", bg: "from-orange-50 to-orange-100", border: "border-orange-500", iconColor: "text-orange-500" },
+    { label: "Total Payables", value: `${currencyLabel} ${widthFormattedPayables(totalPayables)}`, icon: DollarSign, color: "orange", bg: "from-orange-50 to-orange-100", border: "border-orange-500", iconColor: "text-orange-500" },
     { label: "Preferred", value: preferredVendors.toString(), icon: Star, color: "purple", bg: "from-purple-50 to-purple-100", border: "border-purple-500", iconColor: "text-purple-500" },
     { label: "On Hold", value: onHoldVendors.toString(), icon: AlertCircle, color: "yellow", bg: "from-yellow-50 to-yellow-100", border: "border-yellow-500", iconColor: "text-yellow-500" },
     { label: "Doc Expiring", value: expiringDocs.toString(), icon: AlertTriangle, color: "red", bg: "from-red-50 to-red-100", border: "border-red-500", iconColor: "text-red-500" },
@@ -1589,11 +1586,17 @@ const VendorListViewWithActions = ({ vendors, loading, onAddNew, onEdit, onDelet
 
 
   const handleExportExcel = () => {
-    exportToExcel(filteredVendors, VENDOR_COLUMNS, 'Vendor_List');
+    exportToExcel(filteredVendors.map((vendor) => ({
+      ...vendor,
+      balance: formatCurrencyDisplay(vendor.balance, currencyLabel)
+    })), VENDOR_COLUMNS, 'Vendor_List');
   };
 
   const handleExportPdf = () => {
-    exportToPDF(filteredVendors, VENDOR_COLUMNS, 'Vendor List', 'Vendor_List');
+    exportToPDF(filteredVendors.map((vendor) => ({
+      ...vendor,
+      balance: formatCurrencyDisplay(vendor.balance, currencyLabel)
+    })), VENDOR_COLUMNS, 'Vendor List', 'Vendor_List');
   };
 
   const renderStars = (rating) => (
@@ -1783,7 +1786,7 @@ const VendorListViewWithActions = ({ vendors, loading, onAddNew, onEdit, onDelet
                           <td className="px-6 py-4 text-slate-600">{vendor.contact}</td>
                           <td className="px-6 py-4 text-right"><span className="inline-flex items-center gap-1 text-slate-600"><Clock className="h-3 w-3 text-gray-400" />{vendor.leadTime || '-'}</span></td>
                           <td className="px-6 py-4">{renderStars(vendor.rating)}</td>
-                          <td className="px-6 py-4 text-right font-semibold text-slate-900">{vendor.balance || '0.00 AED'}</td>
+                          <td className="px-6 py-4 text-right font-semibold text-slate-900">{formatCurrencyDisplay(vendor.balance, currencyLabel)}</td>
                           <td className="px-6 py-4"><span className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium ${getStatusStyle(vendor.status)}`}>{getStatusIcon(vendor.status)}{vendor.status}</span></td>
                           <td className="px-6 py-4 text-center"><div className="flex items-center justify-center gap-1"><button onClick={() => { setPayInvoicesVendor(vendor); setActiveTab("Pay Invoices"); }} className="p-1.5 hover:bg-slate-100 rounded text-slate-500" title="View Payables"><Eye className="h-4 w-4" /></button><button onClick={() => onEdit(vendor)} className="p-1.5 hover:bg-slate-100 rounded text-slate-500" title="Edit Vendor"><SquarePen className="h-4 w-4" /></button><button onClick={() => onDelete(vendor.id)} className="p-1.5 hover:bg-slate-100 rounded text-slate-500 hover:text-red-600"><Trash2 className="h-4 w-4" /></button></div></td>
                         </tr>

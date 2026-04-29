@@ -86,6 +86,7 @@ import {
 } from '../../../utils/purchasePrintUtils';
 import ExportDropdown from '../../../components/common/ExportDropdown';
 import { exportToExcel, exportToPDF } from '../../../utils/exportUtils';
+import { formatCurrencyDisplay, resolveCurrencyDisplayCode } from '../../../utils/countryCurrencyOptions';
 
 // ==========================================
 // 1. MOCK DATA & CONFIGURATION
@@ -139,7 +140,7 @@ const getStatusColor = (status) => {
 // ==========================================
 
 // --- LIST VIEW ---
-const GRNListView = ({ data, onView, onEdit, onDelete, onPost, onPrint, onProceedToInvoice, activeFilter, setActiveFilter }) => {
+const GRNListView = ({ data, onView, onEdit, onDelete, onPost, onPrint, onProceedToInvoice, activeFilter, setActiveFilter, currencyLabel }) => {
   const filteredData = data.filter(item => {
     if (activeFilter === "All GRNs") return true;
     if (activeFilter === "Today") {
@@ -229,7 +230,7 @@ const GRNListView = ({ data, onView, onEdit, onDelete, onPost, onPrint, onProcee
                     <LayoutDashboard className="h-3 w-3 text-slate-400" /> {row.warehouse}
                   </td>
                   <td className="px-6 py-4 text-center">{row.packages}</td>
-                  <td className="px-6 py-4 text-right font-bold text-slate-900">{row.value}</td>
+                  <td className="px-6 py-4 text-right font-bold text-slate-900">{formatCurrencyDisplay(row.value, currencyLabel)}</td>
                   <td className="px-6 py-4">
                     <StatusBadge className={getStatusColor(row.status)}>{row.status}</StatusBadge>
                   </td>
@@ -574,6 +575,8 @@ const CompareLPOModal = ({ isOpen, onClose, items }) => {
 
 // --- EDITOR VIEW (Detailed UI) ---
 const EditorView = ({ initialData, onSaveDraft, onSubmitQC, onPost, onPrint, grnType, setGrnType }) => {
+  const { company } = useCompany();
+  const currencyLabel = resolveCurrencyDisplayCode(company);
   const navigate = useNavigate();
   // Mock items linked from LPO
   const [items, setItems] = useState([]);
@@ -1835,22 +1838,22 @@ const EditorView = ({ initialData, onSaveDraft, onSubmitQC, onPost, onPrint, grn
             <div className="space-y-2 text-xs border-t border-slate-100 pt-3">
               <div className="flex justify-between">
                 <span className="text-slate-500 font-medium">Subtotal (Gross)</span>
-                <span className="font-medium text-slate-700">{totals.grossTotal.toFixed(2)} AED</span>
+                <span className="font-medium text-slate-700">{formatCurrencyDisplay(totals.grossTotal, currencyLabel)}</span>
               </div>
               {totals.discountTotal > 0 && (
                 <div className="flex justify-between text-emerald-600">
                   <span className="font-medium">Discount</span>
-                  <span className="font-medium">- {totals.discountTotal.toFixed(2)} AED</span>
+                  <span className="font-medium">- {formatCurrencyDisplay(totals.discountTotal, currencyLabel)}</span>
                 </div>
               )}
               <div className="flex justify-between text-slate-500">
                 <span>VAT (Tax)</span>
-                <span className="font-medium text-slate-700">{totals.taxTotal.toFixed(2)} AED</span>
+                <span className="font-medium text-slate-700">{formatCurrencyDisplay(totals.taxTotal, currencyLabel)}</span>
               </div>
               <div className="flex justify-between text-base pt-2 border-t border-slate-100 mt-2">
                 <span className="font-bold text-slate-800">Grand Total</span>
                 <span className="font-bold text-[#F5C742]">
-                  {(totals.netTotal + totals.taxTotal).toFixed(2)} AED
+                  {formatCurrencyDisplay(totals.netTotal + totals.taxTotal, currencyLabel)}
                 </span>
               </div>
             </div>
@@ -1878,7 +1881,7 @@ const EditorView = ({ initialData, onSaveDraft, onSubmitQC, onPost, onPrint, grn
               <div className="flex justify-between font-bold text-blue-700 mb-1 border-b border-blue-100 pb-1">GRNI Posting Preview</div>
               <div className="flex justify-between"><span>Dr. Inventory</span><span>{totals.netTotal.toFixed(2)}</span></div>
               <div className="flex justify-between"><span>Dr. VAT Recoverable</span><span>{totals.taxTotal.toFixed(2)}</span></div>
-              <div className="flex justify-between font-bold pt-1 border-t border-slate-200 mt-1"><span>Cr. GRNI (Accrued)</span><span>{(totals.netTotal + totals.taxTotal).toFixed(2)}</span></div>
+              <div className="flex justify-between font-bold pt-1 border-t border-slate-200 mt-1"><span>Cr. GRNI (Accrued)</span><span>{formatCurrencyDisplay(totals.netTotal + totals.taxTotal, currencyLabel)}</span></div>
             </div>
             <button
               onClick={() => navigate('/finance/ledger')}
@@ -1983,6 +1986,7 @@ const EditorView = ({ initialData, onSaveDraft, onSubmitQC, onPost, onPrint, grn
 
 const GRN = () => {
   const { company } = useCompany();
+  const currencyLabel = resolveCurrencyDisplayCode(company);
   const navigate = useNavigate();
   const [activeNavTab, setActiveNavTab] = useState("list");
   const [grns, setGrns] = useState([]);
@@ -2091,11 +2095,17 @@ const GRN = () => {
   }, [grns, activeFilter]);
 
   const handleExportExcel = () => {
-    exportToExcel(filteredData, GRN_COLUMNS, 'GRN_List');
+    exportToExcel(filteredData.map((row) => ({
+      ...row,
+      value: formatCurrencyDisplay(row.value, currencyLabel)
+    })), GRN_COLUMNS, 'GRN_List');
   };
 
   const handleExportPdf = () => {
-    exportToPDF(filteredData, GRN_COLUMNS, 'Goods Receipt Notes (GRN)', 'GRN_List');
+    exportToPDF(filteredData.map((row) => ({
+      ...row,
+      value: formatCurrencyDisplay(row.value, currencyLabel)
+    })), GRN_COLUMNS, 'Goods Receipt Notes (GRN)', 'GRN_List');
   };
 
   const handleSubmitQC = async (formData, items) => {
@@ -2273,6 +2283,7 @@ const GRN = () => {
           onProceedToInvoice={handleProceedToInvoice}
           activeFilter={activeFilter}
           setActiveFilter={setActiveFilter}
+          currencyLabel={currencyLabel}
         />;
       case 'editor':
         return <EditorView
@@ -2302,6 +2313,7 @@ const GRN = () => {
         onProceedToInvoice={handleProceedToInvoice}
         activeFilter={activeFilter}
         setActiveFilter={setActiveFilter}
+        currencyLabel={currencyLabel}
       />;
     }
   };

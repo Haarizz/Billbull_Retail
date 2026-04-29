@@ -1,3 +1,5 @@
+import uaeDirhamSymbolImage from "../assets/uae-dirham-symbol.png";
+
 const WORLD_CURRENCY_CODES = [
   "AED", "AFN", "ALL", "AMD", "ANG", "AOA", "ARS", "AUD", "AWG", "AZN", "BAM", "BBD",
   "BDT", "BGN", "BHD", "BIF", "BMD", "BND", "BOB", "BRL", "BSD", "BTN", "BWP", "BYN",
@@ -55,12 +57,75 @@ const regionDisplayNames = typeof Intl !== "undefined" && typeof Intl.DisplayNam
   ? new Intl.DisplayNames(["en"], { type: "region" })
   : null;
 
+const CURRENCY_SYMBOL_OVERRIDES = {
+  AED: "AED"
+};
+
+export const UAE_DIRHAM_SYMBOL_IMAGE = uaeDirhamSymbolImage;
+
 export const getCurrencyDisplayName = (code) => {
   if (!code) {
     return "";
   }
 
   return currencyDisplayNames?.of(code) || code;
+};
+
+export const getCurrencySymbol = (value) => {
+  const code = normalizeCurrencyValue(value);
+  if (!code || !WORLD_CURRENCY_CODES.includes(code)) {
+    return code;
+  }
+
+  if (CURRENCY_SYMBOL_OVERRIDES[code]) {
+    return CURRENCY_SYMBOL_OVERRIDES[code];
+  }
+
+  try {
+    const currencyPart = new Intl.NumberFormat("en", {
+      style: "currency",
+      currency: code,
+      currencyDisplay: "narrowSymbol"
+    }).formatToParts(0).find((part) => part.type === "currency");
+
+    return currencyPart?.value || code;
+  } catch {
+    return code;
+  }
+};
+
+export const hasCurrencySymbolImage = (value) => normalizeCurrencyValue(value) === "AED";
+
+export const resolveCurrencyDisplayCode = (companyProfile = {}) => {
+  const currency = normalizeCurrencyValue(companyProfile.currency || "") || "AED";
+  const symbol = typeof companyProfile.currencySymbol === "string" ? companyProfile.currencySymbol.trim() : "";
+
+  if (hasCurrencySymbolImage(currency)) {
+    return currency;
+  }
+
+  return symbol && symbol !== currency ? symbol : getCurrencySymbol(currency);
+};
+
+export const formatCurrencyDisplay = (value, currency = "AED", decimals = 2) => {
+  const currencyLabel = resolveCurrencyDisplayCode({ currency });
+  const rawText = value === null || value === undefined ? "" : String(value).trim();
+  const amountText = rawText.replace(/\bAED\b/gi, "").replace(/د\.إ/g, "").trim();
+  const normalizedAmount = amountText.replace(/,/g, "");
+  const parsedAmount = Number(normalizedAmount);
+
+  if (Number.isFinite(parsedAmount) && normalizedAmount !== "") {
+    return `${currencyLabel} ${parsedAmount.toLocaleString("en-AE", {
+      minimumFractionDigits: decimals,
+      maximumFractionDigits: decimals
+    })}`;
+  }
+
+  if (amountText) {
+    return `${currencyLabel} ${amountText}`;
+  }
+
+  return `${currencyLabel} ${(0).toFixed(decimals)}`;
 };
 
 export const getCountryDisplayName = (code) => {
