@@ -11,8 +11,11 @@ import { getImageUrl } from '../../utils/urlUtils';
 import {
   getCountryOptions,
   getCurrencyOptions,
+  getCurrencySymbol,
+  hasCurrencySymbolImage,
   normalizeCountryValue,
   normalizeCurrencyValue,
+  UAE_DIRHAM_SYMBOL_IMAGE,
   withFallbackOption
 } from '../../utils/countryCurrencyOptions';
 
@@ -35,6 +38,19 @@ const EMPTY_FORM = {
   website: '',
   showStampInPrint: true,
   showStampInEmail: true,
+};
+
+const resolveCurrencySymbol = (symbol, currency) => {
+  const normalizedCurrency = normalizeCurrencyValue(currency);
+  const normalizedSymbol = typeof symbol === 'string' ? symbol.trim() : '';
+
+  if (hasCurrencySymbolImage(normalizedCurrency)) {
+    return getCurrencySymbol(normalizedCurrency);
+  }
+
+  return normalizedSymbol && normalizedSymbol !== normalizedCurrency
+    ? normalizedSymbol
+    : getCurrencySymbol(normalizedCurrency);
 };
 
 const CompanySettings = () => {
@@ -66,6 +82,7 @@ const CompanySettings = () => {
       try {
         const res = await getCompanyProfile();
         const p = res.data;
+        const normalizedCurrency = normalizeCurrencyValue(p.currency || '');
         setForm({
           companyName: p.companyName || '',
           localName: p.localName || '',
@@ -76,8 +93,8 @@ const CompanySettings = () => {
           mobile: p.mobile || '',
           email: p.email || '',
           trn: p.trn || '',
-          currency: normalizeCurrencyValue(p.currency || ''),
-          currencySymbol: p.currencySymbol || '',
+          currency: normalizedCurrency,
+          currencySymbol: resolveCurrencySymbol(p.currencySymbol, normalizedCurrency),
           website: p.website || '',
           showStampInPrint: p.showStampInPrint !== false,
           showStampInEmail: p.showStampInEmail !== false,
@@ -98,6 +115,16 @@ const CompanySettings = () => {
 
   const handleChange = (field, value) => {
     setForm(prev => ({ ...prev, [field]: value }));
+  };
+
+  const handleCurrencyChange = (value) => {
+    const currency = normalizeCurrencyValue(value);
+
+    setForm(prev => ({
+      ...prev,
+      currency,
+      currencySymbol: getCurrencySymbol(currency)
+    }));
   };
 
   const handleLogoChange = async (e) => {
@@ -188,6 +215,7 @@ const CompanySettings = () => {
         ...form,
         country: normalizeCountryValue(form.country),
         currency: normalizeCurrencyValue(form.currency),
+        currencySymbol: resolveCurrencySymbol(form.currencySymbol, form.currency),
         logoPath,
         stampPath,
       });
@@ -429,14 +457,15 @@ const CompanySettings = () => {
           icon={<DollarSign size={15} color="#94a3b8" />}
           options={currencyOptions}
           value={form.currency}
-          onChange={v => handleChange('currency', v)}
+          onChange={handleCurrencyChange}
           placeholder="Search currency"
         />
 
         {/* Currency Symbol */}
-        <FormField
+        <CurrencySymbolField
           label="Currency Symbol"
           icon={<DollarSign size={15} color="#94a3b8" />}
+          currency={form.currency}
           value={form.currencySymbol}
           onChange={v => handleChange('currencySymbol', v)}
           placeholder="e.g. AED or ₹ or $"
@@ -510,6 +539,54 @@ const FormField = ({ label, required, icon, value, onChange, placeholder, fullRo
     </div>
   </div>
 );
+
+const CurrencySymbolField = ({ label, required, icon, currency, value, onChange, placeholder, fullRow }) => {
+  if (!hasCurrencySymbolImage(currency)) {
+    return (
+      <FormField
+        label={label}
+        required={required}
+        icon={icon}
+        value={value}
+        onChange={onChange}
+        placeholder={placeholder}
+        fullRow={fullRow}
+      />
+    );
+  }
+
+  return (
+    <div style={{ gridColumn: fullRow ? '1 / -1' : undefined }}>
+      <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: '#475569', marginBottom: 6 }}>
+        {label}{required && <span style={{ color: '#ef4444', marginLeft: 2 }}>*</span>}
+      </label>
+      <div style={{ position: 'relative' }}>
+        <div style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)', pointerEvents: 'none' }}>
+          {icon}
+        </div>
+        <div
+          style={{
+            width: '100%',
+            minHeight: 38,
+            padding: '8px 12px 8px 32px',
+            border: '1px solid #e2e8f0',
+            borderRadius: 8,
+            background: '#fff',
+            boxSizing: 'border-box',
+            display: 'flex',
+            alignItems: 'center'
+          }}
+        >
+          <img
+            src={UAE_DIRHAM_SYMBOL_IMAGE}
+            alt="UAE Dirham"
+            style={{ width: 24, height: 24, objectFit: 'contain', display: 'block' }}
+          />
+        </div>
+      </div>
+    </div>
+  );
+};
 
 const Toggle = ({ checked, onChange, label }) => (
   <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', userSelect: 'none' }}>

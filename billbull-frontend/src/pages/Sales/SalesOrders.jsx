@@ -81,11 +81,23 @@ const SALES_ORDER_COLUMNS = [
   { header: 'PI No', key: 'linkedProforma', width: 15 },
   { header: 'Total', key: 'orderTotal', width: 15 },
   { header: 'Advance', key: 'advanceAmount', width: 12 },
+  { header: 'Balance', key: 'balanceAmount', width: 12 },
   { header: 'Status', key: 'status', width: 12 }
 ];
 
 // ✅ MOBILE CARD COMPONENT
-const MobileCard = ({ order, onClick, getStatusBadge }) => (
+const resolveCurrencyLabel = (company) => {
+  if (company?.currency === 'AED' || company?.currencySymbol === 'AED') {
+    return 'AED';
+  }
+
+  return company?.currencySymbol || company?.currency || 'AED';
+};
+
+const formatCurrencyAmount = (value, currencyLabel = 'AED') =>
+  `${currencyLabel} ${Number(value || 0).toFixed(2)}`;
+
+const MobileCard = ({ order, onClick, getStatusBadge, currencyLabel }) => (
   <div onClick={() => onClick(order)} className="bg-white p-4 rounded-lg shadow-sm border border-slate-200 mb-3 active:scale-[0.98] transition-transform">
     <div className="flex justify-between items-start mb-2">
       <div>
@@ -104,10 +116,10 @@ const MobileCard = ({ order, onClick, getStatusBadge }) => (
 
     <div className="flex justify-between items-center border-t border-slate-100 pt-2 mt-2">
       <div className="text-xs text-slate-500">
-        Total: <span className="font-bold text-slate-800">{Number(order.orderTotal).toFixed(2)}</span>
+        Total: <span className="font-bold text-slate-800">{formatCurrencyAmount(order.orderTotal, currencyLabel)}</span>
       </div>
       <div className="text-xs text-slate-500">
-        Balance: <span className="font-bold text-slate-800">{(Number(order.orderTotal) - Number(order.advanceAmount)).toFixed(2)}</span>
+        Balance: <span className="font-bold text-slate-800">{formatCurrencyAmount(Number(order.orderTotal) - Number(order.advanceAmount), currencyLabel)}</span>
       </div>
       <ChevronDown size={16} className="text-slate-300 -rotate-90" />
     </div>
@@ -144,6 +156,7 @@ const MobileFloatingActions = ({ status, onConfirm, onMarkInvoiced, onSave, onPr
 
 const SalesOrders = () => {
   const { company } = useCompany();
+  const currencyLabel = resolveCurrencyLabel(company);
   const { canCreate, canEdit, canApprove, canExport } = usePermissions();
   const [activeTab, setActiveTab] = useState('list');
 
@@ -161,6 +174,12 @@ const SalesOrders = () => {
 
   // --- ORDER LIST STATE ---
   const [ordersList, setOrdersList] = useState([]);
+  const exportOrdersList = useMemo(() => ordersList.map((order) => ({
+    ...order,
+    orderTotal: formatCurrencyAmount(order.orderTotal, currencyLabel),
+    advanceAmount: formatCurrencyAmount(order.advanceAmount, currencyLabel),
+    balanceAmount: formatCurrencyAmount(Number(order.orderTotal) - Number(order.advanceAmount), currencyLabel)
+  })), [currencyLabel, ordersList]);
 
   // --- FORM STATES ---
   const [status, setStatus] = useState('DRAFT');
@@ -1208,8 +1227,8 @@ const SalesOrders = () => {
                 </select>
                 {canExport('sales.order') && (
                   <ExportDropdown
-                    onExportExcel={() => exportToExcel(ordersList, SALES_ORDER_COLUMNS, 'Sales_Orders')}
-                    onExportPdf={() => exportToPDF(ordersList, SALES_ORDER_COLUMNS, 'Sales Orders', 'Sales_Orders')}
+                    onExportExcel={() => exportToExcel(exportOrdersList, SALES_ORDER_COLUMNS, 'Sales_Orders')}
+                    onExportPdf={() => exportToPDF(exportOrdersList, SALES_ORDER_COLUMNS, 'Sales Orders', 'Sales_Orders')}
                   />
                 )}
                 {/* ── VERTICAL: canCreate('sales') ── */}
@@ -1247,9 +1266,9 @@ const SalesOrders = () => {
                     <td className="px-4 py-3 text-slate-600">{order.customerName}</td>
                     <td className="px-4 py-3 text-slate-500">{order.linkedQuotation || '-'}</td>
                     <td className="px-4 py-3 text-slate-500">{order.linkedProforma || '-'}</td>
-                    <td className="px-4 py-3 font-medium">{Number(order.orderTotal).toFixed(2)}</td>
-                    <td className="px-4 py-3">{Number(order.advanceAmount).toFixed(2)}</td>
-                    <td className="px-4 py-3">{(Number(order.orderTotal) - Number(order.advanceAmount)).toFixed(2)}</td>
+                    <td className="px-4 py-3 font-medium">{formatCurrencyAmount(order.orderTotal, currencyLabel)}</td>
+                    <td className="px-4 py-3">{formatCurrencyAmount(order.advanceAmount, currencyLabel)}</td>
+                    <td className="px-4 py-3">{formatCurrencyAmount(Number(order.orderTotal) - Number(order.advanceAmount), currencyLabel)}</td>
                     <td className="px-4 py-3 text-right">
                       {renderStatusBadge(order.status)}
                     </td>
@@ -1266,6 +1285,7 @@ const SalesOrders = () => {
                   order={order}
                   onClick={handleLoadOrder}
                   getStatusBadge={renderStatusBadge}
+                  currencyLabel={currencyLabel}
                 />
               ))}
             </div>

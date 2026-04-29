@@ -15,6 +15,7 @@ import { PermissionProvider } from "./context/PermissionContext";
 import { CompanyProvider } from "./context/CompanyContext";
 import { BranchProvider } from "./context/BranchContext";
 import ResourceGuard from "./components/auth/ResourceGuard";// import CustomerInquiries from "./pages/Customer/CustomerInquiries";
+import AedSymbolRenderer from "./components/AedSymbolRenderer";
 // import FollowUpModal from "./pages/Customer/FollowUpModal";
 // import MessageModal from "./pages/Customer/MessageModal";
 // import CustomerLedger from "./pages/Sales/CustomerLedger";
@@ -121,6 +122,7 @@ class ErrorBoundary extends React.Component {
 function App() {
   return (
     <BrowserRouter>
+      <AedSymbolRenderer />
       <CompanyProvider>
         <BranchProvider>
         <Toaster position="top-right" reverseOrder={false} />
