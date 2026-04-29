@@ -446,27 +446,49 @@ const SalesOrders = () => {
 
   // --- CALCULATIONS ---
   const calculateTotals = () => {
-    const itemSummary = summarizeSalesItems(items);
-    const grossTotal = itemSummary.grossTotal;
-    const totalDiscount = itemSummary.itemDiscountTotal;
-    const subTotal = itemSummary.subTotal;
-    const totalTax = itemSummary.tax;
-    const orderTotal = itemSummary.grandTotal;
-    const balanceDue = orderTotal - Number(advanceAmount);
+  const itemSummary = summarizeSalesItems(items);
 
-    const totalCost = items.reduce((acc, i) => {
-      const qty = Number(i.qty) || 0;
-      const unitCost = i.cost > 0 ? i.cost : (i.price * 0.75);
-      return acc + (qty * unitCost);
-    }, 0);
+  const grossTotal = itemSummary.grossTotal;
+  const totalDiscount = itemSummary.itemDiscountTotal;
+  const subTotal = itemSummary.subTotal;
+  const totalTax = itemSummary.tax;
+  const orderTotal = itemSummary.grandTotal;
 
-    const profit = subTotal - totalCost;
-    const marginPercent = subTotal > 0 ? (profit / subTotal) * 100 : 0;
+  const balanceDue = orderTotal - Number(advanceAmount);
 
-    return { grossTotal, totalDiscount, subTotal, totalTax, orderTotal, balanceDue, totalCost, profit, marginPercent };
+  const totalCost = items.reduce((acc, i) => {
+    const qty = Number(i.qty) || 0;
+    const unitCost = i.cost > 0 ? i.cost : (i.price * 0.75);
+    return acc + (qty * unitCost);
+  }, 0);
+
+  const profit = subTotal - totalCost;
+  const marginPercent = subTotal > 0 ? (profit / subTotal) * 100 : 0;
+
+  return {
+    grossTotal,
+    totalDiscount,
+    subTotal,
+    totalTax,
+    orderTotal,
+    balanceDue,
+    totalCost,
+    profit,
+    marginPercent
   };
+};
 
-  const { grossTotal, totalDiscount, subTotal, totalTax, orderTotal, balanceDue, totalCost, profit, marginPercent } = calculateTotals();
+const {
+  grossTotal,
+  totalDiscount,
+  subTotal,
+  totalTax,
+  orderTotal,
+  balanceDue,
+  totalCost,
+  profit,
+  marginPercent
+} = calculateTotals();
 
   // --- ACTIONS ---
 
@@ -480,13 +502,13 @@ const SalesOrders = () => {
     const grossAmount = price * qty;
     let focDeduction = 0;
 
-    if (focQty > 0 && item.focUnit && item.unitConversions) {
+    if (focQty > 0 && item.focUnit) {
       const sellingUnit = item.unit;
       const focUnit = item.focUnit;
 
       if (sellingUnit === focUnit) {
         focDeduction = price * focQty;
-      } else {
+      } else if (item.unitConversions) {
         const focConversion = item.unitConversions[focUnit] || 1;
         const sellingConversion = item.unitConversions[sellingUnit] || 1;
         const focInBaseUnit = focQty * focConversion;
@@ -509,6 +531,7 @@ const SalesOrders = () => {
       disc: discPercent,
       tax: taxPercent,
       taxAmt: taxAmount,
+      discountAmount,
       total
     };
   };
@@ -896,8 +919,8 @@ const SalesOrders = () => {
 
     // Credit limit BLOCK enforcement
     if (salesSettings?.creditLimitPolicy === 'BLOCK' &&
-        selectedCustomer?.creditLimitAmount > 0 &&
-        (Number(selectedCustomer.balance || 0) + orderTotal) > selectedCustomer.creditLimitAmount) {
+      selectedCustomer?.creditLimitAmount > 0 &&
+      (Number(selectedCustomer.balance || 0) + orderTotal) > selectedCustomer.creditLimitAmount) {
       alert(`Credit Limit Exceeded: The projected outstanding balance (${(Number(selectedCustomer.balance || 0) + orderTotal).toFixed(2)} AED) exceeds this customer's credit limit of ${Number(selectedCustomer.creditLimitAmount).toFixed(2)} AED.\n\nThis order cannot be saved. Please collect payment first or adjust the credit limit in the customer profile.`);
       return;
     }
@@ -929,10 +952,10 @@ const SalesOrders = () => {
   const handleSelectCustomer = (cust) => {
     setSelectedCustomer(cust);
     const _defaultAddr = (cust.savedAddresses || []).find(a => a.isDefault);
-      const _resolvedAddr = _defaultAddr
-          ? [_defaultAddr.address1, _defaultAddr.address2, _defaultAddr.city, _defaultAddr.country].filter(Boolean).join(', ')
-          : (cust.defaultShippingAddress || cust.shippingAddress || cust.billingAddress || cust.address || '');
-      setShippingAddress(_resolvedAddr);
+    const _resolvedAddr = _defaultAddr
+      ? [_defaultAddr.address1, _defaultAddr.address2, _defaultAddr.city, _defaultAddr.country].filter(Boolean).join(', ')
+      : (cust.defaultShippingAddress || cust.shippingAddress || cust.billingAddress || cust.address || '');
+    setShippingAddress(_resolvedAddr);
     setIsCustomerSearchOpen(false);
   };
 
@@ -972,10 +995,10 @@ const SalesOrders = () => {
       setSelectedCustomer(cust);
       if (cust.address || cust.shippingAddress || cust.billingAddress) {
         const _defaultAddr = (cust.savedAddresses || []).find(a => a.isDefault);
-      const _resolvedAddr = _defaultAddr
+        const _resolvedAddr = _defaultAddr
           ? [_defaultAddr.address1, _defaultAddr.address2, _defaultAddr.city, _defaultAddr.country].filter(Boolean).join(', ')
           : (cust.defaultShippingAddress || cust.shippingAddress || cust.billingAddress || cust.address || '');
-      setShippingAddress(_resolvedAddr);
+        setShippingAddress(_resolvedAddr);
       }
     }
 
@@ -1004,8 +1027,8 @@ const SalesOrders = () => {
     if (cust.address || cust.shippingAddress || cust.billingAddress) {
       const _defaultAddr = (cust.savedAddresses || []).find(a => a.isDefault);
       const _resolvedAddr = _defaultAddr
-          ? [_defaultAddr.address1, _defaultAddr.address2, _defaultAddr.city, _defaultAddr.country].filter(Boolean).join(', ')
-          : (cust.defaultShippingAddress || cust.shippingAddress || cust.billingAddress || cust.address || '');
+        ? [_defaultAddr.address1, _defaultAddr.address2, _defaultAddr.city, _defaultAddr.country].filter(Boolean).join(', ')
+        : (cust.defaultShippingAddress || cust.shippingAddress || cust.billingAddress || cust.address || '');
       setShippingAddress(_resolvedAddr);
     }
 
@@ -1437,52 +1460,52 @@ const SalesOrders = () => {
             </div>
 
             <CustomerShippingPanel
-                selectedCustomer={selectedCustomer}
-                onOpenCustomerSearch={() => { if (!hasLinkedDocument && !isLocked) setIsCustomerSearchOpen(true); }}
-                shippingAddress={shippingAddress}
-                onShippingChange={setShippingAddress}
-                deliveryType={deliveryType}
-                onDeliveryTypeChange={setDeliveryType}
-                expectedDispatch={expectedDelivery}
-                onExpectedDispatchChange={setExpectedDelivery}
-                isReadOnly={isLocked}
-                currency="AED"
+              selectedCustomer={selectedCustomer}
+              onOpenCustomerSearch={() => { if (!hasLinkedDocument && !isLocked) setIsCustomerSearchOpen(true); }}
+              shippingAddress={shippingAddress}
+              onShippingChange={setShippingAddress}
+              deliveryType={deliveryType}
+              onDeliveryTypeChange={setDeliveryType}
+              expectedDispatch={expectedDelivery}
+              onExpectedDispatchChange={setExpectedDelivery}
+              isReadOnly={isLocked}
+              currency="AED"
             />
 
             {selectedCustomer && salesSettings?.creditLimitPolicy === 'WARNING' &&
-                selectedCustomer.creditLimitAmount > 0 &&
-                (Number(selectedCustomer.balance || 0) + orderTotal) > selectedCustomer.creditLimitAmount && (
+              selectedCustomer.creditLimitAmount > 0 &&
+              (Number(selectedCustomer.balance || 0) + orderTotal) > selectedCustomer.creditLimitAmount && (
                 <div className="p-2.5 bg-yellow-50 shadow-sm border border-yellow-200 rounded-md text-yellow-800 text-[11px] leading-relaxed flex items-start gap-2">
-                    <AlertCircle size={14} className="mt-0.5 shrink-0 text-yellow-600" />
-                    <p>
-                        <strong>Credit Warning:</strong> The projected outstanding balance
-                        ({(Number(selectedCustomer.balance || 0) + orderTotal).toFixed(2)} AED) exceeds this customer's
-                        credit limit of {Number(selectedCustomer.creditLimitAmount).toFixed(2)} AED.
-                    </p>
+                  <AlertCircle size={14} className="mt-0.5 shrink-0 text-yellow-600" />
+                  <p>
+                    <strong>Credit Warning:</strong> The projected outstanding balance
+                    ({(Number(selectedCustomer.balance || 0) + orderTotal).toFixed(2)} AED) exceeds this customer's
+                    credit limit of {Number(selectedCustomer.creditLimitAmount).toFixed(2)} AED.
+                  </p>
                 </div>
-            )}
+              )}
             {selectedCustomer && salesSettings?.creditLimitPolicy === 'BLOCK' &&
-                selectedCustomer.creditLimitAmount > 0 &&
-                (Number(selectedCustomer.balance || 0) + orderTotal) > selectedCustomer.creditLimitAmount && (
+              selectedCustomer.creditLimitAmount > 0 &&
+              (Number(selectedCustomer.balance || 0) + orderTotal) > selectedCustomer.creditLimitAmount && (
                 <div className="p-2.5 bg-red-50 shadow-sm border border-red-300 rounded-md text-red-800 text-[11px] leading-relaxed flex items-start gap-2">
-                    <AlertCircle size={14} className="mt-0.5 shrink-0 text-red-600" />
-                    <p>
-                        <strong>Credit Limit Blocked:</strong> The projected outstanding balance
-                        ({(Number(selectedCustomer.balance || 0) + orderTotal).toFixed(2)} AED) exceeds this customer's
-                        credit limit of {Number(selectedCustomer.creditLimitAmount).toFixed(2)} AED.
-                        Saving this order is blocked until the balance is within limit.
-                    </p>
+                  <AlertCircle size={14} className="mt-0.5 shrink-0 text-red-600" />
+                  <p>
+                    <strong>Credit Limit Blocked:</strong> The projected outstanding balance
+                    ({(Number(selectedCustomer.balance || 0) + orderTotal).toFixed(2)} AED) exceeds this customer's
+                    credit limit of {Number(selectedCustomer.creditLimitAmount).toFixed(2)} AED.
+                    Saving this order is blocked until the balance is within limit.
+                  </p>
                 </div>
-            )}
+              )}
 
             {/* CUSTOMER SELECTOR MODAL */}
             <CustomerSelector
-                isOpen={isCustomerSearchOpen}
-                onClose={() => setIsCustomerSearchOpen(false)}
-                onSelect={handleSelectCustomer}
-                customers={customersList}
-                selectedCode={selectedCustomer?.code || ''}
-                onCustomerCreated={fetchAllData}
+              isOpen={isCustomerSearchOpen}
+              onClose={() => setIsCustomerSearchOpen(false)}
+              onSelect={handleSelectCustomer}
+              customers={customersList}
+              selectedCode={selectedCustomer?.code || ''}
+              onCustomerCreated={fetchAllData}
             />
 
             {/* Delivery Instructions */}
@@ -1542,7 +1565,7 @@ const SalesOrders = () => {
 
                 {!isLocked && (
                   <div className="flex gap-2">
-                  {/* ✅ SELECT FROM CATALOG BUTTON */}
+                    {/* ✅ SELECT FROM CATALOG BUTTON */}
                     <button
                       onClick={() => setIsProductSelectorOpen(true)}
                       className="flex items-center gap-1 px-3 py-1.5 bg-yellow-400 text-slate-900 text-xs font-medium rounded hover:bg-yellow-500"
