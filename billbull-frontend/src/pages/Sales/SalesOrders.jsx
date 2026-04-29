@@ -25,7 +25,8 @@ import {
   Trash2,
   Paperclip,
   Save,
-  ChevronRight
+  ChevronRight,
+  AlertCircle
 } from 'lucide-react';
 
 // ✅ API IMPORTS
@@ -44,6 +45,7 @@ import { generatePrintHtml, printHtml } from '../../utils/printGenerator';
 import { getImageUrl } from '../../utils/urlUtils';
 import { getDefaultProductUnit, resolveUnitAmount } from '../../utils/unitPricing';
 import { getStockAvailability } from '../../api/stockAvailabilityApi';
+import { getSalesSettings } from '../../api/salesSettingsApi';
 import billBullLogo from '../../assets/billBullLogo.png';
 import { useCompany } from '../../context/CompanyContext';
 
@@ -187,6 +189,9 @@ const SalesOrders = () => {
 
   // ✅ NEW STATE: Track the currently focused item for the sidebar
   const [focusedItem, setFocusedItem] = useState(null);
+
+  // Sales settings (stock check, credit limit policy)
+  const [salesSettings, setSalesSettings] = useState(null);
 
   // ✅ LIVE STOCK MAP
   const [liveStockMap, setLiveStockMap] = useState({});
@@ -380,11 +385,12 @@ const SalesOrders = () => {
 
   const fetchAllData = async () => {
     try {
-      const [custResult, qtnResult, proformaResult, bankAccResult] = await Promise.allSettled([
+      const [custResult, qtnResult, proformaResult, bankAccResult, settingsResult] = await Promise.allSettled([
         getAllCustomers(),
         getAllQuotations(),
         getAllProformas(),
-        api.get('/api/ledger/accounts/bank-accounts').then(r => r.data)
+        api.get('/api/ledger/accounts/bank-accounts').then(r => r.data),
+        getSalesSettings()
       ]);
 
       const custData = custResult.status === 'fulfilled' ? custResult.value : [];
@@ -392,6 +398,7 @@ const SalesOrders = () => {
       const proformaData = proformaResult.status === 'fulfilled' ? proformaResult.value : [];
       const bankAccData = bankAccResult.status === 'fulfilled' ? bankAccResult.value : [];
       setBankAccountOptions(Array.isArray(bankAccData) ? bankAccData : []);
+      if (settingsResult.status === 'fulfilled') setSalesSettings(settingsResult.value);
 
       let validCustomers = Array.isArray(custData) ? custData : [];
 
@@ -859,6 +866,35 @@ const SalesOrders = () => {
         focUnit: i.focUnit || i.unit || 'PCS'
       }))
     };
+
+    // Stock check enforcement
+    if (salesSettings?.stockCheckRequired) {
+      const stockIssues = [];
+      for (const item of items) {
+        if (!item.code) continue;
+        try {
+          const stockData = await getStockAvailability(item.code);
+          const available = Number(stockData?.availableQty ?? stockData?.available ?? 0);
+          if (Number(item.qty) > available) {
+            stockIssues.push(`${item.name || item.code}: requested ${item.qty}, available ${available}`);
+          }
+        } catch {
+          // skip items where stock check fails
+        }
+      }
+      if (stockIssues.length > 0) {
+        alert(`Insufficient stock for the following items:\n\n${stockIssues.join('\n')}\n\nPlease adjust quantities or disable stock check in Sales Settings.`);
+        return;
+      }
+    }
+
+    // Credit limit BLOCK enforcement
+    if (salesSettings?.creditLimitPolicy === 'BLOCK' &&
+        selectedCustomer?.creditLimitAmount > 0 &&
+        (Number(selectedCustomer.balance || 0) + orderTotal) > selectedCustomer.creditLimitAmount) {
+      alert(`Credit Limit Exceeded: The projected outstanding balance (${(Number(selectedCustomer.balance || 0) + orderTotal).toFixed(2)} AED) exceeds this customer's credit limit of ${Number(selectedCustomer.creditLimitAmount).toFixed(2)} AED.\n\nThis order cannot be saved. Please collect payment first or adjust the credit limit in the customer profile.`);
+      return;
+    }
 
     try {
       const savedOrder = await saveSalesOrder(payload);
@@ -1406,6 +1442,32 @@ const SalesOrders = () => {
                 isReadOnly={isLocked}
                 currency="AED"
             />
+
+            {selectedCustomer && salesSettings?.creditLimitPolicy === 'WARNING' &&
+                selectedCustomer.creditLimitAmount > 0 &&
+                (Number(selectedCustomer.balance || 0) + orderTotal) > selectedCustomer.creditLimitAmount && (
+                <div className="p-2.5 bg-yellow-50 shadow-sm border border-yellow-200 rounded-md text-yellow-800 text-[11px] leading-relaxed flex items-start gap-2">
+                    <AlertCircle size={14} className="mt-0.5 shrink-0 text-yellow-600" />
+                    <p>
+                        <strong>Credit Warning:</strong> The projected outstanding balance
+                        ({(Number(selectedCustomer.balance || 0) + orderTotal).toFixed(2)} AED) exceeds this customer's
+                        credit limit of {Number(selectedCustomer.creditLimitAmount).toFixed(2)} AED.
+                    </p>
+                </div>
+            )}
+            {selectedCustomer && salesSettings?.creditLimitPolicy === 'BLOCK' &&
+                selectedCustomer.creditLimitAmount > 0 &&
+                (Number(selectedCustomer.balance || 0) + orderTotal) > selectedCustomer.creditLimitAmount && (
+                <div className="p-2.5 bg-red-50 shadow-sm border border-red-300 rounded-md text-red-800 text-[11px] leading-relaxed flex items-start gap-2">
+                    <AlertCircle size={14} className="mt-0.5 shrink-0 text-red-600" />
+                    <p>
+                        <strong>Credit Limit Blocked:</strong> The projected outstanding balance
+                        ({(Number(selectedCustomer.balance || 0) + orderTotal).toFixed(2)} AED) exceeds this customer's
+                        credit limit of {Number(selectedCustomer.creditLimitAmount).toFixed(2)} AED.
+                        Saving this order is blocked until the balance is within limit.
+                    </p>
+                </div>
+            )}
 
             {/* CUSTOMER SELECTOR MODAL */}
             <CustomerSelector
