@@ -747,8 +747,8 @@ const PaymentVoucher = () => {
             <div className="flex flex-col xl:flex-row justify-between items-start xl:items-center gap-4 mb-6">
                 <div>
                     <div className="flex items-center gap-2 mb-1">
-                        <Landmark className="w-5 h-5 text-slate-700" />
-                        <h1 className="text-2xl font-bold text-slate-900 flex items-center gap-2"><CreditCard className="text-[#F5C742]" size={28} /> Payment Voucher</h1>
+                        <CreditCard className="w-7 h-7 text-[#F5C742]" />
+                        <h1 className="text-2xl font-bold text-slate-900">Payment Voucher</h1>
                     </div>
                     <p className="text-sm text-slate-500">Record vendor payments, allocate against invoices, and post to accounts.</p>
                     <div className="flex items-center gap-2 mt-1 text-xs text-slate-400">

@@ -1097,6 +1097,80 @@ const buildPrintStyles = (paperSize = 'A4', orientation = 'Portrait') => {
                 border-radius: 0;
                 box-shadow: none;
             }
+            /* Force 3-column header layout — prevents the responsive breakpoint
+               from collapsing columns on narrow paper sizes like A4 */
+            .document-header {
+                grid-template-columns: minmax(0, 1.15fr) minmax(180px, 240px) minmax(240px, 300px) !important;
+                gap: 28px !important;
+            }
+            .signature-grid {
+                grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+            }
+            .document-title {
+                margin-bottom: 24px !important;
+            }
+            .header-center {
+                padding-top: 48px !important;
+                text-align: right !important;
+                justify-items: end !important;
+            }
+            .header-right {
+                padding-top: 0 !important;
+                text-align: right !important;
+                justify-items: end !important;
+                display: flex !important;
+                flex-direction: column !important;
+                align-items: flex-end !important;
+                gap: 8px !important;
+            }
+            .company-logo {
+                display: flex !important;
+                justify-content: flex-end !important;
+                align-items: flex-end !important;
+                width: 100% !important;
+                max-width: none !important;
+            }
+            .company-logo img {
+                display: block !important;
+                max-width: 120px !important;
+                max-height: 80px !important;
+                object-fit: contain !important;
+                margin-left: auto !important;
+            }
+            .company-logo-fallback {
+                margin-left: auto !important;
+            }
+            .company-panel {
+                display: flex !important;
+                flex-direction: column !important;
+                align-items: flex-end !important;
+                text-align: right !important;
+                width: 100% !important;
+            }
+            .company-name,
+            .company-local-name,
+            .company-copy {
+                text-align: right !important;
+            }
+            .doc-meta-item {
+                text-align: right !important;
+                justify-items: end !important;
+            }
+            .summary-totals {
+                justify-content: flex-end !important;
+            }
+            .tot-label {
+                text-align: right !important;
+                padding-right: 12px !important;
+            }
+            .footer-bar {
+                flex-direction: row !important;
+                align-items: center !important;
+            }
+            .footer-center,
+            .footer-right {
+                text-align: right !important;
+            }
         }
     `;
 };

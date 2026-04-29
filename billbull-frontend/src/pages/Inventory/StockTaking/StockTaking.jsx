@@ -419,7 +419,7 @@ const ListView = ({
                         <div className="bg-amber-100 p-1.5 rounded-lg">
                             <ClipboardList className="h-5 w-5 text-[#F5C742]" />
                         </div>
-                        <h1 className="text-lg font-bold text-slate-800 tracking-tight flex items-center gap-2"><ClipboardList className="text-[#F5C742]" size={24} /> Stock Taking</h1>
+                        <h1 className="text-lg font-bold text-slate-800 tracking-tight">Stock Taking</h1>
                     </div>
                     <p className="text-sm text-slate-500">Manage physical stock counts, track variances, and maintain inventory accuracy</p>
                 </div>

@@ -113,7 +113,9 @@ const BarcodePrinter = () => {
             sku: true,
             unit: false,
             price: true,
-            company: false
+            company: false,
+            itemCode: false,
+            brandName: false
         }
     });
 
@@ -123,14 +125,27 @@ const BarcodePrinter = () => {
         setEditingTemplate({
             ...template,
             // If template has fields object, use it; else fallback to defaults
-            fields: (template.fields && typeof template.fields === 'object') ? template.fields : {
+            fields: (template.fields && typeof template.fields === 'object') ? {
                 barcode: true,
                 qr: false,
                 name: true,
                 sku: true,
                 unit: false,
                 price: true,
-                company: false
+                company: false,
+                itemCode: false,
+                brandName: false,
+                ...template.fields
+            } : {
+                barcode: true,
+                qr: false,
+                name: true,
+                sku: true,
+                unit: false,
+                price: true,
+                company: false,
+                itemCode: false,
+                brandName: false
             }
         });
         setManagerTab('create');
@@ -152,7 +167,9 @@ const BarcodePrinter = () => {
                 sku: true,
                 unit: false,
                 price: true,
-                company: false
+                company: false,
+                itemCode: false,
+                brandName: false
             }
         });
         setManagerTab('create');
@@ -349,8 +366,8 @@ const BarcodePrinter = () => {
         // For 40x25mm: 25mm height is very tight.
         // Need to be very aggressive with space.
         const isSmallHeight = t.height <= 25;
-        const barcodeHeight = isSmallHeight ? 15 : (t.height < 30 ? 25 : 40);
-        const barcodeWidth = t.width < 50 ? 1 : 1.5;
+        const barcodeHeight = isSmallHeight ? 32 : (t.height < 30 ? 40 : 55);
+        const barcodeWidth = t.width < 50 ? 1.4 : 1.8;
         const fontSize = isSmallHeight ? 10 : 12;
         const margin = isSmallHeight ? 0 : 0;
 
@@ -363,9 +380,11 @@ const BarcodePrinter = () => {
                     generateBarcode(selector, value, barcodeWidth, barcodeHeight, fontSize, margin);
                 });
             } else {
-                // Generate sample barcode for preview when empty
+                // Generate sample barcode for the main preview (empty cart)
                 generateBarcode(".barcode-sample", "123456789012", barcodeWidth, barcodeHeight, fontSize, margin);
             }
+            // Always generate for the template manager canvas which uses barcode value as class
+            generateBarcode(".barcode-123456789012", "123456789012", barcodeWidth, barcodeHeight, fontSize, margin);
         }, 0);
     }, [cart, selectedTemplate, templates, editingTemplate]); // Added editingTemplate dependency
 
@@ -624,6 +643,8 @@ const BarcodePrinter = () => {
                     id: 'sample',
                     name: 'Sample Product Name',
                     code: 'SAMPLE-123',
+                    brand: 'Sample Brand',
+                    brandName: 'Sample Brand',
                     price: '99.00',
                     packings: [{ isSale: true, barcode: '123456789012' }],
                     company: companyName
@@ -633,9 +654,10 @@ const BarcodePrinter = () => {
         }
 
         const isSmallHeight = t.height <= 25;
-        const barcodeMaxHeight = isSmallHeight ? '15px' : (t.height < 30 ? '25px' : '40px');
+        const barcodeMaxHeight = isSmallHeight ? '32px' : (t.height < 30 ? '40px' : '55px');
         const nameFontSize = isSmallHeight ? '8px' : '10px';
         const codeFontSize = isSmallHeight ? '7px' : '8px';
+        const barcodeFontSize = isSmallHeight ? '10px' : '12px';
         const priceFontSize = isSmallHeight ? '10px' : '12px';
         const nameMarginBottom = isSmallHeight ? '0px' : '1px';
         const priceMarginTop = isSmallHeight ? '0px' : '1px';
@@ -666,6 +688,14 @@ const BarcodePrinter = () => {
                             <div className="label-name" style={{ fontSize: nameFontSize, marginBottom: nameMarginBottom }}>{item.product.name}</div>
                         )}
 
+                        {isEnabled('brandName') && (item.product.brand?.name || item.product.brandName) && (
+                            <div className="label-code" style={{ fontSize: codeFontSize, marginBottom: '1px', fontWeight: 'bold' }}>{item.product.brand?.name || item.product.brandName}</div>
+                        )}
+
+                        {isEnabled('itemCode') && item.product.code && (
+                            <div className="label-code" style={{ fontSize: codeFontSize, marginBottom: '1px' }}>Code: {item.product.code}</div>
+                        )}
+
                         {isEnabled('qr') ? (
                             <div className="flex items-center justify-center flex-1 w-full p-0.5">
                                 <img
@@ -685,12 +715,12 @@ const BarcodePrinter = () => {
                             <svg className={`barcode-${item.barcode || item.product.id} w-full`} data-barcode={item.barcode || getBarcodeValue(item.product)} style={{ maxHeight: barcodeMaxHeight, maxWidth: '100%' }}></svg>
                         )}
 
-                        {isEnabled('sku') && (
-                            <div className="label-code" style={{ fontSize: codeFontSize, marginTop: '1px' }}>{item.product.sku}</div>
+                        {isEnabled('barcode') && (
+                            <div className="label-code" style={{ fontSize: barcodeFontSize, marginTop: '1px', letterSpacing: '0.08em', fontWeight: 'bold' }}>{item.barcode || getBarcodeValue(item.product)}</div>
                         )}
 
-                        {(isEnabled('barcode') && !isEnabled('sku')) && (
-                            <div className="label-code" style={{ fontSize: codeFontSize }}>{item.barcode || getBarcodeValue(item.product)}</div>
+                        {isEnabled('sku') && (
+                            <div className="label-code" style={{ fontSize: codeFontSize, marginTop: '1px' }}>{item.product.sku}</div>
                         )}
 
                         {/* BB-008: Show unit on the label */}
@@ -721,7 +751,7 @@ const BarcodePrinter = () => {
                         <div className="bg-[#F5C742]/20 p-1.5 rounded-lg text-amber-900">
                             <Barcode size={20} />
                         </div>
-                        <h1 className="text-xl font-bold text-slate-900 flex items-center gap-2"><Barcode className="text-[#F5C742]" size={28} /> Barcode Print & Design</h1>
+                        <h1 className="text-xl font-bold text-slate-900">Barcode Print & Design</h1>
                     </div>
                     <p className="text-xs text-slate-500 mt-1 ml-11">Design and print custom barcode labels for inventory items</p>
                 </div>
@@ -749,11 +779,11 @@ const BarcodePrinter = () => {
             </div>
 
             {/* Main Content */}
-            <div className="flex-1 overflow-y-auto lg:overflow-hidden p-4 lg:p-6 relative">
-                <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 lg:gap-6 h-auto lg:h-full">
+            <div className="flex-1 overflow-y-auto p-4 lg:p-6 relative">
+                <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 lg:gap-6">
 
                     {/* LEFT COLUMN: Templates */}
-                    <div className="col-span-1 lg:col-span-4 flex flex-col gap-4 h-[300px] lg:h-full overflow-y-auto pr-2 custom-scrollbar">
+                    <div className="col-span-1 lg:col-span-4 flex flex-col gap-4 overflow-y-auto pr-2 custom-scrollbar">
                         <div className="bg-white rounded-xl border border-slate-200 p-4 shadow-sm">
                             <div className="flex items-center gap-2 mb-4">
                                 <Layout className="text-[#F5C742]" size={18} />
@@ -806,7 +836,7 @@ const BarcodePrinter = () => {
                     </div>
 
                     {/* RIGHT COLUMN: Search & Queue */}
-                    <div className="col-span-1 lg:col-span-8 flex flex-col gap-4 lg:gap-6 h-auto lg:h-full overflow-visible lg:overflow-hidden">
+                    <div className="col-span-1 lg:col-span-8 flex flex-col gap-4 lg:gap-6">
 
                         {/* Top: Search */}
                         <div className="bg-white rounded-xl border border-slate-200 p-6 shadow-sm shrink-0 relative z-20" ref={searchRef}>
@@ -867,7 +897,7 @@ const BarcodePrinter = () => {
                                                     >
                                                         <div className="w-10 h-10 rounded bg-slate-100 flex items-center justify-center shrink-0 border border-slate-200 overflow-hidden">
                                                             {p.image ? (
-                                                                <img src={p.image.url} alt={p.name} className="w-full h-full object-cover" />
+                                                                <img src={getImageUrl(p.image?.url || p.image)} alt={p.name} className="w-full h-full object-cover" />
                                                             ) : (
                                                                 <Box className="text-slate-400" size={20} />
                                                             )}
@@ -904,7 +934,7 @@ const BarcodePrinter = () => {
                         </div>
 
                         {/* Middle: Queue */}
-                        <div className="bg-white rounded-xl border border-slate-200 p-4 lg:p-6 shadow-sm h-[400px] lg:h-auto lg:flex-1 flex flex-col min-h-0">
+                        <div className="bg-white rounded-xl border border-slate-200 p-4 lg:p-6 shadow-sm flex flex-col" style={{ minHeight: '420px' }}>
                             <div className="flex justify-between items-center mb-4">
                                 <h2 className="font-bold text-slate-800 flex items-center gap-2">
                                     <Box className="text-[#F5C742]" size={18} />
@@ -915,7 +945,7 @@ const BarcodePrinter = () => {
                                 </div>
                             </div>
 
-                            <div className="flex-1 overflow-y-auto custom-scrollbar bg-slate-50 rounded-lg border border-slate-200 p-2">
+                            <div className="overflow-y-auto custom-scrollbar bg-slate-50 rounded-lg border border-slate-200 p-2" style={{ minHeight: '320px', maxHeight: '480px' }}>
                                 {cart.length === 0 ? (
                                     <div className="h-full flex flex-col items-center justify-center text-slate-400">
                                         <Box size={48} className="mb-4 text-slate-200" />
@@ -1027,8 +1057,8 @@ const BarcodePrinter = () => {
                                 <Send className="text-[#F5C742]" size={16} />
                                 Template Preview
                             </h2>
-                            <div className="bg-slate-100 rounded border border-slate-200 h-32 flex items-center justify-center overflow-hidden relative">
-                                <div className="scale-75 origin-center" key={selectedTemplate}>
+                            <div className="bg-slate-100 rounded border border-slate-200 flex items-center justify-center overflow-hidden relative" style={{ minHeight: '280px' }}>
+                                <div className="origin-center" key={selectedTemplate}>
                                     {renderLabels(true)}
                                 </div>
                             </div>
@@ -1375,6 +1405,8 @@ const BarcodePrinter = () => {
                                                             { id: 'barcode', label: 'Barcode', icon: <Barcode size={14} /> },
                                                             { id: 'qr', label: 'QR Code', icon: <Grid size={14} />, sub: 'Cannot use with Barcode' },
                                                             { id: 'name', label: 'Product Name', icon: <Tag size={14} /> },
+                                                            { id: 'itemCode', label: 'Item Code', icon: <Tag size={14} /> },
+                                                            { id: 'brandName', label: 'Brand Name', icon: <Tag size={14} /> },
                                                             { id: 'sku', label: 'SKU Code', icon: <Box size={14} /> },
                                                             { id: 'unit', label: 'Unit', icon: <Box size={14} /> },
                                                             { id: 'price', label: 'Selling Price', icon: <span className="font-bold text-xs">$</span> },
@@ -1442,6 +1474,8 @@ const BarcodePrinter = () => {
                                                                     id: 'sample',
                                                                     name: 'Sample Product Name',
                                                                     code: 'SAMPLE-123',
+                                                                    brand: 'Sample Brand',
+                                                                    brandName: 'Sample Brand',
                                                                     price: '99.00',
                                                                     packings: [{ isSale: true, barcode: '123456789012' }],
                                                                     company: company?.companyName || ''
