@@ -110,7 +110,12 @@ export const resolveCurrencyDisplayCode = (companyProfile = {}) => {
 export const formatCurrencyDisplay = (value, currency = "AED", decimals = 2) => {
   const currencyLabel = resolveCurrencyDisplayCode({ currency });
   const rawText = value === null || value === undefined ? "" : String(value).trim();
-  const amountText = rawText.replace(/\bAED\b/gi, "").replace(/د\.إ/g, "").trim();
+  const escapedCurrencyLabel = currencyLabel.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const amountText = rawText
+    .replace(new RegExp(escapedCurrencyLabel, "g"), "")
+    .replace(/\b[A-Z]{3}\b/g, "")
+    .replace(/د\.إ/g, "")
+    .trim();
   const normalizedAmount = amountText.replace(/,/g, "");
   const parsedAmount = Number(normalizedAmount);
 

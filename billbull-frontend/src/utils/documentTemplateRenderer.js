@@ -140,14 +140,16 @@ export const normalizeDocumentCompanyProfile = (companyProfile = {}) => {
 };
 
 const resolveCurrency = (companyProfile = {}, totals = {}, summaryAmount = {}) => {
+    const companyCurrencyCode = firstNonEmpty(companyProfile.currency);
+    if (companyCurrencyCode) {
+        return hasCurrencySymbolImage(companyCurrencyCode)
+            ? companyCurrencyCode
+            : firstNonEmpty(companyProfile.currencySymbol, companyCurrencyCode);
+    }
+
     const documentCurrency = firstNonEmpty(totals.currency, summaryAmount.currency);
     if (hasCurrencySymbolImage(documentCurrency)) {
         return documentCurrency;
-    }
-
-    const companyCurrencyCode = firstNonEmpty(companyProfile.currency);
-    if (hasCurrencySymbolImage(companyCurrencyCode)) {
-        return companyCurrencyCode;
     }
 
     return firstNonEmpty(documentCurrency, companyProfile.currencySymbol, companyProfile.currency, 'AED');

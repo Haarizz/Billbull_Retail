@@ -93,7 +93,7 @@ const SearchableDropdown = ({
     };
 
     return (
-        <div className={`relative overflow-visible ${className}`} ref={dropdownRef}>
+        <div className={`relative overflow-visible ${className}`} ref={dropdownRef} data-bb-skip-aed-symbol="true">
             <div
                 className={`w-full border rounded-md py-2 px-3 bg-white flex items-center justify-between cursor-pointer ${disabled ? 'bg-slate-50 cursor-not-allowed text-slate-500' : 'hover:border-slate-300'
                     } ${isOpen ? 'ring-1 ring-[#F5C742] border-[#F5C742]' : 'border-slate-200'}`}

@@ -3,7 +3,11 @@ import {
     generateDocumentPrintHtml
 } from './documentTemplateRenderer';
 import { generateReportFilename } from './filenameUtils';
-import { UAE_DIRHAM_SYMBOL_IMAGE } from './countryCurrencyOptions';
+import {
+    hasCurrencySymbolImage,
+    resolveCurrencyDisplayCode,
+    UAE_DIRHAM_SYMBOL_IMAGE
+} from './countryCurrencyOptions';
 
 const escapeHtml = (value) =>
     String(value ?? '')
@@ -15,12 +19,25 @@ const escapeHtml = (value) =>
 
 const AED_TOKEN_PATTERN = /(^|[^A-Za-z0-9_])AED(?=$|[^A-Za-z0-9_])/gi;
 const AMOUNT_BEFORE_AED_PATTERN = /([+-]?\d[\d,]*(?:\.\d+)?)(\s+)AED(?=$|[^A-Za-z0-9_])/gi;
-const AED_SYMBOL_HTML = `<img src="${UAE_DIRHAM_SYMBOL_IMAGE}" alt="AED" style="height:0.82em;width:auto;display:inline-block;vertical-align:-0.08em;margin:0 0.12em;" />`;
 
-const renderTextWithCurrencySymbols = (value) =>
+const renderCurrencySymbolHtml = (companyProfile = {}) => {
+    const currencyLabel = resolveCurrencyDisplayCode(companyProfile);
+    if (hasCurrencySymbolImage(companyProfile.currency || currencyLabel)) {
+        return `<img src="${UAE_DIRHAM_SYMBOL_IMAGE}" alt="AED" style="height:0.82em;width:auto;display:inline-block;vertical-align:-0.08em;margin:0 0.12em;" />`;
+    }
+
+    return escapeHtml(currencyLabel);
+};
+
+const renderTextWithCurrencySymbols = (value, companyProfile = {}) => {
+    const currencySymbolHtml = renderCurrencySymbolHtml(companyProfile);
+    
+    return (
     escapeHtml(value)
-        .replace(AMOUNT_BEFORE_AED_PATTERN, `${AED_SYMBOL_HTML} $1`)
-        .replace(AED_TOKEN_PATTERN, `$1${AED_SYMBOL_HTML}`);
+        .replace(AMOUNT_BEFORE_AED_PATTERN, `${currencySymbolHtml} $1`)
+        .replace(AED_TOKEN_PATTERN, `$1${currencySymbolHtml}`)
+    );
+};
 
 export const generatePrintHtml = (template, data, options = {}) =>
     generateDocumentPrintHtml(template, data, options);
@@ -106,13 +123,13 @@ export const generateReportPrintHtml = (_template, reportTitle, columns, data, c
         }
     `;
 
-    const headers = columns.map((column) => `<th>${renderTextWithCurrencySymbols(column.header)}</th>`).join('');
+    const headers = columns.map((column) => `<th>${renderTextWithCurrencySymbols(column.header, companyProfile)}</th>`).join('');
     const rows = data.map((row) => `
         <tr>
             ${columns.map((column) => {
                 const value = row[column.key];
                 const isNumeric = typeof value === 'number';
-                return `<td class="${isNumeric ? 'text-right' : ''}">${value !== null && value !== undefined ? renderTextWithCurrencySymbols(value) : '-'}</td>`;
+                return `<td class="${isNumeric ? 'text-right' : ''}">${value !== null && value !== undefined ? renderTextWithCurrencySymbols(value, companyProfile) : '-'}</td>`;
             }).join('')}
         </tr>
     `).join('');
