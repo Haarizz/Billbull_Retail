@@ -1,9 +1,15 @@
 import { useEffect } from 'react';
-import { UAE_DIRHAM_SYMBOL_IMAGE } from '../utils/countryCurrencyOptions';
+import { useCompany } from '../context/CompanyContext';
+import {
+  hasCurrencySymbolImage,
+  resolveCurrencyDisplayCode,
+  UAE_DIRHAM_SYMBOL_IMAGE
+} from '../utils/countryCurrencyOptions';
 
 const AED_TOKEN_PATTERN = /(^|[^A-Za-z0-9_])AED(?=$|[^A-Za-z0-9_])/gi;
 const AMOUNT_BEFORE_AED_PATTERN = /([+-]?\d[\d,]*(?:\.\d+)?)(\s+)AED(?=$|[^A-Za-z0-9_])/gi;
 const SKIPPED_SELECTOR = [
+  '[data-bb-currency-symbol]',
   '[data-bb-aed-symbol]',
   '[data-bb-skip-aed-symbol]',
   'script',
@@ -28,26 +34,49 @@ const shouldSkipNode = (node) => {
   return !element || Boolean(element.closest(SKIPPED_SELECTOR));
 };
 
-const createAedSymbolNode = () => {
-  const symbol = document.createElement('span');
+const applySymbolNodeStyles = (symbol, currencyConfig) => {
   symbol.className = 'bb-aed-symbol';
+  symbol.dataset.bbCurrencySymbol = 'true';
   symbol.dataset.bbAedSymbol = 'true';
   symbol.setAttribute('role', 'img');
-  symbol.setAttribute('aria-label', 'AED');
-  symbol.style.backgroundImage = `url("${UAE_DIRHAM_SYMBOL_IMAGE}")`;
-  symbol.style.backgroundRepeat = 'no-repeat';
-  symbol.style.backgroundPosition = 'center';
-  symbol.style.backgroundSize = 'contain';
+  symbol.setAttribute('aria-label', currencyConfig.ariaLabel);
   symbol.style.display = 'inline-block';
-  symbol.style.width = '1.05em';
-  symbol.style.height = '0.82em';
   symbol.style.verticalAlign = '-0.08em';
   symbol.style.margin = '0 0.06em';
 
+  if (currencyConfig.hasImage) {
+    symbol.textContent = '';
+    symbol.style.backgroundImage = `url("${UAE_DIRHAM_SYMBOL_IMAGE}")`;
+    symbol.style.backgroundRepeat = 'no-repeat';
+    symbol.style.backgroundPosition = 'center';
+    symbol.style.backgroundSize = 'contain';
+    symbol.style.width = '1.05em';
+    symbol.style.height = '0.82em';
+    return;
+  }
+
+  symbol.textContent = currencyConfig.label;
+  symbol.style.backgroundImage = '';
+  symbol.style.backgroundRepeat = '';
+  symbol.style.backgroundPosition = '';
+  symbol.style.backgroundSize = '';
+  symbol.style.width = 'auto';
+  symbol.style.height = 'auto';
+};
+
+const createCurrencySymbolNode = (currencyConfig) => {
+  const symbol = document.createElement('span');
+  applySymbolNodeStyles(symbol, currencyConfig);
   return symbol;
 };
 
-const appendStandaloneAedSymbols = (text, fragment) => {
+const updateExistingCurrencySymbolNodes = (currencyConfig) => {
+  document
+    .querySelectorAll('[data-bb-currency-symbol], [data-bb-aed-symbol]')
+    .forEach((symbol) => applySymbolNodeStyles(symbol, currencyConfig));
+};
+
+const appendStandaloneAedSymbols = (text, fragment, currencyConfig) => {
   AED_TOKEN_PATTERN.lastIndex = 0;
   let lastIndex = 0;
   let match = AED_TOKEN_PATTERN.exec(text);
@@ -60,7 +89,7 @@ const appendStandaloneAedSymbols = (text, fragment) => {
       fragment.appendChild(document.createTextNode(text.slice(lastIndex, tokenStart)));
     }
 
-    fragment.appendChild(createAedSymbolNode());
+    fragment.appendChild(createCurrencySymbolNode(currencyConfig));
     lastIndex = tokenStart + 3;
     match = AED_TOKEN_PATTERN.exec(text);
   }
@@ -70,7 +99,7 @@ const appendStandaloneAedSymbols = (text, fragment) => {
   }
 };
 
-const appendTextWithAedSymbols = (text, fragment) => {
+const appendTextWithAedSymbols = (text, fragment, currencyConfig) => {
   AMOUNT_BEFORE_AED_PATTERN.lastIndex = 0;
   let lastIndex = 0;
   let match = AMOUNT_BEFORE_AED_PATTERN.exec(text);
@@ -79,35 +108,35 @@ const appendTextWithAedSymbols = (text, fragment) => {
     const amount = match[1];
 
     if (match.index > lastIndex) {
-      appendStandaloneAedSymbols(text.slice(lastIndex, match.index), fragment);
+      appendStandaloneAedSymbols(text.slice(lastIndex, match.index), fragment, currencyConfig);
     }
 
-    fragment.appendChild(createAedSymbolNode());
+    fragment.appendChild(createCurrencySymbolNode(currencyConfig));
     fragment.appendChild(document.createTextNode(` ${amount}`));
     lastIndex = match.index + match[0].length;
     match = AMOUNT_BEFORE_AED_PATTERN.exec(text);
   }
 
   if (lastIndex < text.length) {
-    appendStandaloneAedSymbols(text.slice(lastIndex), fragment);
+    appendStandaloneAedSymbols(text.slice(lastIndex), fragment, currencyConfig);
   }
 };
 
-const replaceTextNode = (node) => {
+const replaceTextNode = (node, currencyConfig) => {
   const text = node.nodeValue || '';
   if (!text || !hasAedToken(text) || shouldSkipNode(node)) {
     return;
   }
 
   const fragment = document.createDocumentFragment();
-  appendTextWithAedSymbols(text, fragment);
+  appendTextWithAedSymbols(text, fragment, currencyConfig);
 
   node.parentNode?.replaceChild(fragment, node);
 };
 
-const processNode = (node) => {
+const processNode = (node, currencyConfig) => {
   if (node.nodeType === Node.TEXT_NODE) {
-    replaceTextNode(node);
+    replaceTextNode(node, currencyConfig);
     return;
   }
 
@@ -140,25 +169,34 @@ const processNode = (node) => {
     current = walker.nextNode();
   }
 
-  textNodes.forEach(replaceTextNode);
+  textNodes.forEach((textNode) => replaceTextNode(textNode, currencyConfig));
 };
 
 const AedSymbolRenderer = () => {
+  const { company } = useCompany();
+  const currencyLabel = resolveCurrencyDisplayCode(company || {});
+  const currencyConfig = {
+    label: currencyLabel,
+    hasImage: hasCurrencySymbolImage(company?.currency || currencyLabel),
+    ariaLabel: company?.currency || currencyLabel || 'Currency'
+  };
+
   useEffect(() => {
     if (typeof document === 'undefined' || !document.body) {
       return undefined;
     }
 
-    processNode(document.body);
+    updateExistingCurrencySymbolNodes(currencyConfig);
+    processNode(document.body, currencyConfig);
 
     const observer = new MutationObserver((mutations) => {
       mutations.forEach((mutation) => {
         if (mutation.type === 'characterData') {
-          processNode(mutation.target.parentElement || mutation.target);
+          processNode(mutation.target.parentElement || mutation.target, currencyConfig);
           return;
         }
 
-        processNode(mutation.target);
+        processNode(mutation.target, currencyConfig);
       });
     });
 
@@ -169,7 +207,7 @@ const AedSymbolRenderer = () => {
     });
 
     return () => observer.disconnect();
-  }, []);
+  }, [currencyConfig.ariaLabel, currencyConfig.hasImage, currencyConfig.label]);
 
   return null;
 };

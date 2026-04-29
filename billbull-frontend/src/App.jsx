@@ -122,8 +122,8 @@ class ErrorBoundary extends React.Component {
 function App() {
   return (
     <BrowserRouter>
-      <AedSymbolRenderer />
       <CompanyProvider>
+        <AedSymbolRenderer />
         <BranchProvider>
         <Toaster position="top-right" reverseOrder={false} />
         <Routes>
