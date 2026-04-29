@@ -2064,9 +2064,9 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
             </div>
 
             {/* Items Table */}
-            <div className="flex-1 overflow-x-auto">
+            <div className="overflow-auto" style={{ maxHeight: 'calc(4 * 115px + 44px)' }}>
               <table className="w-full text-xs text-left min-w-[800px]">
-                <thead className="bg-slate-50 border-b border-slate-100 text-slate-500">
+                <thead className="bg-slate-50 border-b border-slate-100 text-slate-500 sticky top-0 z-10">
                   <tr>
                     <th className="p-3 font-medium w-10 text-center text-slate-400">#</th>
                     <th className="p-3 font-medium min-w-[280px]">
