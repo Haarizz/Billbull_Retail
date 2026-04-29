@@ -46,20 +46,38 @@ const applySymbolNodeStyles = (symbol, currencyConfig) => {
 
   if (currencyConfig.hasImage) {
     symbol.textContent = '';
-    symbol.style.backgroundImage = `url("${UAE_DIRHAM_SYMBOL_IMAGE}")`;
-    symbol.style.backgroundRepeat = 'no-repeat';
-    symbol.style.backgroundPosition = 'center';
-    symbol.style.backgroundSize = 'contain';
+    symbol.style.backgroundColor = 'currentColor';
+    symbol.style.backgroundImage = '';
+    symbol.style.backgroundRepeat = '';
+    symbol.style.backgroundPosition = '';
+    symbol.style.backgroundSize = '';
+    symbol.style.webkitMaskImage = `url("${UAE_DIRHAM_SYMBOL_IMAGE}")`;
+    symbol.style.maskImage = `url("${UAE_DIRHAM_SYMBOL_IMAGE}")`;
+    symbol.style.webkitMaskRepeat = 'no-repeat';
+    symbol.style.maskRepeat = 'no-repeat';
+    symbol.style.webkitMaskPosition = 'center';
+    symbol.style.maskPosition = 'center';
+    symbol.style.webkitMaskSize = 'contain';
+    symbol.style.maskSize = 'contain';
     symbol.style.width = '1.05em';
     symbol.style.height = '0.82em';
     return;
   }
 
   symbol.textContent = currencyConfig.label;
+  symbol.style.backgroundColor = '';
   symbol.style.backgroundImage = '';
   symbol.style.backgroundRepeat = '';
   symbol.style.backgroundPosition = '';
   symbol.style.backgroundSize = '';
+  symbol.style.webkitMaskImage = '';
+  symbol.style.maskImage = '';
+  symbol.style.webkitMaskRepeat = '';
+  symbol.style.maskRepeat = '';
+  symbol.style.webkitMaskPosition = '';
+  symbol.style.maskPosition = '';
+  symbol.style.webkitMaskSize = '';
+  symbol.style.maskSize = '';
   symbol.style.width = 'auto';
   symbol.style.height = 'auto';
 };

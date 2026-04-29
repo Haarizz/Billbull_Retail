@@ -58,6 +58,7 @@ import { getTemplatesByCategory } from '../../api/printTemplateApi';
 import { generatePrintHtml, printHtml } from '../../utils/printGenerator';
 import { getImageUrl } from '../../utils/urlUtils';
 import { getDefaultProductUnit, resolveUnitAmount } from '../../utils/unitPricing';
+import { summarizeSalesItems } from '../../utils/documentSummaryUtils';
 import billBullLogo from '../../assets/billBullLogo.png';
 import { generateDocFilename } from '../../utils/filenameUtils';
 import { usePrintDocument } from '../../hooks/usePrintDocument';
@@ -65,6 +66,7 @@ import { useCompany } from '../../context/CompanyContext';
 import { useBranch } from '../../context/BranchContext';
 import ExportDropdown from '../../components/common/ExportDropdown';
 import { exportToExcel, exportToPDF } from '../../utils/exportUtils';
+import CurrencyAmount from '../../components/CurrencyAmount';
 
 // ==========================================
 // 1. CONFIGURATION
@@ -106,6 +108,7 @@ const SalesInvoice = () => {
     const { print } = usePrintDocument();
     const { company } = useCompany();
     const { defaultBranch } = useBranch();
+    const invoiceCurrency = company?.currency || company?.currencySymbol || 'AED';
     const location = useLocation();
     const fromQuotationHandled = useRef(false);
     const fromSOHandled = useRef(false);
@@ -680,37 +683,15 @@ const SalesInvoice = () => {
     // ==========================================
     // CALCULATIONS
     // ==========================================
-    const calculateTotals = () => {
-        const subTotal = items.reduce((acc, i) => acc + (Number(i.gross) || 0), 0);
-        const totalDiscount = items.reduce((acc, i) => {
-            // Gross is Qty * Price. Discount is derived from that.
-            const base = Number(i.qty) * Number(i.price);
-            return acc + (base - (Number(i.gross) || base));
-        }, 0);
-
-        // Recalculating precisely for display
-        const rawSubTotal = items.reduce((acc, i) => acc + (Number(i.qty) * Number(i.price)), 0);
-        const rawDiscount = items.reduce((acc, i) => acc + ((Number(i.qty) * Number(i.price)) * (Number(i.disc) / 100)), 0);
-        const taxable = rawSubTotal - rawDiscount;
-        const totalTax = items.reduce((acc, i) => acc + Number(i.taxAmt), 0);
-        const netTotal = taxable + totalTax;
-
-        const totalCost = items.reduce((acc, i) => acc + (Number(i.qty) * Number(i.cost)), 0);
-        const totalProfit = (netTotal - totalTax) - totalCost;
-        const marginPercent = (netTotal - totalTax) > 0 ? (totalProfit / (netTotal - totalTax)) * 100 : 0;
-
-        return {
-            subTotal: rawSubTotal,
-            totalDiscount: rawDiscount,
-            totalTax,
-            netTotal,
-            totalCost,
-            totalProfit,
-            marginPercent
-        };
-    };
-
-    const { subTotal, totalDiscount, totalTax, netTotal, totalCost, totalProfit, marginPercent } = calculateTotals();
+    const invoiceSummary = useMemo(() => summarizeSalesItems(items), [items]);
+    const subTotal = invoiceSummary.grossTotal;
+    const taxableSubTotal = invoiceSummary.subTotal;
+    const totalDiscount = invoiceSummary.itemDiscountTotal;
+    const totalTax = invoiceSummary.tax;
+    const netTotal = invoiceSummary.grandTotal;
+    const totalCost = items.reduce((acc, i) => acc + ((Number(i.qty) || 0) * (Number(i.cost) || 0)), 0);
+    const totalProfit = taxableSubTotal - totalCost;
+    const marginPercent = taxableSubTotal > 0 ? (totalProfit / taxableSubTotal) * 100 : 0;
 
     // Calculate Outstanding
     const previousOutstanding = 0.00; // Mocked for now
@@ -1508,7 +1489,7 @@ const SalesInvoice = () => {
             branch,
             paymentMode,
             items,
-            subTotal,
+            subTotal: taxableSubTotal,
             totalTax,
             invoiceTotal: netTotal,
             amountPaid: amountCollected,
@@ -1526,6 +1507,7 @@ const SalesInvoice = () => {
         try {
             const templates = await getTemplatesByCategory('Sales Invoice');
             const defaultTemplate = templates.find(t => t.isDefault);
+            const resolvedSummary = summarizeSalesItems(dataToPrint.items || []);
 
             if (defaultTemplate) {
                 // Find Customer details
@@ -1560,9 +1542,9 @@ const SalesInvoice = () => {
                         image: i.image || i.imageUrl ? getImageUrl(i.image || i.imageUrl) : ''
                     })),
                     totals: {
-                        subTotal: Number(dataToPrint.subTotal),
-                        tax: Number(dataToPrint.totalTax || dataToPrint.taxTotal),
-                        grandTotal: Number(dataToPrint.invoiceTotal || dataToPrint.netTotal),
+                        subTotal: resolvedSummary.subTotal,
+                        tax: resolvedSummary.tax,
+                        grandTotal: resolvedSummary.grandTotal,
                         currency: dataToPrint.currency || company?.currencySymbol || company?.currency || 'AED',
                         billDiscount: Number(dataToPrint.totalDiscount || 0),
                         billDiscountAmount: 0
@@ -2493,34 +2475,34 @@ const SalesInvoice = () => {
                                     <div className="flex flex-col gap-6">
 
                                         {/* LEFT: Invoice Totals */}
-                                        <div className="flex-1 space-y-2">
+                                        <div className="flex-1 space-y-2" data-bb-skip-aed-symbol="true">
                                             <div className="flex justify-between text-xs text-slate-600">
                                                 <span>Subtotal</span>
-                                                <span>AED {subTotal.toFixed(2)}</span>
+                                                <CurrencyAmount value={subTotal} currency={invoiceCurrency} />
                                             </div>
                                             <div className="flex justify-between text-xs text-red-500">
                                                 <span>Total Discount</span>
-                                                <span>- AED {totalDiscount.toFixed(2)}</span>
+                                                <span>- <CurrencyAmount value={totalDiscount} currency={invoiceCurrency} /></span>
                                             </div>
                                             <div className="flex justify-between text-xs text-slate-600">
                                                 <span>Total Tax (VAT)</span>
-                                                <span>AED {totalTax.toFixed(2)}</span>
+                                                <CurrencyAmount value={totalTax} currency={invoiceCurrency} />
                                             </div>
                                             <div className="flex justify-between text-base font-bold text-slate-800 border-t border-slate-200 pt-2 my-2">
                                                 <span>Net Invoice Amount</span>
-                                                <span>AED {netTotal.toFixed(2)}</span>
+                                                <CurrencyAmount value={netTotal} currency={invoiceCurrency} />
                                             </div>
                                         </div>
 
                                         {/* RIGHT: Payment */}
-                                        <div className="flex-1 space-y-2">
+                                        <div className="flex-1 space-y-2" data-bb-skip-aed-symbol="true">
                                             <div className="flex justify-between text-xs text-slate-600">
                                                 <span>Previous Outstanding</span>
-                                                <span>AED {previousOutstanding.toFixed(2)}</span>
+                                                <CurrencyAmount value={previousOutstanding} currency={invoiceCurrency} />
                                             </div>
                                             <div className="flex justify-between text-xs text-slate-600">
                                                 <span>This Invoice Amount</span>
-                                                <span>AED {netTotal.toFixed(2)}</span>
+                                                <CurrencyAmount value={netTotal} currency={invoiceCurrency} />
                                             </div>
 
                                             <div className="flex items-center gap-1 text-xs text-emerald-600 font-medium">
@@ -2536,7 +2518,7 @@ const SalesInvoice = () => {
 
                                             <div className="flex justify-between text-base font-bold text-red-600 border-t border-slate-200 pt-2 my-2">
                                                 <span>New Total Outstanding</span>
-                                                <span>AED {newTotalOutstanding.toFixed(2)}</span>
+                                                <CurrencyAmount value={newTotalOutstanding} currency={invoiceCurrency} />
                                             </div>
                                             <div>
                                                 <span className={`text-[10px] font-bold px-2 py-1 rounded text-white ${paymentMode === 'Cash' ? 'bg-emerald-500' : 'bg-blue-500'}`}>
@@ -2568,7 +2550,7 @@ const SalesInvoice = () => {
                                     Invoice No: <span className="text-slate-700 font-bold">{invoiceNo || '-'}</span>
                                 </span>
                                 <span className="text-[11px] font-medium text-slate-500 hidden xl:inline">
-                                    Net: <span className="text-slate-700 font-bold">AED {netTotal.toFixed(2)}</span>
+                                    Net: <CurrencyAmount value={netTotal} currency={invoiceCurrency} className="text-slate-700 font-bold" />
                                 </span>
                             </div>
 
@@ -2621,7 +2603,11 @@ const SalesInvoice = () => {
                                 {/* Balance Display */}
                                 <div className="flex justify-between items-center text-sm mb-2">
                                     <span className="text-slate-500 font-medium">Balance Due</span>
-                                    <span className="text-red-600 font-bold text-lg">AED {(netTotal - amountCollected).toFixed(2)}</span>
+                                    <CurrencyAmount
+                                        value={netTotal - amountCollected}
+                                        currency={invoiceCurrency}
+                                        className="text-red-600 font-bold text-lg"
+                                    />
                                 </div>
 
                                 {/* Date */}

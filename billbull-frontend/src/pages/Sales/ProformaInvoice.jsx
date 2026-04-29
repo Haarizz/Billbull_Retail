@@ -35,6 +35,7 @@ import {
 } from 'lucide-react';
 
 import { useMemo } from 'react';
+import CurrencyAmount from '../../components/CurrencyAmount';
 
 // âœ… REAL API IMPORTS
 import api from '../../api/axiosConfig';
@@ -45,6 +46,7 @@ import { getTemplatesByCategory } from '../../api/printTemplateApi';
 import { generatePrintHtml, printHtml } from '../../utils/printGenerator';
 import { getImageUrl } from '../../utils/urlUtils';
 import { getDefaultProductUnit, resolveUnitAmount } from '../../utils/unitPricing';
+import { summarizeSalesItems } from '../../utils/documentSummaryUtils';
 import billBullLogo from '../../assets/billBullLogo.png';
 import { useCompany } from '../../context/CompanyContext';
 
@@ -249,35 +251,17 @@ const ProformaInvoice = () => {
   const [isSaving, setIsSaving] = useState(false);
 
   // Summary Calcs
-  const grossTotal = items.reduce((sum, item) => sum + (Number(item.qty) * Number(item.price) || 0), 0);
-  const totalItemDiscount = items.reduce((sum, item) => {
-    const qty = Number(item.qty) || 0;
-    const price = Number(item.price) || 0;
-    const focQty = Number(item.foc) || 0;
-    const discPercent = Number(item.disc) || 0;
-
-    const grossAmount = price * qty;
-    let focDeduction = 0;
-    if (focQty > 0 && item.focUnit && item.unitConversions) {
-      const sellingUnit = item.unit;
-      const focUnit = item.focUnit;
-      if (sellingUnit === focUnit) {
-        focDeduction = price * focQty;
-      } else {
-        const focConversion = item.unitConversions[focUnit] || 1;
-        const sellingConversion = item.unitConversions[sellingUnit] || 1;
-        focDeduction = price * (focQty * focConversion / sellingConversion);
-      }
-    }
-    const preDiscountAmount = Math.max(0, grossAmount - focDeduction);
-    return sum + (preDiscountAmount * (discPercent / 100));
-  }, 0);
-
-  const subTotal = grossTotal - totalItemDiscount; // Taxable Subtotal
   const [billDiscount, setBillDiscount] = useState(0);
-  const billDiscountAmount = (subTotal * billDiscount) / 100;
-  const totalTax = items.reduce((sum, item) => sum + (Number(item.taxAmt) || 0), 0);
-  const grandTotal = subTotal - billDiscountAmount + totalTax;
+  const proformaSummary = useMemo(
+    () => summarizeSalesItems(items, billDiscount),
+    [items, billDiscount]
+  );
+  const grossTotal = proformaSummary.grossTotal;
+  const totalItemDiscount = proformaSummary.itemDiscountTotal;
+  const subTotal = proformaSummary.subTotal;
+  const billDiscountAmount = proformaSummary.billDiscountAmount;
+  const totalTax = proformaSummary.tax;
+  const grandTotal = proformaSummary.grandTotal;
   const paidAmount = Number(advanceAmount) || 0;
   const balanceDue = grandTotal - paidAmount;
 
@@ -1689,19 +1673,19 @@ const ProformaInvoice = () => {
                   <div className="px-5 py-3 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
                     <h3 className="text-sm font-bold text-slate-800">Proforma Summary</h3>
                   </div>
-                  <div className="p-5 space-y-4">
-                    <div className="space-y-2 text-xs">
+                    <div className="p-5 space-y-4">
+                    <div className="space-y-2 text-xs" data-bb-skip-aed-symbol="true">
                       <div className="flex justify-between text-slate-600">
                         <span>Gross Amount</span>
-                        <span className="font-medium">{grossTotal.toFixed(2)} AED</span>
+                        <CurrencyAmount value={grossTotal} currency={currency} className="font-medium" />
                       </div>
                       <div className="flex justify-between text-red-500">
                         <span>Item Discount</span>
-                        <span className="font-medium">-{totalItemDiscount.toFixed(2)} AED</span>
+                        <span className="font-medium">-<CurrencyAmount value={totalItemDiscount} currency={currency} /></span>
                       </div>
                       <div className="flex justify-between text-slate-800 font-bold border-t border-slate-100 pt-1">
                         <span>Sub Total</span>
-                        <span>{subTotal.toFixed(2)} AED</span>
+                        <CurrencyAmount value={subTotal} currency={currency} />
                       </div>
                       <div className="flex justify-between text-slate-600 items-center">
                         <div className="flex items-center gap-2">
@@ -1714,23 +1698,23 @@ const ProformaInvoice = () => {
                           />
                         </div>
                         <span className="font-medium">
-                          {billDiscountAmount > 0 ? `-${billDiscountAmount.toFixed(2)}` : '0.00'} AED
+                          {billDiscountAmount > 0 ? '-' : ''}<CurrencyAmount value={billDiscountAmount} currency={currency} />
                         </span>
                       </div>
                       <div className="flex justify-between text-slate-600">
                         <span>Tax Total</span>
-                        <span className="font-medium">{totalTax.toFixed(2)} AED</span>
+                        <CurrencyAmount value={totalTax} currency={currency} className="font-medium" />
                       </div>
                     </div>
 
-                    <div className="pt-3 border-t border-slate-100 mt-3">
+                    <div className="pt-3 border-t border-slate-100 mt-3" data-bb-skip-aed-symbol="true">
                       <div className="flex justify-between items-center mb-1 text-xs">
                         <span className="font-semibold text-slate-500">Grand Total</span>
-                        <span className="font-bold text-slate-900">{grandTotal.toFixed(2)} AED</span>
+                        <CurrencyAmount value={grandTotal} currency={currency} className="font-bold text-slate-900" />
                       </div>
                       <div className="flex justify-between items-center text-xs mt-2 text-emerald-600 font-bold border-t border-slate-100/50 pt-2">
                         <span>Balance Due</span>
-                        <span>{balanceDue.toFixed(2)} AED</span>
+                        <CurrencyAmount value={balanceDue} currency={currency} />
                       </div>
                     </div>
 
@@ -1881,7 +1865,11 @@ const ProformaInvoice = () => {
               {/* Balance Display */}
               <div className="flex justify-between items-center text-sm mb-2">
                 <span className="text-slate-500 font-medium">Balance Due</span>
-                <span className="text-red-600 font-bold text-lg">AED {Math.max(grandTotal - Number(advanceAmount), 0).toFixed(2)}</span>
+                <CurrencyAmount
+                  value={Math.max(grandTotal - Number(advanceAmount), 0)}
+                  currency={currency}
+                  className="text-red-600 font-bold text-lg"
+                />
               </div>
 
               {/* Date */}
