@@ -33,7 +33,8 @@ import {
     ChevronRight,
     ArrowLeft,
     SlidersHorizontal,
-    MoreVertical
+    MoreVertical,
+    AlertCircle
 } from 'lucide-react';
 
 // ✅ API IMPORTS
@@ -51,6 +52,7 @@ import {
     getItemPriceHistory
 } from '../../api/quotationApi';
 import { getStockAvailability } from '../../api/stockAvailabilityApi';
+import { getSalesSettings } from '../../api/salesSettingsApi';
 
 // Ensure you have an axios instance or use fetch
 import api from "../../api/axiosConfig";
@@ -253,6 +255,7 @@ const Quotations = () => {
     const [toastMessage, setToastMessage] = useState('');
     const [toastType, setToastType] = useState('success');
     const [printOptions, setPrintOptions] = useState({ printWithImages: false });
+    const [salesSettings, setSalesSettings] = useState(null);
 
     // Add state for expandable rows in Quotation Form
     const [expandedRows, setExpandedRows] = useState({});
@@ -690,6 +693,13 @@ const Quotations = () => {
             const nextNo = await getNextQuotationNo();
             setNextQtnNo(nextNo);
 
+            try {
+                const settings = await getSalesSettings();
+                setSalesSettings(settings);
+            } catch {
+                // settings are optional
+            }
+
         } catch (error) {
             console.error("Error loading data:", error);
         }
@@ -1066,6 +1076,40 @@ const Quotations = () => {
 
     const handleConfirm = async () => {
         if (isViewMode) return;
+
+        // Stock check enforcement
+        if (salesSettings?.stockCheckRequired) {
+            const stockIssues = [];
+            for (const item of items) {
+                if (!item.code) continue;
+                try {
+                    const stockData = await getStockAvailability(item.code);
+                    const available = Number(stockData?.availableQty ?? stockData?.available ?? 0);
+                    if (Number(item.qty) > available) {
+                        stockIssues.push(`${item.name || item.code}: requested ${item.qty}, available ${available}`);
+                    }
+                } catch {
+                    // skip items where stock check fails
+                }
+            }
+            if (stockIssues.length > 0) {
+                setToastMessage(`Insufficient stock:\n${stockIssues.join(', ')}`);
+                setToastType('info');
+                setShowToast(true);
+                return;
+            }
+        }
+
+        // Credit limit BLOCK enforcement
+        if (salesSettings?.creditLimitPolicy === 'BLOCK' &&
+            selectedCustomerData?.creditLimitAmount > 0 &&
+            (Number(selectedCustomerData.balance || 0) + grandTotal) > selectedCustomerData.creditLimitAmount) {
+            setToastMessage(`Credit Limit Exceeded: The projected outstanding balance (${(Number(selectedCustomerData.balance || 0) + grandTotal).toFixed(2)} AED) exceeds this customer's credit limit of ${Number(selectedCustomerData.creditLimitAmount).toFixed(2)} AED.`);
+            setToastType('info');
+            setShowToast(true);
+            return;
+        }
+
         try {
             const payload = constructPayload('Pending Approval');
 
@@ -2374,6 +2418,32 @@ const Quotations = () => {
                                     isReadOnly={isViewMode}
                                     currency={currency}
                                 />
+
+                                {selectedCustomerData && salesSettings?.creditLimitPolicy === 'WARNING' &&
+                                    selectedCustomerData.creditLimitAmount > 0 &&
+                                    (Number(selectedCustomerData.balance || 0) + grandTotal) > selectedCustomerData.creditLimitAmount && (
+                                    <div className="p-2.5 bg-yellow-50 shadow-sm border border-yellow-200 rounded-md text-yellow-800 text-[11px] leading-relaxed flex items-start gap-2">
+                                        <AlertCircle size={14} className="mt-0.5 shrink-0 text-yellow-600" />
+                                        <p>
+                                            <strong>Credit Warning:</strong> The projected outstanding balance
+                                            ({(Number(selectedCustomerData.balance || 0) + grandTotal).toFixed(2)} AED) exceeds this customer's
+                                            credit limit of {Number(selectedCustomerData.creditLimitAmount).toFixed(2)} AED.
+                                        </p>
+                                    </div>
+                                )}
+                                {selectedCustomerData && salesSettings?.creditLimitPolicy === 'BLOCK' &&
+                                    selectedCustomerData.creditLimitAmount > 0 &&
+                                    (Number(selectedCustomerData.balance || 0) + grandTotal) > selectedCustomerData.creditLimitAmount && (
+                                    <div className="p-2.5 bg-red-50 shadow-sm border border-red-300 rounded-md text-red-800 text-[11px] leading-relaxed flex items-start gap-2">
+                                        <AlertCircle size={14} className="mt-0.5 shrink-0 text-red-600" />
+                                        <p>
+                                            <strong>Credit Limit Blocked:</strong> The projected outstanding balance
+                                            ({(Number(selectedCustomerData.balance || 0) + grandTotal).toFixed(2)} AED) exceeds this customer's
+                                            credit limit of {Number(selectedCustomerData.creditLimitAmount).toFixed(2)} AED.
+                                            Confirming this quotation is blocked until the balance is within limit.
+                                        </p>
+                                    </div>
+                                )}
 
                                 {/* CustomerSelector modal (unchanged) */}
                                 <CustomerSelector

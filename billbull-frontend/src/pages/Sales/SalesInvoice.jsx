@@ -1303,6 +1303,38 @@ const SalesInvoice = () => {
             }))
         };
 
+        // Stock check enforcement (skip for Draft saves)
+        if (newStatus !== 'Draft' && salesSettings?.stockCheckRequired) {
+            const stockIssues = [];
+            for (const item of items) {
+                if (!item.code) continue;
+                try {
+                    const warehouseId = (item.warehouseId && item.warehouseId !== '')
+                        ? Number(item.warehouseId)
+                        : (invoiceLevelWarehouseId ? Number(invoiceLevelWarehouseId) : null);
+                    const stockData = await getStockAvailability(item.code, warehouseId);
+                    const available = Number(stockData?.availableQty ?? stockData?.available ?? 0);
+                    if (Number(item.qty) > available) {
+                        stockIssues.push(`${item.name || item.code}: requested ${item.qty}, available ${available}`);
+                    }
+                } catch {
+                    // skip items where stock check fails
+                }
+            }
+            if (stockIssues.length > 0) {
+                alert(`Insufficient stock for the following items:\n\n${stockIssues.join('\n')}\n\nPlease adjust quantities or disable stock check in Sales Settings.`);
+                return;
+            }
+        }
+
+        // Credit limit BLOCK enforcement
+        if (salesSettings?.creditLimitPolicy === 'BLOCK' &&
+            selectedCustomer.creditLimitAmount > 0 &&
+            (Number(selectedCustomer.balance || 0) + netTotal) > selectedCustomer.creditLimitAmount) {
+            alert(`Credit Limit Exceeded: The projected outstanding balance (${(Number(selectedCustomer.balance || 0) + netTotal).toFixed(2)} AED) exceeds this customer's credit limit of ${Number(selectedCustomer.creditLimitAmount).toFixed(2)} AED.\n\nThis invoice cannot be saved. Please collect payment first or adjust the credit limit in the customer profile.`);
+            return;
+        }
+
         try {
             const savedInvoice = await saveSalesInvoice(payload);
             setInvoiceId(savedInvoice.id);
@@ -2182,6 +2214,19 @@ const SalesInvoice = () => {
                                             <strong>Credit Warning:</strong> The projected outstanding balance
                                             ({(Number(selectedCustomer.balance || 0) + netTotal).toFixed(2)} AED) exceeds this customer's
                                             credit limit of {Number(selectedCustomer.creditLimitAmount).toFixed(2)} AED.
+                                        </p>
+                                    </div>
+                                )}
+                                {selectedCustomer && salesSettings?.creditLimitPolicy === 'BLOCK' &&
+                                    selectedCustomer.creditLimitAmount > 0 &&
+                                    (Number(selectedCustomer.balance || 0) + netTotal) > selectedCustomer.creditLimitAmount && (
+                                    <div className="p-2.5 bg-red-50 shadow-sm border border-red-300 rounded-md text-red-800 text-[11px] leading-relaxed flex items-start gap-2">
+                                        <AlertCircle size={14} className="mt-0.5 shrink-0 text-red-600" />
+                                        <p>
+                                            <strong>Credit Limit Blocked:</strong> The projected outstanding balance
+                                            ({(Number(selectedCustomer.balance || 0) + netTotal).toFixed(2)} AED) exceeds this customer's
+                                            credit limit of {Number(selectedCustomer.creditLimitAmount).toFixed(2)} AED.
+                                            Saving this invoice is blocked until the balance is within limit.
                                         </p>
                                     </div>
                                 )}

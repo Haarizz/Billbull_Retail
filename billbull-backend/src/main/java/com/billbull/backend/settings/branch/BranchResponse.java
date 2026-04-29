@@ -1,5 +1,7 @@
 package com.billbull.backend.settings.branch;
 
+import com.fasterxml.jackson.annotation.JsonProperty;
+
 public class BranchResponse {
 
     private Long id;
@@ -47,6 +49,7 @@ public class BranchResponse {
     public String getPhone() { return phone; }
     public void setPhone(String phone) { this.phone = phone; }
 
+    @JsonProperty("isDefault")
     public boolean isDefault() { return isDefault; }
     public void setDefault(boolean isDefault) { this.isDefault = isDefault; }
 
