@@ -48,6 +48,7 @@ import { getStockAvailability } from '../../api/stockAvailabilityApi';
 import { getSalesSettings } from '../../api/salesSettingsApi';
 import billBullLogo from '../../assets/billBullLogo.png';
 import { useCompany } from '../../context/CompanyContext';
+import { summarizeSalesItems } from '../../utils/documentSummaryUtils';
 
 // ✅ PRODUCT SELECTOR
 import ProductSelector from '../../components/ProductSelector';
@@ -70,6 +71,7 @@ import useShortcuts from '../../hooks/useShortcuts';
 import { usePermissions } from '../../context/PermissionContext';
 import ExportDropdown from '../../components/common/ExportDropdown';
 import { exportToExcel, exportToPDF } from '../../utils/exportUtils';
+import CurrencyAmount from '../../components/CurrencyAmount';
 
 // ==========================================
 // 1. CONFIGURATION
@@ -99,7 +101,7 @@ const resolveCurrencyLabel = (company) => {
 const formatCurrencyAmount = (value, currencyLabel = 'AED') =>
   `${currencyLabel} ${Number(value || 0).toFixed(2)}`;
 
-const MobileCard = ({ order, onClick, getStatusBadge, currencyLabel }) => (
+const MobileCard = ({ order, onClick, getStatusBadge, currency }) => (
   <div onClick={() => onClick(order)} className="bg-white p-4 rounded-lg shadow-sm border border-slate-200 mb-3 active:scale-[0.98] transition-transform">
     <div className="flex justify-between items-start mb-2">
       <div>
@@ -118,10 +120,10 @@ const MobileCard = ({ order, onClick, getStatusBadge, currencyLabel }) => (
 
     <div className="flex justify-between items-center border-t border-slate-100 pt-2 mt-2">
       <div className="text-xs text-slate-500">
-        Total: <span className="font-bold text-slate-800">{formatCurrencyAmount(order.orderTotal, currencyLabel)}</span>
+        Total: <CurrencyAmount value={order.orderTotal} currency={currency} className="font-bold text-slate-800" />
       </div>
       <div className="text-xs text-slate-500">
-        Balance: <span className="font-bold text-slate-800">{formatCurrencyAmount(Number(order.orderTotal) - Number(order.advanceAmount), currencyLabel)}</span>
+        Balance: <CurrencyAmount value={Number(order.orderTotal) - Number(order.advanceAmount)} currency={currency} className="font-bold text-slate-800" />
       </div>
       <ChevronDown size={16} className="text-slate-300 -rotate-90" />
     </div>
@@ -159,6 +161,7 @@ const MobileFloatingActions = ({ status, onConfirm, onMarkInvoiced, onSave, onPr
 const SalesOrders = () => {
   const { company } = useCompany();
   const currencyLabel = resolveCurrencyLabel(company);
+  const orderCurrency = company?.currency || currencyLabel || 'AED';
   const { canCreate, canEdit, canApprove, canExport } = usePermissions();
   const [activeTab, setActiveTab] = useState('list');
 
@@ -443,47 +446,49 @@ const SalesOrders = () => {
 
   // --- CALCULATIONS ---
   const calculateTotals = () => {
-    let subTotal = 0, totalTax = 0, totalDiscount = 0;
-    items.forEach(i => {
-      const qty = Number(i.qty) || 0;
-      const price = Number(i.price) || 0;
-      const disc = Number(i.disc) || 0;
-      const tax = Number(i.tax) || 0;
-      const focQty = Number(i.foc) || 0;
-      const gross = qty * price;
-      let focDed = 0;
-      if (focQty > 0 && i.focUnit) {
-        if (i.unit === i.focUnit) { focDed = price * focQty; }
-        else if (i.unitConversions) {
-          const fc = i.unitConversions[i.focUnit] || 1;
-          const sc = i.unitConversions[i.unit] || 1;
-          focDed = price * (focQty * fc / sc);
-        }
-      }
-      const preDisc = Math.max(0, gross - focDed);
-      const discAmt = preDisc * (disc / 100);
-      const taxable = preDisc - discAmt;
-      const taxAmt = taxable * (tax / 100);
-      totalDiscount += discAmt;
-      totalTax += taxAmt;
-      subTotal += taxable;
-    });
-    const orderTotal = subTotal + totalTax;
-    const balanceDue = orderTotal - Number(advanceAmount);
+  const itemSummary = summarizeSalesItems(items);
 
-    const totalCost = items.reduce((acc, i) => {
-      const qty = Number(i.qty) || 0;
-      const unitCost = i.cost > 0 ? i.cost : (i.price * 0.75);
-      return acc + (qty * unitCost);
-    }, 0);
+  const grossTotal = itemSummary.grossTotal;
+  const totalDiscount = itemSummary.itemDiscountTotal;
+  const subTotal = itemSummary.subTotal;
+  const totalTax = itemSummary.tax;
+  const orderTotal = itemSummary.grandTotal;
 
-    const profit = subTotal - totalCost;
-    const marginPercent = subTotal > 0 ? (profit / subTotal) * 100 : 0;
+  const balanceDue = orderTotal - Number(advanceAmount);
 
-    return { subTotal, totalTax, totalDiscount, orderTotal, balanceDue, totalCost, profit, marginPercent };
+  const totalCost = items.reduce((acc, i) => {
+    const qty = Number(i.qty) || 0;
+    const unitCost = i.cost > 0 ? i.cost : (i.price * 0.75);
+    return acc + (qty * unitCost);
+  }, 0);
+
+  const profit = subTotal - totalCost;
+  const marginPercent = subTotal > 0 ? (profit / subTotal) * 100 : 0;
+
+  return {
+    grossTotal,
+    totalDiscount,
+    subTotal,
+    totalTax,
+    orderTotal,
+    balanceDue,
+    totalCost,
+    profit,
+    marginPercent
   };
+};
 
-  const { subTotal, totalTax, totalDiscount, orderTotal, balanceDue, totalCost, profit, marginPercent } = calculateTotals();
+const {
+  grossTotal,
+  totalDiscount,
+  subTotal,
+  totalTax,
+  orderTotal,
+  balanceDue,
+  totalCost,
+  profit,
+  marginPercent
+} = calculateTotals();
 
   // --- ACTIONS ---
 
@@ -1326,9 +1331,9 @@ const SalesOrders = () => {
                     <td className="px-4 py-3 text-slate-600">{order.customerName}</td>
                     <td className="px-4 py-3 text-slate-500">{order.linkedQuotation || '-'}</td>
                     <td className="px-4 py-3 text-slate-500">{order.linkedProforma || '-'}</td>
-                    <td className="px-4 py-3 font-medium">{formatCurrencyAmount(order.orderTotal, currencyLabel)}</td>
-                    <td className="px-4 py-3">{formatCurrencyAmount(order.advanceAmount, currencyLabel)}</td>
-                    <td className="px-4 py-3">{formatCurrencyAmount(Number(order.orderTotal) - Number(order.advanceAmount), currencyLabel)}</td>
+                    <td className="px-4 py-3 font-medium"><CurrencyAmount value={order.orderTotal} currency={orderCurrency} /></td>
+                    <td className="px-4 py-3"><CurrencyAmount value={order.advanceAmount} currency={orderCurrency} /></td>
+                    <td className="px-4 py-3"><CurrencyAmount value={Number(order.orderTotal) - Number(order.advanceAmount)} currency={orderCurrency} /></td>
                     <td className="px-4 py-3 text-right">
                       {renderStatusBadge(order.status)}
                     </td>
@@ -1345,7 +1350,7 @@ const SalesOrders = () => {
                   order={order}
                   onClick={handleLoadOrder}
                   getStatusBadge={renderStatusBadge}
-                  currencyLabel={currencyLabel}
+                  currency={orderCurrency}
                 />
               ))}
             </div>
@@ -1759,30 +1764,32 @@ const SalesOrders = () => {
               <h3 className="text-sm font-bold text-slate-800 mb-3 border-b border-slate-100 pb-2">Order Summary</h3>
               <div className="space-y-3 text-xs mb-4">
                 <div className="flex justify-between text-slate-600">
-                  <span>Subtotal</span>
-                  <span className="font-medium">{subTotal.toFixed(2)}</span>
+                  <span>Gross Amount</span>
+                  <CurrencyAmount value={grossTotal} currency={orderCurrency} className="font-medium" />
                 </div>
-                {totalDiscount > 0 && (
-                  <div className="flex justify-between text-red-500">
-                    <span>Discount</span>
-                    <span>- {totalDiscount.toFixed(2)}</span>
-                  </div>
-                )}
+                <div className="flex justify-between text-red-500">
+                  <span>Discount</span>
+                  <span className="font-medium">- <CurrencyAmount value={totalDiscount} currency={orderCurrency} /></span>
+                </div>
+                <div className="flex justify-between text-slate-600">
+                  <span>Subtotal</span>
+                  <CurrencyAmount value={subTotal} currency={orderCurrency} className="font-medium" />
+                </div>
                 <div className="flex justify-between text-slate-600">
                   <span>Tax</span>
-                  <span>{totalTax.toFixed(2)}</span>
+                  <CurrencyAmount value={totalTax} currency={orderCurrency} />
                 </div>
                 <div className="flex justify-between text-slate-800 text-sm font-bold border-t border-slate-100 pt-2">
                   <span>Order Total</span>
-                  <span>{orderTotal.toFixed(2)}</span>
+                  <CurrencyAmount value={orderTotal} currency={orderCurrency} />
                 </div>
                 <div className="flex justify-between text-emerald-600 font-medium">
-                  <span>$ Advance Received</span>
-                  <span>{Number(advanceAmount).toFixed(2)}</span>
+                  <span>Advance Received</span>
+                  <CurrencyAmount value={advanceAmount} currency={orderCurrency} />
                 </div>
                 <div className="flex justify-between text-red-600 font-bold text-sm">
                   <span>Balance Due</span>
-                  <span>{balanceDue.toFixed(2)}</span>
+                  <CurrencyAmount value={balanceDue} currency={orderCurrency} />
                 </div>
 
                 {/* PAYMENT STATUS BADGE - Logic Updated */}
@@ -1838,15 +1845,15 @@ const SalesOrders = () => {
               <div className="space-y-3 text-xs">
                 <div className="flex justify-between text-slate-600">
                   <span>Total Sell (before tax)</span>
-                  <span className="font-medium">{subTotal.toFixed(2)}</span>
+                  <CurrencyAmount value={subTotal} currency={orderCurrency} className="font-medium" />
                 </div>
                 <div className="flex justify-between text-slate-600">
                   <span>Total Cost</span>
-                  <span className="font-medium">{totalCost.toFixed(2)}</span>
+                  <CurrencyAmount value={totalCost} currency={orderCurrency} className="font-medium" />
                 </div>
                 <div className="flex justify-between text-slate-600">
                   <span>Profit</span>
-                  <span className={`font-medium ${profit >= 0 ? 'text-emerald-600' : 'text-red-500'}`}>{profit.toFixed(2)}</span>
+                  <CurrencyAmount value={profit} currency={orderCurrency} className={`font-medium ${profit >= 0 ? 'text-emerald-600' : 'text-red-500'}`} />
                 </div>
                 <div className="flex justify-between items-center border-t border-slate-100 pt-2 mt-2">
                   <span className="font-bold text-slate-800">Margin %</span>
@@ -1947,7 +1954,7 @@ const SalesOrders = () => {
               {/* Balance Display */}
               <div className="flex justify-between items-center text-sm mb-2">
                 <span className="text-slate-500 font-medium">Balance Due</span>
-                <span className="text-red-600 font-bold text-lg">AED {Math.max(orderTotal - Number(advanceAmount), 0).toFixed(2)}</span>
+                <CurrencyAmount value={Math.max(orderTotal - Number(advanceAmount), 0)} currency={orderCurrency} className="text-red-600 font-bold text-lg" />
               </div>
 
               {/* Date */}

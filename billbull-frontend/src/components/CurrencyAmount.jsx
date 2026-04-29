@@ -17,7 +17,7 @@ const formatAmount = (value, decimals = 2) => (
   })
 );
 
-const CurrencySymbol = ({ currency }) => {
+export const CurrencySymbol = ({ currency }) => {
   const currencyLabel = resolveCurrencyDisplayCode({
     currency,
     currencySymbol: currency

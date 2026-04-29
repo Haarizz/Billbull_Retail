@@ -66,7 +66,7 @@ import { useCompany } from '../../context/CompanyContext';
 import { useBranch } from '../../context/BranchContext';
 import ExportDropdown from '../../components/common/ExportDropdown';
 import { exportToExcel, exportToPDF } from '../../utils/exportUtils';
-import CurrencyAmount from '../../components/CurrencyAmount';
+import CurrencyAmount, { CurrencySymbol } from '../../components/CurrencyAmount';
 
 // ==========================================
 // 1. CONFIGURATION
@@ -2506,7 +2506,7 @@ const SalesInvoice = () => {
                                             </div>
 
                                             <div className="flex items-center gap-1 text-xs text-emerald-600 font-medium">
-                                                <span>- AED</span>
+                                                <span>- <CurrencySymbol currency={invoiceCurrency} /></span>
                                                 <input
                                                     type="number"
                                                     value={amountCollected}
