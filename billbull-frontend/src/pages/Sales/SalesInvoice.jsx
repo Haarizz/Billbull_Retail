@@ -59,6 +59,8 @@ import { generatePrintHtml, printHtml } from '../../utils/printGenerator';
 import { getImageUrl } from '../../utils/urlUtils';
 import { getDefaultProductUnit, resolveUnitAmount } from '../../utils/unitPricing';
 import billBullLogo from '../../assets/billBullLogo.png';
+import { generateDocFilename } from '../../utils/filenameUtils';
+import { usePrintDocument } from '../../hooks/usePrintDocument';
 import { useCompany } from '../../context/CompanyContext';
 import { useBranch } from '../../context/BranchContext';
 import ExportDropdown from '../../components/common/ExportDropdown';
@@ -102,6 +104,7 @@ import useShortcuts from '../../hooks/useShortcuts';
 // ==========================================
 
 const SalesInvoice = () => {
+    const { print } = usePrintDocument();
     const { company } = useCompany();
     const { defaultBranch } = useBranch();
     const location = useLocation();
@@ -1530,11 +1533,25 @@ const SalesInvoice = () => {
                 printHtml(html);
             } else {
                 alert("No default template selected. Using browser print.");
-                window.print();
+                const title = generateDocFilename(
+                    'Sales Invoice',
+                    dataToPrint.invoiceNumber,
+                    dataToPrint.customerName,
+                    dataToPrint.invoiceDate,
+                    dataToPrint.currency || 'AED'
+                );
+                print(title);
             }
         } catch (error) {
             console.error("Print error:", error);
-            window.print();
+            const title = generateDocFilename(
+                'Sales Invoice',
+                dataToPrint.invoiceNumber,
+                dataToPrint.customerName,
+                dataToPrint.invoiceDate,
+                dataToPrint.currency || 'AED'
+            );
+            print(title);
         } finally {
             setIsPrinting(false);
         }

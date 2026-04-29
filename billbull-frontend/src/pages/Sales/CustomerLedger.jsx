@@ -28,6 +28,7 @@ import {
 import ExportDropdown from '../../components/common/ExportDropdown';
 import { exportToExcel, exportToPDF } from '../../utils/exportUtils';
 import { generateSOAFilename } from '../../utils/filenameUtils';
+import { usePrintDocument } from '../../hooks/usePrintDocument';
 
 // ==========================================
 // 1. CONFIGURATION
@@ -1836,6 +1837,7 @@ const ReceiveMoneyView = () => {
 
 const CustomerSOAView = ({ customers = [] }) => {
     const { company } = useCompany();
+    const { print } = usePrintDocument();
     const currency = company?.currency || 'AED';
     const defaultStartDate = `${new Date().getFullYear()}-01-01`;
     const defaultEndDate = new Date().toISOString().split('T')[0];
@@ -1873,20 +1875,36 @@ const CustomerSOAView = ({ customers = [] }) => {
     }, [selectedCustomerCode]);
 
     const handlePrint = () => {
-        const originalTitle = document.title;
-        try {
-            const filename = generateSOAFilename(
-                selectedCustomerDetails?.name || 'Customer',
-                selectedCustomerDetails?.code || selectedCustomerCode || 'N/A',
-                startDate,
-                endDate,
-                currency
-            );
-            document.title = filename;
-            window.print();
-        } finally {
-            document.title = originalTitle;
-        }
+        const filename = generateSOAFilename(
+            selectedCustomerDetails?.name || 'Customer',
+            selectedCustomerDetails?.code || selectedCustomerCode || 'N/A',
+            startDate,
+            endDate,
+            currency
+        );
+        print(filename);
+    };
+
+    const handleExportExcel = () => {
+        if (!statementData) return;
+        const filename = generateSOAFilename(
+            selectedCustomerDetails?.name || 'Customer',
+            selectedCustomerDetails?.code || selectedCustomerCode || 'N/A',
+            startDate,
+            endDate,
+            currency
+        );
+
+        const columns = [
+            { header: 'Date', key: 'date', width: 12 },
+            { header: 'Reference', key: 'reference', width: 15 },
+            { header: 'Description', key: 'description', width: 25 },
+            { header: 'Debit', key: 'debit', width: 12 },
+            { header: 'Credit', key: 'credit', width: 12 },
+            { header: 'Balance', key: 'balance', width: 12 }
+        ];
+
+        exportToExcel(statementData.transactions || [], columns, filename);
     };
 
     const selectedCustomerDetails = useMemo(
@@ -1944,6 +1962,9 @@ const CustomerSOAView = ({ customers = [] }) => {
                     </button>
                     <button onClick={handlePrint} className="px-4 py-2 border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 text-sm font-medium rounded-md shadow-sm flex items-center gap-2">
                         <Printer className="h-4 w-4" /> Print
+                    </button>
+                    <button onClick={handleExportExcel} disabled={!statementData} className="px-4 py-2 border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 text-sm font-medium rounded-md shadow-sm flex items-center gap-2 disabled:opacity-50">
+                        <Download className="h-4 w-4" /> Export Excel
                     </button>
                 </div>
             </div>

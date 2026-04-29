@@ -1805,15 +1805,8 @@ const Quotations = () => {
 </body>
 </html>`;
 
-        // Open in new window and print
-        const printWindow = window.open('', '_blank', 'width=900,height=700');
-        if (printWindow) {
-            printWindow.document.write(htmlContent);
-            printWindow.document.close();
-            setTimeout(() => {
-                printWindow.print();
-            }, 400);
-        }
+        // Open in new window and print using centralized utility
+        printHtml(htmlContent);
     };
 
     // =====================================================

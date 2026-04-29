@@ -165,6 +165,12 @@ export const printHtml = (htmlContent) => {
     printWindow.document.write(htmlContent);
     printWindow.document.close();
 
+    // Ensure the title is set for the Save as PDF filename
+    const titleMatch = htmlContent.match(/<title>(.*?)<\/title>/i);
+    if (titleMatch && titleMatch[1]) {
+        printWindow.document.title = titleMatch[1];
+    }
+
     try {
         printWindow.history.replaceState(null, '', `/print/${printDate}`);
     } catch {
