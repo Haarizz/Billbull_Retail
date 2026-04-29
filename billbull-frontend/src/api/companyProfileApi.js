@@ -19,3 +19,15 @@ export const uploadCompanyLogo = (file) => {
         headers: { 'Content-Type': 'multipart/form-data' },
     });
 };
+
+/**
+ * Upload a new company stamp.
+ * @param {File} file - The image file to upload.
+ */
+export const uploadCompanyStamp = (file) => {
+    const form = new FormData();
+    form.append('file', file);
+    return api.post(`${BASE}/stamp`, form, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+    });
+};

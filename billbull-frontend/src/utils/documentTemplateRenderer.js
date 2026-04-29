@@ -92,6 +92,15 @@ const resolveLogoUrl = (companyProfile = {}) => {
     return resolveDocumentImageUrl(logoPath) || null;
 };
 
+const resolveStampUrl = (companyProfile = {}) => {
+    const stampPath =
+        companyProfile.stampUrl ||
+        companyProfile.stampPath ||
+        '';
+
+    return resolveDocumentImageUrl(stampPath) || null;
+};
+
 export const normalizeDocumentCompanyProfile = (companyProfile = {}) => {
     const address = firstNonEmpty(
         companyProfile.fullAddress,
@@ -109,6 +118,9 @@ export const normalizeDocumentCompanyProfile = (companyProfile = {}) => {
         trn: firstNonEmpty(companyProfile.trn, companyProfile.taxId),
         website: firstNonEmpty(companyProfile.website),
         logoUrl: resolveLogoUrl(companyProfile),
+        stampUrl: resolveStampUrl(companyProfile),
+        showStampInPrint: companyProfile.showStampInPrint !== false,
+        showStampInEmail: companyProfile.showStampInEmail !== false,
         currency: firstNonEmpty(companyProfile.currencySymbol, companyProfile.currency, 'AED'),
         currencySymbol: firstNonEmpty(companyProfile.currencySymbol, companyProfile.currency, 'AED')
     };
@@ -454,6 +466,20 @@ const resolveLayoutDate = (layout) =>
         (layout.headerRows || []).find((row) => /^date$/i.test(asText(row.label).trim()))?.value,
         new Date().toISOString().slice(0, 10)
     );
+
+const buildStampBlock = (layout, renderTarget) => {
+    const showStamp = renderTarget === 'email'
+        ? layout.company.showStampInEmail
+        : layout.company.showStampInPrint;
+
+    if (!layout.company.stampUrl || !showStamp) return '';
+
+    return `
+        <div class="stamp-container">
+            <img src="${layout.company.stampUrl}" alt="Company Stamp" />
+        </div>
+    `;
+};
 
 const buildPrintDateStamp = (layout, renderTarget) =>
     renderTarget === 'print'
@@ -1005,6 +1031,14 @@ const buildCoreStyles = () => `
         color: #6b7280;
         text-align: left;
     }
+    .stamp-container {
+        text-align: right;
+        margin-top: 10px;
+    }
+    .stamp-container img {
+        max-width: 120px;
+        opacity: 0.85;
+    }
     .page-num::before { content: counter(page); }
     .page-total::before { content: counter(pages); }
     @media (max-width: 720px) {
@@ -1407,6 +1441,7 @@ const buildDocumentHtml = (template, data, options = {}, renderTarget = 'print')
                     ${buildItemsTable(layout)}
                     ${buildSummarySection(layout)}
                     ${buildSignatureBlock(layout)}
+                    ${buildStampBlock(layout, renderTarget)}
                     ${buildPrintDateStamp(layout, renderTarget)}
                 </main>
                 ${buildFooterBar(layout, renderTarget, options.billBullLogo)}
