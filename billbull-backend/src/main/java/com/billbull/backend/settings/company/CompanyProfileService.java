@@ -41,14 +41,56 @@ public class CompanyProfileService {
      */
     @Transactional
     public CompanyProfile updateProfile(CompanyProfile incoming) {
-        // Preserve existing logoPath if not provided in the update payload
-        if (incoming.getLogoPath() == null || incoming.getLogoPath().isBlank()) {
-            repo.findById(1L).ifPresent(existing ->
-                incoming.setLogoPath(existing.getLogoPath())
-            );
-        }
+        // Preserve existing file paths and stamp toggles if not provided in the update payload
+        repo.findById(1L).ifPresent(existing -> {
+            if (incoming.getLogoPath() == null || incoming.getLogoPath().isBlank()) {
+                incoming.setLogoPath(existing.getLogoPath());
+            }
+            if (incoming.getStampPath() == null || incoming.getStampPath().isBlank()) {
+                incoming.setStampPath(existing.getStampPath());
+            }
+            if (incoming.getShowStampInPrint() == null) {
+                incoming.setShowStampInPrint(existing.getShowStampInPrint());
+            }
+            if (incoming.getShowStampInEmail() == null) {
+                incoming.setShowStampInEmail(existing.getShowStampInEmail());
+            }
+        });
         incoming.setId(1L);
         return repo.save(incoming);
+    }
+
+    /**
+     * Saves the uploaded stamp file under uploads/company/ and persists the
+     * relative path into the company_profile row.
+     *
+     * @return the updated CompanyProfile with the new stampPath
+     */
+    @Transactional
+    public CompanyProfile uploadStamp(MultipartFile file) throws IOException {
+        if (file == null || file.isEmpty()) {
+            throw new IllegalArgumentException("Stamp file must not be empty");
+        }
+
+        String original = file.getOriginalFilename();
+        String extension = (original != null && original.contains("."))
+                ? original.substring(original.lastIndexOf("."))
+                : ".png";
+
+        String filename = UUID.randomUUID() + extension;
+        Path dir = Path.of(LOGO_UPLOAD_DIR);
+        Files.createDirectories(dir);
+        file.transferTo(dir.resolve(filename).toFile());
+
+        String stampPath = "/uploads/company/" + filename;
+
+        CompanyProfile profile = repo.findById(1L).orElseGet(() -> {
+            CompanyProfile p = new CompanyProfile();
+            p.setId(1L);
+            return p;
+        });
+        profile.setStampPath(stampPath);
+        return repo.save(profile);
     }
 
     /**

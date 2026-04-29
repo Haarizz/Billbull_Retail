@@ -21,8 +21,9 @@ export const CompanyProvider = ({ children }) => {
                 const profile = res.data;
                 setCompany({
                     ...profile,
-                    // Resolve relative path → full URL once, here
+                    // Resolve relative paths → full URLs once, here
                     logoUrl: profile.logoPath ? getImageUrl(profile.logoPath) : null,
+                    stampUrl: profile.stampPath ? getImageUrl(profile.stampPath) : null,
                 });
             })
             .catch(() => {
@@ -42,6 +43,7 @@ export const CompanyProvider = ({ children }) => {
                 setCompany({
                     ...profile,
                     logoUrl: profile.logoPath ? getImageUrl(profile.logoPath) : null,
+                    stampUrl: profile.stampPath ? getImageUrl(profile.stampPath) : null,
                 });
             })
             .catch(() => {});

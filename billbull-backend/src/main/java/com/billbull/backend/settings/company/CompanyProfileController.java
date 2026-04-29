@@ -51,4 +51,20 @@ public class CompanyProfileController {
             return ResponseEntity.badRequest().build();
         }
     }
+
+    /**
+     * POST /api/settings/company-profile/stamp
+     * Uploads a new company stamp. Stores file under /uploads/company/
+     * and persists the relative path in company_profile.stamp_path.
+     */
+    @PostMapping("/stamp")
+    public ResponseEntity<CompanyProfile> uploadStamp(@RequestParam("file") MultipartFile file) {
+        try {
+            return ResponseEntity.ok(service.uploadStamp(file));
+        } catch (IOException e) {
+            return ResponseEntity.internalServerError().build();
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().build();
+        }
+    }
 }
