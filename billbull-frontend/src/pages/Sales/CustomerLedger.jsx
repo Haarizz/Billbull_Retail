@@ -7,6 +7,7 @@ import {
 import SearchableDropdown from '../../components/SearchableDropdown'; // ✅ Import Searchable Dropdown
 
 import StatementPrintPreview from '../../components/StatementPrintPreview';
+import CurrencyAmount, { CurrencySymbol } from '../../components/CurrencyAmount';
 
 // --- API IMPORTS ---
 import { getAllCustomers, getCustomerById, createCustomer, deleteCustomer, getOpeningInvoicesByCustomerCode } from '../../api/customerledgerApi';
@@ -860,7 +861,7 @@ const AddCustomerModal = ({ isOpen, onClose, customerToEdit, onSaveCustomer }) =
                             <div className="bg-blue-50 border border-blue-100 rounded-lg p-4 flex justify-between items-center mb-8">
                                 <span className="text-sm font-medium text-blue-800">Total Opening Balance</span>
                                 <span className="text-xl font-bold text-blue-700">
-                                    AED {formData.openingInvoices.reduce((acc, curr) => acc + Number(curr.outstanding || curr.amount || 0), 0).toFixed(2)}
+                                    <CurrencyAmount value={formData.openingInvoices.reduce((acc, curr) => acc + Number(curr.outstanding || curr.amount || 0), 0)} currency={currency} />
                                 </span>
                             </div>
 
@@ -873,7 +874,7 @@ const AddCustomerModal = ({ isOpen, onClose, customerToEdit, onSaveCustomer }) =
                                                 <div className="text-xs text-slate-400">{inv.date}</div>
                                             </div>
                                             <div className="flex items-center gap-2">
-                                                <span className="font-mono text-slate-800">AED {inv.outstanding || inv.amount}</span>
+                                                <CurrencyAmount value={inv.outstanding || inv.amount} currency={currency} className="font-mono text-slate-800" />
                                                 <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                                                     <button onClick={() => { setEditingInvoiceIdx(idx); setIsInvoiceModalOpen(true); }} className="p-1.5 text-slate-400 hover:text-blue-600 rounded hover:bg-blue-50"><Edit size={14} /></button>
                                                     <button onClick={() => handleDeleteInvoice(idx)} className="p-1.5 text-slate-400 hover:text-red-500 rounded hover:bg-red-50"><Trash2 size={14} /></button>
@@ -1292,6 +1293,8 @@ const AddCustomerModal = ({ isOpen, onClose, customerToEdit, onSaveCustomer }) =
 // ==========================================
 
 const ReceiveMoneyView = () => {
+    const { company } = useCompany();
+    const currency = company?.currency || 'AED';
     const [isLoading, setIsLoading] = useState(false);
 
     // Data States
@@ -1596,7 +1599,7 @@ const ReceiveMoneyView = () => {
                                 </div>
                                 <div>
                                     <p className="text-sm font-bold text-blue-800">Outstanding Balance</p>
-                                    <p className="text-2xl font-bold text-blue-600">AED {customerBalance.toLocaleString()}</p>
+                                    <CurrencyAmount value={customerBalance} currency={currency} className="text-2xl font-bold text-blue-600" />
                                 </div>
                             </div>
                         </div>
@@ -1657,8 +1660,8 @@ const ReceiveMoneyView = () => {
                                                         <span className={isOverdue ? "text-red-500 font-bold" : "text-slate-500"}>{inv.dueDate || '-'}</span>
                                                         {isOverdue && <span className="block text-[9px] text-red-400">Overdue</span>}
                                                     </td>
-                                                    <td className="px-4 py-3 text-right text-slate-600 font-medium">AED {inv.invoiceTotal.toLocaleString()}</td>
-                                                    <td className="px-4 py-3 text-right font-bold text-orange-600">AED {balance.toLocaleString()}</td>
+                                                    <td className="px-4 py-3 text-right text-slate-600 font-medium"><CurrencyAmount value={inv.invoiceTotal} currency={currency} /></td>
+                                                    <td className="px-4 py-3 text-right font-bold text-orange-600"><CurrencyAmount value={balance} currency={currency} /></td>
                                                     <td className="px-4 py-3 text-center">
                                                         {inv._isOpening
                                                             ? <span className="px-2 py-0.5 rounded bg-blue-100 text-blue-700 text-[10px] font-bold">Opening</span>
@@ -1724,7 +1727,7 @@ const ReceiveMoneyView = () => {
                             <div>
                                 <label className="block text-xs font-bold text-slate-500 mb-1">Received Amount (Auto-Allocate) <span className="text-red-500">*</span></label>
                                 <div className="relative">
-                                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 font-bold text-xs">AED</span>
+                                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 font-bold text-xs"><CurrencySymbol currency={currency} /></span>
                                     <input
                                         type="number"
                                         value={receivedAmount}
@@ -1778,7 +1781,7 @@ const ReceiveMoneyView = () => {
                             <div className="pt-4 border-t border-slate-100">
                                 <div className="flex justify-between items-center mb-4">
                                     <span className="text-sm font-bold text-slate-600">Total Settlement</span>
-                                    <span className="text-xl font-bold text-[#F5C742]">AED {totalToSettle.toLocaleString()}</span>
+                                    <CurrencyAmount value={totalToSettle} currency={currency} className="text-xl font-bold text-[#F5C742]" />
                                 </div>
 
                                 <button
@@ -1812,7 +1815,7 @@ const ReceiveMoneyView = () => {
                                     <div className="flex-1 min-w-0">
                                         <div className="flex justify-between items-start">
                                             <p className="font-bold text-slate-800 text-xs truncate">{payment.customerName || 'Unknown'}</p>
-                                            <span className="text-xs font-bold text-emerald-600 px-1.5 py-0.5 bg-emerald-50 rounded">AED {(payment.amount || 0).toLocaleString()}</span>
+                                            <CurrencyAmount value={payment.amount || 0} currency={currency} className="text-xs font-bold text-emerald-600 px-1.5 py-0.5 bg-emerald-50 rounded" />
                                         </div>
                                         <div className="flex justify-between items-center mt-1">
                                             <p className="text-[10px] text-slate-500">{payment.paymentNumber} • {payment.mode}</p>
@@ -1974,19 +1977,19 @@ const CustomerSOAView = ({ customers = [] }) => {
                 <div className="bg-white p-4 rounded-lg border border-slate-200 shadow-sm">
                     <div className="text-xs text-slate-500 mb-1">Opening Balance</div>
                     <div className="text-xl font-bold text-slate-800">
-                        AED {statementData ? statementData.openingBalance.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '0.00'}
+                        <CurrencyAmount value={statementData?.openingBalance || 0} currency={currency} />
                     </div>
                 </div>
                 <div className="bg-white p-4 rounded-lg border border-slate-200 shadow-sm">
                     <div className="text-xs text-slate-500 mb-1">Total Sales ({statementData?.entries?.filter(e => e.type === 'INVOICE').length || 0})</div>
                     <div className="text-xl font-bold text-green-600">
-                        AED {statementData ? statementData.totalDebit.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '0.00'}
+                        <CurrencyAmount value={statementData?.totalDebit || 0} currency={currency} />
                     </div>
                 </div>
                 <div className="bg-white p-4 rounded-lg border border-slate-200 shadow-sm">
                     <div className="text-xs text-slate-500 mb-1">Closing Balance</div>
                     <div className="text-xl font-bold text-orange-600">
-                        AED {statementData ? statementData.closingBalance.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '0.00'}
+                        <CurrencyAmount value={statementData?.closingBalance || 0} currency={currency} />
                     </div>
                 </div>
             </div>
@@ -2083,6 +2086,8 @@ const StatCard = ({ label, value, subtext, icon: Icon, bgClass, iconColor }) => 
 // ==========================================
 
 const CustomerLedger = () => {
+    const { company } = useCompany();
+    const currency = company?.currency || 'AED';
     const [isAddModalOpen, setIsAddModalOpen] = useState(false);
     const [customerToEdit, setCustomerToEdit] = useState(null);
 
@@ -2218,7 +2223,7 @@ const CustomerLedger = () => {
                         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
                             <StatCard label="Total Customers" value={customers.length} icon={Users} bgClass="bg-blue-50" iconColor="text-blue-500" />
                             <StatCard label="Active Customers" value={customers.filter(c => c.status === 'Active').length} icon={CheckCircle2} bgClass="bg-emerald-50" iconColor="text-emerald-500" />
-                            <StatCard label="Total Receivables" value={`AED ${customers.reduce((acc, curr) => acc + (curr.balance || 0), 0).toLocaleString()}`} icon={DollarSign} bgClass="bg-yellow-50" iconColor="text-yellow-600" />
+                            <StatCard label="Total Receivables" value={<CurrencyAmount value={customers.reduce((acc, curr) => acc + (curr.balance || 0), 0)} currency={currency} />} icon={DollarSign} bgClass="bg-yellow-50" iconColor="text-yellow-600" />
                             <StatCard label="Credit Customers" value={customers.filter(c => c.group !== 'Cash').length} icon={CreditCard} bgClass="bg-orange-50" iconColor="text-orange-500" />
                         </div>
 
@@ -2310,8 +2315,8 @@ const CustomerLedger = () => {
                                                         <div className="text-xs text-slate-700 leading-tight">{cust.location && cust.location.split('\n').map((line, i) => <div key={i}>{line}</div>)}</div>
                                                     </td>
                                                     <td className="px-6 py-4 whitespace-nowrap text-right align-top pt-4">
-                                                        <div className="font-bold text-orange-500 text-xs">AED {(cust.balance || 0).toLocaleString()}</div>
-                                                        {cust.totalSales > 0 && <div className="text-[10px] text-slate-400 mt-1">Total: AED {cust.totalSales.toLocaleString()}</div>}
+                                                        <div className="font-bold text-orange-500 text-xs"><CurrencyAmount value={cust.balance || 0} currency={currency} /></div>
+                                                        {cust.totalSales > 0 && <div className="text-[10px] text-slate-400 mt-1">Total: <CurrencyAmount value={cust.totalSales} currency={currency} /></div>}
                                                     </td>
                                                     <td className="px-6 py-4 whitespace-nowrap align-top pt-5">
                                                         <span className={`flex w-fit items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold uppercase border ${cust.creditStatus === 'Good' ? 'bg-emerald-100 text-emerald-600 border-emerald-200' : 'bg-orange-100 text-orange-600 border-orange-200'}`}>

@@ -36,6 +36,7 @@ import {
     findVendorRecord,
     normalizePurchaseTemplate
 } from '../../../utils/purchasePrintUtils';
+import CurrencyAmount, { CurrencySymbol } from '../../../components/CurrencyAmount';
 
 // ==========================================
 // API IMPORTS
@@ -109,7 +110,7 @@ const StatCard = ({ data }) => {
     );
 };
 
-const AuditModal = ({ isOpen, onClose, voucher }) => {
+const AuditModal = ({ isOpen, onClose, voucher, currency = 'AED' }) => {
     if (!isOpen || !voucher) return null;
 
     return (
@@ -131,7 +132,7 @@ const AuditModal = ({ isOpen, onClose, voucher }) => {
                         </div>
                         <div className="flex-1 bg-white p-3 rounded border border-slate-200 shadow-sm">
                             <div className="text-[10px] text-slate-400 uppercase font-bold mb-1">Amount</div>
-                            <div className="font-bold text-slate-800 text-sm">{voucher.amount}</div>
+                            <CurrencyAmount value={voucher.amountVal} currency={currency} className="font-bold text-slate-800 text-sm" />
                             <div className="text-[10px] text-slate-400">Mode: {voucher.mode}</div>
                         </div>
                         <div className="flex-1 bg-white p-3 rounded border border-slate-200 shadow-sm">
@@ -162,7 +163,7 @@ const AuditModal = ({ isOpen, onClose, voucher }) => {
     );
 };
 
-const CreateVoucherModal = ({ isOpen, onClose, onCreate, purchaseInvoices }) => {
+const CreateVoucherModal = ({ isOpen, onClose, onCreate, purchaseInvoices, currency = 'AED' }) => {
     const [formData, setFormData] = useState({
         vendor: "",
         date: new Date().toISOString().split('T')[0],
@@ -278,9 +279,9 @@ const CreateVoucherModal = ({ isOpen, onClose, onCreate, purchaseInvoices }) => 
                         </div>
 
                         <div>
-                            <label className="block text-xs font-semibold text-slate-500 mb-1.5">Amount (AED)</label>
+                            <label className="block text-xs font-semibold text-slate-500 mb-1.5">Amount (<CurrencySymbol currency={currency} />)</label>
                             <div className="relative">
-                                <div className="absolute left-3 top-1/2 -translate-y-1/2 text-xs font-bold text-slate-400">AED</div>
+                                <div className="absolute left-3 top-1/2 -translate-y-1/2 text-xs font-bold text-slate-400"><CurrencySymbol currency={currency} /></div>
                                 <input
                                     type="number"
                                     placeholder="0.00"
@@ -340,6 +341,7 @@ const CreateVoucherModal = ({ isOpen, onClose, onCreate, purchaseInvoices }) => 
 
 const PaymentVoucher = () => {
     const { company } = useCompany();
+    const currency = company?.currency || 'AED';
     const [activeTab, setActiveTab] = useState("list");
     const [selectedVoucher, setSelectedVoucher] = useState(null);
     const [isCreateOpen, setCreateOpen] = useState(false);
@@ -396,6 +398,8 @@ const PaymentVoucher = () => {
                 mode: formatModeString(v.paymentMode),
                 modeIcon: getIconForMode(v.paymentMode),
                 amountVal: parseFloat(v.amount), // Keep number for stats calculation
+                allocatedVal: parseFloat(v.allocated || 0),
+                unallocatedVal: parseFloat(v.unallocated || 0),
                 amount: formatCurrency(v.amount),
                 allocated: formatCurrency(v.allocated),
                 unallocated: formatCurrency(v.unallocated),
@@ -426,13 +430,13 @@ const PaymentVoucher = () => {
         const byCard = calcTotal(v => v.mode === 'Card');
 
         return [
-            { label: "Total Paid", value: formatCurrency(totalPaid), sub: "Posted & Cleared vouchers", color: "bg-emerald-500", icon: Wallet },
-            { label: "By Cash", value: formatCurrency(byCash), sub: `${totalPaid ? ((byCash / totalPaid) * 100).toFixed(1) : 0}% of total`, color: "bg-amber-500", icon: Banknote },
-            { label: "By Bank Transfer", value: formatCurrency(byBank), sub: `${totalPaid ? ((byBank / totalPaid) * 100).toFixed(1) : 0}% of total`, color: "bg-blue-600", icon: Landmark },
-            { label: "By Cheque", value: formatCurrency(byCheque), sub: "Cleared & Posted Cheques", color: "bg-purple-600", icon: FileCheck },
-            { label: "By Card", value: formatCurrency(byCard), sub: `${totalPaid ? ((byCard / totalPaid) * 100).toFixed(1) : 0}% of total`, color: "bg-pink-500", icon: CreditCard },
+            { label: "Total Paid", value: <CurrencyAmount value={totalPaid} currency={currency} />, sub: "Posted & Cleared vouchers", color: "bg-emerald-500", icon: Wallet },
+            { label: "By Cash", value: <CurrencyAmount value={byCash} currency={currency} />, sub: `${totalPaid ? ((byCash / totalPaid) * 100).toFixed(1) : 0}% of total`, color: "bg-amber-500", icon: Banknote },
+            { label: "By Bank Transfer", value: <CurrencyAmount value={byBank} currency={currency} />, sub: `${totalPaid ? ((byBank / totalPaid) * 100).toFixed(1) : 0}% of total`, color: "bg-blue-600", icon: Landmark },
+            { label: "By Cheque", value: <CurrencyAmount value={byCheque} currency={currency} />, sub: "Cleared & Posted Cheques", color: "bg-purple-600", icon: FileCheck },
+            { label: "By Card", value: <CurrencyAmount value={byCard} currency={currency} />, sub: `${totalPaid ? ((byCard / totalPaid) * 100).toFixed(1) : 0}% of total`, color: "bg-pink-500", icon: CreditCard },
         ];
-    }, [vouchers]);
+    }, [vouchers, currency]);
 
     // Actions
     const handleCreateVoucher = async (data) => {
@@ -883,7 +887,7 @@ const PaymentVoucher = () => {
                                             <div className="bg-blue-100 p-2.5 rounded-full text-blue-600"><Wallet size={20} /></div>
                                             <div>
                                                 <p className="text-sm font-bold text-blue-800">Outstanding Balance</p>
-                                                <p className="text-2xl font-bold text-blue-600">AED {totalOutstanding.toLocaleString('en-US', { minimumFractionDigits: 2 })}</p>
+                                                <CurrencyAmount value={totalOutstanding} currency={currency} className="text-2xl font-bold text-blue-600" />
                                             </div>
                                         </div>
                                     )}
@@ -953,8 +957,8 @@ const PaymentVoucher = () => {
                                                                         </span>
                                                                         {isOverdue && <span className="block text-[9px] text-red-400">Overdue</span>}
                                                                     </td>
-                                                                    <td className="px-4 py-3 text-right text-slate-600 font-medium">AED {(inv.grandTotal || 0).toLocaleString()}</td>
-                                                                    <td className="px-4 py-3 text-right font-bold text-orange-600">AED {bal.toLocaleString()}</td>
+                                                                    <td className="px-4 py-3 text-right text-slate-600 font-medium"><CurrencyAmount value={inv.grandTotal || 0} currency={currency} /></td>
+                                                                    <td className="px-4 py-3 text-right font-bold text-orange-600"><CurrencyAmount value={bal} currency={currency} /></td>
                                                                     <td className="px-4 py-3 text-center">
                                                                         {isOverdue
                                                                             ? <span className="px-2 py-0.5 rounded bg-orange-100 text-orange-700 text-[10px] font-bold">Overdue</span>
@@ -1007,7 +1011,7 @@ const PaymentVoucher = () => {
                                             <div>
                                                 <label className="block text-xs font-bold text-slate-500 mb-1">Payment Amount (Auto-Allocate) <span className="text-red-500">*</span></label>
                                                 <div className="relative">
-                                                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 font-bold text-xs">AED</span>
+                                                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 font-bold text-xs"><CurrencySymbol currency={currency} /></span>
                                                     <input type="number" value={receivedAmount}
                                                         onChange={(e) => handleAutoAllocate(e.target.value)}
                                                         placeholder="0.00"
@@ -1059,7 +1063,7 @@ const PaymentVoucher = () => {
                                             <div className="pt-4 border-t border-slate-100">
                                                 <div className="flex justify-between items-center mb-4">
                                                     <span className="text-sm font-bold text-slate-600">Total Settlement</span>
-                                                    <span className="text-xl font-bold text-[#F5C742]">AED {totalToSettle.toLocaleString()}</span>
+                                                    <CurrencyAmount value={totalToSettle} currency={currency} className="text-xl font-bold text-[#F5C742]" />
                                                 </div>
                                                 <button onClick={handleProcessPayment}
                                                     disabled={isProcessing || !selectedVendor || totalToSettle <= 0}
@@ -1091,7 +1095,7 @@ const PaymentVoucher = () => {
                                                 <div className="flex-1 min-w-0">
                                                     <div className="flex justify-between items-start">
                                                         <p className="font-bold text-slate-800 text-xs truncate">{v.vendor || 'Unknown'}</p>
-                                                        <span className="text-xs font-bold text-emerald-600 px-1.5 py-0.5 bg-emerald-50 rounded">{v.amount}</span>
+                                                        <CurrencyAmount value={v.amountVal} currency={currency} className="text-xs font-bold text-emerald-600 px-1.5 py-0.5 bg-emerald-50 rounded" />
                                                     </div>
                                                     <div className="flex justify-between items-center mt-1">
                                                         <p className="text-[10px] text-slate-500">{v.id} • {v.mode}</p>
@@ -1155,9 +1159,9 @@ const PaymentVoucher = () => {
                                                         <row.modeIcon className="w-3 h-3" /> {row.mode}
                                                     </div>
                                                 </td>
-                                                <td className="px-4 py-3 text-right font-bold text-slate-900">{row.amount}</td>
-                                                <td className="px-4 py-3 text-right text-slate-500">{row.allocated}</td>
-                                                <td className="px-4 py-3 text-right text-slate-400">{row.unallocated}</td>
+                                                <td className="px-4 py-3 text-right font-bold text-slate-900"><CurrencyAmount value={row.amountVal} currency={currency} /></td>
+                                                <td className="px-4 py-3 text-right text-slate-500"><CurrencyAmount value={row.allocatedVal} currency={currency} /></td>
+                                                <td className="px-4 py-3 text-right text-slate-400"><CurrencyAmount value={row.unallocatedVal} currency={currency} /></td>
                                                 <td className="px-4 py-3 text-slate-500 font-mono text-[10px]">{row.ref}</td>
                                                 <td className="px-4 py-3">
                                                     <span className={`px-2 py-0.5 rounded text-[10px] font-bold border ${row.statusColor}`}>{row.status}</span>
@@ -1224,7 +1228,7 @@ const PaymentVoucher = () => {
                                                         <row.modeIcon className="w-3 h-3" /> {row.mode}
                                                     </div>
                                                 </td>
-                                                <td className="px-4 py-3 text-right font-bold text-slate-900">{row.amount}</td>
+                                                <td className="px-4 py-3 text-right font-bold text-slate-900"><CurrencyAmount value={row.amountVal} currency={currency} /></td>
                                                 <td className="px-4 py-3">
                                                     <span className={`px-2 py-0.5 rounded text-[10px] font-bold border ${row.statusColor}`}>{row.status}</span>
                                                 </td>
@@ -1290,7 +1294,7 @@ const PaymentVoucher = () => {
                                                     <row.modeIcon className="w-3 h-3" /> {row.mode}
                                                 </div>
                                             </td>
-                                            <td className="px-4 py-3 text-right font-bold text-slate-900">{row.amount}</td>
+                                            <td className="px-4 py-3 text-right font-bold text-slate-900"><CurrencyAmount value={row.amountVal} currency={currency} /></td>
                                             <td className="px-4 py-3">
                                                 <span className={`px-2 py-0.5 rounded text-[10px] font-bold border ${row.statusColor}`}>{row.status}</span>
                                             </td>
@@ -1322,6 +1326,7 @@ const PaymentVoucher = () => {
                 isOpen={!!selectedVoucher}
                 onClose={() => setSelectedVoucher(null)}
                 voucher={selectedVoucher}
+                currency={currency}
             />
 
             <CreateVoucherModal
@@ -1329,6 +1334,7 @@ const PaymentVoucher = () => {
                 onClose={() => setCreateOpen(false)}
                 onCreate={handleCreateVoucher}
                 purchaseInvoices={purchaseInvoices}
+                currency={currency}
             />
 
         </div>

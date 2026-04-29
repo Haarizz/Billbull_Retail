@@ -2433,8 +2433,8 @@ const Quotations = () => {
                                         <AlertCircle size={14} className="mt-0.5 shrink-0 text-yellow-600" />
                                         <p>
                                             <strong>Credit Warning:</strong> The projected outstanding balance
-                                            ({(Number(selectedCustomerData.balance || 0) + grandTotal).toFixed(2)} AED) exceeds this customer's
-                                            credit limit of {Number(selectedCustomerData.creditLimitAmount).toFixed(2)} AED.
+                                            (<CurrencyAmount value={Number(selectedCustomerData.balance || 0) + grandTotal} currency={currency} />) exceeds this customer's
+                                            credit limit of <CurrencyAmount value={selectedCustomerData.creditLimitAmount} currency={currency} />.
                                         </p>
                                     </div>
                                 )}
@@ -2445,8 +2445,8 @@ const Quotations = () => {
                                         <AlertCircle size={14} className="mt-0.5 shrink-0 text-red-600" />
                                         <p>
                                             <strong>Credit Limit Blocked:</strong> The projected outstanding balance
-                                            ({(Number(selectedCustomerData.balance || 0) + grandTotal).toFixed(2)} AED) exceeds this customer's
-                                            credit limit of {Number(selectedCustomerData.creditLimitAmount).toFixed(2)} AED.
+                                            (<CurrencyAmount value={Number(selectedCustomerData.balance || 0) + grandTotal} currency={currency} />) exceeds this customer's
+                                            credit limit of <CurrencyAmount value={selectedCustomerData.creditLimitAmount} currency={currency} />.
                                             Confirming this quotation is blocked until the balance is within limit.
                                         </p>
                                     </div>

@@ -4,6 +4,7 @@ import {
     CheckCircle2, Phone, CreditCard, Star,
     Package, Calendar, ArrowRight, Building2
 } from 'lucide-react';
+import CurrencyAmount from './CurrencyAmount';
 
 /**
  * CustomerShippingPanel  — Two-Row Layout (narrow-column optimised)
@@ -134,7 +135,7 @@ const CustomerShippingPanel = ({
                                 <div className="min-w-0">
                                     <div className="text-[9px] text-slate-400 font-semibold uppercase">Balance</div>
                                     <div className="text-[10px] font-semibold text-slate-700 truncate">
-                                        {selectedCustomer.balance ? Number(selectedCustomer.balance).toFixed(2) : '0.00'} {currency}
+                                        <CurrencyAmount value={selectedCustomer.balance || 0} currency={currency} />
                                     </div>
                                 </div>
                             </div>

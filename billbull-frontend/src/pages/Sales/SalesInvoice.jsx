@@ -433,8 +433,7 @@ const SalesInvoice = () => {
                                         </div>
                                     </td>
                                     <td className="px-4 py-2.5 text-right font-black text-slate-700">
-                                        <div className="text-[9px] text-slate-300 font-bold leading-none mb-0.5 uppercase tracking-tighter">AED</div>
-                                        {Number(h.rate).toFixed(2)}
+                                        <CurrencyAmount value={h.rate} currency={invoiceCurrency} />
                                     </td>
                                 </tr>
                             )) : (
@@ -1634,11 +1633,11 @@ const SalesInvoice = () => {
             <div className="grid grid-cols-2 gap-2 text-xs border-t border-slate-100 pt-3">
                 <div>
                     <span className="block text-slate-400 text-[10px] uppercase">Net Amount</span>
-                    <span className="font-bold text-slate-700">AED {Number(inv.invoiceTotal || 0).toLocaleString()}</span>
+                    <CurrencyAmount value={inv.invoiceTotal || 0} currency={invoiceCurrency} className="font-bold text-slate-700" />
                 </div>
                 <div className="text-right">
                     <span className="block text-slate-400 text-[10px] uppercase">Balance</span>
-                    <span className="font-bold text-red-500">AED {Number(inv.balance || 0).toLocaleString()}</span>
+                    <CurrencyAmount value={inv.balance || 0} currency={invoiceCurrency} className="font-bold text-red-500" />
                 </div>
             </div>
         </div>
@@ -1925,10 +1924,10 @@ const SalesInvoice = () => {
                                                 <td className="px-4 py-3">
                                                     <span className="border border-slate-200 px-2 py-0.5 rounded text-[10px] bg-white text-slate-600">{inv.paymentMode || 'Cash'}</span>
                                                 </td>
-                                                <td className="px-4 py-3 font-medium text-slate-800">AED {Number(inv.invoiceTotal || 0).toLocaleString()}</td>
-                                                <td className="px-4 py-3 text-emerald-600">AED {Number(inv.amountPaid || 0).toLocaleString()}</td>
+                                                <td className="px-4 py-3 font-medium text-slate-800"><CurrencyAmount value={inv.invoiceTotal || 0} currency={invoiceCurrency} /></td>
+                                                <td className="px-4 py-3 text-emerald-600"><CurrencyAmount value={inv.amountPaid || 0} currency={invoiceCurrency} /></td>
                                                 <td className="px-4 py-3">
-                                                    <span className="text-red-500 font-medium mr-2">AED {Number(inv.balance || 0).toLocaleString()}</span>
+                                                    <CurrencyAmount value={inv.balance || 0} currency={invoiceCurrency} className="text-red-500 font-medium mr-2" />
                                                     {renderListStatus(inv.status)}
                                                 </td>
                                                 <td className="px-4 py-3 text-slate-500">Classic</td>
@@ -2183,7 +2182,7 @@ const SalesInvoice = () => {
                                     shippingAddress={shippingAddress}
                                     onShippingChange={setShippingAddress}
                                     isReadOnly={isReadOnlyInvoice}
-                                    currency="AED"
+                                    currency={invoiceCurrency}
                                 />
 
                                 {/* Credit warning (kept outside panel so it's always visible) */}
@@ -2194,8 +2193,8 @@ const SalesInvoice = () => {
                                         <AlertCircle size={14} className="mt-0.5 shrink-0 text-yellow-600" />
                                         <p>
                                             <strong>Credit Warning:</strong> The projected outstanding balance
-                                            ({(Number(selectedCustomer.balance || 0) + netTotal).toFixed(2)} AED) exceeds this customer's
-                                            credit limit of {Number(selectedCustomer.creditLimitAmount).toFixed(2)} AED.
+                                            (<CurrencyAmount value={Number(selectedCustomer.balance || 0) + netTotal} currency={invoiceCurrency} />) exceeds this customer's
+                                            credit limit of <CurrencyAmount value={selectedCustomer.creditLimitAmount} currency={invoiceCurrency} />.
                                         </p>
                                     </div>
                                 )}
@@ -2206,8 +2205,8 @@ const SalesInvoice = () => {
                                         <AlertCircle size={14} className="mt-0.5 shrink-0 text-red-600" />
                                         <p>
                                             <strong>Credit Limit Blocked:</strong> The projected outstanding balance
-                                            ({(Number(selectedCustomer.balance || 0) + netTotal).toFixed(2)} AED) exceeds this customer's
-                                            credit limit of {Number(selectedCustomer.creditLimitAmount).toFixed(2)} AED.
+                                            (<CurrencyAmount value={Number(selectedCustomer.balance || 0) + netTotal} currency={invoiceCurrency} />) exceeds this customer's
+                                            credit limit of <CurrencyAmount value={selectedCustomer.creditLimitAmount} currency={invoiceCurrency} />.
                                             Saving this invoice is blocked until the balance is within limit.
                                         </p>
                                     </div>

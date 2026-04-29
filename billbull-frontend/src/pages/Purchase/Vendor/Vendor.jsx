@@ -14,6 +14,7 @@ import ExportDropdown from '../../../components/common/ExportDropdown';
 import { exportToExcel, exportToPDF } from '../../../utils/exportUtils';
 import { generateSOAFilename } from '../../../utils/filenameUtils';
 import { usePrintDocument } from '../../../hooks/usePrintDocument';
+import CurrencyAmount from '../../../components/CurrencyAmount';
 
 // ==========================================
 // 1. MOCK DATA & CONFIGURATION
@@ -1786,7 +1787,7 @@ const VendorListViewWithActions = ({ vendors, loading, onAddNew, onEdit, onDelet
                           <td className="px-6 py-4 text-slate-600">{vendor.contact}</td>
                           <td className="px-6 py-4 text-right"><span className="inline-flex items-center gap-1 text-slate-600"><Clock className="h-3 w-3 text-gray-400" />{vendor.leadTime || '-'}</span></td>
                           <td className="px-6 py-4">{renderStars(vendor.rating)}</td>
-                          <td className="px-6 py-4 text-right font-semibold text-slate-900">{formatCurrencyDisplay(vendor.balance, currencyLabel)}</td>
+                          <td className="px-6 py-4 text-right font-semibold text-slate-900"><CurrencyAmount value={vendor.balance} currency={currencyLabel} /></td>
                           <td className="px-6 py-4"><span className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium ${getStatusStyle(vendor.status)}`}>{getStatusIcon(vendor.status)}{vendor.status}</span></td>
                           <td className="px-6 py-4 text-center"><div className="flex items-center justify-center gap-1"><button onClick={() => { setPayInvoicesVendor(vendor); setActiveTab("Pay Invoices"); }} className="p-1.5 hover:bg-slate-100 rounded text-slate-500" title="View Payables"><Eye className="h-4 w-4" /></button><button onClick={() => onEdit(vendor)} className="p-1.5 hover:bg-slate-100 rounded text-slate-500" title="Edit Vendor"><SquarePen className="h-4 w-4" /></button><button onClick={() => onDelete(vendor.id)} className="p-1.5 hover:bg-slate-100 rounded text-slate-500 hover:text-red-600"><Trash2 className="h-4 w-4" /></button></div></td>
                         </tr>

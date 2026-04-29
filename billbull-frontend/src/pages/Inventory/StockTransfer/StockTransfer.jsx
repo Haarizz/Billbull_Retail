@@ -35,6 +35,7 @@ import { toast } from 'react-hot-toast';
 import ProductSelector from '../../../components/ProductSelector';
 import { printHtml } from '../../../utils/printGenerator';
 import { getImageUrl } from '../../../utils/urlUtils';
+import CurrencyAmount from '../../../components/CurrencyAmount';
 
 // ==========================================
 // CONSTANTS
@@ -53,10 +54,7 @@ const toNumber = (value, fallback = 0) => {
     return parsed ?? fallback;
 };
 
-const formatCurrency = (value) => `AED ${toNumber(value).toLocaleString(undefined, {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2
-})}`;
+const formatCurrency = (value) => <CurrencyAmount value={toNumber(value)} />;
 
 const recalculateItemFinancials = (item) => {
     const quantity = toNumber(item.quantity);
@@ -1289,7 +1287,7 @@ const CreateTransferView = ({ warehouses, onSubmit }) => {
                             <p className="text-[10px] font-bold text-purple-500 uppercase mb-1">Transfer Value</p>
                             <p className="text-2xl font-bold text-slate-800">{formatCurrency(totals.totalValue)}</p>
                             <p className="text-[10px] text-purple-500 mt-1">
-                                {totals.totalCharges > 0 ? `Includes ${formatCurrency(totals.totalCharges)} logistics charges` : 'Inventory value only'}
+                                {totals.totalCharges > 0 ? <>Includes {formatCurrency(totals.totalCharges)} logistics charges</> : 'Inventory value only'}
                             </p>
                         </div>
                         <div className={`${totals.warningsCount > 0 ? 'bg-amber-50/50 border-amber-100/50' : 'bg-slate-50/50 border-slate-100/50'} rounded-xl p-4 border`}>
@@ -1356,7 +1354,7 @@ const CreateTransferView = ({ warehouses, onSubmit }) => {
                         <StatCard
                             label="Total Transfer Value"
                             value={formatCurrency(totals.totalValue)}
-                            subtext={totals.totalCharges > 0 ? `Includes ${formatCurrency(totals.totalCharges)} landed charges` : "Based on source warehouse cost"}
+                            subtext={totals.totalCharges > 0 ? <>Includes {formatCurrency(totals.totalCharges)} landed charges</> : "Based on source warehouse cost"}
                             icon={Package}
                             color="blue"
                         />

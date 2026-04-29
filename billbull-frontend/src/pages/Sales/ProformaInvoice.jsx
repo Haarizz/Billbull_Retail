@@ -1227,7 +1227,7 @@ const ProformaInvoice = () => {
                       <td className="px-4 py-3 text-blue-600 font-medium">{pi.piNumber}</td>
                       <td className="px-4 py-3 text-slate-600">{pi.piDate}</td>
                       <td className="px-4 py-3 text-slate-700 font-medium">{pi.customerName}</td>
-                      <td className="px-4 py-3 text-right font-bold text-slate-800">AED {Number(pi.grandTotal || 0).toFixed(2)}</td>
+                      <td className="px-4 py-3 text-right font-bold text-slate-800"><CurrencyAmount value={pi.grandTotal || 0} currency={currency} /></td>
                       <td className="px-4 py-3 text-right">{renderStatusBadge(pi.status)}</td>
                     </tr>
                   ))}
@@ -1438,7 +1438,7 @@ const ProformaInvoice = () => {
                     shippingAddress={shippingAddress}
                     onShippingChange={setShippingAddress}
                     isReadOnly={isReadOnly}
-                    currency="AED"
+                    currency={currency}
                 />
 
                 <CustomerSelector

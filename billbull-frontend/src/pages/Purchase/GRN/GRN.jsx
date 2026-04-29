@@ -87,6 +87,7 @@ import {
 import ExportDropdown from '../../../components/common/ExportDropdown';
 import { exportToExcel, exportToPDF } from '../../../utils/exportUtils';
 import { formatCurrencyDisplay, resolveCurrencyDisplayCode } from '../../../utils/countryCurrencyOptions';
+import CurrencyAmount from '../../../components/CurrencyAmount';
 
 // ==========================================
 // 1. MOCK DATA & CONFIGURATION
@@ -230,7 +231,7 @@ const GRNListView = ({ data, onView, onEdit, onDelete, onPost, onPrint, onProcee
                     <LayoutDashboard className="h-3 w-3 text-slate-400" /> {row.warehouse}
                   </td>
                   <td className="px-6 py-4 text-center">{row.packages}</td>
-                  <td className="px-6 py-4 text-right font-bold text-slate-900">{formatCurrencyDisplay(row.value, currencyLabel)}</td>
+                  <td className="px-6 py-4 text-right font-bold text-slate-900"><CurrencyAmount value={row.value} currency={currencyLabel} /></td>
                   <td className="px-6 py-4">
                     <StatusBadge className={getStatusColor(row.status)}>{row.status}</StatusBadge>
                   </td>
@@ -1838,22 +1839,22 @@ const EditorView = ({ initialData, onSaveDraft, onSubmitQC, onPost, onPrint, grn
             <div className="space-y-2 text-xs border-t border-slate-100 pt-3">
               <div className="flex justify-between">
                 <span className="text-slate-500 font-medium">Subtotal (Gross)</span>
-                <span className="font-medium text-slate-700">{formatCurrencyDisplay(totals.grossTotal, currencyLabel)}</span>
+                <CurrencyAmount value={totals.grossTotal} currency={currencyLabel} className="font-medium text-slate-700" />
               </div>
               {totals.discountTotal > 0 && (
                 <div className="flex justify-between text-emerald-600">
                   <span className="font-medium">Discount</span>
-                  <span className="font-medium">- {formatCurrencyDisplay(totals.discountTotal, currencyLabel)}</span>
+                  <span className="font-medium">- <CurrencyAmount value={totals.discountTotal} currency={currencyLabel} /></span>
                 </div>
               )}
               <div className="flex justify-between text-slate-500">
                 <span>VAT (Tax)</span>
-                <span className="font-medium text-slate-700">{formatCurrencyDisplay(totals.taxTotal, currencyLabel)}</span>
+                <CurrencyAmount value={totals.taxTotal} currency={currencyLabel} className="font-medium text-slate-700" />
               </div>
               <div className="flex justify-between text-base pt-2 border-t border-slate-100 mt-2">
                 <span className="font-bold text-slate-800">Grand Total</span>
                 <span className="font-bold text-[#F5C742]">
-                  {formatCurrencyDisplay(totals.netTotal + totals.taxTotal, currencyLabel)}
+                  <CurrencyAmount value={totals.netTotal + totals.taxTotal} currency={currencyLabel} />
                 </span>
               </div>
             </div>
@@ -1879,9 +1880,9 @@ const EditorView = ({ initialData, onSaveDraft, onSubmitQC, onPost, onPrint, grn
             </div>
             <div className="bg-slate-50 bg-opacity-50 rounded p-3 text-[9px] space-y-1.5 font-mono text-slate-600 border border-slate-100">
               <div className="flex justify-between font-bold text-blue-700 mb-1 border-b border-blue-100 pb-1">GRNI Posting Preview</div>
-              <div className="flex justify-between"><span>Dr. Inventory</span><span>{totals.netTotal.toFixed(2)}</span></div>
-              <div className="flex justify-between"><span>Dr. VAT Recoverable</span><span>{totals.taxTotal.toFixed(2)}</span></div>
-              <div className="flex justify-between font-bold pt-1 border-t border-slate-200 mt-1"><span>Cr. GRNI (Accrued)</span><span>{formatCurrencyDisplay(totals.netTotal + totals.taxTotal, currencyLabel)}</span></div>
+              <div className="flex justify-between"><span>Dr. Inventory</span><CurrencyAmount value={totals.netTotal} currency={currencyLabel} /></div>
+              <div className="flex justify-between"><span>Dr. VAT Recoverable</span><CurrencyAmount value={totals.taxTotal} currency={currencyLabel} /></div>
+              <div className="flex justify-between font-bold pt-1 border-t border-slate-200 mt-1"><span>Cr. GRNI (Accrued)</span><CurrencyAmount value={totals.netTotal + totals.taxTotal} currency={currencyLabel} /></div>
             </div>
             <button
               onClick={() => navigate('/finance/ledger')}

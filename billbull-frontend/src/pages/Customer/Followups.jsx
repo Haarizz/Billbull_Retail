@@ -15,6 +15,7 @@ import {
     PieChart, Pie, Cell, Legend, LineChart, Line
 } from 'recharts';
 import { useBranch } from '../../context/BranchContext';
+import CurrencyAmount from '../../components/CurrencyAmount';
 
 const Followups = () => {
     const navigate = useNavigate();
@@ -1322,16 +1323,16 @@ const Followups = () => {
                                             <tr>
                                                 <td className="px-3 py-2">Coca Cola 300ml</td>
                                                 <td className="px-3 py-2">12</td>
-                                                <td className="px-3 py-2">AED 2.50</td>
-                                                <td className="px-3 py-2">AED 0.00</td>
-                                                <td className="px-3 py-2 text-right">AED 30.00</td>
+                                                <td className="px-3 py-2"><CurrencyAmount value={2.5} /></td>
+                                                <td className="px-3 py-2"><CurrencyAmount value={0} /></td>
+                                                <td className="px-3 py-2 text-right"><CurrencyAmount value={30} /></td>
                                             </tr>
                                             <tr>
                                                 <td className="px-3 py-2">Samsung Galaxy A24</td>
                                                 <td className="px-3 py-2">1</td>
-                                                <td className="px-3 py-2">AED 899.00</td>
-                                                <td className="px-3 py-2">AED 50.00</td>
-                                                <td className="px-3 py-2 text-right">AED 849.00</td>
+                                                <td className="px-3 py-2"><CurrencyAmount value={899} /></td>
+                                                <td className="px-3 py-2"><CurrencyAmount value={50} /></td>
+                                                <td className="px-3 py-2 text-right"><CurrencyAmount value={849} /></td>
                                             </tr>
                                         </tbody>
                                     </table>
@@ -1341,19 +1342,19 @@ const Followups = () => {
                                     <div className="w-48 space-y-2">
                                         <div className="flex justify-between text-xs text-slate-600">
                                             <span>Subtotal</span>
-                                            <span>AED 879.00</span>
+                                            <CurrencyAmount value={879} />
                                         </div>
                                         <div className="flex justify-between text-xs text-red-500">
                                             <span>Discount</span>
-                                            <span>-AED 50.00</span>
+                                            <span>-<CurrencyAmount value={50} /></span>
                                         </div>
                                         <div className="flex justify-between text-xs text-slate-600">
                                             <span>Tax (5%)</span>
-                                            <span>AED 43.95</span>
+                                            <CurrencyAmount value={43.95} />
                                         </div>
                                         <div className="flex justify-between text-sm font-bold text-slate-800 border-t border-slate-200 pt-2">
                                             <span>Total</span>
-                                            <span className="text-amber-500">AED 872.95</span>
+                                            <CurrencyAmount value={872.95} className="text-amber-500" />
                                         </div>
                                     </div>
                                 </div>

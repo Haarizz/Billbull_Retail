@@ -11,16 +11,12 @@ import {
 } from "lucide-react";
 import { getUsernameFromToken } from "../api/auth";
 import { getDashboardData } from "../api/dashboardApi";
+import CurrencyAmount from "../components/CurrencyAmount";
 
 // Currency formatter
-const formatCurrency = (value) => {
-    const numericValue = Number(value) || 0;
-    return new Intl.NumberFormat('en-AE', {
-        style: 'currency',
-        currency: 'AED',
-        minimumFractionDigits: 2
-    }).format(numericValue).replace('AED', 'AED ');
-};
+const formatCurrency = (value, className = '') => (
+    <CurrencyAmount value={value} className={className} />
+);
 
 // Format large numbers
 const formatNumber = (num) => {
@@ -557,9 +553,9 @@ const Dashboard = () => {
                                 {dashboardData.salesTrendMeta?.peakLabel ? `Peak: ${dashboardData.salesTrendMeta.peakLabel}` : 'Peak: —'}
                             </span>
                             <span className="text-emerald-600 font-bold">
-                                {dashboardData.salesTrendMeta?.avgSales > 0
-                                    ? `Avg: ${formatCurrency(dashboardData.salesTrendMeta.avgSales)}${timeRange === 'Today' ? '/hr' : '/period'}`
-                                    : ''}
+                                {dashboardData.salesTrendMeta?.avgSales > 0 ? (
+                                    <>Avg: <CurrencyAmount value={dashboardData.salesTrendMeta.avgSales} />{timeRange === 'Today' ? '/hr' : '/period'}</>
+                                ) : ''}
                             </span>
                         </div>
                     </div>

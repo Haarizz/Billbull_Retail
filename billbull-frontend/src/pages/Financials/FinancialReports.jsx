@@ -48,6 +48,8 @@ import {
     getMonthlyTrends 
 } from '../../api/financialReportsApi';
 import toast from 'react-hot-toast';
+import { useCompany } from '../../context/CompanyContext';
+import CurrencyAmount, { CurrencySymbol } from '../../components/CurrencyAmount';
 
 const REPORT_KEYS = [
     'trialBalance',
@@ -68,6 +70,8 @@ const COLORS = ['#3B82F6', '#F43F5E', '#10B981', '#F59E0B', '#8B5CF6', '#EC4899'
 
 const FinancialReports = () => {
     const { print } = usePrintDocument();
+    const { company } = useCompany();
+    const currency = company?.currency || 'AED';
     const [activeTab, setActiveTab] = useState('overview');
     const [loading, setLoading] = useState(true);
     const [dateRange, setDateRange] = useState('thisMonth');
@@ -128,10 +132,7 @@ const FinancialReports = () => {
 
     const toNumber = (value) => Number(value ?? 0);
 
-    const formatCurrency = (amount) => `AED ${toNumber(amount).toLocaleString(undefined, {
-        minimumFractionDigits: 2,
-        maximumFractionDigits: 2
-    })}`;
+    const formatCurrency = (amount) => <CurrencyAmount value={toNumber(amount)} currency={currency} />;
 
     const getCashBalanceFromBalanceSheet = (sheet) => {
         if (!sheet?.assetItems?.length) return 0;
@@ -772,8 +773,8 @@ const FinancialReports = () => {
                                     <th className="px-4 py-3 text-left text-[10px] font-bold text-slate-500 uppercase tracking-wider">Account Code</th>
                                     <th className="px-4 py-3 text-left text-[10px] font-bold text-slate-500 uppercase tracking-wider">Account Name</th>
                                     <th className="px-4 py-3 text-left text-[10px] font-bold text-slate-500 uppercase tracking-wider">Group</th>
-                                    <th className="px-4 py-3 text-right text-[10px] font-bold text-slate-500 uppercase tracking-wider">Debit (AED)</th>
-                                    <th className="px-4 py-3 text-right text-[10px] font-bold text-slate-500 uppercase tracking-wider">Credit (AED)</th>
+                                    <th className="px-4 py-3 text-right text-[10px] font-bold text-slate-500 uppercase tracking-wider">Debit (<CurrencySymbol currency={currency} />)</th>
+                                    <th className="px-4 py-3 text-right text-[10px] font-bold text-slate-500 uppercase tracking-wider">Credit (<CurrencySymbol currency={currency} />)</th>
                                 </tr>
                             </thead>
                             <tbody className="divide-y divide-slate-100">

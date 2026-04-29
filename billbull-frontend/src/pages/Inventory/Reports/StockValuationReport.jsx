@@ -7,6 +7,7 @@ import { getWarehouses } from '../../../api/warehouseApi';
 import { getPrintTemplates } from '../../../api/printTemplateApi';
 import { generateReportPrintHtml, printHtml } from '../../../utils/printGenerator';
 import toast from 'react-hot-toast';
+import CurrencyAmount from '../../../components/CurrencyAmount';
 
 const StockValuationReport = () => {
     const [filters, setFilters] = useState({
@@ -213,7 +214,7 @@ const StockValuationReport = () => {
             >
                 <div>
                     <p style={{ margin: '0 0 6px', fontSize: 12, color: '#6b7280', fontWeight: 500 }}>{label}</p>
-                    <p style={{ margin: 0, fontSize: 22, fontWeight: 700, color: '#111827' }}>AED {Number(value).toLocaleString('en-AE', { minimumFractionDigits: 2 })}</p>
+                    <CurrencyAmount value={value} style={{ margin: 0, fontSize: 22, fontWeight: 700, color: '#111827' }} />
                     {sub && <p style={{ margin: '4px 0 0', fontSize: 11, color: '#9ca3af' }}>{sub}</p>}
                 </div>
                 <div style={{ color, opacity: 0.6 }}><FaArrowUp style={{ fontSize: 18 }} /></div>
@@ -372,10 +373,10 @@ const StockValuationReport = () => {
                                                     </span>
                                                 </td>
                                                 <td style={{ padding: '10px 12px', textAlign: 'right', fontWeight: 600, color: '#111827' }}>{qty.toFixed(0)}</td>
-                                                <td style={{ padding: '10px 12px', textAlign: 'right', color: '#6b7280' }}>AED {cost.toFixed(2)}</td>
-                                                <td style={{ padding: '10px 12px', textAlign: 'right', color: '#6b7280', fontSize: 12 }}>AED {Number(row.fifoUnitCost ?? cost).toFixed(2)}</td>
-                                                <td style={{ padding: '10px 12px', textAlign: 'right', color: '#6b7280', fontSize: 12 }}>AED {Number(row.lifoUnitCost ?? cost).toFixed(2)}</td>
-                                                <td style={{ padding: '10px 12px', textAlign: 'right', fontWeight: 700, color: '#F5A742' }}>AED {val.toLocaleString('en-AE', { minimumFractionDigits: 2 })}</td>
+                                                <td style={{ padding: '10px 12px', textAlign: 'right', color: '#6b7280' }}><CurrencyAmount value={cost} /></td>
+                                                <td style={{ padding: '10px 12px', textAlign: 'right', color: '#6b7280', fontSize: 12 }}><CurrencyAmount value={row.fifoUnitCost ?? cost} /></td>
+                                                <td style={{ padding: '10px 12px', textAlign: 'right', color: '#6b7280', fontSize: 12 }}><CurrencyAmount value={row.lifoUnitCost ?? cost} /></td>
+                                                <td style={{ padding: '10px 12px', textAlign: 'right', fontWeight: 700, color: '#F5A742' }}><CurrencyAmount value={val} /></td>
                                             </tr>
                                         );
                                     })}
@@ -388,7 +389,7 @@ const StockValuationReport = () => {
                     <div className="px-4 sm:px-5 py-4 bg-[#F5C742] flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
                         <div>
                             <p style={{ margin: 0, fontSize: 11, fontWeight: 600, color: '#78350f', textTransform: 'uppercase' }}>Total Stock Valuation</p>
-                            <p style={{ margin: 0, fontSize: 22, fontWeight: 800, color: '#1c1917' }}>AED {totalValuation.toLocaleString('en-AE', { minimumFractionDigits: 2 })}</p>
+                            <CurrencyAmount value={totalValuation} style={{ margin: 0, fontSize: 22, fontWeight: 800, color: '#1c1917' }} />
                         </div>
                         <span style={{ background: 'rgba(0,0,0,0.08)', borderRadius: 8, padding: '4px 12px', fontSize: 12, fontWeight: 600, color: '#1c1917' }}>Per Configured Cost Method</span>
                     </div>

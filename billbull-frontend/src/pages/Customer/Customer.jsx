@@ -21,6 +21,7 @@ import {
 import { getEmployees } from '../../api/employeeApi';
 import { getProducts, getProductById } from '../../api/productsApi';
 import ProductSelector from '../../components/ProductSelector';
+import CurrencyAmount from '../../components/CurrencyAmount';
 
 // ==========================================
 // HELPERS
@@ -811,7 +812,7 @@ const ViewPriceModal = ({ isOpen, onClose, product }) => {
           <p className="text-sm text-slate-500 mb-6">Standard Selling Price</p>
 
           <div className="text-4xl font-extrabold text-[#F5C742] mb-2 drop-shadow-sm">
-            AED {product.standardPrice !== undefined && product.standardPrice !== null ? product.standardPrice.toFixed(2) : (product.price ? product.price.toFixed(2) : '0.00')}
+            <CurrencyAmount value={product.standardPrice !== undefined && product.standardPrice !== null ? product.standardPrice : (product.price || 0)} />
           </div>
           <p className="text-xs text-slate-400 font-medium bg-slate-100 px-2 py-1 rounded-full inline-block">Inclusive of Tax</p>
         </div>
@@ -972,7 +973,7 @@ const ConvertToQuotationModal = ({ isOpen, onClose, inquiry, onSuccess }) => {
                       <td className="px-3 py-2 text-slate-900">{item.productName}</td>
                       <td className="px-3 py-2 text-center text-slate-600">{item.quantity}</td>
                       <td className="px-3 py-2 text-right text-slate-900 font-medium">
-                        AED {item.standardPrice !== undefined && item.standardPrice !== null ? item.standardPrice.toFixed(2) : (item.price ? item.price.toFixed(2) : '0.00')}
+                        <CurrencyAmount value={item.standardPrice !== undefined && item.standardPrice !== null ? item.standardPrice : (item.price || 0)} />
                       </td>
                     </tr>
                   ))}
@@ -1363,7 +1364,7 @@ const ViewInquiry = ({ data, onBack, onRefresh }) => {
                             )}
                           </td>
                           <td className="px-4 py-3 text-right text-slate-600 font-medium">
-                            AED {item.standardPrice !== undefined && item.standardPrice !== null ? item.standardPrice.toFixed(2) : (item.price ? item.price.toFixed(2) : '0.00')}
+                            <CurrencyAmount value={item.standardPrice !== undefined && item.standardPrice !== null ? item.standardPrice : (item.price || 0)} />
                           </td>
                           <td className="px-4 py-3 text-right">
                             <button
@@ -1750,8 +1751,7 @@ const SendPriceListModal = ({ isOpen, onClose, inquiry, onSuccess }) => {
                     </div>
                     {item.price ? (
                       <div className="text-sm font-bold text-slate-900">
-                        {/* Assuming currency is AED based on screenshot */}
-                        AED {(parseFloat(item.price) * (item.quantity || 1)).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        <CurrencyAmount value={parseFloat(item.price) * (item.quantity || 1)} />
                       </div>
                     ) : (
                       <div className="text-xs italic text-slate-400">Price not set</div>

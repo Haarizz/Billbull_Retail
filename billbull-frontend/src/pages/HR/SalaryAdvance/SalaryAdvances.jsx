@@ -29,6 +29,7 @@ import {
 // --- API IMPORTS ---
 import { salaryAdvanceApi } from '../../../api/salaryAdvanceApi';
 import { employeesApi } from '../../../api/employeesApi';
+import CurrencyAmount, { CurrencySymbol } from '../../../components/CurrencyAmount';
 
 // --- Configuration ---
 
@@ -289,7 +290,7 @@ const NewRequestModal = ({ isOpen, onClose, onSave, employeeList }) => {
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
             <div>
-              <label className="block text-xs font-bold text-slate-700 mb-1.5 uppercase">Amount (AED) <span className="text-red-500">*</span></label>
+              <label className="block text-xs font-bold text-slate-700 mb-1.5 uppercase">Amount (<CurrencySymbol />) <span className="text-red-500">*</span></label>
               <input type="number" placeholder="0.00" value={formData.amount} onChange={(e) => setFormData({ ...formData, amount: e.target.value })} className="w-full px-4 py-2 bg-white border border-slate-200 rounded-lg text-sm text-slate-700 focus:outline-none focus:ring-2 focus:ring-[#F5C742]/50 placeholder:text-slate-400" />
             </div>
             <div>
@@ -303,7 +304,7 @@ const NewRequestModal = ({ isOpen, onClose, onSave, employeeList }) => {
               <Calculator className="w-4 h-4 text-slate-600" />
               <span className="text-sm font-medium text-slate-700">Monthly:</span>
             </div>
-            <span className="text-sm font-bold text-slate-900">AED {parseFloat(monthlyDeduction).toLocaleString()}</span>
+            <CurrencyAmount value={monthlyDeduction} className="text-sm font-bold text-slate-900" />
           </div>
 
           <div>
@@ -366,15 +367,15 @@ const ViewRequestModal = ({ isOpen, onClose, request }) => {
           <div className="grid grid-cols-3 gap-4">
             <div className="p-4 border border-slate-200 rounded-xl text-center">
               <div className="text-xs text-slate-500 mb-1 font-medium uppercase">Approved Amount</div>
-              <div className="text-2xl font-bold text-[#0F766E]">{totalAmount.toLocaleString()}</div>
+              <CurrencyAmount value={totalAmount} className="text-2xl font-bold text-[#0F766E]" />
             </div>
             <div className="p-4 border border-slate-200 rounded-xl text-center">
               <div className="text-xs text-slate-500 mb-1 font-medium uppercase">Deducted</div>
-              <div className="text-2xl font-bold text-slate-900">AED {paidAmount.toLocaleString()}</div>
+              <CurrencyAmount value={paidAmount} className="text-2xl font-bold text-slate-900" />
             </div>
             <div className="p-4 border border-slate-200 rounded-xl text-center">
               <div className="text-xs text-slate-500 mb-1 font-medium uppercase">Balance</div>
-              <div className="text-2xl font-bold text-red-500">AED {balance.toLocaleString()}</div>
+              <CurrencyAmount value={balance} className="text-2xl font-bold text-red-500" />
             </div>
           </div>
 
@@ -428,7 +429,7 @@ const ViewRequestModal = ({ isOpen, onClose, request }) => {
                 </div>
                 <div>
                   <div className="text-xs font-semibold text-slate-500 mb-1 uppercase">Est. Installment</div>
-                  <div className="font-bold text-slate-900">AED {Math.round(totalAmount / (request.repaymentPeriodMonths || 1)).toLocaleString()}</div>
+                  <CurrencyAmount value={Math.round(totalAmount / (request.repaymentPeriodMonths || 1))} className="font-bold text-slate-900" />
                 </div>
               </div>
             </div>
@@ -523,7 +524,7 @@ const SalaryAdvances = () => {
     if (!statsData) {
       return [
         { label: "Active Advances", value: "0", subValue: "Currently being repaid", trend: 'neutral', icon: CreditCard, color: "bg-emerald-50 text-emerald-600" },
-        { label: "Outstanding Amount", value: "AED 0", subValue: "Total balance", trend: 'neutral', icon: Wallet, color: "bg-red-50 text-red-600" },
+        { label: "Outstanding Amount", value: <CurrencyAmount value={0} />, subValue: "Total balance", trend: 'neutral', icon: Wallet, color: "bg-red-50 text-red-600" },
         { label: "Pending Requests", value: "0", subValue: "Awaiting approval", trend: 'neutral', icon: Clock, color: "bg-orange-50 text-orange-600" },
         { label: "Approved This Month", value: "0", subValue: "New advances", trend: 'neutral', icon: CheckCircle2, color: "bg-blue-50 text-blue-600" },
       ];
@@ -540,7 +541,7 @@ const SalaryAdvances = () => {
       },
       {
         label: "Outstanding Amount",
-        value: `AED ${statsData.outstandingAmount.toLocaleString()}`,
+        value: <CurrencyAmount value={statsData.outstandingAmount} />,
         subValue: "Total balance",
         trend: statsData.outstandingAmount > 0 ? 'down' : 'neutral',
         icon: Wallet,
@@ -957,13 +958,13 @@ const SalaryAdvances = () => {
                         <div className="h-full bg-[#F5C742] rounded-full transition-all duration-500" style={{ width: `${(item.paidAmount / item.totalAmount) * 100}%` }}></div>
                       </div>
                       <div className="flex justify-between text-[11px] text-slate-500 mt-1.5">
-                        <span>AED {item.paidAmount?.toLocaleString()} paid</span>
-                        <span className="text-red-500 font-medium">AED {item.remainingAmount?.toLocaleString()} remaining</span>
+                        <span><CurrencyAmount value={item.paidAmount || 0} /> paid</span>
+                        <span className="text-red-500 font-medium"><CurrencyAmount value={item.remainingAmount || 0} /> remaining</span>
                       </div>
                     </div>
                     <div className="grid grid-cols-2 md:grid-cols-4 gap-6">
-                      <div><div className="text-[11px] uppercase text-slate-400 font-bold mb-1">Total Amount</div><div className="text-sm font-bold text-green-600">AED {item.totalAmount?.toLocaleString()}</div></div>
-                      <div><div className="text-[11px] uppercase text-slate-400 font-bold mb-1">Installment</div><div className="text-sm font-bold text-slate-900">AED {item.installmentAmount?.toLocaleString()}</div></div>
+                      <div><div className="text-[11px] uppercase text-slate-400 font-bold mb-1">Total Amount</div><CurrencyAmount value={item.totalAmount || 0} className="text-sm font-bold text-green-600" /></div>
+                      <div><div className="text-[11px] uppercase text-slate-400 font-bold mb-1">Installment</div><CurrencyAmount value={item.installmentAmount || 0} className="text-sm font-bold text-slate-900" /></div>
                       <div><div className="text-[11px] uppercase text-slate-400 font-bold mb-1">Frequency</div><div className="text-sm font-medium text-slate-700 bg-slate-50 inline-block px-2 py-0.5 rounded border border-slate-100">Monthly</div></div>
                       <div><div className="text-[11px] uppercase text-slate-400 font-bold mb-1">Next Deduction</div><div className="flex items-center gap-1.5 text-sm font-medium text-slate-800"><Calendar className="w-3.5 h-3.5 text-[#F5C742]" /> {item.nextDeductionDate}</div></div>
                     </div>
@@ -1018,7 +1019,7 @@ const SalaryAdvances = () => {
                   metrics={[
                     { label: "Total Requests", val: reportMetrics.summary.totalRequests },
                     { label: "Approved", val: reportMetrics.summary.approved },
-                    { label: "Total Amount Disbursed", val: `AED ${reportMetrics.summary.totalAmount.toLocaleString()}` }
+                    { label: "Total Amount Disbursed", val: <CurrencyAmount value={reportMetrics.summary.totalAmount} /> }
                   ]}
                 />
                 <SummaryReportCard
@@ -1028,7 +1029,7 @@ const SalaryAdvances = () => {
                   iconColor="text-[#0F766E]"
                   metrics={[
                     { label: "Active Deductions", val: reportMetrics.deduction.activeDeductions },
-                    { label: "Total Deducted", val: `AED ${reportMetrics.deduction.totalDeducted.toLocaleString()}` },
+                    { label: "Total Deducted", val: <CurrencyAmount value={reportMetrics.deduction.totalDeducted} /> },
                     { label: "Completed", val: reportMetrics.deduction.completedLoans }
                   ]}
                 />
@@ -1039,8 +1040,8 @@ const SalaryAdvances = () => {
                   iconColor="text-red-500"
                   metrics={[
                     { label: "Active Loans", val: reportMetrics.outstanding.activeLoans },
-                    { label: "Outstanding Balance", val: `AED ${reportMetrics.outstanding.outstandingBalance.toLocaleString()}`, color: "text-red-500" },
-                    { label: "Avg. Deduction/Month", val: "AED 1000" } // Mock average
+                    { label: "Outstanding Balance", val: <CurrencyAmount value={reportMetrics.outstanding.outstandingBalance} />, color: "text-red-500" },
+                    { label: "Avg. Deduction/Month", val: <CurrencyAmount value={1000} /> } // Mock average
                   ]}
                 />
               </div>
@@ -1101,8 +1102,8 @@ const SalaryAdvances = () => {
                                 {row.active}
                               </span>
                             </td>
-                            <td className="px-6 py-4 font-medium text-slate-900">AED {row.total.toLocaleString()}</td>
-                            <td className="px-6 py-4 font-medium text-red-500">AED {row.outstanding.toLocaleString()}</td>
+                            <td className="px-6 py-4 font-medium text-slate-900"><CurrencyAmount value={row.total} /></td>
+                            <td className="px-6 py-4 font-medium text-red-500"><CurrencyAmount value={row.outstanding} /></td>
                           </tr>
                         ))
                       ) : (

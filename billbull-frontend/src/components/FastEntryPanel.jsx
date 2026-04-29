@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { X, Zap, Search, Plus, Loader2, Check } from 'lucide-react';
 import { getProductsList } from '../api/productsApi';
+import CurrencyAmount from './CurrencyAmount';
 
 const FastEntryPanel = ({ isOpen, onClose, onAddItem, mode = 'sales', currency = 'AED' }) => {
     const [search, setSearch] = useState('');
@@ -272,7 +273,7 @@ const FastEntryPanel = ({ isOpen, onClose, onAddItem, mode = 'sales', currency =
                                         <span className="text-slate-700 font-medium truncate">{item.name}</span>
                                     </div>
                                     <span className="text-slate-500 text-[10px] shrink-0 ml-2">
-                                        ×{item.qty} = {currency} {item.total.toFixed(2)}
+                                        ×{item.qty} = <CurrencyAmount value={item.total} currency={currency} />
                                     </span>
                                 </div>
                             ))}

@@ -46,8 +46,8 @@ export const CurrencySymbol = ({ currency }) => {
   return <span>{currencyLabel}</span>;
 };
 
-const CurrencyAmount = ({ value, currency = 'AED', decimals = 2, className = '' }) => (
-  <span className={className} data-bb-skip-aed-symbol="true">
+const CurrencyAmount = ({ value, currency = 'AED', decimals = 2, className = '', ...props }) => (
+  <span className={className} data-bb-skip-aed-symbol="true" {...props}>
     <CurrencySymbol currency={currency} /> {formatAmount(value, decimals)}
   </span>
 );

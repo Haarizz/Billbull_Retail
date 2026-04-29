@@ -11,6 +11,7 @@ import {
 } from 'lucide-react';
 import ExportDropdown from '../../../components/common/ExportDropdown';
 import { exportToExcel, exportToPDF } from '../../../utils/exportUtils';
+import CurrencyAmount from '../../../components/CurrencyAmount';
 
 // ==========================================
 // CONFIGURATION
@@ -49,6 +50,20 @@ import {
     deleteStockTakeSession,
     getProductsForStockTake,
 } from '../../../api/stockTakeApi';
+
+const parseImpactAmount = (impact) => {
+    if (typeof impact === 'number') return impact;
+    const raw = String(impact || '').trim();
+    if (!raw || raw === '-') return 0;
+    const amount = Number(raw.replace(/[^0-9.]/g, '')) || 0;
+    return raw.includes('-') ? -amount : amount;
+};
+
+const ImpactAmount = ({ value }) => {
+    const amount = parseImpactAmount(value);
+    if (!amount) return '-';
+    return <>{amount > 0 ? '+' : ''}<CurrencyAmount value={Math.abs(amount)} /></>;
+};
 
 // Compact bin selector used in the items table and count modal
 const BinSelector = ({ itemId, binId, bins, onBinChange, disabled, size = 'sm' }) => {
@@ -560,7 +575,7 @@ const ListView = ({
                                         {session.progress > 0 ? (
                                             <div className="flex flex-col items-end">
                                                 <span className={session.totalVarianceValue >= 0 ? 'text-emerald-600' : 'text-red-600'}>
-                                                    {session.totalVarianceValue > 0 ? '+' : ''}AED {Math.abs(session.totalVarianceValue).toFixed(2)}
+                                                    {session.totalVarianceValue > 0 ? '+' : ''}<CurrencyAmount value={Math.abs(session.totalVarianceValue)} />
                                                 </span>
                                                 <span className="text-[10px] text-slate-400 font-bold uppercase tracking-tighter">
                                                     {session.totalVarianceQty > 0 ? '+' : (session.totalVarianceQty < 0 ? '-' : '')}{Math.abs(session.totalVarianceQty)} units
@@ -999,7 +1014,7 @@ const SessionView = ({
                                                 ) : <span className="text-slate-400">-</span>}
                                             </td>
                                             <td className={`px-4 py-2.5 text-center font-bold ${item.varianceValue > 0 ? 'text-blue-600' : item.varianceValue < 0 ? 'text-red-500' : 'text-slate-400'}`}>
-                                                {item.impact || '-'}
+                                                <ImpactAmount value={item.impact || item.varianceValue} />
                                             </td>
                                             <td className="px-4 py-2.5 text-center">
                                                 <span className={`px-2 py-0.5 rounded text-[8px] font-bold uppercase border shadow-sm ${getStatusStyle(item.status)}`}>
@@ -1083,7 +1098,7 @@ const SessionView = ({
                             <div className="flex justify-between items-center text-slate-900 pb-2 border-b border-black/10">
                                 <span className="text-[11px] font-bold opacity-80">Variance (Value)</span>
                                 <span className="text-base font-black tracking-tight">
-                                    AED {items.reduce((sum, item) => sum + Math.abs(item.varianceValue || 0), 0).toFixed(2)}
+                                    <CurrencyAmount value={items.reduce((sum, item) => sum + Math.abs(item.varianceValue || 0), 0)} />
                                 </span>
                             </div>
                         </div>
@@ -1230,11 +1245,11 @@ const SessionView = ({
                                     <p className="text-[11px] font-bold text-slate-600 mb-1">Pricing</p>
                                     <div className="flex justify-between items-center text-xs">
                                         <span className="text-slate-500 font-medium">Cost Price:</span>
-                                        <span className="font-bold text-slate-800">AED {selectedItemForCount.costPrice?.toFixed(2) || '0.00'}</span>
+                                        <CurrencyAmount value={selectedItemForCount.costPrice || 0} className="font-bold text-slate-800" />
                                     </div>
                                     <div className="flex justify-between items-center text-xs">
                                         <span className="text-slate-500 font-medium">Selling Price:</span>
-                                        <span className="font-bold text-emerald-600">AED {selectedItemForCount.price?.toFixed(2) || '0.00'}</span>
+                                        <CurrencyAmount value={selectedItemForCount.price || 0} className="font-bold text-emerald-600" />
                                     </div>
                                 </div>
                             </div>
@@ -2539,7 +2554,7 @@ const StockTaking = () => {
                                                         <td className={`px-4 py-3 text-center text-xs font-black ${item.variance > 0 ? 'text-blue-600' : 'text-red-500'}`}>
                                                             {item.variance > 0 ? `+${item.variance}` : item.variance}
                                                         </td>
-                                                        <td className="px-4 py-3 text-right text-xs font-bold text-slate-600">{item.impact || '-'}</td>
+                                                        <td className="px-4 py-3 text-right text-xs font-bold text-slate-600"><ImpactAmount value={item.impact || item.varianceValue} /></td>
                                                     </tr>
                                                 ))
                                             ) : (
@@ -2558,10 +2573,7 @@ const StockTaking = () => {
                                 <div className="flex justify-between items-center py-2 border-b border-slate-50">
                                     <span className="text-xs font-bold text-slate-500 uppercase tracking-tight">Financial Impact</span>
                                     <span className="text-sm font-black text-slate-900">
-                                        AED {selectedSession?.items?.reduce((sum, item) => {
-                                            const val = parseFloat(item.impact?.replace(/[^0-9.-]+/g, "") || "0");
-                                            return sum + val;
-                                        }, 0).toFixed(2)}
+                                        <CurrencyAmount value={selectedSession?.items?.reduce((sum, item) => sum + parseImpactAmount(item.impact || item.varianceValue), 0) || 0} />
                                     </span>
                                 </div>
                                 <div className="flex justify-between items-center py-2 border-b border-slate-50">

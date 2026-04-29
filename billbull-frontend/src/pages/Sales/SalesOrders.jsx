@@ -1446,7 +1446,7 @@ const SalesOrders = () => {
                 expectedDispatch={expectedDelivery}
                 onExpectedDispatchChange={setExpectedDelivery}
                 isReadOnly={isLocked}
-                currency="AED"
+                currency={orderCurrency}
             />
 
             {selectedCustomer && salesSettings?.creditLimitPolicy === 'WARNING' &&
@@ -1456,8 +1456,8 @@ const SalesOrders = () => {
                     <AlertCircle size={14} className="mt-0.5 shrink-0 text-yellow-600" />
                     <p>
                         <strong>Credit Warning:</strong> The projected outstanding balance
-                        ({(Number(selectedCustomer.balance || 0) + orderTotal).toFixed(2)} AED) exceeds this customer's
-                        credit limit of {Number(selectedCustomer.creditLimitAmount).toFixed(2)} AED.
+                        (<CurrencyAmount value={Number(selectedCustomer.balance || 0) + orderTotal} currency={orderCurrency} />) exceeds this customer's
+                        credit limit of <CurrencyAmount value={selectedCustomer.creditLimitAmount} currency={orderCurrency} />.
                     </p>
                 </div>
             )}
@@ -1468,8 +1468,8 @@ const SalesOrders = () => {
                     <AlertCircle size={14} className="mt-0.5 shrink-0 text-red-600" />
                     <p>
                         <strong>Credit Limit Blocked:</strong> The projected outstanding balance
-                        ({(Number(selectedCustomer.balance || 0) + orderTotal).toFixed(2)} AED) exceeds this customer's
-                        credit limit of {Number(selectedCustomer.creditLimitAmount).toFixed(2)} AED.
+                        (<CurrencyAmount value={Number(selectedCustomer.balance || 0) + orderTotal} currency={orderCurrency} />) exceeds this customer's
+                        credit limit of <CurrencyAmount value={selectedCustomer.creditLimitAmount} currency={orderCurrency} />.
                         Saving this order is blocked until the balance is within limit.
                     </p>
                 </div>

@@ -5,6 +5,7 @@ import { getImageUrl } from '../utils/urlUtils';
 import { getProductsList, createProduct, getProductById } from '../api/productsApi';
 import { getBrands } from '../api/brandsApi';
 import { getUnits } from '../api/unitsApi';
+import CurrencyAmount from './CurrencyAmount';
 const PAGE_SIZE = 15;
 const RECENT_KEY = 'billbull_recent_products';
 const MAX_RECENT = 5;
@@ -875,12 +876,9 @@ const ProductSelector = ({
 
                                     {/* Right: Price & Action */}
                                     <div className="text-right shrink-0 ml-4 flex flex-col items-end">
-                                        <div className="text-[15px] font-bold text-slate-800 flex items-baseline gap-1 mb-1.5">
-                                            <span className="text-[9px] text-slate-400 font-normal uppercase">AED</span>
-                                            {salesPrice.toFixed(2)}
-                                        </div>
+                                        <CurrencyAmount value={salesPrice} className="text-[15px] font-bold text-slate-800 mb-1.5" />
                                         <div className="flex gap-2 mb-3">
-                                            {cost != null && <div className="text-[9px] text-slate-400">Cost: AED {cost.toFixed(2)}</div>}
+                                            {cost != null && <div className="text-[9px] text-slate-400">Cost: <CurrencyAmount value={cost} /></div>}
                                             {gp != null && <div className="text-[9px] text-slate-400">GP: {gp}</div>}
                                         </div>
                                         <button
