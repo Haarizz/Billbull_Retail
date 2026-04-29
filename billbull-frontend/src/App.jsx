@@ -15,7 +15,6 @@ import { PermissionProvider } from "./context/PermissionContext";
 import { CompanyProvider } from "./context/CompanyContext";
 import { BranchProvider } from "./context/BranchContext";
 import ResourceGuard from "./components/auth/ResourceGuard";// import CustomerInquiries from "./pages/Customer/CustomerInquiries";
-import AedSymbolRenderer from "./components/AedSymbolRenderer";
 // import FollowUpModal from "./pages/Customer/FollowUpModal";
 // import MessageModal from "./pages/Customer/MessageModal";
 // import CustomerLedger from "./pages/Sales/CustomerLedger";
@@ -123,7 +122,6 @@ function App() {
   return (
     <BrowserRouter>
       <CompanyProvider>
-        <AedSymbolRenderer />
         <BranchProvider>
         <Toaster position="top-right" reverseOrder={false} />
         <Routes>

@@ -999,6 +999,8 @@ const Quotations = () => {
         () => summarizeSalesItems(items, billDiscount),
         [items, billDiscount]
     );
+    const grossTotal = quotationSummary.grossTotal;
+    const totalItemDiscount = quotationSummary.itemDiscountTotal;
     const subTotal = quotationSummary.subTotal;
     const totalTax = quotationSummary.tax;
     const billDiscountAmount = quotationSummary.billDiscountAmount;
@@ -2740,6 +2742,14 @@ const Quotations = () => {
                                 <div className="bg-white rounded-lg border border-slate-200/50 p-4 shadow-sm mb-4 md:mb-6">
                                     <h3 className="text-xs font-bold text-slate-700 mb-3 border-b border-slate-100/50 pb-2">Quotation Summary</h3>
                                     <div className="space-y-2 text-xs" data-bb-skip-aed-symbol="true">
+                                        <div className="flex justify-between text-slate-600">
+                                            <span>Gross Amount</span>
+                                            <CurrencyAmount value={grossTotal} currency={currency} className="font-medium" />
+                                        </div>
+                                        <div className="flex justify-between text-red-500">
+                                            <span>Item Discount</span>
+                                            <span className="font-medium">- <CurrencyAmount value={totalItemDiscount} currency={currency} /></span>
+                                        </div>
                                         <div className="flex justify-between text-slate-600">
                                             <span>Subtotal</span>
                                             <CurrencyAmount value={subTotal} currency={currency} className="font-medium" />
