@@ -35,6 +35,7 @@ import { getVendors } from "../../../api/vendorsApi";
 import { getUnitConversionFactor } from "../../../utils/unitPricing";
 import ExportDropdown from '../../../components/common/ExportDropdown';
 import { exportToExcel, exportToPDF } from '../../../utils/exportUtils';
+import CurrencyAmount, { CurrencySymbol } from '../../../components/CurrencyAmount';
 
 // ==========================================
 // 1. CONFIGURATION
@@ -827,7 +828,7 @@ const AddProductWizard = ({ onCancel, onSave, initialData, brands: initialBrands
                 <h3 className="font-semibold text-lg mb-4 flex items-center gap-2"><Calculator className="h-5 w-5 text-slate-400" /> Costing</h3>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-4">
                   <div className="space-y-1.5">
-                    <label className="text-xs font-semibold text-slate-500">Cost (AED) <span className="text-red-500">*</span></label>
+                    <label className="text-xs font-semibold text-slate-500">Cost (<CurrencySymbol />) <span className="text-red-500">*</span></label>
                     <input type="number" value={formData.cost} onChange={(e) => handleInputChange('cost', e.target.value)} className="w-full border border-slate-200 rounded-md px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-[#F5C742]/50 font-medium" />
                   </div>
                   <div className="space-y-1.5">
@@ -876,11 +877,11 @@ const AddProductWizard = ({ onCancel, onSave, initialData, brands: initialBrands
                 </div>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-4">
                   <div className="space-y-1.5">
-                    <label className="text-xs font-semibold text-slate-500">Retail Price (AED) <span className="text-red-500">*</span></label>
+                    <label className="text-xs font-semibold text-slate-500">Retail Price (<CurrencySymbol />) <span className="text-red-500">*</span></label>
                     <input type="number" value={formData.retailPrice} onChange={(e) => handleInputChange('retailPrice', e.target.value)} className="w-full border border-slate-200 rounded-md px-3 py-2 text-sm font-bold text-slate-900 outline-none focus:ring-2 focus:ring-[#F5C742]/50 text-lg" />
                   </div>
                   <div className="space-y-1.5">
-                    <label className="text-xs font-semibold text-slate-500">Wholesale Price (AED)</label>
+                    <label className="text-xs font-semibold text-slate-500">Wholesale Price (<CurrencySymbol />)</label>
                     <input type="number" value={formData.wholesalePrice} onChange={(e) => handleInputChange('wholesalePrice', e.target.value)} className="w-full border border-slate-200 rounded-md px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-[#F5C742]/50" placeholder="0" />
                   </div>
                 </div>
@@ -939,16 +940,16 @@ const AddProductWizard = ({ onCancel, onSave, initialData, brands: initialBrands
                   </div>
                   <div className="flex justify-between items-center p-3 bg-white rounded-lg border border-slate-100 shadow-sm">
                     <span className="text-sm text-slate-500">Price Incl. Tax</span>
-                    <span className="font-mono font-semibold">AED {(formData.retailPrice * (1 + formData.salesTax / 100)).toFixed(2)}</span>
+                    <CurrencyAmount value={formData.retailPrice * (1 + formData.salesTax / 100)} className="font-mono font-semibold" />
                   </div>
                   <div className="flex justify-between items-center p-3 bg-white rounded-lg border border-slate-100 shadow-sm">
                     <span className="text-sm text-slate-500">Price Excl. Tax</span>
-                    <span className="font-mono font-semibold">AED {formData.retailPrice}</span>
+                    <CurrencyAmount value={formData.retailPrice} className="font-mono font-semibold" />
                   </div>
                   <div className="mt-6 pt-4 border-t border-slate-100">
                     <div className="bg-emerald-50 border border-emerald-100 p-4 rounded-lg text-center">
                       <span className="text-xs font-medium text-emerald-700 uppercase tracking-wider">Profit per Unit</span>
-                      <div className="text-3xl font-bold text-emerald-700 mt-2">AED {calculateProfit()}</div>
+                      <CurrencyAmount value={calculateProfit()} className="text-3xl font-bold text-emerald-700 mt-2" />
                     </div>
                   </div>
                 </div>
@@ -1468,7 +1469,7 @@ const ScannedDetailsModal = ({ product, onClose, onPrint }) => {
             <div className="p-3 rounded-xl border bg-emerald-50 border-emerald-100 text-center">
               <DollarSign className="h-4 w-4 text-emerald-600 mx-auto mb-1" />
               <p className="text-[10px] font-bold text-slate-400 uppercase">Retail Price</p>
-              <p className="font-bold text-emerald-700 text-lg">AED {product.retailPrice}</p>
+              <CurrencyAmount value={product.retailPrice} className="font-bold text-emerald-700 text-lg" />
             </div>
             <div className="p-3 rounded-xl border bg-white border-slate-100 text-center">
               <Package className="h-4 w-4 text-purple-600 mx-auto mb-1" />
@@ -1527,8 +1528,8 @@ const ViewProductModal = ({ product, onClose }) => {
             </div>
             <div className="text-right space-y-1">
               <span className="block text-xs text-slate-500 uppercase">Retail Price</span>
-              <span className="block text-2xl font-bold text-slate-900">AED {parseFloat(product.retailPrice || 0).toFixed(2)}</span>
-              <span className="block text-xs text-slate-400">Cost: AED {parseFloat(product.cost || 0).toFixed(2)}</span>
+              <CurrencyAmount value={product.retailPrice || 0} className="block text-2xl font-bold text-slate-900" />
+              <span className="block text-xs text-slate-400">Cost: <CurrencyAmount value={product.cost || 0} /></span>
             </div>
           </div>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
@@ -2247,8 +2248,8 @@ const Products = () => {
                       </td>
                       <td className="p-3"><span className="text-xs font-mono text-slate-600">{product.sku}</span></td>
                       <td className="p-3"><span className="text-sm text-slate-700">{product.departmentName || 'General'}</span></td>
-                      <td className="p-3"><span className="text-sm font-medium text-slate-500">AED {parseFloat(product.cost || 0).toFixed(2)}</span></td>
-                      <td className="p-3"><span className="text-sm font-bold text-slate-900">AED {parseFloat(product.retailPrice || 0).toFixed(2)}</span></td>
+                      <td className="p-3"><CurrencyAmount value={product.cost || 0} className="text-sm font-medium text-slate-500" /></td>
+                      <td className="p-3"><CurrencyAmount value={product.retailPrice || 0} className="text-sm font-bold text-slate-900" /></td>
                       <td className="p-3">
                         {product.status === 'ACTIVE' ? (
                           <span className="inline-flex items-center justify-center rounded-md border px-2 py-0.5 text-xs font-medium bg-slate-50 text-emerald-600 border-slate-200">

@@ -41,6 +41,7 @@ import { useCompany } from '../../context/CompanyContext';
 import { employeesApi } from '../../api/employeesApi';
 import ExportDropdown from '../../components/common/ExportDropdown';
 import { exportToExcel, exportToPDF } from '../../utils/exportUtils';
+import { resolveCurrencyDisplayCode } from '../../utils/countryCurrencyOptions';
 
 // ==========================================
 // 1. MOCK DATA & CONFIGURATION
@@ -117,7 +118,7 @@ const CustomSelect = ({ label, placeholder, options, value, onChange }) => {
 const Ledger = () => {
   const { branches, defaultBranchName } = useBranch();
   const { company } = useCompany();
-  const currency = company?.currency || 'AED';
+  const currency = resolveCurrencyDisplayCode(company || {});
   const [activeTab, setActiveTab] = useState('chart');
   const [employeeNames, setEmployeeNames] = useState([]);
   const [loading, setLoading] = useState(true);

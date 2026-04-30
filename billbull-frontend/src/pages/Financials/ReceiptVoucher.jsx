@@ -42,6 +42,7 @@ import { getImageUrl } from '../../utils/urlUtils';
 import { useBranch } from '../../context/BranchContext';
 import { useCompany } from '../../context/CompanyContext';
 import { exportToExcel, exportToPDF } from '../../utils/exportUtils';
+import { resolveCurrencyDisplayCode } from '../../utils/countryCurrencyOptions';
 
 // --- HELPER: CUSTOM SELECT ---
 const CustomSelect = ({ placeholder, options, value, onChange }) => {
@@ -97,7 +98,7 @@ const ReceiptVoucher = () => {
     const { print } = usePrintDocument();
     const { branchNames, defaultBranchName } = useBranch();
     const { company } = useCompany();
-    const currency = company?.currency || 'AED';
+    const currency = resolveCurrencyDisplayCode(company || {});
     const [isAddModalOpen, setIsAddModalOpen] = useState(false);
     const fileInputRef = useRef(null);
 

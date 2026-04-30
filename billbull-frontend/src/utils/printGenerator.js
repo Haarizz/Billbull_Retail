@@ -4,8 +4,7 @@ import {
 } from './documentTemplateRenderer';
 import { generateReportFilename } from './filenameUtils';
 import {
-    hasCurrencySymbolImage,
-    resolveCurrencyDisplayCode,
+    resolveCurrencyDisplayConfig,
     UAE_DIRHAM_SYMBOL_IMAGE
 } from './countryCurrencyOptions';
 
@@ -21,12 +20,12 @@ const AED_TOKEN_PATTERN = /(^|[^A-Za-z0-9_])AED(?=$|[^A-Za-z0-9_])/gi;
 const AMOUNT_BEFORE_AED_PATTERN = /([+-]?\d[\d,]*(?:\.\d+)?)(\s+)AED(?=$|[^A-Za-z0-9_])/gi;
 
 const renderCurrencySymbolHtml = (companyProfile = {}) => {
-    const currencyLabel = resolveCurrencyDisplayCode(companyProfile);
-    if (hasCurrencySymbolImage(companyProfile.currency || currencyLabel)) {
-        return `<img src="${UAE_DIRHAM_SYMBOL_IMAGE}" alt="AED" style="height:0.82em;width:auto;display:inline-block;vertical-align:-0.08em;margin:0 0.12em;" />`;
+    const currencyConfig = resolveCurrencyDisplayConfig(companyProfile);
+    if (currencyConfig.hasImage) {
+        return `<img src="${UAE_DIRHAM_SYMBOL_IMAGE}" alt="${escapeHtml(currencyConfig.ariaLabel)}" style="height:0.82em;width:auto;display:inline-block;vertical-align:-0.08em;margin:0 0.12em;" />`;
     }
 
-    return escapeHtml(currencyLabel);
+    return escapeHtml(currencyConfig.label);
 };
 
 const renderTextWithCurrencySymbols = (value, companyProfile = {}) => {

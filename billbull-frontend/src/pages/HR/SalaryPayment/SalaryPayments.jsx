@@ -30,6 +30,7 @@ import {
 // Import APIs
 import { employeesApi } from '../../../api/employeesApi';
 import { salaryPaymentApi } from '../../../api/salaryPaymentApi';
+import CurrencyAmount, { CurrencySymbol } from '../../../components/CurrencyAmount';
 
 // --- Configuration ---
 
@@ -263,7 +264,7 @@ const AddPaymentModal = ({ isOpen, onClose, onAdd, staffList }) => {
           </div>
 
           <div>
-            <label className="block text-xs font-semibold text-slate-500 mb-1 uppercase">Base Salary (AED)</label>
+            <label className="block text-xs font-semibold text-slate-500 mb-1 uppercase">Base Salary (<CurrencySymbol />)</label>
             <input
               type="number"
               readOnly
@@ -297,7 +298,7 @@ const AddPaymentModal = ({ isOpen, onClose, onAdd, staffList }) => {
 
           <div className="p-4 bg-[#F5C742]/10 rounded-lg border border-[#F5C742]/20 flex justify-between items-center">
             <span className="font-semibold text-slate-700">Net Payable</span>
-            <span className="font-bold text-xl text-slate-900">AED {formData.net.toLocaleString()}</span>
+            <CurrencyAmount value={formData.net} className="font-bold text-xl text-slate-900" />
           </div>
 
         </div>
@@ -332,7 +333,7 @@ const ProcessPaymentModal = ({ isOpen, onClose, employee, onConfirm }) => {
               <DollarSign className="w-8 h-8" />
             </div>
             <h3 className="font-bold text-xl text-slate-900">
-              AED {netAmount.toLocaleString()}
+              <CurrencyAmount value={netAmount} />
             </h3>
             <p className="text-sm text-slate-500">Net Salary Payable to <span className="font-semibold text-slate-800">{employee.employeeName || employee.name}</span></p>
           </div>
@@ -407,7 +408,7 @@ const BulkPaymentModal = ({ isOpen, onClose, count, totalAmount, onConfirm }) =>
             <div className="w-16 h-16 bg-[#F5C742]/20 text-[#F5C742] rounded-full flex items-center justify-center mx-auto mb-3">
               <Layers className="w-8 h-8" />
             </div>
-            <h3 className="font-bold text-xl text-slate-900">AED {totalAmount.toLocaleString()}</h3>
+            <CurrencyAmount value={totalAmount} className="font-bold text-xl text-slate-900" />
             <p className="text-sm text-slate-500">Total Payable to <span className="font-bold text-slate-800">{count} Employees</span></p>
           </div>
 
@@ -715,7 +716,7 @@ const SalaryPayments = () => {
             />
             <StatCard
               label="Total Payable"
-              value={`AED ${employees.reduce((acc, curr) => acc + parseCurrency(curr.net || curr.netPayable), 0).toLocaleString()}`}
+              value={<CurrencyAmount value={employees.reduce((acc, curr) => acc + parseCurrency(curr.net || curr.netPayable), 0)} />}
               subValue="This month"
               icon={DollarSign}
               color="bg-emerald-50 text-emerald-600"
@@ -820,11 +821,11 @@ const SalaryPayments = () => {
                               <div className="text-slate-900">{emp.department || emp.dept}</div>
                               <div className="text-xs text-slate-500">{emp.designation || emp.role}</div>
                             </td>
-                            <td className="px-6 py-4 text-slate-900">{emp.baseSalary || emp.base}</td>
-                            <td className="px-6 py-4 text-green-600">{emp.allowances || emp.allow}</td>
-                            <td className="px-6 py-4 text-red-600">{emp.deductions || emp.deduct}</td>
+                            <td className="px-6 py-4 text-slate-900"><CurrencyAmount value={parseCurrency(emp.baseSalary || emp.base)} /></td>
+                            <td className="px-6 py-4 text-green-600"><CurrencyAmount value={parseCurrency(emp.allowances || emp.allow)} /></td>
+                            <td className="px-6 py-4 text-red-600"><CurrencyAmount value={parseCurrency(emp.deductions || emp.deduct)} /></td>
                             <td className="px-6 py-4 font-bold text-slate-900">
-                              {typeof (emp.netPayable || emp.net) === 'number' ? `AED ${(emp.netPayable || emp.net).toLocaleString()}` : (emp.netPayable || emp.net)}
+                              <CurrencyAmount value={parseCurrency(emp.netPayable || emp.net)} />
                             </td>
                             <td className="px-6 py-4"><StatusBadge status={emp.status} /></td>
                             <td className="px-6 py-4 text-right">
@@ -935,7 +936,7 @@ const SalaryPayments = () => {
                             </td>
                             <td className="px-6 py-4 text-slate-600">{emp.department || emp.dept}</td>
                             <td className="px-6 py-4 text-right font-bold text-slate-900">
-                              {typeof (emp.netPayable || emp.net) === 'number' ? `AED ${(emp.netPayable || emp.net).toLocaleString()}` : (emp.netPayable || emp.net)}
+                              <CurrencyAmount value={parseCurrency(emp.netPayable || emp.net)} />
                             </td>
                             <td className="px-6 py-4 flex justify-end"><StatusBadge status={emp.status} /></td>
                           </tr>
@@ -994,10 +995,10 @@ const SalaryPayments = () => {
                       </div>
                     )}
                     <div className="hidden sm:block absolute top-1/2 left-[5%] xl:left-[15%] -translate-y-1/2 text-xs md:text-sm text-[#F5C742] font-medium pointer-events-none">
-                      Bank Transfer: AED {paymentStats.bankTotal.toLocaleString()}
+                      Bank Transfer: <CurrencyAmount value={paymentStats.bankTotal} />
                     </div>
                     <div className="hidden sm:block absolute top-1/2 right-[5%] xl:right-[15%] -translate-y-1/2 text-xs md:text-sm text-red-500 font-medium pointer-events-none">
-                      Cash: AED {paymentStats.cashTotal.toLocaleString()}
+                      Cash: <CurrencyAmount value={paymentStats.cashTotal} />
                     </div>
                   </div>
                 </div>
@@ -1018,7 +1019,7 @@ const SalaryPayments = () => {
                       </div>
                       <div className="bg-slate-50 rounded-lg p-4 md:p-6 border border-slate-100 text-center">
                         <div className="text-2xl md:text-3xl font-bold text-slate-800 mb-1">
-                          AED {paymentStats.totalAmount.toLocaleString()}
+                          <CurrencyAmount value={paymentStats.totalAmount} />
                         </div>
                         <div className="text-xs text-slate-500">Amount Paid</div>
                       </div>
@@ -1030,13 +1031,13 @@ const SalaryPayments = () => {
                         <div className="flex items-center gap-2 text-sm text-slate-700">
                           <CreditCard className="w-4 h-4 text-slate-500" /> Bank Transfer
                         </div>
-                        <span className="font-bold text-slate-900 text-sm">AED {paymentStats.bankTotal.toLocaleString()}</span>
+                        <CurrencyAmount value={paymentStats.bankTotal} className="font-bold text-slate-900 text-sm" />
                       </div>
                       <div className="flex justify-between items-center p-3 bg-slate-50 rounded-lg border border-slate-100">
                         <div className="flex items-center gap-2 text-sm text-slate-700">
                           <Wallet className="w-4 h-4 text-slate-500" /> Cash
                         </div>
-                        <span className="font-bold text-slate-900 text-sm">AED {paymentStats.cashTotal.toLocaleString()}</span>
+                        <CurrencyAmount value={paymentStats.cashTotal} className="font-bold text-slate-900 text-sm" />
                       </div>
                     </div>
                   </div>
@@ -1072,7 +1073,7 @@ const SalaryPayments = () => {
                           <td className="px-6 py-4 font-medium text-slate-900">{tx.name}</td>
                           <td className="px-6 py-4 text-slate-500">{tx.month}</td>
                           <td className="px-6 py-4 font-bold text-slate-900">
-                            {typeof (tx.net || tx.netPayable) === 'number' ? `AED ${(tx.net || tx.netPayable).toLocaleString()}` : (tx.net || tx.netPayable)}
+                            <CurrencyAmount value={parseCurrency(tx.net || tx.netPayable)} />
                           </td>
                           <td className="px-6 py-4">
                             <div className="flex gap-2">

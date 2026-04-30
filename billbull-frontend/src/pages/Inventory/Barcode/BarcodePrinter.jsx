@@ -16,7 +16,7 @@ import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useCompany } from "../../../context/CompanyContext";
 import { getImageUrl } from "../../../utils/urlUtils";
 import {
-    hasCurrencySymbolImage,
+    resolveCurrencyDisplayConfig,
     resolveCurrencyDisplayCode,
     UAE_DIRHAM_SYMBOL_IMAGE
 } from "../../../utils/countryCurrencyOptions";
@@ -87,11 +87,16 @@ const formatCurrencyAmount = (value, decimals = 2) => {
 };
 
 const CurrencySymbol = ({ currencyCode, currencyLabel }) => {
-    if (hasCurrencySymbolImage(currencyCode || currencyLabel)) {
+    const currencyConfig = resolveCurrencyDisplayConfig({
+        currency: currencyCode,
+        currencySymbol: currencyLabel
+    });
+
+    if (currencyConfig.hasImage) {
         return (
             <img
                 src={UAE_DIRHAM_SYMBOL_IMAGE}
-                alt={currencyCode || currencyLabel || 'Currency'}
+                alt={currencyConfig.ariaLabel}
                 data-bb-currency-image="true"
                 style={{
                     display: 'inline-block',
@@ -104,7 +109,7 @@ const CurrencySymbol = ({ currencyCode, currencyLabel }) => {
         );
     }
 
-    return <>{currencyLabel}</>;
+    return <>{currencyConfig.label}</>;
 };
 
 const CurrencyAmount = ({ value, currencyCode, currencyLabel, decimals = 2 }) => (

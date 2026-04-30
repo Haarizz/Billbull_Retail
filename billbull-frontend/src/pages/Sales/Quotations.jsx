@@ -85,6 +85,11 @@ import { generatePrintHtml, printHtml } from '../../utils/printGenerator';
 import { getImageUrl } from '../../utils/urlUtils';
 import { getDefaultProductUnit, resolveUnitAmount } from '../../utils/unitPricing';
 import { summarizeSalesItems } from '../../utils/documentSummaryUtils';
+import {
+    resolveCurrencyDisplayConfig,
+    resolveCurrencyDisplayCode,
+    UAE_DIRHAM_SYMBOL_IMAGE
+} from '../../utils/countryCurrencyOptions';
 import { useCompany } from '../../context/CompanyContext';
 import { useBranch } from '../../context/BranchContext';
 import ExportDropdown from '../../components/common/ExportDropdown';
@@ -128,8 +133,26 @@ const getCurrencyDisplayName = (code) => {
     return code;
 };
 
+const escapeHtml = (value) =>
+    String(value ?? '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+
+const renderCurrencyDisplayHtml = (currencyProps = {}) => {
+    const currencyConfig = resolveCurrencyDisplayConfig(currencyProps);
+    const currencyLabel = currencyConfig.label;
+    if (currencyConfig.hasImage) {
+        return `<img src="${UAE_DIRHAM_SYMBOL_IMAGE}" alt="${escapeHtml(currencyLabel)}" style="height:0.82em;width:auto;display:inline-block;vertical-align:-0.08em;margin:0 0.12em;" />`;
+    }
+
+    return escapeHtml(currencyLabel);
+};
+
 // ✅ MOBILE COMPONENTS
-const MobileCard = ({ qtn, onClick, renderStatusBadge, isExpanded, onToggleExpand }) => (
+const MobileCard = ({ qtn, onClick, renderStatusBadge, isExpanded, onToggleExpand, currencyProps = {} }) => (
     <div className="bg-white rounded-xl shadow-sm border border-slate-200/60 transition-all relative overflow-hidden">
         {/* Main Card Content */}
         <div onClick={onClick} className="p-4 active:bg-slate-50 cursor-pointer">
@@ -163,7 +186,7 @@ const MobileCard = ({ qtn, onClick, renderStatusBadge, isExpanded, onToggleExpan
                 </div>
                 <div className="flex justify-between text-xs">
                     <span className="text-slate-500">Amount</span>
-                    <span className="font-bold text-slate-800">{qtn.total ? qtn.total.toFixed(2) : '0.00'} {qtn.currency}</span>
+                    <CurrencyAmount value={qtn.total || 0} {...currencyProps} className="font-bold text-slate-800" />
                 </div>
             </div>
         </div>
@@ -181,7 +204,7 @@ const MobileCard = ({ qtn, onClick, renderStatusBadge, isExpanded, onToggleExpan
                             <div className="text-slate-500 mt-0.5">{rev.date}</div>
                         </div>
                         <div className="text-right flex flex-col items-end gap-1">
-                            <div className="font-bold text-slate-700">{rev.total ? Number(rev.total).toFixed(2) : '0.00'} {qtn.currency}</div>
+                            <CurrencyAmount value={rev.total || 0} {...currencyProps} className="font-bold text-slate-700" />
                             <div className="scale-90 origin-right">{renderStatusBadge(rev.status)}</div>
                         </div>
                     </div>
@@ -376,6 +399,15 @@ const Quotations = () => {
     const [selectedAddonItem, setSelectedAddonItem] = useState(null);
     const [isPrinting, setIsPrinting] = useState(false);
 
+    const companyCurrencyCode = company?.currency || '';
+    const companyCurrencySymbol = company?.currencySymbol || '';
+    const getDisplayCurrencyProps = (fallbackCurrency = currency) => ({
+        currency: companyCurrencyCode || fallbackCurrency || 'AED',
+        currencySymbol: companyCurrencySymbol || companyCurrencyCode || fallbackCurrency || 'AED'
+    });
+    const displayCurrencyProps = getDisplayCurrencyProps(currency);
+    const displayCurrencyHtml = renderCurrencyDisplayHtml(displayCurrencyProps);
+
     useEffect(() => {
         if (editingId) {
             return;
@@ -390,6 +422,14 @@ const Quotations = () => {
         defaultBranch?.address,
         editingId
     ]);
+
+    useEffect(() => {
+        if (editingId || activeTab !== 'create' || !companyCurrencyCode) {
+            return;
+        }
+
+        setCurrency(prev => (prev && prev !== 'AED' ? prev : companyCurrencyCode));
+    }, [activeTab, companyCurrencyCode, editingId]);
 
     const currencyOptions = useMemo(() => {
         return WORLD_CURRENCY_CODES
@@ -1109,7 +1149,15 @@ const Quotations = () => {
         if (salesSettings?.creditLimitPolicy === 'BLOCK' &&
             selectedCustomerData?.creditLimitAmount > 0 &&
             (Number(selectedCustomerData.balance || 0) + grandTotal) > selectedCustomerData.creditLimitAmount) {
-            setToastMessage(`Credit Limit Exceeded: The projected outstanding balance (${(Number(selectedCustomerData.balance || 0) + grandTotal).toFixed(2)} AED) exceeds this customer's credit limit of ${Number(selectedCustomerData.creditLimitAmount).toFixed(2)} AED.`);
+            const projectedOutstanding = Number(selectedCustomerData.balance || 0) + grandTotal;
+            setToastMessage(
+                <>
+                    Credit Limit Exceeded: The projected outstanding balance (
+                    <CurrencyAmount value={projectedOutstanding} {...displayCurrencyProps} />
+                    ) exceeds this customer's credit limit of{' '}
+                    <CurrencyAmount value={selectedCustomerData.creditLimitAmount} {...displayCurrencyProps} />.
+                </>
+            );
             setToastType('info');
             setShowToast(true);
             return;
@@ -1465,7 +1513,7 @@ const Quotations = () => {
                     subTotal: resolvedSummary.subTotal,
                     tax: resolvedSummary.tax,
                     grandTotal: resolvedSummary.grandTotal,
-                    currency: qtn.currency,
+                    currency: getDisplayCurrencyProps(qtn.currency).currency,
                     billDiscount: resolvedBillDiscount,
                     billDiscountAmount: resolvedSummary.billDiscountAmount
                 },
@@ -1574,7 +1622,7 @@ const Quotations = () => {
         setStatus('Draft');
         setQtnDate(new Date().toISOString().split('T')[0]);
         setValidTill(new Date().toISOString().split('T')[0]);
-        setCurrency('AED');
+        setCurrency(companyCurrencyCode || 'AED');
         setCurrencySearch('');
         setIsCurrencyOpen(false);
         setAttachments([]);
@@ -1662,7 +1710,7 @@ const Quotations = () => {
                         subTotal,
                         tax: totalTax,
                         grandTotal,
-                        currency: currency || company?.currencySymbol || company?.currency || 'AED',
+                        currency: displayCurrencyProps.currency,
                         billDiscount,
                         billDiscountAmount
                     },
@@ -1808,7 +1856,7 @@ const Quotations = () => {
             <table style="margin-left:auto; border-spacing:0;">
                 <tr><td style="padding:4px 16px 4px 0; font-size:12px; color:#94a3b8; text-align:right;">Date:</td><td style="font-size:13px; font-weight:600; color:#1e293b;">${qtnDate}</td></tr>
                 <tr><td style="padding:4px 16px 4px 0; font-size:12px; color:#94a3b8; text-align:right;">Valid Till:</td><td style="font-size:13px; font-weight:600; color:#1e293b;">${validTill}</td></tr>
-                <tr><td style="padding:4px 16px 4px 0; font-size:12px; color:#94a3b8; text-align:right;">Currency:</td><td style="font-size:13px; font-weight:600; color:#1e293b;">${currency}</td></tr>
+                <tr><td style="padding:4px 16px 4px 0; font-size:12px; color:#94a3b8; text-align:right;">Currency:</td><td style="font-size:13px; font-weight:600; color:#1e293b;">${displayCurrencyHtml}</td></tr>
                 <tr><td style="padding:4px 16px 4px 0; font-size:12px; color:#94a3b8; text-align:right;">Payment:</td><td style="font-size:13px; font-weight:600; color:#1e293b;">${paymentTerm}</td></tr>
                 <tr><td style="padding:4px 16px 4px 0; font-size:12px; color:#94a3b8; text-align:right;">Status:</td><td style="font-size:13px; font-weight:700; color:${status === 'Approved' ? '#16a34a' : status === 'Rejected' ? '#dc2626' : '#F5C742'};">${status}</td></tr>
             </table>
@@ -1840,12 +1888,12 @@ const Quotations = () => {
     <!-- TOTALS -->
     <div style="padding:20px 32px; display:flex; justify-content:flex-end;">
         <table style="border-spacing:0; min-width:280px;">
-            <tr><td style="padding:6px 20px 6px 0; font-size:13px; color:#64748b;">Sub Total</td><td style="text-align:right; font-size:14px; font-weight:600; color:#1e293b;">${currency} ${subTotal.toFixed(2)}</td></tr>
-            ${billDiscount > 0 ? `<tr><td style="padding:6px 20px 6px 0; font-size:13px; color:#dc2626;">Bill Discount (${billDiscount}%)</td><td style="text-align:right; font-size:14px; font-weight:600; color:#dc2626;">-${currency} ${billDiscountAmount.toFixed(2)}</td></tr>` : ''}
-            <tr><td style="padding:6px 20px 6px 0; font-size:13px; color:#64748b;">Tax (VAT 5%)</td><td style="text-align:right; font-size:14px; font-weight:600; color:#1e293b;">${currency} ${totalTax.toFixed(2)}</td></tr>
+            <tr><td style="padding:6px 20px 6px 0; font-size:13px; color:#64748b;">Sub Total</td><td style="text-align:right; font-size:14px; font-weight:600; color:#1e293b;">${displayCurrencyHtml} ${subTotal.toFixed(2)}</td></tr>
+            ${billDiscount > 0 ? `<tr><td style="padding:6px 20px 6px 0; font-size:13px; color:#dc2626;">Bill Discount (${billDiscount}%)</td><td style="text-align:right; font-size:14px; font-weight:600; color:#dc2626;">-${displayCurrencyHtml} ${billDiscountAmount.toFixed(2)}</td></tr>` : ''}
+            <tr><td style="padding:6px 20px 6px 0; font-size:13px; color:#64748b;">Tax (VAT 5%)</td><td style="text-align:right; font-size:14px; font-weight:600; color:#1e293b;">${displayCurrencyHtml} ${totalTax.toFixed(2)}</td></tr>
             <tr style="border-top:2px solid ${t.accentColor};">
                 <td style="padding:12px 20px 6px 0; font-size:16px; font-weight:800; color:#1e293b;">Grand Total</td>
-                <td style="text-align:right; padding-top:12px; font-size:18px; font-weight:800; color:${template === 'Premium' ? '#D4AF37' : '#1e293b'};">${currency} ${grandTotal.toFixed(2)}</td>
+                <td style="text-align:right; padding-top:12px; font-size:18px; font-weight:800; color:${template === 'Premium' ? '#D4AF37' : '#1e293b'};">${displayCurrencyHtml} ${grandTotal.toFixed(2)}</td>
             </tr>
         </table>
     </div>
@@ -1862,7 +1910,7 @@ const Quotations = () => {
     <div style="padding:24px 32px; margin-top:20px; border-top:1px solid #e2e8f0; display:flex; justify-content:space-between; align-items:center;">
         <div>
             <p style="font-size:13px; color:#64748b; font-weight:500;">Thank you for your business!</p>
-            <p style="font-size:11px; color:#94a3b8; margin-top:6px;">This quotation is valid until ${validTill}. Prices are in ${currency}.</p>
+            <p style="font-size:11px; color:#94a3b8; margin-top:6px;">This quotation is valid until ${validTill}. Prices are in ${displayCurrencyHtml}.</p>
         </div>
         <div style="text-align:right; opacity:0.5;">
             <img src="${window.location.origin}${billBullLogo}" alt="BillBull" style="height:24px; width:auto;" />
@@ -2122,7 +2170,9 @@ const Quotations = () => {
                                                 </td>
                                                 <td className="px-4 py-3 text-slate-600">{qtn.date}</td>
                                                 <td className="px-4 py-3 text-slate-700 font-medium">{qtn.customer}</td>
-                                                <td className="px-4 py-3 text-right font-bold text-slate-800">{qtn.total ? qtn.total.toFixed(2) : '0.00'} {qtn.currency}</td>
+                                                <td className="px-4 py-3 text-right font-bold text-slate-800">
+                                                    <CurrencyAmount value={qtn.total || 0} {...getDisplayCurrencyProps(qtn.currency)} />
+                                                </td>
                                                 <td className="px-4 py-3 text-right">
                                                     {renderStatusBadge(qtn.status)}
                                                 </td>
@@ -2236,7 +2286,9 @@ const Quotations = () => {
                                                         </td>
                                                         <td className="px-4 py-2 text-slate-500 text-xs">{rev.date}</td>
                                                         <td className="px-4 py-2 text-slate-500 text-xs italic opacity-70">revised version</td>
-                                                        <td className="px-4 py-2 text-right font-bold text-slate-600 text-xs">{rev.total ? Number(rev.total).toFixed(2) : '0.00'} {qtn.currency}</td>
+                                                        <td className="px-4 py-2 text-right font-bold text-slate-600 text-xs">
+                                                            <CurrencyAmount value={rev.total || 0} {...getDisplayCurrencyProps(qtn.currency)} />
+                                                        </td>
                                                         <td className="px-4 py-2 text-right scale-90 origin-right">
                                                             {renderStatusBadge(rev.status)}
                                                         </td>
@@ -2273,6 +2325,7 @@ const Quotations = () => {
                                         renderStatusBadge={renderStatusBadge}
                                         isExpanded={expandedListRows[qtn.id]}
                                         onToggleExpand={toggleListRow}
+                                        currencyProps={getDisplayCurrencyProps(qtn.currency)}
                                     />
                                 ))
                             ) : (
@@ -2423,7 +2476,8 @@ const Quotations = () => {
                                     expectedDispatch={expectedDispatch}
                                     onExpectedDispatchChange={setExpectedDispatch}
                                     isReadOnly={isViewMode}
-                                    currency={currency}
+                                    currency={displayCurrencyProps.currency}
+                                    currencySymbol={displayCurrencyProps.currencySymbol}
                                 />
 
                                 {selectedCustomerData && salesSettings?.creditLimitPolicy === 'WARNING' &&
@@ -2433,8 +2487,8 @@ const Quotations = () => {
                                         <AlertCircle size={14} className="mt-0.5 shrink-0 text-yellow-600" />
                                         <p>
                                             <strong>Credit Warning:</strong> The projected outstanding balance
-                                            ({(Number(selectedCustomerData.balance || 0) + grandTotal).toFixed(2)} AED) exceeds this customer's
-                                            credit limit of {Number(selectedCustomerData.creditLimitAmount).toFixed(2)} AED.
+                                            (<CurrencyAmount value={Number(selectedCustomerData.balance || 0) + grandTotal} {...displayCurrencyProps} />) exceeds this customer's
+                                            credit limit of <CurrencyAmount value={selectedCustomerData.creditLimitAmount} {...displayCurrencyProps} />.
                                         </p>
                                     </div>
                                 )}
@@ -2445,8 +2499,8 @@ const Quotations = () => {
                                         <AlertCircle size={14} className="mt-0.5 shrink-0 text-red-600" />
                                         <p>
                                             <strong>Credit Limit Blocked:</strong> The projected outstanding balance
-                                            ({(Number(selectedCustomerData.balance || 0) + grandTotal).toFixed(2)} AED) exceeds this customer's
-                                            credit limit of {Number(selectedCustomerData.creditLimitAmount).toFixed(2)} AED.
+                                            (<CurrencyAmount value={Number(selectedCustomerData.balance || 0) + grandTotal} {...displayCurrencyProps} />) exceeds this customer's
+                                            credit limit of <CurrencyAmount value={selectedCustomerData.creditLimitAmount} {...displayCurrencyProps} />.
                                             Confirming this quotation is blocked until the balance is within limit.
                                         </p>
                                     </div>
@@ -2744,15 +2798,15 @@ const Quotations = () => {
                                     <div className="space-y-2 text-xs" data-bb-skip-aed-symbol="true">
                                         <div className="flex justify-between text-slate-600">
                                             <span>Gross Amount</span>
-                                            <CurrencyAmount value={grossTotal} currency={currency} className="font-medium" />
+                                            <CurrencyAmount value={grossTotal} {...displayCurrencyProps} className="font-medium" />
                                         </div>
                                         <div className="flex justify-between text-red-500">
                                             <span>Item Discount</span>
-                                            <span className="font-medium">- <CurrencyAmount value={totalItemDiscount} currency={currency} /></span>
+                                            <span className="font-medium">- <CurrencyAmount value={totalItemDiscount} {...displayCurrencyProps} /></span>
                                         </div>
                                         <div className="flex justify-between text-slate-600">
                                             <span>Subtotal</span>
-                                            <CurrencyAmount value={subTotal} currency={currency} className="font-medium" />
+                                            <CurrencyAmount value={subTotal} {...displayCurrencyProps} className="font-medium" />
                                         </div>
                                         <div className="flex justify-between text-slate-600 items-center">
                                             <span className="flex items-center gap-2">
@@ -2767,15 +2821,15 @@ const Quotations = () => {
                                                     onChange={(e) => setBillDiscount(Number(e.target.value))}
                                                 /> %
                                             </span>
-                                            <span className="font-medium">- <CurrencyAmount value={billDiscountAmount} currency={currency} /></span>
+                                            <span className="font-medium">- <CurrencyAmount value={billDiscountAmount} {...displayCurrencyProps} /></span>
                                         </div>
                                         <div className="flex justify-between text-slate-600">
                                             <span>Tax Total</span>
-                                            <CurrencyAmount value={totalTax} currency={currency} className="font-medium" />
+                                            <CurrencyAmount value={totalTax} {...displayCurrencyProps} className="font-medium" />
                                         </div>
                                         <div className="flex justify-between text-emerald-600 text-sm font-bold border-t border-slate-100/50 pt-2 mt-2">
                                             <span>Grand Total</span>
-                                            <CurrencyAmount value={grandTotal} currency={currency} />
+                                            <CurrencyAmount value={grandTotal} {...displayCurrencyProps} />
                                         </div>
                                     </div>
 
@@ -2848,7 +2902,7 @@ const Quotations = () => {
                                                         </div>
                                                         <div className="flex justify-between items-center text-[10px]">
                                                             <span className="text-slate-600">Qty: {hist.quantity}</span>
-                                                            <span className="font-bold text-slate-800">{currency} {Number(hist.price).toFixed(2)}</span>
+                                                            <CurrencyAmount value={hist.price || 0} {...displayCurrencyProps} className="font-bold text-slate-800" />
                                                         </div>
                                                     </div>
                                                 ))
@@ -2873,12 +2927,12 @@ const Quotations = () => {
                                             <span className="text-slate-500 font-semibold">Total Cost</span>
                                             {(() => {
                                                 const totalCost = items.reduce((sum, item) => sum + ((item.cost || 0) * (item.qty || 0)), 0);
-                                                return <CurrencyAmount value={totalCost} currency={currency} className="font-bold text-slate-700" />;
+                                                return <CurrencyAmount value={totalCost} {...displayCurrencyProps} className="font-bold text-slate-700" />;
                                             })()}
                                         </div>
                                         <div className="flex justify-between items-center text-xs border-b border-slate-100 pb-2">
                                             <span className="text-slate-500 font-semibold">Net Revenue</span>
-                                            <CurrencyAmount value={subTotal} currency={currency} className="font-bold text-slate-700" />
+                                            <CurrencyAmount value={subTotal} {...displayCurrencyProps} className="font-bold text-slate-700" />
                                         </div>
                                         <div className="flex justify-between items-center text-xs pt-1">
                                             <span className="text-slate-500 font-semibold">Margin</span>
@@ -2888,7 +2942,7 @@ const Quotations = () => {
                                                 const marginPercent = subTotal > 0 ? (margin / subTotal) * 100 : 0;
                                                 return (
                                                     <div className={`font-bold flex items-center gap-1.5 ${marginPercent < 15 ? 'text-orange-500' : 'text-emerald-600'}`}>
-                                                        <CurrencyAmount value={margin} currency={currency} />
+                                                        <CurrencyAmount value={margin} {...displayCurrencyProps} />
                                                         <span className="text-[10px] bg-slate-100 px-1.5 py-0.5 rounded text-slate-600">({marginPercent.toFixed(1)}%)</span>
                                                     </div>
                                                 );
@@ -3027,13 +3081,28 @@ const Quotations = () => {
                 {
                     showToast && (
                         <div className="fixed bottom-6 right-6 bg-white border border-slate-200 shadow-xl rounded-lg p-4 flex items-center gap-3 animate-in slide-in-from-right-10 fade-in duration-300 z-50 max-w-sm mb-16 md:mb-0">
+                            {(() => {
+                                const toastMessageText = typeof toastMessage === 'string' ? toastMessage : '';
+                                const toastTitle = toastMessageText.includes('rejected') || toastMessageText.includes('Rejected')
+                                    ? 'Quotation Rejected'
+                                    : toastMessageText.includes('Approved')
+                                        ? 'Quotation Approved'
+                                        : toastType === 'info'
+                                            ? 'Notice'
+                                            : 'Quotation confirmed';
+
+                                return (
+                                    <>
                             <div className={`rounded-full p-1 text-white ${toastType === 'info' ? 'bg-slate-800' : 'bg-black'}`}>
                                 {toastType === 'info' ? <Info size={16} /> : <CheckCircle2 size={16} />}
                             </div>
                             <div>
-                                <h4 className="text-sm font-bold text-slate-800">{toastMessage.includes('rejected') || toastMessage.includes('Rejected') ? 'Quotation Rejected' : toastMessage.includes('Approved') ? 'Quotation Approved' : 'Quotation confirmed'}</h4>
+                                <h4 className="text-sm font-bold text-slate-800">{toastTitle}</h4>
                                 <p className="text-xs text-slate-500">{toastMessage}</p>
                             </div>
+                                    </>
+                                );
+                            })()}
                             <button onClick={() => setShowToast(false)} className="ml-auto text-slate-400 hover:text-slate-600">
                                 <X size={16} />
                             </button>
@@ -3253,9 +3322,7 @@ const Quotations = () => {
                                                         <div className="font-bold text-slate-700 text-sm">
                                                             {idx + 1}. {item.desc || item.name || 'Unnamed Item'}
                                                         </div>
-                                                        <div className="font-black text-slate-800 text-sm">
-                                                            {(parseFloat(item.total) || 0).toFixed(2)} {currency}
-                                                        </div>
+                                                        <CurrencyAmount value={item.total || 0} {...displayCurrencyProps} className="font-black text-slate-800 text-sm" />
                                                     </div>
                                                     <div className="flex justify-between items-center text-xs text-slate-500">
                                                         <div className="flex gap-4">
@@ -3274,7 +3341,10 @@ const Quotations = () => {
                                         <div className="p-4 bg-slate-50 border-t border-slate-200 shrink-0">
                                             <div className="flex justify-between items-center font-black text-lg text-slate-800">
                                                 <span>Total</span>
-                                                <span>{items.reduce((sum, i) => sum + (parseFloat(i.total) || 0), 0).toFixed(2)} {currency}</span>
+                                                <CurrencyAmount
+                                                    value={items.reduce((sum, i) => sum + (parseFloat(i.total) || 0), 0)}
+                                                    {...displayCurrencyProps}
+                                                />
                                             </div>
                                         </div>
                                     </div>
@@ -3306,9 +3376,11 @@ const Quotations = () => {
                                                             <div className="font-bold text-slate-700 text-sm">
                                                                 {idx + 1}. {item.description || item.desc || item.name || 'Unnamed Item'}
                                                             </div>
-                                                            <div className="font-black text-slate-800 text-sm">
-                                                                {(parseFloat(item.lineTotal || item.total) || 0).toFixed(2)} {currency}
-                                                            </div>
+                                                            <CurrencyAmount
+                                                                value={parseFloat(item.lineTotal || item.total) || 0}
+                                                                {...displayCurrencyProps}
+                                                                className="font-black text-slate-800 text-sm"
+                                                            />
                                                         </div>
                                                         <div className="flex justify-between items-center text-xs text-slate-500">
                                                             <div className="flex gap-4">
@@ -3330,7 +3402,7 @@ const Quotations = () => {
                                         <div className="p-4 bg-white border-t border-slate-200 shrink-0">
                                             <div className="flex justify-between items-center font-black text-lg text-slate-800">
                                                 <span>Total</span>
-                                                <span>{(parseFloat(compareRevision.total) || 0).toFixed(2)} {currency}</span>
+                                                <CurrencyAmount value={compareRevision.total || 0} {...displayCurrencyProps} />
                                             </div>
                                         </div>
                                     </div>

@@ -16,6 +16,7 @@ import {
     downloadTaxDocument
 } from '../../api/taxApi';
 import toast from 'react-hot-toast'; // Assuming toast is available, otherwise alert fallback
+import CurrencyAmount, { CurrencySymbol } from '../../components/CurrencyAmount';
 
 export default function TaxCompliance() {
     // --- 1. State Management ---
@@ -420,7 +421,7 @@ export default function TaxCompliance() {
                         <DollarSign size={14} className="text-slate-400" />
                     </div>
                     <div>
-                        <div className="text-xl font-bold text-slate-800 mb-1">AED {kpiData.pendingAmount}</div>
+                        <CurrencyAmount value={kpiData.pendingAmount} className="text-xl font-bold text-slate-800 mb-1" />
                         <div className="text-[10px] text-slate-400">Across all tax types</div>
                     </div>
                 </div>
@@ -528,7 +529,7 @@ export default function TaxCompliance() {
                                                 <div>
                                                     <div className="text-xs text-slate-500 mb-1">Amount Payable</div>
                                                     <div className="text-xl font-bold text-slate-800">
-                                                        AED {latestFiling ? Number(latestFiling.amount || 0).toLocaleString() : '0'}
+                                                        <CurrencyAmount value={latestFiling?.amount || 0} />
                                                     </div>
                                                 </div>
 
@@ -590,7 +591,7 @@ export default function TaxCompliance() {
                                                         <td className="py-3 text-slate-600">{f.period}</td>
                                                         <td className="py-3 text-slate-500">{f.dueDate}</td>
                                                         <td className="py-3 text-emerald-600">{f.filedDate}</td>
-                                                        <td className="py-3 font-mono font-bold text-right text-slate-800">AED {Number(f.amount).toLocaleString()}</td>
+                                                        <td className="py-3 font-mono font-bold text-right text-slate-800"><CurrencyAmount value={f.amount} /></td>
                                                         <td className="py-3 text-center flex justify-center">{getStatusBadge(f.status)}</td>
                                                     </tr>
                                                 ))}
@@ -641,7 +642,7 @@ export default function TaxCompliance() {
 
                                             <div className="flex justify-between items-center text-sm mb-4 mt-auto bg-slate-50 p-3 rounded-lg">
                                                 <span className="font-bold text-slate-600">Total Payable</span>
-                                                <span className="font-bold text-yellow-700 text-base">AED {latestFiling ? Number(latestFiling.amount).toLocaleString() : '0'}</span>
+                                                <CurrencyAmount value={latestFiling?.amount || 0} className="font-bold text-yellow-700 text-base" />
                                             </div>
 
                                             <div className="flex gap-2">
@@ -702,7 +703,7 @@ export default function TaxCompliance() {
                                                     <td className="py-3 text-slate-600">{f.period}</td>
                                                     <td className="py-3 text-slate-500">{f.dueDate}</td>
                                                     <td className="py-3 text-slate-600 font-medium">{f.filedDate || '-'}</td>
-                                                    <td className="py-3 font-mono font-bold text-right text-slate-800">AED {Number(f.amount).toLocaleString()}</td>
+                                                    <td className="py-3 font-mono font-bold text-right text-slate-800"><CurrencyAmount value={f.amount} /></td>
                                                     <td className="py-3 text-center flex justify-center">{getStatusBadge(f.status)}</td>
                                                     <td className="py-3 text-center">
                                                         <button
@@ -794,7 +795,7 @@ export default function TaxCompliance() {
 
                                     <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
                                         <div><div className="text-[10px] text-slate-500 uppercase font-bold mb-1">Due Date</div><div className="text-xs font-medium text-slate-800">{filing.dueDate}</div></div>
-                                        <div><div className="text-[10px] text-slate-500 uppercase font-bold mb-1">Amount</div><div className="text-xs font-bold text-yellow-700">AED {Number(filing.amount).toLocaleString()}</div></div>
+                                        <div><div className="text-[10px] text-slate-500 uppercase font-bold mb-1">Amount</div><CurrencyAmount value={filing.amount} className="text-xs font-bold text-yellow-700" /></div>
                                         <div><div className="text-[10px] text-slate-500 uppercase font-bold mb-1">Documents</div><div className="text-xs font-medium text-slate-800">{filing.documents} file(s)</div></div>
                                     </div>
 
@@ -1017,7 +1018,7 @@ export default function TaxCompliance() {
 
                             {/* Amount Payable */}
                             <div className="space-y-1.5">
-                                <label className="block text-sm font-bold text-slate-700">Amount Payable (AED) <span className="text-red-500">*</span></label>
+                                <label className="block text-sm font-bold text-slate-700">Amount Payable (<CurrencySymbol />) <span className="text-red-500">*</span></label>
                                 <input
                                     type="number"
                                     value={filingForm.amount}

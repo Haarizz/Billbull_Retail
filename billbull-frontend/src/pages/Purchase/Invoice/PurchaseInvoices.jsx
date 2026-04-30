@@ -59,6 +59,8 @@ import {
 import ExportDropdown from '../../../components/common/ExportDropdown';
 import { exportToExcel, exportToPDF } from '../../../utils/exportUtils';
 import { generateReportFilename } from '../../../utils/filenameUtils';
+import CurrencyAmount from '../../../components/CurrencyAmount';
+import { formatCurrencyDisplay } from '../../../utils/countryCurrencyOptions';
 
 // ==========================================
 // 1. MOCK DATA & CONFIGURATION
@@ -339,7 +341,7 @@ const ViewInvoiceModal = ({ invoice, onClose }) => {
               </div>
               <div className="flex justify-between pt-2 border-t border-slate-200 font-bold">
                 <span className="text-slate-800">Total</span>
-                <span className="text-[#F5C742] text-lg">{Number(invoice.total).toLocaleString()} AED</span>
+                <CurrencyAmount value={invoice.total} className="text-[#F5C742] text-lg" />
               </div>
             </div>
           </div>
@@ -414,7 +416,7 @@ const PaymentModal = ({ invoice, onClose, onConfirm }) => {
           <div className="p-3 bg-slate-50 rounded-lg border border-slate-100">
             <div className="flex justify-between items-center">
               <span className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Outstanding Amount</span>
-              <span className="text-lg font-bold text-slate-800">{invoice.outstanding.toLocaleString()} AED</span>
+              <CurrencyAmount value={invoice.outstanding} className="text-lg font-bold text-slate-800" />
             </div>
           </div>
 
@@ -575,7 +577,7 @@ const InvoiceListView = ({ invoices, filteredInvoices, activeFilter, setActiveFi
           <div className="mt-2 flex items-baseline gap-2">
             <span className="text-2xl font-bold text-blue-600">{invoiceStats.today.count}</span>
             <span className="text-xs text-slate-400">
-              AED {invoiceStats.today.amount.toLocaleString()}
+              <CurrencyAmount value={invoiceStats.today.amount} />
             </span>
           </div>
         </button>
@@ -591,7 +593,7 @@ const InvoiceListView = ({ invoices, filteredInvoices, activeFilter, setActiveFi
           <div className="mt-2 flex items-baseline gap-2">
             <span className="text-2xl font-bold text-yellow-600">{invoiceStats.pendingApproval.count}</span>
             <span className="text-xs text-slate-400">
-              AED {invoiceStats.pendingApproval.amount.toLocaleString()}
+              <CurrencyAmount value={invoiceStats.pendingApproval.amount} />
             </span>
           </div>
         </button>
@@ -607,7 +609,7 @@ const InvoiceListView = ({ invoices, filteredInvoices, activeFilter, setActiveFi
           <div className="mt-2 flex items-baseline gap-2">
             <span className="text-2xl font-bold text-red-600">{invoiceStats.outstanding.count}</span>
             <span className="text-xs text-slate-400">
-              AED {invoiceStats.outstanding.amount.toLocaleString()}
+              <CurrencyAmount value={invoiceStats.outstanding.amount} />
             </span>
           </div>
         </button>
@@ -700,7 +702,7 @@ const InvoiceListView = ({ invoices, filteredInvoices, activeFilter, setActiveFi
                   <td className="px-6 py-4"><span className={`text-[10px] px-2 py-0.5 rounded border font-medium ${row.sourceColor}`}>{row.source}</span></td>
                   <td className="px-6 py-4 text-slate-600 font-mono text-[10px]">{row.refNo}</td>
                   <td className="px-6 py-4 text-slate-600 flex items-center gap-1"><LayoutDashboard className="h-3 w-3 text-slate-400" /> {row.warehouse}</td>
-                  <td className="px-6 py-4 text-right font-bold text-slate-900">{typeof row.total === 'number' ? row.total.toLocaleString() : row.total} AED</td>
+                  <td className="px-6 py-4 text-right font-bold text-slate-900"><CurrencyAmount value={row.total} /></td>
                   <td className="px-6 py-4 text-right text-green-600 font-medium">{typeof row.tax === 'number' ? row.tax.toLocaleString() : row.tax}</td>
                   <td className="px-6 py-4"><div className="flex items-center gap-2"><span className={`text-[10px] font-bold px-2 py-0.5 rounded border ${row.statusColor}`}>{row.status}</span>{row.hasAlert && <AlertTriangle className="h-3 w-3 text-amber-500" />}</div></td>
                   <td className="px-6 py-4"><div className="flex flex-col items-start gap-1"><span className={`text-[10px] font-bold px-2 py-0.5 rounded border ${row.paymentColor}`}>{row.payment}</span></div></td>
@@ -729,6 +731,7 @@ const InvoiceListView = ({ invoices, filteredInvoices, activeFilter, setActiveFi
 
 const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreatePayment, onSchedulePayment, editInvoice, onPrint, mode = "edit", onBackToList }) => {
   const navigate = useNavigate();
+  const { company } = useCompany();
   // LPO Data Logic
   const [lpoList, setLpoList] = useState([]);
   const [selectedLpo, setSelectedLpo] = useState("");
@@ -1485,7 +1488,7 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
     });
 
     setFormData(prev => ({ ...prev, items: updatedItems }));
-    alert(`Successfully allocated ${landedCost.toFixed(2)} AED across ${formData.items.length} items.`);
+    alert(`Successfully allocated ${formatCurrencyDisplay(landedCost, company)} across ${formData.items.length} items.`);
   };
 
   const calculateRow = (item) => {
@@ -2193,7 +2196,7 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
                 <div className="flex items-center gap-2">
                   <CreditCard className="h-4 w-4 text-slate-400" />
                   <h3 className="font-semibold text-sm text-slate-700">Landed Costs & NLC</h3>
-                  <span className="bg-blue-50 text-blue-600 text-[10px] px-2 py-0.5 rounded font-bold border border-blue-100">{landedCost.toFixed(2)} AED</span>
+                  <CurrencyAmount value={landedCost} className="bg-blue-50 text-blue-600 text-[10px] px-2 py-0.5 rounded font-bold border border-blue-100" />
                 </div>
                 <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
                   {/* Disable Landed Cost for GRN */}
@@ -2274,7 +2277,7 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
                   </div>
                   <span className={`text-xs ${includeFocInAllocation ? 'text-slate-700 font-medium' : 'text-slate-500'}`}>Include FOC in allocation</span>
                 </div>
-                <div className="text-xs font-bold text-[#F5C742]">Total Landed Cost: {landedCost.toFixed(2)} AED</div>
+                <div className="text-xs font-bold text-[#F5C742]">Total Landed Cost: <CurrencyAmount value={landedCost} /></div>
               </div>
             </div>
 
@@ -2295,33 +2298,33 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
             <div className="space-y-2 text-xs border-t border-slate-100 pt-3">
               <div className="flex justify-between">
                 <span className="text-slate-500 font-medium">Subtotal</span>
-                <span className="font-medium">{preDiscountSubtotal.toFixed(2)}</span>
+                <CurrencyAmount value={preDiscountSubtotal} className="font-medium" />
               </div>
               <div className="flex justify-between text-green-600">
                 <span className="font-medium">Discount</span>
-                <span className="font-medium">- {summaryTotals.discount.toFixed(2)}</span>
+                <span className="font-medium">- <CurrencyAmount value={summaryTotals.discount} /></span>
               </div>
               <div className="flex justify-between">
                 <span className="text-slate-500">Taxable Amount</span>
-                <span className="font-medium">{taxableAmount.toFixed(2)}</span>
+                <CurrencyAmount value={taxableAmount} className="font-medium" />
               </div>
               <div className="flex justify-between">
                 <span className="text-slate-500">VAT</span>
-                <span className="font-medium">{summaryTotals.tax.toFixed(2)}</span>
+                <CurrencyAmount value={summaryTotals.tax} className="font-medium" />
               </div>
               <div className="flex justify-between text-red-500">
                 <span className="font-medium">Landed Costs</span>
-                <span className="font-medium">{landedCost.toFixed(2)}</span>
+                <CurrencyAmount value={landedCost} className="font-medium" />
               </div>
               {landedCostBreakdown.map((costItem) => (
                 <div key={`summary-${costItem.id}`} className="flex justify-between text-[11px] text-slate-500 pl-3">
                   <span>{costItem.type || costItem.name}</span>
-                  <span>{Number(costItem.cost).toFixed(2)}</span>
+                  <CurrencyAmount value={costItem.cost} />
                 </div>
               ))}
               <div className="flex justify-between text-base pt-2 border-t border-slate-100 mt-2">
                 <span className="font-bold text-slate-800">Grand Total</span>
-                <span className="font-bold text-[#F5C742]">{grandTotalWithLanded.toFixed(2)} AED</span>
+                <CurrencyAmount value={grandTotalWithLanded} className="font-bold text-[#F5C742]" />
               </div>
             </div>
           </div>
@@ -2547,7 +2550,7 @@ const PendingApprovalView = ({ pendingApprovals, onApprove, onView }) => {
                     </td>
                     <td className="p-3"><span className={`text-[10px] px-2 py-0.5 rounded border font-medium ${item.sourceColor}`}>{item.source}</span></td>
                     <td className="p-3 font-mono text-slate-600">{item.refNo}</td>
-                    <td className="p-3 text-right font-bold text-slate-900">{item.total.toLocaleString()} AED</td>
+                    <td className="p-3 text-right font-bold text-slate-900"><CurrencyAmount value={item.total} /></td>
                     <td className="p-3 text-right text-green-600 font-medium">{item.tax.toLocaleString()}</td>
                     <td className="p-3 text-slate-600 flex items-center gap-1"><Zap className="h-3 w-3 text-slate-400" /> {item.submittedBy}</td>
                     <td className="p-3"><span className="bg-red-50 text-red-600 border border-red-100 px-2 py-0.5 rounded text-[10px] flex items-center w-fit gap-1"><AlertTriangle className="h-3 w-3" /> {item.flag}</span></td>
@@ -2697,7 +2700,7 @@ const DraftInvoicesView = ({ drafts, onEdit, onDelete }) => {
                     </td>
                     <td className="p-3"><span className={`text-[10px] px-2 py-0.5 rounded border font-medium ${item.sourceColor}`}>{item.source}</span></td>
                     <td className="p-3 font-mono text-slate-600">{item.refNo}</td>
-                    <td className="p-3 text-right font-bold text-slate-900">{item.total.toLocaleString()} AED</td>
+                    <td className="p-3 text-right font-bold text-slate-900"><CurrencyAmount value={item.total} /></td>
                     <td className="p-3"><span className={`text-[10px] font-bold px-2 py-0.5 rounded border ${item.statusColor}`}>{item.status}</span></td>
                     <td className="p-3">
                       <div className="flex items-center justify-center gap-2">

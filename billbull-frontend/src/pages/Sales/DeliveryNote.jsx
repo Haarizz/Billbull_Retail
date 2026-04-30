@@ -44,6 +44,7 @@ import { generateDocFilename } from '../../utils/filenameUtils';
 import { usePrintDocument } from '../../hooks/usePrintDocument';
 import ExportDropdown from '../../components/common/ExportDropdown';
 import { exportToExcel, exportToPDF } from '../../utils/exportUtils';
+import CurrencyAmount from '../../components/CurrencyAmount';
 
 // ==========================================
 // 1. CONFIGURATION
@@ -101,6 +102,7 @@ import ItemAddOnsModal from '../../components/ItemAddOnsModal';
 const DeliveryNote = () => {
     const { print } = usePrintDocument();
     const { company } = useCompany();
+    const currency = company?.currency || 'AED';
     const [activeTab, setActiveTab] = useState('list');
     const [currentDnId, setCurrentDnId] = useState(null); // Tracks editing vs creating
 
@@ -423,8 +425,7 @@ const DeliveryNote = () => {
                                         </div>
                                     </td>
                                     <td className="px-4 py-2.5 text-right font-black text-slate-700">
-                                        <div className="text-[9px] text-slate-300 font-bold leading-none mb-0.5 uppercase tracking-tighter">AED</div>
-                                        {Number(h.rate).toFixed(2)}
+                                        <CurrencyAmount value={h.rate} currency={currency} />
                                     </td>
                                 </tr>
                             )) : (
@@ -1814,7 +1815,7 @@ const DeliveryNote = () => {
                                         shippingAddress={shippingAddress}
                                         onShippingChange={setShippingAddress}
                                         isReadOnly={isLockedForEdit}
-                                        currency="AED"
+                                        currency={currency}
                                     />
 
                                     {/* CustomerSelector modal */}

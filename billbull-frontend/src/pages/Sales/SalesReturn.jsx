@@ -35,6 +35,7 @@ import ExportDropdown from '../../components/common/ExportDropdown';
 import { exportToExcel, exportToPDF } from '../../utils/exportUtils';
 import { generateDocFilename } from '../../utils/filenameUtils';
 import { usePrintDocument } from '../../hooks/usePrintDocument';
+import CurrencyAmount from '../../components/CurrencyAmount';
 
 // ✅ DYNAMIC UI COMPONENTS
 
@@ -71,6 +72,7 @@ const SALES_RETURN_COLUMNS = [
 const SalesReturn = () => {
    const { print } = usePrintDocument();
    const { company } = useCompany();
+   const currency = company?.currency || 'AED';
    const [activeTab, setActiveTab] = useState('list');
    const [isLoading, setIsLoading] = useState(false);
 
@@ -423,7 +425,7 @@ const SalesReturn = () => {
                      <div className="flex justify-between items-start">
                         <div>
                            <p className="text-xs text-slate-500 font-semibold">Today's Returns</p>
-                           <h3 className="text-2xl font-bold text-slate-800 mt-1">AED {stats.todayReturns.toLocaleString()}</h3>
+                           <CurrencyAmount value={stats.todayReturns} currency={currency} className="text-2xl font-bold text-slate-800 mt-1" />
                            <p className="text-[10px] text-slate-400 mt-1">Returned goods today</p>
                         </div>
                         <div className="p-2 bg-[#F5C742] rounded text-slate-900">
@@ -436,7 +438,7 @@ const SalesReturn = () => {
                      <div className="flex justify-between items-start">
                         <div>
                            <p className="text-xs text-slate-500 font-semibold">This Month</p>
-                           <h3 className="text-2xl font-bold text-slate-800 mt-1">AED {stats.thisMonthReturns.toLocaleString()}</h3>
+                           <CurrencyAmount value={stats.thisMonthReturns} currency={currency} className="text-2xl font-bold text-slate-800 mt-1" />
                            <p className="text-[10px] text-slate-400 mt-1">{new Date().toLocaleString('default', { month: 'long' })} {new Date().getFullYear()}</p>
                         </div>
                         <div className="p-2 bg-red-50 rounded text-red-600">
@@ -449,7 +451,7 @@ const SalesReturn = () => {
                      <div className="flex justify-between items-start">
                         <div>
                            <p className="text-xs text-slate-500 font-semibold">Approved Refunds</p>
-                           <h3 className="text-2xl font-bold text-slate-800 mt-1">AED {stats.totalApprovedReturns.toLocaleString()}</h3>
+                           <CurrencyAmount value={stats.totalApprovedReturns} currency={currency} className="text-2xl font-bold text-slate-800 mt-1" />
                            <p className="text-[10px] text-slate-400 mt-1">Total credited amount</p>
                         </div>
                         <div className="p-2 bg-emerald-50 rounded text-emerald-600">
@@ -573,7 +575,7 @@ const SalesReturn = () => {
                                        </span>
                                     </td>
                                     <td className="px-4 py-3 text-slate-600 italic">"{ret.reason}"</td>
-                                    <td className="px-4 py-3 text-right font-bold text-red-600">AED {ret.totalAmount.toLocaleString()}</td>
+                                    <td className="px-4 py-3 text-right font-bold text-red-600"><CurrencyAmount value={ret.totalAmount} currency={currency} /></td>
                                     <td className="px-4 py-3">{renderStatusBadge(ret.status)}</td>
                                     <td className="px-4 py-3 text-center">
                                        <div className="flex justify-center gap-1" onClick={(e) => e.stopPropagation()}>
@@ -784,12 +786,12 @@ const SalesReturn = () => {
 </td>
                                              <td>
 
-                                                <td className="p-3 text-right text-slate-600 font-medium">AED {item.price.toLocaleString()}</td>
+                                                <td className="p-3 text-right text-slate-600 font-medium"><CurrencyAmount value={item.price} currency={currency} /></td>
                                              
 </td>
                                              <td>
 
-                                                <td className="p-3 text-right font-bold text-slate-800">AED {item.total.toLocaleString()}</td>
+                                                <td className="p-3 text-right font-bold text-slate-800"><CurrencyAmount value={item.total} currency={currency} /></td>
                                              
 </td>
                                              <td className="p-3 text-center">
@@ -828,11 +830,11 @@ const SalesReturn = () => {
                               <div className="space-y-4">
                                  <div className="flex justify-between items-center">
                                     <span className="text-xs text-slate-500 font-medium">Subtotal</span>
-                                    <span className="text-xs font-bold text-slate-700">AED {subTotal.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+                                    <CurrencyAmount value={subTotal} currency={currency} className="text-xs font-bold text-slate-700" />
                                  </div>
                                  <div className="flex justify-between items-center">
                                     <span className="text-xs text-slate-500 font-medium">Tax Recovery</span>
-                                    <span className="text-xs font-bold text-slate-700">AED {taxAmtTotal.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+                                    <CurrencyAmount value={taxAmtTotal} currency={currency} className="text-xs font-bold text-slate-700" />
                                  </div>
                                  <div className="h-px bg-slate-100"></div>
                                  <div className="flex justify-between items-center pt-1">
@@ -840,7 +842,7 @@ const SalesReturn = () => {
                                        <span className="text-xs font-bold text-slate-800 uppercase tracking-wider">Total Credit</span>
                                        <span className="text-[10px] text-slate-400">Total amount to be refunded</span>
                                     </div>
-                                    <span className="text-xl font-bold text-red-600">AED {grandTotal.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+                                    <CurrencyAmount value={grandTotal} currency={currency} className="text-xl font-bold text-red-600" />
                                  </div>
 
                                  <div className="mt-6 p-4 bg-red-50/50 rounded-lg border border-red-100">
@@ -893,7 +895,7 @@ const SalesReturn = () => {
                      <div className="grid grid-cols-2 gap-4">
                         <div className="p-4 bg-slate-50 rounded-xl border border-slate-100">
                            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1 text-center">Amount Credited</p>
-                           <p className="text-2xl font-bold text-red-600 text-center">AED {selectedReturn.totalAmount.toLocaleString()}</p>
+                           <CurrencyAmount value={selectedReturn.totalAmount} currency={currency} className="text-2xl font-bold text-red-600 text-center" />
                         </div>
                         <div className="p-4 bg-slate-50 rounded-xl border border-slate-100 flex flex-col items-center justify-center">
                            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Status</p>
@@ -946,14 +948,14 @@ const SalesReturn = () => {
                                        <div className="text-[10px] text-slate-400">{item.itemStatus}</div>
                                     </td>
                                     <td className="px-4 py-3 text-center">{item.returnQty}</td>
-                                    <td className="px-4 py-3 text-right font-bold">AED {item.total.toLocaleString()}</td>
+                                    <td className="px-4 py-3 text-right font-bold"><CurrencyAmount value={item.total} currency={currency} /></td>
                                  </tr>
                               ))}
                            </tbody>
                         </table>
                         <div className="p-4 bg-slate-50/50 flex justify-between items-center text-xs">
                            <span className="font-bold text-slate-500">Total Credits</span>
-                           <span className="font-bold text-lg text-red-600">AED {selectedReturn.totalAmount.toLocaleString()}</span>
+                           <CurrencyAmount value={selectedReturn.totalAmount} currency={currency} className="font-bold text-lg text-red-600" />
                         </div>
                      </div>
 
