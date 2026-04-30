@@ -37,6 +37,7 @@ import { exportToExcel, exportToPDF } from '../../utils/exportUtils';
 import * as api from '../../api/ledgerApi';
 import { useBranch } from '../../context/BranchContext';
 import { useCompany } from '../../context/CompanyContext';
+import { resolveCurrencyDisplayCode } from '../../utils/countryCurrencyOptions';
 
 // --- HELPER: CUSTOM SELECT COMPONENT ---
 const CustomSelect = ({ label, placeholder, options, value, onChange }) => {
@@ -125,7 +126,7 @@ const TRANSACTION_COLUMNS = GL_COLUMNS; // Same as GL for now
 const Ledger = () => {
   const { branches, defaultBranchName } = useBranch();
   const { company } = useCompany();
-  const currency = company?.currency || 'AED';
+  const currency = resolveCurrencyDisplayCode(company || {});
   const [activeTab, setActiveTab] = useState('chart');
   const [loading, setLoading] = useState(true);
 

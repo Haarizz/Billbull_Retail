@@ -174,7 +174,7 @@ import { createPaymentVoucher, getPaymentVouchers, updateVoucherStatus } from '.
 
 const PayInvoices = ({ vendors, initialVendor }) => {
   const { company } = useCompany();
-  const currency = company?.currency || 'AED';
+  const currency = resolveCurrencyDisplayCode(company || {});
   // State
   const [selectedVendor, setSelectedVendor] = useState(null);
   const [paymentDate, setPaymentDate] = useState(new Date().toISOString().split('T')[0]);
@@ -761,7 +761,7 @@ const PayInvoices = ({ vendors, initialVendor }) => {
 const VendorSoA = ({ vendors }) => {
   const { company } = useCompany();
   const { print } = usePrintDocument();
-  const currency = company?.currency || 'AED';
+  const currency = resolveCurrencyDisplayCode(company || {});
   const defaultStartDate = `${new Date().getFullYear()}-01-01`;
   const defaultEndDate = new Date().toISOString().split('T')[0];
 

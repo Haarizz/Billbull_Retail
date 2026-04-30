@@ -67,6 +67,7 @@ import { useBranch } from '../../context/BranchContext';
 import ExportDropdown from '../../components/common/ExportDropdown';
 import { exportToExcel, exportToPDF } from '../../utils/exportUtils';
 import CurrencyAmount, { CurrencySymbol } from '../../components/CurrencyAmount';
+import { formatCurrencyDisplay } from '../../utils/countryCurrencyOptions';
 
 // ==========================================
 // 1. CONFIGURATION
@@ -1311,7 +1312,7 @@ const SalesInvoice = () => {
         if (salesSettings?.creditLimitPolicy === 'BLOCK' &&
             selectedCustomer.creditLimitAmount > 0 &&
             (Number(selectedCustomer.balance || 0) + netTotal) > selectedCustomer.creditLimitAmount) {
-            alert(`Credit Limit Exceeded: The projected outstanding balance (${(Number(selectedCustomer.balance || 0) + netTotal).toFixed(2)} AED) exceeds this customer's credit limit of ${Number(selectedCustomer.creditLimitAmount).toFixed(2)} AED.\n\nThis invoice cannot be saved. Please collect payment first or adjust the credit limit in the customer profile.`);
+            alert(`Credit Limit Exceeded: The projected outstanding balance (${formatCurrencyDisplay(Number(selectedCustomer.balance || 0) + netTotal, company)}) exceeds this customer's credit limit of ${formatCurrencyDisplay(selectedCustomer.creditLimitAmount, company)}.\n\nThis invoice cannot be saved. Please collect payment first or adjust the credit limit in the customer profile.`);
             return;
         }
 

@@ -22,6 +22,7 @@ const CustomerShippingPanel = ({
     onExpectedDispatchChange,
     isReadOnly = false,
     currency = 'AED',
+    currencySymbol,
     showAddCustomer = false,
     onAddCustomer,
 }) => {
@@ -135,7 +136,7 @@ const CustomerShippingPanel = ({
                                 <div className="min-w-0">
                                     <div className="text-[9px] text-slate-400 font-semibold uppercase">Balance</div>
                                     <div className="text-[10px] font-semibold text-slate-700 truncate">
-                                        <CurrencyAmount value={selectedCustomer.balance || 0} currency={currency} />
+                                        <CurrencyAmount value={selectedCustomer.balance || 0} currency={currency} currencySymbol={currencySymbol} />
                                     </div>
                                 </div>
                             </div>

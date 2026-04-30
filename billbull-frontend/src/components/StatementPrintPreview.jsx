@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { getCompanyProfile } from '../api/companyProfileApi';
 import { useCompany } from '../context/CompanyContext';
 import { normalizeDocumentCompanyProfile } from '../utils/documentTemplateRenderer';
+import { resolveCurrencyDisplayCode } from '../utils/countryCurrencyOptions';
 
 const asNumber = (value) => {
     const parsed = Number(value ?? 0);
@@ -262,7 +263,7 @@ const StatementPrintPreview = ({
     );
 
     const partyDetails = useMemo(() => resolvePartyDetails(party), [party]);
-    const currency = normalizedCompany.currencySymbol || normalizedCompany.currency || 'AED';
+    const currency = resolveCurrencyDisplayCode(normalizedCompany);
     const openingBalance = asNumber(statementData?.openingBalance);
     const totalDebit = asNumber(statementData?.totalDebit);
     const totalCredit = asNumber(statementData?.totalCredit);

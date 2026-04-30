@@ -6,7 +6,10 @@ import {
     sanitizeTemplateDisplayOptions
 } from './printTemplateConfig';
 import { generateDocFilename } from './filenameUtils';
-import { hasCurrencySymbolImage, UAE_DIRHAM_SYMBOL_IMAGE } from './countryCurrencyOptions';
+import {
+    resolveCurrencyDisplayConfig,
+    UAE_DIRHAM_SYMBOL_IMAGE
+} from './countryCurrencyOptions';
 
 const PURCHASE_TEMPLATE_CATEGORIES = new Set([
     'Local Purchase Order',
@@ -70,11 +73,12 @@ const escapeHtml = (value) =>
         .replace(/'/g, '&#39;');
 
 const renderCurrencySymbol = (value) => {
-    if (hasCurrencySymbolImage(value)) {
-        return `<img src="${escapeHtml(UAE_DIRHAM_SYMBOL_IMAGE)}" alt="AED" style="height:0.82em;width:auto;display:inline-block;vertical-align:-0.08em;margin:0 0.12em;" />`;
+    const currencyConfig = resolveCurrencyDisplayConfig(value);
+    if (currencyConfig.hasImage) {
+        return `<img src="${escapeHtml(UAE_DIRHAM_SYMBOL_IMAGE)}" alt="${escapeHtml(currencyConfig.ariaLabel)}" style="height:0.82em;width:auto;display:inline-block;vertical-align:-0.08em;margin:0 0.12em;" />`;
     }
 
-    return escapeHtml(value);
+    return escapeHtml(currencyConfig.label);
 };
 
 const formatNumber = (value, decimals = 2) =>
@@ -116,10 +120,7 @@ export const normalizeDocumentCompanyProfile = (companyProfile = {}) => {
         joinAddress(companyProfile.address, companyProfile.city, companyProfile.country),
         companyProfile.address
     );
-    const currencyCode = firstNonEmpty(companyProfile.currency, 'AED');
-    const currencyValue = hasCurrencySymbolImage(currencyCode)
-        ? currencyCode
-        : firstNonEmpty(companyProfile.currencySymbol, currencyCode, 'AED');
+    const currencyValue = resolveCurrencyDisplayConfig(companyProfile).label;
 
     return {
         ...companyProfile,
@@ -140,19 +141,12 @@ export const normalizeDocumentCompanyProfile = (companyProfile = {}) => {
 };
 
 const resolveCurrency = (companyProfile = {}, totals = {}, summaryAmount = {}) => {
-    const companyCurrencyCode = firstNonEmpty(companyProfile.currency);
-    if (companyCurrencyCode) {
-        return hasCurrencySymbolImage(companyCurrencyCode)
-            ? companyCurrencyCode
-            : firstNonEmpty(companyProfile.currencySymbol, companyCurrencyCode);
+    if (firstNonEmpty(companyProfile.currency, companyProfile.currencySymbol)) {
+        return resolveCurrencyDisplayConfig(companyProfile).label;
     }
 
     const documentCurrency = firstNonEmpty(totals.currency, summaryAmount.currency);
-    if (hasCurrencySymbolImage(documentCurrency)) {
-        return documentCurrency;
-    }
-
-    return firstNonEmpty(documentCurrency, companyProfile.currencySymbol, companyProfile.currency, 'AED');
+    return resolveCurrencyDisplayConfig(documentCurrency || 'AED').label;
 };
 
 const resolveCompanyVars = (html, company) => {

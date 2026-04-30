@@ -12,10 +12,8 @@ import {
   getCountryOptions,
   getCurrencyOptions,
   getCurrencySymbol,
-  hasCurrencySymbolImage,
   normalizeCountryValue,
   normalizeCurrencyValue,
-  UAE_DIRHAM_SYMBOL_IMAGE,
   withFallbackOption
 } from '../../utils/countryCurrencyOptions';
 
@@ -44,13 +42,7 @@ const resolveCurrencySymbol = (symbol, currency) => {
   const normalizedCurrency = normalizeCurrencyValue(currency);
   const normalizedSymbol = typeof symbol === 'string' ? symbol.trim() : '';
 
-  if (hasCurrencySymbolImage(normalizedCurrency)) {
-    return getCurrencySymbol(normalizedCurrency);
-  }
-
-  return normalizedSymbol && normalizedSymbol !== normalizedCurrency
-    ? normalizedSymbol
-    : getCurrencySymbol(normalizedCurrency);
+  return normalizedSymbol || getCurrencySymbol(normalizedCurrency);
 };
 
 const CompanySettings = () => {
@@ -541,50 +533,16 @@ const FormField = ({ label, required, icon, value, onChange, placeholder, fullRo
 );
 
 const CurrencySymbolField = ({ label, required, icon, currency, value, onChange, placeholder, fullRow }) => {
-  if (!hasCurrencySymbolImage(currency)) {
-    return (
-      <FormField
-        label={label}
-        required={required}
-        icon={icon}
-        value={value}
-        onChange={onChange}
-        placeholder={placeholder}
-        fullRow={fullRow}
-      />
-    );
-  }
-
   return (
-    <div style={{ gridColumn: fullRow ? '1 / -1' : undefined }}>
-      <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: '#475569', marginBottom: 6 }}>
-        {label}{required && <span style={{ color: '#ef4444', marginLeft: 2 }}>*</span>}
-      </label>
-      <div style={{ position: 'relative' }}>
-        <div style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)', pointerEvents: 'none' }}>
-          {icon}
-        </div>
-        <div
-          style={{
-            width: '100%',
-            minHeight: 38,
-            padding: '8px 12px 8px 32px',
-            border: '1px solid #e2e8f0',
-            borderRadius: 8,
-            background: '#fff',
-            boxSizing: 'border-box',
-            display: 'flex',
-            alignItems: 'center'
-          }}
-        >
-          <img
-            src={UAE_DIRHAM_SYMBOL_IMAGE}
-            alt="UAE Dirham"
-            style={{ width: 24, height: 24, objectFit: 'contain', display: 'block' }}
-          />
-        </div>
-      </div>
-    </div>
+    <FormField
+      label={label}
+      required={required}
+      icon={icon}
+      value={value}
+      onChange={onChange}
+      placeholder={placeholder}
+      fullRow={fullRow}
+    />
   );
 };
 

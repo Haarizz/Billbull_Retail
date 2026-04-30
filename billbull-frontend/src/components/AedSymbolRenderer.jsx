@@ -1,8 +1,7 @@
 import { useEffect } from 'react';
 import { useCompany } from '../context/CompanyContext';
 import {
-  hasCurrencySymbolImage,
-  resolveCurrencyDisplayCode,
+  resolveCurrencyDisplayConfig,
   UAE_DIRHAM_SYMBOL_IMAGE
 } from '../utils/countryCurrencyOptions';
 
@@ -192,12 +191,7 @@ const processNode = (node, currencyConfig) => {
 
 const AedSymbolRenderer = () => {
   const { company } = useCompany();
-  const currencyLabel = resolveCurrencyDisplayCode(company || {});
-  const currencyConfig = {
-    label: currencyLabel,
-    hasImage: hasCurrencySymbolImage(company?.currency || currencyLabel),
-    ariaLabel: company?.currency || currencyLabel || 'Currency'
-  };
+  const currencyConfig = resolveCurrencyDisplayConfig(company || {});
 
   useEffect(() => {
     if (typeof document === 'undefined' || !document.body) {

@@ -63,6 +63,33 @@ const CURRENCY_SYMBOL_OVERRIDES = {
 
 export const UAE_DIRHAM_SYMBOL_IMAGE = uaeDirhamSymbolImage;
 
+const normalizeCurrencyProfileInput = (profileOrCurrency = {}, fallbackProfile = {}) => {
+  const primary = typeof profileOrCurrency === "string"
+    ? { currency: profileOrCurrency }
+    : (profileOrCurrency || {});
+  const fallback = typeof fallbackProfile === "string"
+    ? { currency: fallbackProfile }
+    : (fallbackProfile || {});
+
+  const currency = normalizeCurrencyValue(
+    primary.currency ||
+    primary.currencyCode ||
+    primary.code ||
+    fallback.currency ||
+    fallback.currencyCode ||
+    fallback.code ||
+    ""
+  ) || "AED";
+  const rawSymbol =
+    typeof primary.currencySymbol === "string" ? primary.currencySymbol.trim() :
+    typeof primary.symbol === "string" ? primary.symbol.trim() :
+    typeof fallback.currencySymbol === "string" ? fallback.currencySymbol.trim() :
+    typeof fallback.symbol === "string" ? fallback.symbol.trim() :
+    "";
+
+  return { currency, rawSymbol };
+};
+
 export const getCurrencyDisplayName = (code) => {
   if (!code) {
     return "";
@@ -94,21 +121,35 @@ export const getCurrencySymbol = (value) => {
   }
 };
 
-export const hasCurrencySymbolImage = (value) => normalizeCurrencyValue(value) === "AED";
+export const resolveCurrencyDisplayConfig = (profileOrCurrency = {}, fallbackProfile = {}) => {
+  const { currency, rawSymbol } = normalizeCurrencyProfileInput(profileOrCurrency, fallbackProfile);
+  const label = rawSymbol || getCurrencySymbol(currency) || currency;
+  const hasImage = currency === "AED" && normalizeCurrencyValue(label) === "AED";
 
-export const resolveCurrencyDisplayCode = (companyProfile = {}) => {
-  const currency = normalizeCurrencyValue(companyProfile.currency || "") || "AED";
-  const symbol = typeof companyProfile.currencySymbol === "string" ? companyProfile.currencySymbol.trim() : "";
-
-  if (hasCurrencySymbolImage(currency)) {
-    return currency;
-  }
-
-  return symbol && symbol !== currency ? symbol : getCurrencySymbol(currency);
+  return {
+    currency,
+    symbol: label,
+    label,
+    hasImage,
+    ariaLabel: currency || label || "Currency"
+  };
 };
 
+export const hasCurrencySymbolImage = (value) => {
+  if (value && typeof value === "object") {
+    return resolveCurrencyDisplayConfig(value).hasImage;
+  }
+
+  return normalizeCurrencyValue(value) === "AED";
+};
+
+export const resolveCurrencyDisplayCode = (companyProfile = {}) =>
+  resolveCurrencyDisplayConfig(companyProfile).label;
+
 export const formatCurrencyDisplay = (value, currency = "AED", decimals = 2) => {
-  const currencyLabel = resolveCurrencyDisplayCode({ currency });
+  const currencyLabel = resolveCurrencyDisplayCode(
+    typeof currency === "string" ? { currency } : currency
+  );
   const rawText = value === null || value === undefined ? "" : String(value).trim();
   const escapedCurrencyLabel = currencyLabel.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const amountText = rawText

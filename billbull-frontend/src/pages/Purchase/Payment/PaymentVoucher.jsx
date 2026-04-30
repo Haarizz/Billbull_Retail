@@ -36,6 +36,7 @@ import {
     findVendorRecord,
     normalizePurchaseTemplate
 } from '../../../utils/purchasePrintUtils';
+import { formatCurrencyDisplay } from '../../../utils/countryCurrencyOptions';
 import CurrencyAmount, { CurrencySymbol } from '../../../components/CurrencyAmount';
 
 // ==========================================
@@ -54,10 +55,7 @@ import { getVendors } from '../../../api/vendorsApi';
 // HELPERS & CONFIG
 // ==========================================
 
-const formatCurrency = (val) => {
-    const num = parseFloat(val || 0);
-    return `AED ${num.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ",")}`;
-};
+const formatCurrency = (val, companyProfile) => formatCurrencyDisplay(val, companyProfile);
 
 const getIconForMode = (mode) => {
     const m = mode ? mode.toUpperCase() : "CASH";
@@ -400,9 +398,9 @@ const PaymentVoucher = () => {
                 amountVal: parseFloat(v.amount), // Keep number for stats calculation
                 allocatedVal: parseFloat(v.allocated || 0),
                 unallocatedVal: parseFloat(v.unallocated || 0),
-                amount: formatCurrency(v.amount),
-                allocated: formatCurrency(v.allocated),
-                unallocated: formatCurrency(v.unallocated),
+                amount: formatCurrency(v.amount, company),
+                allocated: formatCurrency(v.allocated, company),
+                unallocated: formatCurrency(v.unallocated, company),
                 ref: v.referenceNumber || "—",
                 status: formatStatusString(v.status),
                 statusColor: getStatusColor(v.status),

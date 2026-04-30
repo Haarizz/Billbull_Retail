@@ -72,6 +72,7 @@ import { usePermissions } from '../../context/PermissionContext';
 import ExportDropdown from '../../components/common/ExportDropdown';
 import { exportToExcel, exportToPDF } from '../../utils/exportUtils';
 import CurrencyAmount from '../../components/CurrencyAmount';
+import { formatCurrencyDisplay, resolveCurrencyDisplayCode } from '../../utils/countryCurrencyOptions';
 
 // ==========================================
 // 1. CONFIGURATION
@@ -91,15 +92,11 @@ const SALES_ORDER_COLUMNS = [
 
 // ✅ MOBILE CARD COMPONENT
 const resolveCurrencyLabel = (company) => {
-  if (company?.currency === 'AED' || company?.currencySymbol === 'AED') {
-    return 'AED';
-  }
-
-  return company?.currencySymbol || company?.currency || 'AED';
+  return resolveCurrencyDisplayCode(company || {});
 };
 
-const formatCurrencyAmount = (value, currencyLabel = 'AED') =>
-  `${currencyLabel} ${Number(value || 0).toFixed(2)}`;
+const formatCurrencyAmount = (value, companyProfile) =>
+  formatCurrencyDisplay(value, companyProfile);
 
 const MobileCard = ({ order, onClick, getStatusBadge, currency }) => (
   <div onClick={() => onClick(order)} className="bg-white p-4 rounded-lg shadow-sm border border-slate-200 mb-3 active:scale-[0.98] transition-transform">
@@ -181,10 +178,10 @@ const SalesOrders = () => {
   const [ordersList, setOrdersList] = useState([]);
   const exportOrdersList = useMemo(() => ordersList.map((order) => ({
     ...order,
-    orderTotal: formatCurrencyAmount(order.orderTotal, currencyLabel),
-    advanceAmount: formatCurrencyAmount(order.advanceAmount, currencyLabel),
-    balanceAmount: formatCurrencyAmount(Number(order.orderTotal) - Number(order.advanceAmount), currencyLabel)
-  })), [currencyLabel, ordersList]);
+    orderTotal: formatCurrencyAmount(order.orderTotal, company),
+    advanceAmount: formatCurrencyAmount(order.advanceAmount, company),
+    balanceAmount: formatCurrencyAmount(Number(order.orderTotal) - Number(order.advanceAmount), company)
+  })), [company, ordersList]);
 
   // --- FORM STATES ---
   const [status, setStatus] = useState('DRAFT');
@@ -898,7 +895,7 @@ const SalesOrders = () => {
     if (salesSettings?.creditLimitPolicy === 'BLOCK' &&
         selectedCustomer?.creditLimitAmount > 0 &&
         (Number(selectedCustomer.balance || 0) + orderTotal) > selectedCustomer.creditLimitAmount) {
-      alert(`Credit Limit Exceeded: The projected outstanding balance (${(Number(selectedCustomer.balance || 0) + orderTotal).toFixed(2)} AED) exceeds this customer's credit limit of ${Number(selectedCustomer.creditLimitAmount).toFixed(2)} AED.\n\nThis order cannot be saved. Please collect payment first or adjust the credit limit in the customer profile.`);
+      alert(`Credit Limit Exceeded: The projected outstanding balance (${formatCurrencyDisplay(Number(selectedCustomer.balance || 0) + orderTotal, company)}) exceeds this customer's credit limit of ${formatCurrencyDisplay(selectedCustomer.creditLimitAmount, company)}.\n\nThis order cannot be saved. Please collect payment first or adjust the credit limit in the customer profile.`);
       return;
     }
 

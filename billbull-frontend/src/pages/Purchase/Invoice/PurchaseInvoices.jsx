@@ -60,6 +60,7 @@ import ExportDropdown from '../../../components/common/ExportDropdown';
 import { exportToExcel, exportToPDF } from '../../../utils/exportUtils';
 import { generateReportFilename } from '../../../utils/filenameUtils';
 import CurrencyAmount from '../../../components/CurrencyAmount';
+import { formatCurrencyDisplay } from '../../../utils/countryCurrencyOptions';
 
 // ==========================================
 // 1. MOCK DATA & CONFIGURATION
@@ -735,6 +736,7 @@ const InvoiceListView = ({ invoices, filteredInvoices, activeFilter, setActiveFi
 
 const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreatePayment, onSchedulePayment, editInvoice, onPrint, mode = "edit", onBackToList }) => {
   const navigate = useNavigate();
+  const { company } = useCompany();
   // LPO Data Logic
   const [lpoList, setLpoList] = useState([]);
   const [selectedLpo, setSelectedLpo] = useState("");
@@ -1491,7 +1493,7 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
     });
 
     setFormData(prev => ({ ...prev, items: updatedItems }));
-    alert(`Successfully allocated ${landedCost.toFixed(2)} AED across ${formData.items.length} items.`);
+    alert(`Successfully allocated ${formatCurrencyDisplay(landedCost, company)} across ${formData.items.length} items.`);
   };
 
   const calculateRow = (item) => {

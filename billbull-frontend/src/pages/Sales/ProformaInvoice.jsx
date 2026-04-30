@@ -49,6 +49,7 @@ import { getDefaultProductUnit, resolveUnitAmount } from '../../utils/unitPricin
 import { summarizeSalesItems } from '../../utils/documentSummaryUtils';
 import billBullLogo from '../../assets/billBullLogo.png';
 import { useCompany } from '../../context/CompanyContext';
+import { formatCurrencyDisplay } from '../../utils/countryCurrencyOptions';
 
 // âœ… STEP 2: PROFORMA API IMPORTS
 import {
@@ -834,7 +835,7 @@ const ProformaInvoice = () => {
     }
 
     if (balanceDue > 0.01) {
-      return alert(`Cannot Issue PI. Full payment is required. Current Balance Due: AED ${balanceDue.toFixed(2)}`);
+      return alert(`Cannot Issue PI. Full payment is required. Current Balance Due: ${formatCurrencyDisplay(balanceDue, company)}`);
     }
 
     setIsSaving(true);
