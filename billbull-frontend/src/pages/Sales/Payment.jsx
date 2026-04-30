@@ -30,6 +30,7 @@ import {
 import { getAllSalesPayments, saveSalesPayment, getNextSalesPaymentNumber, getSalesPaymentStats, deleteSalesPayment } from '../../api/salesPaymentApi';
 import { getAllSalesInvoices } from '../../api/salesInvoiceApi';
 import { getAllCustomers } from '../../api/customerledgerApi';
+import { getBankAccounts } from '../../api/ledgerApi';
 import { getTemplatesByCategory } from '../../api/printTemplateApi';
 import { generatePrintHtml, printHtml } from '../../utils/printGenerator';
 import { useCompany } from '../../context/CompanyContext';
@@ -88,6 +89,8 @@ const Payment = () => {
     // Auto-allocate & cheque date
     const [receivedAmount, setReceivedAmount] = useState('');
     const [chequeDate, setChequeDate] = useState('');
+    const [bankAccount, setBankAccount] = useState('');
+    const [bankAccounts, setBankAccounts] = useState([]);
 
     // Payment Details
     const [referenceNo, setReferenceNo] = useState('');
@@ -113,6 +116,7 @@ const Payment = () => {
         fetchCustomers();
         fetchInvoices();
         fetchStats();
+        getBankAccounts().then(data => setBankAccounts(Array.isArray(data) ? data : [])).catch(() => {});
     }, []);
 
     const fetchPayments = async () => {
@@ -275,6 +279,7 @@ const Payment = () => {
         setSettleAmounts({});
         setReceivedAmount('');
         setChequeDate('');
+        setBankAccount('');
         setReferenceNo('');
         setNotes('');
         setActiveTab('create');
@@ -419,6 +424,7 @@ const Payment = () => {
                     amount: amountToSettle,
                     paymentMode: paymentMode,
                     referenceNumber: referenceNo,
+                    bankName: paymentMode !== 'Cash' ? bankAccount : null,
                     notes: notes,
                     chequeDate: paymentMode === 'Cheque' ? chequeDate : null,
                     status: status
@@ -433,6 +439,7 @@ const Payment = () => {
             setSettleAmounts({});
             setReceivedAmount('');
             setChequeDate('');
+            setBankAccount('');
             setReferenceNo('');
             setNotes('');
             setActiveTab('list');
@@ -884,7 +891,7 @@ const Payment = () => {
                                                 </div>
                                                 <div>
                                                     <label className="block text-xs font-bold text-slate-500 mb-1">Method</label>
-                                                    <select value={paymentMode} onChange={e => setPaymentMode(e.target.value)}
+                                                    <select value={paymentMode} onChange={e => { setPaymentMode(e.target.value); setBankAccount(''); }}
                                                         className="w-full text-xs border border-slate-200 rounded px-3 py-2 focus:border-yellow-400 outline-none bg-white">
                                                         <option>Cash</option>
                                                         <option>Bank Transfer</option>
@@ -894,6 +901,19 @@ const Payment = () => {
                                                     </select>
                                                 </div>
                                             </div>
+
+                                            {paymentMode !== 'Cash' && (
+                                                <div className="animate-in fade-in slide-in-from-top-2 duration-200">
+                                                    <label className="block text-xs font-bold text-slate-500 mb-1">Bank Account <span className="text-red-500">*</span></label>
+                                                    <select value={bankAccount} onChange={e => setBankAccount(e.target.value)}
+                                                        className="w-full text-xs border border-slate-200 rounded px-3 py-2 focus:border-yellow-400 outline-none bg-white">
+                                                        <option value="">Select Bank Account...</option>
+                                                        {bankAccounts.map(acc => (
+                                                            <option key={acc.id} value={acc.name}>{acc.code} — {acc.name}</option>
+                                                        ))}
+                                                    </select>
+                                                </div>
+                                            )}
 
                                             {paymentMode === 'Cheque' && (
                                                 <div className="animate-in fade-in slide-in-from-top-2 duration-200">

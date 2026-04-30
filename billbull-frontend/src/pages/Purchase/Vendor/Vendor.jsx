@@ -171,6 +171,7 @@ const RenderStars = ({ rating }) => (
 // NEW IMPORTS FOR PAYMENT MODULE
 import { getPostedInvoicesForPayment } from '../../../api/purchaseInvoiceApi';
 import { createPaymentVoucher, getPaymentVouchers, updateVoucherStatus } from '../../../api/paymentApi';
+import { getBankAccounts } from '../../../api/ledgerApi';
 
 const PayInvoices = ({ vendors, initialVendor }) => {
   const { company } = useCompany();
@@ -187,6 +188,8 @@ const PayInvoices = ({ vendors, initialVendor }) => {
 
   // Payment Form State
   const [paymentMethod, setPaymentMethod] = useState('Cash');
+  const [bankAccount, setBankAccount] = useState('');
+  const [bankAccounts, setBankAccounts] = useState([]);
   const [reference, setReference] = useState('');
   const [notes, setNotes] = useState('');
   const [chequeDate, setChequeDate] = useState('');
@@ -203,6 +206,11 @@ const PayInvoices = ({ vendors, initialVendor }) => {
       setSelectedVendor(initialVendor);
     }
   }, [initialVendor]);
+
+  // Load bank accounts on mount
+  useEffect(() => {
+    getBankAccounts().then(data => setBankAccounts(Array.isArray(data) ? data : [])).catch(() => {});
+  }, []);
 
   // Load History
   useEffect(() => {
@@ -403,6 +411,7 @@ const PayInvoices = ({ vendors, initialVendor }) => {
           invoiceId: isOpeningBalance ? null : invId,
           notes: isOpeningBalance ? `Opening Balance Payment${notes ? ': ' + notes : ''}` : notes,
           chequeDate: paymentMethod === 'Cheque' ? chequeDate : null,
+          bankAccount: paymentMethod !== 'Cash' ? bankAccount : null,
         };
         const saved = await createPaymentVoucher(payload);
         if (saved && saved.id) {
@@ -419,6 +428,7 @@ const PayInvoices = ({ vendors, initialVendor }) => {
       setSettleAmounts({});
       setReceivedAmount('');
       setChequeDate('');
+      setBankAccount('');
 
       fetchInvoices();
       fetchHistory();
@@ -645,7 +655,7 @@ const PayInvoices = ({ vendors, initialVendor }) => {
                   <label className="block text-xs font-bold text-slate-500 mb-1">Method</label>
                   <select
                     value={paymentMethod}
-                    onChange={(e) => setPaymentMethod(e.target.value)}
+                    onChange={(e) => { setPaymentMethod(e.target.value); setBankAccount(''); }}
                     className="w-full text-xs border border-slate-200 rounded px-3 py-2 focus:border-yellow-400 outline-none bg-white"
                   >
                     <option>Cash</option>
@@ -655,6 +665,25 @@ const PayInvoices = ({ vendors, initialVendor }) => {
                   </select>
                 </div>
               </div>
+
+              {paymentMethod !== 'Cash' && (
+                <div className="animate-in fade-in slide-in-from-top-2 duration-200">
+                  <label className="block text-xs font-bold text-slate-500 mb-1">Bank Account <span className="text-red-500">*</span></label>
+                  <div className="relative">
+                    <Landmark className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400" />
+                    <select
+                      value={bankAccount}
+                      onChange={(e) => setBankAccount(e.target.value)}
+                      className="w-full pl-8 text-xs border border-slate-200 rounded px-3 py-2 focus:border-yellow-400 outline-none bg-white"
+                    >
+                      <option value="">Select Bank Account...</option>
+                      {bankAccounts.map(acc => (
+                        <option key={acc.id} value={acc.name}>{acc.code} — {acc.name}</option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+              )}
 
               {paymentMethod === 'Cheque' && (
                 <div className="animate-in fade-in slide-in-from-top-2 duration-200">

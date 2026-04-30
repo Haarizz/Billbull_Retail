@@ -189,7 +189,7 @@ const StockAvailabilityModal = ({ isOpen, onClose, selectedStockItem }) => {
                                                 <td className="p-2 font-bold text-blue-600">{lpo.lpoNumber}</td>
                                                 <td className="p-2">{lpo.supplierName}</td>
                                                 <td className="p-2 text-slate-500">{lpo.expectedDate ? new Date(lpo.expectedDate).toLocaleDateString() : 'TBD'}</td>
-                                                <td className="p-2 text-right font-bold text-emerald-600">+{lpo.quantity}</td>
+                                                <td className="p-2 text-right font-bold text-emerald-600">+{lpo.quantity} {lpo.uom || ''}</td>
                                             </tr>
                                         ))}
                                     </tbody>

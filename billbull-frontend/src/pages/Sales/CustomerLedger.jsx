@@ -17,6 +17,7 @@ import { getWarehouses } from '../../api/warehouseApi';
 // ✅ Import Sales Payment & Invoice API
 import { getAllSalesPayments, saveSalesPayment, getNextSalesPaymentNumber, getSalesPaymentStats } from '../../api/salesPaymentApi';
 import { getAllSalesInvoices } from '../../api/salesInvoiceApi';
+import { getBankAccounts } from '../../api/ledgerApi';
 import { useBranch } from '../../context/BranchContext';
 import { useCompany } from '../../context/CompanyContext';
 import {
@@ -1312,6 +1313,8 @@ const ReceiveMoneyView = () => {
     // ✅ NEW: Received Amount & Cheque Date
     const [receivedAmount, setReceivedAmount] = useState('');
     const [chequeDate, setChequeDate] = useState('');
+    const [bankAccount, setBankAccount] = useState('');
+    const [bankAccounts, setBankAccounts] = useState([]);
 
     // Selection & Settlement States
     const [selectedCustomer, setSelectedCustomer] = useState(null);
@@ -1345,6 +1348,7 @@ const ReceiveMoneyView = () => {
         } finally {
             setIsLoading(false);
         }
+        getBankAccounts().then(data => setBankAccounts(Array.isArray(data) ? data : [])).catch(() => {});
     };
 
     // Filtered Data
@@ -1540,9 +1544,10 @@ const ReceiveMoneyView = () => {
                     amount: amount,
                     paymentMode: paymentMode,
                     referenceNumber: referenceNo,
+                    bankName: paymentMode !== 'Cash' ? bankAccount : null,
                     notes: notes,
                     status: status,
-                    chequeDate: paymentMode === 'Cheque' ? chequeDate : null // ✅ Include Cheque Date
+                    chequeDate: paymentMode === 'Cheque' ? chequeDate : null
                 };
 
                 await saveSalesPayment(payload);
@@ -1557,8 +1562,9 @@ const ReceiveMoneyView = () => {
             setSettleAmounts({});
             setReferenceNo('');
             setNotes('');
-            setReceivedAmount(''); // Reset
-            setChequeDate(''); // Reset
+            setReceivedAmount('');
+            setChequeDate('');
+            setBankAccount('');
 
         } catch (error) {
             console.error("Error saving payments:", error);
@@ -1746,7 +1752,7 @@ const ReceiveMoneyView = () => {
                                 </div>
                                 <div>
                                     <label className="block text-xs font-bold text-slate-500 mb-1">Method</label>
-                                    <select value={paymentMode} onChange={(e) => setPaymentMode(e.target.value)} className="w-full text-xs border border-slate-200 rounded px-3 py-2 focus:border-yellow-400 outline-none bg-white">
+                                    <select value={paymentMode} onChange={(e) => { setPaymentMode(e.target.value); setBankAccount(''); }} className="w-full text-xs border border-slate-200 rounded px-3 py-2 focus:border-yellow-400 outline-none bg-white">
                                         <option>Cash</option>
                                         <option>Bank Transfer</option>
                                         <option>Cheque</option>
@@ -1755,7 +1761,18 @@ const ReceiveMoneyView = () => {
                                 </div>
                             </div>
 
-                            {/* ✅ NEW: Cheque Date Field */}
+                            {paymentMode !== 'Cash' && (
+                                <div className="animate-in fade-in slide-in-from-top-2 duration-200">
+                                    <label className="block text-xs font-bold text-slate-500 mb-1">Bank Account <span className="text-red-500">*</span></label>
+                                    <select value={bankAccount} onChange={(e) => setBankAccount(e.target.value)} className="w-full text-xs border border-slate-200 rounded px-3 py-2 focus:border-yellow-400 outline-none bg-white">
+                                        <option value="">Select Bank Account...</option>
+                                        {bankAccounts.map(acc => (
+                                            <option key={acc.id} value={acc.name}>{acc.code} — {acc.name}</option>
+                                        ))}
+                                    </select>
+                                </div>
+                            )}
+
                             {paymentMode === 'Cheque' && (
                                 <div className="animate-in fade-in slide-in-from-top-2 duration-200">
                                     <label className="block text-xs font-bold text-slate-500 mb-1">Cheque Date <span className="text-red-500">*</span></label>

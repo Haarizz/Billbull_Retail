@@ -57,7 +57,15 @@ public class PaymentVoucherController {
             voucher.setPaymentDate(LocalDate.parse((String) payload.get("date")));
 
             String modeStr = ((String) payload.get("mode")).toUpperCase().replace(" ", "_");
-            voucher.setPaymentMode(PaymentMode.valueOf(modeStr));
+            PaymentMode mode = PaymentMode.valueOf(modeStr);
+            voucher.setPaymentMode(mode);
+
+            if (mode != PaymentMode.CASH) {
+                Object bankAcc = payload.get("bankAccount");
+                if (bankAcc == null || bankAcc.toString().isBlank()) {
+                    return ResponseEntity.badRequest().build();
+                }
+            }
 
             voucher.setAmount(new BigDecimal(payload.get("amount").toString()));
             voucher.setReferenceNumber((String) payload.get("ref"));

@@ -8,6 +8,11 @@ export const getAccounts = async () => {
   return res.data;
 };
 
+export const getBankAccounts = async () => {
+  const res = await api.get("/api/ledger/accounts/bank-accounts");
+  return res.data;
+};
+
 // Backend handles both Create and Update via POST based on ID presence
 export const createAccount = async (payload) => {
   const res = await api.post("/api/ledger/accounts", payload);

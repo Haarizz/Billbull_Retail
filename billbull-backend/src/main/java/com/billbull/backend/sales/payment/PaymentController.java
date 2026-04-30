@@ -4,8 +4,10 @@ import com.billbull.backend.security.AuditLogService;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
+import org.springframework.http.HttpStatus;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.server.ResponseStatusException;
 
 import java.util.List;
 import java.util.Map;
@@ -78,6 +80,12 @@ public class PaymentController {
     @PostMapping
     @PreAuthorize("hasAnyRole('ADMIN','SALES')")
     public Payment savePayment(@RequestBody Payment payment) {
+        String mode = payment.getPaymentMode();
+        if (mode != null && !mode.equalsIgnoreCase("Cash")) {
+            if (payment.getBankName() == null || payment.getBankName().isBlank()) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Bank account is required for non-cash payments.");
+            }
+        }
         return paymentService.savePayment(payment);
     }
 
