@@ -247,6 +247,7 @@ const SalesOrders = () => {
 
   // Items
   const [items, setItems] = useState([createBlankOrderItem()]);
+  const [billDiscount, setBillDiscount] = useState(0);
 
   // ✅ GLOBAL SHORTCUTS
   useShortcuts({
@@ -375,6 +376,7 @@ const SalesOrders = () => {
       handleSelectQuotation({
         qtnNo: qtn.qtnNo,
         customer: qtn.customer,
+        billDiscount: qtn.billDiscount,
         items: qtn.items || []
       });
       setActiveTab('create');
@@ -443,10 +445,11 @@ const SalesOrders = () => {
 
   // --- CALCULATIONS ---
   const calculateTotals = () => {
-    const itemSummary = summarizeSalesItems(items);
+    const itemSummary = summarizeSalesItems(items, billDiscount);
     const grossTotal = itemSummary.grossTotal;
     const totalDiscount = itemSummary.itemDiscountTotal;
     const subTotal = itemSummary.subTotal;
+    const billDiscountAmount = itemSummary.billDiscountAmount;
     const totalTax = itemSummary.tax;
     const orderTotal = itemSummary.grandTotal;
     const balanceDue = orderTotal - Number(advanceAmount);
@@ -460,10 +463,10 @@ const SalesOrders = () => {
     const profit = subTotal - totalCost;
     const marginPercent = subTotal > 0 ? (profit / subTotal) * 100 : 0;
 
-    return { grossTotal, totalDiscount, subTotal, totalTax, orderTotal, balanceDue, totalCost, profit, marginPercent };
+    return { grossTotal, totalDiscount, subTotal, billDiscountAmount, totalTax, orderTotal, balanceDue, totalCost, profit, marginPercent };
   };
 
-  const { grossTotal, totalDiscount, subTotal, totalTax, orderTotal, balanceDue, totalCost, profit, marginPercent } = calculateTotals();
+  const { grossTotal, totalDiscount, subTotal, billDiscountAmount, totalTax, orderTotal, balanceDue, totalCost, profit, marginPercent } = calculateTotals();
 
   // --- ACTIONS ---
 
@@ -657,6 +660,7 @@ const SalesOrders = () => {
     setLinkedSourceSearch('');
     setLinkedQtn('');
     setLinkedPi('');
+    setBillDiscount(0);
     setIsLinkedSourceOpen(false);
   };
 
@@ -709,6 +713,7 @@ const SalesOrders = () => {
           customerCode: selectedCustomer?.code || '',
           linkedQuotation: linkedQtn || '',
           linkedProforma: linkedPi || '',
+          billDiscount: Number(billDiscount) || 0,
           items: items
             .filter(i => i.code && i.qty > 0)
             .map(i => ({
@@ -773,8 +778,8 @@ const SalesOrders = () => {
             tax: totalTax,
             grandTotal: orderTotal,
             currency: company?.currencySymbol || company?.currency || 'AED',
-            billDiscount: 0,
-            billDiscountAmount: 0
+            billDiscount: Number(billDiscount) || 0,
+            billDiscountAmount
           },
           meta: {
             paymentTerm: '30 Days',
@@ -835,6 +840,7 @@ const SalesOrders = () => {
       customerName: selectedCustomer?.name || '',
       linkedQuotation: sanitizedLinkedQuotation,
       linkedProforma: sanitizedLinkedProforma,
+      billDiscount: Number(billDiscount) || 0,
 
       // Payment & Delivery
       advanceAmount: Number(advanceAmount),
@@ -960,6 +966,7 @@ const SalesOrders = () => {
     setLinkedQtn(qtn.qtnNo);
     setLinkedPi('');
     setLinkedSourceSearch(qtn.qtnNo || '');
+    setBillDiscount(Number(qtn.billDiscount) || 0);
 
     if (qtn.customer) {
       const matchedCustomer = customersList.find(c =>
@@ -990,6 +997,7 @@ const SalesOrders = () => {
     setLinkedPi(proforma.piNumber || '');
     setLinkedQtn('');
     setLinkedSourceSearch(proforma.piNumber || '');
+    setBillDiscount(Number(proforma.billDiscount) || 0);
 
     const matchedCustomer = customersList.find((customer) =>
       (proforma.customerCode && customer.code === proforma.customerCode)
@@ -1042,6 +1050,7 @@ const SalesOrders = () => {
     }
 
     setAdvanceAmount(order.advanceAmount || 0);
+    setBillDiscount(Number(order.billDiscount) || 0);
     setPaymentMethod(order.paymentMethod || 'Cash');
     setPaymentRef(order.paymentReference || '');
     setDeliveryType(order.deliveryType || 'Delivery');
@@ -1073,6 +1082,7 @@ const SalesOrders = () => {
     setLinkedQtn('');
     setLinkedPi('');
     setItems([createBlankOrderItem()]);
+    setBillDiscount(0);
     setAdvanceAmount(0);
     setPaymentMethod('Cash');
     setPaymentRef('');
@@ -1748,6 +1758,21 @@ const SalesOrders = () => {
                 <div className="flex justify-between text-slate-600">
                   <span>Subtotal</span>
                   <CurrencyAmount value={subTotal} currency={orderCurrency} className="font-medium" />
+                </div>
+                <div className="flex justify-between text-slate-600 items-center">
+                  <span className="flex items-center gap-2">
+                    Bill Discount
+                    <input
+                      type="number"
+                      min="0"
+                      max="100"
+                      disabled={isLocked}
+                      className="w-10 border border-slate-300/50 rounded px-1 text-center focus:outline-none focus:border-yellow-400 disabled:bg-slate-50 disabled:text-slate-500 disabled:cursor-not-allowed"
+                      value={billDiscount}
+                      onChange={(e) => setBillDiscount(Number(e.target.value))}
+                    /> %
+                  </span>
+                  <span className="font-medium text-red-500">- <CurrencyAmount value={billDiscountAmount} currency={orderCurrency} /></span>
                 </div>
                 <div className="flex justify-between text-slate-600">
                   <span>Tax</span>

@@ -45,6 +45,7 @@ public class SalesInvoice {
 
     private Double amountPaid;
     private Double balance;
+    private Double billDiscount;
 
     /**
      * Customer's credit limit (copied from Customer record at invoice creation, or
@@ -247,6 +248,14 @@ public class SalesInvoice {
 
     public void setBalance(Double balance) {
         this.balance = balance;
+    }
+
+    public Double getBillDiscount() {
+        return billDiscount;
+    }
+
+    public void setBillDiscount(Double billDiscount) {
+        this.billDiscount = billDiscount;
     }
 
     public Double getCreditLimit() {

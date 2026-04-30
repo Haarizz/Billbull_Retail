@@ -33,6 +33,7 @@ public class SalesOrder {
 
     private Double advanceAmount;
     private Double balanceDue;
+    private Double billDiscount;
 
     private String paymentMethod;
     private String paymentReference;
@@ -159,6 +160,14 @@ public class SalesOrder {
 
     public void setBalanceDue(Double balanceDue) {
         this.balanceDue = balanceDue;
+    }
+
+    public Double getBillDiscount() {
+        return billDiscount;
+    }
+
+    public void setBillDiscount(Double billDiscount) {
+        this.billDiscount = billDiscount;
     }
 
     public String getPaymentMethod() {

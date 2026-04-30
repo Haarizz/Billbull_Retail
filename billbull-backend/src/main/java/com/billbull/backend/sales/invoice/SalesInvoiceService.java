@@ -146,7 +146,10 @@ public class SalesInvoiceService {
         // Round to 2 dp to eliminate floating-point noise from client-side arithmetic
         subTotal = BigDecimal.valueOf(subTotal).setScale(2, RoundingMode.HALF_UP).doubleValue();
         taxTotal = BigDecimal.valueOf(taxTotal).setScale(2, RoundingMode.HALF_UP).doubleValue();
-        double total = BigDecimal.valueOf(subTotal + taxTotal).setScale(2, RoundingMode.HALF_UP).doubleValue();
+        double billDiscPct = invoice.getBillDiscount() != null ? invoice.getBillDiscount() : 0;
+        double billDiscAmt = BigDecimal.valueOf(subTotal * (billDiscPct / 100))
+                .setScale(2, RoundingMode.HALF_UP).doubleValue();
+        double total = BigDecimal.valueOf(subTotal - billDiscAmt + taxTotal).setScale(2, RoundingMode.HALF_UP).doubleValue();
         double paid = invoice.getAmountPaid() != null ? invoice.getAmountPaid() : 0;
 
         if (paid < 0) {
