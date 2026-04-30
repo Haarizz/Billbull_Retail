@@ -1446,6 +1446,7 @@ const Quotations = () => {
                         id: qtn.id,
                         qtnNo: qtn.qtnNo,
                         customer: qtn.customer,
+                        billDiscount: qtn.billDiscount,
                         items: qtn.items
                     }
                 }
@@ -1465,6 +1466,7 @@ const Quotations = () => {
                     id: qtn.id,
                     qtnNo: qtn.qtnNo,
                     customer: qtn.customer,
+                    billDiscount: qtn.billDiscount,
                     items: qtn.items
                 }
             }
@@ -1595,6 +1597,7 @@ const Quotations = () => {
                         id: editingId,
                         qtnNo: getQuotationNo(),
                         customer: customer,
+                        billDiscount,
                         items: items
                     }
                 }
@@ -2996,6 +2999,7 @@ const Quotations = () => {
                                                         id: editingId,
                                                         qtnNo: getQuotationNo(),
                                                         customer: customer,
+                                                        billDiscount,
                                                         items: items
                                                     }
                                                 }

@@ -246,6 +246,7 @@ const SalesInvoice = () => {
     const [items, setItems] = useState([
         { id: 1, code: '', image: '', name: '', unit: 'PCS', qty: 0, price: 0, disc: 0, tax: 5, taxAmt: 0, gross: 0, net: 0, cost: 0, gp: 0 }
     ]);
+    const [billDiscount, setBillDiscount] = useState(0);
 
     // ✅ PRODUCT SELECTOR STATE
     const [isProductSelectorOpen, setIsProductSelectorOpen] = useState(false);
@@ -551,6 +552,7 @@ const SalesInvoice = () => {
 
         setSelectedCustomer(matched || { name: fromQtn.customer, code: '', id: null });
         setItems(mappedItems.length > 0 ? mappedItems : [{ id: Date.now(), code: '', name: '', unit: 'PCS', qty: 0, price: 0, disc: 0, tax: 5, taxAmt: 0, gross: 0, net: 0, cost: 0 }]);
+        setBillDiscount(Number(fromQtn.billDiscount) || 0);
         setReference(fromQtn.qtnNo || '');
         setInvoiceDate(new Date().toISOString().split('T')[0]);
         setStatus('Draft');
@@ -600,6 +602,7 @@ const SalesInvoice = () => {
         setSalesType('STANDARD_FLOW');
         setLinkedSO(fromSO.soNumber || '');
         setLinkedPI(fromSO.linkedProforma || '');
+        setBillDiscount(Number(fromSO.billDiscount) || 0);
         setReference(fromSO.linkedQuotation || fromSO.linkedProforma || fromSO.soNumber || '');
         setInvoiceDate(new Date().toISOString().split('T')[0]);
         setStatus('Draft');
@@ -683,10 +686,11 @@ const SalesInvoice = () => {
     // ==========================================
     // CALCULATIONS
     // ==========================================
-    const invoiceSummary = useMemo(() => summarizeSalesItems(items), [items]);
+    const invoiceSummary = useMemo(() => summarizeSalesItems(items, billDiscount), [items, billDiscount]);
     const subTotal = invoiceSummary.grossTotal;
     const taxableSubTotal = invoiceSummary.subTotal;
     const totalDiscount = invoiceSummary.itemDiscountTotal;
+    const billDiscountAmount = invoiceSummary.billDiscountAmount;
     const totalTax = invoiceSummary.tax;
     const netTotal = invoiceSummary.grandTotal;
     const totalCost = items.reduce((acc, i) => acc + ((Number(i.qty) || 0) * (Number(i.cost) || 0)), 0);
@@ -728,6 +732,7 @@ const SalesInvoice = () => {
         setSalesperson('John Doe');
         setBranch(defaultBranch?.name || '');
         setItems([{ id: Date.now(), code: '', name: '', unit: 'PCS', qty: 0, price: 0, disc: 0, tax: 5, taxAmt: 0, gross: 0, net: 0, cost: 0 }]);
+        setBillDiscount(0);
         setAmountCollected(0);
         setInvoiceBalance(null);
         setActiveTab('create');
@@ -790,6 +795,12 @@ const SalesInvoice = () => {
 
         setLinkedDN(dnNumbers);
         if (soNumbers && !linkedSO) setLinkedSO(soNumbers);
+        const linkedSoDiscounts = [...new Set(selectedDocs.map(dn => dn.salesOrderNo).filter(Boolean))]
+            .map(soNumber => salesOrdersList.find(s => s.soNumber === soNumber))
+            .filter(Boolean);
+        if (linkedSoDiscounts.length === 1) {
+            setBillDiscount(Number(linkedSoDiscounts[0].billDiscount) || 0);
+        }
 
         // Merge Items with Composite Key (productCode + unit + warehouse + price if available)
         const combinedItemsMap = new Map();
@@ -868,10 +879,14 @@ const SalesInvoice = () => {
     const handleSOChange = (soNumber) => {
         if (isReadOnlyInvoice) return;
         setLinkedSO(soNumber);
-        if (!soNumber) return;
+        if (!soNumber) {
+            setBillDiscount(0);
+            return;
+        }
 
         const so = salesOrdersList.find(s => s.soNumber === soNumber);
         if (so) {
+            setBillDiscount(Number(so.billDiscount) || 0);
             // Auto-fill customer
             setSelectedCustomer({
                 code: so.customerCode,
@@ -903,7 +918,10 @@ const SalesInvoice = () => {
     const handleDNChange = (dnNumber) => {
         if (isReadOnlyInvoice) return;
         setLinkedDN(dnNumber);
-        if (!dnNumber) return;
+        if (!dnNumber) {
+            setBillDiscount(0);
+            return;
+        }
 
         const dn = deliveryNotesList.find(d => d.dnNumber === dnNumber);
         if (dn) {
@@ -921,6 +939,7 @@ const SalesInvoice = () => {
                 const linkedSO = salesOrdersList.find(s => s.soNumber === dn.salesOrderNo);
 
                 if (linkedSO && linkedSO.items && linkedSO.items.length > 0) {
+                    setBillDiscount(Number(linkedSO.billDiscount) || 0);
                     // Use SO items with DN quantities
                     setItems(dn.items.map(dnItem => {
                         // Find matching SO item for pricing
@@ -985,9 +1004,12 @@ const SalesInvoice = () => {
 
     const handlePIChange = (piNumber) => {
         setLinkedPI(piNumber);
-        if (!piNumber) return;
+        if (!piNumber) {
+            setBillDiscount(0);
+            return;
+        }
 
-        const pi = proformaList.find(p => p.piNumber === piNumber);
+        const pi = proformaList.find(p => p.piNumber === piNumber || p.proformaNo === piNumber);
         if (pi) {
             // Auto-fill customer
             setSelectedCustomer({
@@ -999,6 +1021,7 @@ const SalesInvoice = () => {
             if (pi.salesOrderNo) {
                 setLinkedSO(pi.salesOrderNo);
             }
+            setBillDiscount(Number(pi.billDiscount) || 0);
 
             // Auto-fill items from PI
             if (pi.items && pi.items.length > 0) {
@@ -1254,6 +1277,7 @@ const SalesInvoice = () => {
             shippingAddress: shippingAddress,
 
             amountPaid: Number(amountCollected),
+            billDiscount: Number(billDiscount) || 0,
             status: newStatus === 'Confirmed' ? 'CONFIRMED' : 'DRAFT',
             salesType: salesType,
             requirePickingNote: true,
@@ -1362,6 +1386,7 @@ const SalesInvoice = () => {
         setBranch(invoice.branch || defaultBranch?.name || '');
 
         setAmountCollected(invoice.amountPaid || 0);
+        setBillDiscount(Number(invoice.billDiscount) || 0);
         setInvoiceBalance(invoice.balance != null ? invoice.balance : null);
         setStatus(invoice.status || 'Draft');
         const resolvedSalesType = invoice.salesType || 'STANDARD_FLOW';
@@ -1493,6 +1518,8 @@ const SalesInvoice = () => {
             totalTax,
             invoiceTotal: netTotal,
             amountPaid: amountCollected,
+            billDiscount,
+            billDiscountAmount,
             status,
             paymentTerms,
             salesperson
@@ -1507,7 +1534,8 @@ const SalesInvoice = () => {
         try {
             const templates = await getTemplatesByCategory('Sales Invoice');
             const defaultTemplate = templates.find(t => t.isDefault);
-            const resolvedSummary = summarizeSalesItems(dataToPrint.items || []);
+            const resolvedBillDiscount = Number(dataToPrint.billDiscount) || 0;
+            const resolvedSummary = summarizeSalesItems(dataToPrint.items || [], resolvedBillDiscount);
 
             if (defaultTemplate) {
                 // Find Customer details
@@ -1546,8 +1574,8 @@ const SalesInvoice = () => {
                         tax: resolvedSummary.tax,
                         grandTotal: resolvedSummary.grandTotal,
                         currency: dataToPrint.currency || company?.currencySymbol || company?.currency || 'AED',
-                        billDiscount: Number(dataToPrint.totalDiscount || 0),
-                        billDiscountAmount: 0
+                        billDiscount: resolvedBillDiscount,
+                        billDiscountAmount: resolvedSummary.billDiscountAmount
                     },
                     meta: {
                         status: dataToPrint.status,
@@ -2100,6 +2128,7 @@ const SalesInvoice = () => {
                                                         setSalesType(e.target.value === 'Direct Sale' ? 'DIRECT_SALE' : 'STANDARD_FLOW');
                                                         // Reset links when switching type
                                                         setLinkedSO(''); setLinkedDN(''); setLinkedPI('');
+                                                        setBillDiscount(0);
                                                     }}
                                                     className="w-full text-xs p-2 border border-slate-200 rounded bg-white appearance-none focus:outline-none focus:border-[#F5C742] disabled:bg-slate-50 disabled:text-slate-500">
                                                     <option>Direct Sale</option>
@@ -2142,7 +2171,7 @@ const SalesInvoice = () => {
                                             <div>
                                                 <label className="block text-xs font-bold text-slate-700 mb-1">Proforma Invoice</label>
                                                 <div className="relative">
-                                                    <select value={linkedPI} onChange={e => setLinkedPI(e.target.value)} disabled={isReadOnlyInvoice} className="w-full text-xs p-2 border border-slate-200 rounded bg-white appearance-none focus:outline-none focus:border-[#F5C742] disabled:bg-slate-50 disabled:text-slate-500">
+                                                    <select value={linkedPI} onChange={e => handlePIChange(e.target.value)} disabled={isReadOnlyInvoice} className="w-full text-xs p-2 border border-slate-200 rounded bg-white appearance-none focus:outline-none focus:border-[#F5C742] disabled:bg-slate-50 disabled:text-slate-500">
                                                         <option value="">Select PI...</option>
                                                         {proformaList.filter(p => p.status !== 'CANCELLED').map(p => <option key={p.id} value={p.proformaNo}>{p.proformaNo} - {p.customerName}</option>)}
                                                     </select>
@@ -2483,6 +2512,21 @@ const SalesInvoice = () => {
                                             <div className="flex justify-between text-xs text-red-500">
                                                 <span>Total Discount</span>
                                                 <span>- <CurrencyAmount value={totalDiscount} currency={invoiceCurrency} /></span>
+                                            </div>
+                                            <div className="flex justify-between text-xs text-slate-600 items-center">
+                                                <span className="flex items-center gap-2">
+                                                    Bill Discount
+                                                    <input
+                                                        type="number"
+                                                        min="0"
+                                                        max="100"
+                                                        disabled={isReadOnlyInvoice}
+                                                        value={billDiscount}
+                                                        onChange={(e) => setBillDiscount(Number(e.target.value))}
+                                                        className="w-10 border border-slate-300/50 rounded px-1 text-center focus:outline-none focus:border-yellow-400 disabled:bg-slate-50 disabled:text-slate-500 disabled:cursor-not-allowed"
+                                                    /> %
+                                                </span>
+                                                <span className="font-medium text-red-500">- <CurrencyAmount value={billDiscountAmount} currency={invoiceCurrency} /></span>
                                             </div>
                                             <div className="flex justify-between text-xs text-slate-600">
                                                 <span>Total Tax (VAT)</span>

@@ -11,6 +11,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
+import java.math.BigDecimal;
 import java.math.RoundingMode;
 
 import com.billbull.backend.inventory.product.ProductMediaRepository;
@@ -111,11 +112,16 @@ public class SalesOrderService {
             }
         }
 
-        double total = subTotal + tax;
+        double billDiscPct = order.getBillDiscount() != null ? order.getBillDiscount() : 0;
+        double billDiscAmt = BigDecimal.valueOf(subTotal * (billDiscPct / 100))
+                .setScale(2, RoundingMode.HALF_UP).doubleValue();
+        subTotal = BigDecimal.valueOf(subTotal).setScale(2, RoundingMode.HALF_UP).doubleValue();
+        double tax2 = BigDecimal.valueOf(tax).setScale(2, RoundingMode.HALF_UP).doubleValue();
+        double total = BigDecimal.valueOf(subTotal - billDiscAmt + tax2).setScale(2, RoundingMode.HALF_UP).doubleValue();
         double advance = order.getAdvanceAmount() != null ? order.getAdvanceAmount() : 0;
 
         order.setSubTotal(subTotal);
-        order.setTaxTotal(tax);
+        order.setTaxTotal(tax2);
         order.setOrderTotal(total);
         order.setBalanceDue(total - advance);
 
