@@ -898,6 +898,7 @@ const EditorView = ({ initialData, onSaveDraft, onSubmitQC, onPost, onPrint, grn
     setItems(
       initialData.items.map(i => recalculateItemTotals({
         ...i,
+        disc: Number(i.discountPercent || i.disc || 0),
         tax: parseFloat(i.purchaseTax) || parseFloat(i.tax) || 5,
         taxAmt: Number(i.taxAmt || 0),
         foc: Number(i.foc || i.focQty || 0),

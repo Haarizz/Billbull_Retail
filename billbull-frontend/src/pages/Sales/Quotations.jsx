@@ -557,9 +557,9 @@ const Quotations = () => {
             billDiscount: data.billDiscount || 0,
             status: data.status === 'PENDING_APPROVAL' ? 'Pending Approval' :
                 data.status === 'APPROVED' ? 'Approved' :
-                data.status === 'REJECTED' ? 'Rejected' :
-                data.status === 'CONVERTED' ? 'Converted' :
-                data.status === 'EXPIRED' ? 'Expired' : 'Draft',
+                    data.status === 'REJECTED' ? 'Rejected' :
+                        data.status === 'CONVERTED' ? 'Converted' :
+                            data.status === 'EXPIRED' ? 'Expired' : 'Draft',
             currency: data.currency,
             paymentTerm: data.paymentTerms,
             deliveryType: data.deliveryType,
@@ -1129,7 +1129,9 @@ const Quotations = () => {
                 if (!item.code) continue;
                 try {
                     const stockData = await getStockAvailability(item.code);
-                    const available = Number(stockData?.availableQty ?? stockData?.available ?? 0);
+                    const locs = stockData?.locations || [];
+                    const available = locs.reduce((sum, l) => sum + (Number(l.available) || 0), 0);
+
                     if (Number(item.qty) > available) {
                         stockIssues.push(`${item.name || item.code}: requested ${item.qty}, available ${available}`);
                     }
@@ -1318,10 +1320,10 @@ const Quotations = () => {
     const handleSelectCustomer = (cust) => {
         setCustomer(`${cust.name} - ${cust.code}`);
         const _defaultAddr = (cust.savedAddresses || []).find(a => a.isDefault);
-            const _resolvedAddr = _defaultAddr
-                ? [_defaultAddr.address1, _defaultAddr.address2, _defaultAddr.city, _defaultAddr.country].filter(Boolean).join(', ')
-                : (cust.defaultShippingAddress || cust.shippingAddress || cust.billingAddress || cust.address || '');
-            setShippingAddress(_resolvedAddr);
+        const _resolvedAddr = _defaultAddr
+            ? [_defaultAddr.address1, _defaultAddr.address2, _defaultAddr.city, _defaultAddr.country].filter(Boolean).join(', ')
+            : (cust.defaultShippingAddress || cust.shippingAddress || cust.billingAddress || cust.address || '');
+        setShippingAddress(_resolvedAddr);
         setIsCustomerSearchOpen(false);
     };
 
@@ -2486,28 +2488,28 @@ const Quotations = () => {
                                 {selectedCustomerData && salesSettings?.creditLimitPolicy === 'WARNING' &&
                                     selectedCustomerData.creditLimitAmount > 0 &&
                                     (Number(selectedCustomerData.balance || 0) + grandTotal) > selectedCustomerData.creditLimitAmount && (
-                                    <div className="p-2.5 bg-yellow-50 shadow-sm border border-yellow-200 rounded-md text-yellow-800 text-[11px] leading-relaxed flex items-start gap-2">
-                                        <AlertCircle size={14} className="mt-0.5 shrink-0 text-yellow-600" />
-                                        <p>
-                                            <strong>Credit Warning:</strong> The projected outstanding balance
-                                            (<CurrencyAmount value={Number(selectedCustomerData.balance || 0) + grandTotal} {...displayCurrencyProps} />) exceeds this customer's
-                                            credit limit of <CurrencyAmount value={selectedCustomerData.creditLimitAmount} {...displayCurrencyProps} />.
-                                        </p>
-                                    </div>
-                                )}
+                                        <div className="p-2.5 bg-yellow-50 shadow-sm border border-yellow-200 rounded-md text-yellow-800 text-[11px] leading-relaxed flex items-start gap-2">
+                                            <AlertCircle size={14} className="mt-0.5 shrink-0 text-yellow-600" />
+                                            <p>
+                                                <strong>Credit Warning:</strong> The projected outstanding balance
+                                                (<CurrencyAmount value={Number(selectedCustomerData.balance || 0) + grandTotal} {...displayCurrencyProps} />) exceeds this customer's
+                                                credit limit of <CurrencyAmount value={selectedCustomerData.creditLimitAmount} {...displayCurrencyProps} />.
+                                            </p>
+                                        </div>
+                                    )}
                                 {selectedCustomerData && salesSettings?.creditLimitPolicy === 'BLOCK' &&
                                     selectedCustomerData.creditLimitAmount > 0 &&
                                     (Number(selectedCustomerData.balance || 0) + grandTotal) > selectedCustomerData.creditLimitAmount && (
-                                    <div className="p-2.5 bg-red-50 shadow-sm border border-red-300 rounded-md text-red-800 text-[11px] leading-relaxed flex items-start gap-2">
-                                        <AlertCircle size={14} className="mt-0.5 shrink-0 text-red-600" />
-                                        <p>
-                                            <strong>Credit Limit Blocked:</strong> The projected outstanding balance
-                                            (<CurrencyAmount value={Number(selectedCustomerData.balance || 0) + grandTotal} {...displayCurrencyProps} />) exceeds this customer's
-                                            credit limit of <CurrencyAmount value={selectedCustomerData.creditLimitAmount} {...displayCurrencyProps} />.
-                                            Confirming this quotation is blocked until the balance is within limit.
-                                        </p>
-                                    </div>
-                                )}
+                                        <div className="p-2.5 bg-red-50 shadow-sm border border-red-300 rounded-md text-red-800 text-[11px] leading-relaxed flex items-start gap-2">
+                                            <AlertCircle size={14} className="mt-0.5 shrink-0 text-red-600" />
+                                            <p>
+                                                <strong>Credit Limit Blocked:</strong> The projected outstanding balance
+                                                (<CurrencyAmount value={Number(selectedCustomerData.balance || 0) + grandTotal} {...displayCurrencyProps} />) exceeds this customer's
+                                                credit limit of <CurrencyAmount value={selectedCustomerData.creditLimitAmount} {...displayCurrencyProps} />.
+                                                Confirming this quotation is blocked until the balance is within limit.
+                                            </p>
+                                        </div>
+                                    )}
 
                                 {/* CustomerSelector modal (unchanged) */}
                                 <CustomerSelector
@@ -2558,12 +2560,12 @@ const Quotations = () => {
                                         </h3>
                                         {!isViewMode && (
                                             <div className="flex gap-2">
-                                            <button
-                                                onClick={() => setIsProductSelectionOpen(true)}
-                                                className="flex items-center gap-1 px-3 py-1.5 bg-yellow-400 text-slate-900 text-xs font-medium rounded hover:bg-yellow-500"
-                                            >
-                                                <Plus size={14} /> Select from Products
-                                            </button>
+                                                <button
+                                                    onClick={() => setIsProductSelectionOpen(true)}
+                                                    className="flex items-center gap-1 px-3 py-1.5 bg-yellow-400 text-slate-900 text-xs font-medium rounded hover:bg-yellow-500"
+                                                >
+                                                    <Plus size={14} /> Select from Products
+                                                </button>
                                             </div>
                                         )}
                                     </div>
@@ -2675,9 +2677,9 @@ const Quotations = () => {
                                                             <td className="p-2 text-center align-middle">
                                                                 <div className="flex items-center justify-center gap-1.5">
                                                                     {!isViewMode && (
-                                                                    <button onClick={() => handleDeleteItem(item.id)} className="p-1.5 text-red-500 border border-red-100 hover:bg-red-50 rounded transition-colors group">
-                                                                        <Trash2 size={14} className="group-hover:scale-110 transition-transform" />
-                                                                    </button>
+                                                                        <button onClick={() => handleDeleteItem(item.id)} className="p-1.5 text-red-500 border border-red-100 hover:bg-red-50 rounded transition-colors group">
+                                                                            <Trash2 size={14} className="group-hover:scale-110 transition-transform" />
+                                                                        </button>
                                                                     )}
                                                                 </div>
                                                             </td>
@@ -2732,10 +2734,10 @@ const Quotations = () => {
                                             <p className="text-[10px] text-slate-500 mb-2">Upload documents (Customer PO, Specs)</p>
 
                                             {!isViewMode && (
-                                            <label className="cursor-pointer mb-2">
-                                                <span className="px-3 py-1 bg-white border border-slate-300/50 rounded text-[10px] font-bold text-slate-700 hover:bg-slate-50">Choose Files</span>
-                                                <input type="file" className="hidden" multiple onChange={handleFileUpload} />
-                                            </label>
+                                                <label className="cursor-pointer mb-2">
+                                                    <span className="px-3 py-1 bg-white border border-slate-300/50 rounded text-[10px] font-bold text-slate-700 hover:bg-slate-50">Choose Files</span>
+                                                    <input type="file" className="hidden" multiple onChange={handleFileUpload} />
+                                                </label>
                                             )}
 
                                             <div className="w-full max-h-[120px] overflow-y-auto">
@@ -2747,9 +2749,9 @@ const Quotations = () => {
                                                             <div key={idx} className="flex justify-between items-center bg-slate-50 border border-slate-100 p-1.5 rounded text-[10px]">
                                                                 <span className="truncate max-w-[150px] text-slate-700">{file.fileName || file.name}</span>
                                                                 {!isViewMode && (
-                                                                <button onClick={() => handleRemoveAttachment(idx)} className="text-slate-400 hover:text-red-500">
-                                                                    <X size={12} />
-                                                                </button>
+                                                                    <button onClick={() => handleRemoveAttachment(idx)} className="text-slate-400 hover:text-red-500">
+                                                                        <X size={12} />
+                                                                    </button>
                                                                 )}
                                                             </div>
                                                         ))}
@@ -3097,13 +3099,13 @@ const Quotations = () => {
 
                                 return (
                                     <>
-                            <div className={`rounded-full p-1 text-white ${toastType === 'info' ? 'bg-slate-800' : 'bg-black'}`}>
-                                {toastType === 'info' ? <Info size={16} /> : <CheckCircle2 size={16} />}
-                            </div>
-                            <div>
-                                <h4 className="text-sm font-bold text-slate-800">{toastTitle}</h4>
-                                <p className="text-xs text-slate-500">{toastMessage}</p>
-                            </div>
+                                        <div className={`rounded-full p-1 text-white ${toastType === 'info' ? 'bg-slate-800' : 'bg-black'}`}>
+                                            {toastType === 'info' ? <Info size={16} /> : <CheckCircle2 size={16} />}
+                                        </div>
+                                        <div>
+                                            <h4 className="text-sm font-bold text-slate-800">{toastTitle}</h4>
+                                            <p className="text-xs text-slate-500">{toastMessage}</p>
+                                        </div>
                                     </>
                                 );
                             })()}

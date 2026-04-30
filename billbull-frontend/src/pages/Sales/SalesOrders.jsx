@@ -465,7 +465,6 @@ const SalesOrders = () => {
 
     return { grossTotal, totalDiscount, subTotal, billDiscountAmount, totalTax, orderTotal, balanceDue, totalCost, profit, marginPercent };
   };
-};
 
   const { grossTotal, totalDiscount, subTotal, billDiscountAmount, totalTax, orderTotal, balanceDue, totalCost, profit, marginPercent } = calculateTotals();
 
@@ -885,7 +884,8 @@ const SalesOrders = () => {
         if (!item.code) continue;
         try {
           const stockData = await getStockAvailability(item.code);
-          const available = Number(stockData?.availableQty ?? stockData?.available ?? 0);
+          const locs = stockData?.locations || [];
+          const available = locs.reduce((sum, l) => sum + (Number(l.available) || 0), 0);
           if (Number(item.qty) > available) {
             stockIssues.push(`${item.name || item.code}: requested ${item.qty}, available ${available}`);
           }
@@ -901,8 +901,8 @@ const SalesOrders = () => {
 
     // Credit limit BLOCK enforcement
     if (salesSettings?.creditLimitPolicy === 'BLOCK' &&
-        selectedCustomer?.creditLimitAmount > 0 &&
-        (Number(selectedCustomer.balance || 0) + orderTotal) > selectedCustomer.creditLimitAmount) {
+      selectedCustomer?.creditLimitAmount > 0 &&
+      (Number(selectedCustomer.balance || 0) + orderTotal) > selectedCustomer.creditLimitAmount) {
       alert(`Credit Limit Exceeded: The projected outstanding balance (${formatCurrencyDisplay(Number(selectedCustomer.balance || 0) + orderTotal, company)}) exceeds this customer's credit limit of ${formatCurrencyDisplay(selectedCustomer.creditLimitAmount, company)}.\n\nThis order cannot be saved. Please collect payment first or adjust the credit limit in the customer profile.`);
       return;
     }
@@ -1446,41 +1446,41 @@ const SalesOrders = () => {
             </div>
 
             <CustomerShippingPanel
-                selectedCustomer={selectedCustomer}
-                onOpenCustomerSearch={() => { if (!hasLinkedDocument && !isLocked) setIsCustomerSearchOpen(true); }}
-                shippingAddress={shippingAddress}
-                onShippingChange={setShippingAddress}
-                deliveryType={deliveryType}
-                onDeliveryTypeChange={setDeliveryType}
-                expectedDispatch={expectedDelivery}
-                onExpectedDispatchChange={setExpectedDelivery}
-                isReadOnly={isLocked}
-                currency={orderCurrency}
+              selectedCustomer={selectedCustomer}
+              onOpenCustomerSearch={() => { if (!hasLinkedDocument && !isLocked) setIsCustomerSearchOpen(true); }}
+              shippingAddress={shippingAddress}
+              onShippingChange={setShippingAddress}
+              deliveryType={deliveryType}
+              onDeliveryTypeChange={setDeliveryType}
+              expectedDispatch={expectedDelivery}
+              onExpectedDispatchChange={setExpectedDelivery}
+              isReadOnly={isLocked}
+              currency={orderCurrency}
             />
 
             {selectedCustomer && salesSettings?.creditLimitPolicy === 'WARNING' &&
               selectedCustomer.creditLimitAmount > 0 &&
               (Number(selectedCustomer.balance || 0) + orderTotal) > selectedCustomer.creditLimitAmount && (
                 <div className="p-2.5 bg-yellow-50 shadow-sm border border-yellow-200 rounded-md text-yellow-800 text-[11px] leading-relaxed flex items-start gap-2">
-                    <AlertCircle size={14} className="mt-0.5 shrink-0 text-yellow-600" />
-                    <p>
-                        <strong>Credit Warning:</strong> The projected outstanding balance
-                        (<CurrencyAmount value={Number(selectedCustomer.balance || 0) + orderTotal} currency={orderCurrency} />) exceeds this customer's
-                        credit limit of <CurrencyAmount value={selectedCustomer.creditLimitAmount} currency={orderCurrency} />.
-                    </p>
+                  <AlertCircle size={14} className="mt-0.5 shrink-0 text-yellow-600" />
+                  <p>
+                    <strong>Credit Warning:</strong> The projected outstanding balance
+                    (<CurrencyAmount value={Number(selectedCustomer.balance || 0) + orderTotal} currency={orderCurrency} />) exceeds this customer's
+                    credit limit of <CurrencyAmount value={selectedCustomer.creditLimitAmount} currency={orderCurrency} />.
+                  </p>
                 </div>
               )}
             {selectedCustomer && salesSettings?.creditLimitPolicy === 'BLOCK' &&
               selectedCustomer.creditLimitAmount > 0 &&
               (Number(selectedCustomer.balance || 0) + orderTotal) > selectedCustomer.creditLimitAmount && (
                 <div className="p-2.5 bg-red-50 shadow-sm border border-red-300 rounded-md text-red-800 text-[11px] leading-relaxed flex items-start gap-2">
-                    <AlertCircle size={14} className="mt-0.5 shrink-0 text-red-600" />
-                    <p>
-                        <strong>Credit Limit Blocked:</strong> The projected outstanding balance
-                        (<CurrencyAmount value={Number(selectedCustomer.balance || 0) + orderTotal} currency={orderCurrency} />) exceeds this customer's
-                        credit limit of <CurrencyAmount value={selectedCustomer.creditLimitAmount} currency={orderCurrency} />.
-                        Saving this order is blocked until the balance is within limit.
-                    </p>
+                  <AlertCircle size={14} className="mt-0.5 shrink-0 text-red-600" />
+                  <p>
+                    <strong>Credit Limit Blocked:</strong> The projected outstanding balance
+                    (<CurrencyAmount value={Number(selectedCustomer.balance || 0) + orderTotal} currency={orderCurrency} />) exceeds this customer's
+                    credit limit of <CurrencyAmount value={selectedCustomer.creditLimitAmount} currency={orderCurrency} />.
+                    Saving this order is blocked until the balance is within limit.
+                  </p>
                 </div>
               )}
 
