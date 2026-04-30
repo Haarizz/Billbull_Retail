@@ -1219,12 +1219,12 @@ const EditorView = ({ initialData, vendors, warehouses, onSave, onSubmit, onPrin
       const gross = qty * unitPrice;
       let focDeduction = 0;
 
-      if (focQty > 0 && item.focUnit && item.unitConversions) {
+      if (focQty > 0 && item.focUnit) {
         const sellingUnit = item.uom;
         const focUnit = item.focUnit;
         if (sellingUnit === focUnit) {
           focDeduction = unitPrice * focQty;
-        } else {
+        } else if (item.unitConversions) {
           const focConversion = item.unitConversions[focUnit] || 1;
           const sellingConversion = item.unitConversions[sellingUnit] || 1;
           const focInSellingUnit = (focQty * focConversion) / sellingConversion;
@@ -2088,9 +2088,16 @@ const EditorView = ({ initialData, vendors, warehouses, onSave, onSubmit, onPrin
                       <span className="text-xs font-bold text-slate-800">LPO Created</span>
                       <span className="text-[10px] text-slate-400">{formData.createdAt ? new Date(formData.createdAt).toLocaleString() : 'N/A'}</span>
                     </div>
-                    <p className="text-[10px] text-slate-500 mt-0.5">
-                      LPO #{formData.lpoNumber} created{formData.createdBy ? ` by ${formData.createdBy}` : ''} with {formData.items?.length || 0} item(s) for <strong>{formData.vendorName}</strong>.
-                    </p>
+                    <div className="text-[10px] text-slate-500 mt-0.5 flex flex-wrap gap-x-1">
+                      <span key="lpo-prefix">LPO #</span>
+                      <span key="lpo-no" className="font-medium">{formData.lpoNumber}</span>
+                      <span key="created-text">created</span>
+                      {formData.createdBy ? <span key="created-by"> by {formData.createdBy}</span> : null}
+                      <span key="with-text"> with </span>
+                      <span key="item-count">{formData.items?.length || 0}</span>
+                      <span key="items-suffix"> item(s) for </span>
+                      <strong key="vendor-name" className="font-bold">{formData.vendorName}</strong>
+                    </div>
                   </div>
                 </div>
 
@@ -2903,8 +2910,8 @@ const LPOList = () => {
                         const cardClass = isApproved
                           ? 'bg-emerald-50 border-emerald-200'
                           : isRejected
-                          ? 'bg-red-50 border-red-200'
-                          : 'bg-white border-slate-200';
+                            ? 'bg-red-50 border-red-200'
+                            : 'bg-white border-slate-200';
                         const labelColor = isApproved ? 'text-emerald-700' : isRejected ? 'text-red-600' : 'text-slate-500';
                         return (
                           <div key={idx} className="relative">
@@ -2966,7 +2973,14 @@ const LPOList = () => {
                           <span className="text-sm font-bold text-slate-800">LPO Created</span>
                           <span className="text-xs text-slate-400">{currentEditorData.createdAt ? new Date(currentEditorData.createdAt).toLocaleString() : 'N/A'}</span>
                         </div>
-                        <p className="text-xs text-slate-500">LPO #{currentEditorData.lpoNumber} created with {currentEditorData.items?.length || 0} item(s) for <strong>{currentEditorData.vendorName}</strong>.</p>
+                        <div className="text-xs text-slate-500 flex flex-wrap gap-x-1 mt-1">
+                          <span key="rev-lpo-prefix">LPO #</span>
+                          <span key="rev-lpo-no" className="font-medium">{currentEditorData.lpoNumber}</span>
+                          <span key="rev-created-text">created with </span>
+                          <span key="rev-item-count">{currentEditorData.items?.length || 0}</span>
+                          <span key="rev-items-suffix"> item(s) for </span>
+                          <strong key="rev-vendor-name" className="font-bold">{currentEditorData.vendorName}</strong>
+                        </div>
                       </div>
                     </div>
 
