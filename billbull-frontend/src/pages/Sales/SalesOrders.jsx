@@ -465,6 +465,7 @@ const SalesOrders = () => {
 
     return { grossTotal, totalDiscount, subTotal, billDiscountAmount, totalTax, orderTotal, balanceDue, totalCost, profit, marginPercent };
   };
+};
 
   const { grossTotal, totalDiscount, subTotal, billDiscountAmount, totalTax, orderTotal, balanceDue, totalCost, profit, marginPercent } = calculateTotals();
 
@@ -480,13 +481,13 @@ const SalesOrders = () => {
     const grossAmount = price * qty;
     let focDeduction = 0;
 
-    if (focQty > 0 && item.focUnit && item.unitConversions) {
+    if (focQty > 0 && item.focUnit) {
       const sellingUnit = item.unit;
       const focUnit = item.focUnit;
 
       if (sellingUnit === focUnit) {
         focDeduction = price * focQty;
-      } else {
+      } else if (item.unitConversions) {
         const focConversion = item.unitConversions[focUnit] || 1;
         const sellingConversion = item.unitConversions[sellingUnit] || 1;
         const focInBaseUnit = focQty * focConversion;
@@ -509,6 +510,7 @@ const SalesOrders = () => {
       disc: discPercent,
       tax: taxPercent,
       taxAmt: taxAmount,
+      discountAmount,
       total
     };
   };
@@ -932,10 +934,10 @@ const SalesOrders = () => {
   const handleSelectCustomer = (cust) => {
     setSelectedCustomer(cust);
     const _defaultAddr = (cust.savedAddresses || []).find(a => a.isDefault);
-      const _resolvedAddr = _defaultAddr
-          ? [_defaultAddr.address1, _defaultAddr.address2, _defaultAddr.city, _defaultAddr.country].filter(Boolean).join(', ')
-          : (cust.defaultShippingAddress || cust.shippingAddress || cust.billingAddress || cust.address || '');
-      setShippingAddress(_resolvedAddr);
+    const _resolvedAddr = _defaultAddr
+      ? [_defaultAddr.address1, _defaultAddr.address2, _defaultAddr.city, _defaultAddr.country].filter(Boolean).join(', ')
+      : (cust.defaultShippingAddress || cust.shippingAddress || cust.billingAddress || cust.address || '');
+    setShippingAddress(_resolvedAddr);
     setIsCustomerSearchOpen(false);
   };
 
@@ -976,10 +978,10 @@ const SalesOrders = () => {
       setSelectedCustomer(cust);
       if (cust.address || cust.shippingAddress || cust.billingAddress) {
         const _defaultAddr = (cust.savedAddresses || []).find(a => a.isDefault);
-      const _resolvedAddr = _defaultAddr
+        const _resolvedAddr = _defaultAddr
           ? [_defaultAddr.address1, _defaultAddr.address2, _defaultAddr.city, _defaultAddr.country].filter(Boolean).join(', ')
           : (cust.defaultShippingAddress || cust.shippingAddress || cust.billingAddress || cust.address || '');
-      setShippingAddress(_resolvedAddr);
+        setShippingAddress(_resolvedAddr);
       }
     }
 
@@ -1009,8 +1011,8 @@ const SalesOrders = () => {
     if (cust.address || cust.shippingAddress || cust.billingAddress) {
       const _defaultAddr = (cust.savedAddresses || []).find(a => a.isDefault);
       const _resolvedAddr = _defaultAddr
-          ? [_defaultAddr.address1, _defaultAddr.address2, _defaultAddr.city, _defaultAddr.country].filter(Boolean).join(', ')
-          : (cust.defaultShippingAddress || cust.shippingAddress || cust.billingAddress || cust.address || '');
+        ? [_defaultAddr.address1, _defaultAddr.address2, _defaultAddr.city, _defaultAddr.country].filter(Boolean).join(', ')
+        : (cust.defaultShippingAddress || cust.shippingAddress || cust.billingAddress || cust.address || '');
       setShippingAddress(_resolvedAddr);
     }
 
@@ -1457,8 +1459,8 @@ const SalesOrders = () => {
             />
 
             {selectedCustomer && salesSettings?.creditLimitPolicy === 'WARNING' &&
-                selectedCustomer.creditLimitAmount > 0 &&
-                (Number(selectedCustomer.balance || 0) + orderTotal) > selectedCustomer.creditLimitAmount && (
+              selectedCustomer.creditLimitAmount > 0 &&
+              (Number(selectedCustomer.balance || 0) + orderTotal) > selectedCustomer.creditLimitAmount && (
                 <div className="p-2.5 bg-yellow-50 shadow-sm border border-yellow-200 rounded-md text-yellow-800 text-[11px] leading-relaxed flex items-start gap-2">
                     <AlertCircle size={14} className="mt-0.5 shrink-0 text-yellow-600" />
                     <p>
@@ -1467,10 +1469,10 @@ const SalesOrders = () => {
                         credit limit of <CurrencyAmount value={selectedCustomer.creditLimitAmount} currency={orderCurrency} />.
                     </p>
                 </div>
-            )}
+              )}
             {selectedCustomer && salesSettings?.creditLimitPolicy === 'BLOCK' &&
-                selectedCustomer.creditLimitAmount > 0 &&
-                (Number(selectedCustomer.balance || 0) + orderTotal) > selectedCustomer.creditLimitAmount && (
+              selectedCustomer.creditLimitAmount > 0 &&
+              (Number(selectedCustomer.balance || 0) + orderTotal) > selectedCustomer.creditLimitAmount && (
                 <div className="p-2.5 bg-red-50 shadow-sm border border-red-300 rounded-md text-red-800 text-[11px] leading-relaxed flex items-start gap-2">
                     <AlertCircle size={14} className="mt-0.5 shrink-0 text-red-600" />
                     <p>
@@ -1480,16 +1482,16 @@ const SalesOrders = () => {
                         Saving this order is blocked until the balance is within limit.
                     </p>
                 </div>
-            )}
+              )}
 
             {/* CUSTOMER SELECTOR MODAL */}
             <CustomerSelector
-                isOpen={isCustomerSearchOpen}
-                onClose={() => setIsCustomerSearchOpen(false)}
-                onSelect={handleSelectCustomer}
-                customers={customersList}
-                selectedCode={selectedCustomer?.code || ''}
-                onCustomerCreated={fetchAllData}
+              isOpen={isCustomerSearchOpen}
+              onClose={() => setIsCustomerSearchOpen(false)}
+              onSelect={handleSelectCustomer}
+              customers={customersList}
+              selectedCode={selectedCustomer?.code || ''}
+              onCustomerCreated={fetchAllData}
             />
 
             {/* Delivery Instructions */}
@@ -1549,7 +1551,7 @@ const SalesOrders = () => {
 
                 {!isLocked && (
                   <div className="flex gap-2">
-                  {/* ✅ SELECT FROM CATALOG BUTTON */}
+                    {/* ✅ SELECT FROM CATALOG BUTTON */}
                     <button
                       onClick={() => setIsProductSelectorOpen(true)}
                       className="flex items-center gap-1 px-3 py-1.5 bg-yellow-400 text-slate-900 text-xs font-medium rounded hover:bg-yellow-500"

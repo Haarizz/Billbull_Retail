@@ -368,9 +368,9 @@ const ViewInvoiceModal = ({ invoice, onClose }) => {
 
 const PAYMENT_MODES = [
   { value: 'BANK_TRANSFER', label: 'Bank Transfer', icon: '🏦' },
-  { value: 'CASH',          label: 'Cash',          icon: '💵' },
-  { value: 'CHEQUE',        label: 'Cheque',        icon: '📄' },
-  { value: 'CARD',          label: 'Card',          icon: '💳' },
+  { value: 'CASH', label: 'Cash', icon: '💵' },
+  { value: 'CHEQUE', label: 'Cheque', icon: '📄' },
+  { value: 'CARD', label: 'Card', icon: '💳' },
 ];
 
 const BANK_REQUIRED_MODES = ['BANK_TRANSFER', 'CHEQUE', 'CARD'];
@@ -428,11 +428,10 @@ const PaymentModal = ({ invoice, onClose, onConfirm }) => {
                 <button
                   key={mode.value}
                   onClick={() => { setPaymentMode(mode.value); setBankAccount(''); }}
-                  className={`flex items-center gap-2.5 px-3 py-2.5 rounded-lg border-2 text-sm font-medium transition-all duration-150 ${
-                    paymentMode === mode.value
+                  className={`flex items-center gap-2.5 px-3 py-2.5 rounded-lg border-2 text-sm font-medium transition-all duration-150 ${paymentMode === mode.value
                       ? 'border-[#F5C742] bg-[#FFF8E1] text-slate-800'
                       : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300'
-                  }`}
+                    }`}
                 >
                   <span className="text-base leading-none">{mode.icon}</span>
                   <span>{mode.label}</span>
@@ -571,9 +570,8 @@ const InvoiceListView = ({ invoices, filteredInvoices, activeFilter, setActiveFi
         <button
           type="button"
           onClick={() => setActiveFilter("Today")}
-          className={`bg-white p-4 rounded-lg border shadow-sm border-l-4 border-l-blue-500 text-left transition-all hover:-translate-y-0.5 hover:shadow-md ${
-            activeFilter === "Today" ? "border-blue-300 ring-2 ring-blue-100" : "border-slate-200"
-          }`}
+          className={`bg-white p-4 rounded-lg border shadow-sm border-l-4 border-l-blue-500 text-left transition-all hover:-translate-y-0.5 hover:shadow-md ${activeFilter === "Today" ? "border-blue-300 ring-2 ring-blue-100" : "border-slate-200"
+            }`}
         >
           <div className="text-sm font-medium text-slate-500">Invoices Today</div>
           <div className="mt-2 flex items-baseline gap-2">
@@ -588,9 +586,8 @@ const InvoiceListView = ({ invoices, filteredInvoices, activeFilter, setActiveFi
         <button
           type="button"
           onClick={() => setActiveFilter("Pending Approval")}
-          className={`bg-white p-4 rounded-lg border shadow-sm border-l-4 border-l-yellow-500 text-left transition-all hover:-translate-y-0.5 hover:shadow-md ${
-            activeFilter === "Pending Approval" ? "border-yellow-300 ring-2 ring-yellow-100" : "border-slate-200"
-          }`}
+          className={`bg-white p-4 rounded-lg border shadow-sm border-l-4 border-l-yellow-500 text-left transition-all hover:-translate-y-0.5 hover:shadow-md ${activeFilter === "Pending Approval" ? "border-yellow-300 ring-2 ring-yellow-100" : "border-slate-200"
+            }`}
         >
           <div className="text-sm font-medium text-slate-500">Pending Approval</div>
           <div className="mt-2 flex items-baseline gap-2">
@@ -605,9 +602,8 @@ const InvoiceListView = ({ invoices, filteredInvoices, activeFilter, setActiveFi
         <button
           type="button"
           onClick={() => setActiveFilter("Outstanding")}
-          className={`bg-white p-4 rounded-lg border shadow-sm border-l-4 border-l-red-500 text-left transition-all hover:-translate-y-0.5 hover:shadow-md ${
-            activeFilter === "Outstanding" ? "border-red-300 ring-2 ring-red-100" : "border-slate-200"
-          }`}
+          className={`bg-white p-4 rounded-lg border shadow-sm border-l-4 border-l-red-500 text-left transition-all hover:-translate-y-0.5 hover:shadow-md ${activeFilter === "Outstanding" ? "border-red-300 ring-2 ring-red-100" : "border-slate-200"
+            }`}
         >
           <div className="text-sm font-medium text-slate-500">Total Outstanding</div>
           <div className="mt-2 flex items-baseline gap-2">
@@ -622,9 +618,8 @@ const InvoiceListView = ({ invoices, filteredInvoices, activeFilter, setActiveFi
         <button
           type="button"
           onClick={() => setActiveFilter("Overdue")}
-          className={`bg-white p-4 rounded-lg border shadow-sm border-l-4 border-l-orange-500 text-left transition-all hover:-translate-y-0.5 hover:shadow-md ${
-            activeFilter === "Overdue" ? "border-orange-300 ring-2 ring-orange-100" : "border-slate-200"
-          }`}
+          className={`bg-white p-4 rounded-lg border shadow-sm border-l-4 border-l-orange-500 text-left transition-all hover:-translate-y-0.5 hover:shadow-md ${activeFilter === "Overdue" ? "border-orange-300 ring-2 ring-orange-100" : "border-slate-200"
+            }`}
         >
           <div className="text-sm font-medium text-slate-500">Overdue</div>
           <div className="mt-2 flex items-baseline gap-2">
@@ -1890,11 +1885,10 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
                   value={formData.vendorInvoiceNo}
                   readOnly={isInvoiceLocked}
                   onChange={(e) => setFormData({ ...formData, vendorInvoiceNo: e.target.value })}
-                  className={`w-full text-xs border rounded-md py-2 px-3 focus:ring-1 focus:ring-[#F5C742] outline-none read-only:bg-slate-50 ${
-                    !formData.vendorInvoiceNo?.trim() && !isInvoiceLocked
+                  className={`w-full text-xs border rounded-md py-2 px-3 focus:ring-1 focus:ring-[#F5C742] outline-none read-only:bg-slate-50 ${!formData.vendorInvoiceNo?.trim() && !isInvoiceLocked
                       ? "border-red-300 bg-red-50"
                       : "border-slate-200"
-                  }`}
+                    }`}
                 />
                 {!formData.vendorInvoiceNo?.trim() && !isInvoiceLocked && (
                   <p className="text-[10px] text-red-500 mt-0.5">Vendor invoice number is required</p>
@@ -2417,47 +2411,47 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
                   <FileText className="h-3 w-3" /> <span className="hidden sm:inline">Save Draft</span><span className="sm:hidden">Draft</span>
                 </button>
                 <button
-              onClick={() => {
-                // 1. Basic Item Guard
-                if (formData.items.length === 0) {
-                  alert("Invoice must contain at least one item.");
-                  return;
-                }
+                  onClick={() => {
+                    // 1. Basic Item Guard
+                    if (formData.items.length === 0) {
+                      alert("Invoice must contain at least one item.");
+                      return;
+                    }
 
-                // 2. Vendor Guard
-                if (!formData.vendor) {
-                  alert("Vendor name is required.");
-                  return;
-                }
+                    // 2. Vendor Guard
+                    if (!formData.vendor) {
+                      alert("Vendor name is required.");
+                      return;
+                    }
 
-                // 3. Vendor Invoice Number Guard
-                if (!formData.vendorInvoiceNo?.trim()) {
-                  alert("Vendor invoice number is required.");
-                  return;
-                }
+                    // 3. Vendor Invoice Number Guard
+                    if (!formData.vendorInvoiceNo?.trim()) {
+                      alert("Vendor invoice number is required.");
+                      return;
+                    }
 
-                // 4. Direct Invoice Location Guard
-                if (invoiceType === SOURCE.DIRECT && !formData.warehouseId) {
-                  alert("Warehouse is required for Direct Invoices to post stock.");
-                  return;
-                }
+                    // 4. Direct Invoice Location Guard
+                    if (invoiceType === SOURCE.DIRECT && !formData.warehouseId) {
+                      alert("Warehouse is required for Direct Invoices to post stock.");
+                      return;
+                    }
 
-                // 4. NLC Validation
-                const totalNLC = isLandedCostAllowed ? landedCost : 0;
-                if (totalNLC > summaryTotals.subtotal) { // Using subtotal as base, usually NLC shouldn't exclude goods value
-                  // User said "Invoice Total", usually implies Goods Value.
-                  // Safe check: NLC > Grand Total is definitely wrong.
-                  // Let's stick to user request "NLC must not exceed invoice total"
-                  if (totalNLC > summaryTotals.grandTotal) {
-                    alert("Total Landed Cost cannot exceed the Invoice Grand Total.");
-                    return;
-                  }
-                }
+                    // 4. NLC Validation
+                    const totalNLC = isLandedCostAllowed ? landedCost : 0;
+                    if (totalNLC > summaryTotals.subtotal) { // Using subtotal as base, usually NLC shouldn't exclude goods value
+                      // User said "Invoice Total", usually implies Goods Value.
+                      // Safe check: NLC > Grand Total is definitely wrong.
+                      // Let's stick to user request "NLC must not exceed invoice total"
+                      if (totalNLC > summaryTotals.grandTotal) {
+                        alert("Total Landed Cost cannot exceed the Invoice Grand Total.");
+                        return;
+                      }
+                    }
 
-                onSubmitApproval(getInvoicePayload());
-              }}
-              className="flex-1 xl:flex-none px-4 py-2 bg-[#F5C742] hover:bg-[#E5B732] text-slate-900 rounded font-medium flex items-center justify-center gap-2 transition-colors whitespace-nowrap shadow-sm">
-              <Share2 className="h-3 w-3" /> <span className="hidden sm:inline">Submit Approval</span><span className="sm:hidden">Submit</span>
+                    onSubmitApproval(getInvoicePayload());
+                  }}
+                  className="flex-1 xl:flex-none px-4 py-2 bg-[#F5C742] hover:bg-[#E5B732] text-slate-900 rounded font-medium flex items-center justify-center gap-2 transition-colors whitespace-nowrap shadow-sm">
+                  <Share2 className="h-3 w-3" /> <span className="hidden sm:inline">Submit Approval</span><span className="sm:hidden">Submit</span>
                 </button>
               </>
             )}
