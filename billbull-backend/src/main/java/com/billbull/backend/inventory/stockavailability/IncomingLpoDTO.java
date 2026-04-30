@@ -7,6 +7,7 @@ public class IncomingLpoDTO {
     private LocalDate expectedDate;
     private Integer quantity;
     private String supplierName;
+    private String uom;
 
     public IncomingLpoDTO() {
     }
@@ -48,5 +49,13 @@ public class IncomingLpoDTO {
 
     public void setSupplierName(String supplierName) {
         this.supplierName = supplierName;
+    }
+
+    public String getUom() {
+        return uom;
+    }
+
+    public void setUom(String uom) {
+        this.uom = uom;
     }
 }

@@ -1,6 +1,8 @@
 package com.billbull.backend.inventory.stockavailability;
 
 import com.billbull.backend.inventory.product.Product;
+import com.billbull.backend.inventory.product.ProductPacking;
+import com.billbull.backend.inventory.product.ProductPackingRepository;
 import com.billbull.backend.inventory.product.ProductRepository;
 import com.billbull.backend.inventory.warehouse.Bin;
 import com.billbull.backend.inventory.warehouse.BinRepository;
@@ -26,6 +28,7 @@ import java.util.stream.Collectors;
 public class StockAvailabilityService {
 
     private final ProductRepository productRepository;
+    private final ProductPackingRepository productPackingRepository;
     private final WarehouseStockService warehouseStockService;
     private final BinStockService binStockService;
     private final BinRepository binRepository;
@@ -34,12 +37,14 @@ public class StockAvailabilityService {
 
     public StockAvailabilityService(
             ProductRepository productRepository,
+            ProductPackingRepository productPackingRepository,
             WarehouseStockService warehouseStockService,
             BinStockService binStockService,
             BinRepository binRepository,
             LpoItemRepository lpoItemRepository,
             GrnRepository grnRepository) {
         this.productRepository = productRepository;
+        this.productPackingRepository = productPackingRepository;
         this.warehouseStockService = warehouseStockService;
         this.binStockService = binStockService;
         this.binRepository = binRepository;
@@ -109,8 +114,20 @@ public class StockAvailabilityService {
                                 (gi.getFocQty() != null ? gi.getFocQty() : 0))
                         .sum();
 
-                int totalOrdered = item.getQuantity() != null ? item.getQuantity() : 0;
-                int remaining = Math.max(0, totalOrdered - totalReceived);
+                int rawOrdered = item.getQuantity() != null ? item.getQuantity() : 0;
+
+                // Normalize LPO quantity to base unit using packing conversion
+                int baseOrdered = rawOrdered;
+                String itemUom = item.getUom();
+                if (itemUom != null && !itemUom.equalsIgnoreCase(finalUom)) {
+                    java.util.Optional<ProductPacking> packing =
+                            productPackingRepository.findByProductIdAndUnitName(product.getId(), itemUom);
+                    if (packing.isPresent() && packing.get().getConversion() != null) {
+                        baseOrdered = (int) Math.round(rawOrdered * packing.get().getConversion().doubleValue());
+                    }
+                }
+
+                int remaining = Math.max(0, baseOrdered - totalReceived);
 
                 if (remaining <= 0)
                     return null;
@@ -120,6 +137,7 @@ public class StockAvailabilityService {
                 dto.setExpectedDate(item.getLpo().getExpectedDeliveryDate());
                 dto.setQuantity(remaining);
                 dto.setSupplierName(item.getLpo().getVendorName());
+                dto.setUom(finalUom);
                 return dto;
             })
                     .filter(java.util.Objects::nonNull)

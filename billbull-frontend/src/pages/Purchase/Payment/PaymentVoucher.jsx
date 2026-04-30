@@ -50,6 +50,7 @@ import {
     updateVoucherStatus
 } from '../../../api/paymentApi';
 import { getVendors } from '../../../api/vendorsApi';
+import { getBankAccounts } from '../../../api/ledgerApi';
 
 // ==========================================
 // HELPERS & CONFIG
@@ -348,6 +349,7 @@ const PaymentVoucher = () => {
     const [vouchers, setVouchers] = useState([]);
     const [purchaseInvoices, setPurchaseInvoices] = useState([]);
     const [vendors, setVendors] = useState([]);
+    const [bankAccounts, setBankAccounts] = useState([]);
     const [loading, setLoading] = useState(true);
 
     // ── Pay Invoices Tab State ──────────────────────────────────────
@@ -359,6 +361,7 @@ const PaymentVoucher = () => {
     const [selectedInvoices, setSelectedInvoices] = useState({});
     const [settleAmounts, setSettleAmounts] = useState({});
     const [paymentMethod, setPaymentMethod] = useState('Cash');
+    const [bankAccount, setBankAccount] = useState('');
     const [reference, setReference] = useState('');
     const [payNotes, setPayNotes] = useState('');
     const [chequeDate, setChequeDate] = useState('');
@@ -381,6 +384,10 @@ const PaymentVoucher = () => {
             // 1b. Fetch vendors
             const vendorRes = await getVendors();
             setVendors(Array.isArray(vendorRes) ? vendorRes : (vendorRes.data || []));
+
+            // 1c. Fetch bank accounts
+            const bankRes = await getBankAccounts();
+            setBankAccounts(Array.isArray(bankRes) ? bankRes : []);
 
             // 2. Fetch Vouchers for table (from paymentApi)
             const voucherRes = await getPaymentVouchers();
@@ -713,6 +720,7 @@ const PaymentVoucher = () => {
                     invoiceId: isOB ? null : invId,
                     notes: isOB ? `Opening Balance Payment${payNotes ? ': ' + payNotes : ''}` : payNotes,
                     chequeDate: paymentMethod === 'Cheque' ? chequeDate : null,
+                    bankAccount: paymentMethod !== 'Cash' ? bankAccount : null,
                 });
                 if (saved && saved.id) {
                     await updateVoucherStatus(saved.id, 'POSTED');
@@ -724,6 +732,7 @@ const PaymentVoucher = () => {
             setSettleAmounts({});
             setReceivedAmount('');
             setChequeDate('');
+            setBankAccount('');
             setReference('');
             setPayNotes('');
             fetchData();
@@ -1026,7 +1035,7 @@ const PaymentVoucher = () => {
                                                 </div>
                                                 <div>
                                                     <label className="block text-xs font-bold text-slate-500 mb-1">Method</label>
-                                                    <select value={paymentMethod} onChange={e => setPaymentMethod(e.target.value)}
+                                                    <select value={paymentMethod} onChange={e => { setPaymentMethod(e.target.value); setBankAccount(''); }}
                                                         className="w-full text-xs border border-slate-200 rounded px-3 py-2 focus:border-yellow-400 outline-none bg-white">
                                                         <option>Cash</option>
                                                         <option>Bank Transfer</option>
@@ -1035,6 +1044,22 @@ const PaymentVoucher = () => {
                                                     </select>
                                                 </div>
                                             </div>
+
+                                            {paymentMethod !== 'Cash' && (
+                                                <div className="animate-in fade-in slide-in-from-top-2 duration-200">
+                                                    <label className="block text-xs font-bold text-slate-500 mb-1">Bank Account <span className="text-red-500">*</span></label>
+                                                    <div className="relative">
+                                                        <Landmark className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400" />
+                                                        <select value={bankAccount} onChange={e => setBankAccount(e.target.value)}
+                                                            className="w-full pl-8 text-xs border border-slate-200 rounded px-3 py-2 focus:border-yellow-400 outline-none bg-white">
+                                                            <option value="">Select Bank Account...</option>
+                                                            {bankAccounts.map(acc => (
+                                                                <option key={acc.id} value={acc.name}>{acc.code} — {acc.name}</option>
+                                                            ))}
+                                                        </select>
+                                                    </div>
+                                                </div>
+                                            )}
 
                                             {paymentMethod === 'Cheque' && (
                                                 <div className="animate-in fade-in slide-in-from-top-2 duration-200">
