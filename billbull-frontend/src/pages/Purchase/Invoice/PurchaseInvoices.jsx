@@ -429,8 +429,8 @@ const PaymentModal = ({ invoice, onClose, onConfirm }) => {
                   key={mode.value}
                   onClick={() => { setPaymentMode(mode.value); setBankAccount(''); }}
                   className={`flex items-center gap-2.5 px-3 py-2.5 rounded-lg border-2 text-sm font-medium transition-all duration-150 ${paymentMode === mode.value
-                      ? 'border-[#F5C742] bg-[#FFF8E1] text-slate-800'
-                      : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300'
+                    ? 'border-[#F5C742] bg-[#FFF8E1] text-slate-800'
+                    : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300'
                     }`}
                 >
                   <span className="text-base leading-none">{mode.icon}</span>
@@ -940,26 +940,41 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
       setInvoiceType(type);
 
       // 2. Map Items (Now with FOC and Discount!)
-      const mappedItems = (editInvoice.items || []).map((item, idx) => ({
-        id: idx + 1,
-        code: item.itemCode,
-        barcode: resolveBarcode(item),
-        name: item.itemName,
-        image: item.image,
-        uom: item.uom,
-        qty: Number(item.qty),
-        cost: Number(item.unitCost),
-        tax: Number(item.taxPercent),
-        taxAmt: Number(item.taxAmount || 0),
-        taxAmount: Number(item.taxAmount || 0),
-        disc: Number(item.discountPercent || 0),
-        discount: Number(item.discountPercent || 0),
-        discountAmount: Number(item.discountAmount || 0),
-        foc: Number(item.focQty || 0),
-        focUnit: item.focUnit || item.uom || 'PCS',
-        lineTotal: Number(item.lineTotal),
-        remarks: item.remarks || ""
-      }));
+      const mappedItems = (editInvoice.items || []).map((item, idx) => {
+        const qty = Number(item.qty);
+        const grossUnitCost = Number(item.unitCost);
+        // For GRN invoices, backend may store netCost (post-discount) separately.
+        // Prefer netCost so calculateRow (which assumes cost=netCost for GRN) is correct.
+        const effectiveCost = type === SOURCE.GRN
+          ? Number(item.netCost ?? item.unitCost)
+          : grossUnitCost;
+        // Infer discountAmount from gross vs net difference when not explicitly stored.
+        const storedDiscountAmt = Number(item.discountAmount || 0);
+        const inferredDiscountAmt = type === SOURCE.GRN && item.netCost != null
+          ? Math.max(0, qty * grossUnitCost - qty * Number(item.netCost))
+          : 0;
+        const resolvedDiscountAmt = storedDiscountAmt > 0 ? storedDiscountAmt : inferredDiscountAmt;
+        return {
+          id: idx + 1,
+          code: item.itemCode,
+          barcode: resolveBarcode(item),
+          name: item.itemName,
+          image: item.image,
+          uom: item.uom,
+          qty,
+          cost: effectiveCost,
+          tax: Number(item.taxPercent),
+          taxAmt: Number(item.taxAmount || 0),
+          taxAmount: Number(item.taxAmount || 0),
+          disc: Number(item.discountPercent || 0),
+          discount: Number(item.discountPercent || 0),
+          discountAmount: resolvedDiscountAmt,
+          foc: Number(item.focQty || 0),
+          focUnit: item.focUnit || item.uom || 'PCS',
+          lineTotal: Number(item.lineTotal),
+          remarks: item.remarks || ""
+        };
+      });
 
       // 3. Set Form Data
       setFormData({
@@ -1671,7 +1686,7 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
       unitCost: i.cost,
 
       discountPercent: invoiceType === SOURCE.GRN ? 0 : Number(i.discount ?? i.disc ?? 0),
-      discountAmount: invoiceType === SOURCE.GRN ? 0 : calculateRow(i).discAmt,
+      discountAmount: invoiceType === SOURCE.GRN ? Number(i.discountAmount || 0) : calculateRow(i).discAmt,
 
       // Preserve actual tax rate — no longer forced to 0 for GRN (backend needs it for audit).
       taxPercent: i.tax ?? 0,
@@ -1886,8 +1901,8 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
                   readOnly={isInvoiceLocked}
                   onChange={(e) => setFormData({ ...formData, vendorInvoiceNo: e.target.value })}
                   className={`w-full text-xs border rounded-md py-2 px-3 focus:ring-1 focus:ring-[#F5C742] outline-none read-only:bg-slate-50 ${!formData.vendorInvoiceNo?.trim() && !isInvoiceLocked
-                      ? "border-red-300 bg-red-50"
-                      : "border-slate-200"
+                    ? "border-red-300 bg-red-50"
+                    : "border-slate-200"
                     }`}
                 />
                 {!formData.vendorInvoiceNo?.trim() && !isInvoiceLocked && (

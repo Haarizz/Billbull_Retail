@@ -444,7 +444,8 @@ const ProductSelector = ({
         saveRecent(product);
         syncRecentProducts(product);
         onSelect(product);
-    }, [onSelect, syncRecentProducts]);
+        onClose(); // ✅ Force close modal after immediate selection
+    }, [onSelect, syncRecentProducts, onClose]);
 
     const handleInlineAdd = useCallback(() => {
         if (!selectedProduct || !inlineEntryEnabled) return;
@@ -472,27 +473,10 @@ const ProductSelector = ({
     ]);
 
     const handleInlineButtonAdd = useCallback((product) => {
-        if (!inlineEntryEnabled) {
-            handleImmediateSelect(product);
-            return;
-        }
-
-        const defaults = getInlineDefaults(product);
-        onInlineAdd(defaults.normalizedProduct, defaults.qty, defaults.price, defaults.disc);
-        saveRecent(defaults.normalizedProduct);
-        syncRecentProducts(defaults.normalizedProduct);
-        clearInlineEntry('');
-        fetchProducts('', 0, warehouseId);
-    }, [
-        clearInlineEntry,
-        fetchProducts,
-        getInlineDefaults,
-        handleImmediateSelect,
-        inlineEntryEnabled,
-        onInlineAdd,
-        syncRecentProducts,
-        warehouseId,
-    ]);
+        // ✅ ALWAYS call handleImmediateSelect for the card's "Select" button.
+        // This ensures clicking the button closes the modal and adds the item.
+        handleImmediateSelect(product);
+    }, [handleImmediateSelect]);
 
     // Reset + load when modal opens; clean up on close
     useEffect(() => {
@@ -589,6 +573,7 @@ const ProductSelector = ({
         fetchProducts(searchQuery, newPage, warehouseId);
     };
 
+    // Keyboard / Enter → show inline entry form (fast entry flow)
     const handleSelect = useCallback((product) => {
         if (inlineEntryEnabled) {
             primeInlineEntry(product);
@@ -597,6 +582,19 @@ const ProductSelector = ({
 
         handleImmediateSelect(product);
     }, [handleImmediateSelect, inlineEntryEnabled, primeInlineEntry]);
+
+    // Mouse click → add immediately with defaults and close the modal
+    const handleMouseSelect = useCallback((product) => {
+        if (inlineEntryEnabled) {
+            const defaults = getInlineDefaults(product);
+            onInlineAdd(defaults.normalizedProduct, defaults.qty, defaults.price, defaults.disc);
+            saveRecent(defaults.normalizedProduct);
+            syncRecentProducts(defaults.normalizedProduct);
+            onClose();
+            return;
+        }
+        handleImmediateSelect(product);
+    }, [getInlineDefaults, handleImmediateSelect, inlineEntryEnabled, onClose, onInlineAdd, syncRecentProducts]);
 
     if (!isOpen) return null;
 
@@ -775,7 +773,7 @@ const ProductSelector = ({
                                 {recentProducts.map(rp => (
                                     <button
                                         key={rp.id}
-                                        onClick={() => handleSelect(rp)}
+                                        onClick={() => handleMouseSelect(rp)}
                                         className="flex items-center gap-2 px-3 py-1.5 bg-white border border-slate-200 rounded-full hover:border-emerald-400 hover:shadow-sm transition-all group"
                                     >
                                         {rp.image ? (
@@ -832,7 +830,7 @@ const ProductSelector = ({
                             return (
                                 <div
                                     key={product.id}
-                                    onClick={() => handleSelect(product)}
+                                    onClick={() => handleMouseSelect(product)}
                                     className={`
                                         bg-white border rounded p-4 flex justify-between items-start shadow-sm
                                         cursor-pointer transition-all duration-200
@@ -882,7 +880,7 @@ const ProductSelector = ({
                                             {gp != null && <div className="text-[9px] text-slate-400">GP: {gp}</div>}
                                         </div>
                                         <button
-                                            onClick={(e) => { e.stopPropagation(); handleInlineButtonAdd(product); }}
+                                            onClick={(e) => { e.stopPropagation(); handleMouseSelect(product); }}
                                             className="bg-[#FFD700] text-slate-800 px-4 py-1.5 rounded-md text-[11px] font-bold flex items-center gap-1.5 hover:bg-[#FACC15] transition-colors shadow-sm"
                                         >
                                             <Plus size={12} strokeWidth={2.5} /> {inlineEntryEnabled ? 'Select' : actionLabel}

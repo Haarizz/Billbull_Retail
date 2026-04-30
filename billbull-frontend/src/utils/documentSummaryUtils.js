@@ -84,12 +84,18 @@ export const summarizeSalesItems = (items = [], billDiscountPercent = 0) => {
         grandTotal: 0,
     });
 
-    const billDiscountAmount = summary.subTotal * (toNumber(billDiscountPercent) / 100);
+    const billDiscountPercentValue = toNumber(billDiscountPercent);
+    const billDiscountAmount = summary.subTotal * (billDiscountPercentValue / 100);
+    
+    // ✅ ERP FIX: Apply tax AFTER bill discount
+    // We can proportionally reduce the total tax by the same percentage as the bill discount
+    const finalTax = summary.tax * (1 - billDiscountPercentValue / 100);
 
     return {
         ...summary,
         billDiscountAmount,
-        grandTotal: summary.subTotal - billDiscountAmount + summary.tax,
+        tax: finalTax, // Overwrite with discounted tax
+        grandTotal: summary.subTotal - billDiscountAmount + finalTax,
     };
 };
 

@@ -480,6 +480,38 @@ const DeliveryNote = () => {
 
     const getRequiredPickingQty = (item) => Math.max(Number(item?.currentQty) || 0, 0);
 
+    const formatPickingQty = (qty, item) => {
+        if (!item) return String(qty || 0);
+        const sellingUnit = item.unit || 'PCS';
+        const conversions = item.unitConversions || {};
+
+        if (!conversions || typeof conversions !== 'object' || Array.isArray(conversions)) {
+            return `${qty} ${sellingUnit}`;
+        }
+
+        // Find base unit (lowest factor, usually 1)
+        const entries = Object.entries(conversions)
+            .map(([u, f]) => [u, Number(f)])
+            .filter(([, f]) => f > 0)
+            .sort((a, b) => a[1] - b[1]);
+
+        const baseUnitEntry = entries[0];
+        const baseUnit = baseUnitEntry ? baseUnitEntry[0] : null;
+
+        // If no conversions or selling unit is already the base unit
+        if (!baseUnit || baseUnit === sellingUnit || entries.length < 2) {
+            return `${qty} ${sellingUnit}`;
+        }
+
+        const sellingFactor = Number(conversions[sellingUnit]) || 1;
+        const baseFactor = baseUnitEntry[1] || 1;
+        
+        // Calculate qty in base units
+        const baseQty = Number(((Number(qty) * sellingFactor) / baseFactor).toFixed(2));
+
+        return `${qty} ${sellingUnit} (${baseQty} ${baseUnit})`;
+    };
+
     const getPickedQty = (noteId, itemId) =>
         Number(pickedItemsByNote[noteId]?.[itemId] || 0);
 
@@ -2391,7 +2423,7 @@ const DeliveryNote = () => {
                                             </tr>
                                         </thead>
                                         <tbody className="divide-y divide-slate-100">
-                                            {activePickingNotes.map((note) => {
+                                            {activePickingNotes.length > 0 ? activePickingNotes.map((note) => {
                                                 const progress = getPickingProgress(note);
                                                 const isSelected = selectedPickingNote?.id === note.id;
 
@@ -2423,8 +2455,8 @@ const DeliveryNote = () => {
                                                                 <div className="flex-1 h-2 rounded-full bg-slate-100 overflow-hidden">
                                                                     <div className="h-full bg-emerald-500 transition-all" style={{ width: `${progress.percent}%` }} />
                                                                 </div>
-                                                                <span className="text-[11px] font-bold text-slate-600 min-w-[78px] text-right">
-                                                                    {progress.pickedQty}/{progress.requiredQty}
+                                                                <span className="text-[11px] font-bold text-slate-600 min-w-[60px] text-right">
+                                                                    {`${progress.pickedQty}/${progress.requiredQty}`}
                                                                 </span>
                                                             </div>
                                                         </td>
@@ -2447,8 +2479,7 @@ const DeliveryNote = () => {
                                                         </td>
                                                     </tr>
                                                 );
-                                            })}
-                                            {activePickingNotes.length === 0 && (
+                                            }) : (
                                                 <tr>
                                                     <td colSpan="7" className="px-4 py-10 text-center text-slate-400">
                                                         No draft Picking notes match the current filter.
@@ -2603,17 +2634,17 @@ const DeliveryNote = () => {
                                                                     <td className="px-4 py-3 text-slate-500">
                                                                         {item.barcode || <span className="text-slate-300">No barcode</span>}
                                                                     </td>
-                                                                    <td className="px-4 py-3 text-center font-bold text-slate-700">{requiredQty}</td>
+                                                                    <td className="px-4 py-3 text-center font-bold text-slate-700 whitespace-nowrap">{formatPickingQty(requiredQty, item)}</td>
                                                                     <td className="px-4 py-3 text-center">
-                                                                        <span className={`px-2 py-1 rounded text-[11px] font-bold border ${
+                                                                        <span className={`px-2 py-1 rounded text-[11px] font-bold border whitespace-nowrap ${
                                                                             pickedQty >= requiredQty
                                                                                 ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
                                                                                 : 'bg-amber-50 text-amber-700 border-amber-200'
                                                                         }`}>
-                                                                            {pickedQty}
+                                                                            {formatPickingQty(pickedQty, item)}
                                                                         </span>
                                                                     </td>
-                                                                    <td className="px-4 py-3 text-center font-medium text-slate-500">{remainingQty}</td>
+                                                                    <td className="px-4 py-3 text-center font-medium text-slate-500 whitespace-nowrap">{formatPickingQty(remainingQty, item)}</td>
                                                                     <td className="px-4 py-3">
                                                                         <div className="flex justify-end items-center gap-2">
                                                                             <button
