@@ -245,6 +245,9 @@ public class GrnService {
             item.setUnitCost(i.unitCost());
             item.setNetCost(i.netCost());
             item.setLineTotal(i.total());
+            item.setDiscountPercent(i.discountPercent() != null ? i.discountPercent() : BigDecimal.ZERO);
+            item.setTaxAmount(i.taxAmt());
+            item.setPurchaseTax(i.purchaseTax());
             item.setBatchManaged(i.batch());
             item.setFocQty(i.focQty());
             item.setFocUnit(i.focUnit());
@@ -259,12 +262,17 @@ public class GrnService {
         BigDecimal tax = grn.getItems().stream()
                 .map(item -> {
                     BigDecimal lineTotal = item.getLineTotal() != null ? item.getLineTotal() : BigDecimal.ZERO;
-                    BigDecimal taxPercent = (item.getProduct() != null
+                    if (item.getTaxAmount() != null) {
+                        return item.getTaxAmount();
+                    }
+                    BigDecimal taxPercent = item.getPurchaseTax() != null
+                            ? item.getPurchaseTax()
+                            : (item.getProduct() != null
                             && item.getProduct().getTax() != null
                             && item.getProduct().getTax().getPurchaseTax() != null)
                             ? item.getProduct().getTax().getPurchaseTax()
                             : BigDecimal.valueOf(5);
-                    return lineTotal.multiply(taxPercent).divide(BigDecimal.valueOf(100));
+                    return lineTotal.multiply(taxPercent).divide(BigDecimal.valueOf(100), 2, RoundingMode.HALF_UP);
                 })
                 .reduce(BigDecimal.ZERO, BigDecimal::add)
                 .setScale(2, RoundingMode.HALF_UP);
@@ -521,11 +529,15 @@ public class GrnService {
                         i.getUnitCost(),
                         i.getNetCost(),
                         i.getLineTotal(),
+                        i.getDiscountPercent(),
+                        i.getTaxAmount(),
                         i.isBatchManaged(),
                         i.getFocQty(),
                         i.getFocUnit(),
                         i.getRemarks(),
-                        (i.getProduct().getTax() != null && i.getProduct().getTax().getPurchaseTax() != null)
+                        i.getPurchaseTax() != null
+                                ? i.getPurchaseTax()
+                                : (i.getProduct().getTax() != null && i.getProduct().getTax().getPurchaseTax() != null)
                                 ? i.getProduct().getTax().getPurchaseTax()
                                 : java.math.BigDecimal.valueOf(5))).toList(),
                 g.getBranchId(),

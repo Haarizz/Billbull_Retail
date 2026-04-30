@@ -896,16 +896,34 @@ const EditorView = ({ initialData, onSaveDraft, onSubmitQC, onPost, onPrint, grn
     if (initialData.locatorId) getLocatorBins(initialData.locatorId).then(setBinList).catch(console.error);
 
     setItems(
-      initialData.items.map(i => recalculateItemTotals({
-        ...i,
-        disc: Number(i.discountPercent || i.disc || 0),
-        tax: parseFloat(i.purchaseTax) || parseFloat(i.tax) || 5,
-        taxAmt: Number(i.taxAmt || 0),
-        foc: Number(i.foc || i.focQty || 0),
-        focUnit: i.focUnit || i.uom || 'PCS',
-        remarks: i.remarks || '',
-        variance: i.received - i.lpoQty
-      }))
+      initialData.items.map(i => {
+        const acceptedQty = Number(i.accepted ?? i.acceptedQty ?? 0);
+        const unitCost = Number(i.unitCost ?? 0);
+        const storedLineTotal = Number(i.total ?? i.lineTotal ?? 0);
+        const netCost = Number(i.netCost ?? (acceptedQty > 0 ? storedLineTotal / acceptedQty : unitCost));
+        const netLineTotal = storedLineTotal || (acceptedQty * netCost);
+        const grossLineTotal = acceptedQty * unitCost;
+        const inferredDiscountAmount = Math.max(0, grossLineTotal - netLineTotal);
+        const inferredDiscountPercent = grossLineTotal > 0
+          ? (inferredDiscountAmount / grossLineTotal) * 100
+          : 0;
+        const taxPercent = parseFloat(i.purchaseTax) || parseFloat(i.tax) || 5;
+
+        return recalculateItemTotals({
+          ...i,
+          unitCost,
+          netCost,
+          total: netLineTotal,
+          discountAmount: Number(i.discountAmount ?? inferredDiscountAmount),
+          disc: Number(i.discountPercent ?? i.disc ?? inferredDiscountPercent),
+          tax: taxPercent,
+          taxAmt: Number(i.taxAmt ?? i.taxAmount ?? ((netLineTotal * taxPercent) / 100)),
+          foc: Number(i.foc || i.focQty || 0),
+          focUnit: i.focUnit || i.uom || 'PCS',
+          remarks: i.remarks || '',
+          variance: i.received - i.lpoQty
+        });
+      })
     );
   }, [initialData]);
 

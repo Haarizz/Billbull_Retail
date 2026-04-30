@@ -1278,7 +1278,9 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
         const cost = Number(item.netCost ?? item.unitCost ?? item.unit_cost ?? 0);
         const originalCost = Number(item.unitCost ?? item.unit_cost ?? cost);
         const lineGross = qty * cost;
-        const inferredDiscount = Math.max(0, (qty * originalCost) - lineGross);
+        const originalGross = qty * originalCost;
+        const inferredDiscount = Math.max(0, originalGross - lineGross);
+        const inferredDiscountPercent = originalGross > 0 ? (inferredDiscount / originalGross) * 100 : 0;
 
         // Preserve the actual per-item tax rate (not a hardcoded 5%).
         const taxPercent = Number(item.purchaseTax ?? item.taxPercent ?? item.tax ?? 5);
@@ -1303,8 +1305,8 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
           taxAmt: itemTaxAmt,
           taxAmount: itemTaxAmt,
           lineTotal: (qty * cost) + itemTaxAmt, // qty × netCost + tax
-          disc: 0,
-          discount: 0,
+          disc: Number(item.discountPercent ?? item.disc ?? inferredDiscountPercent),
+          discount: Number(item.discountPercent ?? item.disc ?? inferredDiscountPercent),
           discountAmount: inferredDiscount,
           foc: Number(item.focQty || 0),
           focUnit: item.focUnit || item.uom || 'PCS',
@@ -1576,22 +1578,13 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
   }, [formData.items, invoiceType]);
 
   const summaryTotals = useMemo(() => {
-    if (invoiceType !== SOURCE.GRN) {
-      return {
-        subtotal: totals.subtotal,
-        discount: totals.discount,
-        tax: totals.tax,
-        grandTotal: totals.grandTotal
-      };
-    }
-
-    const subtotal = Number(formData.grnSubTotal || totals.subtotal || 0);
-    const tax = Number(formData.grnTaxTotal || totals.tax || 0);
-    const discount = Number(totals.discount || 0);
-    const grandTotal = Number(formData.grnGrandTotal || (subtotal + tax) || totals.grandTotal || 0);
-
-    return { subtotal, discount, tax, grandTotal };
-  }, [formData.grnGrandTotal, formData.grnSubTotal, formData.grnTaxTotal, invoiceType, totals.discount, totals.grandTotal, totals.subtotal, totals.tax]);
+    return {
+      subtotal: totals.subtotal,
+      discount: totals.discount,
+      tax: totals.tax,
+      grandTotal: totals.grandTotal
+    };
+  }, [totals.discount, totals.grandTotal, totals.subtotal, totals.tax]);
 
 
   const grandTotalWithLanded = summaryTotals.grandTotal + (isLandedCostAllowed ? landedCost : 0);
@@ -1685,7 +1678,7 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
       focUnit: i.focUnit || i.uom || 'PCS',
       unitCost: i.cost,
 
-      discountPercent: invoiceType === SOURCE.GRN ? 0 : Number(i.discount ?? i.disc ?? 0),
+      discountPercent: Number(i.discount ?? i.disc ?? 0),
       discountAmount: invoiceType === SOURCE.GRN ? Number(i.discountAmount || 0) : calculateRow(i).discAmt,
 
       // Preserve actual tax rate — no longer forced to 0 for GRN (backend needs it for audit).

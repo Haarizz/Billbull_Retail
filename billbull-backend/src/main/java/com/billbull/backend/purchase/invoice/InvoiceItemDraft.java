@@ -13,6 +13,7 @@ public class InvoiceItemDraft {
     private Integer focQty; // Added
     private String focUnit;
     private BigDecimal unitCost;
+    private BigDecimal netCost;
 
     private BigDecimal discountPercent; // Added
     private BigDecimal discountAmount; // Added
@@ -97,6 +98,14 @@ public class InvoiceItemDraft {
 
     public void setUnitCost(BigDecimal unitCost) {
         this.unitCost = unitCost;
+    }
+
+    public BigDecimal getNetCost() {
+        return netCost;
+    }
+
+    public void setNetCost(BigDecimal netCost) {
+        this.netCost = netCost;
     }
 
     public BigDecimal getDiscountPercent() {
