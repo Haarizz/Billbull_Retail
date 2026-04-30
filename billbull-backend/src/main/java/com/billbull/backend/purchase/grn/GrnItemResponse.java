@@ -17,6 +17,8 @@ public record GrnItemResponse(
         BigDecimal unitCost,
         BigDecimal netCost,
         BigDecimal total,
+        BigDecimal discountPercent,
+        BigDecimal taxAmt,
         boolean batch,
         Integer focQty,
         String focUnit,

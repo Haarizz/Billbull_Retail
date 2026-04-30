@@ -316,28 +316,53 @@ public class PurchaseInvoiceService {
             d.setImage(imageMap.get(i.getProductCode()));
             d.setUom(i.getUom());
             d.setQty(i.getAcceptedQty());
-            d.setUnitCost(i.getUnitCost());
+            BigDecimal qty = BigDecimal.valueOf(i.getAcceptedQty() != null ? i.getAcceptedQty() : 0);
+            BigDecimal grossUnitCost = nvl(i.getUnitCost());
+            BigDecimal netLineBase = i.getLineTotal() != null
+                    ? i.getLineTotal()
+                    : (i.getNetCost() != null ? i.getNetCost() : grossUnitCost).multiply(qty);
+            BigDecimal netUnitCost = i.getNetCost() != null
+                    ? i.getNetCost()
+                    : (qty.compareTo(BigDecimal.ZERO) > 0
+                            ? netLineBase.divide(qty, 4, java.math.RoundingMode.HALF_UP)
+                            : grossUnitCost);
+            BigDecimal grossBase = grossUnitCost.multiply(qty);
+            BigDecimal discountAmount = grossBase.subtract(netLineBase).max(BigDecimal.ZERO).setScale(2, java.math.RoundingMode.HALF_UP);
+            BigDecimal discountPercent = i.getDiscountPercent() != null
+                    ? i.getDiscountPercent()
+                    : (grossBase.compareTo(BigDecimal.ZERO) > 0
+                            ? discountAmount.multiply(BigDecimal.valueOf(100)).divide(grossBase, 4, java.math.RoundingMode.HALF_UP)
+                            : BigDecimal.ZERO);
 
-            BigDecimal taxPercent = (i.getProduct() != null
+            d.setUnitCost(netUnitCost);
+            d.setNetCost(netUnitCost);
+            d.setDiscountPercent(discountPercent);
+            d.setDiscountAmount(discountAmount);
+
+            BigDecimal taxPercent = i.getPurchaseTax() != null
+                    ? i.getPurchaseTax()
+                    : (i.getProduct() != null
                     && i.getProduct().getTax() != null
                     && i.getProduct().getTax().getPurchaseTax() != null)
                     ? i.getProduct().getTax().getPurchaseTax()
                     : BigDecimal.valueOf(5);
-            BigDecimal base = i.getUnitCost()
-                    .multiply(BigDecimal.valueOf(i.getAcceptedQty()));
-            BigDecimal taxAmount = base
-                    .multiply(taxPercent)
-                    .divide(BigDecimal.valueOf(100), 2, java.math.RoundingMode.HALF_UP);
+            BigDecimal taxAmount = i.getTaxAmount() != null
+                    ? i.getTaxAmount()
+                    : netLineBase
+                            .multiply(taxPercent)
+                            .divide(BigDecimal.valueOf(100), 2, java.math.RoundingMode.HALF_UP);
 
             d.setTaxPercent(taxPercent);
             d.setTaxAmount(taxAmount);
-            d.setLineTotal(base.add(taxAmount));
+            d.setLineTotal(netLineBase.add(taxAmount));
 
             return d;
         }).toList();
 
         for (InvoiceItemDraft d : lineItems) {
-            BigDecimal lineBase = d.getUnitCost().multiply(BigDecimal.valueOf(d.getQty()));
+            BigDecimal lineBase = d.getNetCost() != null
+                    ? d.getNetCost().multiply(BigDecimal.valueOf(d.getQty() != null ? d.getQty() : 0))
+                    : d.getLineTotal().subtract(d.getTaxAmount() != null ? d.getTaxAmount() : BigDecimal.ZERO);
             headerSubTotal = headerSubTotal.add(lineBase);
             headerTaxTotal = headerTaxTotal.add(d.getTaxAmount());
         }
@@ -863,6 +888,7 @@ public class PurchaseInvoiceService {
                 d.setFocQty(i.getFocQty());
                 d.setFocUnit(i.getFocUnit());
                 d.setUnitCost(i.getUnitCost());
+                d.setNetCost(i.getUnitCost());
                 d.setDiscountPercent(i.getDiscountPercent());
                 d.setDiscountAmount(i.getDiscountAmount());
                 d.setTaxPercent(i.getTaxPercent());
