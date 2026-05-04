@@ -49,6 +49,10 @@ import {
     rejectStockTakeSession,
     deleteStockTakeSession,
     getProductsForStockTake,
+    addItemBatch,
+    updateItemBatch,
+    deleteItemBatch,
+    previewNextBatchNumber,
 } from '../../../api/stockTakeApi';
 
 const parseImpactAmount = (impact) => {
@@ -63,6 +67,207 @@ const ImpactAmount = ({ value }) => {
     const amount = parseImpactAmount(value);
     if (!amount) return '-';
     return <>{amount > 0 ? '+' : ''}<CurrencyAmount value={Math.abs(amount)} /></>;
+};
+
+// Batch / expiry editor — rendered inside the count modal for batch-enabled items.
+// countedQty is derived from the sum of batch quantities (server-side); the user enters per-batch rows here.
+const BatchEditor = ({ item, disabled, onChange }) => {
+    const [batches, setBatches] = useState(item?.batches || []);
+    const [draft, setDraft] = useState({ batchNumber: '', expiryDate: '', quantity: 1 });
+    const [busy, setBusy] = useState(false);
+    const [error, setError] = useState('');
+
+    useEffect(() => { setBatches(item?.batches || []); }, [item?.id, item?.batches]);
+
+    const expiryRequired = !!item?.expiryEnabled;
+
+    const handlePrefillBatchNumber = async () => {
+        if (!item?.id) return;
+        try {
+            const res = await previewNextBatchNumber(item.id);
+            setDraft(d => ({ ...d, batchNumber: res?.batchNumber || '' }));
+        } catch (e) {
+            // non-fatal
+        }
+    };
+
+    const handleAdd = async () => {
+        setError('');
+        const qty = parseInt(draft.quantity, 10);
+        if (!Number.isFinite(qty) || qty <= 0) { setError('Quantity must be > 0'); return; }
+        if (expiryRequired && !draft.expiryDate) { setError('Expiry date is required'); return; }
+        setBusy(true);
+        try {
+            const saved = await addItemBatch(item.id, {
+                batchNumber: draft.batchNumber?.trim() || null,
+                expiryDate: draft.expiryDate || null,
+                quantity: qty,
+            });
+            const next = [...batches, saved];
+            setBatches(next);
+            setDraft({ batchNumber: '', expiryDate: '', quantity: 1 });
+            onChange?.(next);
+        } catch (e) {
+            setError(e?.response?.data?.message || 'Failed to add batch');
+        } finally {
+            setBusy(false);
+        }
+    };
+
+    const handleDelete = async (id) => {
+        setBusy(true);
+        try {
+            await deleteItemBatch(id);
+            const next = batches.filter(b => b.id !== id);
+            setBatches(next);
+            onChange?.(next);
+        } catch (e) {
+            setError(e?.response?.data?.message || 'Failed to delete batch');
+        } finally {
+            setBusy(false);
+        }
+    };
+
+    const handleUpdate = async (id, patch) => {
+        setBusy(true);
+        try {
+            const saved = await updateItemBatch(id, patch);
+            const next = batches.map(b => (b.id === id ? saved : b));
+            setBatches(next);
+            onChange?.(next);
+        } catch (e) {
+            setError(e?.response?.data?.message || 'Failed to update batch');
+        } finally {
+            setBusy(false);
+        }
+    };
+
+    const total = batches.reduce((s, b) => s + (parseInt(b.quantity, 10) || 0), 0);
+
+    return (
+        <div className="bg-white border border-slate-200 rounded-xl p-3">
+            <div className="flex items-center justify-between mb-2">
+                <div>
+                    <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wide">Batches</p>
+                    <p className="text-[10px] text-slate-400">Counted quantity = sum of batch quantities ({total})</p>
+                </div>
+            </div>
+
+            {batches.length > 0 && (
+                <div className="border border-slate-100 rounded-lg overflow-hidden mb-3">
+                    <table className="w-full text-xs">
+                        <thead className="bg-slate-50 text-[10px] uppercase tracking-wide text-slate-500">
+                            <tr>
+                                <th className="px-2 py-1.5 text-left">Batch #</th>
+                                <th className="px-2 py-1.5 text-left">Expiry</th>
+                                <th className="px-2 py-1.5 text-right">Qty</th>
+                                <th className="px-2 py-1.5"></th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {batches.map(b => (
+                                <tr key={b.id} className="border-t border-slate-100">
+                                    <td className="px-2 py-1.5 font-mono text-[11px]">{b.batchNumber}</td>
+                                    <td className="px-2 py-1.5">
+                                        <input
+                                            type="date"
+                                            disabled={disabled || busy}
+                                            value={b.expiryDate || ''}
+                                            onChange={(e) => handleUpdate(b.id, { expiryDate: e.target.value || null })}
+                                            className="border border-slate-200 rounded px-1 py-0.5 text-[11px]"
+                                        />
+                                    </td>
+                                    <td className="px-2 py-1.5 text-right">
+                                        <input
+                                            type="number"
+                                            min={1}
+                                            disabled={disabled || busy}
+                                            defaultValue={b.quantity}
+                                            onBlur={(e) => {
+                                                const v = parseInt(e.target.value, 10);
+                                                if (Number.isFinite(v) && v > 0 && v !== b.quantity) {
+                                                    handleUpdate(b.id, { quantity: v });
+                                                }
+                                            }}
+                                            className="w-16 border border-slate-200 rounded px-1 py-0.5 text-[11px] text-right"
+                                        />
+                                    </td>
+                                    <td className="px-2 py-1.5 text-right">
+                                        <button
+                                            type="button"
+                                            disabled={disabled || busy}
+                                            onClick={() => handleDelete(b.id)}
+                                            className="text-red-500 hover:text-red-700 disabled:opacity-50"
+                                        >
+                                            <Trash2 className="h-3.5 w-3.5" />
+                                        </button>
+                                    </td>
+                                </tr>
+                            ))}
+                        </tbody>
+                    </table>
+                </div>
+            )}
+
+            {!disabled && (
+                <div className="grid grid-cols-12 gap-2 items-end">
+                    <div className="col-span-5">
+                        <label className="block text-[10px] font-bold text-slate-500 mb-0.5">Batch Number</label>
+                        <div className="flex gap-1">
+                            <input
+                                type="text"
+                                placeholder="(auto)"
+                                value={draft.batchNumber}
+                                onChange={(e) => setDraft(d => ({ ...d, batchNumber: e.target.value }))}
+                                className="flex-1 border border-slate-200 rounded px-2 py-1 text-[11px]"
+                            />
+                            <button
+                                type="button"
+                                onClick={handlePrefillBatchNumber}
+                                title="Generate"
+                                className="px-2 py-1 text-[10px] font-bold border border-slate-200 rounded hover:bg-slate-50"
+                            >
+                                Gen
+                            </button>
+                        </div>
+                    </div>
+                    <div className="col-span-4">
+                        <label className="block text-[10px] font-bold text-slate-500 mb-0.5">
+                            Expiry {expiryRequired && <span className="text-red-500">*</span>}
+                        </label>
+                        <input
+                            type="date"
+                            value={draft.expiryDate}
+                            onChange={(e) => setDraft(d => ({ ...d, expiryDate: e.target.value }))}
+                            className="w-full border border-slate-200 rounded px-2 py-1 text-[11px]"
+                        />
+                    </div>
+                    <div className="col-span-2">
+                        <label className="block text-[10px] font-bold text-slate-500 mb-0.5">Qty</label>
+                        <input
+                            type="number"
+                            min={1}
+                            value={draft.quantity}
+                            onChange={(e) => setDraft(d => ({ ...d, quantity: e.target.value }))}
+                            className="w-full border border-slate-200 rounded px-2 py-1 text-[11px]"
+                        />
+                    </div>
+                    <div className="col-span-1">
+                        <button
+                            type="button"
+                            disabled={busy}
+                            onClick={handleAdd}
+                            className="w-full px-2 py-1 text-[11px] font-bold text-slate-900 bg-[#F5C742] hover:bg-amber-400 rounded disabled:opacity-50"
+                        >
+                            +
+                        </button>
+                    </div>
+                </div>
+            )}
+
+            {error && <p className="text-[10px] text-red-500 mt-2">{error}</p>}
+        </div>
+    );
 };
 
 // Compact bin selector used in the items table and count modal
@@ -983,7 +1188,8 @@ const SessionView = ({
                                                         type="number"
                                                         value={item.countedQty === null ? '' : item.countedQty}
                                                         onChange={(e) => handleCountChange(item.id, e.target.value)}
-                                                        disabled={selectedSession?.status !== 'In Progress' || entryMode !== 'manual'}
+                                                        disabled={selectedSession?.status !== 'In Progress' || entryMode !== 'manual' || item.batchEnabled}
+                                                        title={item.batchEnabled ? 'Open the item to manage batches' : undefined}
                                                         placeholder="0"
                                                         className={`w-16 px-1.5 py-0.5 rounded text-[10px] font-bold text-slate-900 text-center focus:ring-1 outline-none transition-all disabled:opacity-50 disabled:bg-slate-100 ${
                                                             binCapacityViolations.some(v => v.itemId === item.id)
@@ -1254,7 +1460,24 @@ const SessionView = ({
                                 </div>
                             </div>
 
-                            {/* Enter Counted Quantity */}
+                            {/* Batch / Expiry editor — for batch-enabled items, countedQty is derived from batches */}
+                            {selectedItemForCount.batchEnabled && (
+                                <BatchEditor
+                                    item={selectedItemForCount}
+                                    disabled={selectedSession?.status !== 'In Progress'}
+                                    onChange={(nextBatches) => {
+                                        const sum = nextBatches.reduce((s, b) => s + (parseInt(b.quantity, 10) || 0), 0);
+                                        setSelectedItemForCount(prev => ({
+                                            ...prev,
+                                            batches: nextBatches,
+                                            countedQty: sum,
+                                        }));
+                                    }}
+                                />
+                            )}
+
+                            {/* Enter Counted Quantity — hidden for batch-enabled items */}
+                            {!selectedItemForCount.batchEnabled && (
                             <div className="bg-[#FFF8E7] border border-[#FDE6A9] rounded-xl p-4">
 
                                 {/* Mode toggle — only for items already in the session with a prior count */}
@@ -1322,6 +1545,7 @@ const SessionView = ({
                                     </p>
                                 )}
                             </div>
+                            )}
 
                             {/* Bin capacity warning — checks TOTAL of all items in this bin, not just this item */}
                             {(() => {
@@ -1363,17 +1587,19 @@ const SessionView = ({
                                 onClick={() => setIsCountModalOpen(false)}
                                 className="px-5 py-2 text-xs font-bold text-slate-600 bg-white border border-slate-200 rounded-lg hover:bg-slate-50 transition-colors shadow-sm"
                             >
-                                Cancel
+                                {selectedItemForCount.batchEnabled ? 'Close' : 'Cancel'}
                             </button>
-                            <button
-                                onClick={submitCountAdd}
-                                className="px-5 py-2 flex items-center gap-2 text-xs font-bold text-slate-900 bg-[#F5C742] hover:bg-amber-400 rounded-lg shadow-sm transition-colors"
-                            >
-                                <Check className="h-4 w-4" />
-                                {countMode === 'add' && !selectedItemForCount?._fromSearch
-                                    ? 'Add to Count'
-                                    : 'Confirm Count'}
-                            </button>
+                            {!selectedItemForCount.batchEnabled && (
+                                <button
+                                    onClick={submitCountAdd}
+                                    className="px-5 py-2 flex items-center gap-2 text-xs font-bold text-slate-900 bg-[#F5C742] hover:bg-amber-400 rounded-lg shadow-sm transition-colors"
+                                >
+                                    <Check className="h-4 w-4" />
+                                    {countMode === 'add' && !selectedItemForCount?._fromSearch
+                                        ? 'Add to Count'
+                                        : 'Confirm Count'}
+                                </button>
+                            )}
                         </div>
                     </div>
                 </div>

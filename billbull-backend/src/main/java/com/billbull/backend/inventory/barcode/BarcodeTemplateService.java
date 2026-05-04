@@ -44,7 +44,8 @@ public class BarcodeTemplateService {
         existing.setType(updates.getType());
         existing.setFields(updates.getFields());
         existing.setPerPage(updates.getPerPage());
-        
+        existing.setBarcodeFormat(updates.getBarcodeFormat());
+
         return repository.save(existing);
     }
 
