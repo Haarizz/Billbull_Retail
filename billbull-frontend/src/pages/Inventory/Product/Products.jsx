@@ -72,6 +72,7 @@ const INITIAL_FORM_STATE = {
   productType: 'stock',
   isSerial: false,
   isBatch: false,
+  expiryEnabled: false,
   isWeighing: false,
   isDiscountAllowed: true,
   maxDiscount: 0,
@@ -159,6 +160,7 @@ const buildProductPayload = (formData) => {
       category: formData.category,
       isSerial: formData.isSerial,
       isBatch: formData.isBatch,
+      expiryEnabled: formData.expiryEnabled,
       isWeighing: formData.isWeighing,
       isDiscountAllowed: formData.isDiscountAllowed,
       maxDiscount: formData.maxDiscount,
@@ -711,7 +713,11 @@ const AddProductWizard = ({ onCancel, onSave, initialData, brands: initialBrands
                   </label>
                   <label className="flex items-center gap-2 cursor-pointer text-sm text-slate-600 hover:text-slate-900 transition-colors">
                     <input type="checkbox" className="rounded text-[#F5C742] focus:ring-[#F5C742]" checked={formData.isBatch} onChange={(e) => handleInputChange('isBatch', e.target.checked)} />
-                    Batch / Expiry Controlled
+                    Batch Controlled
+                  </label>
+                  <label className="flex items-center gap-2 cursor-pointer text-sm text-slate-600 hover:text-slate-900 transition-colors">
+                    <input type="checkbox" className="rounded text-[#F5C742] focus:ring-[#F5C742]" checked={formData.expiryEnabled} onChange={(e) => handleInputChange('expiryEnabled', e.target.checked)} />
+                    Expiry Tracked
                   </label>
                   <label className="flex items-center gap-2 cursor-pointer text-sm text-slate-600 hover:text-slate-900 transition-colors">
                     <input type="checkbox" className="rounded text-[#F5C742] focus:ring-[#F5C742]" checked={formData.isWeighing} onChange={(e) => handleInputChange('isWeighing', e.target.checked)} />
@@ -1935,6 +1941,7 @@ const Products = () => {
         productType: product?.productType ? product.productType.toLowerCase() : 'stock',
         isSerial: product?.isSerial || false,
         isBatch: product?.isBatch || false,
+        expiryEnabled: product?.expiryEnabled || false,
         isWeighing: product?.isWeighing || false,
         isDiscountAllowed: product?.isDiscountAllowed != null ? product.isDiscountAllowed : true,
         maxDiscount: product?.maxDiscount || 0,

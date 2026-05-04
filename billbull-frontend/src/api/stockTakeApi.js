@@ -82,3 +82,33 @@ export const updateItemBin = async (itemId, binId) => {
     const response = await axiosInstance.patch(url);
     return response.data;
 };
+
+export const addItemBatch = async (itemId, payload) => {
+    const response = await axiosInstance.post(
+        `/api/inventory/stock-take/items/${itemId}/batches`,
+        payload
+    );
+    return response.data;
+};
+
+export const updateItemBatch = async (batchId, payload) => {
+    const response = await axiosInstance.put(
+        `/api/inventory/stock-take/batches/${batchId}`,
+        payload
+    );
+    return response.data;
+};
+
+export const deleteItemBatch = async (batchId) => {
+    const response = await axiosInstance.delete(
+        `/api/inventory/stock-take/batches/${batchId}`
+    );
+    return response.data;
+};
+
+export const previewNextBatchNumber = async (itemId) => {
+    const response = await axiosInstance.get(
+        `/api/inventory/stock-take/items/${itemId}/batches/next-number`
+    );
+    return response.data;
+};

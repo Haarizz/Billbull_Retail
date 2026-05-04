@@ -1,15 +1,20 @@
 package com.billbull.backend.inventory.stocktake;
 
 import java.math.BigDecimal;
+import java.util.ArrayList;
+import java.util.List;
 
 import com.billbull.backend.common.BaseEntity;
 import com.fasterxml.jackson.annotation.JsonIgnore;
 
+import jakarta.persistence.CascadeType;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
 import jakarta.persistence.Enumerated;
+import jakarta.persistence.FetchType;
 import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
+import jakarta.persistence.OneToMany;
 import jakarta.persistence.Table;
 
 @Entity
@@ -44,6 +49,12 @@ public class StockTakeItem extends BaseEntity {
 
     @Enumerated(EnumType.STRING)
     private ItemStatus status; // PENDING, MATCHED, VARIANCE
+
+    private boolean batchEnabled;
+    private boolean expiryEnabled;
+
+    @OneToMany(mappedBy = "item", cascade = CascadeType.ALL, orphanRemoval = true, fetch = FetchType.EAGER)
+    private List<StockTakeItemBatch> batches = new ArrayList<>();
 
     public enum ItemStatus {
         PENDING, MATCHED, VARIANCE
@@ -106,4 +117,13 @@ public class StockTakeItem extends BaseEntity {
 
     public Long getLocatorId() { return locatorId; }
     public void setLocatorId(Long locatorId) { this.locatorId = locatorId; }
+
+    public boolean isBatchEnabled() { return batchEnabled; }
+    public void setBatchEnabled(boolean batchEnabled) { this.batchEnabled = batchEnabled; }
+
+    public boolean isExpiryEnabled() { return expiryEnabled; }
+    public void setExpiryEnabled(boolean expiryEnabled) { this.expiryEnabled = expiryEnabled; }
+
+    public List<StockTakeItemBatch> getBatches() { return batches; }
+    public void setBatches(List<StockTakeItemBatch> batches) { this.batches = batches; }
 }

@@ -120,6 +120,45 @@ public class StockTakeController {
         return ResponseEntity.ok().build();
     }
 
+    @PostMapping("/items/{itemId}/batches")
+    public ResponseEntity<?> addBatch(@PathVariable Long itemId, @RequestBody BatchRequest req) {
+        try {
+            return ResponseEntity.ok(service.addBatch(itemId, req.batchNumber, req.expiryDate, req.quantity));
+        } catch (IllegalStateException | IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body(java.util.Map.of("message", e.getMessage()));
+        }
+    }
+
+    @PutMapping("/batches/{batchId}")
+    public ResponseEntity<?> updateBatch(@PathVariable Long batchId, @RequestBody BatchRequest req) {
+        try {
+            return ResponseEntity.ok(service.updateBatch(batchId, req.batchNumber, req.expiryDate, req.quantity));
+        } catch (IllegalStateException | IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body(java.util.Map.of("message", e.getMessage()));
+        }
+    }
+
+    @org.springframework.web.bind.annotation.DeleteMapping("/batches/{batchId}")
+    public ResponseEntity<?> deleteBatch(@PathVariable Long batchId) {
+        try {
+            service.deleteBatch(batchId);
+            return ResponseEntity.ok().build();
+        } catch (IllegalStateException e) {
+            return ResponseEntity.badRequest().body(java.util.Map.of("message", e.getMessage()));
+        }
+    }
+
+    @GetMapping("/items/{itemId}/batches/next-number")
+    public ResponseEntity<?> previewNextBatchNumber(@PathVariable Long itemId) {
+        return ResponseEntity.ok(java.util.Map.of("batchNumber", service.previewNextBatchNumber(itemId)));
+    }
+
+    public static class BatchRequest {
+        public String batchNumber;
+        public java.time.LocalDate expiryDate;
+        public Integer quantity;
+    }
+
     public static class StockTakeSessionRequest {
         public String warehouseName;
         public Long warehouseId;

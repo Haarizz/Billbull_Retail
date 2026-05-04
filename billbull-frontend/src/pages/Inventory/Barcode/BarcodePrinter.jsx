@@ -12,6 +12,7 @@ import { getLpos } from "../../../api/lpoApi";
 import { getPostedPurchaseInvoices } from '../../../api/purchaseInvoiceApi';
 import { getVendors } from "../../../api/vendorsApi";
 import { getBarcodeTemplates, createBarcodeTemplate, updateBarcodeTemplate, deleteBarcodeTemplate } from '../../../api/barcodeTemplateApi';
+import { getStockTakeSessions, getStockTakeSession } from '../../../api/stockTakeApi';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useCompany } from "../../../context/CompanyContext";
 import { getImageUrl } from "../../../utils/urlUtils";
@@ -152,9 +153,10 @@ const getBarcodeRenderOptions = (template) => {
     const height = Number(template?.height) || 25;
     const width = Number(template?.width) || 40;
     const isSmallHeight = height <= 25;
+    const format = template?.barcodeFormat || "CODE128";
 
     return {
-        format: "CODE128",
+        format,
         width: width < 50 ? 1.4 : 1.8,
         height: isSmallHeight ? 32 : (height < 30 ? 40 : 55),
         displayValue: false,
@@ -196,6 +198,11 @@ const BarcodePrinter = () => {
 
     // Modal State
     const [showSearchModal, setShowSearchModal] = useState(false);
+    const [showStockTakeModal, setShowStockTakeModal] = useState(false);
+    const [stockTakeSessions, setStockTakeSessions] = useState([]);
+    const [stockTakeLoading, setStockTakeLoading] = useState(false);
+    const [openedStockTakeSession, setOpenedStockTakeSession] = useState(null);
+    const [selectedBatchKeys, setSelectedBatchKeys] = useState({}); // key -> { selected, labelCount }
     const [allPurchaseOrders, setAllPurchaseOrders] = useState([]); // Master list
     const [displayedPurchaseOrders, setDisplayedPurchaseOrders] = useState([]); // Filtered list
     const [vendors, setVendors] = useState([]);
@@ -233,10 +240,16 @@ const BarcodePrinter = () => {
     });
 
     const handleEditTemplate = (template) => {
-        // Parse fields string "x fields" to object if needed, or if we change data structure
-        // For now, let's just copy width/height/name and default fields
+        // System templates have string ids (e.g. 'standard_40x25') and aren't persisted.
+        // Editing one means cloning into a new DB-backed template — null the id and rename.
+        const isSystemSeed = typeof template.id === 'string';
+        const baseTemplate = isSystemSeed
+            ? { ...template, id: null, name: `${template.name} (Copy)` }
+            : { ...template };
+
         setEditingTemplate({
-            ...template,
+            ...baseTemplate,
+            barcodeFormat: template.barcodeFormat || 'CODE128',
             // If template has fields object, use it; else fallback to defaults
             fields: (template.fields && typeof template.fields === 'object') ? {
                 barcode: true,
@@ -273,6 +286,7 @@ const BarcodePrinter = () => {
             height: 25,
             type: 'Roll',
             perPage: 1,
+            barcodeFormat: 'CODE128',
             fields: {
                 barcode: true,
                 qr: false,
@@ -340,23 +354,21 @@ const BarcodePrinter = () => {
 
     const saveNewTemplate = async () => {
         try {
-            // Check if trying to edit system template
-            const isSystem = TEMPLATES.some(t => t.id === editingTemplate.id);
-            if (isSystem) {
-                alert("Cannot modify system template directly. Please Create New.");
-                return;
-            }
-
+            // Send only fields the server cares about — drop BaseEntity audit fields
+            // (createdAt/updatedAt/createdBy/updatedBy/active) so Jackson doesn't trip on them.
             const payload = {
-                ...editingTemplate,
-                fields: JSON.stringify(editingTemplate.fields),
+                name: editingTemplate.name,
+                description: editingTemplate.description || '',
+                type: editingTemplate.type || 'Roll',
                 width: Number(editingTemplate.width),
                 height: Number(editingTemplate.height),
-                perPage: Number(editingTemplate.perPage)
+                perPage: Number(editingTemplate.perPage) || 1,
+                barcodeFormat: editingTemplate.barcodeFormat || 'CODE128',
+                fields: JSON.stringify(editingTemplate.fields || {}),
             };
 
             let saved;
-            if (editingTemplate.id) {
+            if (typeof editingTemplate.id === 'number') {
                 saved = await updateBarcodeTemplate(editingTemplate.id, payload);
             } else {
                 saved = await createBarcodeTemplate(payload);
@@ -368,7 +380,8 @@ const BarcodePrinter = () => {
             alert("Template saved successfully!");
         } catch (e) {
             console.error("Failed to save template", e);
-            alert("Failed to save template");
+            const serverMsg = e?.response?.data?.message || e?.response?.data?.error || e?.message;
+            alert(`Failed to save template${serverMsg ? `: ${serverMsg}` : ''}`);
         }
     };
 
@@ -557,11 +570,83 @@ const BarcodePrinter = () => {
                 product,
                 qty,
                 barcode: targetBarcode,
-                unit: resolvedUnit // Store unit name for display
+                unit: resolvedUnit, // Store unit name for display
+                batchNumber: options.batchNumber || null,
+                expiryDate: options.expiryDate || null
             }];
         });
         setSearchTerm('');
         setIsSearchFocused(false);
+    };
+
+    const openStockTakeModal = async () => {
+        setShowStockTakeModal(true);
+        setOpenedStockTakeSession(null);
+        setSelectedBatchKeys({});
+        setStockTakeLoading(true);
+        try {
+            const sessions = await getStockTakeSessions();
+            setStockTakeSessions(Array.isArray(sessions) ? sessions : []);
+        } catch (e) {
+            console.error('Failed to load stock take sessions', e);
+        } finally {
+            setStockTakeLoading(false);
+        }
+    };
+
+    const openStockTakeSession = async (sessionId) => {
+        setStockTakeLoading(true);
+        try {
+            const data = await getStockTakeSession(sessionId);
+            setOpenedStockTakeSession(data);
+            // Default-select all batched rows with labelCount = batch quantity
+            const initial = {};
+            (data?.items || []).forEach(item => {
+                (item.batches || []).forEach(b => {
+                    initial[`${item.id}:${b.id}`] = { selected: true, labelCount: b.quantity || 1 };
+                });
+            });
+            setSelectedBatchKeys(initial);
+        } catch (e) {
+            console.error('Failed to load stock take session', e);
+        } finally {
+            setStockTakeLoading(false);
+        }
+    };
+
+    const loadSelectedBatchesIntoCart = () => {
+        if (!openedStockTakeSession) return;
+        let added = 0;
+        (openedStockTakeSession.items || []).forEach(item => {
+            (item.batches || []).forEach(b => {
+                const key = `${item.id}:${b.id}`;
+                const sel = selectedBatchKeys[key];
+                if (!sel?.selected) return;
+                const labels = parseInt(sel.labelCount, 10) || 1;
+                const product = {
+                    id: `stk-${item.productId}-${b.id}`,
+                    code: item.sku,
+                    name: item.productName,
+                    sku: item.sku,
+                    price: item.price,
+                    image: item.image,
+                };
+                setCart(prev => [...prev, {
+                    product,
+                    qty: labels,
+                    barcode: b.batchNumber,
+                    unit: null,
+                    batchNumber: b.batchNumber,
+                    expiryDate: b.expiryDate,
+                }]);
+                added++;
+            });
+        });
+        if (added > 0) {
+            setShowStockTakeModal(false);
+            setOpenedStockTakeSession(null);
+            setSelectedBatchKeys({});
+        }
     };
 
     const loadPoItems = async (po) => {
@@ -787,13 +872,15 @@ const BarcodePrinter = () => {
                     id: 'sample',
                     name: 'Sample Product Name',
                     code: 'SAMPLE-123',
+                    sku: 'SKU-001',
                     brand: 'Sample Brand',
                     brandName: 'Sample Brand',
                     price: '99.00',
                     packings: [{ isSale: true, barcode: '123456789012' }],
                     company: companyName
                 },
-                qty: 1
+                qty: 1,
+                unit: 'PCS'
             });
         }
 
@@ -867,7 +954,15 @@ const BarcodePrinter = () => {
                     <div className="label-code" style={{ fontSize: barcodeFontSize, marginTop: '1px', letterSpacing: '0.08em', fontWeight: 'bold' }}>{item.barcode || getBarcodeValue(item.product)}</div>
                 )}
 
-                {isEnabled('sku') && (
+                {item.batchNumber && (
+                    <div className="label-code" style={{ fontSize: codeFontSize, marginTop: '1px', fontWeight: 'bold' }}>Batch: {item.batchNumber}</div>
+                )}
+
+                {item.expiryDate && (
+                    <div className="label-code" style={{ fontSize: codeFontSize, marginTop: '1px' }}>Exp: {item.expiryDate}</div>
+                )}
+
+                {isEnabled('sku') && item.product.sku && (
                     <div className="label-code" style={{ fontSize: codeFontSize, marginTop: '1px' }}>{item.product.sku}</div>
                 )}
 
@@ -1046,12 +1141,20 @@ const BarcodePrinter = () => {
                                     <ShoppingBag className="text-[#F5C742]" size={18} />
                                     Load Purchase Items
                                 </h2>
-                                <button
-                                    onClick={() => setShowSearchModal(true)}
-                                    className="bg-[#F5C742] hover:bg-[#E5B732] text-slate-900 font-bold px-6 py-2 rounded-lg text-sm flex items-center gap-2 transition-colors"
-                                >
-                                    <Search size={16} /> Search Purchase
-                                </button>
+                                <div className="flex items-center gap-2">
+                                    <button
+                                        onClick={() => setShowSearchModal(true)}
+                                        className="bg-[#F5C742] hover:bg-[#E5B732] text-slate-900 font-bold px-4 py-2 rounded-lg text-sm flex items-center gap-2 transition-colors"
+                                    >
+                                        <Search size={16} /> Purchase
+                                    </button>
+                                    <button
+                                        onClick={openStockTakeModal}
+                                        className="bg-white border border-[#F5C742] text-slate-900 font-bold px-4 py-2 rounded-lg text-sm flex items-center gap-2 hover:bg-[#FFF8E7] transition-colors"
+                                    >
+                                        <Box size={16} /> Stock Taking
+                                    </button>
+                                </div>
                             </div>
                             <p className="text-xs text-slate-500 mb-4">Search and select purchase orders to print labels</p>
 
@@ -1273,6 +1376,151 @@ const BarcodePrinter = () => {
                 </div>
 
                 {/* SEARCH MODAL */}
+                {showStockTakeModal && (
+                    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50">
+                        <div className="bg-white rounded-2xl shadow-2xl w-full max-w-4xl max-h-[85vh] flex flex-col overflow-hidden">
+                            <div className="flex items-center justify-between px-5 py-3 border-b border-slate-200">
+                                <div>
+                                    <h3 className="text-base font-bold text-slate-900">Load from Stock Taking</h3>
+                                    <p className="text-xs text-slate-500">
+                                        {openedStockTakeSession
+                                            ? `Session ${openedStockTakeSession.sessionId} — select batches to print`
+                                            : 'Pick a stock take session'}
+                                    </p>
+                                </div>
+                                <button onClick={() => setShowStockTakeModal(false)} className="text-slate-400 hover:text-slate-600">
+                                    <X size={18} />
+                                </button>
+                            </div>
+
+                            <div className="flex-1 overflow-y-auto p-5">
+                                {stockTakeLoading && (
+                                    <div className="text-center text-sm text-slate-500 py-8">Loading...</div>
+                                )}
+
+                                {!stockTakeLoading && !openedStockTakeSession && (
+                                    <div className="space-y-2">
+                                        {stockTakeSessions.length === 0 ? (
+                                            <div className="text-center text-sm text-slate-500 py-8">No stock take sessions found.</div>
+                                        ) : stockTakeSessions.map(s => {
+                                            const batchCount = (s.items || []).reduce(
+                                                (n, i) => n + ((i.batches || []).length), 0
+                                            );
+                                            return (
+                                                <button
+                                                    key={s.id}
+                                                    onClick={() => openStockTakeSession(s.sessionId)}
+                                                    className="w-full text-left p-3 bg-slate-50 hover:bg-[#FFF8E7] rounded-lg border border-slate-200 flex items-center justify-between"
+                                                >
+                                                    <div>
+                                                        <div className="font-bold text-sm text-slate-900">{s.sessionId}</div>
+                                                        <div className="text-xs text-slate-500">
+                                                            {s.warehouseName} | {s.status} | {(s.items || []).length} items, {batchCount} batches
+                                                        </div>
+                                                    </div>
+                                                    <ChevronRight size={16} className="text-slate-400" />
+                                                </button>
+                                            );
+                                        })}
+                                    </div>
+                                )}
+
+                                {!stockTakeLoading && openedStockTakeSession && (
+                                    <div className="space-y-3">
+                                        <button
+                                            onClick={() => { setOpenedStockTakeSession(null); setSelectedBatchKeys({}); }}
+                                            className="text-xs font-bold text-slate-600 hover:text-slate-900 inline-flex items-center gap-1"
+                                        >
+                                            <ArrowLeft size={12} /> Back to sessions
+                                        </button>
+
+                                        {(openedStockTakeSession.items || []).filter(it => (it.batches || []).length > 0).length === 0 && (
+                                            <div className="text-center text-sm text-slate-500 py-6">
+                                                No batched items in this session.
+                                            </div>
+                                        )}
+
+                                        {(openedStockTakeSession.items || []).map(item => {
+                                            if (!item.batches || item.batches.length === 0) return null;
+                                            return (
+                                                <div key={item.id} className="border border-slate-200 rounded-lg overflow-hidden">
+                                                    <div className="px-3 py-2 bg-slate-50 border-b border-slate-200">
+                                                        <div className="text-sm font-bold text-slate-900">{item.productName}</div>
+                                                        <div className="text-[11px] text-slate-500">Code: {item.sku}</div>
+                                                    </div>
+                                                    <table className="w-full text-xs">
+                                                        <thead className="bg-white text-[10px] uppercase tracking-wide text-slate-500">
+                                                            <tr>
+                                                                <th className="px-3 py-1.5 w-8"></th>
+                                                                <th className="px-3 py-1.5 text-left">Batch #</th>
+                                                                <th className="px-3 py-1.5 text-left">Expiry</th>
+                                                                <th className="px-3 py-1.5 text-right">Qty</th>
+                                                                <th className="px-3 py-1.5 text-right">Labels</th>
+                                                            </tr>
+                                                        </thead>
+                                                        <tbody>
+                                                            {item.batches.map(b => {
+                                                                const key = `${item.id}:${b.id}`;
+                                                                const sel = selectedBatchKeys[key] || { selected: false, labelCount: b.quantity || 1 };
+                                                                return (
+                                                                    <tr key={b.id} className="border-t border-slate-100">
+                                                                        <td className="px-3 py-1.5">
+                                                                            <input
+                                                                                type="checkbox"
+                                                                                checked={!!sel.selected}
+                                                                                onChange={(e) => setSelectedBatchKeys(prev => ({
+                                                                                    ...prev,
+                                                                                    [key]: { ...sel, selected: e.target.checked }
+                                                                                }))}
+                                                                            />
+                                                                        </td>
+                                                                        <td className="px-3 py-1.5 font-mono text-[11px]">{b.batchNumber}</td>
+                                                                        <td className="px-3 py-1.5">{b.expiryDate || '—'}</td>
+                                                                        <td className="px-3 py-1.5 text-right">{b.quantity}</td>
+                                                                        <td className="px-3 py-1.5 text-right">
+                                                                            <input
+                                                                                type="number"
+                                                                                min={1}
+                                                                                value={sel.labelCount}
+                                                                                onChange={(e) => setSelectedBatchKeys(prev => ({
+                                                                                    ...prev,
+                                                                                    [key]: { ...sel, labelCount: e.target.value }
+                                                                                }))}
+                                                                                className="w-16 border border-slate-200 rounded px-1 py-0.5 text-[11px] text-right"
+                                                                            />
+                                                                        </td>
+                                                                    </tr>
+                                                                );
+                                                            })}
+                                                        </tbody>
+                                                    </table>
+                                                </div>
+                                            );
+                                        })}
+                                    </div>
+                                )}
+                            </div>
+
+                            <div className="px-5 py-3 border-t border-slate-200 flex items-center justify-end gap-2 bg-slate-50">
+                                <button
+                                    onClick={() => setShowStockTakeModal(false)}
+                                    className="px-4 py-2 text-xs font-bold text-slate-600 bg-white border border-slate-200 rounded-lg hover:bg-slate-50"
+                                >
+                                    Close
+                                </button>
+                                {openedStockTakeSession && (
+                                    <button
+                                        onClick={loadSelectedBatchesIntoCart}
+                                        className="px-4 py-2 text-xs font-bold text-slate-900 bg-[#F5C742] hover:bg-amber-400 rounded-lg"
+                                    >
+                                        Load Selected Batches
+                                    </button>
+                                )}
+                            </div>
+                        </div>
+                    </div>
+                )}
+
                 {showSearchModal && (
                     <div className="absolute inset-0 z-50 bg-white/10 backdrop-blur-sm flex items-center justify-center p-6">
                         <div className="bg-white rounded-xl shadow-2xl w-full max-w-2xl h-full max-h-[85vh] flex flex-col overflow-hidden border border-slate-200">
@@ -1687,6 +1935,7 @@ const BarcodePrinter = () => {
                                                                     id: 'sample',
                                                                     name: 'Sample Product Name',
                                                                     code: 'SAMPLE-123',
+                                                                    sku: 'SKU-001',
                                                                     brand: 'Sample Brand',
                                                                     brandName: 'Sample Brand',
                                                                     price: '99.00',
@@ -1694,15 +1943,16 @@ const BarcodePrinter = () => {
                                                                     company: company?.companyName || ''
                                                                 },
                                                                 qty: 1,
-                                                                barcode: '123456789012'
+                                                                barcode: '123456789012',
+                                                                unit: 'PCS'
                                                             }])}
                                                         </div>
                                                     </div>
                                                 </div>
 
                                                 {/* Right: Summary & Save */}
-                                                <div className="col-span-3 flex flex-col gap-4 h-full">
-                                                    <div className="bg-white rounded-xl border border-slate-200 p-4 flex-1">
+                                                <div className="col-span-3 flex flex-col gap-4 h-full min-h-0">
+                                                    <div className="bg-white rounded-xl border border-slate-200 p-4 flex-1 overflow-y-auto min-h-0">
                                                         <h3 className="font-bold text-slate-800 text-sm mb-4">Template Summary</h3>
 
                                                         <div className="space-y-4">
@@ -1750,13 +2000,36 @@ const BarcodePrinter = () => {
                                                                 </select>
                                                             </div>
 
+                                                            <div>
+                                                                <label className="text-[10px] font-bold text-slate-400 uppercase">Barcode Format</label>
+                                                                <select
+                                                                    className="w-full border-b border-slate-200 py-1 text-sm font-bold text-slate-900 focus:border-[#F5C742] outline-none bg-white"
+                                                                    value={editingTemplate.barcodeFormat || 'CODE128'}
+                                                                    onChange={e => setEditingTemplate({ ...editingTemplate, barcodeFormat: e.target.value })}
+                                                                >
+                                                                    <option value="CODE128">Code 128 (default, alphanumeric)</option>
+                                                                    <option value="EAN13">EAN-13 (13-digit retail)</option>
+                                                                    <option value="EAN8">EAN-8 (8-digit short)</option>
+                                                                    <option value="UPC">UPC-A (12-digit US retail)</option>
+                                                                    <option value="CODE39">Code 39 (industrial)</option>
+                                                                    <option value="ITF14">ITF-14 (cartons)</option>
+                                                                    <option value="ITF">ITF (interleaved)</option>
+                                                                    <option value="MSI">MSI</option>
+                                                                    <option value="codabar">Codabar</option>
+                                                                    <option value="pharmacode">Pharmacode</option>
+                                                                </select>
+                                                                <p className="text-[10px] text-slate-400 mt-1">
+                                                                    EAN-13 needs exactly 13 digits, EAN-8 needs 8, UPC needs 12. Use Code 128 for general use.
+                                                                </p>
+                                                            </div>
+
                                                             <div className="bg-[#F5C742]/10 rounded-lg p-3 border border-[#F5C742]/20 text-xs text-amber-900">
                                                                 <strong>Note:</strong> Custom layouts will be saved to your local storage.
                                                             </div>
                                                         </div>
 
                                                     </div>
-                                                    <div className="flex flex-col gap-2">
+                                                    <div className="flex flex-col gap-2 shrink-0">
                                                         <button
                                                             onClick={saveNewTemplate}
                                                             className="w-full py-3 bg-[#F5C742] hover:bg-[#E5B732] text-slate-900 font-bold rounded-xl shadow-sm transition-colors flex items-center justify-center gap-2"

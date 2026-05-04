@@ -64,6 +64,7 @@ public class Product extends BaseEntity {
 
     private boolean isSerial;
     private boolean isBatch;
+    private boolean expiryEnabled;
     private boolean isWeighing;
     private boolean isDiscountAllowed;
 
@@ -132,6 +133,8 @@ public class Product extends BaseEntity {
     public void setSerial(boolean isSerial) { this.isSerial = isSerial; }
     public boolean isBatch() { return isBatch; }
     public void setBatch(boolean isBatch) { this.isBatch = isBatch; }
+    public boolean isExpiryEnabled() { return expiryEnabled; }
+    public void setExpiryEnabled(boolean expiryEnabled) { this.expiryEnabled = expiryEnabled; }
     public boolean isWeighing() { return isWeighing; }
     public void setWeighing(boolean isWeighing) { this.isWeighing = isWeighing; }
     public boolean isDiscountAllowed() { return isDiscountAllowed; }

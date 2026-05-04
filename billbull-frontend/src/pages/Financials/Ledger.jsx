@@ -140,6 +140,12 @@ const Ledger = () => {
   const [glFilterFrom, setGlFilterFrom] = useState(firstOfMonth);
   const [glFilterTo, setGlFilterTo] = useState(today);
 
+  // --- TRANSACTION TAB FILTER STATES ---
+  const [txnSearch, setTxnSearch] = useState('');
+  const [txnFilterFrom, setTxnFilterFrom] = useState('');
+  const [txnFilterTo, setTxnFilterTo] = useState('');
+  const [txnFilterAccount, setTxnFilterAccount] = useState('');
+
   // --- CORE DATA STATES ---
   const [accounts, setAccounts] = useState([]);
   const [costCenters, setCostCenters] = useState([]);
@@ -447,6 +453,7 @@ const Ledger = () => {
   const [selectedCostCenter, setSelectedCostCenter] = useState('');
   const [selectedBalType, setSelectedBalType] = useState('Debit (Dr)');
   const [isActive, setIsActive] = useState(true);
+  const [accParentCode, setAccParentCode] = useState('');
 
   // --- FORM STATES: COST CENTER ---
   const [ccId, setCcId] = useState(null);
@@ -535,8 +542,7 @@ const Ledger = () => {
   const handleSaveAccount = async () => {
     if (!accName || !selectedGroup) return alert("Name and Group are required");
 
-    // 5-Digit Random Code Logic
-    const codeToCheck = accCode || Math.floor(10000 + Math.random() * 90000).toString();
+    const codeToCheck = accCode || generateNextCode(selectedGroup, accounts);
 
     // Uniqueness Check
     const isDuplicateCode = accounts.some(acc => acc.code === codeToCheck && (!accId || acc.id !== accId));
@@ -545,18 +551,26 @@ const Ledger = () => {
     const isDebit = selectedBalType.includes('Debit');
     const formattedAmt = parseFloat(accOpeningBalance || 0);
 
+    const parentAccount = accParentCode ? accounts.find(a => a.code === accParentCode) : null;
+
+    const accountTypeMap = { 'Assets': 'Asset', 'Liabilities': 'Liability', 'Income': 'Income', 'Expenses': 'Expense', 'Equity': 'Equity' };
+
     const accountData = {
       id: accId,
       code: codeToCheck,
       name: accName,
       subGroup: accSubGroup || '-',
       accountGroup: selectedGroup,
+      accountType: accountTypeMap[selectedGroup] || selectedGroup,
       branch: selectedBranch || 'All Branches',
       costCenterCode: selectedCostCenter || '-',
       balanceAmount: formattedAmt,
       balanceType: isDebit ? 'Dr' : 'Cr',
       description: accDescription,
-      status: isActive ? 'active' : 'inactive'
+      status: isActive ? 'active' : 'inactive',
+      parentCode: accParentCode || null,
+      isGroup: false,
+      level: parentAccount ? (parentAccount.level || 1) + 1 : 1
     };
 
     try {
@@ -620,6 +634,7 @@ const Ledger = () => {
     setSelectedBalType(bal.type === 'Dr' ? 'Debit (Dr)' : 'Credit (Cr)');
 
     setIsActive(account.status === 'active');
+    setAccParentCode(account.parentCode || '');
     setOpenActionMenuId(null);
     setIsAccountModalOpen(true);
   };
@@ -639,6 +654,7 @@ const Ledger = () => {
     setSelectedBalType(bal.type === 'Dr' ? 'Debit (Dr)' : 'Credit (Cr)');
 
     setIsActive(true);
+    setAccParentCode('');
     setOpenActionMenuId(null);
     setIsAccountModalOpen(true);
   };
@@ -769,11 +785,24 @@ const Ledger = () => {
     }
   };
 
+  const generateNextCode = (group, existingAccounts) => {
+    const prefixMap = { 'Assets': 1, 'Liabilities': 2, 'Equity': 3, 'Income': 4, 'Expenses': 5 };
+    const prefix = prefixMap[group] ?? 9;
+    const rangeMin = prefix * 1000;
+    const rangeMax = rangeMin + 999;
+    const existing = existingAccounts
+      .map(a => parseInt(a.code))
+      .filter(n => Number.isFinite(n) && n >= rangeMin && n <= rangeMax);
+    const max = existing.length > 0 ? Math.max(...existing) : rangeMin + 99;
+    return String(max + 1);
+  };
+
   const handleOpenAddAccount = () => {
     setAccId(null); setAccName(''); setAccCode(''); setAccSubGroup('');
     setAccOpeningBalance(''); setAccDescription(''); setSelectedGroup('');
     setSelectedBranch(defaultBranchName || ''); setSelectedCostCenter(''); setSelectedBalType('Debit (Dr)');
     setIsActive(true);
+    setAccParentCode('');
     setIsAccountModalOpen(true);
   };
 
@@ -1481,13 +1510,14 @@ const glAccountOptions = accounts
                     {glAccountOpen && !glFilterAccount && (
                       <div className="absolute z-50 mt-1 w-full bg-white border border-slate-200 rounded-md shadow-lg max-h-52 overflow-y-auto">
                         <div
+                          key="__all__"
                           onClick={() => { setGlFilterAccount(''); setGlAccountSearch(''); setGlAccountOpen(false); }}
                           className="px-3 py-2 text-xs cursor-pointer text-slate-400 hover:bg-slate-50 italic border-b border-slate-100"
                         >
                           All Accounts
                         </div>
                         {glAccountOptions.length === 0 ? (
-                          <div className="px-3 py-2 text-xs text-slate-400">No accounts found</div>
+                          <div key="__empty__" className="px-3 py-2 text-xs text-slate-400">No accounts found</div>
                         ) : glAccountOptions.map(a => (
                           <div
                             key={a.id}
@@ -1741,54 +1771,122 @@ const glAccountOptions = accounts
       )}
 
       {/* ======================= TAB 4: TRANSACTIONS ======================= */}
-      {activeTab === 'transactions' && (
-        <div className="space-y-6 animate-in fade-in duration-300">
-          <div className="bg-white rounded-lg border border-slate-200 shadow-sm p-5 min-h-[400px]">
-            <div className="mb-4 flex justify-between items-center">
-              <div>
-                <h3 className="text-sm font-bold text-slate-700">Recent Transactions</h3>
-                <p className="text-xs text-slate-500">Latest financial transactions across all accounts</p>
+      {activeTab === 'transactions' && (() => {
+        const filteredTxn = glData.filter(entry => {
+          const q = txnSearch.toLowerCase();
+          const matchesText = !q || (
+            (entry.voucher && entry.voucher.toLowerCase().includes(q)) ||
+            (entry.accCode && entry.accCode.toLowerCase().includes(q)) ||
+            (entry.accName && entry.accName.toLowerCase().includes(q)) ||
+            (entry.desc && entry.desc.toLowerCase().includes(q))
+          );
+          const matchesFrom = !txnFilterFrom || (entry.date && entry.date >= txnFilterFrom);
+          const matchesTo = !txnFilterTo || (entry.date && entry.date <= txnFilterTo);
+          const matchesAccount = !txnFilterAccount || entry.accCode === txnFilterAccount;
+          return matchesText && matchesFrom && matchesTo && matchesAccount;
+        });
+
+        return (
+          <div className="space-y-4 animate-in fade-in duration-300">
+            <div className="bg-white rounded-lg border border-slate-200 shadow-sm p-4">
+              <div className="flex flex-wrap gap-3 items-end">
+                <div className="flex-1 min-w-[200px]">
+                  <label className="block text-xs font-bold text-slate-500 mb-1">Search</label>
+                  <div className="relative">
+                    <Search size={12} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
+                    <input
+                      type="text"
+                      placeholder="Voucher, account, description..."
+                      value={txnSearch}
+                      onChange={e => setTxnSearch(e.target.value)}
+                      className="w-full pl-7 pr-3 py-2 text-xs border border-slate-200 rounded-md bg-white text-slate-700 outline-none focus:border-blue-400"
+                    />
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-slate-500 mb-1">Account</label>
+                  <select
+                    value={txnFilterAccount}
+                    onChange={e => setTxnFilterAccount(e.target.value)}
+                    className="px-3 py-2 text-xs border border-slate-200 rounded-md bg-white text-slate-700 outline-none focus:border-blue-400"
+                  >
+                    <option value="">All Accounts</option>
+                    {accounts.sort((a, b) => (a.code || '').localeCompare(b.code || '')).map(a => (
+                      <option key={a.id} value={a.code}>{a.code} — {a.name}</option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-slate-500 mb-1">From Date</label>
+                  <input type="date" value={txnFilterFrom} onChange={e => setTxnFilterFrom(e.target.value)}
+                    className="px-3 py-2 text-xs border border-slate-200 rounded-md text-slate-700 outline-none focus:border-blue-400" />
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-slate-500 mb-1">To Date</label>
+                  <input type="date" value={txnFilterTo} onChange={e => setTxnFilterTo(e.target.value)}
+                    className="px-3 py-2 text-xs border border-slate-200 rounded-md text-slate-700 outline-none focus:border-blue-400" />
+                </div>
+                {(txnSearch || txnFilterFrom || txnFilterTo || txnFilterAccount) && (
+                  <button
+                    onClick={() => { setTxnSearch(''); setTxnFilterFrom(''); setTxnFilterTo(''); setTxnFilterAccount(''); }}
+                    className="px-3 py-2 text-xs border border-slate-200 rounded-md text-slate-500 hover:bg-slate-50 flex items-center gap-1"
+                  >
+                    <X size={12} /> Clear
+                  </button>
+                )}
+                <div className="ml-auto">
+                  <button
+                    onClick={() => { setTxnAccount(''); setTxnAmount(''); setTxnDesc(''); setIsTransactionModalOpen(true); }}
+                    className="flex items-center gap-2 px-5 py-2 bg-[#F5C742] text-slate-900 rounded-md text-xs font-bold hover:bg-yellow-400 shadow-sm"
+                  >
+                    <Plus size={14} /> Add Transaction
+                  </button>
+                </div>
               </div>
-              <button
-                onClick={() => {
-                  setTxnAccount(''); setTxnAmount(''); setTxnDesc('');
-                  setIsTransactionModalOpen(true);
-                }}
-                className="flex items-center gap-2 px-5 py-2.5 bg-[#F5C742] text-slate-900 rounded-md text-xs font-bold hover:bg-yellow-400 shadow-sm"
-              >
-                <Plus size={16} /> Add Transaction
-              </button>
             </div>
 
-            <div className="overflow-x-auto">
-              <table className="w-full text-left text-xs">
-                <thead className="bg-slate-50 text-slate-600 font-semibold border-b border-slate-200">
-                  <tr>
-                    <th className="px-4 py-3">Date</th>
-                    <th className="px-4 py-3">Voucher</th>
-                    <th className="px-4 py-3">Account</th>
-                    <th className="px-4 py-3">Description</th>
-                    <th className="px-4 py-3 text-right">Debit</th>
-                    <th className="px-4 py-3 text-right">Credit</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-50">
-                  {glData.map((entry, idx) => (
-                    <tr key={entry.id || idx} className="hover:bg-slate-50">
-                      <td className="px-4 py-3 font-medium text-slate-700">{entry.date}</td>
-                      <td className="px-4 py-3 text-slate-500">{entry.voucher}</td>
-                      <td className="px-4 py-3 font-bold text-slate-700">{entry.accName}</td>
-                      <td className="px-4 py-3 text-slate-600">{entry.desc}</td>
-                      <td className="px-4 py-3 text-right text-emerald-600 font-medium">{entry.debit}</td>
-                      <td className="px-4 py-3 text-right text-red-600 font-medium">{entry.credit}</td>
+            <div className="bg-white rounded-lg border border-slate-200 shadow-sm">
+              <div className="px-5 py-3 border-b border-slate-100 flex items-center justify-between">
+                <span className="text-xs font-bold text-slate-700">Transaction Journal</span>
+                <span className="text-xs text-slate-400">{filteredTxn.length} {filteredTxn.length === 1 ? 'entry' : 'entries'}</span>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-xs">
+                  <thead className="bg-slate-50 text-slate-600 font-semibold border-b border-slate-200">
+                    <tr>
+                      <th className="px-4 py-3">Date</th>
+                      <th className="px-4 py-3">Voucher</th>
+                      <th className="px-4 py-3">Account</th>
+                      <th className="px-4 py-3">Description</th>
+                      <th className="px-4 py-3 text-right">Debit</th>
+                      <th className="px-4 py-3 text-right">Credit</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody className="divide-y divide-slate-50">
+                    {filteredTxn.length === 0 ? (
+                      <tr>
+                        <td colSpan={6} className="px-4 py-8 text-center text-xs text-slate-400">No transactions match your filters</td>
+                      </tr>
+                    ) : filteredTxn.map((entry, idx) => (
+                      <tr key={entry.id || idx} className="hover:bg-slate-50">
+                        <td className="px-4 py-3 font-medium text-slate-700">{entry.date}</td>
+                        <td className="px-4 py-3 text-slate-500">{entry.voucher}</td>
+                        <td className="px-4 py-3">
+                          <div className="font-bold text-slate-700">{entry.accCode}</div>
+                          <div className="text-slate-400">{entry.accName}</div>
+                        </td>
+                        <td className="px-4 py-3 text-slate-600">{entry.desc}</td>
+                        <td className="px-4 py-3 text-right text-emerald-600 font-medium">{entry.debit}</td>
+                        <td className="px-4 py-3 text-right text-red-600 font-medium">{entry.credit}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
 
       {/* ======================= ARCHIVE CONFIRMATION MODAL ======================= */}
       {isArchiveModalOpen && (
@@ -1916,6 +2014,27 @@ const glAccountOptions = accounts
                 <div className="col-span-1">
                   <label className="block text-xs font-bold text-slate-600 mb-1">Sub Group</label>
                   <input type="text" value={accSubGroup} onChange={(e) => setAccSubGroup(e.target.value)} placeholder="e.g., Current Assets, Fixed Asset" className="w-full px-3 py-2 text-xs border border-slate-200 rounded-md focus:border-blue-500 focus:outline-none placeholder:text-slate-400" />
+                </div>
+
+                <div className="col-span-2">
+                  <label className="block text-xs font-bold text-slate-600 mb-1">Parent Account</label>
+                  <select
+                    value={accParentCode}
+                    onChange={(e) => setAccParentCode(e.target.value)}
+                    className="w-full px-3 py-2 text-xs border border-slate-200 rounded-md focus:border-blue-500 focus:outline-none bg-white text-slate-700"
+                  >
+                    <option value="">— None (Root Account) —</option>
+                    {accounts
+                      .filter(a => !accId || a.id !== accId)
+                      .sort((a, b) => (a.code || '').localeCompare(b.code || ''))
+                      .map(a => (
+                        <option key={a.id} value={a.code}>
+                          {a.code} — {a.name}
+                        </option>
+                      ))
+                    }
+                  </select>
+                  <p className="text-[10px] text-slate-400 mt-1">Select a parent to nest this account in the tree hierarchy</p>
                 </div>
 
                 <div className="col-span-1">
