@@ -1328,7 +1328,8 @@ const SalesInvoice = () => {
         };
 
         // Stock check enforcement (skip for Draft saves)
-        if (newStatus !== 'Draft' && salesSettings?.stockCheckRequired) {
+        const isSourceLinkedInvoice = Boolean((linkedSO || '').trim() || (linkedDN || '').trim());
+        if (newStatus !== 'Draft' && salesSettings?.stockCheckRequired && !isSourceLinkedInvoice) {
             const stockIssues = [];
             for (const item of items) {
                 if (!item.code) continue;

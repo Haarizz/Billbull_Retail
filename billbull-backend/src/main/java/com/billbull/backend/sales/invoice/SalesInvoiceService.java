@@ -25,11 +25,14 @@ import com.billbull.backend.financials.receiptvoucher.ReceiptVoucherService;
 import com.billbull.backend.inventory.product.ProductBarcodeRepository;
 import com.billbull.backend.sales.customerledger.CustomerRepository;
 import com.billbull.backend.inventory.product.ProductMediaRepository;
+import com.billbull.backend.inventory.product.Product;
+import com.billbull.backend.inventory.product.ProductPackingRepository;
 import com.billbull.backend.inventory.product.ProductRepository;
 import com.billbull.backend.inventory.stockavailability.StockAvailabilityResponse;
 import com.billbull.backend.inventory.stockavailability.StockAvailabilityService;
 import com.billbull.backend.inventory.warehouse.Warehouse;
 import com.billbull.backend.inventory.warehouse.WarehouseRepository;
+import com.billbull.backend.sales.delivery.DeliveryNoteRepository;
 import com.billbull.backend.sales.delivery.DeliveryNoteItemRequest;
 import com.billbull.backend.sales.delivery.DeliveryNoteRequest;
 import com.billbull.backend.sales.delivery.DeliveryNoteService;
@@ -49,7 +52,9 @@ public class SalesInvoiceService {
     private final ProductRepository productRepo;
     private final ProductBarcodeRepository barcodeRepo;
     private final ProductMediaRepository productMediaRepository;
+    private final ProductPackingRepository packingRepo;
     private final com.billbull.backend.sales.salesorder.SalesOrderRepository salesOrderRepository;
+    private final DeliveryNoteRepository deliveryNoteRepository;
     private final CustomerRepository customerRepository;
     private final WarehouseRepository warehouseRepository;
     private final BranchAccessService branchAccessService;
@@ -63,7 +68,9 @@ public class SalesInvoiceService {
             ProductRepository productRepo,
             ProductBarcodeRepository barcodeRepo,
             ProductMediaRepository productMediaRepository,
+            ProductPackingRepository packingRepo,
             com.billbull.backend.sales.salesorder.SalesOrderRepository salesOrderRepository,
+            DeliveryNoteRepository deliveryNoteRepository,
             CustomerRepository customerRepository,
             WarehouseRepository warehouseRepository,
             BranchAccessService branchAccessService) {
@@ -76,7 +83,9 @@ public class SalesInvoiceService {
         this.productRepo = productRepo;
         this.barcodeRepo = barcodeRepo;
         this.productMediaRepository = productMediaRepository;
+        this.packingRepo = packingRepo;
         this.salesOrderRepository = salesOrderRepository;
+        this.deliveryNoteRepository = deliveryNoteRepository;
         this.customerRepository = customerRepository;
         this.warehouseRepository = warehouseRepository;
         this.branchAccessService = branchAccessService;
@@ -526,6 +535,8 @@ public class SalesInvoiceService {
             return;
         if (invoice.getItems() == null || invoice.getItems().isEmpty())
             return;
+        if (invoice.getLinkedDeliveryNote() != null && !invoice.getLinkedDeliveryNote().isBlank())
+            return;
 
         List<String> insufficientItems = new ArrayList<>();
 
@@ -533,18 +544,23 @@ public class SalesInvoiceService {
             if (item.getItemCode() == null || item.getItemCode().isBlank())
                 continue;
 
-            int requiredQty = (item.getQuantity() != null ? item.getQuantity() : 0)
-                    + (item.getFoc() != null ? item.getFoc() : 0);
+            Product product = productRepo.findByCodeAndIsActiveTrue(item.getItemCode()).orElse(null);
+            if (product == null)
+                continue;
+
+            int requiredQty = resolveBaseQty(product.getId(), item.getUnit(), item.getQuantity() != null ? item.getQuantity() : 0)
+                    + resolveBaseQty(product.getId(), item.getUnit(), item.getFoc() != null ? item.getFoc() : 0);
             if (requiredQty <= 0)
                 continue;
 
             try {
-                StockAvailabilityResponse stock = stockAvailabilityService.getStockAvailability(item.getItemCode());
+                Long warehouseId = item.getWarehouseId();
+                StockAvailabilityResponse stock = stockAvailabilityService.getStockAvailability(item.getItemCode(), warehouseId, null, null, null);
                 int available;
-                if (item.getWarehouseId() != null && stock.getLocations() != null) {
+                if (warehouseId != null && stock.getLocations() != null) {
                     // Check only the item's specific warehouse
                     available = stock.getLocations().stream()
-                            .filter(loc -> item.getWarehouseId().equals(loc.getLocationId()))
+                            .filter(loc -> warehouseId.equals(loc.getLocationId()))
                             .mapToInt(loc -> loc.getAvailable() != null ? loc.getAvailable() : 0)
                             .sum();
                 } else {
@@ -554,6 +570,7 @@ public class SalesInvoiceService {
                                     .mapToInt(loc -> loc.getAvailable() != null ? loc.getAvailable() : 0)
                                     .sum();
                 }
+                available += resolveSourceReservationCredit(invoice, item, product, warehouseId);
 
                 if (available < requiredQty) {
                     insufficientItems.add(String.format("'%s' (required: %d, available: %d)",
@@ -571,6 +588,66 @@ public class SalesInvoiceService {
                     "Stock check failed. Insufficient stock for: " + String.join(", ", insufficientItems) +
                             ". Please reduce quantities or disable the stock check requirement in Sales Settings.");
         }
+    }
+
+    private int resolveSourceReservationCredit(SalesInvoice invoice, SalesInvoiceItem item, Product product,
+            Long warehouseId) {
+        int deliveryNoteCredit = 0;
+        if (invoice.getId() != null) {
+            deliveryNoteCredit = safeDecimal(deliveryNoteRepository.sumReservedQtyForSourceDocument(
+                    "SALES_INVOICE",
+                    invoice.getId(),
+                    product.getId(),
+                    warehouseId)).intValue();
+        }
+
+        if (deliveryNoteCredit > 0) {
+            return deliveryNoteCredit;
+        }
+
+        if (invoice.getLinkedSalesOrder() == null || invoice.getLinkedSalesOrder().isBlank()) {
+            return 0;
+        }
+
+        return salesOrderRepository.findBySoNumber(invoice.getLinkedSalesOrder())
+                .map(so -> {
+                    if (so.getStatus() != com.billbull.backend.sales.salesorder.SalesOrderStatus.CONFIRMED
+                            && so.getStatus() != com.billbull.backend.sales.salesorder.SalesOrderStatus.PARTIALLY_PAID) {
+                        return 0;
+                    }
+                    if (warehouseId != null && so.getWarehouse() != null
+                            && !warehouseId.equals(so.getWarehouse().getId())) {
+                        return 0;
+                    }
+                    if (so.getItems() == null) {
+                        return 0;
+                    }
+
+                    return so.getItems().stream()
+                            .filter(soItem -> item.getItemCode().equals(soItem.getItemCode()))
+                            .mapToInt(soItem -> resolveBaseQty(
+                                    product.getId(),
+                                    soItem.getUnit(),
+                                    soItem.getQuantity() != null ? soItem.getQuantity() : 0))
+                            .sum();
+                })
+                .orElse(0);
+    }
+
+    private BigDecimal safeDecimal(BigDecimal value) {
+        return value != null ? value : BigDecimal.ZERO;
+    }
+
+    private int resolveBaseQty(Long productId, String unitName, int qty) {
+        if (qty <= 0 || unitName == null || unitName.isBlank()) return qty;
+        return packingRepo.findByProductId(productId).stream()
+                .filter(p -> p.getUnit() != null && unitName.equalsIgnoreCase(p.getUnit().getName()))
+                .findFirst()
+                .map(p -> p.getConversion() != null
+                        ? BigDecimal.valueOf(qty).multiply(p.getConversion())
+                                .setScale(0, RoundingMode.HALF_UP).intValue()
+                        : qty)
+                .orElse(qty);
     }
 
     /**

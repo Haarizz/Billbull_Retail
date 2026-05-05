@@ -39,6 +39,23 @@ public interface DeliveryNoteRepository extends JpaRepository<DeliveryNote, Long
           FROM DeliveryNote dn JOIN dn.items i
           LEFT JOIN com.billbull.backend.inventory.product.ProductPacking pp
               ON pp.product.id = i.product.id AND LOWER(pp.unit.name) = LOWER(i.unit) AND pp.isActive = true
+          WHERE dn.sourceDocumentType = :sourceDocumentType
+            AND dn.sourceDocumentId = :sourceDocumentId
+            AND i.product.id = :productId
+            AND (:warehouseId IS NULL OR dn.warehouse.id = :warehouseId)
+            AND dn.status IN ('DRAFT', 'DISPATCHED')
+      """)
+  BigDecimal sumReservedQtyForSourceDocument(
+      @Param("sourceDocumentType") String sourceDocumentType,
+      @Param("sourceDocumentId") Long sourceDocumentId,
+      @Param("productId") Long productId,
+      @Param("warehouseId") Long warehouseId);
+
+  @Query("""
+          SELECT COALESCE(SUM(i.currentQty * COALESCE(pp.conversion, 1)), 0)
+          FROM DeliveryNote dn JOIN dn.items i
+          LEFT JOIN com.billbull.backend.inventory.product.ProductPacking pp
+              ON pp.product.id = i.product.id AND LOWER(pp.unit.name) = LOWER(i.unit) AND pp.isActive = true
           WHERE i.product.id = :productId
             AND dn.warehouse.id = :warehouseId
             AND i.binId IS NULL
