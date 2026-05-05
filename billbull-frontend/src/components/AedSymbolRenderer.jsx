@@ -161,6 +161,10 @@ const processNode = (node, currencyConfig) => {
     return;
   }
 
+  if (!hasAedToken(node.textContent || '')) {
+    return;
+  }
+
   node.normalize();
 
   const textNodes = [];
@@ -199,6 +203,11 @@ const AedSymbolRenderer = () => {
     }
 
     updateExistingCurrencySymbolNodes(currencyConfig);
+
+    if (!currencyConfig.hasImage) {
+      return undefined;
+    }
+
     processNode(document.body, currencyConfig);
 
     const observer = new MutationObserver((mutations) => {
