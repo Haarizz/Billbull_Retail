@@ -893,7 +893,6 @@ const PrintEmailTemplates = () => {
 
             // Auto-seed if empty
             if (data.length === 0) {
-                console.log("No templates found. Seeding defaults...");
                 await seedDefaultTemplates();
                 return;
             }

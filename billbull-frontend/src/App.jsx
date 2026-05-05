@@ -16,6 +16,7 @@ import { CompanyProvider } from "./context/CompanyContext";
 import { BranchProvider } from "./context/BranchContext";
 import ResourceGuard from "./components/auth/ResourceGuard";// import CustomerInquiries from "./pages/Customer/CustomerInquiries";
 import AedSymbolRenderer from "./components/AedSymbolRenderer";
+import AppAlertBridge from "./components/AppAlertBridge";
 // import FollowUpModal from "./pages/Customer/FollowUpModal";
 // import MessageModal from "./pages/Customer/MessageModal";
 // import CustomerLedger from "./pages/Sales/CustomerLedger";
@@ -125,7 +126,8 @@ function App() {
       <CompanyProvider>
         <BranchProvider>
         <AedSymbolRenderer />
-        <Toaster position="top-right" reverseOrder={false} />
+        <AppAlertBridge />
+        <Toaster position="top-right" reverseOrder={false} containerStyle={{ zIndex: 10000 }} />
         <Routes>
           {/* 🔓 Public Route */}
           <Route path="/login" element={<Login />} />

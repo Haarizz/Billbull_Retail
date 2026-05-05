@@ -524,10 +524,6 @@ const BarcodePrinter = () => {
         try {
             setPoLoading(true);
             const data = await getPostedPurchaseInvoices();
-            console.log('📦 Purchase Orders loaded:', data);
-            console.log('📦 Data length:', data?.length);
-            console.log('📦 First PO:', data?.[0]);
-            console.log('📦 First PO items:', data?.[0]?.items);
             setAllPurchaseOrders(data || []);
             setDisplayedPurchaseOrders(data || []);
         } catch (error) {
@@ -539,11 +535,7 @@ const BarcodePrinter = () => {
     };
 
     const applyFilters = () => {
-        console.log('🔍 Applying filters:', filters);
         let filtered = allPurchaseOrders;
-        if (filtered.length > 0) {
-            console.log('📦 Sample PO for filtering:', filtered[0]);
-        }
         if (filters.lpoNumber) filtered = filtered.filter(po => po.lpoNumber && po.lpoNumber.toLowerCase().includes(filters.lpoNumber.toLowerCase()));
         if (filters.invoiceNumber) filtered = filtered.filter(po => po.invoiceNumber && po.invoiceNumber.toLowerCase().includes(filters.invoiceNumber.toLowerCase()));
 
@@ -710,8 +702,6 @@ const BarcodePrinter = () => {
             po.items.forEach(poItem => {
                 const product = fetchedProducts.find(p => p.code === poItem.itemCode);
                 if (product) {
-                    console.log('📦 DETAILED PRODUCT OBJECT:', product);
-
                     // Try to find matching barcode for the PO Item's UOM
                     let selectedBarcode = null;
                     let selectedUnit = poItem.uom || null;
@@ -1710,18 +1700,12 @@ const BarcodePrinter = () => {
                                                     {/* Table Body */}
                                                     <div className="border-x border-b border-slate-200 rounded-b-lg overflow-hidden">
                                                         {po.items.map((item, idx) => {
-                                                            console.log('🔍 Rendering item:', item);
                                                             const prod = products.find(p => p.code === item.itemCode);
-                                                            console.log('🔍 Found product:', prod ? prod.name : 'NOT FOUND');
 
                                                             // Fallback: Show item even if product not found
                                                             const displayName = prod?.name || item.itemName || 'Unknown Item';
                                                             const displaySku = prod?.sku || item.itemCode || '-';
                                                             const displayBarcode = prod ? getBarcodeValue(prod) : '-';
-
-                                                            if (prod?.image) {
-                                                                console.log('🖼️ Product Image URL:', prod.image);
-                                                            }
 
                                                             return (
                                                                 <div
