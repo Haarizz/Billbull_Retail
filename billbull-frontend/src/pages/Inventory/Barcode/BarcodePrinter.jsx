@@ -28,7 +28,7 @@ const TEMPLATES = [
         name: 'Standard 40x25mm',
         desc: '1 column, compact design',
         width: 40, height: 25, type: 'Roll', perPage: 1,
-        fields: { barcode: true, name: true, price: true, sku: false, unit: false, company: false, qr: false },
+        fields: { barcode: true, name: true, price: true, sku: false, unit: false, company: false, qr: false, batchNumber: true, expiryDate: true },
         isSystem: true // Protect system templates
     },
     {
@@ -36,7 +36,7 @@ const TEMPLATES = [
         name: 'Medium 50x30mm',
         desc: '1 column with SKU',
         width: 50, height: 30, type: 'Roll', perPage: 1,
-        fields: { barcode: true, name: true, price: true, sku: true, unit: true, company: false, qr: false },
+        fields: { barcode: true, name: true, price: true, sku: true, unit: true, company: false, qr: false, batchNumber: true, expiryDate: true },
         isSystem: true
     },
     {
@@ -44,7 +44,7 @@ const TEMPLATES = [
         name: 'Large 70x40mm',
         desc: 'Detailed with company info',
         width: 70, height: 40, type: 'Roll', perPage: 1,
-        fields: { barcode: true, name: true, price: true, sku: true, unit: true, company: true, qr: false },
+        fields: { barcode: true, name: true, price: true, sku: true, unit: true, company: true, qr: false, batchNumber: true, expiryDate: true },
         isSystem: true
     },
     {
@@ -52,7 +52,7 @@ const TEMPLATES = [
         name: 'Two Column 50x25mm',
         desc: '2 labels per row',
         width: 50, height: 25, type: 'Sheet', perPage: 2,
-        fields: { barcode: true, name: true, price: true, sku: false, unit: false, company: false, qr: false },
+        fields: { barcode: true, name: true, price: true, sku: false, unit: false, company: false, qr: false, batchNumber: true, expiryDate: true },
         isSystem: true
     },
     {
@@ -60,7 +60,7 @@ const TEMPLATES = [
         name: 'QR Code 40x40mm',
         desc: 'QR code format',
         width: 40, height: 40, type: 'Roll', perPage: 1,
-        fields: { barcode: false, name: true, price: true, sku: false, unit: false, company: false, qr: true },
+        fields: { barcode: false, name: true, price: true, sku: false, unit: false, company: false, qr: true, batchNumber: true, expiryDate: true },
         isSystem: true
     },
     {
@@ -68,7 +68,7 @@ const TEMPLATES = [
         name: 'Shelf Label 60x30mm',
         desc: 'Price-focused shelf tag',
         width: 60, height: 30, type: 'Roll', perPage: 1,
-        fields: { barcode: true, name: true, price: true, sku: true, unit: true, company: false, qr: false },
+        fields: { barcode: true, name: true, price: true, sku: true, unit: true, company: false, qr: false, batchNumber: true, expiryDate: true },
         isSystem: true
     },
 ];
@@ -147,6 +147,24 @@ const getTemplateMetrics = (template) => {
         paddingMm: PRINT_PAGE_MARGIN_MM,
         labelsPerPage
     };
+};
+
+// Many JsBarcode formats reject inputs that don't match their length / charset rules.
+// Pick a sample value that's guaranteed to render so the preview reflects the chosen format.
+const getSampleBarcodeForFormat = (format) => {
+    switch ((format || 'CODE128').toUpperCase()) {
+        case 'EAN13':      return '5901234123457';   // 13 digits with valid check digit
+        case 'EAN8':       return '12345670';        // 8 digits with valid check digit
+        case 'UPC':        return '123456789012';    // 12 digits
+        case 'ITF14':      return '12345678901231';  // 14 digits
+        case 'ITF':        return '1234567890';      // even-length digits
+        case 'MSI':        return '1234567';
+        case 'CODABAR':    return 'A12345B';
+        case 'PHARMACODE': return '1234';
+        case 'CODE39':     return 'SAMPLE-123';
+        case 'CODE128':
+        default:           return '123456789012';
+    }
 };
 
 const getBarcodeRenderOptions = (template) => {
@@ -261,6 +279,8 @@ const BarcodePrinter = () => {
                 company: false,
                 itemCode: false,
                 brandName: false,
+                batchNumber: true,
+                expiryDate: true,
                 ...template.fields
             } : {
                 barcode: true,
@@ -271,7 +291,9 @@ const BarcodePrinter = () => {
                 price: true,
                 company: false,
                 itemCode: false,
-                brandName: false
+                brandName: false,
+                batchNumber: true,
+                expiryDate: true
             }
         });
         setManagerTab('create');
@@ -296,7 +318,9 @@ const BarcodePrinter = () => {
                 price: true,
                 company: false,
                 itemCode: false,
-                brandName: false
+                brandName: false,
+                batchNumber: true,
+                expiryDate: true
             }
         });
         setManagerTab('create');
@@ -867,6 +891,7 @@ const BarcodePrinter = () => {
 
         // If preview mode and no items, show a sample
         if (isPreview && allItems.length === 0) {
+            const sampleBarcode = getSampleBarcodeForFormat(t.barcodeFormat);
             allItems.push({
                 product: {
                     id: 'sample',
@@ -876,11 +901,14 @@ const BarcodePrinter = () => {
                     brand: 'Sample Brand',
                     brandName: 'Sample Brand',
                     price: '99.00',
-                    packings: [{ isSale: true, barcode: '123456789012' }],
+                    packings: [{ isSale: true, barcode: sampleBarcode }],
                     company: companyName
                 },
                 qty: 1,
-                unit: 'PCS'
+                barcode: sampleBarcode,
+                unit: 'PCS',
+                batchNumber: 'ST-040526-WH1-STK-PRD-1',
+                expiryDate: '2026-12-31'
             });
         }
 
@@ -954,11 +982,11 @@ const BarcodePrinter = () => {
                     <div className="label-code" style={{ fontSize: barcodeFontSize, marginTop: '1px', letterSpacing: '0.08em', fontWeight: 'bold' }}>{item.barcode || getBarcodeValue(item.product)}</div>
                 )}
 
-                {item.batchNumber && (
+                {isEnabled('batchNumber') && item.batchNumber && (
                     <div className="label-code" style={{ fontSize: codeFontSize, marginTop: '1px', fontWeight: 'bold' }}>Batch: {item.batchNumber}</div>
                 )}
 
-                {item.expiryDate && (
+                {isEnabled('expiryDate') && item.expiryDate && (
                     <div className="label-code" style={{ fontSize: codeFontSize, marginTop: '1px' }}>Exp: {item.expiryDate}</div>
                 )}
 
@@ -1359,15 +1387,22 @@ const BarcodePrinter = () => {
                             </div>
                         </div>
 
-                        {/* Bottom: Preview (Collapsed or Small) */}
+                        {/* Bottom: Preview — always shows ONE representative label, not the whole queue.
+                            Uses the first cart item if any (so users can see real data on the label),
+                            otherwise falls back to the built-in sample. */}
                         <div className="bg-white rounded-xl border border-slate-200 p-4 shadow-sm shrink-0">
                             <h2 className="font-bold text-slate-800 flex items-center gap-2 mb-2 text-sm">
                                 <Send className="text-[#F5C742]" size={16} />
                                 Template Preview
+                                {cart.length > 0 && (
+                                    <span className="text-[10px] font-medium text-slate-400 ml-1">
+                                        (showing first item — full queue prints when you click Print)
+                                    </span>
+                                )}
                             </h2>
                             <div className="bg-slate-100 rounded border border-slate-200 flex items-center justify-center overflow-hidden relative" style={{ minHeight: '280px' }}>
                                 <div className="origin-center" key={selectedTemplate}>
-                                    {renderLabels(true)}
+                                    {renderLabels(true, null, cart.length > 0 ? [{ ...cart[0], qty: 1 }] : null)}
                                 </div>
                             </div>
                         </div>
@@ -1872,6 +1907,8 @@ const BarcodePrinter = () => {
                                                             { id: 'unit', label: 'Unit', icon: <Box size={14} /> },
                                                             { id: 'price', label: 'Selling Price', icon: <span className="font-bold text-xs">$</span> },
                                                             { id: 'company', label: 'Company Name', icon: <FileText size={14} /> },
+                                                            { id: 'batchNumber', label: 'Batch No', icon: <Tag size={14} />, sub: 'Shows when item has a batch number' },
+                                                            { id: 'expiryDate', label: 'Expiry Date', icon: <Calendar size={14} />, sub: 'Shows when item has an expiry' },
                                                         ].map(attr => (
                                                             <div
                                                                 key={attr.id}
@@ -1930,22 +1967,27 @@ const BarcodePrinter = () => {
 
                                                         {/* ACTUAL LABEL RENDER - Uses shared logic now */}
                                                         <div className="flex items-center justify-center">
-                                                            {renderLabels(true, editingTemplate, [{
-                                                                product: {
-                                                                    id: 'sample',
-                                                                    name: 'Sample Product Name',
-                                                                    code: 'SAMPLE-123',
-                                                                    sku: 'SKU-001',
-                                                                    brand: 'Sample Brand',
-                                                                    brandName: 'Sample Brand',
-                                                                    price: '99.00',
-                                                                    packings: [{ isSale: true, barcode: '123456789012' }],
-                                                                    company: company?.companyName || ''
-                                                                },
-                                                                qty: 1,
-                                                                barcode: '123456789012',
-                                                                unit: 'PCS'
-                                                            }])}
+                                                            {(() => {
+                                                                const sampleBarcode = getSampleBarcodeForFormat(editingTemplate.barcodeFormat);
+                                                                return renderLabels(true, editingTemplate, [{
+                                                                    product: {
+                                                                        id: 'sample',
+                                                                        name: 'Sample Product Name',
+                                                                        code: 'SAMPLE-123',
+                                                                        sku: 'SKU-001',
+                                                                        brand: 'Sample Brand',
+                                                                        brandName: 'Sample Brand',
+                                                                        price: '99.00',
+                                                                        packings: [{ isSale: true, barcode: sampleBarcode }],
+                                                                        company: company?.companyName || ''
+                                                                    },
+                                                                    qty: 1,
+                                                                    barcode: sampleBarcode,
+                                                                    unit: 'PCS',
+                                                                    batchNumber: 'ST-040526-WH1-STK-PRD-1',
+                                                                    expiryDate: '2026-12-31'
+                                                                }]);
+                                                            })()}
                                                         </div>
                                                     </div>
                                                 </div>

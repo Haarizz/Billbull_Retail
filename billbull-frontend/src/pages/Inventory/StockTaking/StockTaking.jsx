@@ -79,7 +79,8 @@ const BatchEditor = ({ item, disabled, onChange }) => {
 
     useEffect(() => { setBatches(item?.batches || []); }, [item?.id, item?.batches]);
 
-    const expiryRequired = !!item?.expiryEnabled;
+    // With the unified Batch & Expiry toggle, any tracked item requires an expiry.
+    const expiryRequired = !!(item?.expiryEnabled || item?.batchEnabled);
 
     const handlePrefillBatchNumber = async () => {
         if (!item?.id) return;
@@ -210,57 +211,60 @@ const BatchEditor = ({ item, disabled, onChange }) => {
             )}
 
             {!disabled && (
-                <div className="grid grid-cols-12 gap-2 items-end">
-                    <div className="col-span-5">
-                        <label className="block text-[10px] font-bold text-slate-500 mb-0.5">Batch Number</label>
-                        <div className="flex gap-1">
+                <div className="border-t border-slate-100 pt-3 mt-1">
+                    <div className="grid grid-cols-12 gap-2 items-end">
+                        <div className="col-span-5">
+                            <label className="block text-[10px] font-bold text-slate-500 mb-1">Batch Number</label>
+                            <div className="flex gap-1">
+                                <input
+                                    type="text"
+                                    placeholder="(auto)"
+                                    value={draft.batchNumber}
+                                    onChange={(e) => setDraft(d => ({ ...d, batchNumber: e.target.value }))}
+                                    className="flex-1 min-w-0 h-8 border border-slate-200 rounded px-2 text-[11px] focus:outline-none focus:ring-1 focus:ring-amber-400"
+                                />
+                                <button
+                                    type="button"
+                                    onClick={handlePrefillBatchNumber}
+                                    title="Generate batch number"
+                                    className="h-8 px-2 text-[10px] font-bold border border-slate-200 rounded hover:bg-slate-50 shrink-0"
+                                >
+                                    Gen
+                                </button>
+                            </div>
+                        </div>
+                        <div className="col-span-4">
+                            <label className="block text-[10px] font-bold text-slate-500 mb-1">
+                                Expiry {expiryRequired && <span className="text-red-500">*</span>}
+                            </label>
                             <input
-                                type="text"
-                                placeholder="(auto)"
-                                value={draft.batchNumber}
-                                onChange={(e) => setDraft(d => ({ ...d, batchNumber: e.target.value }))}
-                                className="flex-1 border border-slate-200 rounded px-2 py-1 text-[11px]"
+                                type="date"
+                                value={draft.expiryDate}
+                                onChange={(e) => setDraft(d => ({ ...d, expiryDate: e.target.value }))}
+                                className="w-full h-8 border border-slate-200 rounded px-2 text-[11px] focus:outline-none focus:ring-1 focus:ring-amber-400"
                             />
+                        </div>
+                        <div className="col-span-2">
+                            <label className="block text-[10px] font-bold text-slate-500 mb-1">Qty</label>
+                            <input
+                                type="number"
+                                min={1}
+                                value={draft.quantity}
+                                onChange={(e) => setDraft(d => ({ ...d, quantity: e.target.value }))}
+                                className="w-full h-8 border border-slate-200 rounded px-2 text-[11px] text-right focus:outline-none focus:ring-1 focus:ring-amber-400"
+                            />
+                        </div>
+                        <div className="col-span-1">
                             <button
                                 type="button"
-                                onClick={handlePrefillBatchNumber}
-                                title="Generate"
-                                className="px-2 py-1 text-[10px] font-bold border border-slate-200 rounded hover:bg-slate-50"
+                                disabled={busy}
+                                onClick={handleAdd}
+                                title="Add batch"
+                                className="w-full h-8 flex items-center justify-center text-base font-bold text-slate-900 bg-[#F5C742] hover:bg-amber-400 rounded disabled:opacity-50 leading-none"
                             >
-                                Gen
+                                +
                             </button>
                         </div>
-                    </div>
-                    <div className="col-span-4">
-                        <label className="block text-[10px] font-bold text-slate-500 mb-0.5">
-                            Expiry {expiryRequired && <span className="text-red-500">*</span>}
-                        </label>
-                        <input
-                            type="date"
-                            value={draft.expiryDate}
-                            onChange={(e) => setDraft(d => ({ ...d, expiryDate: e.target.value }))}
-                            className="w-full border border-slate-200 rounded px-2 py-1 text-[11px]"
-                        />
-                    </div>
-                    <div className="col-span-2">
-                        <label className="block text-[10px] font-bold text-slate-500 mb-0.5">Qty</label>
-                        <input
-                            type="number"
-                            min={1}
-                            value={draft.quantity}
-                            onChange={(e) => setDraft(d => ({ ...d, quantity: e.target.value }))}
-                            className="w-full border border-slate-200 rounded px-2 py-1 text-[11px]"
-                        />
-                    </div>
-                    <div className="col-span-1">
-                        <button
-                            type="button"
-                            disabled={busy}
-                            onClick={handleAdd}
-                            className="w-full px-2 py-1 text-[11px] font-bold text-slate-900 bg-[#F5C742] hover:bg-amber-400 rounded disabled:opacity-50"
-                        >
-                            +
-                        </button>
                     </div>
                 </div>
             )}
@@ -835,6 +839,7 @@ const ListView = ({
 
 const SessionView = ({
     selectedSession,
+    refreshSelectedSession,
     handleSaveDraft,
     setIsReviewModalOpen,
     setViewMode,
@@ -878,7 +883,9 @@ const SessionView = ({
     const [entryMode, setEntryMode] = useState('scan'); // 'scan' or 'manual'
 
     const openCountModal = (item) => {
-        if (selectedSession?.status !== 'In Progress' || entryMode !== 'manual') return;
+        if (selectedSession?.status !== 'In Progress') return;
+        // Allow row-click in either scan or manual mode — useful for batched items
+        // where the user needs to manage batches without flipping the entry-mode toggle.
         setSelectedItemForCount(item);
         // Manual click = set the total directly; prefill with existing count for easy adjustment
         setCountMode('set');
@@ -1188,8 +1195,8 @@ const SessionView = ({
                                                         type="number"
                                                         value={item.countedQty === null ? '' : item.countedQty}
                                                         onChange={(e) => handleCountChange(item.id, e.target.value)}
-                                                        disabled={selectedSession?.status !== 'In Progress' || entryMode !== 'manual' || item.batchEnabled}
-                                                        title={item.batchEnabled ? 'Open the item to manage batches' : undefined}
+                                                        disabled={selectedSession?.status !== 'In Progress' || entryMode !== 'manual' || item.batchEnabled || item.expiryEnabled}
+                                                        title={(item.batchEnabled || item.expiryEnabled) ? 'Open the item to manage batches' : undefined}
                                                         placeholder="0"
                                                         className={`w-16 px-1.5 py-0.5 rounded text-[10px] font-bold text-slate-900 text-center focus:ring-1 outline-none transition-all disabled:opacity-50 disabled:bg-slate-100 ${
                                                             binCapacityViolations.some(v => v.itemId === item.id)
@@ -1460,8 +1467,8 @@ const SessionView = ({
                                 </div>
                             </div>
 
-                            {/* Batch / Expiry editor — for batch-enabled items, countedQty is derived from batches */}
-                            {selectedItemForCount.batchEnabled && (
+                            {/* Batch / Expiry editor — shown whenever either flag is on (single combined product toggle) */}
+                            {(selectedItemForCount.batchEnabled || selectedItemForCount.expiryEnabled) && (
                                 <BatchEditor
                                     item={selectedItemForCount}
                                     disabled={selectedSession?.status !== 'In Progress'}
@@ -1472,12 +1479,16 @@ const SessionView = ({
                                             batches: nextBatches,
                                             countedQty: sum,
                                         }));
+                                        // Re-fetch session so the items table and reopened modals show fresh batches.
+                                        if (typeof refreshSelectedSession === 'function') {
+                                            refreshSelectedSession();
+                                        }
                                     }}
                                 />
                             )}
 
-                            {/* Enter Counted Quantity — hidden for batch-enabled items */}
-                            {!selectedItemForCount.batchEnabled && (
+                            {/* Enter Counted Quantity — hidden for tracked items (batch or expiry) */}
+                            {!(selectedItemForCount.batchEnabled || selectedItemForCount.expiryEnabled) && (
                             <div className="bg-[#FFF8E7] border border-[#FDE6A9] rounded-xl p-4">
 
                                 {/* Mode toggle — only for items already in the session with a prior count */}
@@ -1587,9 +1598,9 @@ const SessionView = ({
                                 onClick={() => setIsCountModalOpen(false)}
                                 className="px-5 py-2 text-xs font-bold text-slate-600 bg-white border border-slate-200 rounded-lg hover:bg-slate-50 transition-colors shadow-sm"
                             >
-                                {selectedItemForCount.batchEnabled ? 'Close' : 'Cancel'}
+                                {(selectedItemForCount.batchEnabled || selectedItemForCount.expiryEnabled) ? 'Close' : 'Cancel'}
                             </button>
-                            {!selectedItemForCount.batchEnabled && (
+                            {!(selectedItemForCount.batchEnabled || selectedItemForCount.expiryEnabled) && (
                                 <button
                                     onClick={submitCountAdd}
                                     className="px-5 py-2 flex items-center gap-2 text-xs font-bold text-slate-900 bg-[#F5C742] hover:bg-amber-400 rounded-lg shadow-sm transition-colors"
@@ -2105,6 +2116,31 @@ const StockTaking = () => {
         setViewMode('list');
     };
 
+    // Re-fetch the current session from the backend so any server-side derived
+    // values (countedQty / variance / batches list) are reflected in the UI.
+    const refreshSelectedSession = async () => {
+        if (!selectedSession) return;
+        try {
+            const detail = await getStockTakeSession(selectedSession.sessionId);
+            setSelectedSession(prev => prev ? {
+                ...prev,
+                items: (detail.items || []).map(item => ({
+                    ...item,
+                    impact: item.varianceValue ? `${item.varianceValue > 0 ? '+' : ''}AED ${Math.abs(item.varianceValue).toFixed(2)}` : null,
+                    status: item.status ? (item.status.charAt(0) + item.status.slice(1).toLowerCase()) : 'Pending'
+                }))
+            } : prev);
+            // Also refresh the modal's selected item so its batch list / countedQty stays in sync
+            setSelectedItemForCount(prev => {
+                if (!prev) return prev;
+                const fresh = (detail.items || []).find(it => it.id === prev.id);
+                return fresh ? { ...prev, ...fresh } : prev;
+            });
+        } catch (e) {
+            console.error('Failed to refresh session', e);
+        }
+    };
+
     const handleSubmitApproval = async () => {
         if (!selectedSession) return;
 
@@ -2216,9 +2252,16 @@ const StockTaking = () => {
             if (existingItem) {
                 setBarcodeInput('');
                 setSelectedItemForCount(existingItem);
-                // Each barcode scan = add 1 more to the existing count
-                setCountMode('add');
-                setCountToAdd(1);
+                if (existingItem.batchEnabled || existingItem.expiryEnabled) {
+                    // Batched items: countedQty is derived from batches, so +1 isn't meaningful.
+                    // Open the modal in 'set' mode so the user manages batch rows directly.
+                    setCountMode('set');
+                    setCountToAdd(existingItem.countedQty != null ? existingItem.countedQty : 0);
+                } else {
+                    // Each barcode scan = add 1 more to the existing count
+                    setCountMode('add');
+                    setCountToAdd(1);
+                }
                 setIsCountModalOpen(true);
                 barcodeInputRef.current?.focus();
                 return;
@@ -2233,7 +2276,28 @@ const StockTaking = () => {
                     results = await searchExactProducts(scanned);
                 }
                 if (results && results.length > 0) {
-                    await handleSelectProduct(results[0], 1);
+                    const product = results[0];
+                    // If the scanned product is batch-enabled, add the item with 0 count
+                    // and pop the count modal so the user can enter batches manually.
+                    // A naked product barcode can't tell us which physical batch the unit
+                    // belongs to, so we never auto-increment for batched items.
+                    const productData = product.product || product;
+                    const isTracked = !!(productData.isBatch || productData.expiryEnabled);
+                    if (isTracked) {
+                        const created = await handleSelectProduct(product, 0);
+                        // handleSelectProduct may not return; fall back to refetching the item
+                        const newItem = created || (selectedSession?.items || []).find(
+                            i => i.productId === productData.id
+                        );
+                        if (newItem) {
+                            setSelectedItemForCount(newItem);
+                            setCountMode('set');
+                            setCountToAdd(0);
+                            setIsCountModalOpen(true);
+                        }
+                    } else {
+                        await handleSelectProduct(product, 1);
+                    }
                     setBarcodeInput('');
                     setScanFlash(true);
                     setTimeout(() => setScanFlash(false), 300);
@@ -2373,6 +2437,7 @@ const StockTaking = () => {
             {viewMode === 'session' && (
                 <SessionView
                     selectedSession={selectedSession}
+                    refreshSelectedSession={refreshSelectedSession}
                     handleSaveDraft={handleSaveDraft}
                     setIsReviewModalOpen={setIsReviewModalOpen}
                     setViewMode={setViewMode}
