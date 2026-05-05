@@ -142,6 +142,22 @@ public class StockMovementService {
             Long locatorId,
             Integer qty,
             String ref) {
+        postOutboundStock(sourceType, sourceId, productId, warehouseId, binId, zoneId, locatorId, null, null, qty, ref);
+    }
+
+    /** Full hierarchy outbound post with exact batch/expiry identity */
+    public void postOutboundStock(
+            StockSourceType sourceType,
+            Long sourceId,
+            Long productId,
+            Long warehouseId,
+            Long binId,
+            Long zoneId,
+            Long locatorId,
+            String batchNumber,
+            LocalDate expiryDate,
+            Integer qty,
+            String ref) {
 
         if (productId == null)
             throw new IllegalArgumentException("Product ID is required for outbound stock");
@@ -150,14 +166,17 @@ public class StockMovementService {
         if (qty == null || qty <= 0)
             throw new IllegalArgumentException("Outbound quantity must be positive; got: " + qty);
 
-        // Anti-duplication guard
-        boolean alreadyDecreased = repository.existsBySourceTypeAndSourceIdAndProductId(
-                sourceType, sourceId, productId);
+        String normalizedBatchNumber = normalizeBatchNumber(batchNumber);
+
+        // Anti-duplication guard per stock identity. A single delivery can legitimately
+        // split one product across multiple batch/bin rows.
+        boolean alreadyDecreased = repository.existsOutboundIdentity(
+                sourceType, sourceId, productId, warehouseId, binId, normalizedBatchNumber, expiryDate);
 
         if (alreadyDecreased)
             throw new IllegalStateException(
                     "Outbound stock already posted for " + sourceType + " #" + sourceId
-                            + " product #" + productId + ". Duplicate deduction blocked.");
+                            + " product #" + productId + " in the same stock identity. Duplicate deduction blocked.");
 
         StockMovement sm = new StockMovement();
         sm.setSourceType(sourceType);
@@ -170,6 +189,8 @@ public class StockMovementService {
         sm.setQuantity(-qty); // negative for outbound
         sm.setMovementDate(LocalDate.now());
         sm.setReferenceNo(ref);
+        sm.setBatchNumber(normalizedBatchNumber);
+        sm.setExpiryDate(expiryDate);
 
         repository.save(sm);
     }
@@ -200,6 +221,23 @@ public class StockMovementService {
             Long locatorId,
             Integer qty,
             String ref) {
+        reverseOutboundStock(sourceType, sourceId, productId, warehouseId, binId, zoneId, locatorId,
+                null, null, qty, ref);
+    }
+
+    /** Full hierarchy reversal with exact batch/expiry identity */
+    public void reverseOutboundStock(
+            StockSourceType sourceType,
+            Long sourceId,
+            Long productId,
+            Long warehouseId,
+            Long binId,
+            Long zoneId,
+            Long locatorId,
+            String batchNumber,
+            LocalDate expiryDate,
+            Integer qty,
+            String ref) {
 
         if (productId == null)
             throw new IllegalArgumentException("Product ID is required for stock reversal");
@@ -219,7 +257,17 @@ public class StockMovementService {
         sm.setQuantity(qty); // positive for returning outbound stock
         sm.setMovementDate(LocalDate.now());
         sm.setReferenceNo(ref);
+        sm.setBatchNumber(normalizeBatchNumber(batchNumber));
+        sm.setExpiryDate(expiryDate);
 
         repository.save(sm);
+    }
+
+    private String normalizeBatchNumber(String batchNumber) {
+        if (batchNumber == null) {
+            return null;
+        }
+        String trimmed = batchNumber.trim();
+        return trimmed.isEmpty() || "-".equals(trimmed) ? null : trimmed;
     }
 }

@@ -20,6 +20,7 @@ import com.billbull.backend.inventory.warehouse.Warehouse;
 import com.billbull.backend.inventory.warehouse.WarehouseRepository;
 import com.billbull.backend.inventory.warehouse.WarehouseStockService;
 import com.billbull.backend.inventory.warehouse.BinRepository;
+import com.billbull.backend.purchase.stockmovement.StockMovement;
 import com.billbull.backend.purchase.stockmovement.StockMovementRepository;
 import com.billbull.backend.purchase.stockmovement.StockMovementService;
 import com.billbull.backend.purchase.stockmovement.StockSourceType;
@@ -35,9 +36,12 @@ import com.billbull.backend.inventory.warehouse.Bin;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 @Service
 @Transactional
@@ -344,64 +348,9 @@ public class DeliveryNoteService {
                                     " | Requested: " + requested);
                 }
 
-                // BIN-SPLIT DEDUCTION: spread the outbound qty across bins in descending
-                // stock order. This prevents negative bin stock when a single bin cannot
-                // cover the full ordered quantity.
-                int totalToDeduct = baseQty + baseFoc;
+                // Deduct exact batch/bin identities so visible batch stock is reduced.
+                postBatchAwareDeliveryDeduction(dn, item, baseQty + baseFoc);
 
-                if (item.getBinId() != null) {
-                    // Explicit bin chosen — deduct entirely from that bin (single movement)
-                    Long binId = item.getBinId();
-                    Long zoneId = null;
-                    Long locatorId = null;
-                    Bin bin = binRepo.findById(binId).orElse(null);
-                    if (bin != null) {
-                        locatorId = bin.getLocator() != null ? bin.getLocator().getId() : null;
-                        zoneId = (bin.getLocator() != null && bin.getLocator().getZone() != null)
-                                ? bin.getLocator().getZone().getId() : null;
-                    }
-                    stockMovementService.postOutboundStock(
-                            StockSourceType.DELIVERY_NOTE, dn.getId(),
-                            item.getProduct().getId(), dn.getWarehouse().getId(),
-                            binId, zoneId, locatorId, totalToDeduct, dn.getDnNumber());
-                } else {
-                    // Auto-split across bins ordered by highest stock first
-                    List<Object[]> activeBins = stockMovementRepo.findActiveBinsByWarehouseAndProduct(
-                            dn.getWarehouse().getId(), item.getProduct().getId());
-
-                    int remaining = totalToDeduct;
-
-                    for (Object[] row : activeBins) {
-                        if (remaining <= 0) break;
-                        Long binId = (Long) row[0];
-                        int binStock = ((Number) row[1]).intValue();
-                        int deductFromBin = Math.min(remaining, binStock);
-
-                        Long zoneId = null;
-                        Long locatorId = null;
-                        Bin bin = binRepo.findById(binId).orElse(null);
-                        if (bin != null) {
-                            locatorId = bin.getLocator() != null ? bin.getLocator().getId() : null;
-                            zoneId = (bin.getLocator() != null && bin.getLocator().getZone() != null)
-                                    ? bin.getLocator().getZone().getId() : null;
-                        }
-
-                        stockMovementService.postOutboundStock(
-                                StockSourceType.DELIVERY_NOTE, dn.getId(),
-                                item.getProduct().getId(), dn.getWarehouse().getId(),
-                                binId, zoneId, locatorId, deductFromBin, dn.getDnNumber());
-
-                        remaining -= deductFromBin;
-                    }
-
-                    // Any remaining qty not covered by located bins — post without bin
-                    if (remaining > 0) {
-                        stockMovementService.postOutboundStock(
-                                StockSourceType.DELIVERY_NOTE, dn.getId(),
-                                item.getProduct().getId(), dn.getWarehouse().getId(),
-                                null, null, null, remaining, dn.getDnNumber());
-                    }
-                }
             }
         }
 
@@ -439,6 +388,167 @@ public class DeliveryNoteService {
         }
     }
 
+    private void postBatchAwareDeliveryDeduction(DeliveryNote dn, DeliveryNoteItem item, int totalToDeduct) {
+        if (totalToDeduct <= 0) {
+            return;
+        }
+
+        Long warehouseId = dn.getWarehouse().getId();
+        Long productId = item.getProduct().getId();
+        int remaining = totalToDeduct;
+
+        if (item.getBinId() != null) {
+            remaining = postDeductionFromBinIdentities(dn, productId, warehouseId, item.getBinId(), remaining);
+            if (remaining > 0) {
+                throw new IllegalStateException(
+                        "Selected bin does not have enough batch stock for " + item.getProduct().getCode()
+                                + ". Short by: " + remaining);
+            }
+            return;
+        }
+
+        for (Object[] row : stockMovementRepo.findActiveBinsByWarehouseAndProduct(warehouseId, productId)) {
+            if (remaining <= 0) {
+                break;
+            }
+            Long binId = (Long) row[0];
+            remaining = postDeductionFromBinIdentities(dn, productId, warehouseId, binId, remaining);
+        }
+
+        if (remaining > 0) {
+            remaining = postDeductionFromBinIdentities(dn, productId, warehouseId, null, remaining);
+        }
+
+        if (remaining > 0) {
+            throw new IllegalStateException(
+                    "Insufficient batch/bin stock for " + item.getProduct().getCode()
+                            + ". Short by: " + remaining);
+        }
+    }
+
+    private int postDeductionFromBinIdentities(
+            DeliveryNote dn,
+            Long productId,
+            Long warehouseId,
+            Long binId,
+            int requestedQty) {
+        if (requestedQty <= 0) {
+            return 0;
+        }
+
+        BinLocation location = resolveBinLocation(binId);
+        int remaining = requestedQty;
+
+        for (StockIdentity identity : loadPositiveStockIdentities(warehouseId, productId, binId)) {
+            if (remaining <= 0) {
+                break;
+            }
+
+            int deductQty = Math.min(remaining, identity.quantity);
+            stockMovementService.postOutboundStock(
+                    StockSourceType.DELIVERY_NOTE,
+                    dn.getId(),
+                    productId,
+                    warehouseId,
+                    binId,
+                    location.zoneId,
+                    location.locatorId,
+                    identity.batchNumber,
+                    identity.expiryDate,
+                    deductQty,
+                    dn.getDnNumber());
+            remaining -= deductQty;
+        }
+
+        return remaining;
+    }
+
+    private List<StockIdentity> loadPositiveStockIdentities(Long warehouseId, Long productId, Long binId) {
+        return stockMovementRepo.findStockIdentitiesByProductAndBin(warehouseId, productId, binId)
+                .stream()
+                .map(row -> new StockIdentity(
+                        normalizeBatchNumber(row[0] != null ? row[0].toString() : null),
+                        (LocalDate) row[1],
+                        row[2] != null ? ((Number) row[2]).intValue() : 0))
+                .filter(identity -> identity.quantity > 0)
+                .sorted(Comparator
+                        .comparing((StockIdentity identity) -> identity.expiryDate != null
+                                ? identity.expiryDate : LocalDate.MAX)
+                        .thenComparing(identity -> identity.batchNumber != null ? identity.batchNumber : ""))
+                .toList();
+    }
+
+    private void reverseDeliveryDeduction(DeliveryNote dn, DeliveryNoteItem item) {
+        List<StockMovement> deductions = stockMovementRepo
+                .findBySourceTypeAndSourceIdAndProductIdAndQuantityLessThan(
+                        StockSourceType.DELIVERY_NOTE,
+                        dn.getId(),
+                        item.getProduct().getId(),
+                        0);
+
+        for (StockMovement deduction : deductions) {
+            stockMovementService.reverseOutboundStock(
+                    StockSourceType.DELIVERY_NOTE,
+                    dn.getId(),
+                    item.getProduct().getId(),
+                    deduction.getWarehouseId() != null ? deduction.getWarehouseId() : dn.getWarehouse().getId(),
+                    deduction.getBinId(),
+                    deduction.getZoneId(),
+                    deduction.getLocatorId(),
+                    deduction.getBatchNumber(),
+                    deduction.getExpiryDate(),
+                    Math.abs(deduction.getQuantity()),
+                    dn.getDnNumber() + "-REV");
+        }
+    }
+
+    private BinLocation resolveBinLocation(Long binId) {
+        if (binId == null) {
+            return new BinLocation(null, null);
+        }
+
+        Bin bin = binRepo.findById(binId).orElse(null);
+        if (bin == null) {
+            return new BinLocation(null, null);
+        }
+
+        Long locatorId = bin.getLocator() != null ? bin.getLocator().getId() : null;
+        Long zoneId = bin.getLocator() != null && bin.getLocator().getZone() != null
+                ? bin.getLocator().getZone().getId()
+                : null;
+        return new BinLocation(zoneId, locatorId);
+    }
+
+    private String normalizeBatchNumber(String batchNumber) {
+        if (batchNumber == null) {
+            return null;
+        }
+        String trimmed = batchNumber.trim();
+        return trimmed.isEmpty() || "-".equals(trimmed) ? null : trimmed;
+    }
+
+    private static class StockIdentity {
+        private final String batchNumber;
+        private final LocalDate expiryDate;
+        private final int quantity;
+
+        private StockIdentity(String batchNumber, LocalDate expiryDate, int quantity) {
+            this.batchNumber = batchNumber;
+            this.expiryDate = expiryDate;
+            this.quantity = quantity;
+        }
+    }
+
+    private static class BinLocation {
+        private final Long zoneId;
+        private final Long locatorId;
+
+        private BinLocation(Long zoneId, Long locatorId) {
+            this.zoneId = zoneId;
+            this.locatorId = locatorId;
+        }
+    }
+
     @CacheEvict(value = "stockAvailability", allEntries = true)
     @Transactional(rollbackFor = Exception.class)
     public DeliveryNoteResponse cancel(Long id) {
@@ -447,38 +557,11 @@ public class DeliveryNoteService {
         // If DELIVERED, reverse stock movements AND accounting journals
         if (dn.getStatus() == DeliveryNoteStatus.DELIVERED) {
             if (stockStrategy.canDeliveryNoteDeductStock()) {
+                Set<Long> reversedProductIds = new HashSet<>();
                 for (DeliveryNoteItem item : dn.getItems()) {
-                    int qty = item.getCurrentQty() != null ? item.getCurrentQty() : 0;
-                    int foc = item.getFoc() != null ? item.getFoc() : 0;
-                    int baseQty = resolveBaseQty(item.getProduct().getId(), item.getUnit(), qty);
-                    String effectiveFocUnit = (item.getFocUnit() != null && !item.getFocUnit().isBlank())
-                            ? item.getFocUnit() : item.getUnit();
-                    int baseFoc = resolveBaseQty(item.getProduct().getId(), effectiveFocUnit, foc);
-
-                    Long binId = item.getBinId();
-                    Long zoneId = null;
-                    Long locatorId = null;
-
-                    if (binId != null) {
-                        Bin bin = binRepo.findById(binId).orElse(null);
-                        if (bin != null) {
-                            locatorId = bin.getLocator() != null ? bin.getLocator().getId() : null;
-                            zoneId = (bin.getLocator() != null && bin.getLocator().getZone() != null)
-                                    ? bin.getLocator().getZone().getId()
-                                    : null;
-                        }
+                    if (item.getProduct() != null && reversedProductIds.add(item.getProduct().getId())) {
+                        reverseDeliveryDeduction(dn, item);
                     }
-
-                    stockMovementService.reverseOutboundStock(
-                            StockSourceType.DELIVERY_NOTE,
-                            dn.getId(),
-                            item.getProduct().getId(),
-                            dn.getWarehouse().getId(),
-                            binId,
-                            zoneId,
-                            locatorId,
-                            baseQty + baseFoc,
-                            dn.getDnNumber() + "-REV");
                 }
             }
 
