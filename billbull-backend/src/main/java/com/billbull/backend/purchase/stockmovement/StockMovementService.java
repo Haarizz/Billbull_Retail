@@ -171,7 +171,7 @@ public class StockMovementService {
         // Anti-duplication guard per stock identity. A single delivery can legitimately
         // split one product across multiple batch/bin rows.
         boolean alreadyDecreased = repository.existsOutboundIdentity(
-                sourceType, sourceId, productId, warehouseId, binId, normalizedBatchNumber, expiryDate);
+                sourceType.name(), sourceId, productId, warehouseId, binId, normalizedBatchNumber, expiryDate);
 
         if (alreadyDecreased)
             throw new IllegalStateException(

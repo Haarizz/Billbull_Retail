@@ -1449,6 +1449,7 @@ const Quotations = () => {
                         qtnNo: qtn.qtnNo,
                         customer: qtn.customer,
                         billDiscount: qtn.billDiscount,
+                        shippingAddress: qtn.shippingAddress || '',
                         items: qtn.items
                     }
                 }
@@ -1469,6 +1470,7 @@ const Quotations = () => {
                     qtnNo: qtn.qtnNo,
                     customer: qtn.customer,
                     billDiscount: qtn.billDiscount,
+                    shippingAddress: qtn.shippingAddress || '',
                     items: qtn.items
                 }
             }

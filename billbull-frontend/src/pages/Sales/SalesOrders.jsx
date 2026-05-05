@@ -377,6 +377,7 @@ const SalesOrders = () => {
         qtnNo: qtn.qtnNo,
         customer: qtn.customer,
         billDiscount: qtn.billDiscount,
+        shippingAddress: qtn.shippingAddress || '',
         items: qtn.items || []
       });
       setActiveTab('create');
@@ -715,6 +716,7 @@ const SalesOrders = () => {
           linkedQuotation: linkedQtn || '',
           linkedProforma: linkedPi || '',
           billDiscount: Number(billDiscount) || 0,
+          shippingAddress: shippingAddress || '',
           items: items
             .filter(i => i.code && i.qty > 0)
             .map(i => ({
@@ -976,7 +978,10 @@ const SalesOrders = () => {
       );
       const cust = matchedCustomer || buildFallbackCustomer(qtn.customer);
       setSelectedCustomer(cust);
-      if (cust.address || cust.shippingAddress || cust.billingAddress) {
+      // Always resolve shipping: prefer passed-through address, then customer master
+      if (qtn.shippingAddress) {
+        setShippingAddress(qtn.shippingAddress);
+      } else {
         const _defaultAddr = (cust.savedAddresses || []).find(a => a.isDefault);
         const _resolvedAddr = _defaultAddr
           ? [_defaultAddr.address1, _defaultAddr.address2, _defaultAddr.city, _defaultAddr.country].filter(Boolean).join(', ')
