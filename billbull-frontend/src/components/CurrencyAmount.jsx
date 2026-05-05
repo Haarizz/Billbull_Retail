@@ -67,7 +67,8 @@ const CurrencyAmount = ({
       currency={currency}
       currencySymbol={currencySymbol}
       preferExplicitCurrency={preferExplicitCurrency}
-    /> {formatAmount(value, decimals)}
+    />
+    {` ${formatAmount(value, decimals)}`}
   </span>
 );
 
