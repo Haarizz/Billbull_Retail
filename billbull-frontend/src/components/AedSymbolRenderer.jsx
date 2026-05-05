@@ -161,8 +161,6 @@ const processNode = (node, currencyConfig) => {
     return;
   }
 
-  node.normalize();
-
   const textNodes = [];
   const walker = document.createTreeWalker(
     node,
