@@ -43,6 +43,7 @@ import {
     PURCHASE_TEMPLATE_CATEGORIES,
     serializeTemplateForApi
 } from '../../utils/purchasePrintUtils';
+import toast from 'react-hot-toast';
 
 const PURCHASE_CATEGORY_META = [
     { title: 'Local Purchase Order', description: 'Vendor purchase order template', icon: FaClipboardList },
@@ -721,7 +722,7 @@ const PurchasePrintEmailTemplates = () => {
             await loadTemplates();
         } catch (error) {
             console.error('Error duplicating purchase template:', error);
-            alert('Failed to duplicate template');
+            toast.error('Failed to duplicate template');
         }
     };
 
@@ -740,7 +741,7 @@ const PurchasePrintEmailTemplates = () => {
             await loadTemplates();
         } catch (error) {
             console.error('Error deleting purchase template:', error);
-            alert('Failed to delete template');
+            toast.error('Failed to delete template');
         }
     };
 
@@ -761,7 +762,7 @@ const PurchasePrintEmailTemplates = () => {
             await loadTemplates();
         } catch (error) {
             console.error('Error saving purchase template:', error);
-            alert('Failed to save template');
+            toast.error('Failed to save template');
         }
     };
 
@@ -774,7 +775,7 @@ const PurchasePrintEmailTemplates = () => {
             await loadTemplates();
         } catch (error) {
             console.error('Error setting purchase default template:', error);
-            alert('Failed to set default template');
+            toast.error('Failed to set default template');
         }
     };
 

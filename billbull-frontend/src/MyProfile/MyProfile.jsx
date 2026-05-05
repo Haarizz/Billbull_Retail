@@ -9,6 +9,7 @@ import {
 } from 'lucide-react';
 import { getUserProfile, updateUserProfile, changePassword, logout } from '../api/auth';
 import { getImageUrl } from '../utils/urlUtils';
+import toast from 'react-hot-toast';
 
 const MyProfile = () => {
     const [activeTab, setActiveTab] = useState('Personal');
@@ -72,10 +73,10 @@ const MyProfile = () => {
             setProfile(updated);
             setIsEditing(false);
             setPreviewImage(null);
-            alert("Profile updated successfully!");
+            toast.success("Profile updated successfully!");
         } catch (error) {
             console.error("Failed to update profile", error);
-            alert("Failed to update profile. Please try again.");
+            toast.error("Failed to update profile. Please try again.");
         } finally {
             setLoading(false);
         }
@@ -94,11 +95,11 @@ const MyProfile = () => {
 
     const handlePasswordSubmit = async () => {
         if (!passForm.current || !passForm.new || !passForm.confirm) {
-            alert("Please fill in all password fields.");
+            toast.error("Please fill in all password fields.");
             return;
         }
         if (passForm.new !== passForm.confirm) {
-            alert("New passwords do not match.");
+            toast.error("New passwords do not match.");
             return;
         }
 
@@ -108,11 +109,11 @@ const MyProfile = () => {
                 currentPassword: passForm.current,
                 newPassword: passForm.new
             });
-            alert("Password changed successfully!");
+            toast.success("Password changed successfully!");
             setPassForm({ current: '', new: '', confirm: '' });
         } catch (error) {
             console.error("Failed to change password", error);
-            alert("Failed to change password. Please check your current password.");
+            toast.error("Failed to change password. Please check your current password.");
         } finally {
             setLoading(false);
         }

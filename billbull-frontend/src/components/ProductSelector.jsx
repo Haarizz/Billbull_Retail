@@ -6,6 +6,7 @@ import { getProductsList, createProduct, getProductById } from '../api/productsA
 import { getBrands } from '../api/brandsApi';
 import { getUnits } from '../api/unitsApi';
 import CurrencyAmount from './CurrencyAmount';
+import toast from 'react-hot-toast';
 const PAGE_SIZE = 15;
 const RECENT_KEY = 'billbull_recent_products';
 const MAX_RECENT = 5;
@@ -220,7 +221,7 @@ const QuickAddModal = ({ isOpen, onClose, onSuccess }) => {
             onSuccess(res.product); // Returning the newly created product
         } catch (err) {
             console.error("Failed to create product:", err);
-            alert("Failed to create product. Check console.");
+            toast.error("Failed to create product. Check console.");
         } finally {
             setLoading(false);
         }

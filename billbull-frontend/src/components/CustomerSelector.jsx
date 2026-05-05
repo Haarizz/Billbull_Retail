@@ -3,6 +3,7 @@ import ReactDOM from 'react-dom';
 import { Search, X, Plus, User, Check, Phone, Mail, MapPin, ChevronDown } from 'lucide-react';
 import { createCustomer, CUSTOMER_GROUPS } from '../api/customerledgerApi';
 import { useBranch } from '../context/BranchContext';
+import toast from 'react-hot-toast';
 
 // ==========================================
 // CUSTOMER SELECTOR — Search Modal + New Customer Panel
@@ -138,7 +139,7 @@ const CustomerSelector = ({
     // Handle new customer save
     const handleSaveNewCustomer = async () => {
         if (!newCust.name.trim()) {
-            alert('Customer Name is required');
+            toast.error('Customer Name is required');
             return;
         }
 
@@ -174,7 +175,7 @@ const CustomerSelector = ({
 
         } catch (err) {
             console.error('Failed to create customer', err);
-            alert('Failed to save customer. Please try again.');
+            toast.error('Failed to save customer. Please try again.');
         } finally {
             setIsSaving(false);
         }
