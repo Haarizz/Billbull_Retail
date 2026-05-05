@@ -26,11 +26,12 @@ public class DatabaseFixConfig {
                         List.of("DRAFT", "CONFIRMED", "PARTIALLY_PAID", "INVOICED", "DELIVERED", "DISPATCHED"));
 
                 // 3. Fix stock_movements source_type check to include STOCK_TAKE (BB-019)
+                //    and STOCK_TAKE_BATCH (per-batch ledger entries posted on approval)
                 updateColumnConstraint(jdbcTemplate, "stock_movements", "stock_movements_source_type_check",
                         "source_type",
                         List.of("LPO", "GRN", "DIRECT_PURCHASE", "DELIVERY_NOTE",
                                 "STOCK_TRANSFER_IN", "STOCK_TRANSFER_OUT",
-                                "SALES_INVOICE", "CANCELLED", "STOCK_TAKE"));
+                                "SALES_INVOICE", "CANCELLED", "STOCK_TAKE", "STOCK_TAKE_BATCH"));
 
                 System.out.println("Database constraints updated successfully.");
             } catch (Exception e) {

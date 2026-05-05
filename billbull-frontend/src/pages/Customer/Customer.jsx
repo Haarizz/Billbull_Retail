@@ -22,6 +22,7 @@ import { getEmployees } from '../../api/employeeApi';
 import { getProducts, getProductById } from '../../api/productsApi';
 import ProductSelector from '../../components/ProductSelector';
 import CurrencyAmount from '../../components/CurrencyAmount';
+import toast from 'react-hot-toast';
 
 // ==========================================
 // HELPERS
@@ -82,12 +83,12 @@ const AddFollowUpModal = ({ isOpen, onClose, inquiryId, onSaveSuccess }) => {
     try {
       setIsSubmitting(true);
       await addFollowUp(inquiryId, formData);
-      alert('Follow-up saved!');
+      toast.success('Follow-up saved!');
       onSaveSuccess(); // Refresh parent data
       onClose();
     } catch (error) {
       console.error("Failed to add follow-up", error);
-      alert("Failed to save follow-up.");
+      toast.error("Failed to save follow-up.");
     } finally {
       setIsSubmitting(false);
     }
@@ -522,7 +523,7 @@ const CreateInquiry = ({ onBack, onSave, isSaving }) => {
 
   const handleSaveClick = () => {
     if (!formData.customer || !formData.mobile) {
-      alert("Please fill in at least Customer Name and Mobile Number.");
+      toast.error("Please fill in at least Customer Name and Mobile Number.");
       return;
     }
     onSave(formData);
@@ -924,7 +925,7 @@ const ConvertToQuotationModal = ({ isOpen, onClose, inquiry, onSuccess }) => {
       onClose();
     } catch (error) {
       console.error("Error creating quotation data", error);
-      alert("Failed to prepare quotation data. Please try again.");
+      toast.error("Failed to prepare quotation data. Please try again.");
     } finally {
       setLoading(false);
     }
@@ -1087,7 +1088,7 @@ const ReassignRepModal = ({ isOpen, onClose, inquiry, onSuccess }) => {
 
   const handleReassign = async () => {
     if (!selectedRep) {
-      alert('Please select a representative');
+      toast.error('Please select a representative');
       return;
     }
 
@@ -1100,7 +1101,7 @@ const ReassignRepModal = ({ isOpen, onClose, inquiry, onSuccess }) => {
 
     // Always show success and refresh since backend is working
     setLoading(false);
-    alert('Representative reassigned successfully!');
+    toast.success('Representative reassigned successfully!');
     onSuccess();
     onClose();
   };
@@ -1565,7 +1566,7 @@ const Customer = () => {
       setView('view');
     } catch (error) {
       console.error("Failed to fetch inquiry details", error);
-      alert("Failed to load inquiry details.");
+      toast.error("Failed to load inquiry details.");
     } finally {
       setLoading(false);
     }
@@ -1578,7 +1579,7 @@ const Customer = () => {
         setInquiries(prev => prev.filter(item => item.id !== id));
       } catch (error) {
         console.error("Failed to delete inquiry", error);
-        alert("Could not delete inquiry");
+        toast.error("Could not delete inquiry");
       }
     }
   };
@@ -1601,7 +1602,7 @@ const Customer = () => {
       setView('list');
     } catch (error) {
       console.error("Failed to create inquiry", error);
-      alert("Failed to save inquiry. Please try again.");
+      toast.error("Failed to save inquiry. Please try again.");
     } finally {
       setSaving(false);
     }
@@ -1707,12 +1708,12 @@ const SendPriceListModal = ({ isOpen, onClose, inquiry, onSuccess }) => {
         nextFollowUpDate: null
       });
 
-      alert(`Price list sent via ${method} to ${contact}!`);
+      toast.success(`Price list sent via ${method} to ${contact}!`);
       if (onSuccess) onSuccess();
       onClose();
     } catch (err) {
       console.error("Failed to log price list activity", err);
-      alert("Price list sent, but failed to log activity.");
+      toast.error("Price list sent, but failed to log activity.");
       onClose();
     } finally {
       setSending(false);

@@ -7,6 +7,7 @@ import {
     resolveCurrencyDisplayConfig,
     UAE_DIRHAM_SYMBOL_IMAGE
 } from './countryCurrencyOptions';
+import toast from 'react-hot-toast';
 
 const escapeHtml = (value) =>
     String(value ?? '')
@@ -174,7 +175,7 @@ export const generateReportPrintHtml = (_template, reportTitle, columns, data, c
 export const printHtml = (htmlContent) => {
     const printWindow = window.open('', '_blank', 'width=960,height=760');
     if (!printWindow) {
-        alert('Pop-up blocked! Please allow pop-ups for this site.');
+        toast.error('Pop-up blocked! Please allow pop-ups for this site.');
         return;
     }
 
