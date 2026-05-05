@@ -273,89 +273,118 @@ public class StockTakeService {
             if (item.getCountedQty() == null) continue; // Skip items not counted
 
             int variance = item.getVariance();
-            if (variance != 0) {
-                // Idempotency guard: use item.getId() as sourceId so that each bin-level item
-                // gets its own movement key. Using session.getId() would collide when the same
-                // product appears in multiple bins (two items with the same productId & sessionId).
-                boolean alreadyPosted = stockMovementRepo.existsBySourceTypeAndSourceIdAndProductId(
-                        StockSourceType.STOCK_TAKE, item.getId(), item.getProductId());
-                if (alreadyPosted) continue;
+            // Defensive OR — if either flag survived an old record, treat as batched.
+            boolean batched = (item.isBatchEnabled() || item.isExpiryEnabled())
+                    && item.getBatches() != null && !item.getBatches().isEmpty();
 
-                // Resolve bin: prefer explicit assignment on item, else auto-detect from existing stock
-                Long resolvedBinId = item.getBinId();
-                Long resolvedZoneId = item.getZoneId();
-                Long resolvedLocatorId = item.getLocatorId();
-                String resolvedBinCode = item.getBinCode();
+            // Skip purely-zero non-batched items (no change to record).
+            // Batched items always post (even if variance=0) so the per-batch ledger is accurate.
+            if (!batched && variance == 0) continue;
 
-                if (resolvedBinId == null) {
-                    // No bin assigned on the item. Find which bin(s) currently hold this product.
-                    // If it lives in exactly one bin → auto-assign that bin so bin-level stock is correct.
-                    // If spread across multiple bins → leave null (can't auto-decide; user should assign manually).
-                    List<Object[]> activeBins = stockMovementRepo.findActiveBinsByWarehouseAndProduct(
-                            session.getWarehouseId(), item.getProductId());
-                    if (activeBins.size() == 1) {
-                        Long autoBinId = ((Number) activeBins.get(0)[0]).longValue();
-                        Bin autoBin = binRepo.findByIdEager(autoBinId).orElse(null);
-                        if (autoBin != null) {
-                            resolvedBinId    = autoBin.getId();
-                            resolvedBinCode  = autoBin.getCode();
-                            resolvedLocatorId = autoBin.getLocator().getId();
-                            resolvedZoneId   = autoBin.getLocator().getZone().getId();
-                            // Persist the resolved bin back onto the item so the UI and audit trail are accurate
-                            item.setBinId(resolvedBinId);
-                            item.setBinCode(resolvedBinCode);
-                            item.setLocatorId(resolvedLocatorId);
-                            item.setZoneId(resolvedZoneId);
-                            itemRepo.save(item);
-                        }
+            // Resolve bin: prefer explicit assignment on item, else auto-detect from existing stock
+            Long resolvedBinId = item.getBinId();
+            Long resolvedZoneId = item.getZoneId();
+            Long resolvedLocatorId = item.getLocatorId();
+            String resolvedBinCode = item.getBinCode();
+
+            if (resolvedBinId == null) {
+                List<Object[]> activeBins = stockMovementRepo.findActiveBinsByWarehouseAndProduct(
+                        session.getWarehouseId(), item.getProductId());
+                if (activeBins.size() == 1) {
+                    Long autoBinId = ((Number) activeBins.get(0)[0]).longValue();
+                    Bin autoBin = binRepo.findByIdEager(autoBinId).orElse(null);
+                    if (autoBin != null) {
+                        resolvedBinId    = autoBin.getId();
+                        resolvedBinCode  = autoBin.getCode();
+                        resolvedLocatorId = autoBin.getLocator().getId();
+                        resolvedZoneId   = autoBin.getLocator().getZone().getId();
+                        item.setBinId(resolvedBinId);
+                        item.setBinCode(resolvedBinCode);
+                        item.setLocatorId(resolvedLocatorId);
+                        item.setZoneId(resolvedZoneId);
+                        itemRepo.save(item);
                     }
                 }
+            }
 
-                // Hard capacity check: only block when adding stock into the bin (variance > 0)
-                if (variance > 0 && resolvedBinId != null) {
-                    binStockService.validateBinCapacity(resolvedBinId, variance);
-                }
+            // Hard capacity check: only block when adding stock into the bin (variance > 0)
+            if (variance > 0 && resolvedBinId != null) {
+                binStockService.validateBinCapacity(resolvedBinId, variance);
+            }
 
-                if (item.isBatchEnabled() && item.getBatches() != null && !item.getBatches().isEmpty()) {
-                    // One movement per batch — preserves traceability for FEFO and lifecycle tracking.
-                    // sourceId = batch.id keeps the (sourceType, sourceId, productId) uniqueness intact.
-                    for (StockTakeItemBatch batch : item.getBatches()) {
-                        if (batch.getQuantity() == null || batch.getQuantity() <= 0) continue;
-                        boolean batchPosted = stockMovementRepo.existsBySourceTypeAndSourceIdAndProductId(
-                                StockSourceType.STOCK_TAKE, batch.getId(), item.getProductId());
-                        if (batchPosted) continue;
-
-                        StockMovement sm = new StockMovement();
-                        sm.setSourceType(StockSourceType.STOCK_TAKE);
-                        sm.setSourceId(batch.getId());
-                        sm.setProductId(item.getProductId());
-                        sm.setWarehouseId(session.getWarehouseId());
-                        sm.setQuantity(batch.getQuantity());
-                        sm.setReferenceNo(session.getSessionId());
-                        sm.setMovementDate(LocalDate.now());
-                        sm.setBinId(resolvedBinId);
-                        sm.setZoneId(resolvedZoneId);
-                        sm.setLocatorId(resolvedLocatorId);
-                        sm.setBatchNumber(batch.getBatchNumber());
-                        sm.setExpiryDate(batch.getExpiryDate());
-
-                        stockMovementRepo.save(sm);
-                    }
+            if (batched) {
+                // Two-step ledger:
+                //   1) STOCK_TAKE   correction = -current_on_hand (zeros out prior un-batched on-hand)
+                //   2) STOCK_TAKE_BATCH per-batch positives summing to counted_qty
+                // Net effect = -current_on_hand + sum(batches), so post-approval on-hand == counted_qty.
+                // Read on-hand fresh from the ledger here — item.system_qty may be stale if other
+                // movements landed between modal open and approval.
+                java.math.BigDecimal onHandBd;
+                if (resolvedBinId != null) {
+                    onHandBd = stockMovementRepo.getStockByBin(session.getWarehouseId(), item.getProductId(), resolvedBinId);
                 } else {
+                    onHandBd = stockMovementRepo.getUnlocatedStock(session.getWarehouseId(), item.getProductId());
+                }
+                int sysQty = onHandBd != null ? onHandBd.intValue() : 0;
+                if (sysQty != 0) {
+                    boolean correctionPosted = stockMovementRepo.existsBySourceTypeAndSourceIdAndProductId(
+                            StockSourceType.STOCK_TAKE, item.getId(), item.getProductId());
+                    if (!correctionPosted) {
+                        StockMovement correction = new StockMovement();
+                        correction.setSourceType(StockSourceType.STOCK_TAKE);
+                        correction.setSourceId(item.getId());
+                        correction.setProductId(item.getProductId());
+                        correction.setWarehouseId(session.getWarehouseId());
+                        correction.setQuantity(-sysQty);
+                        correction.setReferenceNo(session.getSessionId());
+                        correction.setMovementDate(LocalDate.now());
+                        correction.setBinId(resolvedBinId);
+                        correction.setZoneId(resolvedZoneId);
+                        correction.setLocatorId(resolvedLocatorId);
+                        stockMovementRepo.save(correction);
+                    }
+                }
+
+                for (StockTakeItemBatch batch : item.getBatches()) {
+                    if (batch.getQuantity() == null || batch.getQuantity() <= 0) continue;
+                    boolean batchPosted = stockMovementRepo.existsBySourceTypeAndSourceIdAndProductId(
+                            StockSourceType.STOCK_TAKE_BATCH, batch.getId(), item.getProductId());
+                    if (batchPosted) continue;
+
                     StockMovement sm = new StockMovement();
-                    sm.setSourceType(StockSourceType.STOCK_TAKE);
-                    sm.setSourceId(item.getId()); // Per-item key so multiple bins of the same product don't collide
+                    sm.setSourceType(StockSourceType.STOCK_TAKE_BATCH);
+                    sm.setSourceId(batch.getId());
                     sm.setProductId(item.getProductId());
                     sm.setWarehouseId(session.getWarehouseId());
-                    sm.setQuantity(variance); // Positive for excess, Negative for shortage
+                    sm.setQuantity(batch.getQuantity());
                     sm.setReferenceNo(session.getSessionId());
                     sm.setMovementDate(LocalDate.now());
                     sm.setBinId(resolvedBinId);
                     sm.setZoneId(resolvedZoneId);
                     sm.setLocatorId(resolvedLocatorId);
+                    sm.setBatchNumber(batch.getBatchNumber());
+                    sm.setExpiryDate(batch.getExpiryDate());
 
                     stockMovementRepo.save(sm);
                 }
+            } else {
+                boolean alreadyPosted = stockMovementRepo.existsBySourceTypeAndSourceIdAndProductId(
+                        StockSourceType.STOCK_TAKE, item.getId(), item.getProductId());
+                if (alreadyPosted) continue;
+
+                StockMovement sm = new StockMovement();
+                sm.setSourceType(StockSourceType.STOCK_TAKE);
+                sm.setSourceId(item.getId());
+                sm.setProductId(item.getProductId());
+                sm.setWarehouseId(session.getWarehouseId());
+                sm.setQuantity(variance);
+                sm.setReferenceNo(session.getSessionId());
+                sm.setMovementDate(LocalDate.now());
+                sm.setBinId(resolvedBinId);
+                sm.setZoneId(resolvedZoneId);
+                sm.setLocatorId(resolvedLocatorId);
+
+                stockMovementRepo.save(sm);
             }
         }
 
@@ -384,8 +413,13 @@ public class StockTakeService {
         item.setCategory(p.getCategory());
         item.setDescription(p.getShortDesc() != null ? p.getShortDesc() : p.getName());
         item.setPrice(p.getPricing() != null ? p.getPricing().getRetailPrice() : BigDecimal.ZERO);
-        item.setBatchEnabled(p.isBatch());
-        item.setExpiryEnabled(p.isExpiryEnabled());
+        // Batch and Expiry are now driven by a single product-master toggle, but the
+        // two underlying columns may briefly drift on legacy data. Treat the item as
+        // tracked whenever either flag is set, and force them both true so the rest
+        // of the flow has one consistent source of truth.
+        boolean tracked = p.isBatch() || p.isExpiryEnabled();
+        item.setBatchEnabled(tracked);
+        item.setExpiryEnabled(tracked);
 
         // Fetch barcode: use the first barcode entry for this product
         java.util.List<com.billbull.backend.inventory.product.ProductBarcode> barcodes = barcodeRepo.findByProductId(p.getId());
@@ -512,13 +546,19 @@ public class StockTakeService {
     }
 
     private String nextAutoBatchNumber(StockTakeItem item, String warehouseCode, String itemCode, String documentCode) {
+        // Opening Inventory sessions emit OS-prefixed batch numbers; regular counts emit ST.
+        StockIdentifier identifier =
+                item.getSession().getType() == StockTakeSession.StockTakeType.OPENING_INVENTORY
+                        ? StockIdentifier.OS
+                        : StockIdentifier.ST;
+
         // Sequence: per item, per document, starts at 1
         int existing = item.getBatches() != null ? item.getBatches().size() : 0;
         int seq = existing + 1;
         String candidate;
         do {
             candidate = BatchNumberGenerator.generate(
-                    StockIdentifier.ST,
+                    identifier,
                     java.time.LocalDate.now(),
                     warehouseCode,
                     documentCode,

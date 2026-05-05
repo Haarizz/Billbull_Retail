@@ -6,6 +6,7 @@ import com.billbull.backend.common.BaseEntity;
 import com.billbull.backend.inventory.brand.Brand;
 import com.billbull.backend.inventory.department.Department;
 import com.billbull.backend.inventory.subdepartment.SubDepartment;
+import com.fasterxml.jackson.annotation.JsonProperty;
 
 import jakarta.persistence.CascadeType;
 import jakarta.persistence.Column;
@@ -62,10 +63,18 @@ public class Product extends BaseEntity {
 
     private String category;
 
+    @JsonProperty("isSerial")
     private boolean isSerial;
+
+    @JsonProperty("isBatch")
     private boolean isBatch;
+
     private boolean expiryEnabled;
+
+    @JsonProperty("isWeighing")
     private boolean isWeighing;
+
+    @JsonProperty("isDiscountAllowed")
     private boolean isDiscountAllowed;
 
     private Integer maxDiscount;
