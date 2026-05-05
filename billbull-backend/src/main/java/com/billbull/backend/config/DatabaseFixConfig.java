@@ -33,7 +33,11 @@ public class DatabaseFixConfig {
                         "source_type",
                         List.of("LPO", "GRN", "DIRECT_PURCHASE", "DELIVERY_NOTE",
                                 "STOCK_TRANSFER_IN", "STOCK_TRANSFER_OUT",
-                                "SALES_INVOICE", "CANCELLED", "STOCK_TAKE", "STOCK_TAKE_BATCH"));
+                                "SALES_INVOICE", "CANCELLED", "STOCK_TAKE", "STOCK_TAKE_BATCH",
+                                "STOCK_TAKE_ADJUSTMENT"));
+
+                ensureStockTakeBatchIdentityConstraint(jdbcTemplate);
+                ensureStockTakeBatchSeededColumn(jdbcTemplate);
 
                 System.out.println("Database constraints updated successfully.");
             } catch (Exception e) {
@@ -52,6 +56,41 @@ public class DatabaseFixConfig {
             jdbcTemplate.execute("ALTER TABLE products ALTER COLUMN expiry_enabled SET NOT NULL");
         } catch (Exception e) {
             System.err.println("Error ensuring product schema columns: " + e.getMessage());
+        }
+    }
+
+    private void ensureStockTakeBatchSeededColumn(JdbcTemplate jdbcTemplate) {
+        try {
+            jdbcTemplate.execute(
+                    "ALTER TABLE stock_take_item_batches ADD COLUMN IF NOT EXISTS seeded BOOLEAN DEFAULT FALSE");
+            jdbcTemplate.execute(
+                    "UPDATE stock_take_item_batches SET seeded = FALSE WHERE seeded IS NULL");
+            jdbcTemplate.execute(
+                    "ALTER TABLE stock_take_item_batches ALTER COLUMN seeded SET DEFAULT FALSE");
+            jdbcTemplate.execute(
+                    "ALTER TABLE stock_take_item_batches ALTER COLUMN seeded SET NOT NULL");
+        } catch (Exception e) {
+            System.err.println("Error ensuring stock_take_item_batches.seeded column: " + e.getMessage());
+        }
+    }
+
+    private void ensureStockTakeBatchIdentityConstraint(JdbcTemplate jdbcTemplate) {
+        try {
+            jdbcTemplate.execute("ALTER TABLE stock_take_item_batches DROP CONSTRAINT IF EXISTS uk_stock_take_item_batch");
+
+            List<Map<String, Object>> constraints = jdbcTemplate.queryForList(
+                    "SELECT conname FROM pg_constraint WHERE conname = ?",
+                    "uk_stock_take_item_batch_identity");
+
+            if (constraints.isEmpty()) {
+                jdbcTemplate.execute("""
+                        ALTER TABLE stock_take_item_batches
+                        ADD CONSTRAINT uk_stock_take_item_batch_identity
+                        UNIQUE (stock_take_item_id, batch_number, expiry_date)
+                        """);
+            }
+        } catch (Exception e) {
+            System.err.println("Error ensuring stock take batch identity constraint: " + e.getMessage());
         }
     }
 

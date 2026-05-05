@@ -30,6 +30,7 @@ const LowStockReport = () => {
         { header: 'Brand', key: 'brand', width: 20 },
         { header: 'Warehouse', key: 'warehouse', width: 25 },
         { header: 'Batch No', key: 'batchNumber', width: 20 },
+        { header: 'Expiry', key: 'expiryDate', width: 15 },
         { header: 'On Hand', key: 'onHand', width: 15 },
         { header: 'Min Stock', key: 'minStock', width: 15 },
         { header: 'Suggested PO Qty', key: 'suggestedPoQty', width: 20 },
@@ -261,7 +262,7 @@ const LowStockReport = () => {
                         <div style={{ overflowX: 'auto' }}>
                             <table style={{ width: '100%', minWidth: 1130, borderCollapse: 'collapse', fontSize: 13 }}>
                                 <thead style={{ background: '#f9fafb' }}>
-                                    <tr>{['SKU', 'Item', 'Department', 'Brand', 'Warehouse', 'Batch No', 'On Hand', 'Min Stock', 'Suggested PO Qty', 'Vendor'].map(h =>
+                                    <tr>{['SKU', 'Item', 'Department', 'Brand', 'Warehouse', 'Batch No', 'Expiry', 'On Hand', 'Min Stock', 'Suggested PO Qty', 'Vendor'].map(h =>
                                         <th key={h} style={{ padding: '8px 12px', textAlign: ['On Hand', 'Min Stock', 'Suggested PO Qty'].includes(h) ? 'right' : 'left', fontSize: 11, fontWeight: 600, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.05em', borderBottom: '1px solid #e5e7eb', whiteSpace: 'nowrap' }}>{h}</th>
                                     )}</tr>
                                 </thead>
@@ -274,6 +275,7 @@ const LowStockReport = () => {
                                             <td style={{ padding: '10px 12px', color: '#6b7280' }}>{row.brand || '-'}</td>
                                             <td style={{ padding: '10px 12px', color: '#6b7280' }}>{row.warehouse}</td>
                                             <td style={{ padding: '10px 12px', color: '#6b7280', fontFamily: 'monospace', fontSize: 12 }}>{row.batchNumber || '-'}</td>
+                                            <td style={{ padding: '10px 12px', color: '#6b7280' }}>{row.expiryDate || '-'}</td>
                                             <td style={{ padding: '10px 12px', textAlign: 'right', fontWeight: 700, color: '#ef4444' }}>{Number(row.onHand ?? 0).toFixed(0)}</td>
                                             <td style={{ padding: '10px 12px', textAlign: 'right', color: '#6b7280' }}>{Number(row.minStock ?? 0).toFixed(0)}</td>
                                             <td style={{ padding: '10px 12px', textAlign: 'right', color: '#F5A742', fontWeight: 600 }}>{Number(row.suggestedPoQty ?? 0).toFixed(0)}</td>

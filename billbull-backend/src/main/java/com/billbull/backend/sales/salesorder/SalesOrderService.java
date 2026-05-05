@@ -154,6 +154,10 @@ public class SalesOrderService {
                     com.billbull.backend.sales.quotation.QuotationStatus.CONVERTED);
         }
 
+        // Force the lazy warehouse proxy to load while the transaction is still open,
+        // so Jackson can serialize it after the session closes (open-in-view=false).
+        Hibernate.initialize(saved.getWarehouse());
+
         return saved;
     }
 
@@ -199,6 +203,7 @@ public class SalesOrderService {
                 .orElseThrow(() -> new RuntimeException("Sales Order not found: " + id));
 
         Hibernate.initialize(order.getItems());
+        Hibernate.initialize(order.getWarehouse());
         hydrateOrderItemDisplayData(order);
         return order;
     }
@@ -219,6 +224,7 @@ public class SalesOrderService {
         // ✅ FORCE LAZY INITIALIZATION
         orders.forEach(order -> {
             Hibernate.initialize(order.getItems());
+            Hibernate.initialize(order.getWarehouse());
             hydrateOrderItemDisplayData(order);
         });
 

@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.Mockito.when;
 
 import java.math.BigDecimal;
+import java.time.LocalDate;
 import java.util.List;
 
 import org.junit.jupiter.api.BeforeEach;
@@ -58,9 +59,9 @@ class InventoryReportServiceTest {
         warehouse.setId(2L);
         warehouse.setName("Main Warehouse");
 
-        when(stockRepo.findStockByWarehouseAndBatch(2L)).thenReturn(List.of(
-                new Object[] { 10L, "BATCH-A", 5 },
-                new Object[] { 10L, "BATCH-B", 3 }));
+        when(stockRepo.findStockByWarehouseAndBatch(2L)).thenReturn(List.<Object[]>of(
+                new Object[] { 10L, "BATCH-A", LocalDate.parse("2026-06-01"), 5 },
+                new Object[] { 10L, "BATCH-B", LocalDate.parse("2026-07-01"), 3 }));
         when(productRepo.findAllById(List.of(10L))).thenReturn(List.of(product));
         when(pricingRepo.findByProductIdIn(List.of(10L))).thenReturn(List.of(pricing));
         when(inventoryRepo.findByProductIdIn(List.of(10L))).thenReturn(List.of());
@@ -70,6 +71,7 @@ class InventoryReportServiceTest {
 
         assertEquals(2, rows.size());
         assertEquals("BATCH-A", rows.get(0).getBatchNumber());
+        assertEquals(LocalDate.parse("2026-06-01"), rows.get(0).getExpiryDate());
         assertEquals(new BigDecimal("5"), rows.get(0).getOnHand());
         assertEquals(new BigDecimal("20.00"), rows.get(0).getValue());
         assertEquals("BATCH-B", rows.get(1).getBatchNumber());

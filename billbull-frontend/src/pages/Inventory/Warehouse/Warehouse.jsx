@@ -749,7 +749,7 @@ const BinDetail = ({ bin, onEdit }) => {
                   const reserved = s.reservedQuantity || 0;
                   const available = onHand - reserved;
                   return (
-                    <tr key={s.id || idx} className="hover:bg-slate-50">
+                    <tr key={s.stockIdentityKey || `${s.id || 'row'}-${idx}`} className="hover:bg-slate-50">
                       <td className="px-6 py-3 font-medium text-slate-900">{s.productCode || '-'}</td>
                       <td className="px-6 py-3 text-slate-600">{s.productName || '-'}</td>
                       <td className="px-6 py-3"><span className="px-2 py-0.5 bg-blue-100 text-blue-700 text-xs rounded font-medium">{s.batchNumber || '-'}</span></td>

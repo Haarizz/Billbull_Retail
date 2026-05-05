@@ -5,6 +5,7 @@ import java.time.LocalDate;
 public class BinStockResponse {
 
     private Long id;
+    private String stockIdentityKey;
     private String productCode;
     private String productName;
     private String batchNumber;
@@ -17,6 +18,7 @@ public class BinStockResponse {
 
     public BinStockResponse(BinStock stock) {
         this.id = stock.getId();
+        this.stockIdentityKey = String.valueOf(stock.getId());
         this.productCode = stock.getProductCode();
         this.productName = stock.getProductName();
         this.batchNumber = stock.getBatchNumber();
@@ -32,6 +34,14 @@ public class BinStockResponse {
 
     public void setId(Long id) {
         this.id = id;
+    }
+
+    public String getStockIdentityKey() {
+        return stockIdentityKey;
+    }
+
+    public void setStockIdentityKey(String stockIdentityKey) {
+        this.stockIdentityKey = stockIdentityKey;
     }
 
     public String getProductCode() {

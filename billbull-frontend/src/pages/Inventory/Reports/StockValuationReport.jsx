@@ -33,6 +33,7 @@ const StockValuationReport = () => {
         { header: 'Brand', key: 'brand', width: 20 },
         { header: 'Warehouse', key: 'warehouse', width: 25 },
         { header: 'Batch No', key: 'batchNumber', width: 20 },
+        { header: 'Expiry', key: 'expiryDate', width: 15 },
         { header: 'Cost Method', key: 'costMethod', width: 18 },
         { header: 'Qty', key: 'onHand', width: 15 },
         { header: 'Unit Cost', key: 'unitCost', width: 15 },
@@ -351,7 +352,7 @@ const StockValuationReport = () => {
                             <table style={{ width: '100%', minWidth: 980, borderCollapse: 'collapse', fontSize: 13 }}>
                                 <thead style={{ background: '#f9fafb' }}>
                                     <tr>
-                                        {['SKU', 'Item', 'Category', 'Department', 'Brand', 'Warehouse', 'Batch No', 'Cost Method', 'Qty', 'Unit Cost', 'FIFO Cost', 'LIFO Cost', 'Stock Value'].map(h => (
+                                        {['SKU', 'Item', 'Category', 'Department', 'Brand', 'Warehouse', 'Batch No', 'Expiry', 'Cost Method', 'Qty', 'Unit Cost', 'FIFO Cost', 'LIFO Cost', 'Stock Value'].map(h => (
                                             <th key={h} style={{ padding: '8px 12px', textAlign: ['Qty', 'Unit Cost', 'FIFO Cost', 'LIFO Cost', 'Stock Value'].includes(h) ? 'right' : 'left', fontSize: 11, fontWeight: 600, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.05em', borderBottom: '1px solid #e5e7eb', whiteSpace: 'nowrap' }}>{h}</th>
                                         ))}
                                     </tr>
@@ -370,6 +371,7 @@ const StockValuationReport = () => {
                                                 <td style={{ padding: '10px 12px', color: '#6b7280' }}>{row.brand || '-'}</td>
                                                 <td style={{ padding: '10px 12px', color: '#6b7280' }}>{row.warehouse}</td>
                                                 <td style={{ padding: '10px 12px', color: '#6b7280', fontFamily: 'monospace', fontSize: 12 }}>{row.batchNumber || '-'}</td>
+                                                <td style={{ padding: '10px 12px', color: '#6b7280' }}>{row.expiryDate || '-'}</td>
                                                 <td style={{ padding: '10px 12px' }}>
                                                     <span style={{ background: '#eff6ff', borderRadius: 4, padding: '2px 7px', fontSize: 11, color: '#3b82f6', fontWeight: 600 }}>
                                                         {row.costMethod ? row.costMethod.replace('_', ' ') : 'STANDARD'}
