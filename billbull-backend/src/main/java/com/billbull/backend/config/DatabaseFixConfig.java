@@ -17,6 +17,8 @@ public class DatabaseFixConfig {
             try {
                 System.out.println("Checking and updating database check constraints for enums...");
 
+                ensureProductSchemaColumns(jdbcTemplate);
+
                 // 1. Fix delivery_notes_status_check
                 updateStatusConstraint(jdbcTemplate, "delivery_notes", "delivery_notes_status_check",
                         List.of("DRAFT", "DISPATCHED", "DELIVERED", "CANCELLED"));
@@ -39,6 +41,18 @@ public class DatabaseFixConfig {
                 // Non-fatal error, let app continue
             }
         };
+    }
+
+    private void ensureProductSchemaColumns(JdbcTemplate jdbcTemplate) {
+        try {
+            jdbcTemplate.execute(
+                    "ALTER TABLE products ADD COLUMN IF NOT EXISTS expiry_enabled BOOLEAN DEFAULT FALSE");
+            jdbcTemplate.execute("UPDATE products SET expiry_enabled = FALSE WHERE expiry_enabled IS NULL");
+            jdbcTemplate.execute("ALTER TABLE products ALTER COLUMN expiry_enabled SET DEFAULT FALSE");
+            jdbcTemplate.execute("ALTER TABLE products ALTER COLUMN expiry_enabled SET NOT NULL");
+        } catch (Exception e) {
+            System.err.println("Error ensuring product schema columns: " + e.getMessage());
+        }
     }
 
     private void updateStatusConstraint(JdbcTemplate jdbcTemplate, String tableName, String constraintName,
