@@ -752,6 +752,14 @@ const DeliveryNote = () => {
         };
     };
 
+    const getReservationAwareAvailable = (item = {}) => {
+        const available = Number(warehouseStockMap[item.code]) || 0;
+        const ownReservation = Number(item.currentQty ?? item.qty ?? item.orderedQty) || 0;
+        const isSourceReserved = (sourceType === 'SO' && Boolean((linkedSO || '').trim())) || Boolean(currentDnId);
+
+        return isSourceReserved ? available + ownReservation : available;
+    };
+
     const handleSaveAddonItem = (updatedItem) => {
         setItems(prev => prev.map(i => i.id === updatedItem.id ? { ...updatedItem } : i));
         if (focusedItem && focusedItem.id === updatedItem.id) {
@@ -1184,7 +1192,7 @@ const DeliveryNote = () => {
 
                 if (field === 'currentQty') {
                     const qty = Number(value);
-                    const available = warehouseStockMap[item.code] || 0;
+                    const available = getReservationAwareAvailable(item);
 
                     if (qty > available) {
                         alert(`Insufficient stock for ${item.code}. Available: ${available}`);
@@ -1251,7 +1259,7 @@ const DeliveryNote = () => {
 
         // Stock validation
         for (const i of items) {
-            const available = warehouseStockMap[i.code] || 0;
+            const available = getReservationAwareAvailable(i);
             if (i.currentQty > available) {
                 alert(`Insufficient stock for ${i.code}. Available: ${available}`);
                 return null;

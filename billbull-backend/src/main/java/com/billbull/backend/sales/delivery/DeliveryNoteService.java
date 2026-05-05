@@ -259,10 +259,6 @@ public class DeliveryNoteService {
             for (DeliveryNoteItem item : dn.getItems()) {
                 ensureDispatchBinAssignment(dn, item);
 
-                BigDecimal available = warehouseStockService.getAvailableStock(
-                        dn.getWarehouse().getId(),
-                        item.getProduct().getId());
-
                 int qty = item.getCurrentQty() != null ? item.getCurrentQty() : 0;
                 int foc = item.getFoc() != null ? item.getFoc() : 0;
                 int baseQty = resolveBaseQty(item.getProduct().getId(), item.getUnit(), qty);
@@ -270,6 +266,10 @@ public class DeliveryNoteService {
                         ? item.getFocUnit() : item.getUnit();
                 int baseFoc = resolveBaseQty(item.getProduct().getId(), effectiveFocUnit, foc);
                 BigDecimal requested = BigDecimal.valueOf((long) baseQty + baseFoc);
+                BigDecimal available = warehouseStockService.getAvailableStock(
+                        dn.getWarehouse().getId(),
+                        item.getProduct().getId())
+                        .add(BigDecimal.valueOf(baseQty));
 
                 if (available.compareTo(requested) < 0) {
                     throw new IllegalStateException(
