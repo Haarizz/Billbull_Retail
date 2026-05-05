@@ -1,6 +1,7 @@
 package com.billbull.backend.inventory.reports;
 
 import java.math.BigDecimal;
+import java.time.LocalDate;
 
 public class StockReportResponse {
 
@@ -12,6 +13,7 @@ public class StockReportResponse {
     private String brand;
     private String warehouse;
     private String batchNumber;
+    private LocalDate expiryDate;
     private Long branchId;
     private String branchName;
     private String branchCode;
@@ -63,6 +65,9 @@ public class StockReportResponse {
 
     public String getBatchNumber() { return batchNumber; }
     public void setBatchNumber(String batchNumber) { this.batchNumber = batchNumber; }
+
+    public LocalDate getExpiryDate() { return expiryDate; }
+    public void setExpiryDate(LocalDate expiryDate) { this.expiryDate = expiryDate; }
 
     public Long getBranchId() { return branchId; }
     public void setBranchId(Long branchId) { this.branchId = branchId; }

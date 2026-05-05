@@ -30,6 +30,7 @@ const StockOnHandReport = () => {
         { header: 'Item', key: 'item', width: 35 },
         { header: 'Warehouse', key: 'warehouse', width: 25 },
         { header: 'Batch No', key: 'batchNumber', width: 20 },
+        { header: 'Expiry', key: 'expiryDate', width: 15 },
         { header: 'Qty', key: 'onHand', width: 15 },
         { header: 'UOM', key: 'uom', width: 15 },
         { header: 'Unit Cost', key: 'unitCost', width: 15 },
@@ -229,7 +230,7 @@ const StockOnHandReport = () => {
                                 <table className="w-full text-xs border-collapse min-w-[720px]">
                                     <thead className="bg-gray-50">
                                         <tr>
-                                            {['SKU', 'Item', 'Warehouse', 'Batch No', 'Qty', 'UOM', 'Unit Cost', 'Value'].map(h => (
+                                            {['SKU', 'Item', 'Warehouse', 'Batch No', 'Expiry', 'Qty', 'UOM', 'Unit Cost', 'Value'].map(h => (
                                                 <th key={h} className={`px-3 py-2.5 text-[11px] font-semibold text-gray-500 uppercase tracking-wide border-b border-gray-200 whitespace-nowrap ${['Qty', 'Unit Cost', 'Value'].includes(h) ? 'text-right' : 'text-left'}`}>{h}</th>
                                             ))}
                                         </tr>
@@ -243,6 +244,7 @@ const StockOnHandReport = () => {
                                                     <span className="bg-gray-100 rounded px-1.5 py-0.5 text-[11px] font-medium text-gray-600">{row.warehouse}</span>
                                                 </td>
                                                 <td className="px-3 py-2.5 font-mono text-[11px] text-gray-600">{row.batchNumber || '-'}</td>
+                                                <td className="px-3 py-2.5 text-gray-500">{row.expiryDate || '-'}</td>
                                                 <td className="px-3 py-2.5 text-right font-semibold text-gray-900">{row.onHand}</td>
                                                 <td className="px-3 py-2.5 text-gray-500">{row.uom}</td>
                                                 <td className="px-3 py-2.5 text-right text-gray-500"><CurrencyAmount value={row.unitCost || 0} /></td>
@@ -250,7 +252,7 @@ const StockOnHandReport = () => {
                                             </tr>
                                         )) : (
                                             <tr>
-                                                <td colSpan="8" className="py-14 text-center">
+                                                <td colSpan="9" className="py-14 text-center">
                                                     <FaBoxOpen className="text-4xl text-gray-200 mx-auto mb-3" />
                                                     <p className="text-sm text-gray-500">No data found matching current filters.</p>
                                                 </td>

@@ -122,26 +122,11 @@ public class BinStockService {
                 .orElseThrow(() -> new RuntimeException("Bin not found: " + binId));
         Long warehouseId = bin.getLocator().getZone().getWarehouse().getId();
 
-        List<StockMovement> movements = stockMovementRepository.findByBinId(binId);
-        Map<Long, BinStockResponse> stockMap = new HashMap<>();
-
-        for (StockMovement movement : movements) {
-            Long productId = movement.getProductId();
-
-            if (stockMap.containsKey(productId)) {
-                BinStockResponse existing = stockMap.get(productId);
-                existing.setQuantity(existing.getQuantity() + movement.getQuantity());
-            } else {
-                BinStockResponse response = new BinStockResponse();
-                response.setId(productId);
-                response.setQuantity(movement.getQuantity());
-                response.setBatchNumber(movement.getBatchNumber() != null ? movement.getBatchNumber() : "-");
-                response.setExpiryDate(movement.getExpiryDate());
-                stockMap.put(productId, response);
-            }
-        }
-
-        List<Long> productIds = new ArrayList<>(stockMap.keySet());
+        List<Object[]> stockRows = stockMovementRepository.findStockIdentitiesByBin(binId);
+        List<Long> productIds = stockRows.stream()
+                .map(row -> ((Number) row[0]).longValue())
+                .distinct()
+                .toList();
         if (productIds.isEmpty()) {
             return new ArrayList<>();
         }
@@ -154,21 +139,8 @@ public class BinStockService {
                 .stream()
                 .collect(Collectors.groupingBy(row -> (Long) row[0]));
 
-        List<BinStockResponse> resultList = new ArrayList<>();
-
-        for (BinStockResponse response : stockMap.values()) {
-            Long productId = response.getId();
-            Product product = productDetails.get(productId);
-            if (product != null) {
-                response.setProductCode(product.getCode());
-                response.setProductName(product.getName());
-            }
-
-            int binOnHand = response.getQuantity() != null ? response.getQuantity() : 0;
-            if (binOnHand <= 0) {
-                continue;
-            }
-
+        Map<Long, Integer> remainingReservedByProduct = new HashMap<>();
+        for (Long productId : productIds) {
             List<Object[]> warehouseBinRows = warehouseBinRowsByProduct.getOrDefault(productId, List.of());
 
             int warehouseSoReserved = warehouseStockService.getSalesOrderReservedForWarehouse(warehouseId, productId);
@@ -183,7 +155,34 @@ public class BinStockService {
 
             int binDnReserved = safeInt(deliveryNoteRepo.sumReservedQtyInDispatchedNotesByBin(productId, binId));
 
-            response.setReservedQuantity(allocatedSoReserved + allocatedUnassignedDnReserved + binDnReserved);
+            remainingReservedByProduct.put(productId,
+                    allocatedSoReserved + allocatedUnassignedDnReserved + binDnReserved);
+        }
+
+        List<BinStockResponse> resultList = new ArrayList<>();
+        for (Object[] row : stockRows) {
+            Long productId = ((Number) row[0]).longValue();
+            String batchNumber = row[1] != null ? row[1].toString() : "-";
+            java.time.LocalDate expiryDate = (java.time.LocalDate) row[2];
+            int binOnHand = row[3] != null ? ((Number) row[3]).intValue() : 0;
+            if (binOnHand <= 0) continue;
+
+            Product product = productDetails.get(productId);
+            BinStockResponse response = new BinStockResponse();
+            response.setId(productId);
+            response.setStockIdentityKey(productId + "|" + batchNumber + "|" + (expiryDate != null ? expiryDate : ""));
+            response.setQuantity(binOnHand);
+            response.setBatchNumber(batchNumber);
+            response.setExpiryDate(expiryDate);
+            if (product != null) {
+                response.setProductCode(product.getCode());
+                response.setProductName(product.getName());
+            }
+
+            int remainingReserved = remainingReservedByProduct.getOrDefault(productId, 0);
+            int rowReserved = Math.min(binOnHand, Math.max(remainingReserved, 0));
+            response.setReservedQuantity(rowReserved);
+            remainingReservedByProduct.put(productId, remainingReserved - rowReserved);
             resultList.add(response);
         }
 

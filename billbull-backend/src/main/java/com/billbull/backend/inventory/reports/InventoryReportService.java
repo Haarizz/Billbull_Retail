@@ -3,6 +3,7 @@ package com.billbull.backend.inventory.reports;
 import java.math.BigDecimal;
 import java.sql.Timestamp;
 import java.text.SimpleDateFormat;
+import java.time.LocalDate;
 import java.util.*;
 import java.util.stream.Collectors;
 
@@ -63,7 +64,7 @@ public class InventoryReportService {
         // 2. Collect product IDs that have non-zero stock
         Set<Long> productIdSet = new LinkedHashSet<>();
         for (Object[] row : stockRows) {
-            Number qtyNum = (Number) row[warehouseId != null ? 2 : 3];
+            Number qtyNum = (Number) row[warehouseId != null ? 3 : 4];
             if (qtyNum != null && qtyNum.longValue() != 0) {
                 productIdSet.add(((Number) row[0]).longValue());
             }
@@ -94,7 +95,8 @@ public class InventoryReportService {
             for (Object[] row : stockRows) {
                 Long pId = ((Number) row[0]).longValue();
                 String batchNumber = normalizeBatchNumber((String) row[1]);
-                Number qtyNum = (Number) row[2];
+                LocalDate expiryDate = (LocalDate) row[2];
+                Number qtyNum = (Number) row[3];
                 BigDecimal qty = qtyNum == null ? BigDecimal.ZERO : new BigDecimal(qtyNum.toString());
 
                 if (qty.compareTo(BigDecimal.ZERO) == 0)
@@ -103,14 +105,15 @@ public class InventoryReportService {
                 if (p == null)
                     continue;
 
-                result.add(buildResponse(p, wName, batchNumber, qty, pricingMap.get(pId), invMap.get(pId)));
+                result.add(buildResponse(p, wName, batchNumber, expiryDate, qty, pricingMap.get(pId), invMap.get(pId)));
             }
         } else {
             for (Object[] row : stockRows) {
                 Long pId = ((Number) row[0]).longValue();
                 Number wIdNum = (Number) row[1];
                 String batchNumber = normalizeBatchNumber((String) row[2]);
-                Number qtyNum = (Number) row[3];
+                LocalDate expiryDate = (LocalDate) row[3];
+                Number qtyNum = (Number) row[4];
                 Long wId = wIdNum != null ? wIdNum.longValue() : null;
                 BigDecimal qty = qtyNum == null ? BigDecimal.ZERO : new BigDecimal(qtyNum.toString());
 
@@ -121,7 +124,7 @@ public class InventoryReportService {
                     continue;
 
                 String wName = wId != null ? warehouseNameMap.getOrDefault(wId, "Warehouse") : "Warehouse";
-                result.add(buildResponse(p, wName, batchNumber, qty, pricingMap.get(pId), invMap.get(pId)));
+                result.add(buildResponse(p, wName, batchNumber, expiryDate, qty, pricingMap.get(pId), invMap.get(pId)));
             }
         }
 
@@ -257,7 +260,7 @@ public class InventoryReportService {
         Set<Long> productIdSet = new LinkedHashSet<>();
         Set<Long> warehouseIdSet = new LinkedHashSet<>();
         for (Object[] row : stockRows) {
-            Number qtyNum = (Number) row[warehouseId != null ? 2 : 3];
+            Number qtyNum = (Number) row[warehouseId != null ? 3 : 4];
             if (qtyNum != null && qtyNum.longValue() != 0) {
                 productIdSet.add(((Number) row[0]).longValue());
                 if (warehouseId == null && row[1] != null) {
@@ -311,12 +314,13 @@ public class InventoryReportService {
             for (Object[] row : stockRows) {
                 Long pId = ((Number) row[0]).longValue();
                 String batchNumber = normalizeBatchNumber((String) row[1]);
-                Number qtyNum = (Number) row[2];
+                LocalDate expiryDate = (LocalDate) row[2];
+                Number qtyNum = (Number) row[3];
                 BigDecimal qty = qtyNum == null ? BigDecimal.ZERO : new BigDecimal(qtyNum.toString());
                 if (qty.compareTo(BigDecimal.ZERO) == 0) continue;
                 Product p = productMap.get(pId);
                 if (p == null) continue;
-                result.add(buildValuationResponse(p, wName, batchNumber, qty,
+                result.add(buildValuationResponse(p, wName, batchNumber, expiryDate, qty,
                         pricingMap.get(pId), invMap.get(pId),
                         wacMap.get(pId), lifoMap.get(pId), fifoMap.get(pId)));
             }
@@ -325,7 +329,8 @@ public class InventoryReportService {
                 Long pId = ((Number) row[0]).longValue();
                 Number wIdNum = (Number) row[1];
                 String batchNumber = normalizeBatchNumber((String) row[2]);
-                Number qtyNum = (Number) row[3];
+                LocalDate expiryDate = (LocalDate) row[3];
+                Number qtyNum = (Number) row[4];
                 Long wId = wIdNum != null ? wIdNum.longValue() : null;
                 BigDecimal qty = qtyNum == null ? BigDecimal.ZERO : new BigDecimal(qtyNum.toString());
                 if (qty.compareTo(BigDecimal.ZERO) == 0) continue;
@@ -337,7 +342,7 @@ public class InventoryReportService {
                 Map<Long, BigDecimal> fifoMap = wId != null ? fifoByWh.getOrDefault(wId, Collections.emptyMap()) : Collections.emptyMap();
                 String wName = wId != null ? warehouseNameMap.getOrDefault(wId, "Warehouse") : "Warehouse";
 
-                result.add(buildValuationResponse(p, wName, batchNumber, qty,
+                result.add(buildValuationResponse(p, wName, batchNumber, expiryDate, qty,
                         pricingMap.get(pId), invMap.get(pId),
                         wacMap.get(pId), lifoMap.get(pId), fifoMap.get(pId)));
             }
@@ -372,7 +377,7 @@ public class InventoryReportService {
      * product's configured costMethod rather than the static pricing.cost field.
      */
     private StockReportResponse buildValuationResponse(
-            Product p, String wName, String batchNumber, BigDecimal qty,
+            Product p, String wName, String batchNumber, LocalDate expiryDate, BigDecimal qty,
             ProductPricing pricing, ProductInventoryPolicy inv,
             BigDecimal wacCost, BigDecimal lifoCost, BigDecimal fifoCost) {
 
@@ -383,6 +388,7 @@ public class InventoryReportService {
         res.setCategory(p.getCategory());
         res.setWarehouse(wName);
         res.setBatchNumber(batchNumber);
+        res.setExpiryDate(expiryDate);
         res.setOnHand(qty);
 
         if (p.getDepartment() != null) res.setDepartment(p.getDepartment().getName());
@@ -454,7 +460,7 @@ public class InventoryReportService {
     // SHARED RESPONSE BUILDER
     // ─────────────────────────────────────────────────────────────────────────
     private StockReportResponse buildResponse(
-            Product p, String wName, String batchNumber, BigDecimal qty,
+            Product p, String wName, String batchNumber, LocalDate expiryDate, BigDecimal qty,
             ProductPricing pricing, ProductInventoryPolicy inv) {
 
         StockReportResponse res = new StockReportResponse();
@@ -464,6 +470,7 @@ public class InventoryReportService {
         res.setCategory(p.getCategory());
         res.setWarehouse(wName);
         res.setBatchNumber(batchNumber);
+        res.setExpiryDate(expiryDate);
         res.setOnHand(qty);
 
         // Department and Brand from product relations
