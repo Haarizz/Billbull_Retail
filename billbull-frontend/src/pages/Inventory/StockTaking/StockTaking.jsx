@@ -30,7 +30,7 @@ const STOCK_TAKING_COLUMNS = [
 ];
 import { getImageUrl } from '../../../utils/urlUtils';
 import ExcelJS from 'exceljs';
-import { getWarehouses, getWarehouseStock, getWarehouseProductStock, getWarehouseBins } from '../../../api/warehouseApi';
+import { getWarehouses, getWarehouseStock, getWarehouseProductStock, getWarehouseBins, getWarehouseStockSummary } from '../../../api/warehouseApi';
 import { getProductById, searchExactProducts, searchProductByBarcode } from '../../../api/productsApi';
 import { getDepartments } from '../../../api/departmentsApi';
 import { getBrands } from '../../../api/brandsApi';
@@ -1712,6 +1712,25 @@ const StockTaking = () => {
         setIsLoading(true);
         try {
             const data = await getStockTakeSessions();
+
+            // Progress denominator = warehouse SKU count for INVENTORY_COUNTING sessions
+            // (OPENING_INVENTORY has no pre-existing warehouse stock, so it falls back to
+            // the session's own item count). Fetch summaries in parallel.
+            const warehouseIds = [...new Set(
+                data
+                    .filter(s => s.type !== 'OPENING_INVENTORY' && s.warehouseId)
+                    .map(s => s.warehouseId)
+            )];
+            const skuCountByWarehouse = {};
+            await Promise.all(warehouseIds.map(async (id) => {
+                try {
+                    const summary = await getWarehouseStockSummary(id);
+                    skuCountByWarehouse[id] = summary?.totalSkus ?? 0;
+                } catch {
+                    skuCountByWarehouse[id] = 0;
+                }
+            }));
+
             setAllSessions(data.map(s => {
                 // Only sum variance for counted items — uncounted items carry a placeholder
                 // variance of -systemQty which would corrupt the total if included.
@@ -1720,6 +1739,14 @@ const StockTaking = () => {
                 const totalQty = countedItems.reduce((sum, item) => sum + (item.variance || 0), 0);
                 const sessionTimestamps = mapSessionTimestamps(s);
 
+                const sessionItemCount = s.items?.length || 0;
+                const isOpening = s.type === 'OPENING_INVENTORY';
+                const warehouseSkuCount = skuCountByWarehouse[s.warehouseId];
+                const total = isOpening
+                    ? sessionItemCount
+                    : (warehouseSkuCount != null ? warehouseSkuCount : sessionItemCount);
+                const progress = Math.min(sessionItemCount, total);
+
                 return {
                     ...s,
                     id: s.sessionId,
@@ -1727,9 +1754,8 @@ const StockTaking = () => {
                     // BB-014: Map warehouseName → warehouse for the listing display
                     warehouse: s.warehouseName || s.warehouse || '',
                     ...sessionTimestamps,
-                    // BB-017: Use countedCount/totalCount from backend if available, else compute from items
-                    progress: s.countedCount != null ? s.countedCount : (s.items?.filter(i => i.countedQty !== null).length || 0),
-                    total: s.totalCount != null ? s.totalCount : (s.items?.length || 0),
+                    progress,
+                    total,
                     status: s.status === 'IN_PROGRESS' ? 'In Progress' :
                         s.status === 'PENDING_APPROVAL' ? 'Pending Approval' :
                             s.status === 'COMPLETED' ? 'Completed' : s.status,
