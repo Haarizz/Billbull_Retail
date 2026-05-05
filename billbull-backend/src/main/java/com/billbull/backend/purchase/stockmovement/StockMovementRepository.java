@@ -78,6 +78,17 @@ public interface StockMovementRepository
                         """)
         List<Object[]> getTotalAvailableStockForProducts(@Param("productIds") List<Long> productIds);
 
+        @Query("""
+                            SELECT sm.productId, COALESCE(SUM(sm.quantity), 0)
+                            FROM StockMovement sm
+                            WHERE sm.warehouseId = :warehouseId
+                              AND sm.productId IN :productIds
+                            GROUP BY sm.productId
+                        """)
+        List<Object[]> getAvailableStockForProductsInWarehouse(
+                        @Param("warehouseId") Long warehouseId,
+                        @Param("productIds") List<Long> productIds);
+
         // ✅ Total product stock across all warehouses, grouped by warehouse and product
         @Query("""
                             SELECT sm.productId, sm.warehouseId, COALESCE(SUM(sm.quantity), 0)
@@ -93,6 +104,21 @@ public interface StockMovementRepository
                             GROUP BY sm.productId, sm.warehouseId
                         """)
         List<Object[]> findStockByProductsForAllWarehouses(@Param("productIds") List<Long> productIds);
+
+        @Query("""
+                            SELECT sm.productId, sm.batchNumber, COALESCE(SUM(sm.quantity), 0)
+                            FROM StockMovement sm
+                            WHERE sm.warehouseId = :warehouseId
+                            GROUP BY sm.productId, sm.batchNumber
+                        """)
+        List<Object[]> findStockByWarehouseAndBatch(@Param("warehouseId") Long warehouseId);
+
+        @Query("""
+                            SELECT sm.productId, sm.warehouseId, sm.batchNumber, COALESCE(SUM(sm.quantity), 0)
+                            FROM StockMovement sm
+                            GROUP BY sm.productId, sm.warehouseId, sm.batchNumber
+                        """)
+        List<Object[]> findAllStockGroupedByProductWarehouseAndBatch();
 
         // ✅ Get Last Sold and Last Received dates for Out of Stock Report
         @Query(value = """

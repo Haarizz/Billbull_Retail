@@ -11,6 +11,7 @@ public class StockReportResponse {
     private String department;
     private String brand;
     private String warehouse;
+    private String batchNumber;
     private Long branchId;
     private String branchName;
     private String branchCode;
@@ -59,6 +60,9 @@ public class StockReportResponse {
 
     public String getWarehouse() { return warehouse; }
     public void setWarehouse(String warehouse) { this.warehouse = warehouse; }
+
+    public String getBatchNumber() { return batchNumber; }
+    public void setBatchNumber(String batchNumber) { this.batchNumber = batchNumber; }
 
     public Long getBranchId() { return branchId; }
     public void setBranchId(Long branchId) { this.branchId = branchId; }

@@ -3,19 +3,28 @@ package com.billbull.backend.inventory.stocktake;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.stream.Collectors;
 
 import org.springframework.cache.annotation.CacheEvict;
 import org.springframework.cache.annotation.Caching;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageImpl;
+import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import com.billbull.backend.inventory.batch.BatchNumberGenerator;
 import com.billbull.backend.inventory.batch.StockIdentifier;
 import com.billbull.backend.inventory.product.Product;
+import com.billbull.backend.inventory.product.ProductBarcode;
 import com.billbull.backend.inventory.product.ProductBarcodeRepository;
+import com.billbull.backend.inventory.product.ProductMedia;
 import com.billbull.backend.inventory.product.ProductMediaRepository;
+import com.billbull.backend.inventory.product.ProductPricing;
 import com.billbull.backend.inventory.product.ProductRepository;
 import com.billbull.backend.inventory.warehouse.Bin;
 import com.billbull.backend.inventory.warehouse.BinRepository;
@@ -91,29 +100,110 @@ public class StockTakeService {
     }
 
     @org.springframework.transaction.annotation.Transactional(readOnly = true)
-    public org.springframework.data.domain.Page<Product> getProductsForStockTake(
+    public Page<StockTakeProductResponse> getProductsForStockTake(
             String stockTakeType, Long warehouseId, String countType,
             Long categoryId, Long brandId, String search, int page, int size) {
 
         // COUNTING requires warehouse restriction; OPENING is global
         Long effectiveWarehouseId = "COUNTING".equalsIgnoreCase(stockTakeType) ? warehouseId : null;
+        Pageable pageable = org.springframework.data.domain.PageRequest.of(page, size);
 
         // Validate: if count type demands a filter but none provided → return empty
         boolean needsCategory = "Selected Categories".equalsIgnoreCase(countType);
         boolean needsBrand    = "Selected Brands".equalsIgnoreCase(countType);
-        if (needsCategory && categoryId == null) return org.springframework.data.domain.Page.empty();
-        if (needsBrand    && brandId    == null) return org.springframework.data.domain.Page.empty();
+        if (needsCategory && categoryId == null) return Page.empty(pageable);
+        if (needsBrand    && brandId    == null) return Page.empty(pageable);
 
         // Only apply category/brand filters when the count type explicitly requires them
         Long effectiveCategoryId = needsCategory ? categoryId : null;
         Long effectiveBrandId    = needsBrand    ? brandId    : null;
 
-        org.springframework.data.domain.Pageable pageable =
-                org.springframework.data.domain.PageRequest.of(page, size);
-
-        return productRepo.findForStockTake(
+        Page<Product> productPage = productRepo.findForStockTake(
                 effectiveWarehouseId, effectiveCategoryId, effectiveBrandId,
                 search != null ? search : "", pageable);
+
+        List<Product> products = productPage.getContent();
+        if (products.isEmpty()) {
+            return new PageImpl<>(List.of(), pageable, productPage.getTotalElements());
+        }
+
+        List<Long> productIds = products.stream().map(Product::getId).toList();
+
+        Map<Long, Integer> stockMap = new HashMap<>();
+        List<Object[]> stockRows = effectiveWarehouseId != null
+                ? stockMovementRepo.getAvailableStockForProductsInWarehouse(effectiveWarehouseId, productIds)
+                : stockMovementRepo.getTotalAvailableStockForProducts(productIds);
+        for (Object[] row : stockRows) {
+            if (row[0] == null || row[1] == null) continue;
+            stockMap.put(((Number) row[0]).longValue(), ((Number) row[1]).intValue());
+        }
+
+        Map<Long, List<String>> barcodeMap = barcodeRepo.findByProductIdIn(productIds)
+                .stream()
+                .filter(b -> b.getProduct() != null && b.getBarcode() != null && !b.getBarcode().isBlank())
+                .collect(Collectors.groupingBy(
+                        b -> b.getProduct().getId(),
+                        Collectors.mapping(ProductBarcode::getBarcode, Collectors.toList())));
+
+        Map<Long, String> imageMap = mediaRepo.findByProductIdInAndIsPrimaryTrue(productIds)
+                .stream()
+                .collect(Collectors.toMap(
+                        m -> m.getProduct().getId(),
+                        ProductMedia::getImageUrl,
+                        (a, b) -> a));
+
+        List<StockTakeProductResponse> content = new ArrayList<>();
+        for (Product product : products) {
+            content.add(toStockTakeProductResponse(
+                    product,
+                    stockMap.getOrDefault(product.getId(), 0),
+                    barcodeMap.getOrDefault(product.getId(), List.of()),
+                    imageMap.get(product.getId())));
+        }
+
+        return new PageImpl<>(content, pageable, productPage.getTotalElements());
+    }
+
+    private StockTakeProductResponse toStockTakeProductResponse(
+            Product product,
+            Integer stock,
+            List<String> barcodes,
+            String image) {
+        StockTakeProductResponse response = new StockTakeProductResponse();
+        response.setId(product.getId());
+        response.setCode(product.getCode());
+        response.setSku(product.getSku() != null ? product.getSku() : product.getCode());
+        response.setName(product.getName());
+        response.setDescription(product.getShortDesc() != null ? product.getShortDesc() : product.getName());
+        response.setCategory(product.getCategory());
+        response.setStock(stock != null ? stock : 0);
+        response.setImage(image);
+        response.setBatchEnabled(product.isBatch() || product.isExpiryEnabled());
+        response.setExpiryEnabled(product.isBatch() || product.isExpiryEnabled());
+
+        if (product.getDepartment() != null) {
+            response.setDepartmentId(product.getDepartment().getId());
+            response.setDepartmentName(product.getDepartment().getName());
+            if (response.getCategory() == null || response.getCategory().isBlank()) {
+                response.setCategory(product.getDepartment().getName());
+            }
+        }
+        if (product.getBrand() != null) {
+            response.setBrandId(product.getBrand().getId());
+            response.setBrandName(product.getBrand().getName());
+        }
+
+        response.setBarcodes(barcodes != null ? barcodes : List.of());
+        response.setBarcode(response.getBarcodes().isEmpty() ? null : response.getBarcodes().get(0));
+
+        ProductPricing pricing = product.getPricing();
+        if (pricing != null) {
+            response.setCost(pricing.getCost());
+            response.setRetailPrice(pricing.getRetailPrice());
+            response.setSellingPrice(pricing.getRetailPrice());
+        }
+
+        return response;
     }
 
     public List<StockTakeSession> getAllSessions() {

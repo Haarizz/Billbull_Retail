@@ -31,7 +31,7 @@ const STOCK_TAKING_COLUMNS = [
 import { getImageUrl } from '../../../utils/urlUtils';
 import ExcelJS from 'exceljs';
 import { getWarehouses, getWarehouseStock, getWarehouseProductStock, getWarehouseBins, getWarehouseStockSummary } from '../../../api/warehouseApi';
-import { getProductById, searchExactProducts, searchProductByBarcode } from '../../../api/productsApi';
+import { searchExactProducts, searchProductByBarcode } from '../../../api/productsApi';
 import { getDepartments } from '../../../api/departmentsApi';
 import { getBrands } from '../../../api/brandsApi';
 import ProductSelector from '../../../components/ProductSelector';
@@ -575,7 +575,10 @@ const resolveProductCategory = (product) => (
 const normalizeSelectorProduct = (product, detail = null) => {
     const detailProduct = detail?.product || null;
     const baseProduct = detailProduct || product?.product || product || {};
-    const detailBarcode = detail?.inventory?.packings?.find?.(packing => packing.barcode)?.barcode || '';
+    const detailBarcode =
+        detail?.inventory?.packings?.find?.(packing => packing.barcode)?.barcode ||
+        product?.inventory?.packings?.find?.(packing => packing.barcode)?.barcode ||
+        '';
     const brand = resolveProductBrand(product) || resolveProductBrand(detail) || baseProduct.brand?.name || 'General';
     const category = (
         product?.category ||
@@ -585,6 +588,21 @@ const normalizeSelectorProduct = (product, detail = null) => {
         resolveProductCategory(product) ||
         resolveProductCategory(detail) ||
         'Uncategorized'
+    );
+    const batchEnabled = !!(
+        product?.batchEnabled ??
+        product?.isBatch ??
+        product?.product?.isBatch ??
+        detailProduct?.isBatch ??
+        baseProduct.isBatch ??
+        false
+    );
+    const expiryEnabled = !!(
+        product?.expiryEnabled ??
+        product?.product?.expiryEnabled ??
+        detailProduct?.expiryEnabled ??
+        baseProduct.expiryEnabled ??
+        false
     );
 
     return {
@@ -604,8 +622,18 @@ const normalizeSelectorProduct = (product, detail = null) => {
         retailPrice: product?.retailPrice ?? detail?.pricing?.retailPrice ?? product?.sellingPrice ?? null,
         sellingPrice: product?.sellingPrice ?? detail?.pricing?.retailPrice ?? product?.retailPrice ?? null,
         stock: product?.stock ?? 0,
+        batchEnabled,
+        expiryEnabled,
     };
 };
+
+const mapStockTakeItem = (item) => ({
+    ...item,
+    barcode: item?.barcode || item?.product?.barcode || '',
+    batches: item?.batches || [],
+    impact: item?.varianceValue ? `${item.varianceValue > 0 ? '+' : ''}AED ${Math.abs(item.varianceValue).toFixed(2)}` : null,
+    status: item?.status ? item.status.charAt(0) + item.status.slice(1).toLowerCase() : 'Pending',
+});
 
 const ListView = ({
     activeTab,
@@ -1652,7 +1680,6 @@ const StockTaking = () => {
     const [scanFlash, setScanFlash] = useState(false);
     const [lastSaved, setLastSaved] = useState(null);
     const barcodeInputRef = React.useRef(null);
-    const productDetailsCacheRef = React.useRef(new Map());
     // Prevents duplicate adds from rapid barcode scanner Enter presses firing before state updates
     const addingSkusRef = React.useRef(new Set());
 
@@ -1855,7 +1882,15 @@ const StockTaking = () => {
     const handleSelectProduct = async (product, initialCount = null) => {
         if (!selectedSession) return;
 
-        const sku = product.sku || product.code;
+        const normalizedProduct = normalizeSelectorProduct(product);
+        const productId = normalizedProduct.id;
+        const sku = normalizedProduct.sku || normalizedProduct.code || (productId ? String(productId) : '');
+
+        if (!productId) {
+            console.error('Stock take add blocked: missing product ID', { product, normalizedProduct });
+            showNotif('error', 'Product Error', 'Unable to add this product because its product ID is missing.');
+            return null;
+        }
 
         // Guard: drop concurrent calls for the same SKU (rapid barcode scanner Enter events)
         if (addingSkusRef.current.has(sku)) return;
@@ -1863,34 +1898,36 @@ const StockTaking = () => {
 
         setIsLoading(true);
 
-        const existingItem = selectedSession.items?.find(i => i.sku === sku);
+        const existingItem = selectedSession.items?.find(i =>
+            String(i.productId) === String(productId) ||
+            (sku && i.sku === sku) ||
+            (normalizedProduct.barcode && i.barcode === normalizedProduct.barcode)
+        );
 
         if (existingItem) {
-            // If scanning, increment count
-            if (initialCount !== null) {
+            if (initialCount !== null && !(existingItem.batchEnabled || existingItem.expiryEnabled)) {
                 await handleCountChange(existingItem.id, (existingItem.countedQty || 0) + initialCount);
                 setLastScannedItem({ ...existingItem, countedQty: (existingItem.countedQty || 0) + initialCount });
                 setLastScannedAt(new Date());
-            } else {
+            } else if (initialCount === null) {
                 showNotif('info', 'Already Added', 'This product is already in the session.');
+            } else {
+                setLastScannedItem(existingItem);
+                setLastScannedAt(new Date());
             }
             setIsLoading(false);
             addingSkusRef.current.delete(sku);
-            return;
+            return existingItem;
         }
 
         try {
             const newItem = await addItemToSession(
                 selectedSession.sessionId,
-                product.id,
+                productId,
                 initialCount !== null ? initialCount : 0
             );
 
-            const mappedItem = {
-                ...newItem,
-                impact: newItem.varianceValue ? `${newItem.varianceValue > 0 ? '+' : ''}AED ${Math.abs(newItem.varianceValue).toFixed(2)}` : null,
-                status: newItem.status ? newItem.status.charAt(0) + newItem.status.slice(1).toLowerCase() : 'Pending'
-            };
+            const mappedItem = mapStockTakeItem(newItem);
 
             const updatedSession = {
                 ...selectedSession,
@@ -1906,10 +1943,16 @@ const StockTaking = () => {
             setUndoHistory(prev => [...prev, { type: 'ADD_ITEM', itemId: newItem.id }]);
             setIsLoading(false);
             setIsProductSelectorOpen(false);
+            return mappedItem;
         } catch (error) {
-            console.error("Failed to add product to session:", error);
-            showNotif('error', 'Error', 'Failed to add product to session.');
+            console.error("Failed to add product to session:", {
+                error,
+                product: normalizedProduct,
+                sessionId: selectedSession.sessionId,
+            });
+            showNotif('error', 'Error', error?.response?.data?.message || 'Failed to add product to session.');
             setIsLoading(false);
+            return null;
         } finally {
             addingSkusRef.current.delete(sku);
         }
@@ -1944,23 +1987,7 @@ const StockTaking = () => {
             signal,
         });
 
-        const content = await Promise.all(
-            (data.content || []).map(async (product) => {
-                const cachedDetail = productDetailsCacheRef.current.get(product.id);
-                if (cachedDetail) {
-                    return normalizeSelectorProduct(product, cachedDetail);
-                }
-
-                try {
-                    const detail = await getProductById(product.id);
-                    productDetailsCacheRef.current.set(product.id, detail);
-                    return normalizeSelectorProduct(product, detail);
-                } catch (error) {
-                    console.error(`Failed to enrich stock take product ${product.id}:`, error);
-                    return normalizeSelectorProduct(product);
-                }
-            })
-        );
+        const content = (data.content || []).map(product => normalizeSelectorProduct(product));
 
         return {
             ...data,
@@ -1970,9 +1997,27 @@ const StockTaking = () => {
 
     // Called when user picks a product from the ProductSelector search modal.
     // Instead of adding immediately, open the count modal so they can enter qty first.
-    const handleProductSelectorSelect = (product) => {
+    const handleProductSelectorSelect = async (product) => {
         setIsProductSelectorOpen(false);
         const normalizedProduct = normalizeSelectorProduct(product);
+        const isTracked = !!(normalizedProduct.batchEnabled || normalizedProduct.expiryEnabled);
+
+        if (isTracked) {
+            const existingItem = selectedSession?.items?.find(i =>
+                String(i.productId) === String(normalizedProduct.id) ||
+                i.sku === (normalizedProduct.sku || normalizedProduct.code) ||
+                (normalizedProduct.barcode && i.barcode === normalizedProduct.barcode)
+            );
+            const itemForModal = existingItem || await handleSelectProduct(normalizedProduct, 0);
+            if (itemForModal) {
+                setSelectedItemForCount(mapStockTakeItem(itemForModal));
+                setCountMode('set');
+                setCountToAdd(itemForModal.countedQty != null ? itemForModal.countedQty : 0);
+                setIsCountModalOpen(true);
+            }
+            return;
+        }
+
         const tempItem = {
             id: product.id,          // product ID — used by handleSelectProduct for addItemToSession
             _sessionItemId: null,    // no session item ID yet
@@ -1988,6 +2033,9 @@ const StockTaking = () => {
             countedQty: null,
             costPrice: parseFloat(normalizedProduct.cost) || 0,
             price: parseFloat(normalizedProduct.retailPrice ?? normalizedProduct.sellingPrice) || 0,
+            batchEnabled: normalizedProduct.batchEnabled,
+            expiryEnabled: normalizedProduct.expiryEnabled,
+            batches: [],
             _fromSearch: true, // flag: needs to be added via addItemToSession first
         };
         setSelectedItemForCount(tempItem);
@@ -2302,23 +2350,21 @@ const StockTaking = () => {
                     results = await searchExactProducts(scanned);
                 }
                 if (results && results.length > 0) {
-                    const product = results[0];
+                    const product = normalizeSelectorProduct(results[0]);
                     // If the scanned product is batch-enabled, add the item with 0 count
                     // and pop the count modal so the user can enter batches manually.
                     // A naked product barcode can't tell us which physical batch the unit
                     // belongs to, so we never auto-increment for batched items.
-                    const productData = product.product || product;
-                    const isTracked = !!(productData.isBatch || productData.expiryEnabled);
+                    const isTracked = !!(product.batchEnabled || product.expiryEnabled);
                     if (isTracked) {
                         const created = await handleSelectProduct(product, 0);
-                        // handleSelectProduct may not return; fall back to refetching the item
                         const newItem = created || (selectedSession?.items || []).find(
-                            i => i.productId === productData.id
+                            i => String(i.productId) === String(product.id)
                         );
                         if (newItem) {
-                            setSelectedItemForCount(newItem);
+                            setSelectedItemForCount(mapStockTakeItem(newItem));
                             setCountMode('set');
-                            setCountToAdd(0);
+                            setCountToAdd(newItem.countedQty != null ? newItem.countedQty : 0);
                             setIsCountModalOpen(true);
                         }
                     } else {
@@ -2332,6 +2378,7 @@ const StockTaking = () => {
                 }
             } catch (error) {
                 console.error("Barcode search failed:", error);
+                showNotif('error', 'Barcode Error', error?.response?.data?.message || 'Failed to add product in the session.');
             } finally {
                 setIsLoading(false);
                 barcodeInputRef.current?.focus();

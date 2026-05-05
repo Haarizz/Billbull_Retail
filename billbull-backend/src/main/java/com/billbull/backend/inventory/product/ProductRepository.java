@@ -120,7 +120,8 @@ public interface ProductRepository extends JpaRepository<Product, Long> {
                         "AND (:search = '' OR LOWER(p.name) LIKE LOWER(CONCAT('%', :search, '%')) " +
                         "  OR LOWER(p.code) LIKE LOWER(CONCAT('%', :search, '%')) " +
                         "  OR LOWER(p.sku)  LIKE LOWER(CONCAT('%', :search, '%')) " +
-                        "  OR LOWER(p.brand.name) LIKE LOWER(CONCAT('%', :search, '%'))) " +
+                        "  OR LOWER(p.brand.name) LIKE LOWER(CONCAT('%', :search, '%')) " +
+                        "  OR EXISTS (SELECT 1 FROM ProductBarcode pb WHERE pb.product = p AND LOWER(pb.barcode) LIKE LOWER(CONCAT('%', :search, '%')))) " +
                         "ORDER BY p.name ASC")
         org.springframework.data.domain.Page<Product> findForStockTake(
                         @org.springframework.data.repository.query.Param("warehouseId") Long warehouseId,
