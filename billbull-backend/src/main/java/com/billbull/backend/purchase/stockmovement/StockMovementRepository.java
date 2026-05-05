@@ -1,6 +1,7 @@
 package com.billbull.backend.purchase.stockmovement;
 
 import java.math.BigDecimal;
+import java.time.LocalDate;
 import java.util.List;
 
 import org.springframework.data.jpa.repository.JpaRepository;
@@ -16,6 +17,33 @@ public interface StockMovementRepository
                         StockSourceType sourceType,
                         Long sourceId,
                         Long productId);
+
+        @Query("""
+                            SELECT COUNT(sm) > 0
+                            FROM StockMovement sm
+                            WHERE sm.sourceType = :sourceType
+                              AND sm.sourceId = :sourceId
+                              AND sm.productId = :productId
+                              AND sm.warehouseId = :warehouseId
+                              AND ((:binId IS NULL AND sm.binId IS NULL) OR sm.binId = :binId)
+                              AND ((:batchNumber IS NULL AND sm.batchNumber IS NULL) OR sm.batchNumber = :batchNumber)
+                              AND ((:expiryDate IS NULL AND sm.expiryDate IS NULL) OR sm.expiryDate = :expiryDate)
+                              AND sm.quantity < 0
+                        """)
+        boolean existsOutboundIdentity(
+                        @Param("sourceType") StockSourceType sourceType,
+                        @Param("sourceId") Long sourceId,
+                        @Param("productId") Long productId,
+                        @Param("warehouseId") Long warehouseId,
+                        @Param("binId") Long binId,
+                        @Param("batchNumber") String batchNumber,
+                        @Param("expiryDate") LocalDate expiryDate);
+
+        List<StockMovement> findBySourceTypeAndSourceIdAndProductIdAndQuantityLessThan(
+                        StockSourceType sourceType,
+                        Long sourceId,
+                        Long productId,
+                        Integer quantity);
 
         // ✅ Warehouse stock summary (used by WarehouseStockService)
         @Query("""
