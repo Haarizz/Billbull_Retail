@@ -27,7 +27,6 @@ export const getStockAvailability = async (itemCode, filtersOrSignal, maybeAbort
         return res.data;
     } catch (error) {
         if (error.name === 'AbortError' || error.name === 'CanceledError' || error.code === 'ERR_CANCELED') {
-            console.log("Stock availability request aborted");
             return null; // Return null intentionally to handle in UI
         }
         console.error("Failed to fetch stock availability", error);

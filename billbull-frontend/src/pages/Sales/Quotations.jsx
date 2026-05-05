@@ -3086,7 +3086,7 @@ const Quotations = () => {
                 {/* --- TOAST NOTIFICATION --- */}
                 {
                     showToast && (
-                        <div className="fixed bottom-6 right-6 bg-white border border-slate-200 shadow-xl rounded-lg p-4 flex items-center gap-3 animate-in slide-in-from-right-10 fade-in duration-300 z-50 max-w-sm mb-16 md:mb-0">
+                        <div className="fixed bottom-24 right-6 bg-white border border-slate-200 shadow-xl rounded-lg p-4 flex items-center gap-3 animate-in slide-in-from-right-10 fade-in duration-300 z-[120] max-w-sm">
                             {(() => {
                                 const toastMessageText = typeof toastMessage === 'string' ? toastMessage : '';
                                 const toastTitle = toastMessageText.includes('rejected') || toastMessageText.includes('Rejected')
