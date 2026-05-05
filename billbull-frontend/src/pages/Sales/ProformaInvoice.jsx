@@ -988,7 +988,14 @@ const ProformaInvoice = () => {
     try {
       const full = await getQuotationById(qtn.id);
       const matchedCust = customersList.find(c => c.code === (full.customerCode || qtn.customerCode) || c.name === (full.customerName || qtn.customerName));
-      if (matchedCust) setSelectedCustomer(matchedCust);
+      if (matchedCust) {
+        setSelectedCustomer(matchedCust);
+        const _defaultAddr = (matchedCust.savedAddresses || []).find(a => a.isDefault);
+        const _resolvedAddr = _defaultAddr
+          ? [_defaultAddr.address1, _defaultAddr.address2, _defaultAddr.city, _defaultAddr.country].filter(Boolean).join(', ')
+          : (matchedCust.defaultShippingAddress || matchedCust.shippingAddress || matchedCust.billingAddress || matchedCust.address || '');
+        setShippingAddress(_resolvedAddr);
+      }
       const srcItems = full.items || full.lineItems || [];
       if (srcItems.length > 0) {
         setItems(srcItems.map((item, i) => normalizeProformaItem(item, item.id || Date.now() + i + Math.random())));
@@ -996,7 +1003,14 @@ const ProformaInvoice = () => {
     } catch (err) {
       console.error('Failed to fetch quotation details', err);
       const matchedCust = customersList.find(c => c.name === qtn.customerName || c.code === qtn.customerCode);
-      if (matchedCust) setSelectedCustomer(matchedCust);
+      if (matchedCust) {
+        setSelectedCustomer(matchedCust);
+        const _defaultAddr = (matchedCust.savedAddresses || []).find(a => a.isDefault);
+        const _resolvedAddr = _defaultAddr
+          ? [_defaultAddr.address1, _defaultAddr.address2, _defaultAddr.city, _defaultAddr.country].filter(Boolean).join(', ')
+          : (matchedCust.defaultShippingAddress || matchedCust.shippingAddress || matchedCust.billingAddress || matchedCust.address || '');
+        setShippingAddress(_resolvedAddr);
+      }
     }
   };
 
@@ -1007,7 +1021,15 @@ const ProformaInvoice = () => {
     try {
       const full = await getSalesOrderById(so.id);
       const matchedCust = customersList.find(c => c.code === (full.customerCode || so.customerCode));
-      if (matchedCust) setSelectedCustomer(matchedCust);
+      if (matchedCust) {
+        setSelectedCustomer(matchedCust);
+        const _defaultAddr = (matchedCust.savedAddresses || []).find(a => a.isDefault);
+        const _resolvedAddr = _defaultAddr
+          ? [_defaultAddr.address1, _defaultAddr.address2, _defaultAddr.city, _defaultAddr.country].filter(Boolean).join(', ')
+          : (matchedCust.defaultShippingAddress || matchedCust.shippingAddress || matchedCust.billingAddress || matchedCust.address || '');
+        // Prefer SO's shipping address if it has one, otherwise fall back to customer master
+        setShippingAddress(full.shippingAddress || _resolvedAddr);
+      }
       const srcItems = full.items || full.lineItems || [];
       if (srcItems.length > 0) {
         setItems(srcItems.map((item, i) => normalizeProformaItem(item, item.id || Date.now() + i + Math.random())));
@@ -1015,7 +1037,14 @@ const ProformaInvoice = () => {
     } catch (err) {
       console.error('Failed to fetch sales order details', err);
       const matchedCust = customersList.find(c => c.code === so.customerCode);
-      if (matchedCust) setSelectedCustomer(matchedCust);
+      if (matchedCust) {
+        setSelectedCustomer(matchedCust);
+        const _defaultAddr = (matchedCust.savedAddresses || []).find(a => a.isDefault);
+        const _resolvedAddr = _defaultAddr
+          ? [_defaultAddr.address1, _defaultAddr.address2, _defaultAddr.city, _defaultAddr.country].filter(Boolean).join(', ')
+          : (matchedCust.defaultShippingAddress || matchedCust.shippingAddress || matchedCust.billingAddress || matchedCust.address || '');
+        setShippingAddress(_resolvedAddr);
+      }
     }
   };
 

@@ -18,20 +18,20 @@ public interface StockMovementRepository
                         Long sourceId,
                         Long productId);
 
-        @Query("""
-                            SELECT COUNT(sm) > 0
-                            FROM StockMovement sm
-                            WHERE sm.sourceType = :sourceType
-                              AND sm.sourceId = :sourceId
-                              AND sm.productId = :productId
-                              AND sm.warehouseId = :warehouseId
-                              AND ((:binId IS NULL AND sm.binId IS NULL) OR sm.binId = :binId)
-                              AND ((:batchNumber IS NULL AND sm.batchNumber IS NULL) OR sm.batchNumber = :batchNumber)
-                              AND ((:expiryDate IS NULL AND sm.expiryDate IS NULL) OR sm.expiryDate = :expiryDate)
+        @Query(value = """
+                            SELECT COUNT(sm.id) > 0
+                            FROM stock_movements sm
+                            WHERE sm.source_type = :sourceType
+                              AND sm.source_id = :sourceId
+                              AND sm.product_id = :productId
+                              AND sm.warehouse_id = :warehouseId
+                              AND ((CAST(:binId AS bigint) IS NULL AND sm.bin_id IS NULL) OR sm.bin_id = CAST(:binId AS bigint))
+                              AND ((CAST(:batchNumber AS varchar) IS NULL AND sm.batch_number IS NULL) OR sm.batch_number = CAST(:batchNumber AS varchar))
+                              AND ((CAST(:expiryDate AS date) IS NULL AND sm.expiry_date IS NULL) OR sm.expiry_date = CAST(:expiryDate AS date))
                               AND sm.quantity < 0
-                        """)
+                        """, nativeQuery = true)
         boolean existsOutboundIdentity(
-                        @Param("sourceType") StockSourceType sourceType,
+                        @Param("sourceType") String sourceType,
                         @Param("sourceId") Long sourceId,
                         @Param("productId") Long productId,
                         @Param("warehouseId") Long warehouseId,

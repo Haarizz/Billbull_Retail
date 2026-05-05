@@ -1047,9 +1047,23 @@ const DeliveryNote = () => {
         setIsPIOpen(false);
         setIsSIOpen(false);
 
+        // Resolve shipping: prefer SO's saved address, fall back to customer master
         if (so.shippingAddress) {
             setShippingAddress(so.shippingAddress);
+        } else {
+            const matchedCust = customersList.find(c => c.code === so.customerCode || c.name === so.customerName);
+            if (matchedCust) {
+                const _defaultAddr = (matchedCust.savedAddresses || []).find(a => a.isDefault);
+                const _resolvedAddr = _defaultAddr
+                    ? [_defaultAddr.address1, _defaultAddr.address2, _defaultAddr.city, _defaultAddr.country].filter(Boolean).join(', ')
+                    : (matchedCust.defaultShippingAddress || matchedCust.shippingAddress || matchedCust.billingAddress || matchedCust.address || '');
+                setShippingAddress(_resolvedAddr);
+            }
         }
+
+        // Set customer from master list so savedAddresses are available
+        const matchedCust = customersList.find(c => c.code === so.customerCode || c.name === so.customerName);
+        if (matchedCust) setSelectedCustomer(matchedCust);
 
         if (so.items && so.items.length > 0) {
             const mappedItems = so.items.map((item, index) =>
@@ -1074,7 +1088,19 @@ const DeliveryNote = () => {
         setIsSOOpen(false);
         setIsPIOpen(false);
 
-        if (si.shippingAddress) setShippingAddress(si.shippingAddress);
+        // Resolve shipping: prefer SI's saved address, fall back to customer master
+        if (si.shippingAddress) {
+            setShippingAddress(si.shippingAddress);
+        } else {
+            const matchedCust = customersList.find(c => c.code === si.customerCode || c.name === si.customerName);
+            if (matchedCust) {
+                const _defaultAddr = (matchedCust.savedAddresses || []).find(a => a.isDefault);
+                const _resolvedAddr = _defaultAddr
+                    ? [_defaultAddr.address1, _defaultAddr.address2, _defaultAddr.city, _defaultAddr.country].filter(Boolean).join(', ')
+                    : (matchedCust.defaultShippingAddress || matchedCust.shippingAddress || matchedCust.billingAddress || matchedCust.address || '');
+                setShippingAddress(_resolvedAddr);
+            }
+        }
 
         const siItems = si.items || si.invoiceItems || [];
         if (siItems.length > 0) {
@@ -1095,8 +1121,18 @@ const DeliveryNote = () => {
         setSourceDocumentId(pi.id);
         setIsPIOpen(false);
 
+        // Resolve shipping: prefer PI's saved address, fall back to customer master
         if (pi.shippingAddress) {
             setShippingAddress(pi.shippingAddress);
+        } else {
+            const matchedCust = customersList.find(c => c.code === pi.customerCode || c.name === pi.customerName);
+            if (matchedCust) {
+                const _defaultAddr = (matchedCust.savedAddresses || []).find(a => a.isDefault);
+                const _resolvedAddr = _defaultAddr
+                    ? [_defaultAddr.address1, _defaultAddr.address2, _defaultAddr.city, _defaultAddr.country].filter(Boolean).join(', ')
+                    : (matchedCust.defaultShippingAddress || matchedCust.shippingAddress || matchedCust.billingAddress || matchedCust.address || '');
+                setShippingAddress(_resolvedAddr);
+            }
         }
 
         if (pi.items && pi.items.length > 0) {

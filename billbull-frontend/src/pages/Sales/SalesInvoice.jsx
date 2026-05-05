@@ -551,7 +551,20 @@ const SalesInvoice = () => {
             .then(nextNo => setInvoiceNo(nextNo))
             .catch(() => { });
 
-        setSelectedCustomer(matched || { name: fromQtn.customer, code: '', id: null });
+        const resolvedCustomer = matched || { name: fromQtn.customer, code: '', id: null };
+        setSelectedCustomer(resolvedCustomer);
+
+        // Resolve shipping address: prefer passed-through → customer master
+        if (fromQtn.shippingAddress) {
+            setShippingAddress(fromQtn.shippingAddress);
+        } else if (matched) {
+            const _defaultAddr = (matched.savedAddresses || []).find(a => a.isDefault);
+            const _resolvedAddr = _defaultAddr
+                ? [_defaultAddr.address1, _defaultAddr.address2, _defaultAddr.city, _defaultAddr.country].filter(Boolean).join(', ')
+                : (matched.defaultShippingAddress || matched.shippingAddress || matched.billingAddress || matched.address || '');
+            setShippingAddress(_resolvedAddr);
+        }
+
         setItems(mappedItems.length > 0 ? mappedItems : [{ id: Date.now(), code: '', name: '', unit: 'PCS', qty: 0, price: 0, disc: 0, tax: 5, taxAmt: 0, gross: 0, net: 0, cost: 0 }]);
         setBillDiscount(Number(fromQtn.billDiscount) || 0);
         setReference(fromQtn.qtnNo || '');
@@ -598,7 +611,20 @@ const SalesInvoice = () => {
             .then(nextNo => setInvoiceNo(nextNo))
             .catch(() => { });
 
-        setSelectedCustomer(matched || { name: fromSO.customer, code: fromSO.customerCode || '', id: null });
+        const resolvedCustomer = matched || { name: fromSO.customer, code: fromSO.customerCode || '', id: null };
+        setSelectedCustomer(resolvedCustomer);
+
+        // Resolve shipping address: prefer passed-through → customer master
+        if (fromSO.shippingAddress) {
+            setShippingAddress(fromSO.shippingAddress);
+        } else if (matched) {
+            const _defaultAddr = (matched.savedAddresses || []).find(a => a.isDefault);
+            const _resolvedAddr = _defaultAddr
+                ? [_defaultAddr.address1, _defaultAddr.address2, _defaultAddr.city, _defaultAddr.country].filter(Boolean).join(', ')
+                : (matched.defaultShippingAddress || matched.shippingAddress || matched.billingAddress || matched.address || '');
+            setShippingAddress(_resolvedAddr);
+        }
+
         setItems(mappedItems.length > 0 ? mappedItems : [{ id: Date.now(), code: '', name: '', unit: 'PCS', qty: 0, price: 0, disc: 0, tax: 5, taxAmt: 0, gross: 0, net: 0, cost: 0 }]);
         setInvoiceTypeUI('Against Sales Order');
         setSalesType('STANDARD_FLOW');

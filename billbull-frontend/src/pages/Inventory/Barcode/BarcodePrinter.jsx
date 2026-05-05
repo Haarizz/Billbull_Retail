@@ -221,6 +221,9 @@ const BarcodePrinter = () => {
     const [stockTakeLoading, setStockTakeLoading] = useState(false);
     const [openedStockTakeSession, setOpenedStockTakeSession] = useState(null);
     const [selectedBatchKeys, setSelectedBatchKeys] = useState({}); // key -> { selected, labelCount }
+    const [stockTakeSearch, setStockTakeSearch] = useState('');
+    const [stockTakeFilterStatus, setStockTakeFilterStatus] = useState('');
+    const [stockTakeFilterWarehouse, setStockTakeFilterWarehouse] = useState('');
     const [allPurchaseOrders, setAllPurchaseOrders] = useState([]); // Master list
     const [displayedPurchaseOrders, setDisplayedPurchaseOrders] = useState([]); // Filtered list
     const [vendors, setVendors] = useState([]);
@@ -972,7 +975,7 @@ const BarcodePrinter = () => {
                     <div className="label-code" style={{ fontSize: barcodeFontSize, marginTop: '1px', letterSpacing: '0.08em', fontWeight: 'bold' }}>{item.barcode || getBarcodeValue(item.product)}</div>
                 )}
 
-                {isEnabled('batchNumber') && item.batchNumber && (
+                {isEnabled('batchNumber') && item.batchNumber && item.batchNumber !== (item.barcode || getBarcodeValue(item.product)) && (
                     <div className="label-code" style={{ fontSize: codeFontSize, marginTop: '1px', fontWeight: 'bold' }}>Batch: {item.batchNumber}</div>
                 )}
 
@@ -1423,32 +1426,123 @@ const BarcodePrinter = () => {
                                     <div className="text-center text-sm text-slate-500 py-8">Loading...</div>
                                 )}
 
-                                {!stockTakeLoading && !openedStockTakeSession && (
-                                    <div className="space-y-2">
-                                        {stockTakeSessions.length === 0 ? (
-                                            <div className="text-center text-sm text-slate-500 py-8">No stock take sessions found.</div>
-                                        ) : stockTakeSessions.map(s => {
-                                            const batchCount = (s.items || []).reduce(
-                                                (n, i) => n + ((i.batches || []).length), 0
-                                            );
-                                            return (
-                                                <button
-                                                    key={s.id}
-                                                    onClick={() => openStockTakeSession(s.sessionId)}
-                                                    className="w-full text-left p-3 bg-slate-50 hover:bg-[#FFF8E7] rounded-lg border border-slate-200 flex items-center justify-between"
-                                                >
-                                                    <div>
-                                                        <div className="font-bold text-sm text-slate-900">{s.sessionId}</div>
-                                                        <div className="text-xs text-slate-500">
-                                                            {s.warehouseName} | {s.status} | {(s.items || []).length} items, {batchCount} batches
-                                                        </div>
+                                {!stockTakeLoading && !openedStockTakeSession && (() => {
+                                    const allStatuses = [...new Set(stockTakeSessions.map(s => s.status).filter(Boolean))];
+                                    const allWarehouses = [...new Set(stockTakeSessions.map(s => s.warehouseName).filter(Boolean))];
+                                    const filteredStockTakeSessions = stockTakeSessions.filter(s => {
+                                        const q = stockTakeSearch.trim().toLowerCase();
+                                        const matchesSearch = !q ||
+                                            (s.sessionId && s.sessionId.toLowerCase().includes(q)) ||
+                                            (s.warehouseName && s.warehouseName.toLowerCase().includes(q));
+                                        const matchesStatus = !stockTakeFilterStatus || s.status === stockTakeFilterStatus;
+                                        const matchesWarehouse = !stockTakeFilterWarehouse || s.warehouseName === stockTakeFilterWarehouse;
+                                        return matchesSearch && matchesStatus && matchesWarehouse;
+                                    });
+                                    return (
+                                        <div className="space-y-3">
+                                            {/* Search + Filter bar */}
+                                            <div className="flex flex-col gap-2">
+                                                <div className="relative">
+                                                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={14} />
+                                                    <input
+                                                        type="text"
+                                                        placeholder="Search by session ID or warehouse..."
+                                                        className="w-full pl-9 pr-4 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:border-[#F5C742] focus:ring-2 focus:ring-[#F5C742]/40 transition-all"
+                                                        value={stockTakeSearch}
+                                                        onChange={e => setStockTakeSearch(e.target.value)}
+                                                    />
+                                                    {stockTakeSearch && (
+                                                        <button
+                                                            onClick={() => setStockTakeSearch('')}
+                                                            className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                                                        >
+                                                            <X size={13} />
+                                                        </button>
+                                                    )}
+                                                </div>
+                                                <div className="flex gap-2">
+                                                    <select
+                                                        className="flex-1 text-xs border border-slate-200 rounded-lg px-3 py-2 focus:outline-none focus:border-[#F5C742] bg-white text-slate-700"
+                                                        value={stockTakeFilterStatus}
+                                                        onChange={e => setStockTakeFilterStatus(e.target.value)}
+                                                    >
+                                                        <option value="">All Statuses</option>
+                                                        {allStatuses.map(st => (
+                                                            <option key={st} value={st}>{st}</option>
+                                                        ))}
+                                                    </select>
+                                                    <select
+                                                        className="flex-1 text-xs border border-slate-200 rounded-lg px-3 py-2 focus:outline-none focus:border-[#F5C742] bg-white text-slate-700"
+                                                        value={stockTakeFilterWarehouse}
+                                                        onChange={e => setStockTakeFilterWarehouse(e.target.value)}
+                                                    >
+                                                        <option value="">All Warehouses</option>
+                                                        {allWarehouses.map(wh => (
+                                                            <option key={wh} value={wh}>{wh}</option>
+                                                        ))}
+                                                    </select>
+                                                    {(stockTakeSearch || stockTakeFilterStatus || stockTakeFilterWarehouse) && (
+                                                        <button
+                                                            onClick={() => { setStockTakeSearch(''); setStockTakeFilterStatus(''); setStockTakeFilterWarehouse(''); }}
+                                                            className="px-3 py-2 text-xs font-bold text-slate-500 border border-slate-200 rounded-lg hover:bg-slate-50 flex items-center gap-1 whitespace-nowrap"
+                                                        >
+                                                            <RefreshCw size={11} /> Reset
+                                                        </button>
+                                                    )}
+                                                </div>
+                                                <div className="flex items-center justify-between">
+                                                    <p className="text-[10px] text-slate-400 font-medium">
+                                                        {filteredStockTakeSessions.length} of {stockTakeSessions.length} sessions
+                                                    </p>
+                                                    {filteredStockTakeSessions.length === 0 && stockTakeSessions.length > 0 && (
+                                                        <p className="text-[10px] text-amber-600 font-semibold">No sessions match your filters</p>
+                                                    )}
+                                                </div>
+                                            </div>
+
+                                            {/* Session list */}
+                                            <div className="space-y-2">
+                                                {stockTakeSessions.length === 0 ? (
+                                                    <div className="text-center text-sm text-slate-500 py-8">No stock take sessions found.</div>
+                                                ) : filteredStockTakeSessions.length === 0 ? (
+                                                    <div className="text-center text-sm text-slate-400 py-6">
+                                                        <Filter size={28} className="mx-auto mb-2 opacity-30" />
+                                                        No sessions match your search or filters.
                                                     </div>
-                                                    <ChevronRight size={16} className="text-slate-400" />
-                                                </button>
-                                            );
-                                        })}
-                                    </div>
-                                )}
+                                                ) : filteredStockTakeSessions.map(s => {
+                                                    const batchCount = (s.items || []).reduce(
+                                                        (n, i) => n + ((i.batches || []).length), 0
+                                                    );
+                                                    const statusColor = s.status === 'COMPLETED'
+                                                        ? 'bg-emerald-100 text-emerald-700'
+                                                        : s.status === 'IN_PROGRESS'
+                                                        ? 'bg-amber-100 text-amber-700'
+                                                        : 'bg-slate-100 text-slate-600';
+                                                    return (
+                                                        <button
+                                                            key={s.id}
+                                                            onClick={() => openStockTakeSession(s.sessionId)}
+                                                            className="w-full text-left p-3 bg-slate-50 hover:bg-[#FFF8E7] rounded-lg border border-slate-200 flex items-center justify-between transition-colors"
+                                                        >
+                                                            <div>
+                                                                <div className="flex items-center gap-2 mb-0.5">
+                                                                    <span className="font-bold text-sm text-slate-900">{s.sessionId}</span>
+                                                                    <span className={`text-[10px] px-1.5 py-0.5 rounded font-bold ${statusColor}`}>
+                                                                        {s.status}
+                                                                    </span>
+                                                                </div>
+                                                                <div className="text-xs text-slate-500">
+                                                                    {s.warehouseName} &bull; {(s.items || []).length} items, {batchCount} batches
+                                                                </div>
+                                                            </div>
+                                                            <ChevronRight size={16} className="text-slate-400" />
+                                                        </button>
+                                                    );
+                                                })}
+                                            </div>
+                                        </div>
+                                    );
+                                })()}
 
                                 {!stockTakeLoading && openedStockTakeSession && (
                                     <div className="space-y-3">
