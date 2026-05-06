@@ -5,7 +5,7 @@ import {
     Barcode, Layout, CheckCircle, Square, ArrowLeft,
     FileText, Grid, Tag, ShoppingBag, AlertCircle,
     ChevronLeft, ChevronRight, RefreshCw, Send, Box,
-    Calendar, Filter, Loader, Save
+    Calendar, Filter, Loader, Save, SlidersHorizontal
 } from 'lucide-react';
 import { searchExactProducts } from "../../../api/productsApi";
 import { getLpos } from "../../../api/lpoApi";
@@ -24,54 +24,116 @@ import {
 
 const TEMPLATES = [
     {
-        id: 'standard_40x25',
-        name: 'Standard 40x25mm',
-        desc: '1 column, compact design',
-        width: 40, height: 25, type: 'Roll', perPage: 1,
-        fields: { barcode: true, name: true, price: true, sku: false, unit: false, company: false, qr: false, batchNumber: true, expiryDate: true },
-        isSystem: true // Protect system templates
-    },
-    {
-        id: 'medium_50x30',
-        name: 'Medium 50x30mm',
-        desc: '1 column with SKU',
-        width: 50, height: 30, type: 'Roll', perPage: 1,
-        fields: { barcode: true, name: true, price: true, sku: true, unit: true, company: false, qr: false, batchNumber: true, expiryDate: true },
+        id: 'dual_standard_70x50',
+        name: 'Standard Dual 70x50mm',
+        desc: 'Balanced two-barcode label',
+        width: 70, height: 50, type: 'Roll', perPage: 1, barcodeFormat: 'CODE128', contentScale: 0.9,
+        fields: { barcode: true, name: true, price: true, sku: true, unit: false, company: false, qr: false, itemCode: false, brandName: true, batchNumber: true, expiryDate: true },
         isSystem: true
     },
     {
-        id: 'large_70x40',
-        name: 'Large 70x40mm',
-        desc: 'Detailed with company info',
-        width: 70, height: 40, type: 'Roll', perPage: 1,
-        fields: { barcode: true, name: true, price: true, sku: true, unit: true, company: true, qr: false, batchNumber: true, expiryDate: true },
+        id: 'dual_compact_80x35',
+        name: 'Compact Dual 80x35mm',
+        desc: 'Compact batch barcode label',
+        width: 80, height: 35, type: 'Roll', perPage: 1, barcodeFormat: 'CODE128', contentScale: 0.78,
+        fields: { barcode: true, name: true, price: true, sku: false, unit: false, company: false, qr: false, itemCode: false, brandName: false, batchNumber: true, expiryDate: true },
         isSystem: true
     },
     {
-        id: 'two_col_50x25',
-        name: 'Two Column 50x25mm',
-        desc: '2 labels per row',
-        width: 50, height: 25, type: 'Sheet', perPage: 2,
-        fields: { barcode: true, name: true, price: true, sku: false, unit: false, company: false, qr: false, batchNumber: true, expiryDate: true },
+        id: 'dual_retail_90x50',
+        name: 'Retail Dual 90x50mm',
+        desc: 'Price and expiry focused',
+        width: 90, height: 50, type: 'Roll', perPage: 1, barcodeFormat: 'CODE128', contentScale: 0.9,
+        fields: { barcode: true, name: true, price: true, sku: true, unit: true, company: false, qr: false, itemCode: false, brandName: true, batchNumber: true, expiryDate: true },
         isSystem: true
     },
     {
-        id: 'qr_40x40',
-        name: 'QR Code 40x40mm',
-        desc: 'QR code format',
-        width: 40, height: 40, type: 'Roll', perPage: 1,
-        fields: { barcode: false, name: true, price: true, sku: false, unit: false, company: false, qr: true, batchNumber: true, expiryDate: true },
+        id: 'dual_detailed_100x60',
+        name: 'Detailed Dual 100x60mm',
+        desc: 'Company and item details',
+        width: 100, height: 60, type: 'Roll', perPage: 1, barcodeFormat: 'CODE128', contentScale: 0.95,
+        fields: { barcode: true, name: true, price: true, sku: true, unit: true, company: true, qr: false, itemCode: true, brandName: true, batchNumber: true, expiryDate: true },
         isSystem: true
     },
     {
-        id: 'shelf_60x30',
-        name: 'Shelf Label 60x30mm',
-        desc: 'Price-focused shelf tag',
-        width: 60, height: 30, type: 'Roll', perPage: 1,
-        fields: { barcode: true, name: true, price: true, sku: true, unit: true, company: false, qr: false, batchNumber: true, expiryDate: true },
+        id: 'dual_sheet_90x50',
+        name: 'Sheet Dual 90x50mm',
+        desc: 'Two-column sheet friendly',
+        width: 90, height: 50, type: 'Sheet', perPage: 2, barcodeFormat: 'CODE128', contentScale: 0.88,
+        fields: { barcode: true, name: true, price: true, sku: true, unit: false, company: false, qr: false, itemCode: false, brandName: true, batchNumber: true, expiryDate: true },
+        isSystem: true
+    },
+    {
+        id: 'qr_batch_50x50',
+        name: 'QR Code 50x50mm',
+        desc: 'QR label with expiry text',
+        width: 50, height: 50, type: 'Roll', perPage: 1, barcodeFormat: 'CODE128', contentScale: 0.9,
+        fields: { barcode: false, name: true, price: true, sku: false, unit: false, company: false, qr: true, itemCode: false, brandName: false, batchNumber: false, expiryDate: true },
         isSystem: true
     },
 ];
+
+const CONTENT_SCALE_FIELD = '_contentScale';
+const DEFAULT_CONTENT_SCALE = 1;
+const MIN_CONTENT_SCALE = 0.75;
+const MAX_CONTENT_SCALE = 1.35;
+
+const DEFAULT_TEMPLATE_FIELDS = {
+    barcode: true,
+    qr: false,
+    name: true,
+    sku: true,
+    unit: false,
+    price: true,
+    company: false,
+    itemCode: false,
+    brandName: false,
+    batchNumber: true,
+    expiryDate: true
+};
+
+const parseTemplateFields = (fields) => {
+    if (!fields) return {};
+    if (typeof fields === 'object') return fields;
+
+    try {
+        return JSON.parse(fields);
+    } catch (error) {
+        console.warn('Invalid barcode template fields JSON', error);
+        return {};
+    }
+};
+
+const clampContentScale = (value) => {
+    const numericValue = Number(value);
+    if (!Number.isFinite(numericValue)) return DEFAULT_CONTENT_SCALE;
+
+    const clamped = Math.min(MAX_CONTENT_SCALE, Math.max(MIN_CONTENT_SCALE, numericValue));
+    return Math.round(clamped * 100) / 100;
+};
+
+const normalizeTemplateFields = (fields) => ({
+    ...DEFAULT_TEMPLATE_FIELDS,
+    ...parseTemplateFields(fields)
+});
+
+const getTemplateContentScale = (template) => {
+    const fields = parseTemplateFields(template?.fields);
+    return clampContentScale(
+        template?.contentScale ??
+        fields?.[CONTENT_SCALE_FIELD] ??
+        fields?.contentScale ??
+        DEFAULT_CONTENT_SCALE
+    );
+};
+
+const countEnabledFields = (fields) => (
+    Object.entries(parseTemplateFields(fields))
+        .filter(([key, value]) => !key.startsWith('_') && value === true)
+        .length
+);
+
+const toBooleanFlag = (value) => value === true || value === 'true' || value === 1 || value === '1';
 
 const formatCurrencyAmount = (value, decimals = 2) => {
     const numericValue = Number(value);
@@ -172,13 +234,16 @@ const getBarcodeRenderOptions = (template) => {
     const width = Number(template?.width) || 40;
     const isSmallHeight = height <= 25;
     const format = template?.barcodeFormat || "CODE128";
+    const contentScale = getTemplateContentScale(template);
+    const baseWidth = width < 50 ? 1.4 : 1.8;
+    const baseHeight = isSmallHeight ? 32 : (height < 30 ? 40 : 55);
 
     return {
         format,
-        width: width < 50 ? 1.4 : 1.8,
-        height: isSmallHeight ? 32 : (height < 30 ? 40 : 55),
+        width: Math.max(1, Number((baseWidth * contentScale).toFixed(2))),
+        height: Math.max(20, Math.round(baseHeight * contentScale)),
         displayValue: false,
-        fontSize: isSmallHeight ? 10 : 12,
+        fontSize: Math.max(8, Math.round((isSmallHeight ? 10 : 12) * contentScale)),
         margin: 0
     };
 };
@@ -210,7 +275,7 @@ const BarcodePrinter = () => {
     const [searchTerm, setSearchTerm] = useState('');
     const [isSearchFocused, setIsSearchFocused] = useState(false);
     const [searchLoading, setSearchLoading] = useState(false);
-    const [selectedTemplate, setSelectedTemplate] = useState('standard_40x25');
+    const [selectedTemplate, setSelectedTemplate] = useState('dual_standard_70x50');
     const [previewPage, setPreviewPage] = useState(1);
     const [loading, setLoading] = useState(true);
 
@@ -247,57 +312,25 @@ const BarcodePrinter = () => {
         height: 25,
         type: 'Roll',
         perPage: 1,
-        fields: {
-            barcode: true,
-            qr: false,
-            name: true,
-            sku: true,
-            unit: false,
-            price: true,
-            company: false,
-            itemCode: false,
-            brandName: false
-        }
+        barcodeFormat: 'CODE128',
+        contentScale: DEFAULT_CONTENT_SCALE,
+        fields: { ...DEFAULT_TEMPLATE_FIELDS }
     });
 
     const handleEditTemplate = (template) => {
-        // System templates have string ids (e.g. 'standard_40x25') and aren't persisted.
+        // System templates have string ids (e.g. 'dual_standard_70x50') and aren't persisted.
         // Editing one means cloning into a new DB-backed template — null the id and rename.
         const isSystemSeed = typeof template.id === 'string';
         const baseTemplate = isSystemSeed
             ? { ...template, id: null, name: `${template.name} (Copy)` }
             : { ...template };
+        const fields = normalizeTemplateFields(template.fields);
 
         setEditingTemplate({
             ...baseTemplate,
             barcodeFormat: template.barcodeFormat || 'CODE128',
-            // If template has fields object, use it; else fallback to defaults
-            fields: (template.fields && typeof template.fields === 'object') ? {
-                barcode: true,
-                qr: false,
-                name: true,
-                sku: true,
-                unit: false,
-                price: true,
-                company: false,
-                itemCode: false,
-                brandName: false,
-                batchNumber: true,
-                expiryDate: true,
-                ...template.fields
-            } : {
-                barcode: true,
-                qr: false,
-                name: true,
-                sku: true,
-                unit: false,
-                price: true,
-                company: false,
-                itemCode: false,
-                brandName: false,
-                batchNumber: true,
-                expiryDate: true
-            }
+            contentScale: getTemplateContentScale({ ...template, fields }),
+            fields
         });
         setManagerTab('create');
         setShowTemplateManager(true);
@@ -312,19 +345,8 @@ const BarcodePrinter = () => {
             type: 'Roll',
             perPage: 1,
             barcodeFormat: 'CODE128',
-            fields: {
-                barcode: true,
-                qr: false,
-                name: true,
-                sku: true,
-                unit: false,
-                price: true,
-                company: false,
-                itemCode: false,
-                brandName: false,
-                batchNumber: true,
-                expiryDate: true
-            }
+            contentScale: DEFAULT_CONTENT_SCALE,
+            fields: { ...DEFAULT_TEMPLATE_FIELDS }
         });
         setManagerTab('create');
         setShowTemplateManager(true);
@@ -349,15 +371,20 @@ const BarcodePrinter = () => {
     const loadTemplates = async () => {
         try {
             const apiTemplates = await getBarcodeTemplates();
-            // Parse fields JSON string back to object if necessary
-            const parsed = (apiTemplates || []).map(t => ({
-                ...t,
-                fields: typeof t.fields === 'string' ? JSON.parse(t.fields) : t.fields,
-                width: Number(t.width),
-                height: Number(t.height),
-                perPage: Number(t.perPage),
-                isSystem: false
-            }));
+            const parsed = (apiTemplates || []).map(t => {
+                const fields = normalizeTemplateFields(t.fields);
+
+                return {
+                    ...t,
+                    desc: t.description || t.desc || 'Custom barcode label',
+                    fields,
+                    contentScale: getTemplateContentScale({ ...t, fields }),
+                    width: Number(t.width),
+                    height: Number(t.height),
+                    perPage: Number(t.perPage),
+                    isSystem: false
+                };
+            });
             setTemplates([...TEMPLATES, ...parsed]);
         } catch (e) {
             console.error("Failed to load templates", e);
@@ -372,7 +399,7 @@ const BarcodePrinter = () => {
         try {
             await deleteBarcodeTemplate(id);
             await loadTemplates();
-            if (selectedTemplate === id) setSelectedTemplate('standard_40x25');
+            if (selectedTemplate === id) setSelectedTemplate('dual_standard_70x50');
         } catch (e) {
             console.error("Failed to delete", e);
             alert("Failed to delete template");
@@ -381,6 +408,12 @@ const BarcodePrinter = () => {
 
     const saveNewTemplate = async () => {
         try {
+            const contentScale = getTemplateContentScale(editingTemplate);
+            const fieldsForSave = {
+                ...normalizeTemplateFields(editingTemplate.fields),
+                [CONTENT_SCALE_FIELD]: contentScale
+            };
+
             // Send only fields the server cares about — drop BaseEntity audit fields
             // (createdAt/updatedAt/createdBy/updatedBy/active) so Jackson doesn't trip on them.
             const payload = {
@@ -391,7 +424,7 @@ const BarcodePrinter = () => {
                 height: Number(editingTemplate.height),
                 perPage: Number(editingTemplate.perPage) || 1,
                 barcodeFormat: editingTemplate.barcodeFormat || 'CODE128',
-                fields: JSON.stringify(editingTemplate.fields || {}),
+                fields: JSON.stringify(fieldsForSave),
             };
 
             let saved;
@@ -589,9 +622,13 @@ const BarcodePrinter = () => {
                 product,
                 qty,
                 barcode: targetBarcode,
+                productBarcode: targetBarcode,
                 unit: resolvedUnit, // Store unit name for display
                 batchNumber: options.batchNumber || null,
-                expiryDate: options.expiryDate || null
+                batchBarcode: options.batchBarcode || options.batchNumber || null,
+                expiryDate: options.expiryDate || null,
+                batchEnabled: options.batchEnabled ?? product.isBatch ?? product.batchEnabled ?? product.batchExpiryControlled ?? false,
+                expiryEnabled: options.expiryEnabled ?? product.expiryEnabled ?? product.batchExpiryControlled ?? product.isBatch ?? false
             }];
         });
         setSearchTerm('');
@@ -649,14 +686,23 @@ const BarcodePrinter = () => {
                     sku: item.sku,
                     price: item.price,
                     image: item.image,
+                    barcode: item.barcode || null,
+                    packings: item.barcode ? [{ isSale: true, barcode: item.barcode }] : [],
+                    isBatch: !!item.batchEnabled,
+                    batchEnabled: !!item.batchEnabled,
+                    expiryEnabled: !!item.expiryEnabled,
                 };
                 setCart(prev => [...prev, {
                     product,
                     qty: labels,
-                    barcode: b.batchNumber,
+                    barcode: item.barcode || null,
+                    productBarcode: item.barcode || null,
                     unit: null,
                     batchNumber: b.batchNumber,
+                    batchBarcode: b.batchNumber,
                     expiryDate: b.expiryDate,
+                    batchEnabled: !!item.batchEnabled,
+                    expiryEnabled: !!item.expiryEnabled,
                 }]);
                 added++;
             });
@@ -729,7 +775,11 @@ const BarcodePrinter = () => {
 
                     addToCart(productWithPrice, poItem.qty || 1, {
                         barcode: selectedBarcode,
-                        unit: selectedUnit
+                        unit: selectedUnit,
+                        batchNumber: poItem.batchNumber || poItem.batchNo || null,
+                        expiryDate: poItem.expiryDate || poItem.exp || null,
+                        batchEnabled: productWithPrice.isBatch || productWithPrice.batchEnabled || productWithPrice.expiryEnabled,
+                        expiryEnabled: productWithPrice.expiryEnabled || productWithPrice.isBatch
                     });
                     loadedCount++;
                 }
@@ -767,6 +817,33 @@ const BarcodePrinter = () => {
             if (anyUnit) return anyUnit.barcode;
         }
         return null;
+    };
+
+    const getProductBarcodeValue = (item) => item?.productBarcode || item?.barcode || getBarcodeValue(item?.product);
+    const getBatchBarcodeValue = (item) => item?.batchBarcode || item?.batchNumber || null;
+
+    const isBatchTrackingEnabled = (item) => {
+        const product = item?.product || {};
+        return (
+            toBooleanFlag(item?.batchEnabled) ||
+            toBooleanFlag(item?.batchManaged) ||
+            toBooleanFlag(product?.isBatch) ||
+            toBooleanFlag(product?.batchEnabled) ||
+            toBooleanFlag(product?.batchManaged) ||
+            toBooleanFlag(product?.batchExpiryControlled) ||
+            toBooleanFlag(product?.expiryEnabled)
+        );
+    };
+
+    const isExpiryTrackingEnabled = (item) => {
+        const product = item?.product || {};
+        return (
+            toBooleanFlag(item?.expiryEnabled) ||
+            toBooleanFlag(item?.batchEnabled) ||
+            toBooleanFlag(product?.expiryEnabled) ||
+            toBooleanFlag(product?.batchExpiryControlled) ||
+            toBooleanFlag(product?.isBatch)
+        );
     };
 
     const handlePrint = () => {
@@ -895,43 +972,60 @@ const BarcodePrinter = () => {
                     brandName: 'Sample Brand',
                     price: '99.00',
                     packings: [{ isSale: true, barcode: sampleBarcode }],
-                    company: companyName
+                    company: companyName,
+                    isBatch: true,
+                    expiryEnabled: true
                 },
                 qty: 1,
                 barcode: sampleBarcode,
+                productBarcode: sampleBarcode,
                 unit: 'PCS',
                 batchNumber: 'ST-040526-WH1-STK-PRD-1',
-                expiryDate: '2026-12-31'
+                batchBarcode: 'ST-040526-WH1-STK-PRD-1',
+                expiryDate: '2026-12-31',
+                batchEnabled: true,
+                expiryEnabled: true
             });
         }
 
         const isSmallHeight = t.height <= 25;
-        const barcodeMaxHeight = isSmallHeight ? '32px' : (t.height < 30 ? '40px' : '55px');
-        const nameFontSize = isSmallHeight ? '8px' : '10px';
-        const codeFontSize = isSmallHeight ? '7px' : '8px';
-        const barcodeFontSize = isSmallHeight ? '10px' : '12px';
-        const priceFontSize = isSmallHeight ? '10px' : '12px';
+        const contentScale = getTemplateContentScale(t);
+        const scaledPx = (value, min = 5) => `${Math.max(min, Math.round(value * contentScale * 100) / 100)}px`;
+        const barcodeBaseHeight = isSmallHeight ? 32 : (t.height < 30 ? 40 : 55);
+        const barcodeMaxHeight = `${Math.max(18, Math.round(barcodeBaseHeight * contentScale))}px`;
+        const nameFontSize = scaledPx(isSmallHeight ? 8 : 10, 6);
+        const codeFontSize = scaledPx(isSmallHeight ? 7 : 8, 5.5);
+        const barcodeFontSize = scaledPx(isSmallHeight ? 10 : 12, 7);
+        const priceFontSize = scaledPx(isSmallHeight ? 10 : 12, 7);
         const nameMarginBottom = isSmallHeight ? '0px' : '1px';
         const priceMarginTop = isSmallHeight ? '0px' : '1px';
 
-        const renderLabelCard = (item, key, compactPreview = false) => (
-            <div
-                key={key}
-                className="print-label bg-white border border-slate-200"
-                style={{
-                    width: `${t.width}mm`,
-                    height: `${t.height}mm`,
-                    marginBottom: compactPreview ? '4px' : '0',
-                    marginRight: compactPreview ? '4px' : '0',
-                    display: 'flex',
-                    flexDirection: 'column',
-                    alignItems: compactPreview ? 'center' : 'stretch',
-                    justifyContent: compactPreview ? 'center' : 'flex-start',
-                    textAlign: compactPreview ? 'center' : 'left',
-                    padding: compactPreview ? '0' : '1mm',
-                    boxSizing: 'border-box'
-                }}
-            >
+        const renderLabelCard = (item, key, compactPreview = false) => {
+            const productBarcodeValue = getProductBarcodeValue(item);
+            const batchBarcodeValue = getBatchBarcodeValue(item);
+            const showLinearBarcode = !isEnabled('qr') && isEnabled('barcode');
+            const showBatchDetails = isEnabled('batchNumber') && isBatchTrackingEnabled(item) && !!batchBarcodeValue;
+            const showBatchBarcode = showLinearBarcode && showBatchDetails && batchBarcodeValue !== productBarcodeValue;
+            const showExpiryDate = isEnabled('expiryDate') && isExpiryTrackingEnabled(item) && !!item.expiryDate;
+
+            return (
+                <div
+                    key={key}
+                    className="print-label bg-white border border-slate-200"
+                    style={{
+                        width: `${t.width}mm`,
+                        height: `${t.height}mm`,
+                        marginBottom: compactPreview ? '4px' : '0',
+                        marginRight: compactPreview ? '4px' : '0',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        alignItems: compactPreview ? 'center' : 'stretch',
+                        justifyContent: compactPreview ? 'center' : 'flex-start',
+                        textAlign: compactPreview ? 'center' : 'left',
+                        padding: compactPreview ? '0' : '1mm',
+                        boxSizing: 'border-box'
+                    }}
+                >
                 {isEnabled('company') && (
                     <div className="label-name" style={{ fontSize: codeFontSize, marginBottom: '2px', fontWeight: 'bold', textTransform: 'uppercase' }}>{item.product.company || companyName}</div>
                 )}
@@ -955,7 +1049,7 @@ const BarcodePrinter = () => {
                                 id: item.product.id,
                                 name: item.product.name,
                                 price: item.product.retailPrice || item.product.price || '0.00',
-                                barcode: item.barcode || getBarcodeValue(item.product),
+                                barcode: productBarcodeValue,
                                 sku: item.product.sku || item.product.code,
                                 company: item.product.company || companyName
                             }))}`}
@@ -963,23 +1057,37 @@ const BarcodePrinter = () => {
                             className="w-full h-full object-contain"
                         />
                     </div>
-                ) : isEnabled('barcode') && (
+                ) : showLinearBarcode && productBarcodeValue && (
                     <svg
                         className="w-full"
-                        data-barcode={item.barcode || getBarcodeValue(item.product)}
+                        data-barcode={productBarcodeValue}
                         style={{ maxHeight: barcodeMaxHeight, maxWidth: '100%' }}
                     ></svg>
                 )}
 
-                {isEnabled('barcode') && (
-                    <div className="label-code" style={{ fontSize: barcodeFontSize, marginTop: '1px', letterSpacing: '0.08em', fontWeight: 'bold' }}>{item.barcode || getBarcodeValue(item.product)}</div>
+                {showLinearBarcode && productBarcodeValue && (
+                    <div className="label-code" style={{ fontSize: barcodeFontSize, marginTop: '1px', letterSpacing: '0.08em', fontWeight: 'bold' }}>{productBarcodeValue}</div>
                 )}
 
-                {isEnabled('batchNumber') && item.batchNumber && item.batchNumber !== (item.barcode || getBarcodeValue(item.product)) && (
-                    <div className="label-code" style={{ fontSize: codeFontSize, marginTop: '1px', fontWeight: 'bold' }}>Batch: {item.batchNumber}</div>
+                {showBatchBarcode && (
+                    <svg
+                        className="w-full"
+                        data-barcode={batchBarcodeValue}
+                        style={{
+                            maxHeight: barcodeMaxHeight,
+                            width: 'calc(100% - 4mm)',
+                            maxWidth: 'calc(100% - 4mm)',
+                            marginLeft: '2mm',
+                            marginRight: '2mm'
+                        }}
+                    ></svg>
                 )}
 
-                {isEnabled('expiryDate') && item.expiryDate && (
+                {showBatchBarcode && (
+                    <div className="label-code" style={{ fontSize: barcodeFontSize, marginTop: '1px', letterSpacing: '0.08em', fontWeight: 'bold' }}>{batchBarcodeValue}</div>
+                )}
+
+                {showExpiryDate && (
                     <div className="label-code" style={{ fontSize: codeFontSize, marginTop: '1px' }}>Exp: {item.expiryDate}</div>
                 )}
 
@@ -1002,6 +1110,7 @@ const BarcodePrinter = () => {
                 )}
             </div>
         );
+        };
 
         if (!isPreview) {
             const metrics = getTemplateMetrics(t);
@@ -1143,7 +1252,7 @@ const BarcodePrinter = () => {
                                                 {t.type}
                                             </span>
                                             <span className="text-[10px] bg-slate-100 text-slate-600 px-2 py-1 rounded font-medium border border-slate-200">
-                                                {typeof t.fields === 'object' ? `${Object.values(t.fields).filter(Boolean).length} fields` : t.fields}
+                                                {typeof t.fields === 'object' ? `${countEnabledFields(t.fields)} fields` : t.fields}
                                             </span>
                                         </div>
                                     </div>
@@ -1331,6 +1440,7 @@ const BarcodePrinter = () => {
                                                                                 return {
                                                                                     ...cartItem,
                                                                                     barcode: selectedBarcode,
+                                                                                    productBarcode: selectedBarcode,
                                                                                     unit: selectedPacking ? (selectedPacking.unit?.name || selectedPacking.unitName) : null
                                                                                 };
                                                                             }
@@ -1985,8 +2095,8 @@ const BarcodePrinter = () => {
                                                             { id: 'unit', label: 'Unit', icon: <Box size={14} /> },
                                                             { id: 'price', label: 'Selling Price', icon: <span className="font-bold text-xs">$</span> },
                                                             { id: 'company', label: 'Company Name', icon: <FileText size={14} /> },
-                                                            { id: 'batchNumber', label: 'Batch No', icon: <Tag size={14} />, sub: 'Shows when item has a batch number' },
-                                                            { id: 'expiryDate', label: 'Expiry Date', icon: <Calendar size={14} />, sub: 'Shows when item has an expiry' },
+                                                            { id: 'batchNumber', label: 'Batch No + Barcode', icon: <Barcode size={14} />, sub: 'Shows only for batch-enabled items' },
+                                                            { id: 'expiryDate', label: 'Expiry Date', icon: <Calendar size={14} />, sub: 'Shows only for expiry-enabled items' },
                                                         ].map(attr => (
                                                             <div
                                                                 key={attr.id}
@@ -2014,7 +2124,7 @@ const BarcodePrinter = () => {
                                                         ))}
                                                     </div>
                                                     <div className="p-4 border-t border-slate-100 mt-auto">
-                                                        <p className="text-xs text-slate-500 text-center">{Object.values(editingTemplate.fields).filter(Boolean).length} attributes selected</p>
+                                                        <p className="text-xs text-slate-500 text-center">{countEnabledFields(editingTemplate.fields)} attributes selected</p>
                                                     </div>
                                                 </div>
 
@@ -2057,13 +2167,19 @@ const BarcodePrinter = () => {
                                                                         brandName: 'Sample Brand',
                                                                         price: '99.00',
                                                                         packings: [{ isSale: true, barcode: sampleBarcode }],
-                                                                        company: company?.companyName || ''
+                                                                        company: company?.companyName || '',
+                                                                        isBatch: true,
+                                                                        expiryEnabled: true
                                                                     },
                                                                     qty: 1,
                                                                     barcode: sampleBarcode,
+                                                                    productBarcode: sampleBarcode,
                                                                     unit: 'PCS',
                                                                     batchNumber: 'ST-040526-WH1-STK-PRD-1',
-                                                                    expiryDate: '2026-12-31'
+                                                                    batchBarcode: 'ST-040526-WH1-STK-PRD-1',
+                                                                    expiryDate: '2026-12-31',
+                                                                    batchEnabled: true,
+                                                                    expiryEnabled: true
                                                                 }]);
                                                             })()}
                                                         </div>
@@ -2105,6 +2221,36 @@ const BarcodePrinter = () => {
                                                                         onChange={e => setEditingTemplate({ ...editingTemplate, height: Number(e.target.value) })}
                                                                     />
                                                                 </div>
+                                                            </div>
+
+                                                            <div>
+                                                                <div className="flex items-center justify-between gap-3">
+                                                                    <label className="text-[10px] font-bold text-slate-400 uppercase flex items-center gap-1">
+                                                                        <SlidersHorizontal size={12} /> Content Size
+                                                                    </label>
+                                                                    <span className="text-[10px] font-bold text-slate-500">
+                                                                        {Math.round(getTemplateContentScale(editingTemplate) * 100)}%
+                                                                    </span>
+                                                                </div>
+                                                                <input
+                                                                    type="range"
+                                                                    min={MIN_CONTENT_SCALE}
+                                                                    max={MAX_CONTENT_SCALE}
+                                                                    step="0.05"
+                                                                    className="w-full accent-[#F5C742]"
+                                                                    value={getTemplateContentScale(editingTemplate)}
+                                                                    onChange={e => {
+                                                                        const nextScale = clampContentScale(e.target.value);
+                                                                        setEditingTemplate(prev => ({
+                                                                            ...prev,
+                                                                            contentScale: nextScale,
+                                                                            fields: {
+                                                                                ...normalizeTemplateFields(prev.fields),
+                                                                                [CONTENT_SCALE_FIELD]: nextScale
+                                                                            }
+                                                                        }));
+                                                                    }}
+                                                                />
                                                             </div>
 
                                                             <div>
