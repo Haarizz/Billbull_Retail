@@ -59,6 +59,8 @@ class StockTakeServiceTest {
     @Mock private ProductBarcodeRepository barcodeRepo;
     @Mock private BinRepository binRepo;
     @Mock private BinStockService binStockService;
+    @Mock private StockTakeExpectedUnitRepository expectedUnitRepo;
+    @Mock private StockTakeUnitScanRepository unitScanRepo;
 
     private StockTakeService service;
 
@@ -74,7 +76,9 @@ class StockTakeServiceTest {
                 mediaRepo,
                 barcodeRepo,
                 binRepo,
-                binStockService);
+                binStockService,
+                expectedUnitRepo,
+                unitScanRepo);
     }
 
     @Test

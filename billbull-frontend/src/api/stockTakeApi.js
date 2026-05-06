@@ -15,6 +15,27 @@ export const getStockTakeSession = async (sessionId) => {
     return response.data;
 };
 
+export const scanStockTakeUnit = async (sessionId, payload) => {
+    const response = await axiosInstance.post(
+        `/api/inventory/stock-take/sessions/${sessionId}/unit-scans`,
+        payload
+    );
+    return response.data;
+};
+
+export const getStockTakeCoverage = async (sessionId) => {
+    const response = await axiosInstance.get(`/api/inventory/stock-take/sessions/${sessionId}/coverage`);
+    return response.data;
+};
+
+export const resolveStockTakeUnitScan = async (scanId, payload) => {
+    const response = await axiosInstance.patch(
+        `/api/inventory/stock-take/unit-scans/${scanId}/resolve`,
+        payload
+    );
+    return response.data;
+};
+
 export const updateItemCount = async (itemId, countedQty) => {
     // Guard: do not send "null" as string to backend
     if (countedQty === null || countedQty === undefined || countedQty === '') {
