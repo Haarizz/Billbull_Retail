@@ -1,7 +1,8 @@
 import ExcelJS from 'exceljs';
 import { saveAs } from 'file-saver';
-import jsPDF from 'jspdf';
-import 'jspdf-autotable';
+import { jsPDF } from 'jspdf';
+import autoTable from 'jspdf-autotable';
+import { generateReportFilename } from './filenameUtils';
 
 /**
  * Generic function to export JSON data to an Excel file (.xlsx)
@@ -54,7 +55,7 @@ export const exportToExcel = async (data, columns, fileName = 'Export') => {
         // Write to buffer and save via browser FileSaver
         const buffer = await workbook.xlsx.writeBuffer();
         const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
-        saveAs(blob, `${fileName}_${new Date().toISOString().split('T')[0]}.xlsx`);
+        saveAs(blob, `${generateReportFilename(fileName)}.xlsx`);
 
     } catch (error) {
         console.error('Failed to export to Excel', error);
@@ -96,7 +97,7 @@ export const exportToPDF = (data, columns, title = 'Report', fileName = 'Export'
         });
 
         // Generate the table
-        doc.autoTable({
+        autoTable(doc, {
             startY: 90,
             head: head,
             body: body,
@@ -121,7 +122,7 @@ export const exportToPDF = (data, columns, title = 'Report', fileName = 'Export'
         });
 
         // Save PDF
-        doc.save(`${fileName}_${new Date().toISOString().split('T')[0]}.pdf`);
+        doc.save(`${generateReportFilename(fileName)}.pdf`);
     } catch (error) {
         console.error('Failed to export to PDF', error);
         throw error;

@@ -22,13 +22,22 @@ import com.billbull.backend.financials.generalledger.postingengine.PostingEngine
 import com.billbull.backend.financials.receiptvoucher.ReceiptPurpose;
 import com.billbull.backend.financials.receiptvoucher.ReceiptVoucher;
 import com.billbull.backend.financials.receiptvoucher.ReceiptVoucherService;
+import com.billbull.backend.inventory.product.ProductBarcodeRepository;
+import com.billbull.backend.sales.customerledger.CustomerRepository;
 import com.billbull.backend.inventory.product.ProductMediaRepository;
+import com.billbull.backend.inventory.product.Product;
+import com.billbull.backend.inventory.product.ProductPackingRepository;
 import com.billbull.backend.inventory.product.ProductRepository;
 import com.billbull.backend.inventory.stockavailability.StockAvailabilityResponse;
 import com.billbull.backend.inventory.stockavailability.StockAvailabilityService;
+import com.billbull.backend.inventory.warehouse.Warehouse;
+import com.billbull.backend.inventory.warehouse.WarehouseRepository;
+import com.billbull.backend.sales.delivery.DeliveryNoteRepository;
 import com.billbull.backend.sales.delivery.DeliveryNoteItemRequest;
 import com.billbull.backend.sales.delivery.DeliveryNoteRequest;
 import com.billbull.backend.sales.delivery.DeliveryNoteService;
+import com.billbull.backend.settings.branch.Branch;
+import com.billbull.backend.settings.branch.BranchAccessService;
 import com.billbull.backend.util.DocumentOrderingUtil;
 
 @Service
@@ -41,8 +50,14 @@ public class SalesInvoiceService {
     private final StockAvailabilityService stockAvailabilityService;
     private final ReceiptVoucherService receiptVoucherService;
     private final ProductRepository productRepo;
+    private final ProductBarcodeRepository barcodeRepo;
     private final ProductMediaRepository productMediaRepository;
+    private final ProductPackingRepository packingRepo;
     private final com.billbull.backend.sales.salesorder.SalesOrderRepository salesOrderRepository;
+    private final DeliveryNoteRepository deliveryNoteRepository;
+    private final CustomerRepository customerRepository;
+    private final WarehouseRepository warehouseRepository;
+    private final BranchAccessService branchAccessService;
 
     public SalesInvoiceService(SalesInvoiceRepository invoiceRepo,
             PostingEngineService postingEngineService,
@@ -51,8 +66,14 @@ public class SalesInvoiceService {
             StockAvailabilityService stockAvailabilityService,
             ReceiptVoucherService receiptVoucherService,
             ProductRepository productRepo,
+            ProductBarcodeRepository barcodeRepo,
             ProductMediaRepository productMediaRepository,
-            com.billbull.backend.sales.salesorder.SalesOrderRepository salesOrderRepository) {
+            ProductPackingRepository packingRepo,
+            com.billbull.backend.sales.salesorder.SalesOrderRepository salesOrderRepository,
+            DeliveryNoteRepository deliveryNoteRepository,
+            CustomerRepository customerRepository,
+            WarehouseRepository warehouseRepository,
+            BranchAccessService branchAccessService) {
         this.invoiceRepo = invoiceRepo;
         this.postingEngineService = postingEngineService;
         this.deliveryNoteService = deliveryNoteService;
@@ -60,8 +81,14 @@ public class SalesInvoiceService {
         this.stockAvailabilityService = stockAvailabilityService;
         this.receiptVoucherService = receiptVoucherService;
         this.productRepo = productRepo;
+        this.barcodeRepo = barcodeRepo;
         this.productMediaRepository = productMediaRepository;
+        this.packingRepo = packingRepo;
         this.salesOrderRepository = salesOrderRepository;
+        this.deliveryNoteRepository = deliveryNoteRepository;
+        this.customerRepository = customerRepository;
+        this.warehouseRepository = warehouseRepository;
+        this.branchAccessService = branchAccessService;
     }
 
     // ----------------------------
@@ -89,15 +116,20 @@ public class SalesInvoiceService {
     // ----------------------------
     @Transactional
     public SalesInvoice save(SalesInvoice invoice) {
+        SalesInvoice existing = invoice.getId() != null ? invoiceRepo.findById(invoice.getId()).orElse(null) : null;
 
-        if (invoice.getId() != null) {
-            SalesInvoice existing = invoiceRepo.findById(invoice.getId()).orElse(null);
-            if (existing != null && existing.getStatus() == SalesInvoiceStatus.POSTED) {
+        if (existing != null) {
+            branchAccessService.assertTransactionBranchAccessible(existing.getBranchId(), "Sales Invoice");
+            if (existing.getStatus() == SalesInvoiceStatus.POSTED) {
                 throw new org.springframework.web.server.ResponseStatusException(
                         org.springframework.http.HttpStatus.BAD_REQUEST,
                         "Posted invoices cannot be modified. Create a reversal instead.");
             }
         }
+
+        Branch resolvedBranch = resolveBranchForSave(existing);
+        applyBranchSnapshot(invoice, existing, resolvedBranch);
+        validateInvoiceWarehouses(invoice, resolvedBranch != null ? resolvedBranch.getId() : null);
 
         // Auto-generate invoice number if new
         if (invoice.getId() == null && (invoice.getInvoiceNumber() == null || invoice.getInvoiceNumber().isBlank())) {
@@ -123,7 +155,10 @@ public class SalesInvoiceService {
         // Round to 2 dp to eliminate floating-point noise from client-side arithmetic
         subTotal = BigDecimal.valueOf(subTotal).setScale(2, RoundingMode.HALF_UP).doubleValue();
         taxTotal = BigDecimal.valueOf(taxTotal).setScale(2, RoundingMode.HALF_UP).doubleValue();
-        double total = BigDecimal.valueOf(subTotal + taxTotal).setScale(2, RoundingMode.HALF_UP).doubleValue();
+        double billDiscPct = invoice.getBillDiscount() != null ? invoice.getBillDiscount() : 0;
+        double billDiscAmt = BigDecimal.valueOf(subTotal * (billDiscPct / 100))
+                .setScale(2, RoundingMode.HALF_UP).doubleValue();
+        double total = BigDecimal.valueOf(subTotal - billDiscAmt + taxTotal).setScale(2, RoundingMode.HALF_UP).doubleValue();
         double paid = invoice.getAmountPaid() != null ? invoice.getAmountPaid() : 0;
 
         if (paid < 0) {
@@ -185,6 +220,10 @@ public class SalesInvoiceService {
 
         SalesInvoice saved = invoiceRepo.save(invoice);
 
+        if (shouldCreateDraftPickingNote(saved, settings)) {
+            autoGenerateDeliveryNote(saved, settings);
+        }
+
         if (isNewlyFinalized) {
             // Trigger doUpdateStatus with the already-fetched settings (single DB fetch
             // per request — avoids a redundant getSettings() call inside updateStatus).
@@ -232,6 +271,7 @@ public class SalesInvoiceService {
     public SalesInvoice getById(Long id) {
         SalesInvoice invoice = invoiceRepo.findById(id)
                 .orElseThrow(() -> new RuntimeException("Sales Invoice not found: " + id));
+        branchAccessService.assertTransactionBranchAccessible(invoice.getBranchId(), "Sales Invoice");
 
         Hibernate.initialize(invoice.getItems());
         enrichItems(invoice.getItems());
@@ -243,7 +283,8 @@ public class SalesInvoiceService {
     // ----------------------------
     @Transactional(readOnly = true)
     public List<SalesInvoice> getAll() {
-        List<SalesInvoice> invoices = new ArrayList<>(invoiceRepo.findAll());
+        List<SalesInvoice> invoices = new ArrayList<>(
+                branchAccessService.filterBranchScoped(invoiceRepo.findAll(), SalesInvoice::getBranchId));
         DocumentOrderingUtil.sortByDocumentDateAndNumberDesc(
                 invoices,
                 SalesInvoice::getInvoiceDate,
@@ -263,6 +304,7 @@ public class SalesInvoiceService {
     // ----------------------------
     private void enrichItems(java.util.List<SalesInvoiceItem> items) {
         if (items == null || items.isEmpty()) return;
+        Map<Long, String> barcodeMap = new HashMap<>();
         for (SalesInvoiceItem item : items) {
             if (item.getItemCode() == null || item.getItemCode().isBlank()) continue;
             productRepo.findByCodeAndIsActiveTrue(item.getItemCode()).ifPresent(p -> {
@@ -270,6 +312,16 @@ public class SalesInvoiceService {
                 if (item.getLocalName() == null || item.getLocalName().isBlank()) item.setLocalName(p.getLocalName());
                 if (item.getDescription() == null || item.getDescription().isBlank()) item.setDescription(p.getShortDesc());
                 if (item.getItemName() == null || item.getItemName().isBlank()) item.setItemName(p.getName());
+                if (item.getBarcode() == null || item.getBarcode().isBlank()) {
+                    String barcode = barcodeMap.computeIfAbsent(
+                            p.getId(),
+                            productId -> barcodeRepo.findByProductId(productId).stream()
+                                    .map(com.billbull.backend.inventory.product.ProductBarcode::getBarcode)
+                                    .filter(value -> value != null && !value.isBlank())
+                                    .findFirst()
+                                    .orElse(null));
+                    item.setBarcode(barcode);
+                }
             });
         }
 
@@ -483,6 +535,8 @@ public class SalesInvoiceService {
             return;
         if (invoice.getItems() == null || invoice.getItems().isEmpty())
             return;
+        if (invoice.getLinkedDeliveryNote() != null && !invoice.getLinkedDeliveryNote().isBlank())
+            return;
 
         List<String> insufficientItems = new ArrayList<>();
 
@@ -490,21 +544,37 @@ public class SalesInvoiceService {
             if (item.getItemCode() == null || item.getItemCode().isBlank())
                 continue;
 
-            int requiredQty = (item.getQuantity() != null ? item.getQuantity() : 0)
-                    + (item.getFoc() != null ? item.getFoc() : 0);
+            Product product = productRepo.findByCodeAndIsActiveTrue(item.getItemCode()).orElse(null);
+            if (product == null)
+                continue;
+
+            int requiredQty = resolveBaseQty(product.getId(), item.getUnit(), item.getQuantity() != null ? item.getQuantity() : 0)
+                    + resolveBaseQty(product.getId(), item.getUnit(), item.getFoc() != null ? item.getFoc() : 0);
             if (requiredQty <= 0)
                 continue;
 
             try {
-                StockAvailabilityResponse stock = stockAvailabilityService.getStockAvailability(item.getItemCode());
-                int totalAvailable = stock.getLocations() == null ? 0
-                        : stock.getLocations().stream()
-                                .mapToInt(loc -> loc.getAvailable() != null ? loc.getAvailable() : 0)
-                                .sum();
+                Long warehouseId = item.getWarehouseId();
+                StockAvailabilityResponse stock = stockAvailabilityService.getStockAvailability(item.getItemCode(), warehouseId, null, null, null);
+                int available;
+                if (warehouseId != null && stock.getLocations() != null) {
+                    // Check only the item's specific warehouse
+                    available = stock.getLocations().stream()
+                            .filter(loc -> warehouseId.equals(loc.getLocationId()))
+                            .mapToInt(loc -> loc.getAvailable() != null ? loc.getAvailable() : 0)
+                            .sum();
+                } else {
+                    // No warehouse set — fall back to total across all warehouses
+                    available = stock.getLocations() == null ? 0
+                            : stock.getLocations().stream()
+                                    .mapToInt(loc -> loc.getAvailable() != null ? loc.getAvailable() : 0)
+                                    .sum();
+                }
+                available += resolveSourceReservationCredit(invoice, item, product, warehouseId);
 
-                if (totalAvailable < requiredQty) {
+                if (available < requiredQty) {
                     insufficientItems.add(String.format("'%s' (required: %d, available: %d)",
-                            item.getItemCode(), requiredQty, totalAvailable));
+                            item.getItemCode(), requiredQty, available));
                 }
             } catch (Exception e) {
                 // If stock check fails (e.g. product not found), skip silently
@@ -520,6 +590,66 @@ public class SalesInvoiceService {
         }
     }
 
+    private int resolveSourceReservationCredit(SalesInvoice invoice, SalesInvoiceItem item, Product product,
+            Long warehouseId) {
+        int deliveryNoteCredit = 0;
+        if (invoice.getId() != null) {
+            deliveryNoteCredit = safeDecimal(deliveryNoteRepository.sumReservedQtyForSourceDocument(
+                    "SALES_INVOICE",
+                    invoice.getId(),
+                    product.getId(),
+                    warehouseId)).intValue();
+        }
+
+        if (deliveryNoteCredit > 0) {
+            return deliveryNoteCredit;
+        }
+
+        if (invoice.getLinkedSalesOrder() == null || invoice.getLinkedSalesOrder().isBlank()) {
+            return 0;
+        }
+
+        return salesOrderRepository.findBySoNumber(invoice.getLinkedSalesOrder())
+                .map(so -> {
+                    if (so.getStatus() != com.billbull.backend.sales.salesorder.SalesOrderStatus.CONFIRMED
+                            && so.getStatus() != com.billbull.backend.sales.salesorder.SalesOrderStatus.PARTIALLY_PAID) {
+                        return 0;
+                    }
+                    if (warehouseId != null && so.getWarehouse() != null
+                            && !warehouseId.equals(so.getWarehouse().getId())) {
+                        return 0;
+                    }
+                    if (so.getItems() == null) {
+                        return 0;
+                    }
+
+                    return so.getItems().stream()
+                            .filter(soItem -> item.getItemCode().equals(soItem.getItemCode()))
+                            .mapToInt(soItem -> resolveBaseQty(
+                                    product.getId(),
+                                    soItem.getUnit(),
+                                    soItem.getQuantity() != null ? soItem.getQuantity() : 0))
+                            .sum();
+                })
+                .orElse(0);
+    }
+
+    private BigDecimal safeDecimal(BigDecimal value) {
+        return value != null ? value : BigDecimal.ZERO;
+    }
+
+    private int resolveBaseQty(Long productId, String unitName, int qty) {
+        if (qty <= 0 || unitName == null || unitName.isBlank()) return qty;
+        return packingRepo.findByProductId(productId).stream()
+                .filter(p -> p.getUnit() != null && unitName.equalsIgnoreCase(p.getUnit().getName()))
+                .findFirst()
+                .map(p -> p.getConversion() != null
+                        ? BigDecimal.valueOf(qty).multiply(p.getConversion())
+                                .setScale(0, RoundingMode.HALF_UP).intValue()
+                        : qty)
+                .orElse(qty);
+    }
+
     /**
      * Enforces the credit limit policy. If BLOCK, throws 400 when the customer's
      * outstanding balance exceeds their credit limit (currently based on existing
@@ -532,16 +662,18 @@ public class SalesInvoiceService {
         if (invoice.getCustomerCode() == null || invoice.getCustomerCode().isBlank())
             return;
 
-        // Sum outstanding (non-paid, non-cancelled) balances for this customer
-        Double outstanding = invoiceRepo.findOutstandingBalanceByCustomerCode(invoice.getCustomerCode());
-        double outstandingAmount = outstanding != null ? outstanding : 0.0;
-
-        // Use the customer's credit limit from the invoice entity (if set), fallback 0
-        double creditLimit = invoice.getCreditLimit() != null ? invoice.getCreditLimit() : 0.0;
+        // Look up credit limit directly from the customer record (authoritative source)
+        double creditLimit = customerRepository.findByCode(invoice.getCustomerCode())
+                .map(c -> c.getCreditLimitAmount() != null ? c.getCreditLimitAmount().doubleValue() : 0.0)
+                .orElse(0.0);
 
         // Only enforce if a credit limit is actually configured for this customer
         if (creditLimit <= 0)
             return;
+
+        // Sum outstanding (non-paid, non-cancelled) balances for this customer
+        Double outstanding = invoiceRepo.findOutstandingBalanceByCustomerCode(invoice.getCustomerCode());
+        double outstandingAmount = outstanding != null ? outstanding : 0.0;
 
         boolean isOverLimit = outstandingAmount > creditLimit;
 
@@ -598,6 +730,9 @@ public class SalesInvoiceService {
         req.autoGenerated = true;
         req.sourceDocumentType = "SALES_INVOICE";
         req.sourceDocumentId = invoice.getId();
+        req.branchId = invoice.getBranchId();
+        req.branchName = invoice.getBranchName();
+        req.branchCode = invoice.getBranchCode();
 
         // Pick the first non-null warehouseId from any item
         if (invoice.getItems() != null) {
@@ -631,11 +766,20 @@ public class SalesInvoiceService {
             for (SalesInvoiceItem item : invoice.getItems()) {
                 DeliveryNoteItemRequest iReq = new DeliveryNoteItemRequest();
                 iReq.itemCode = item.getItemCode();
-                iReq.description = item.getItemName();
+                iReq.barcode = item.getBarcode();
+                iReq.description = item.getDescription() != null && !item.getDescription().isBlank()
+                        ? item.getDescription()
+                        : item.getItemName();
                 iReq.unit = item.getUnit();
                 iReq.orderedQty = item.getQuantity();
                 iReq.currentQty = item.getQuantity();
                 iReq.foc = item.getFoc();
+                iReq.focUnit = item.getUnit();
+                iReq.image = item.getImage();
+                iReq.price = item.getPrice();
+                iReq.disc = item.getDiscount();
+                iReq.tax = item.getTaxRate();
+                iReq.cost = item.getCost();
                 req.items.add(iReq);
             }
         }
@@ -676,12 +820,37 @@ public class SalesInvoiceService {
         return false;
     }
 
+    private boolean shouldCreateDraftPickingNote(SalesInvoice invoice, SalesSettings settings) {
+        boolean pickingRequested = !Boolean.FALSE.equals(invoice.getRequirePickingNote());
+        boolean pickingTypeRequested = invoice.getRequestedFulfillmentType() == null
+                || invoice.getRequestedFulfillmentType().isBlank()
+                || "PICKING".equalsIgnoreCase(invoice.getRequestedFulfillmentType());
+        boolean linkedToExistingDelivery = invoice.getLinkedDeliveryNote() != null
+                && !invoice.getLinkedDeliveryNote().isBlank();
+
+        return pickingRequested
+                && pickingTypeRequested
+                && invoice.getId() != null
+                && invoice.getStatus() == SalesInvoiceStatus.DRAFT
+                && invoice.getSalesType() != SalesType.DIRECT_SALE
+                && settings.getSalesMode() != SalesMode.FAST_SALE
+                && !linkedToExistingDelivery
+                && !deliveryNoteService.hasActiveDeliveryNoteForSource("SALES_INVOICE", invoice.getId());
+    }
+
     // ----------------------------
     // PRICE HISTORY
     // ----------------------------
     @Transactional(readOnly = true)
     public List<PriceHistoryDTO> getPriceHistory(String itemCode) {
-        return invoiceRepo.findPriceHistoryByItemCode(itemCode, org.springframework.data.domain.PageRequest.of(0, 10));
+        Long currentBranchId = branchAccessService.getCurrentUserBranchId();
+        if (currentBranchId == null) {
+            return List.of();
+        }
+        return invoiceRepo.findPriceHistoryByItemCodeAndBranchScope(
+                itemCode,
+                currentBranchId,
+                org.springframework.data.domain.PageRequest.of(0, 10));
     }
 
     // ----------------------------
@@ -761,5 +930,52 @@ public class SalesInvoiceService {
                         + dnsWithoutAccounting.size() + deferredNotCleared.size()));
 
         return result;
+    }
+
+    private Branch resolveBranchForSave(SalesInvoice existing) {
+        if (existing != null && existing.getBranchId() == null) {
+            return null;
+        }
+        return branchAccessService.getRequiredCurrentUserBranch();
+    }
+
+    private void applyBranchSnapshot(SalesInvoice invoice, SalesInvoice existing, Branch resolvedBranch) {
+        if (existing != null && existing.getBranchId() == null) {
+            invoice.setBranchId(null);
+            invoice.setBranchName(null);
+            invoice.setBranchCode(null);
+            invoice.setBranch(existing.getBranch());
+            return;
+        }
+
+        if (resolvedBranch == null) {
+            invoice.setBranchId(null);
+            invoice.setBranchName(null);
+            invoice.setBranchCode(null);
+            return;
+        }
+
+        invoice.setBranchId(resolvedBranch.getId());
+        invoice.setBranchName(resolvedBranch.getName());
+        invoice.setBranchCode(resolvedBranch.getCode());
+        invoice.setBranch(resolvedBranch.getName());
+    }
+
+    private void validateInvoiceWarehouses(SalesInvoice invoice, Long branchId) {
+        if (branchId == null || invoice.getItems() == null) {
+            return;
+        }
+
+        for (SalesInvoiceItem item : invoice.getItems()) {
+            if (item.getWarehouseId() == null) {
+                continue;
+            }
+
+            Warehouse warehouse = warehouseRepository.findById(item.getWarehouseId())
+                    .orElseThrow(() -> new ResponseStatusException(
+                            HttpStatus.BAD_REQUEST,
+                            "Warehouse not found for item " + item.getItemCode()));
+            branchAccessService.assertWarehouseMatchesBranch(warehouse, branchId, "Sales Invoice item");
+        }
     }
 }

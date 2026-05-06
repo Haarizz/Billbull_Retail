@@ -23,6 +23,7 @@ import com.billbull.backend.hr.employees.EmployeeLoginAccessRequest;
 import com.billbull.backend.hr.employees.EmployeeRepository;
 import com.billbull.backend.role.Role;
 import com.billbull.backend.role.RoleRepository;
+import com.billbull.backend.settings.branch.BranchRepository;
 import com.billbull.backend.security.AdminSafeguardService;
 
 @ExtendWith(MockitoExtension.class)
@@ -43,6 +44,9 @@ class UserServiceTest {
     @Mock
     private EmployeeRepository employeeRepository;
 
+    @Mock
+    private BranchRepository branchRepository;
+
     private UserService userService;
 
     @BeforeEach
@@ -52,7 +56,8 @@ class UserServiceTest {
                 roleRepository,
                 passwordEncoder,
                 adminSafeguardService,
-                employeeRepository);
+                employeeRepository,
+                branchRepository);
     }
 
     @Test

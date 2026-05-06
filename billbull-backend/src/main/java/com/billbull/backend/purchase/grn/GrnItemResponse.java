@@ -4,7 +4,7 @@ import java.math.BigDecimal;
 
 public record GrnItemResponse(
         Long id,
-        Long productId, // Added productId for bin mapping
+        Long productId,
         String code,
         String name,
         String barcode,
@@ -17,8 +17,11 @@ public record GrnItemResponse(
         BigDecimal unitCost,
         BigDecimal netCost,
         BigDecimal total,
+        BigDecimal discountPercent,
+        BigDecimal taxAmt,
         boolean batch,
         Integer focQty,
         String focUnit,
-        String remarks) {
+        String remarks,
+        BigDecimal purchaseTax) {
 }

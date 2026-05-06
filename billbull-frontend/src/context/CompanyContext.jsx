@@ -21,8 +21,9 @@ export const CompanyProvider = ({ children }) => {
                 const profile = res.data;
                 setCompany({
                     ...profile,
-                    // Resolve relative path → full URL once, here
+                    // Resolve relative paths → full URLs once, here
                     logoUrl: profile.logoPath ? getImageUrl(profile.logoPath) : null,
+                    stampUrl: profile.stampPath ? getImageUrl(profile.stampPath) : null,
                 });
             })
             .catch(() => {
@@ -36,15 +37,18 @@ export const CompanyProvider = ({ children }) => {
      * component that reads company context gets the fresh data immediately.
      */
     const refreshCompany = () => {
-        getCompanyProfile()
+        return getCompanyProfile()
             .then(res => {
                 const profile = res.data;
-                setCompany({
+                const normalizedProfile = {
                     ...profile,
                     logoUrl: profile.logoPath ? getImageUrl(profile.logoPath) : null,
-                });
+                    stampUrl: profile.stampPath ? getImageUrl(profile.stampPath) : null,
+                };
+                setCompany(normalizedProfile);
+                return normalizedProfile;
             })
-            .catch(() => {});
+            .catch(() => null);
     };
 
     return (

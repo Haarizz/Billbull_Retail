@@ -1,5 +1,7 @@
 package com.billbull.backend.settings.branch;
 
+import com.fasterxml.jackson.annotation.JsonProperty;
+
 public class BranchResponse {
 
     private Long id;
@@ -10,6 +12,7 @@ public class BranchResponse {
     private boolean isDefault;
     private Long defaultWarehouseId;
     private String defaultWarehouseName;
+    private String defaultWarehouseBranchName;
 
     public BranchResponse() {}
 
@@ -24,6 +27,9 @@ public class BranchResponse {
         if (b.getDefaultWarehouse() != null) {
             r.defaultWarehouseId = b.getDefaultWarehouse().getId();
             r.defaultWarehouseName = b.getDefaultWarehouse().getName();
+            r.defaultWarehouseBranchName = b.getDefaultWarehouse().getBranch() != null
+                    ? b.getDefaultWarehouse().getBranch().getName()
+                    : null;
         }
         return r;
     }
@@ -43,6 +49,7 @@ public class BranchResponse {
     public String getPhone() { return phone; }
     public void setPhone(String phone) { this.phone = phone; }
 
+    @JsonProperty("isDefault")
     public boolean isDefault() { return isDefault; }
     public void setDefault(boolean isDefault) { this.isDefault = isDefault; }
 
@@ -51,4 +58,9 @@ public class BranchResponse {
 
     public String getDefaultWarehouseName() { return defaultWarehouseName; }
     public void setDefaultWarehouseName(String defaultWarehouseName) { this.defaultWarehouseName = defaultWarehouseName; }
+
+    public String getDefaultWarehouseBranchName() { return defaultWarehouseBranchName; }
+    public void setDefaultWarehouseBranchName(String defaultWarehouseBranchName) {
+        this.defaultWarehouseBranchName = defaultWarehouseBranchName;
+    }
 }

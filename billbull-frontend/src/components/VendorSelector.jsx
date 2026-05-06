@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef, useMemo } from 'react';
 import ReactDOM from 'react-dom';
 import { Search, X, Plus, Check, Phone, Mail, MapPin, ChevronDown, Store } from 'lucide-react';
 import { createVendor } from '../api/vendorsApi';
+import toast from 'react-hot-toast';
 
 // ==========================================
 // VENDOR SELECTOR — Search Modal + New Vendor Panel
@@ -128,7 +129,7 @@ const VendorSelector = ({
     // Handle new vendor save
     const handleSaveNewVendor = async () => {
         if (!newVendor.name.trim()) {
-            alert('Vendor Name is required');
+            toast.error('Vendor Name is required');
             return;
         }
 
@@ -161,7 +162,7 @@ const VendorSelector = ({
 
         } catch (err) {
             console.error('Failed to create vendor', err);
-            alert('Failed to save vendor. Please try again.');
+            toast.error('Failed to save vendor. Please try again.');
         } finally {
             setIsSaving(false);
         }

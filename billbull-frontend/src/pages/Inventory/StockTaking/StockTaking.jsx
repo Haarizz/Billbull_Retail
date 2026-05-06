@@ -9,10 +9,29 @@ import {
     Check, XCircle, Image as ImageIcon, FileDown, Package, AlertTriangle, Trash2,
     PlusCircle, MinusCircle, Activity
 } from 'lucide-react';
+import ExportDropdown from '../../../components/common/ExportDropdown';
+import { exportToExcel, exportToPDF } from '../../../utils/exportUtils';
+import CurrencyAmount from '../../../components/CurrencyAmount';
+
+// ==========================================
+// CONFIGURATION
+// ==========================================
+
+const STOCK_TAKING_COLUMNS = [
+    { header: 'Session ID', key: 'id', width: 20 },
+    { header: 'Warehouse', key: 'warehouse', width: 20 },
+    { header: 'Created By', key: 'createdBy', width: 20 },
+    { header: 'Started On', key: 'startedOn', width: 15 },
+    { header: 'Status', key: 'status', width: 15 },
+    { header: 'Progress', key: 'progress', width: 12 },
+    { header: 'Total', key: 'total', width: 12 },
+    { header: 'Variance Qty', key: 'totalVarianceQty', width: 15 },
+    { header: 'Variance Value', key: 'totalVarianceValue', width: 15 }
+];
 import { getImageUrl } from '../../../utils/urlUtils';
 import ExcelJS from 'exceljs';
-import { getWarehouses, getWarehouseStock, getWarehouseProductStock, getWarehouseBins } from '../../../api/warehouseApi';
-import { getProductById, searchExactProducts, searchProductByBarcode } from '../../../api/productsApi';
+import { getWarehouses, getWarehouseStock, getWarehouseProductStock, getWarehouseBins, getWarehouseStockSummary } from '../../../api/warehouseApi';
+import { searchExactProducts, searchProductByBarcode } from '../../../api/productsApi';
 import { getDepartments } from '../../../api/departmentsApi';
 import { getBrands } from '../../../api/brandsApi';
 import ProductSelector from '../../../components/ProductSelector';
@@ -30,7 +49,344 @@ import {
     rejectStockTakeSession,
     deleteStockTakeSession,
     getProductsForStockTake,
+    addItemBatch,
+    updateItemLot,
+    deleteItemLot,
+    previewNextBatchNumber,
 } from '../../../api/stockTakeApi';
+
+const parseImpactAmount = (impact) => {
+    if (typeof impact === 'number') return impact;
+    const raw = String(impact || '').trim();
+    if (!raw || raw === '-') return 0;
+    const amount = Number(raw.replace(/[^0-9.]/g, '')) || 0;
+    return raw.includes('-') ? -amount : amount;
+};
+
+const ImpactAmount = ({ value }) => {
+    const amount = parseImpactAmount(value);
+    if (!amount) return '-';
+    return <>{amount > 0 ? '+' : ''}<CurrencyAmount value={Math.abs(amount)} /></>;
+};
+
+// Batch / expiry editor — rendered inside the count modal for tracked items
+// (batch-controlled, expiry-controlled, or both — each toggle is independent).
+// countedQty is derived from the sum of batch quantities (server-side); the user enters per-batch rows here.
+//
+// One UI row corresponds to one logical lot. Storage-wise, a lot of qty=N is N
+// per-unit rows in stock_take_item_batches, each with its own batch_number ending
+// in -1, -2, ..., -N. The backend exposes them grouped via item.lotGroups; this
+// editor renders those groups and uses the lot-level update/delete endpoints to
+// apply the user's edits to all underlying unit rows in one call.
+//
+// Three operations are supported:
+//   a. Count existing batch       — edit qty on a seeded lot (adds/removes unit rows)
+//   b. Add new physical batch     — use the bottom add form (creates a new lot of N units)
+//   c. Correct batch / expiry     — edit batch # or expiry on a seeded lot (renames/retags every unit row in the lot)
+const BatchEditor = ({ item, disabled, onChange }) => {
+    const [lots, setLots] = useState(item?.lotGroups || []);
+    const [draft, setDraft] = useState({ batchNumber: '', expiryDate: '', quantity: 1 });
+    const [busy, setBusy] = useState(false);
+    const [error, setError] = useState('');
+
+    useEffect(() => { setLots(item?.lotGroups || []); }, [item?.id, item?.lotGroups]);
+
+    const batchEnabled = !!item?.batchEnabled;
+    const expiryEnabled = !!item?.expiryEnabled;
+    // Each tracking dimension is independent: a value is required only when its
+    // corresponding product toggle is on. Batch # falls back to a server-generated
+    // value if left blank, so it isn't strictly required client-side.
+    const expiryRequired = expiryEnabled;
+
+    // The server returns the latest StockTakeItem after every lot mutation. Its
+    // lotGroups array becomes our new state; the parent gets the same object so
+    // it can refresh totals and item status.
+    const applyServerItem = (serverItem) => {
+        if (serverItem && Array.isArray(serverItem.lotGroups)) {
+            setLots(serverItem.lotGroups);
+            onChange?.(serverItem);
+        }
+    };
+
+    const handlePrefillBatchNumber = async () => {
+        if (!item?.id) return;
+        try {
+            const res = await previewNextBatchNumber(item.id);
+            setDraft(d => ({ ...d, batchNumber: res?.batchNumber || '' }));
+        } catch (e) {
+            // non-fatal
+        }
+    };
+
+    const handleAdd = async () => {
+        setError('');
+        const qty = parseInt(draft.quantity, 10);
+        if (!Number.isFinite(qty) || qty <= 0) { setError('Quantity must be > 0'); return; }
+        if (expiryRequired && !draft.expiryDate) { setError('Expiry date is required'); return; }
+        setBusy(true);
+        try {
+            // Backend creates qty per-unit rows for this lot.
+            await addItemBatch(item.id, {
+                batchNumber: draft.batchNumber?.trim() || null,
+                expiryDate: draft.expiryDate || null,
+                quantity: qty,
+            });
+            // Re-fetch the item via the parent (the saved response is the unit-row list,
+            // not the full item). Easiest path: ask the parent to refresh the modal item.
+            onChange?.(null);
+            setDraft({ batchNumber: '', expiryDate: '', quantity: 1 });
+        } catch (e) {
+            setError(e?.response?.data?.message || 'Failed to add batch');
+        } finally {
+            setBusy(false);
+        }
+    };
+
+    const handleDeleteLot = async (lot) => {
+        setBusy(true);
+        try {
+            await deleteItemLot(item.id, {
+                lotPrefix: lot.batchNumber,
+                matchExpiry: lot.expiryDate || null,
+                seeded: lot.seeded,
+            });
+            onChange?.(null);
+        } catch (e) {
+            setError(e?.response?.data?.message || 'Failed to delete batch');
+        } finally {
+            setBusy(false);
+        }
+    };
+
+    const handleUpdateLot = async (lot, patch) => {
+        setBusy(true);
+        try {
+            const saved = await updateItemLot(item.id, {
+                lotPrefix: lot.batchNumber,
+                matchExpiry: lot.expiryDate || null,
+                seeded: lot.seeded,
+                newBatchNumber: patch.batchNumber ?? null,
+                newExpiryDate: patch.expiryDate ?? null,
+                newQuantity: patch.quantity ?? null,
+            });
+            // Server returns the unit rows for the (renamed) lot, but lot mutations may
+            // affect siblings (e.g., recompute). Ask parent to refresh for accuracy.
+            if (saved) {
+                onChange?.(null);
+            }
+        } catch (e) {
+            setError(e?.response?.data?.message || 'Failed to update batch');
+        } finally {
+            setBusy(false);
+        }
+    };
+
+    const seededLots = lots.filter(l => l.seeded);
+    const newLots = lots.filter(l => !l.seeded);
+    const total = lots.reduce((s, l) => s + (parseInt(l.quantity, 10) || 0), 0);
+
+    const renderLotRow = (lot, { allowDelete }) => (
+        <tr key={lot.lotKey} className="border-t border-slate-100">
+            {batchEnabled && (
+                <td className="px-2 py-1.5">
+                    <input
+                        type="text"
+                        disabled={disabled || busy}
+                        defaultValue={lot.batchNumber || ''}
+                        onBlur={(e) => {
+                            const v = e.target.value.trim();
+                            if (v && v !== lot.batchNumber) {
+                                handleUpdateLot(lot, { batchNumber: v });
+                            }
+                        }}
+                        className="w-full min-w-36 border border-slate-200 rounded px-1 py-0.5 font-mono text-[11px]"
+                        title={lot.legacy ? 'Legacy single-row batch' : `Lot covers units 1–${lot.quantity}`}
+                    />
+                </td>
+            )}
+            {expiryEnabled && (
+                <td className="px-2 py-1.5">
+                    <input
+                        type="date"
+                        disabled={disabled || busy}
+                        value={lot.expiryDate || ''}
+                        onChange={(e) => handleUpdateLot(lot, { expiryDate: e.target.value || null })}
+                        className="border border-slate-200 rounded px-1 py-0.5 text-[11px]"
+                    />
+                </td>
+            )}
+            <td className="px-2 py-1.5 text-right">
+                <input
+                    type="number"
+                    min={0}
+                    disabled={disabled || busy}
+                    defaultValue={lot.quantity}
+                    onBlur={(e) => {
+                        const v = parseInt(e.target.value, 10);
+                        if (Number.isFinite(v) && v > 0 && v !== lot.quantity) {
+                            handleUpdateLot(lot, { quantity: v });
+                        }
+                    }}
+                    className="w-16 border border-slate-200 rounded px-1 py-0.5 text-[11px] text-right"
+                />
+            </td>
+            <td className="px-2 py-1.5 text-right">
+                {allowDelete ? (
+                    <button
+                        type="button"
+                        disabled={disabled || busy}
+                        onClick={() => handleDeleteLot(lot)}
+                        className="text-red-500 hover:text-red-700 disabled:opacity-50"
+                        title="Remove this physical batch"
+                    >
+                        <Trash2 className="h-3.5 w-3.5" />
+                    </button>
+                ) : (
+                    <span className="text-[10px] text-slate-300" title="Existing batches cannot be removed — to retire one, correct or zero its quantity">—</span>
+                )}
+            </td>
+        </tr>
+    );
+
+    return (
+        <div className="bg-white border border-slate-200 rounded-xl p-3 space-y-4">
+            <div>
+                <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wide">
+                    {batchEnabled && expiryEnabled ? 'Batches' : batchEnabled ? 'Batch Numbers' : 'Expiry Dates'}
+                </p>
+                <p className="text-[10px] text-slate-400">Counted quantity = sum of row quantities ({total})</p>
+            </div>
+
+            {/* Section A — Existing rows (Count existing / Correct identity) */}
+            <div>
+                <div className="flex items-center justify-between mb-1.5">
+                    <div>
+                        <p className="text-[10px] font-bold text-slate-700 uppercase tracking-wide">
+                            Existing {batchEnabled && expiryEnabled ? 'Batches' : batchEnabled ? 'Batches' : 'Lots'}
+                        </p>
+                        <p className="text-[10px] text-slate-400">
+                            Edit Qty to <strong>count existing</strong>.
+                            {(batchEnabled || expiryEnabled) && (
+                                <> Edit {batchEnabled && 'Batch #'}{batchEnabled && expiryEnabled && ' or '}{expiryEnabled && 'Expiry'} to <strong>correct</strong> the identity.</>
+                            )}
+                        </p>
+                    </div>
+                </div>
+                {seededLots.length > 0 ? (
+                    <div className="border border-amber-100 bg-amber-50/30 rounded-lg overflow-hidden">
+                        <table className="w-full text-xs">
+                            <thead className="bg-amber-50 text-[10px] uppercase tracking-wide text-amber-700">
+                                <tr>
+                                    {batchEnabled && <th className="px-2 py-1.5 text-left">Batch #</th>}
+                                    {expiryEnabled && <th className="px-2 py-1.5 text-left">Expiry</th>}
+                                    <th className="px-2 py-1.5 text-right">Qty</th>
+                                    <th className="px-2 py-1.5"></th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {seededLots.map(b => renderLotRow(b, { allowDelete: false }))}
+                            </tbody>
+                        </table>
+                    </div>
+                ) : (
+                    <p className="text-[10px] text-slate-400 italic px-1">
+                        No existing batches in this bin. Assign a bin first, or add a new physical batch below.
+                    </p>
+                )}
+            </div>
+
+            {/* Section B — New physical batches (Add new) */}
+            <div>
+                <div className="mb-1.5">
+                    <p className="text-[10px] font-bold text-slate-700 uppercase tracking-wide">New Physical Batches</p>
+                    <p className="text-[10px] text-slate-400">Use this section to <strong>add new</strong> stock you found that isn't in any existing batch.</p>
+                </div>
+                {newLots.length > 0 && (
+                    <div className="border border-emerald-100 bg-emerald-50/20 rounded-lg overflow-hidden mb-3">
+                        <table className="w-full text-xs">
+                            <thead className="bg-emerald-50 text-[10px] uppercase tracking-wide text-emerald-700">
+                                <tr>
+                                    {batchEnabled && <th className="px-2 py-1.5 text-left">Batch #</th>}
+                                    {expiryEnabled && <th className="px-2 py-1.5 text-left">Expiry</th>}
+                                    <th className="px-2 py-1.5 text-right">Qty</th>
+                                    <th className="px-2 py-1.5"></th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {newLots.map(b => renderLotRow(b, { allowDelete: true }))}
+                            </tbody>
+                        </table>
+                    </div>
+                )}
+
+                {!disabled && (
+                    <div className="border border-dashed border-slate-200 rounded-lg p-2.5">
+                        <div className="flex flex-wrap gap-2 items-end">
+                            {batchEnabled && (
+                                <div className="flex-1 min-w-[160px]">
+                                    <label className="block text-[10px] font-bold text-slate-500 mb-1">Batch Number</label>
+                                    <div className="flex gap-1">
+                                        <input
+                                            type="text"
+                                            placeholder="(auto)"
+                                            value={draft.batchNumber}
+                                            onChange={(e) => setDraft(d => ({ ...d, batchNumber: e.target.value }))}
+                                            className="flex-1 min-w-0 h-8 border border-slate-200 rounded px-2 text-[11px] focus:outline-none focus:ring-1 focus:ring-amber-400"
+                                        />
+                                        <button
+                                            type="button"
+                                            onClick={handlePrefillBatchNumber}
+                                            title="Generate batch number"
+                                            className="h-8 px-2 text-[10px] font-bold border border-slate-200 rounded hover:bg-slate-50 shrink-0"
+                                        >
+                                            Gen
+                                        </button>
+                                    </div>
+                                </div>
+                            )}
+                            {expiryEnabled && (
+                                <div className="flex-1 min-w-[140px]">
+                                    <label className="block text-[10px] font-bold text-slate-500 mb-1">
+                                        Expiry {expiryRequired && <span className="text-red-500">*</span>}
+                                    </label>
+                                    <input
+                                        type="date"
+                                        value={draft.expiryDate}
+                                        onChange={(e) => setDraft(d => ({ ...d, expiryDate: e.target.value }))}
+                                        className="w-full h-8 border border-slate-200 rounded px-2 text-[11px] focus:outline-none focus:ring-1 focus:ring-amber-400"
+                                    />
+                                </div>
+                            )}
+                            <div className="w-20 shrink-0">
+                                <label className="block text-[10px] font-bold text-slate-500 mb-1">Qty</label>
+                                <input
+                                    type="number"
+                                    min={1}
+                                    value={draft.quantity}
+                                    onChange={(e) => setDraft(d => ({ ...d, quantity: e.target.value }))}
+                                    className="w-full h-8 border border-slate-200 rounded px-2 text-[11px] text-right focus:outline-none focus:ring-1 focus:ring-amber-400"
+                                />
+                            </div>
+                            <div className="w-10 shrink-0">
+                                <button
+                                    type="button"
+                                    disabled={busy}
+                                    onClick={handleAdd}
+                                    title="Add new physical batch"
+                                    className="w-full h-8 flex items-center justify-center text-base font-bold text-slate-900 bg-[#F5C742] hover:bg-amber-400 rounded disabled:opacity-50 leading-none"
+                                >
+                                    +
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                )}
+            </div>
+
+            {error && <p className="text-[10px] text-red-500">{error}</p>}
+        </div>
+    );
+};
 
 // Compact bin selector used in the items table and count modal
 const BinSelector = ({ itemId, binId, bins, onBinChange, disabled, size = 'sm' }) => {
@@ -333,7 +689,10 @@ const resolveProductCategory = (product) => (
 const normalizeSelectorProduct = (product, detail = null) => {
     const detailProduct = detail?.product || null;
     const baseProduct = detailProduct || product?.product || product || {};
-    const detailBarcode = detail?.inventory?.packings?.find?.(packing => packing.barcode)?.barcode || '';
+    const detailBarcode =
+        detail?.inventory?.packings?.find?.(packing => packing.barcode)?.barcode ||
+        product?.inventory?.packings?.find?.(packing => packing.barcode)?.barcode ||
+        '';
     const brand = resolveProductBrand(product) || resolveProductBrand(detail) || baseProduct.brand?.name || 'General';
     const category = (
         product?.category ||
@@ -343,6 +702,21 @@ const normalizeSelectorProduct = (product, detail = null) => {
         resolveProductCategory(product) ||
         resolveProductCategory(detail) ||
         'Uncategorized'
+    );
+    const batchEnabled = !!(
+        product?.batchEnabled ??
+        product?.isBatch ??
+        product?.product?.isBatch ??
+        detailProduct?.isBatch ??
+        baseProduct.isBatch ??
+        false
+    );
+    const expiryEnabled = !!(
+        product?.expiryEnabled ??
+        product?.product?.expiryEnabled ??
+        detailProduct?.expiryEnabled ??
+        baseProduct.expiryEnabled ??
+        false
     );
 
     return {
@@ -362,8 +736,18 @@ const normalizeSelectorProduct = (product, detail = null) => {
         retailPrice: product?.retailPrice ?? detail?.pricing?.retailPrice ?? product?.sellingPrice ?? null,
         sellingPrice: product?.sellingPrice ?? detail?.pricing?.retailPrice ?? product?.retailPrice ?? null,
         stock: product?.stock ?? 0,
+        batchEnabled,
+        expiryEnabled,
     };
 };
+
+const mapStockTakeItem = (item) => ({
+    ...item,
+    barcode: item?.barcode || item?.product?.barcode || '',
+    batches: item?.batches || [],
+    impact: item?.varianceValue ? `${item.varianceValue > 0 ? '+' : ''}AED ${Math.abs(item.varianceValue).toFixed(2)}` : null,
+    status: item?.status ? item.status.charAt(0) + item.status.slice(1).toLowerCase() : 'Pending',
+});
 
 const ListView = ({
     activeTab,
@@ -401,7 +785,7 @@ const ListView = ({
                         <div className="bg-amber-100 p-1.5 rounded-lg">
                             <ClipboardList className="h-5 w-5 text-[#F5C742]" />
                         </div>
-                        <h1 className="text-lg font-bold text-slate-800 tracking-tight flex items-center gap-2"><ClipboardList className="text-[#F5C742]" size={24} /> Stock Taking</h1>
+                        <h1 className="text-lg font-bold text-slate-800 tracking-tight">Stock Taking</h1>
                     </div>
                     <p className="text-sm text-slate-500">Manage physical stock counts, track variances, and maintain inventory accuracy</p>
                 </div>
@@ -413,9 +797,10 @@ const ListView = ({
                     >
                         <Plus className="h-3.5 w-3.5" /> New Stock Take
                     </button>
-                    <button className="inline-flex items-center justify-center gap-2 h-8 px-3 rounded-md border border-slate-200 bg-white hover:bg-slate-50 text-xs font-medium text-slate-700 transition-colors">
-                        <Download className="h-3.5 w-3.5" /> Export
-                    </button>
+                    <ExportDropdown
+                        onExportExcel={() => exportToExcel(filteredSessions, STOCK_TAKING_COLUMNS, 'StockTaking')}
+                        onExportPdf={() => exportToPDF(filteredSessions, STOCK_TAKING_COLUMNS, 'Stock Taking Sessions', 'StockTaking')}
+                    />
                 </div>
             </div>
 
@@ -541,7 +926,7 @@ const ListView = ({
                                         {session.progress > 0 ? (
                                             <div className="flex flex-col items-end">
                                                 <span className={session.totalVarianceValue >= 0 ? 'text-emerald-600' : 'text-red-600'}>
-                                                    {session.totalVarianceValue > 0 ? '+' : ''}AED {Math.abs(session.totalVarianceValue).toFixed(2)}
+                                                    {session.totalVarianceValue > 0 ? '+' : ''}<CurrencyAmount value={Math.abs(session.totalVarianceValue)} />
                                                 </span>
                                                 <span className="text-[10px] text-slate-400 font-bold uppercase tracking-tighter">
                                                     {session.totalVarianceQty > 0 ? '+' : (session.totalVarianceQty < 0 ? '-' : '')}{Math.abs(session.totalVarianceQty)} units
@@ -596,6 +981,7 @@ const ListView = ({
 
 const SessionView = ({
     selectedSession,
+    refreshSelectedSession,
     handleSaveDraft,
     setIsReviewModalOpen,
     setViewMode,
@@ -623,7 +1009,9 @@ const SessionView = ({
     countToAdd, setCountToAdd,
     countMode, setCountMode,
     ChevronRight, Undo2, Save, ClipboardList, Barcode, Keyboard, Search, Filter, FileDown,
-    ImageIcon, Trash2, PackageSearch, Package, RefreshCw, CheckSquare, MousePointer2
+    ImageIcon, Trash2, PackageSearch, Package, RefreshCw, CheckSquare, MousePointer2,
+    binCapacityViolations = [],
+    isItemDeleting = false,
 }) => {
     const [itemSearchQuery, setItemSearchQuery] = useState('');
     // BB-016: Filter items by search query
@@ -637,7 +1025,9 @@ const SessionView = ({
     const [entryMode, setEntryMode] = useState('scan'); // 'scan' or 'manual'
 
     const openCountModal = (item) => {
-        if (selectedSession?.status !== 'In Progress' || entryMode !== 'manual') return;
+        if (selectedSession?.status !== 'In Progress') return;
+        // Allow row-click in either scan or manual mode — useful for batched items
+        // where the user needs to manage batches without flipping the entry-mode toggle.
         setSelectedItemForCount(item);
         // Manual click = set the total directly; prefill with existing count for easy adjustment
         setCountMode('set');
@@ -942,14 +1332,24 @@ const SessionView = ({
                                             </td>
                                             <td className="px-4 py-2.5 text-center font-bold text-slate-700">{item.systemQty}</td>
                                             <td className="px-4 py-2.5 text-center" onClick={(e) => e.stopPropagation()}>
-                                                <input
-                                                    type="number"
-                                                    value={item.countedQty === null ? '' : item.countedQty}
-                                                    onChange={(e) => handleCountChange(item.id, e.target.value)}
-                                                    disabled={selectedSession?.status !== 'In Progress' || entryMode !== 'manual'}
-                                                    placeholder="0"
-                                                    className="w-16 px-1.5 py-0.5 bg-slate-50 border border-slate-200 rounded text-[10px] font-bold text-slate-900 text-center focus:ring-1 focus:ring-amber-500 outline-none transition-all disabled:opacity-50 disabled:bg-slate-100"
-                                                />
+                                                <div className="flex items-center justify-center gap-1">
+                                                    <input
+                                                        type="number"
+                                                        value={item.countedQty === null ? '' : item.countedQty}
+                                                        onChange={(e) => handleCountChange(item.id, e.target.value)}
+                                                        disabled={selectedSession?.status !== 'In Progress' || entryMode !== 'manual' || item.batchEnabled || item.expiryEnabled}
+                                                        title={(item.batchEnabled || item.expiryEnabled) ? 'Open the item to manage batches' : undefined}
+                                                        placeholder="0"
+                                                        className={`w-16 px-1.5 py-0.5 rounded text-[10px] font-bold text-slate-900 text-center focus:ring-1 outline-none transition-all disabled:opacity-50 disabled:bg-slate-100 ${
+                                                            binCapacityViolations.some(v => v.itemId === item.id)
+                                                                ? 'bg-red-50 border border-red-400 focus:ring-red-400'
+                                                                : 'bg-slate-50 border border-slate-200 focus:ring-amber-500'
+                                                        }`}
+                                                    />
+                                                    {binCapacityViolations.some(v => v.itemId === item.id) && (
+                                                        <AlertTriangle className="h-3.5 w-3.5 text-red-500 shrink-0" title="Bin capacity exceeded" />
+                                                    )}
+                                                </div>
                                             </td>
                                             <td className="px-4 py-2.5 text-center font-bold">
                                                 {item.variance !== undefined && item.variance !== null ? (
@@ -969,7 +1369,7 @@ const SessionView = ({
                                                 ) : <span className="text-slate-400">-</span>}
                                             </td>
                                             <td className={`px-4 py-2.5 text-center font-bold ${item.varianceValue > 0 ? 'text-blue-600' : item.varianceValue < 0 ? 'text-red-500' : 'text-slate-400'}`}>
-                                                {item.impact || '-'}
+                                                <ImpactAmount value={item.impact || item.varianceValue} />
                                             </td>
                                             <td className="px-4 py-2.5 text-center">
                                                 <span className={`px-2 py-0.5 rounded text-[8px] font-bold uppercase border shadow-sm ${getStatusStyle(item.status)}`}>
@@ -1053,7 +1453,7 @@ const SessionView = ({
                             <div className="flex justify-between items-center text-slate-900 pb-2 border-b border-black/10">
                                 <span className="text-[11px] font-bold opacity-80">Variance (Value)</span>
                                 <span className="text-base font-black tracking-tight">
-                                    AED {items.reduce((sum, item) => sum + Math.abs(item.varianceValue || 0), 0).toFixed(2)}
+                                    <CurrencyAmount value={items.reduce((sum, item) => sum + Math.abs(item.varianceValue || 0), 0)} />
                                 </span>
                             </div>
                         </div>
@@ -1078,9 +1478,10 @@ const SessionView = ({
                             </button>
                             <button
                                 onClick={handleSaveDraft}
-                                className="w-full h-10 bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 font-bold rounded-lg shadow-sm transition-all flex items-center justify-center gap-2 text-[11px] uppercase tracking-wider"
+                                disabled={isItemDeleting}
+                                className="w-full h-10 bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 font-bold rounded-lg shadow-sm transition-all flex items-center justify-center gap-2 text-[11px] uppercase tracking-wider disabled:opacity-50 disabled:cursor-not-allowed"
                             >
-                                <Save className="h-4 w-4 text-slate-400" /> Save & Continue Later
+                                <Save className="h-4 w-4 text-slate-400" /> {isItemDeleting ? 'Removing...' : 'Save & Continue Later'}
                             </button>
                         </div>
                     )}
@@ -1199,16 +1600,34 @@ const SessionView = ({
                                     <p className="text-[11px] font-bold text-slate-600 mb-1">Pricing</p>
                                     <div className="flex justify-between items-center text-xs">
                                         <span className="text-slate-500 font-medium">Cost Price:</span>
-                                        <span className="font-bold text-slate-800">AED {selectedItemForCount.costPrice?.toFixed(2) || '0.00'}</span>
+                                        <CurrencyAmount value={selectedItemForCount.costPrice || 0} className="font-bold text-slate-800" />
                                     </div>
                                     <div className="flex justify-between items-center text-xs">
                                         <span className="text-slate-500 font-medium">Selling Price:</span>
-                                        <span className="font-bold text-emerald-600">AED {selectedItemForCount.price?.toFixed(2) || '0.00'}</span>
+                                        <CurrencyAmount value={selectedItemForCount.price || 0} className="font-bold text-emerald-600" />
                                     </div>
                                 </div>
                             </div>
 
-                            {/* Enter Counted Quantity */}
+                            {/* Batch / Expiry editor — shown whenever either flag is on (independent product toggles) */}
+                            {(selectedItemForCount.batchEnabled || selectedItemForCount.expiryEnabled) && (
+                                <BatchEditor
+                                    item={selectedItemForCount}
+                                    disabled={selectedSession?.status !== 'In Progress'}
+                                    onChange={() => {
+                                        // Lot-level mutations may add/remove unit rows or rename
+                                        // siblings, so we refetch the session rather than patching
+                                        // a single field locally. The editor reads its own state
+                                        // from item.lotGroups, which the refresh repopulates.
+                                        if (typeof refreshSelectedSession === 'function') {
+                                            refreshSelectedSession();
+                                        }
+                                    }}
+                                />
+                            )}
+
+                            {/* Enter Counted Quantity — hidden for tracked items (batch or expiry) */}
+                            {!(selectedItemForCount.batchEnabled || selectedItemForCount.expiryEnabled) && (
                             <div className="bg-[#FFF8E7] border border-[#FDE6A9] rounded-xl p-4">
 
                                 {/* Mode toggle — only for items already in the session with a prior count */}
@@ -1276,6 +1695,41 @@ const SessionView = ({
                                     </p>
                                 )}
                             </div>
+                            )}
+
+                            {/* Bin capacity warning — checks TOTAL of all items in this bin, not just this item */}
+                            {(() => {
+                                if (!selectedItemForCount.binId) return null;
+                                const bin = warehouseBins.find(b => String(b.id) === String(selectedItemForCount.binId));
+                                if (!bin?.capacity) return null;
+
+                                // Sum countedQty of all OTHER items already in this bin
+                                const otherItemsInBin = (selectedSession?.items || [])
+                                    .filter(i => i.id !== selectedItemForCount.id && i.binId != null && String(i.binId) === String(selectedItemForCount.binId) && i.countedQty != null)
+                                    .reduce((sum, i) => sum + i.countedQty, 0);
+
+                                const thisItemQty = countMode === 'add' && selectedItemForCount.countedQty != null
+                                    ? selectedItemForCount.countedQty + (parseInt(countToAdd) || 0)
+                                    : (parseInt(countToAdd) || 0);
+
+                                const binTotal = otherItemsInBin + thisItemQty;
+                                if (binTotal <= bin.capacity) return null;
+
+                                return (
+                                    <div className="flex items-start gap-3 p-3 bg-red-50 border border-red-200 rounded-xl">
+                                        <AlertTriangle className="h-4 w-4 text-red-500 shrink-0 mt-0.5" />
+                                        <div>
+                                            <p className="text-xs font-bold text-red-700">Bin Capacity Exceeded</p>
+                                            <p className="text-[11px] text-red-600 mt-0.5">
+                                                Bin <strong>{bin.code}</strong> max is <strong>{bin.capacity}</strong> units.
+                                                Total in bin after this entry: <strong>{binTotal}</strong>
+                                                {otherItemsInBin > 0 && <span className="text-red-500"> ({otherItemsInBin} from other products + {thisItemQty} this item)</span>}.
+                                                Approval will be blocked.
+                                            </p>
+                                        </div>
+                                    </div>
+                                );
+                            })()}
                         </div>
 
                         <div className="px-5 py-4 border-t border-slate-100 flex items-center justify-end gap-3 bg-slate-50">
@@ -1283,17 +1737,19 @@ const SessionView = ({
                                 onClick={() => setIsCountModalOpen(false)}
                                 className="px-5 py-2 text-xs font-bold text-slate-600 bg-white border border-slate-200 rounded-lg hover:bg-slate-50 transition-colors shadow-sm"
                             >
-                                Cancel
+                                {(selectedItemForCount.batchEnabled || selectedItemForCount.expiryEnabled) ? 'Close' : 'Cancel'}
                             </button>
-                            <button
-                                onClick={submitCountAdd}
-                                className="px-5 py-2 flex items-center gap-2 text-xs font-bold text-slate-900 bg-[#F5C742] hover:bg-amber-400 rounded-lg shadow-sm transition-colors"
-                            >
-                                <Check className="h-4 w-4" />
-                                {countMode === 'add' && !selectedItemForCount?._fromSearch
-                                    ? 'Add to Count'
-                                    : 'Confirm Count'}
-                            </button>
+                            {!(selectedItemForCount.batchEnabled || selectedItemForCount.expiryEnabled) && (
+                                <button
+                                    onClick={submitCountAdd}
+                                    className="px-5 py-2 flex items-center gap-2 text-xs font-bold text-slate-900 bg-[#F5C742] hover:bg-amber-400 rounded-lg shadow-sm transition-colors"
+                                >
+                                    <Check className="h-4 w-4" />
+                                    {countMode === 'add' && !selectedItemForCount?._fromSearch
+                                        ? 'Add to Count'
+                                        : 'Confirm Count'}
+                                </button>
+                            )}
                         </div>
                     </div>
                 </div>
@@ -1313,6 +1769,7 @@ const StockTaking = () => {
     const [sessionToDelete, setSessionToDelete] = useState(null);
     const [notifModal, setNotifModal] = useState(null);
     // notifModal shape: { type: 'info'|'success'|'warning'|'error'|'confirm', title, message, confirmLabel?, confirmClass?, onConfirm? }
+    const [isItemDeleting, setIsItemDeleting] = useState(false);
     const [selectedType, setSelectedType] = useState('Inventory Counting');
     const [isTypeDropdownOpen, setIsTypeDropdownOpen] = useState(false);
     const [selectedCountType, setSelectedCountType] = useState('Full Stock Take (All Items)');
@@ -1334,7 +1791,8 @@ const StockTaking = () => {
     const [scanFlash, setScanFlash] = useState(false);
     const [lastSaved, setLastSaved] = useState(null);
     const barcodeInputRef = React.useRef(null);
-    const productDetailsCacheRef = React.useRef(new Map());
+    // Prevents duplicate adds from rapid barcode scanner Enter presses firing before state updates
+    const addingSkusRef = React.useRef(new Set());
 
     const [allSessions, setAllSessions] = useState([]);
     const [warehouseBins, setWarehouseBins] = useState([]);
@@ -1347,6 +1805,41 @@ const StockTaking = () => {
     // Undo history: each entry is { type: 'ADD_ITEM'|'UPDATE_COUNT', itemId, prevQty? }
     const [undoHistory, setUndoHistory] = useState([]);
 
+    // Derive bin capacity violations — checks the TOTAL of all items sharing the same bin,
+    // not each item individually. e.g. Product1=100 + Product2=100 in BIN01 (cap 100) → violation.
+    const binCapacityViolations = React.useMemo(() => {
+        if (!selectedSession?.items || warehouseBins.length === 0) return [];
+
+        // Step 1: sum countedQty per bin across all items in the session
+        const binTotals = {};
+        selectedSession.items
+            .filter(item => item.countedQty != null && item.binId != null)
+            .forEach(item => {
+                const key = String(item.binId);
+                binTotals[key] = (binTotals[key] || 0) + item.countedQty;
+            });
+
+        // Step 2: for each bin total that exceeds capacity, flag every item in that bin
+        return selectedSession.items
+            .filter(item => item.countedQty != null && item.binId != null)
+            .reduce((violations, item) => {
+                const bin = warehouseBins.find(b => String(b.id) === String(item.binId));
+                if (!bin?.capacity) return violations;
+                const binTotal = binTotals[String(item.binId)] || 0;
+                if (binTotal > bin.capacity) {
+                    violations.push({
+                        itemId: item.id,
+                        productName: item.productName,
+                        binCode: bin.code,
+                        capacity: bin.capacity,
+                        countedQty: item.countedQty,
+                        binTotal,
+                    });
+                }
+                return violations;
+            }, []);
+    }, [selectedSession?.items, warehouseBins]);
+
     const showNotif = React.useCallback((type, title, message) => setNotifModal({ type, title, message }), []);
 
     React.useEffect(() => {
@@ -1357,6 +1850,25 @@ const StockTaking = () => {
         setIsLoading(true);
         try {
             const data = await getStockTakeSessions();
+
+            // Progress denominator = warehouse SKU count for INVENTORY_COUNTING sessions
+            // (OPENING_INVENTORY has no pre-existing warehouse stock, so it falls back to
+            // the session's own item count). Fetch summaries in parallel.
+            const warehouseIds = [...new Set(
+                data
+                    .filter(s => s.type !== 'OPENING_INVENTORY' && s.warehouseId)
+                    .map(s => s.warehouseId)
+            )];
+            const skuCountByWarehouse = {};
+            await Promise.all(warehouseIds.map(async (id) => {
+                try {
+                    const summary = await getWarehouseStockSummary(id);
+                    skuCountByWarehouse[id] = summary?.totalSkus ?? 0;
+                } catch {
+                    skuCountByWarehouse[id] = 0;
+                }
+            }));
+
             setAllSessions(data.map(s => {
                 // Only sum variance for counted items — uncounted items carry a placeholder
                 // variance of -systemQty which would corrupt the total if included.
@@ -1365,6 +1877,14 @@ const StockTaking = () => {
                 const totalQty = countedItems.reduce((sum, item) => sum + (item.variance || 0), 0);
                 const sessionTimestamps = mapSessionTimestamps(s);
 
+                const sessionItemCount = s.items?.length || 0;
+                const isOpening = s.type === 'OPENING_INVENTORY';
+                const warehouseSkuCount = skuCountByWarehouse[s.warehouseId];
+                const total = isOpening
+                    ? sessionItemCount
+                    : (warehouseSkuCount != null ? warehouseSkuCount : sessionItemCount);
+                const progress = Math.min(sessionItemCount, total);
+
                 return {
                     ...s,
                     id: s.sessionId,
@@ -1372,9 +1892,8 @@ const StockTaking = () => {
                     // BB-014: Map warehouseName → warehouse for the listing display
                     warehouse: s.warehouseName || s.warehouse || '',
                     ...sessionTimestamps,
-                    // BB-017: Use countedCount/totalCount from backend if available, else compute from items
-                    progress: s.countedCount != null ? s.countedCount : (s.items?.filter(i => i.countedQty !== null).length || 0),
-                    total: s.totalCount != null ? s.totalCount : (s.items?.length || 0),
+                    progress,
+                    total,
                     status: s.status === 'IN_PROGRESS' ? 'In Progress' :
                         s.status === 'PENDING_APPROVAL' ? 'Pending Approval' :
                             s.status === 'COMPLETED' ? 'Completed' : s.status,
@@ -1473,36 +1992,53 @@ const StockTaking = () => {
 
     const handleSelectProduct = async (product, initialCount = null) => {
         if (!selectedSession) return;
+
+        const normalizedProduct = normalizeSelectorProduct(product);
+        const productId = normalizedProduct.id;
+        const sku = normalizedProduct.sku || normalizedProduct.code || (productId ? String(productId) : '');
+
+        if (!productId) {
+            console.error('Stock take add blocked: missing product ID', { product, normalizedProduct });
+            showNotif('error', 'Product Error', 'Unable to add this product because its product ID is missing.');
+            return null;
+        }
+
+        // Guard: drop concurrent calls for the same SKU (rapid barcode scanner Enter events)
+        if (addingSkusRef.current.has(sku)) return;
+        addingSkusRef.current.add(sku);
+
         setIsLoading(true);
 
-        const sku = product.sku || product.code;
-        const existingItem = selectedSession.items?.find(i => i.sku === sku);
+        const existingItem = selectedSession.items?.find(i =>
+            String(i.productId) === String(productId) ||
+            (sku && i.sku === sku) ||
+            (normalizedProduct.barcode && i.barcode === normalizedProduct.barcode)
+        );
 
         if (existingItem) {
-            // If scanning, increment count
-            if (initialCount !== null) {
+            if (initialCount !== null && !(existingItem.batchEnabled || existingItem.expiryEnabled)) {
                 await handleCountChange(existingItem.id, (existingItem.countedQty || 0) + initialCount);
                 setLastScannedItem({ ...existingItem, countedQty: (existingItem.countedQty || 0) + initialCount });
                 setLastScannedAt(new Date());
-            } else {
+            } else if (initialCount === null) {
                 showNotif('info', 'Already Added', 'This product is already in the session.');
+            } else {
+                setLastScannedItem(existingItem);
+                setLastScannedAt(new Date());
             }
             setIsLoading(false);
-            return;
+            addingSkusRef.current.delete(sku);
+            return existingItem;
         }
 
         try {
             const newItem = await addItemToSession(
                 selectedSession.sessionId,
-                product.id,
+                productId,
                 initialCount !== null ? initialCount : 0
             );
 
-            const mappedItem = {
-                ...newItem,
-                impact: newItem.varianceValue ? `${newItem.varianceValue > 0 ? '+' : ''}AED ${Math.abs(newItem.varianceValue).toFixed(2)}` : null,
-                status: newItem.status ? newItem.status.charAt(0) + newItem.status.slice(1).toLowerCase() : 'Pending'
-            };
+            const mappedItem = mapStockTakeItem(newItem);
 
             const updatedSession = {
                 ...selectedSession,
@@ -1518,10 +2054,18 @@ const StockTaking = () => {
             setUndoHistory(prev => [...prev, { type: 'ADD_ITEM', itemId: newItem.id }]);
             setIsLoading(false);
             setIsProductSelectorOpen(false);
+            return mappedItem;
         } catch (error) {
-            console.error("Failed to add product to session:", error);
-            showNotif('error', 'Error', 'Failed to add product to session.');
+            console.error("Failed to add product to session:", {
+                error,
+                product: normalizedProduct,
+                sessionId: selectedSession.sessionId,
+            });
+            showNotif('error', 'Error', error?.response?.data?.message || 'Failed to add product to session.');
             setIsLoading(false);
+            return null;
+        } finally {
+            addingSkusRef.current.delete(sku);
         }
     };
 
@@ -1554,23 +2098,7 @@ const StockTaking = () => {
             signal,
         });
 
-        const content = await Promise.all(
-            (data.content || []).map(async (product) => {
-                const cachedDetail = productDetailsCacheRef.current.get(product.id);
-                if (cachedDetail) {
-                    return normalizeSelectorProduct(product, cachedDetail);
-                }
-
-                try {
-                    const detail = await getProductById(product.id);
-                    productDetailsCacheRef.current.set(product.id, detail);
-                    return normalizeSelectorProduct(product, detail);
-                } catch (error) {
-                    console.error(`Failed to enrich stock take product ${product.id}:`, error);
-                    return normalizeSelectorProduct(product);
-                }
-            })
-        );
+        const content = (data.content || []).map(product => normalizeSelectorProduct(product));
 
         return {
             ...data,
@@ -1580,9 +2108,27 @@ const StockTaking = () => {
 
     // Called when user picks a product from the ProductSelector search modal.
     // Instead of adding immediately, open the count modal so they can enter qty first.
-    const handleProductSelectorSelect = (product) => {
+    const handleProductSelectorSelect = async (product) => {
         setIsProductSelectorOpen(false);
         const normalizedProduct = normalizeSelectorProduct(product);
+        const isTracked = !!(normalizedProduct.batchEnabled || normalizedProduct.expiryEnabled);
+
+        if (isTracked) {
+            const existingItem = selectedSession?.items?.find(i =>
+                String(i.productId) === String(normalizedProduct.id) ||
+                i.sku === (normalizedProduct.sku || normalizedProduct.code) ||
+                (normalizedProduct.barcode && i.barcode === normalizedProduct.barcode)
+            );
+            const itemForModal = existingItem || await handleSelectProduct(normalizedProduct, 0);
+            if (itemForModal) {
+                setSelectedItemForCount(mapStockTakeItem(itemForModal));
+                setCountMode('set');
+                setCountToAdd(itemForModal.countedQty != null ? itemForModal.countedQty : 0);
+                setIsCountModalOpen(true);
+            }
+            return;
+        }
+
         const tempItem = {
             id: product.id,          // product ID — used by handleSelectProduct for addItemToSession
             _sessionItemId: null,    // no session item ID yet
@@ -1598,6 +2144,9 @@ const StockTaking = () => {
             countedQty: null,
             costPrice: parseFloat(normalizedProduct.cost) || 0,
             price: parseFloat(normalizedProduct.retailPrice ?? normalizedProduct.sellingPrice) || 0,
+            batchEnabled: normalizedProduct.batchEnabled,
+            expiryEnabled: normalizedProduct.expiryEnabled,
+            batches: [],
             _fromSearch: true, // flag: needs to be added via addItemToSession first
         };
         setSelectedItemForCount(tempItem);
@@ -1616,31 +2165,31 @@ const StockTaking = () => {
         const oldItem = selectedSession.items.find(i => i.id === itemId);
         const prevQty = oldItem ? oldItem.countedQty : null;
 
-        // 1. Optimistic Update for immediate UI responsiveness
-        const updatedItems = selectedSession.items.map(item => {
-            if (item.id === itemId) {
-                const variance = counted !== null ? counted - item.systemQty : 0 - item.systemQty;
-                const price = item.price || 0;
-                const varianceValue = price * variance;
-
-                return {
-                    ...item,
-                    countedQty: counted,
-                    variance: variance,
-                    impact: varianceValue ? `${varianceValue > 0 ? '+' : ''}AED ${Math.abs(varianceValue).toFixed(2)}` : null,
-                    status: variance === 0 ? 'Matched' : 'Variance'
-                };
-            }
-            return item;
+        // Optimistic update using functional updater — safe against concurrent state changes
+        setSelectedSession(prev => {
+            if (!prev) return prev;
+            return {
+                ...prev,
+                items: prev.items.map(item => {
+                    if (item.id !== itemId) return item;
+                    const variance = counted !== null ? counted - item.systemQty : 0 - item.systemQty;
+                    const varianceValue = (item.price || 0) * variance;
+                    return {
+                        ...item,
+                        countedQty: counted,
+                        variance,
+                        impact: varianceValue ? `${varianceValue > 0 ? '+' : ''}AED ${Math.abs(varianceValue).toFixed(2)}` : null,
+                        status: variance === 0 ? 'Matched' : 'Variance'
+                    };
+                })
+            };
         });
 
-        setSelectedSession({ ...selectedSession, items: updatedItems });
-        // Record undo entry (only push if count actually changed)
         if (prevQty !== counted) {
             setUndoHistory(prev => [...prev, { type: 'UPDATE_COUNT', itemId, prevQty }]);
         }
 
-        // 2. Background API Call
+        // Background API call
         updateApiCount(itemId, counted).then(() => {
             setLastSaved(new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }));
         }).catch(error => {
@@ -1654,22 +2203,18 @@ const StockTaking = () => {
         setUndoHistory(prev => prev.slice(0, -1));
 
         if (last.type === 'ADD_ITEM') {
-            // Remove the item from the session (soft delete)
             try {
                 await deleteStockTakeItem(last.itemId);
-                const updatedItems = selectedSession.items.filter(i => i.id !== last.itemId);
-                setSelectedSession({ ...selectedSession, items: updatedItems });
+                // Use functional updater so rapid undos always filter against latest state
+                setSelectedSession(prev => prev ? { ...prev, items: prev.items.filter(i => i.id !== last.itemId) } : prev);
                 setLastScannedItem(null);
                 setLastScannedAt(null);
             } catch (err) {
                 console.error('Undo ADD_ITEM failed:', err);
-                // Re-push in case of failure
                 setUndoHistory(prev => [...prev, last]);
             }
         } else if (last.type === 'UPDATE_COUNT') {
-            // Revert the count to the previous value
             handleCountChange(last.itemId, last.prevQty !== null ? String(last.prevQty) : '');
-            // Remove the undo entry that handleCountChange just pushed (keep history clean)
             setUndoHistory(prev => prev.slice(0, -1));
         }
     };
@@ -1690,15 +2235,17 @@ const StockTaking = () => {
         }));
         try {
             const updated = await updateApiBin(itemId, binId || null);
+            const mappedUpdated = mapStockTakeItem(updated);
             // Sync server response to get zoneId / locatorId
             setSelectedSession(prev => ({
                 ...prev,
                 items: prev.items.map(item =>
                     item.id === itemId
-                        ? { ...item, binId: updated.binId, binCode: updated.binCode, zoneId: updated.zoneId, locatorId: updated.locatorId }
+                        ? { ...item, ...mappedUpdated }
                         : item
                 )
             }));
+            setSelectedItemForCount(prev => prev?.id === itemId ? { ...prev, ...mappedUpdated } : prev);
         } catch (error) {
             console.error('Failed to update bin assignment:', error);
             // Revert optimistic update so the UI doesn't show a bin that wasn't saved
@@ -1724,31 +2271,71 @@ const StockTaking = () => {
             confirmClass: 'bg-red-500 hover:bg-red-600 text-white',
             onConfirm: async () => {
                 setNotifModal(null);
+                setIsItemDeleting(true);
                 try {
                     await deleteStockTakeItem(itemId);
-                    const updatedItems = selectedSession.items.filter(item => item.id !== itemId);
-                    setSelectedSession({ ...selectedSession, items: updatedItems });
+                    // Re-fetch session from backend — ensures UI reflects DB state after delete.
+                    // Local filter alone won't catch a silent backend failure.
+                    const sessionId = selectedSession.sessionId;
+                    const detail = await getStockTakeSession(sessionId);
+                    setSelectedSession(prev => prev ? {
+                        ...prev,
+                        items: detail.items.map(item => ({
+                            ...item,
+                            impact: item.varianceValue ? `${item.varianceValue > 0 ? '+' : ''}AED ${Math.abs(item.varianceValue).toFixed(2)}` : null,
+                            status: item.status.charAt(0) + item.status.slice(1).toLowerCase()
+                        }))
+                    } : prev);
                 } catch (error) {
                     console.error("Error deleting item:", error);
                     showNotif('error', 'Error', 'Failed to delete item.');
+                } finally {
+                    setIsItemDeleting(false);
                 }
             }
         });
     };
 
-    const handleSaveDraft = () => {
+    const handleSaveDraft = async () => {
         if (!selectedSession) return;
-
-        const updatedSessions = allSessions.map(s =>
-            s.id === selectedSession.id ? { ...selectedSession, status: 'In Progress', action: 'Continue' } : s
-        );
-
-        setAllSessions(updatedSessions);
+        // Re-fetch all sessions from backend so the list shows correct progress/variance
+        await fetchSessions();
         setViewMode('list');
+    };
+
+    // Re-fetch the current session from the backend so any server-side derived
+    // values (countedQty / variance / batches list) are reflected in the UI.
+    const refreshSelectedSession = async () => {
+        if (!selectedSession) return;
+        try {
+            const detail = await getStockTakeSession(selectedSession.sessionId);
+            setSelectedSession(prev => prev ? {
+                ...prev,
+                items: (detail.items || []).map(item => ({
+                    ...item,
+                    impact: item.varianceValue ? `${item.varianceValue > 0 ? '+' : ''}AED ${Math.abs(item.varianceValue).toFixed(2)}` : null,
+                    status: item.status ? (item.status.charAt(0) + item.status.slice(1).toLowerCase()) : 'Pending'
+                }))
+            } : prev);
+            // Also refresh the modal's selected item so its batch list / countedQty stays in sync
+            setSelectedItemForCount(prev => {
+                if (!prev) return prev;
+                const fresh = (detail.items || []).find(it => it.id === prev.id);
+                return fresh ? { ...prev, ...fresh } : prev;
+            });
+        } catch (e) {
+            console.error('Failed to refresh session', e);
+        }
     };
 
     const handleSubmitApproval = async () => {
         if (!selectedSession) return;
+
+        const itemsWithoutBin = (selectedSession.items || []).filter(item => !item.binId);
+        if (itemsWithoutBin.length > 0) {
+            showNotif('warning', 'Bin Required', `${itemsWithoutBin.length} item(s) are missing a bin assignment. Please assign a bin to all items before submitting.`);
+            return;
+        }
 
         try {
             await submitForApproval(selectedSession.sessionId);
@@ -1852,9 +2439,16 @@ const StockTaking = () => {
             if (existingItem) {
                 setBarcodeInput('');
                 setSelectedItemForCount(existingItem);
-                // Each barcode scan = add 1 more to the existing count
-                setCountMode('add');
-                setCountToAdd(1);
+                if (existingItem.batchEnabled || existingItem.expiryEnabled) {
+                    // Batched items: countedQty is derived from batches, so +1 isn't meaningful.
+                    // Open the modal in 'set' mode so the user manages batch rows directly.
+                    setCountMode('set');
+                    setCountToAdd(existingItem.countedQty != null ? existingItem.countedQty : 0);
+                } else {
+                    // Each barcode scan = add 1 more to the existing count
+                    setCountMode('add');
+                    setCountToAdd(1);
+                }
                 setIsCountModalOpen(true);
                 barcodeInputRef.current?.focus();
                 return;
@@ -1869,7 +2463,26 @@ const StockTaking = () => {
                     results = await searchExactProducts(scanned);
                 }
                 if (results && results.length > 0) {
-                    await handleSelectProduct(results[0], 1);
+                    const product = normalizeSelectorProduct(results[0]);
+                    // If the scanned product is batch-enabled, add the item with 0 count
+                    // and pop the count modal so the user can enter batches manually.
+                    // A naked product barcode can't tell us which physical batch the unit
+                    // belongs to, so we never auto-increment for batched items.
+                    const isTracked = !!(product.batchEnabled || product.expiryEnabled);
+                    if (isTracked) {
+                        const created = await handleSelectProduct(product, 0);
+                        const newItem = created || (selectedSession?.items || []).find(
+                            i => String(i.productId) === String(product.id)
+                        );
+                        if (newItem) {
+                            setSelectedItemForCount(mapStockTakeItem(newItem));
+                            setCountMode('set');
+                            setCountToAdd(newItem.countedQty != null ? newItem.countedQty : 0);
+                            setIsCountModalOpen(true);
+                        }
+                    } else {
+                        await handleSelectProduct(product, 1);
+                    }
                     setBarcodeInput('');
                     setScanFlash(true);
                     setTimeout(() => setScanFlash(false), 300);
@@ -1878,6 +2491,7 @@ const StockTaking = () => {
                 }
             } catch (error) {
                 console.error("Barcode search failed:", error);
+                showNotif('error', 'Barcode Error', error?.response?.data?.message || 'Failed to add product in the session.');
             } finally {
                 setIsLoading(false);
                 barcodeInputRef.current?.focus();
@@ -2009,6 +2623,7 @@ const StockTaking = () => {
             {viewMode === 'session' && (
                 <SessionView
                     selectedSession={selectedSession}
+                    refreshSelectedSession={refreshSelectedSession}
                     handleSaveDraft={handleSaveDraft}
                     setIsReviewModalOpen={setIsReviewModalOpen}
                     setViewMode={setViewMode}
@@ -2055,6 +2670,8 @@ const StockTaking = () => {
                     CheckSquare={CheckSquare}
                     MousePointer2={MousePointer2}
                     getStatusStyle={getStatusStyle}
+                    binCapacityViolations={binCapacityViolations}
+                    isItemDeleting={isItemDeleting}
                 />
             )}
 
@@ -2414,7 +3031,7 @@ const StockTaking = () => {
                                                         <td className={`px-4 py-3 text-center text-xs font-black ${item.variance > 0 ? 'text-blue-600' : 'text-red-500'}`}>
                                                             {item.variance > 0 ? `+${item.variance}` : item.variance}
                                                         </td>
-                                                        <td className="px-4 py-3 text-right text-xs font-bold text-slate-600">{item.impact || '-'}</td>
+                                                        <td className="px-4 py-3 text-right text-xs font-bold text-slate-600"><ImpactAmount value={item.impact || item.varianceValue} /></td>
                                                     </tr>
                                                 ))
                                             ) : (
@@ -2433,10 +3050,7 @@ const StockTaking = () => {
                                 <div className="flex justify-between items-center py-2 border-b border-slate-50">
                                     <span className="text-xs font-bold text-slate-500 uppercase tracking-tight">Financial Impact</span>
                                     <span className="text-sm font-black text-slate-900">
-                                        AED {selectedSession?.items?.reduce((sum, item) => {
-                                            const val = parseFloat(item.impact?.replace(/[^0-9.-]+/g, "") || "0");
-                                            return sum + val;
-                                        }, 0).toFixed(2)}
+                                        <CurrencyAmount value={selectedSession?.items?.reduce((sum, item) => sum + parseImpactAmount(item.impact || item.varianceValue), 0) || 0} />
                                     </span>
                                 </div>
                                 <div className="flex justify-between items-center py-2 border-b border-slate-50">
@@ -2451,6 +3065,34 @@ const StockTaking = () => {
                                     Approving this session will <strong>atomically update</strong> the inventory levels for {selectedSession?.warehouse}. This action is logged for the audit trail and cannot be undone.
                                 </p>
                             </div>
+
+                            {/* Bin capacity violation banner — blocks approval */}
+                            {binCapacityViolations.length > 0 && (
+                                <div className="p-4 bg-red-50 rounded-xl border border-red-300 flex gap-3">
+                                    <AlertTriangle className="h-5 w-5 text-red-500 shrink-0 mt-0.5" />
+                                    <div>
+                                        <p className="text-xs font-bold text-red-700 mb-1">Bin Capacity Exceeded — Approval Blocked</p>
+                                        <p className="text-[11px] text-red-600 leading-relaxed mb-2">
+                                            The following items exceed their bin&apos;s physical capacity. Edit the counted quantities before approving.
+                                        </p>
+                                        {/* Group by bin so we show one line per bin, not one per item */}
+                                        <ul className="space-y-1">
+                                            {Object.values(
+                                                binCapacityViolations.reduce((acc, v) => {
+                                                    if (!acc[v.binCode]) acc[v.binCode] = { binCode: v.binCode, capacity: v.capacity, binTotal: v.binTotal, products: [] };
+                                                    acc[v.binCode].products.push(v.productName);
+                                                    return acc;
+                                                }, {})
+                                            ).map((group, i) => (
+                                                <li key={i} className="text-[11px] text-red-700 font-semibold">
+                                                    • Bin <strong>{group.binCode}</strong>: total <strong>{group.binTotal}</strong> / max <strong>{group.capacity}</strong>
+                                                    <span className="font-normal text-red-600"> ({group.products.join(', ')})</span>
+                                                </li>
+                                            ))}
+                                        </ul>
+                                    </div>
+                                </div>
+                            )}
                         </div>
 
                         {/* Modal Footer */}
@@ -2469,7 +3111,7 @@ const StockTaking = () => {
                             </button>
                             <button
                                 onClick={handleApproveSession}
-                                disabled={!selectedSession?.items?.some(i => i.countedQty != null)}
+                                disabled={!selectedSession?.items?.some(i => i.countedQty != null) || binCapacityViolations.length > 0}
                                 className="flex items-center gap-2 px-6 py-2 text-xs font-bold text-white bg-[#10B981] rounded-lg hover:bg-emerald-600 transition-all shadow-md shadow-emerald-200 disabled:opacity-40 disabled:cursor-not-allowed disabled:shadow-none"
                             >
                                 <Check className="h-4 w-4" /> Approve & Update Stock

@@ -1,6 +1,7 @@
 package com.billbull.backend.purchase.stockmovement;
 
 import java.math.BigDecimal;
+import java.time.LocalDate;
 import java.util.List;
 
 import org.springframework.data.jpa.repository.JpaRepository;
@@ -16,6 +17,33 @@ public interface StockMovementRepository
                         StockSourceType sourceType,
                         Long sourceId,
                         Long productId);
+
+        @Query(value = """
+                            SELECT COUNT(sm.id) > 0
+                            FROM stock_movements sm
+                            WHERE sm.source_type = :sourceType
+                              AND sm.source_id = :sourceId
+                              AND sm.product_id = :productId
+                              AND sm.warehouse_id = :warehouseId
+                              AND ((CAST(:binId AS bigint) IS NULL AND sm.bin_id IS NULL) OR sm.bin_id = CAST(:binId AS bigint))
+                              AND ((CAST(:batchNumber AS varchar) IS NULL AND sm.batch_number IS NULL) OR sm.batch_number = CAST(:batchNumber AS varchar))
+                              AND ((CAST(:expiryDate AS date) IS NULL AND sm.expiry_date IS NULL) OR sm.expiry_date = CAST(:expiryDate AS date))
+                              AND sm.quantity < 0
+                        """, nativeQuery = true)
+        boolean existsOutboundIdentity(
+                        @Param("sourceType") String sourceType,
+                        @Param("sourceId") Long sourceId,
+                        @Param("productId") Long productId,
+                        @Param("warehouseId") Long warehouseId,
+                        @Param("binId") Long binId,
+                        @Param("batchNumber") String batchNumber,
+                        @Param("expiryDate") LocalDate expiryDate);
+
+        List<StockMovement> findBySourceTypeAndSourceIdAndProductIdAndQuantityLessThan(
+                        StockSourceType sourceType,
+                        Long sourceId,
+                        Long productId,
+                        Integer quantity);
 
         // ✅ Warehouse stock summary (used by WarehouseStockService)
         @Query("""
@@ -78,6 +106,17 @@ public interface StockMovementRepository
                         """)
         List<Object[]> getTotalAvailableStockForProducts(@Param("productIds") List<Long> productIds);
 
+        @Query("""
+                            SELECT sm.productId, COALESCE(SUM(sm.quantity), 0)
+                            FROM StockMovement sm
+                            WHERE sm.warehouseId = :warehouseId
+                              AND sm.productId IN :productIds
+                            GROUP BY sm.productId
+                        """)
+        List<Object[]> getAvailableStockForProductsInWarehouse(
+                        @Param("warehouseId") Long warehouseId,
+                        @Param("productIds") List<Long> productIds);
+
         // ✅ Total product stock across all warehouses, grouped by warehouse and product
         @Query("""
                             SELECT sm.productId, sm.warehouseId, COALESCE(SUM(sm.quantity), 0)
@@ -85,6 +124,29 @@ public interface StockMovementRepository
                             GROUP BY sm.productId, sm.warehouseId
                         """)
         List<Object[]> findAllStockGroupedByProductAndWarehouse();
+
+        @Query("""
+                            SELECT sm.productId, sm.warehouseId, COALESCE(SUM(sm.quantity), 0)
+                            FROM StockMovement sm
+                            WHERE sm.productId IN :productIds
+                            GROUP BY sm.productId, sm.warehouseId
+                        """)
+        List<Object[]> findStockByProductsForAllWarehouses(@Param("productIds") List<Long> productIds);
+
+        @Query("""
+                            SELECT sm.productId, sm.batchNumber, sm.expiryDate, COALESCE(SUM(sm.quantity), 0)
+                            FROM StockMovement sm
+                            WHERE sm.warehouseId = :warehouseId
+                            GROUP BY sm.productId, sm.batchNumber, sm.expiryDate
+                        """)
+        List<Object[]> findStockByWarehouseAndBatch(@Param("warehouseId") Long warehouseId);
+
+        @Query("""
+                            SELECT sm.productId, sm.warehouseId, sm.batchNumber, sm.expiryDate, COALESCE(SUM(sm.quantity), 0)
+                            FROM StockMovement sm
+                            GROUP BY sm.productId, sm.warehouseId, sm.batchNumber, sm.expiryDate
+                        """)
+        List<Object[]> findAllStockGroupedByProductWarehouseAndBatch();
 
         // ✅ Get Last Sold and Last Received dates for Out of Stock Report
         @Query(value = """
@@ -109,6 +171,32 @@ public interface StockMovementRepository
                             GROUP BY sm.productId
                         """)
         List<Object[]> findStockByBin(@Param("binId") Long binId);
+
+        // Current on-hand by exact stock identity inside one bin.
+        // Identity = product + warehouse + bin + batch + expiry.
+        @Query("""
+                            SELECT sm.batchNumber, sm.expiryDate, COALESCE(SUM(sm.quantity), 0)
+                            FROM StockMovement sm
+                            WHERE sm.warehouseId = :warehouseId
+                              AND sm.productId = :productId
+                              AND ((:binId IS NULL AND sm.binId IS NULL) OR sm.binId = :binId)
+                            GROUP BY sm.batchNumber, sm.expiryDate
+                            HAVING COALESCE(SUM(sm.quantity), 0) <> 0
+                        """)
+        List<Object[]> findStockIdentitiesByProductAndBin(
+                        @Param("warehouseId") Long warehouseId,
+                        @Param("productId") Long productId,
+                        @Param("binId") Long binId);
+
+        @Query("""
+                            SELECT sm.productId, sm.batchNumber, sm.expiryDate, COALESCE(SUM(sm.quantity), 0)
+                            FROM StockMovement sm
+                            WHERE sm.binId = :binId
+                            GROUP BY sm.productId, sm.batchNumber, sm.expiryDate
+                            HAVING COALESCE(SUM(sm.quantity), 0) > 0
+                            ORDER BY sm.productId, sm.expiryDate, sm.batchNumber
+                        """)
+        List<Object[]> findStockIdentitiesByBin(@Param("binId") Long binId);
 
         // ✅ Find bins that currently hold stock for a specific product in a warehouse
         // Used by stock-take approval to auto-resolve bin when item has no explicit bin assignment

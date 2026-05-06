@@ -605,15 +605,19 @@ public class ProductService {
         java.util.Map<Long, ProductTax> taxMap = taxRepo.findByProductIdIn(ids)
                 .stream().collect(Collectors.toMap(t -> t.getProduct().getId(), t -> t));
 
-        // Query 5: barcodes bulk (keep first barcode per product)
+        // Query 5: inventory policy bulk (default unit and procurement metadata)
+        java.util.Map<Long, ProductInventoryPolicy> inventoryMap = inventoryRepo.findByProductIdIn(ids)
+                .stream().collect(Collectors.toMap(inv -> inv.getProduct().getId(), inv -> inv));
+
+        // Query 6: barcodes bulk (keep first barcode per product)
         java.util.Map<Long, List<ProductBarcode>> barcodeMap = barcodeRepo.findByProductIdIn(ids)
                 .stream().collect(Collectors.groupingBy(b -> b.getProduct().getId()));
 
-        // Query 6: packings bulk for unit ratios and prices
+        // Query 7: packings bulk for unit ratios and prices
         java.util.Map<Long, List<ProductPacking>> packingMap = packingRepo.findByProductIdIn(ids)
                 .stream().collect(Collectors.groupingBy(p -> p.getProduct().getId()));
 
-        // Query 7: available stock totals (QA-007 fix — stock was missing, showing 0 everywhere)
+        // Query 8: available stock totals (QA-007 fix — stock was missing, showing 0 everywhere)
         java.util.Map<Long, Integer> stockMap = new java.util.HashMap<>();
         List<Object[]> stockRows = stockMovementRepo.getTotalAvailableStockForProducts(ids);
         for (Object[] row : stockRows) {
@@ -640,6 +644,11 @@ public class ProductService {
 
             ProductTax tx = taxMap.get(p.getId());
             item.put("salesTax", tx != null ? tx.getSalesTax() : null);
+            item.put("purchaseTax", tx != null ? tx.getPurchaseTax() : null);
+
+            ProductInventoryPolicy inv = inventoryMap.get(p.getId());
+            item.put("unitName", inv != null && inv.getDefaultUnit() != null ? inv.getDefaultUnit().getName() : null);
+            item.put("defaultUnitId", inv != null && inv.getDefaultUnit() != null ? inv.getDefaultUnit().getId() : null);
 
             item.put("maxDiscount", p.getMaxDiscount());
 
@@ -669,14 +678,18 @@ public class ProductService {
             List<String> availableUnits = new java.util.ArrayList<>();
             java.util.Map<String, java.math.BigDecimal> unitConversions = new java.util.HashMap<>();
             java.util.Map<String, java.math.BigDecimal> unitPrices = new java.util.HashMap<>();
+            java.util.Map<String, java.math.BigDecimal> unitCosts = new java.util.HashMap<>();
 
             for (ProductPacking pkg : pkgs) {
                 if (pkg.getUnit() != null) {
                     String uName = pkg.getUnit().getName();
                     availableUnits.add(uName);
                     unitConversions.put(uName, pkg.getConversion());
-                    if (pkg.getPrice() != null && pkg.getPrice().compareTo(java.math.BigDecimal.ZERO) > 0) {
+                    if (pkg.getPrice() != null) {
                         unitPrices.put(uName, pkg.getPrice());
+                    }
+                    if (pkg.getCost() != null) {
+                        unitCosts.put(uName, pkg.getCost());
                     }
                 }
             }
@@ -684,6 +697,7 @@ public class ProductService {
             item.put("availableUnits", availableUnits.isEmpty() ? java.util.List.of("PCS") : availableUnits);
             item.put("unitConversions", unitConversions);
             item.put("unitPrices", unitPrices);
+            item.put("unitCosts", unitCosts);
 
             // QA-007 fix: include total available stock so the product selector displays correct quantity
             item.put("stock", stockMap.getOrDefault(p.getId(), 0));
@@ -772,6 +786,7 @@ public class ProductService {
             for (ProductPacking p : dbPackings) {
                 ProductPackingRequest dto = new ProductPackingRequest();
                 // Map basic fields
+                dto.setId(p.getId());
                 dto.setLevel(p.getLevel());
                 if (p.getUnit() != null) {
                     dto.setUnit(p.getUnit().getId());

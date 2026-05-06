@@ -9,6 +9,8 @@ import com.billbull.backend.hr.employees.EmployeeRepository;
 import com.billbull.backend.role.Role;
 import com.billbull.backend.role.RoleRepository;
 import com.billbull.backend.security.AdminSafeguardService;
+import com.billbull.backend.settings.branch.Branch;
+import com.billbull.backend.settings.branch.BranchRepository;
 
 import java.util.List;
 import java.util.Optional;
@@ -29,18 +31,21 @@ public class UserService {
     private final PasswordEncoder passwordEncoder;
     private final AdminSafeguardService adminSafeguardService;
     private final EmployeeRepository employeeRepository;
+    private final BranchRepository branchRepository;
 
     public UserService(
             UserRepository userRepository,
             RoleRepository roleRepository,
             PasswordEncoder passwordEncoder,
             AdminSafeguardService adminSafeguardService,
-            EmployeeRepository employeeRepository) {
+            EmployeeRepository employeeRepository,
+            BranchRepository branchRepository) {
         this.userRepository = userRepository;
         this.roleRepository = roleRepository;
         this.passwordEncoder = passwordEncoder;
         this.adminSafeguardService = adminSafeguardService;
         this.employeeRepository = employeeRepository;
+        this.branchRepository = branchRepository;
     }
 
     /**
@@ -83,35 +88,39 @@ public class UserService {
     public UserSafeDto createUser(UserCreateRequest request) {
         validateUsernameAvailable(request.getUsername());
 
+        Employee linkedEmployee = null;
+        if (request.getLinkedEmployeeId() != null) {
+            linkedEmployee = employeeRepository.findById(request.getLinkedEmployeeId())
+                    .orElseThrow(() -> new RuntimeException(
+                            "Employee not found with id: " + request.getLinkedEmployeeId()));
+        }
+
         User user = new User();
         user.setUsername(request.getUsername().trim());
         user.setPassword(encodeRequiredPassword(request.getPassword(), "Password"));
         user.setFullName(request.getFullName());
         user.setEmail(request.getEmail());
         user.setPhone(request.getPhone());
+        user.setBranch(resolveBranchForLinkedUserCreate(request.getBranchId(), linkedEmployee));
 
         user.setRoles(resolveRoles(request.getRoleIds()));
 
         // Link employee if provided
-        if (request.getLinkedEmployeeId() != null) {
-            Employee employee = employeeRepository.findById(request.getLinkedEmployeeId())
-                    .orElseThrow(() -> new RuntimeException(
-                            "Employee not found with id: " + request.getLinkedEmployeeId()));
-
+        if (linkedEmployee != null) {
             // Ensure employee is active (per business rule)
-            if (!"Active".equals(employee.getStatus())) {
+            if (!"Active".equals(linkedEmployee.getStatus())) {
                 throw new RuntimeException(
-                        "Cannot create access for employee with status: " + employee.getStatus() +
+                        "Cannot create access for employee with status: " + linkedEmployee.getStatus() +
                         ". Employee must be Active.");
             }
 
             // Ensure employee is not already linked to another user
-            if (userRepository.findByLinkedEmployee_Id(request.getLinkedEmployeeId()).isPresent()) {
+            if (userRepository.findByLinkedEmployee_Id(linkedEmployee.getId()).isPresent()) {
                 throw new RuntimeException(
                         "Employee is already linked to a user account.");
             }
 
-            user.setLinkedEmployee(employee);
+            user.setLinkedEmployee(linkedEmployee);
         }
 
         return new UserSafeDto(userRepository.save(user));
@@ -147,6 +156,7 @@ public class UserService {
         user.setRoles(resolveRoles(Set.of(request.getRoleId())));
         user.setActive(false);
         user.setPendingEmployeeActivation(true);
+        user.setBranch(resolveBranchForEmployeeAccess(employee, request.getBranchId()));
 
         userRepository.save(user);
     }
@@ -181,6 +191,7 @@ public class UserService {
         if (request.getPhone() != null) {
             user.setPhone(request.getPhone());
         }
+        user.setBranch(resolveRequiredBranch(request.getBranchId()));
         if (request.getPassword() != null && !request.getPassword().isEmpty()) {
             user.setPassword(passwordEncoder.encode(request.getPassword()));
         }
@@ -192,7 +203,7 @@ public class UserService {
      * Assign roles to user (prevents privilege escalation and last-admin removal).
      */
     @Transactional
-    public UserSafeDto assignRoles(Long userId, Set<Long> roleIds) {
+    public UserSafeDto assignRoles(Long userId, Set<Long> roleIds, Long primaryRoleId) {
         User user = findUserById(userId);
 
         boolean hadAdminRole = user.getRoles().stream()
@@ -214,6 +225,18 @@ public class UserService {
         }
 
         user.setRoles(newRoles);
+
+        // Set primary role — must be one of the assigned roles
+        if (primaryRoleId != null) {
+            Role primary = newRoles.stream()
+                    .filter(r -> r.getId().equals(primaryRoleId))
+                    .findFirst()
+                    .orElseThrow(() -> new IllegalArgumentException("Primary role must be one of the assigned roles"));
+            user.setPrimaryRole(primary);
+        } else {
+            user.setPrimaryRole(null);
+        }
+
         return new UserSafeDto(userRepository.save(user));
     }
 
@@ -305,5 +328,72 @@ public class UserService {
         return Stream.of(employee.getFirstName(), employee.getMiddleName(), employee.getLastName())
                 .filter(part -> part != null && !part.isBlank())
                 .collect(Collectors.joining(" "));
+    }
+
+    private Branch resolveRequiredBranch(Long branchId) {
+        if (branchId == null) {
+            throw new RuntimeException("Branch is required for user access.");
+        }
+
+        return branchRepository.findById(branchId)
+                .orElseThrow(() -> new RuntimeException("Branch not found with id: " + branchId));
+    }
+
+    private Branch resolveBranchForLinkedUserCreate(Long requestedBranchId, Employee linkedEmployee) {
+        if (requestedBranchId != null) {
+            return resolveRequiredBranch(requestedBranchId);
+        }
+
+        if (linkedEmployee != null) {
+            return resolveBranchForEmployeeAccess(linkedEmployee, null);
+        }
+
+        return resolveRequiredBranch(null);
+    }
+
+    private Branch resolveBranchForEmployeeAccess(Employee employee, Long requestedBranchId) {
+        if (requestedBranchId != null) {
+            return resolveRequiredBranch(requestedBranchId);
+        }
+
+        if (employee != null && employee.getBranch() != null && !employee.getBranch().isBlank()) {
+            String label = employee.getBranch().trim();
+            return branchRepository.findByCodeIgnoreCase(label)
+                    .or(() -> branchRepository.findByNameIgnoreCase(label))
+                    .or(() -> resolveBranchFromFormattedLabel(label))
+                    .orElseThrow(() -> new RuntimeException(
+                            "Branch assignment is required before creating employee login access."));
+        }
+
+        throw new RuntimeException("Branch assignment is required before creating employee login access.");
+    }
+
+    private Optional<Branch> resolveBranchFromFormattedLabel(String label) {
+        if (label == null || label.isBlank()) {
+            return Optional.empty();
+        }
+
+        int openParenIndex = label.lastIndexOf('(');
+        int closeParenIndex = label.lastIndexOf(')');
+
+        if (openParenIndex < 0 || closeParenIndex <= openParenIndex) {
+            return Optional.empty();
+        }
+
+        String code = label.substring(openParenIndex + 1, closeParenIndex).trim();
+        String name = label.substring(0, openParenIndex).trim();
+
+        if (!code.isBlank()) {
+            Optional<Branch> byCode = branchRepository.findByCodeIgnoreCase(code);
+            if (byCode.isPresent()) {
+                return byCode;
+            }
+        }
+
+        if (!name.isBlank()) {
+            return branchRepository.findByNameIgnoreCase(name);
+        }
+
+        return Optional.empty();
     }
 }

@@ -8,6 +8,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 import com.fasterxml.jackson.annotation.JsonManagedReference;
+import com.billbull.backend.inventory.warehouse.Warehouse;
 
 
 @Entity
@@ -38,8 +39,13 @@ public class ProformaInvoice {
     private String quotationNo;
     private String salesOrderNo;
 
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "warehouse_id")
+    private Warehouse warehouse;
+
     // ---- Totals ----
     private BigDecimal subTotal;
+    private BigDecimal billDiscount;
     private BigDecimal taxTotal;
     private BigDecimal grandTotal;
 
@@ -118,8 +124,20 @@ public class ProformaInvoice {
 		return salesOrderNo;
 	}
 
+	public Warehouse getWarehouse() {
+		return warehouse;
+	}
+
 	public BigDecimal getSubTotal() {
 		return subTotal;
+	}
+
+	public BigDecimal getBillDiscount() {
+		return billDiscount;
+	}
+
+	public void setBillDiscount(BigDecimal billDiscount) {
+		this.billDiscount = billDiscount;
 	}
 
 	public BigDecimal getTaxTotal() {
@@ -206,6 +224,10 @@ public class ProformaInvoice {
 
 	public void setSalesOrderNo(String salesOrderNo) {
 		this.salesOrderNo = salesOrderNo;
+	}
+
+	public void setWarehouse(Warehouse warehouse) {
+		this.warehouse = warehouse;
 	}
 
 	public void setSubTotal(BigDecimal subTotal) {

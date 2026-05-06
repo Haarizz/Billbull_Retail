@@ -5,6 +5,7 @@ import {
     sanitizeTemplateColumns,
     sanitizeTemplateDisplayOptions
 } from './printTemplateConfig';
+import { summarizePurchaseItems } from './documentSummaryUtils';
 
 const PURCHASE_TEMPLATE_TERMS = {
     "Local Purchase Order": `1. Delivery: Goods must be delivered within the specified time frame.
@@ -98,11 +99,13 @@ export const getPurchaseDefaultDisplayOptions = (category, overrides = {}) => {
         {
             ...DEFAULT_TEMPLATE_DISPLAY_OPTIONS,
             showTerms: !isVoucher,
+            showItemImage: !isVoucher,
             ...overrides
         },
         {
             ...DEFAULT_TEMPLATE_DISPLAY_OPTIONS,
-            showTerms: !isVoucher
+            showTerms: !isVoucher,
+            showItemImage: !isVoucher
         }
     );
 };
@@ -114,6 +117,7 @@ export const getPurchaseDefaultColumns = (category, overrides = {}) => {
             ...DEFAULT_TEMPLATE_COLUMNS,
             qty: !isVoucher,
             unitPrice: !isVoucher,
+            taxableAmount: !isVoucher,
             tax: category === "Purchase Invoice",
             ...overrides
         },
@@ -121,6 +125,7 @@ export const getPurchaseDefaultColumns = (category, overrides = {}) => {
             ...DEFAULT_TEMPLATE_COLUMNS,
             qty: !isVoucher,
             unitPrice: !isVoucher,
+            taxableAmount: !isVoucher,
             tax: category === "Purchase Invoice"
         }
     );
@@ -170,6 +175,42 @@ export const getDefaultPurchaseTemplates = () =>
         displayOptions: JSON.stringify(getPurchaseDefaultDisplayOptions(category)),
         columns: JSON.stringify(getPurchaseDefaultColumns(category)),
     }));
+
+export const getDefaultPurchaseTemplate = (category) => {
+    const fallbackTemplate = getDefaultPurchaseTemplates().find(
+        (template) => template.category === category
+    );
+
+    return normalizePurchaseTemplate(
+        fallbackTemplate || {
+            category,
+            name: TEMPLATE_NAMES[category] || `${category} Template`,
+            isDefault: true,
+            paperSize: "A4",
+            orientation: "Portrait",
+            headerContent: "",
+            termsContent: PURCHASE_TEMPLATE_TERMS[category] || "",
+            footerContent: "",
+            displayOptions: getPurchaseDefaultDisplayOptions(category),
+            columns: getPurchaseDefaultColumns(category),
+        },
+        category
+    );
+};
+
+export const resolvePurchasePrintTemplate = (category, templates = []) => {
+    const categoryTemplates = Array.isArray(templates)
+        ? templates.filter((template) => template?.category === category)
+        : [];
+
+    const selectedTemplate =
+        categoryTemplates.find((template) => template?.isDefault) ||
+        categoryTemplates[0];
+
+    return selectedTemplate
+        ? normalizePurchaseTemplate(selectedTemplate, category)
+        : getDefaultPurchaseTemplate(category);
+};
 
 const resolveCurrency = (companyProfile, vendor) =>
     firstValue(companyProfile?.currencySymbol, companyProfile?.currency, vendor?.currency, "AED");
@@ -274,15 +315,26 @@ export const buildLpoPrintData = (lpo, vendor, companyProfile) => {
         };
     });
 
-    const subTotal = toNumber(lpo?.subtotal || items.reduce((sum, item) => sum + item.taxableAmount, 0));
-    const tax = toNumber(lpo?.tax);
-    const grandTotal = toNumber(lpo?.grandTotal || subTotal + tax);
+    const itemSummary = summarizePurchaseItems(lpo?.items || []);
+    const hasItemRows = items.length > 0;
+    const subTotal = hasItemRows
+        ? Math.max(itemSummary.preDiscountSubtotal, toNumber(lpo?.subtotal))
+        : toNumber(lpo?.subtotal);
+    const discountAmount = hasItemRows
+        ? Math.max(itemSummary.discountTotal, toNumber(lpo?.discount))
+        : toNumber(lpo?.discount);
+    const tax = hasItemRows
+        ? Math.max(itemSummary.tax, toNumber(lpo?.tax))
+        : toNumber(lpo?.tax);
+    const grandTotal = hasItemRows
+        ? Math.max(itemSummary.grandTotal, toNumber(lpo?.grandTotal))
+        : toNumber(lpo?.grandTotal || subTotal + tax);
     const totals = buildTotals(
         {
             subTotal,
             tax,
             grandTotal,
-            discountAmount: toNumber(lpo?.discount),
+            discountAmount,
         },
         companyProfile,
         vendor
@@ -314,7 +366,8 @@ export const buildLpoPrintData = (lpo, vendor, companyProfile) => {
 };
 
 export const buildGrnPrintData = (grn, vendor, companyProfile) => {
-    const items = (grn?.items || []).map((item, index) => {
+    const items = (grn?.items || []).map((rawItem, index) => {
+        const item = rawItem || {};
         const qty = toNumber(item.received ?? item.quantity ?? item.qty);
         const price = toNumber(item.unitCost ?? item.price);
         const taxableAmount = toNumber(item.total || qty * price);
@@ -367,7 +420,7 @@ export const buildGrnPrintData = (grn, vendor, companyProfile) => {
     return {
         title: "GOODS RECEIPT NOTE",
         docNo: firstValue(grn?.grnNo, grn?.id),
-        date: grn?.date,
+        date: grn?.date || grn?.grnDate,
         status: firstValue(grn?.status, "DRAFT"),
         party: resolveParty(vendor, firstValue(grn?.vendor, grn?.vendorName)),
         headerMeta: [
@@ -389,14 +442,26 @@ export const buildGrnPrintData = (grn, vendor, companyProfile) => {
 };
 
 export const buildPurchaseInvoicePrintData = (invoice, vendor, companyProfile) => {
-    const items = (invoice?.items || []).map((item, index) => {
+    const items = (invoice?.items || []).map((rawItem, index) => {
+        const item = rawItem || {};
         const qty = toNumber(item.qty ?? item.quantity);
-        const price = toNumber(item.unitCost ?? item.unitPrice ?? item.price);
+        const price = toNumber(item.unitCost ?? item.unitPrice ?? item.price ?? item.cost);
         const discountAmount = toNumber(item.discountAmount);
-        const taxableAmount = toNumber((qty * price) - discountAmount);
+        const taxableAmount = toNumber(
+            item.taxableAmount ??
+            item.netCost ??
+            item.net ??
+            item.amount ??
+            ((qty * price) - discountAmount)
+        );
         const taxAmt = toNumber(item.taxAmount ?? item.taxAmt);
         const taxPercent = toNumber(item.taxPercent ?? item.taxRate ?? 0);
-        const lineTotal = toNumber(item.lineTotal || taxableAmount + taxAmt);
+        const lineTotal = toNumber(
+            item.lineTotal ??
+            item.total ??
+            item.amountTotal ??
+            (taxableAmount + taxAmt)
+        );
 
         return {
             rowNo: index + 1,
@@ -429,13 +494,24 @@ export const buildPurchaseInvoicePrintData = (invoice, vendor, companyProfile) =
         };
     });
 
+    const itemSummary = summarizePurchaseItems(invoice?.items || []);
+    const hasItemRows = items.length > 0;
     const totals = buildTotals(
         {
-            subTotal: toNumber(invoice?.subTotal || items.reduce((sum, item) => sum + item.taxableAmount, 0)),
-            tax: toNumber(invoice?.taxTotal || items.reduce((sum, item) => sum + item.taxAmt, 0)),
-            grandTotal: toNumber(invoice?.grandTotal || items.reduce((sum, item) => sum + item.total, 0)),
+            subTotal: hasItemRows
+                ? Math.max(itemSummary.preDiscountSubtotal, toNumber(invoice?.subTotal))
+                : toNumber(invoice?.subTotal),
+            tax: hasItemRows
+                ? Math.max(itemSummary.tax, toNumber(invoice?.taxTotal))
+                : toNumber(invoice?.taxTotal),
+            grandTotal: hasItemRows
+                ? Math.max(itemSummary.grandTotal, toNumber(invoice?.grandTotal))
+                : toNumber(invoice?.grandTotal),
             amountPaid: toNumber(invoice?.amountPaid),
             balanceDue: toNumber(invoice?.balanceDue),
+            discountAmount: hasItemRows
+                ? Math.max(itemSummary.discountTotal, toNumber(invoice?.discountTotal))
+                : toNumber(invoice?.discountTotal),
         },
         companyProfile,
         vendor

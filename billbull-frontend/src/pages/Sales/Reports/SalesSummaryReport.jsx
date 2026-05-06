@@ -7,10 +7,27 @@ import {
 } from 'lucide-react';
 import { getAllSalesInvoices } from '../../../api/salesInvoiceApi';
 import toast from 'react-hot-toast';
+import ExportDropdown from '../../../components/common/ExportDropdown';
+import { exportToExcel, exportToPDF } from '../../../utils/exportUtils';
+import CurrencyAmount from '../../../components/CurrencyAmount';
+import { useCompany } from '../../../context/CompanyContext';
 
-const formatCurrency = (val) => `AED ${parseFloat(val || 0).toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',')}`;
+// ==========================================
+// 1. CONFIGURATION
+// ==========================================
+
+const SALES_SUMMARY_COLUMNS = [
+    { header: 'Invoice No', key: 'invoiceNumber', width: 15 },
+    { header: 'Date', key: 'invoiceDate', width: 12 },
+    { header: 'Customer', key: 'customerName', width: 25 },
+    { header: 'Status', key: 'status', width: 12 },
+    { header: 'Grand Total', key: 'invoiceTotal', width: 15 },
+    { header: 'Tax', key: 'taxTotal', width: 12 }
+];
 
 const SalesSummaryReport = () => {
+    const { company } = useCompany();
+    const reportCurrency = company?.currency || 'AED';
     const [invoices, setInvoices] = useState([]);
     const [loading, setLoading] = useState(false);
     const [dateFrom, setDateFrom] = useState(() => {
@@ -78,18 +95,7 @@ const SalesSummaryReport = () => {
         return Object.values(map).sort((a, b) => b.total - a.total);
     }, [filtered, groupBy]);
 
-    const handleExport = () => {
-        const headers = ['Invoice No', 'Date', 'Customer', 'Status', 'Grand Total', 'Tax'];
-        const rows = filtered.map(i => [
-            i.invoiceNumber || '', i.invoiceDate || '', i.customerName || '',
-            i.status || '', i.invoiceTotal || 0, i.taxTotal || 0
-        ]);
-        const csv = [headers, ...rows].map(r => r.join(',')).join('\n');
-        const blob = new Blob([csv], { type: 'text/csv' });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a'); a.href = url;
-        a.download = `sales_summary_${dateFrom}_to_${dateTo}.csv`; a.click();
-    };
+
 
     return (
         <div className="flex h-screen bg-slate-50 overflow-hidden font-sans">
@@ -183,14 +189,14 @@ const SalesSummaryReport = () => {
                         <span style={{ background: '#f3f4f6', borderRadius: 12, padding: '2px 8px', fontWeight: 500, fontSize: 11, color: '#4b5563' }}>{filtered.length} records</span>
                     </div>
                     {[
-                        { label: 'Total Revenue', value: formatCurrency(totalSales) },
-                        { label: 'Total Tax (VAT)', value: formatCurrency(totalTax) },
-                        { label: 'Paid Amount', value: formatCurrency(totalPaid) },
-                        { label: 'Outstanding', value: formatCurrency(totalOutstanding) },
+                        { label: 'Total Revenue', value: totalSales },
+                        { label: 'Total Tax (VAT)', value: totalTax },
+                        { label: 'Paid Amount', value: totalPaid },
+                        { label: 'Outstanding', value: totalOutstanding },
                     ].map((stat, i) => (
                         <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '6px 8px', borderRadius: 8, marginBottom: 4, background: '#f9fafb' }}>
                             <span style={{ fontSize: 11, color: '#6b7280' }}>{stat.label}</span>
-                            <span style={{ fontSize: 12, fontWeight: 700, color: '#111827' }}>{stat.value}</span>
+                            <CurrencyAmount value={stat.value} currency={reportCurrency} className="text-xs font-bold text-slate-900" />
                         </div>
                     ))}
                 </div>
@@ -203,13 +209,10 @@ const SalesSummaryReport = () => {
                     >
                         <RefreshCw size={13} /> Refresh
                     </button>
-                    <button
-                        type="button"
-                        onClick={handleExport}
-                        className="flex-1 h-9 bg-[#F5C742] border border-[#F5C742] rounded-lg text-xs font-bold text-slate-900 hover:brightness-95 flex items-center justify-center gap-2"
-                    >
-                        <Download size={13} /> Export CSV
-                    </button>
+                        <ExportDropdown
+                            onExportExcel={() => exportToExcel(filtered, SALES_SUMMARY_COLUMNS, `Sales_Summary_${dateFrom}_to_${dateTo}`)}
+                            onExportPdf={() => exportToPDF(filtered, SALES_SUMMARY_COLUMNS, 'Sales Summary Report', `Sales_Summary_${dateFrom}_to_${dateTo}`)}
+                        />
                 </div>
             </aside>
 
@@ -236,10 +239,10 @@ const SalesSummaryReport = () => {
                     {/* Summary Cards */}
                     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-5">
                         {[
-                            { label: 'Total Revenue', value: formatCurrency(totalSales), sub: `${filtered.length} invoices`, icon: TrendingUp, color: 'text-emerald-600', bg: 'bg-emerald-50' },
-                            { label: 'Total Tax (VAT)', value: formatCurrency(totalTax), sub: 'VAT collected', icon: DollarSign, color: 'text-blue-600', bg: 'bg-blue-50' },
-                            { label: 'Paid Amount', value: formatCurrency(totalPaid), sub: 'Fully paid invoices', icon: ShoppingCart, color: 'text-green-600', bg: 'bg-green-50' },
-                            { label: 'Outstanding', value: formatCurrency(totalOutstanding), sub: 'Pending collection', icon: Calendar, color: 'text-amber-600', bg: 'bg-amber-50' },
+                            { label: 'Total Revenue', value: totalSales, sub: `${filtered.length} invoices`, icon: TrendingUp, color: 'text-emerald-600', bg: 'bg-emerald-50' },
+                            { label: 'Total Tax (VAT)', value: totalTax, sub: 'VAT collected', icon: DollarSign, color: 'text-blue-600', bg: 'bg-blue-50' },
+                            { label: 'Paid Amount', value: totalPaid, sub: 'Fully paid invoices', icon: ShoppingCart, color: 'text-green-600', bg: 'bg-green-50' },
+                            { label: 'Outstanding', value: totalOutstanding, sub: 'Pending collection', icon: Calendar, color: 'text-amber-600', bg: 'bg-amber-50' },
                         ].map((card, i) => (
                             <div key={i} className="bg-white p-4 rounded-lg border border-slate-200 shadow-sm">
                                 <div className="flex items-center justify-between mb-3">
@@ -248,7 +251,7 @@ const SalesSummaryReport = () => {
                                         <card.icon className={`w-3.5 h-3.5 ${card.color}`} />
                                     </div>
                                 </div>
-                                <div className="text-lg font-bold text-slate-800">{card.value}</div>
+                                <CurrencyAmount value={card.value} currency={reportCurrency} className="text-lg font-bold text-slate-800" />
                                 <div className="text-xs text-slate-400 mt-1">{card.sub}</div>
                             </div>
                         ))}
@@ -273,8 +276,8 @@ const SalesSummaryReport = () => {
                                             <div className="text-xs text-slate-400">{row.count} invoice{row.count !== 1 ? 's' : ''}</div>
                                         </div>
                                         <div className="text-right">
-                                            <div className="text-sm font-bold text-slate-800">{formatCurrency(row.total)}</div>
-                                            {row.paid > 0 && <div className="text-xs text-emerald-500">{formatCurrency(row.paid)} paid</div>}
+                                            <CurrencyAmount value={row.total} currency={reportCurrency} className="text-sm font-bold text-slate-800" />
+                                            {row.paid > 0 && <div className="text-xs text-emerald-500"><CurrencyAmount value={row.paid} currency={reportCurrency} /> paid</div>}
                                         </div>
                                     </div>
                                 ))}
@@ -315,7 +318,7 @@ const SalesSummaryReport = () => {
                                                         'bg-amber-100 text-amber-700'
                                                     }`}>{inv.status || 'Draft'}</span>
                                                 </td>
-                                                <td className="px-4 py-2.5 text-right font-bold text-slate-800">{formatCurrency(inv.invoiceTotal)}</td>
+                                                <td className="px-4 py-2.5 text-right font-bold text-slate-800"><CurrencyAmount value={inv.invoiceTotal} currency={reportCurrency} /></td>
                                             </tr>
                                         ))}
                                     </tbody>
@@ -323,7 +326,7 @@ const SalesSummaryReport = () => {
                                         <tfoot>
                                             <tr className="border-t-2 border-slate-300 bg-slate-50">
                                                 <td colSpan="4" className="px-4 py-3 font-bold text-slate-700 text-sm">Total ({filtered.length} invoices)</td>
-                                                <td className="px-4 py-3 text-right font-bold text-slate-900 text-sm">{formatCurrency(totalSales)}</td>
+                                                <td className="px-4 py-3 text-right font-bold text-slate-900 text-sm"><CurrencyAmount value={totalSales} currency={reportCurrency} /></td>
                                             </tr>
                                         </tfoot>
                                     )}

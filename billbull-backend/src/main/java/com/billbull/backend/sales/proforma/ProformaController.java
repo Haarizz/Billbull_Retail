@@ -52,4 +52,9 @@ public class ProformaController {
     public ProformaResponse issue(@PathVariable Long id) {
         return service.issue(id);
     }
+
+    @PostMapping("/{id}/cancel")
+    public ProformaResponse cancel(@PathVariable Long id) {
+        return service.cancel(id);
+    }
 }

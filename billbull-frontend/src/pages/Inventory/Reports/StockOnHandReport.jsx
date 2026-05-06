@@ -8,6 +8,7 @@ import { generateReportPrintHtml, printHtml } from '../../../utils/printGenerato
 import { getStockOnHandReport } from '../../../api/inventoryReportsApi';
 import { getWarehouses } from '../../../api/warehouseApi';
 import toast from 'react-hot-toast';
+import CurrencyAmount, { CurrencySymbol } from '../../../components/CurrencyAmount';
 
 const StockOnHandReport = () => {
     const [viewMode, setViewMode] = useState('table');
@@ -28,6 +29,8 @@ const StockOnHandReport = () => {
         { header: 'SKU', key: 'sku', width: 15 },
         { header: 'Item', key: 'item', width: 35 },
         { header: 'Warehouse', key: 'warehouse', width: 25 },
+        { header: 'Batch No', key: 'batchNumber', width: 20 },
+        { header: 'Expiry', key: 'expiryDate', width: 15 },
         { header: 'Qty', key: 'onHand', width: 15 },
         { header: 'UOM', key: 'uom', width: 15 },
         { header: 'Unit Cost', key: 'unitCost', width: 15 },
@@ -47,7 +50,11 @@ const StockOnHandReport = () => {
         else if (filters.stockCondition === 'Negative only') d = d.filter(r => (r.onHand ?? 0) < 0);
         if (filters.searchQuery) {
             const q = filters.searchQuery.toLowerCase();
-            d = d.filter(r => (r.sku && r.sku.toLowerCase().includes(q)) || (r.item && r.item.toLowerCase().includes(q)));
+            d = d.filter(r =>
+                (r.sku && r.sku.toLowerCase().includes(q)) ||
+                (r.item && r.item.toLowerCase().includes(q)) ||
+                (r.batchNumber && r.batchNumber.toLowerCase().includes(q))
+            );
         }
         if (filters.dateFrom) {
             const from = new Date(filters.dateFrom).getTime();
@@ -187,8 +194,8 @@ const StockOnHandReport = () => {
                 {/* Stat cards */}
                 <div className="flex flex-col sm:flex-row gap-3">
                     <StatCard label="Total Qty" value={totalQty.toFixed(0)} sub={`${data.length} items`} sortKey="onHand" />
-                    <StatCard label="Total Value" value={`AED ${totalValue.toLocaleString('en-AE', { minimumFractionDigits: 2 })}`} sub="Sort by value" sortKey="value" />
-                    <StatCard label="Avg Unit Cost" value={`AED ${avgUnitCost.toLocaleString('en-AE', { minimumFractionDigits: 2 })}`} sub="Sort by cost" sortKey="unitCost" />
+                    <StatCard label="Total Value" value={<CurrencyAmount value={totalValue} />} sub="Sort by value" sortKey="value" />
+                    <StatCard label="Avg Unit Cost" value={<CurrencyAmount value={avgUnitCost} />} sub="Sort by cost" sortKey="unitCost" />
                 </div>
 
                 {/* Table / Chart panel */}
@@ -220,10 +227,10 @@ const StockOnHandReport = () => {
                     ) : viewMode === 'table' ? (
                         <>
                             <div className="overflow-x-auto">
-                                <table className="w-full text-xs border-collapse min-w-[600px]">
+                                <table className="w-full text-xs border-collapse min-w-[720px]">
                                     <thead className="bg-gray-50">
                                         <tr>
-                                            {['SKU', 'Item', 'Warehouse', 'Qty', 'UOM', 'Unit Cost', 'Value'].map(h => (
+                                            {['SKU', 'Item', 'Warehouse', 'Batch No', 'Expiry', 'Qty', 'UOM', 'Unit Cost', 'Value'].map(h => (
                                                 <th key={h} className={`px-3 py-2.5 text-[11px] font-semibold text-gray-500 uppercase tracking-wide border-b border-gray-200 whitespace-nowrap ${['Qty', 'Unit Cost', 'Value'].includes(h) ? 'text-right' : 'text-left'}`}>{h}</th>
                                             ))}
                                         </tr>
@@ -236,14 +243,16 @@ const StockOnHandReport = () => {
                                                 <td className="px-3 py-2.5">
                                                     <span className="bg-gray-100 rounded px-1.5 py-0.5 text-[11px] font-medium text-gray-600">{row.warehouse}</span>
                                                 </td>
+                                                <td className="px-3 py-2.5 font-mono text-[11px] text-gray-600">{row.batchNumber || '-'}</td>
+                                                <td className="px-3 py-2.5 text-gray-500">{row.expiryDate || '-'}</td>
                                                 <td className="px-3 py-2.5 text-right font-semibold text-gray-900">{row.onHand}</td>
                                                 <td className="px-3 py-2.5 text-gray-500">{row.uom}</td>
-                                                <td className="px-3 py-2.5 text-right text-gray-500">AED {row.unitCost?.toFixed(2)}</td>
-                                                <td className="px-3 py-2.5 text-right font-semibold text-green-600">AED {row.value?.toFixed(2)}</td>
+                                                <td className="px-3 py-2.5 text-right text-gray-500"><CurrencyAmount value={row.unitCost || 0} /></td>
+                                                <td className="px-3 py-2.5 text-right font-semibold text-green-600"><CurrencyAmount value={row.value || 0} /></td>
                                             </tr>
                                         )) : (
                                             <tr>
-                                                <td colSpan="7" className="py-14 text-center">
+                                                <td colSpan="9" className="py-14 text-center">
                                                     <FaBoxOpen className="text-4xl text-gray-200 mx-auto mb-3" />
                                                     <p className="text-sm text-gray-500">No data found matching current filters.</p>
                                                 </td>
@@ -262,7 +271,7 @@ const StockOnHandReport = () => {
                                     </div>
                                     <div className="text-right">
                                         <div className="text-[10px] font-semibold text-gray-500 uppercase">Total Value</div>
-                                        <div className="text-base font-bold text-gray-900">AED {data.reduce((acc, r) => acc + r.value, 0).toLocaleString('en-AE', { minimumFractionDigits: 2 })}</div>
+                                        <CurrencyAmount value={data.reduce((acc, r) => acc + r.value, 0)} className="text-base font-bold text-gray-900" />
                                     </div>
                                 </div>
                             )}
@@ -271,7 +280,7 @@ const StockOnHandReport = () => {
                         <div className="p-4 md:p-8 bg-gray-50">
                             <div className="mb-4 text-center">
                                 <h3 className="text-sm font-bold text-gray-700">Stock Valuation by Warehouse</h3>
-                                <p className="text-xs text-gray-500 mt-1">Total Value (AED) grouped by Warehouse.</p>
+                                <p className="text-xs text-gray-500 mt-1">Total Value (<CurrencySymbol />) grouped by Warehouse.</p>
                             </div>
                             <div className="h-64 md:h-80">
                                 {chartData.length > 0 ? (
@@ -280,7 +289,7 @@ const StockOnHandReport = () => {
                                             <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e5e7eb" />
                                             <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fill: '#6b7280', fontSize: 11 }} dy={8} />
                                             <YAxis axisLine={false} tickLine={false} tick={{ fill: '#6b7280', fontSize: 11 }} tickFormatter={v => v >= 1000 ? `${(v / 1000).toFixed(1)}k` : v} dx={-8} />
-                                            <Tooltip cursor={{ fill: '#f3f4f6' }} contentStyle={{ borderRadius: 8, border: 'none', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.1)' }} formatter={v => [`AED ${v.toLocaleString('en-AE', { minimumFractionDigits: 2 })}`, 'Valuation']} />
+                                            <Tooltip cursor={{ fill: '#f3f4f6' }} contentStyle={{ borderRadius: 8, border: 'none', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.1)' }} formatter={v => [<CurrencyAmount value={v} />, 'Valuation']} />
                                             <Bar dataKey="value" fill="#F5C742" radius={[6, 6, 0, 0]} maxBarSize={60} />
                                         </BarChart>
                                     </ResponsiveContainer>

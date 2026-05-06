@@ -4,6 +4,22 @@ import {
     AlertTriangle, Check, Clock, User, Calendar, ArrowRight, Save, Send, CheckCircle2,
     AlertCircle, X, MoreHorizontal, Eye, Edit, Printer, RefreshCw, Copy, Sparkles, Lightbulb, Info, List, ShieldCheck
 } from 'lucide-react';
+import ExportDropdown from '../../../components/common/ExportDropdown';
+import { exportToExcel, exportToPDF } from '../../../utils/exportUtils';
+
+// ==========================================
+// CONFIGURATION
+// ==========================================
+
+const STOCK_TRANSFER_COLUMNS = [
+    { header: 'Transfer No', key: 'transferNo', width: 20 },
+    { header: 'Date', key: 'transferDate', width: 15 },
+    { header: 'From Warehouse', key: 'fromWarehouseName', width: 25 },
+    { header: 'To Warehouse', key: 'toWarehouseName', width: 25 },
+    { header: 'Status', key: 'status', width: 15 },
+    { header: 'Requested By', key: 'requestedBy', width: 20 },
+    { header: 'Total Value', key: 'totalTransferValue', width: 15 }
+];
 import {
     getWarehouses, getWarehouseProductStock, getAggregateLocationStock,
     getWarehouseZones, getZoneLocators, getLocatorBins
@@ -12,10 +28,14 @@ import {
 import {
     getStockTransfers, createStockTransfer, updateStockTransfer,
     deleteStockTransfer, sendStockTransfer, receiveStockTransfer,
-    requestStockTransferApproval, cancelStockTransfer
+    requestStockTransferApproval, cancelStockTransfer, getStockTransferCostPreview
 } from '../../../api/stockTransferApi';
+import { getCompanyProfile } from '../../../api/companyProfileApi';
 import { toast } from 'react-hot-toast';
 import ProductSelector from '../../../components/ProductSelector';
+import { printHtml } from '../../../utils/printGenerator';
+import { getImageUrl } from '../../../utils/urlUtils';
+import CurrencyAmount from '../../../components/CurrencyAmount';
 
 // ==========================================
 // CONSTANTS
@@ -23,6 +43,64 @@ import ProductSelector from '../../../components/ProductSelector';
 
 const transferReasons = ["Stock Rebalancing", "Low Stock Alert", "Seasonal Demand", "Store Opening", "Return to Warehouse", "Quality Issue", "Other"];
 const transportModes = ["Vehicle", "Courier", "Manual", "Internal"];
+
+const parseFiniteNumber = (value) => {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+};
+
+const toNumber = (value, fallback = 0) => {
+    const parsed = parseFiniteNumber(value);
+    return parsed ?? fallback;
+};
+
+const formatCurrency = (value) => <CurrencyAmount value={toNumber(value)} />;
+
+const recalculateItemFinancials = (item) => {
+    const quantity = toNumber(item.quantity);
+    const unitCost = parseFiniteNumber(item.unitCost);
+    return {
+        ...item,
+        unitCost,
+        lineValue: unitCost == null ? null : Number((unitCost * quantity).toFixed(2))
+    };
+};
+
+const applyCostPreviewToItems = (targetItems, previewItems = []) => {
+    const previewMap = new Map(
+        (previewItems || []).map(item => [Number(item.productId), item])
+    );
+
+    return targetItems.map(item => {
+        const preview = previewMap.get(Number(item.productId));
+        if (!preview) {
+            return recalculateItemFinancials(item);
+        }
+
+        return recalculateItemFinancials({
+            ...item,
+            unitCost: preview.costAvailable ? parseFiniteNumber(preview.unitCost) : null,
+            costSource: preview.costSource || null,
+            costAvailable: Boolean(preview.costAvailable)
+        });
+    });
+};
+
+const calculateTransferTotals = (items, transportCharge, additionalCharges) => {
+    const inventoryValue = items.reduce((sum, item) => sum + toNumber(item.lineValue), 0);
+    const qty = items.reduce((sum, item) => sum + toNumber(item.quantity), 0);
+    const totalCharges = toNumber(transportCharge) + toNumber(additionalCharges);
+    return {
+        qty,
+        items: items.length,
+        inventoryValue,
+        totalCharges,
+        totalValue: inventoryValue + totalCharges,
+        avgCostPerUnit: qty > 0 ? inventoryValue / qty : 0,
+        warningsCount: items.reduce((sum, item) => sum + (item.status === 'Insufficient' ? 1 : 0), 0),
+        missingCostCount: items.reduce((sum, item) => sum + (item.productId && !item.costAvailable ? 1 : 0), 0)
+    };
+};
 
 // ==========================================
 // HELPER COMPONENTS
@@ -59,7 +137,7 @@ const StatusBadge = ({ status }) => {
     );
 };
 
-const ViewTransferModal = ({ isOpen, onClose, data }) => {
+const ViewTransferModal = ({ isOpen, onClose, data, onPrint }) => {
     if (!isOpen || !data) return null;
 
     return (
@@ -153,6 +231,21 @@ const ViewTransferModal = ({ isOpen, onClose, data }) => {
                         </div>
                     </div>
 
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                        <div className="bg-blue-50/60 rounded-xl p-4 border border-blue-100/60">
+                            <p className="text-[10px] font-bold text-blue-500 uppercase mb-1">Inventory Value</p>
+                            <p className="text-xl font-bold text-slate-800">{formatCurrency(data.inventoryValue)}</p>
+                        </div>
+                        <div className="bg-orange-50/60 rounded-xl p-4 border border-orange-100/60">
+                            <p className="text-[10px] font-bold text-orange-500 uppercase mb-1">Logistics Charges</p>
+                            <p className="text-xl font-bold text-slate-800">{formatCurrency(toNumber(data.transportCharge) + toNumber(data.additionalCharges))}</p>
+                        </div>
+                        <div className="bg-emerald-50/60 rounded-xl p-4 border border-emerald-100/60">
+                            <p className="text-[10px] font-bold text-emerald-500 uppercase mb-1">Total Transfer Value</p>
+                            <p className="text-xl font-bold text-slate-800">{formatCurrency(data.totalTransferValue)}</p>
+                        </div>
+                    </div>
+
                     {/* Items Table */}
                     <div className="space-y-4">
                         <div className="flex items-center justify-between">
@@ -167,6 +260,8 @@ const ViewTransferModal = ({ isOpen, onClose, data }) => {
                                         <th className="px-4 py-3">Batch/Lot</th>
                                         <th className="px-4 py-3 text-center">Qty</th>
                                         <th className="px-4 py-3 text-center">UoM</th>
+                                        <th className="px-4 py-3 text-right">Unit Cost</th>
+                                        <th className="px-4 py-3 text-right">Line Value</th>
                                     </tr>
                                 </thead>
                                 <tbody className="divide-y divide-slate-50">
@@ -181,6 +276,8 @@ const ViewTransferModal = ({ isOpen, onClose, data }) => {
                                             <td className="px-4 py-3 font-mono text-slate-500">{item.batchNumber || '---'}</td>
                                             <td className="px-4 py-3 text-center font-bold text-slate-800">{item.quantity}</td>
                                             <td className="px-4 py-3 text-center"><span className="bg-slate-100 px-2 py-0.5 rounded font-bold">{item.uom}</span></td>
+                                            <td className="px-4 py-3 text-right font-semibold text-slate-700">{item.unitCostAtSend != null ? formatCurrency(item.unitCostAtSend) : 'Pending'}</td>
+                                            <td className="px-4 py-3 text-right font-bold text-slate-800">{formatCurrency(item.receivedLineValue ?? item.lineValue)}</td>
                                         </tr>
                                     ))}
                                 </tbody>
@@ -192,8 +289,8 @@ const ViewTransferModal = ({ isOpen, onClose, data }) => {
                 {/* Footer */}
                 <div className="px-8 py-5 border-t border-slate-100 flex justify-end gap-3 bg-slate-50/30">
                     <button onClick={onClose} className="px-6 py-2 border border-slate-200 text-slate-600 rounded-lg h-10 text-xs font-bold hover:bg-white transition-all">Close Details</button>
-                    {data.status === 'SENT' && (
-                        <button className="px-6 py-2 bg-slate-900 text-white rounded-lg h-10 text-xs font-bold hover:bg-slate-800 shadow-md shadow-slate-200 transition-all flex items-center gap-2">
+                    {(data.status === 'SENT' || data.status === 'RECEIVED') && (
+                        <button onClick={() => onPrint(data)} className="px-6 py-2 bg-slate-900 text-white rounded-lg h-10 text-xs font-bold hover:bg-slate-800 shadow-md shadow-slate-200 transition-all flex items-center gap-2">
                             <Printer size={14} className="text-[#F5C742]" /> Print Gate Pass
                         </button>
                     )}
@@ -297,7 +394,7 @@ const ChecklistItem = ({ checked, label }) => (
 // TRANSFER HISTORY VIEW (Enhanced)
 // ==========================================
 
-const TransferHistoryView = ({ data, warehouses, onView, onSend }) => {
+const TransferHistoryView = ({ data, warehouses, onView, onSend, onPrint }) => {
     return (
         <div className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
             <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between">
@@ -306,6 +403,10 @@ const TransferHistoryView = ({ data, warehouses, onView, onSend }) => {
                     <h3 className="font-bold text-slate-800">Transfer Records</h3>
                 </div>
                 <div className="flex gap-2">
+                    <ExportDropdown
+                        onExportExcel={() => exportToExcel(data, STOCK_TRANSFER_COLUMNS, 'StockTransfers')}
+                        onExportPdf={() => exportToPDF(data, STOCK_TRANSFER_COLUMNS, 'Stock Transfer Records', 'StockTransfers')}
+                    />
                     <div className="relative">
                         <input type="text" placeholder="Search transfers..." className="h-9 w-64 bg-slate-50 border border-slate-200 rounded-lg px-9 text-xs outline-none focus:bg-white focus:ring-1 focus:ring-[#F5C742] transition-all" />
                         <Search size={14} className="absolute left-3 top-2.5 text-slate-400" />
@@ -368,7 +469,7 @@ const TransferHistoryView = ({ data, warehouses, onView, onSend }) => {
                                                 <Send size={12} className="text-[#F5C742]" /> Send
                                             </button>
                                         )}
-                                        <button className="p-2 text-slate-400 hover:text-slate-600 hover:bg-white rounded-lg border border-transparent hover:border-slate-200 transition-all opacity-0 group-hover:opacity-100">
+                                        <button onClick={() => onPrint(row)} className="p-2 text-slate-400 hover:text-slate-600 hover:bg-white rounded-lg border border-transparent hover:border-slate-200 transition-all opacity-0 group-hover:opacity-100">
                                             <Printer size={16} />
                                         </button>
                                     </div>
@@ -418,6 +519,10 @@ const ReceiveTransferView = ({ data, onReceive }) => {
                             <div className="flex justify-between text-xs">
                                 <span className="text-slate-500">Items:</span>
                                 <span className="font-bold text-slate-700">{transfer.items?.length || 0} Products</span>
+                            </div>
+                            <div className="flex justify-between text-xs">
+                                <span className="text-slate-500">Transfer Value:</span>
+                                <span className="font-bold text-slate-700">{formatCurrency(transfer.totalTransferValue)}</span>
                             </div>
                             <div className="flex justify-between text-xs">
                                 <span className="text-slate-500">Sent Date:</span>
@@ -549,6 +654,35 @@ const CreateTransferView = ({ warehouses, onSubmit }) => {
         }
     }, [formData.toLocatorId]);
 
+    const loadCostPreview = async (targetItems, warehouseId) => {
+        if (!targetItems.length) return [];
+
+        if (!warehouseId) {
+            return targetItems.map(item => recalculateItemFinancials({
+                ...item,
+                unitCost: null,
+                costSource: null,
+                costAvailable: false
+            }));
+        }
+
+        try {
+            const preview = await getStockTransferCostPreview(
+                warehouseId,
+                targetItems.map(item => Number(item.productId)).filter(Boolean)
+            );
+            return applyCostPreviewToItems(targetItems, preview?.items || []);
+        } catch (error) {
+            console.error("Failed to load stock transfer cost preview:", error);
+            return targetItems.map(item => recalculateItemFinancials({
+                ...item,
+                unitCost: null,
+                costSource: null,
+                costAvailable: false
+            }));
+        }
+    };
+
     const refreshAllItemsStock = async () => {
         const { fromWarehouseId, fromZoneId, fromLocatorId, fromBinId, toWarehouseId, toZoneId, toLocatorId, toBinId } = formData;
         if (!fromWarehouseId) return;
@@ -606,7 +740,8 @@ const CreateTransferView = ({ warehouses, onSubmit }) => {
             return item;
         }));
 
-        setItems(updatedItems);
+        const pricedItems = await loadCostPreview(updatedItems, fromWarehouseId);
+        setItems(pricedItems);
     };
 
     const handleAddSingleProduct = async (productData) => {
@@ -627,7 +762,11 @@ const CreateTransferView = ({ warehouses, onSubmit }) => {
             available: 0,
             quantity: 1,
             batchNumber: "",
-            status: "Pending" // Will be validated by refresh
+            status: "Pending",
+            unitCost: null,
+            lineValue: null,
+            costSource: null,
+            costAvailable: false
         };
 
         const newItems = [...items, newItem];
@@ -637,18 +776,37 @@ const CreateTransferView = ({ warehouses, onSubmit }) => {
         // Fetch stock for this newly added item immediately
         if (formData.fromWarehouseId) {
             try {
-                const stock = await getWarehouseProductStock(formData.fromWarehouseId, productData.id, {
-                    zoneId: formData.fromZoneId,
-                    locatorId: formData.fromLocatorId,
-                    binId: formData.fromBinId
-                });
-                setItems(prev => prev.map(i => i.id === newItem.id ? {
+                const [stockResult, previewResult] = await Promise.allSettled([
+                    getWarehouseProductStock(formData.fromWarehouseId, productData.id, {
+                        zoneId: formData.fromZoneId,
+                        locatorId: formData.fromLocatorId,
+                        binId: formData.fromBinId
+                    }),
+                    getStockTransferCostPreview(formData.fromWarehouseId, [productData.id])
+                ]);
+
+                const stock = stockResult.status === 'fulfilled' ? stockResult.value : 0;
+                const previewItem = previewResult.status === 'fulfilled'
+                    ? previewResult.value?.items?.[0]
+                    : null;
+
+                setItems(prev => prev.map(i => i.id === newItem.id ? recalculateItemFinancials({
                     ...i,
                     available: stock,
-                    status: i.quantity > 0 ? (i.quantity <= stock ? "Valid" : "Insufficient") : "Valid"
-                } : i));
+                    status: i.quantity > 0 ? (i.quantity <= stock ? "Valid" : "Insufficient") : "Valid",
+                    unitCost: previewItem?.costAvailable ? parseFiniteNumber(previewItem.unitCost) : null,
+                    costSource: previewItem?.costSource || null,
+                    costAvailable: Boolean(previewItem?.costAvailable)
+                }) : i));
             } catch (e) {
-                setItems(prev => prev.map(i => i.id === newItem.id ? { ...i, available: 0, status: "Error" } : i));
+                setItems(prev => prev.map(i => i.id === newItem.id ? recalculateItemFinancials({
+                    ...i,
+                    available: 0,
+                    status: "Error",
+                    unitCost: null,
+                    costSource: null,
+                    costAvailable: false
+                }) : i));
             }
         }
     };
@@ -663,7 +821,7 @@ const CreateTransferView = ({ warehouses, onSubmit }) => {
                 if (field === "quantity" && value > 0) {
                     updated.status = value <= updated.available ? "Valid" : "Insufficient";
                 }
-                return updated;
+                return recalculateItemFinancials(updated);
             }
             return i;
         });
@@ -672,30 +830,44 @@ const CreateTransferView = ({ warehouses, onSubmit }) => {
 
         if (field === "productId" && value && formData.fromWarehouseId) {
             try {
-                const stock = await getWarehouseProductStock(formData.fromWarehouseId, value, {
-                    zoneId: formData.fromZoneId,
-                    locatorId: formData.fromLocatorId,
-                    binId: formData.fromBinId
-                });
-                setItems(prev => prev.map(i => i.id === id ? { ...i, available: stock, status: i.quantity > 0 ? (i.quantity <= stock ? "Valid" : "Insufficient") : "Valid" } : i));
+                const [stockResult, previewResult] = await Promise.allSettled([
+                    getWarehouseProductStock(formData.fromWarehouseId, value, {
+                        zoneId: formData.fromZoneId,
+                        locatorId: formData.fromLocatorId,
+                        binId: formData.fromBinId
+                    }),
+                    getStockTransferCostPreview(formData.fromWarehouseId, [value])
+                ]);
+
+                const stock = stockResult.status === 'fulfilled' ? stockResult.value : 0;
+                const previewItem = previewResult.status === 'fulfilled'
+                    ? previewResult.value?.items?.[0]
+                    : null;
+
+                setItems(prev => prev.map(i => i.id === id ? recalculateItemFinancials({
+                    ...i,
+                    available: stock,
+                    status: i.quantity > 0 ? (i.quantity <= stock ? "Valid" : "Insufficient") : "Valid",
+                    unitCost: previewItem?.costAvailable ? parseFiniteNumber(previewItem.unitCost) : null,
+                    costSource: previewItem?.costSource || null,
+                    costAvailable: Boolean(previewItem?.costAvailable)
+                }) : i));
             } catch (e) {
-                setItems(prev => prev.map(i => i.id === id ? { ...i, available: 0, status: "Error" } : i));
+                setItems(prev => prev.map(i => i.id === id ? recalculateItemFinancials({
+                    ...i,
+                    available: 0,
+                    status: "Error",
+                    unitCost: null,
+                    costSource: null,
+                    costAvailable: false
+                }) : i));
             }
         }
     };
 
     const totals = useMemo(() => {
-        return items.reduce((acc, item) => {
-            const qty = Number(item.quantity) || 0;
-            const price = 16.61; // Indicative avg cost (mock for Phase-1)
-            return {
-                qty: acc.qty + qty,
-                items: acc.items + 1,
-                totalValue: acc.totalValue + (qty * price),
-                warningsCount: acc.warningsCount + (item.status === 'Insufficient' ? 1 : 0)
-            };
-        }, { qty: 0, items: 0, totalValue: 0, warningsCount: 0 });
-    }, [items]);
+        return calculateTransferTotals(items, formData.transportCharge, formData.additionalCharges);
+    }, [items, formData.transportCharge, formData.additionalCharges]);
 
     const preparePayload = (statusOverride) => {
         if (!formData.fromWarehouseId || !formData.toWarehouseId) {
@@ -1113,7 +1285,10 @@ const CreateTransferView = ({ warehouses, onSubmit }) => {
                         </div>
                         <div className="bg-purple-50/50 rounded-xl p-4 border border-purple-100/50">
                             <p className="text-[10px] font-bold text-purple-500 uppercase mb-1">Transfer Value</p>
-                            <p className="text-2xl font-bold text-slate-800">AED {totals.totalValue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
+                            <p className="text-2xl font-bold text-slate-800">{formatCurrency(totals.totalValue)}</p>
+                            <p className="text-[10px] text-purple-500 mt-1">
+                                {totals.totalCharges > 0 ? <>Includes {formatCurrency(totals.totalCharges)} logistics charges</> : 'Inventory value only'}
+                            </p>
                         </div>
                         <div className={`${totals.warningsCount > 0 ? 'bg-amber-50/50 border-amber-100/50' : 'bg-slate-50/50 border-slate-100/50'} rounded-xl p-4 border`}>
                             <p className={`text-[10px] font-bold ${totals.warningsCount > 0 ? 'text-amber-500' : 'text-slate-400'} uppercase mb-1`}>Warnings</p>
@@ -1178,15 +1353,15 @@ const CreateTransferView = ({ warehouses, onSubmit }) => {
                     <div className="grid grid-cols-1 gap-3">
                         <StatCard
                             label="Total Transfer Value"
-                            value={`AED ${totals.totalValue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
-                            subtext="Indicative value based on avg cost"
+                            value={formatCurrency(totals.totalValue)}
+                            subtext={totals.totalCharges > 0 ? <>Includes {formatCurrency(totals.totalCharges)} landed charges</> : "Based on source warehouse cost"}
                             icon={Package}
                             color="blue"
                         />
                         <StatCard
                             label="Avg Cost Per Unit"
-                            value="AED 16.61"
-                            subtext="Combined lineage cost"
+                            value={totals.qty > 0 && totals.missingCostCount === 0 ? formatCurrency(totals.avgCostPerUnit) : (totals.inventoryValue > 0 ? formatCurrency(totals.avgCostPerUnit) : 'Pending')}
+                            subtext={totals.missingCostCount > 0 ? `${totals.missingCostCount} item(s) need source cost` : "Weighted avg from source warehouse"}
                             icon={RefreshCw}
                             color="emerald"
                         />
@@ -1324,6 +1499,171 @@ const StockTransfer = () => {
         setIsViewModalOpen(true);
     };
 
+    const handlePrintGatePass = async (data) => {
+        const generatedAt = new Date().toLocaleString();
+        
+        let company = {};
+        try {
+            const res = await getCompanyProfile();
+            company = res?.data || res || {};
+        } catch (e) {
+            console.error("Failed to fetch company profile for print", e);
+        }
+
+        const logoPath = company.logoUrl || company.logoPath || company.logo;
+        const resolvedLogoUrl = logoPath ? getImageUrl(logoPath) : '';
+        const logoHtml = resolvedLogoUrl ? `<img src="${resolvedLogoUrl}" alt="Company Logo" style="max-height: 80px; max-width: 150px; object-fit: contain; margin-bottom: 10px;" />` : '';
+
+        const htmlContent = `
+            <!DOCTYPE html>
+            <html lang="en">
+            <head>
+                <meta charset="UTF-8" />
+                <title>Gate Pass - ${data.transferNo}</title>
+                <style>
+                    @page { size: A4; margin: 20mm; }
+                    body { font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; color: #1e293b; font-size: 12px; line-height: 1.5; margin: 0; padding: 0; }
+                    .header { border-bottom: 2px solid #e2e8f0; padding-bottom: 20px; margin-bottom: 30px; display: flex; justify-content: space-between; align-items: flex-start; }
+                    .title { font-size: 24px; font-weight: bold; color: #0f172a; margin: 0; text-transform: uppercase; letter-spacing: 1px; }
+                    
+                    .info-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 30px; }
+                    .info-box { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 15px; }
+                    .info-box h4 { margin: 0 0 10px 0; font-size: 10px; text-transform: uppercase; color: #64748b; letter-spacing: 0.5px; }
+                    .info-box p { margin: 5px 0; font-size: 12px; font-weight: 500; color: #1e293b; }
+                    .info-box span { color: #64748b; font-weight: normal; }
+                    
+                    table.details-table { width: 100%; border-collapse: collapse; margin-bottom: 30px; }
+                    table.details-table th { background: #f1f5f9; text-align: left; padding: 12px; font-size: 11px; text-transform: uppercase; color: #475569; border-bottom: 2px solid #cbd5e1; }
+                    table.details-table td { padding: 12px; font-size: 12px; border-bottom: 1px solid #e2e8f0; color: #334155; }
+                    .text-right { text-align: right; }
+                    .text-center { text-align: center; }
+                    
+                    .totals { width: 300px; float: right; margin-bottom: 40px; }
+                    .totals-row { display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid #e2e8f0; }
+                    .totals-row.grand { font-weight: bold; font-size: 14px; border-bottom: 2px solid #cbd5e1; border-top: 2px solid #cbd5e1; padding: 12px 0; color: #0f172a; }
+                    
+                    .signatures { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 20px; margin-top: 60px; clear: both; }
+                    .sig-box { text-align: center; }
+                    .sig-line { border-top: 1px solid #94a3b8; margin-top: 50px; padding-top: 8px; font-size: 11px; color: #64748b; font-weight: bold; text-transform: uppercase; }
+                    
+                    .footer { text-align: center; margin-top: 40px; padding-top: 20px; border-top: 1px solid #e2e8f0; font-size: 10px; color: #94a3b8; }
+                </style>
+            </head>
+            <body>
+                <div class="header">
+                    <div>
+                        <h1 class="title" style="margin-bottom: 20px;">STOCK TRANSFER / GATE PASS</h1>
+                        <table style="width: auto; border: none; margin: 0; border-collapse: collapse;">
+                            <tr>
+                                <td style="padding: 2px 15px 2px 0; border: none; font-size: 10px; font-weight: bold; color: #64748b;">DOCUMENT NO</td>
+                                <td style="padding: 2px 0; border: none; font-size: 11px; font-weight: bold; color: #1e293b;">${data.transferNo}</td>
+                            </tr>
+                            <tr>
+                                <td style="padding: 2px 15px 2px 0; border: none; font-size: 10px; font-weight: bold; color: #64748b;">DATE</td>
+                                <td style="padding: 2px 0; border: none; font-size: 11px; font-weight: bold; color: #1e293b;">${data.transferDate}</td>
+                            </tr>
+                            <tr>
+                                <td style="padding: 2px 15px 2px 0; border: none; font-size: 10px; font-weight: bold; color: #64748b;">STATUS</td>
+                                <td style="padding: 2px 0; border: none; font-size: 11px; font-weight: bold; color: #1e293b; text-transform: uppercase;">${data.status}</td>
+                            </tr>
+                        </table>
+                    </div>
+                    <div style="text-align: right; max-width: 300px;">
+                        ${logoHtml}
+                        <div style="font-weight: bold; font-size: 14px; margin-bottom: 4px;">${company.companyName || company.name || ''}</div>
+                        <div style="color: #4b5563; font-size: 11px; margin-bottom: 2px; white-space: pre-wrap;">${company.address || ''}</div>
+                        ${company.phone ? `<div style="color: #4b5563; font-size: 11px; margin-bottom: 2px;">${company.phone}</div>` : ''}
+                        ${company.email ? `<div style="color: #4b5563; font-size: 11px; margin-bottom: 2px;">${company.email}</div>` : ''}
+                        ${company.trn ? `<div style="color: #4b5563; font-size: 11px; margin-bottom: 2px;">TRN: ${company.trn}</div>` : ''}
+                    </div>
+                </div>
+
+                <div class="info-grid">
+                    <div class="info-box">
+                        <h4>From (Source)</h4>
+                        <p>Warehouse: <span>${data.fromWarehouseName || 'N/A'}</span></p>
+                        <p>Zone: <span>${data.fromZoneName || 'N/A'}</span></p>
+                        <p>Locator: <span>${data.fromLocatorName || 'N/A'}</span></p>
+                    </div>
+                    <div class="info-box">
+                        <h4>To (Destination)</h4>
+                        <p>Warehouse: <span>${data.toWarehouseName || 'N/A'}</span></p>
+                        <p>Zone: <span>${data.toZoneName || 'N/A'}</span></p>
+                        <p>Locator: <span>${data.toLocatorName || 'N/A'}</span></p>
+                    </div>
+                    <div class="info-box">
+                        <h4>Logistics Details</h4>
+                        <p>Transport Mode: <span>${data.transportMode || 'N/A'}</span></p>
+                        <p>Vehicle No: <span>${data.vehicleNo || 'N/A'}</span></p>
+                        <p>Driver: <span>${data.driverName || 'Not Assigned'}</span></p>
+                    </div>
+                    <div class="info-box">
+                        <h4>Movement Info</h4>
+                        <p>Reason: <span>${data.reason || 'N/A'}</span></p>
+                        <p>Reference: <span>${data.referenceDoc || 'None'}</span></p>
+                        <p>Dispatch: <span>${data.dispatchDate || 'Pending'}</span></p>
+                    </div>
+                </div>
+
+                <table class="details-table">
+                    <thead>
+                        <tr>
+                            <th>#</th>
+                            <th>Product / Item Code</th>
+                            <th>Batch / Lot</th>
+                            <th class="text-center">Qty</th>
+                            <th class="text-center">UoM</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${(data.items || []).map((item, index) => `
+                            <tr>
+                                <td>${index + 1}</td>
+                                <td>
+                                    <strong>${item.productName}</strong><br>
+                                    <span style="font-size: 10px; color: #64748b;">${item.productCode}</span>
+                                </td>
+                                <td>${item.batchNumber || '---'}</td>
+                                <td class="text-center"><strong>${item.quantity}</strong></td>
+                                <td class="text-center">${item.uom}</td>
+                            </tr>
+                        `).join('')}
+                    </tbody>
+                </table>
+
+                <div class="totals">
+                    <div class="totals-row">
+                        <span>Total Items:</span>
+                        <strong>${data.items?.length || 0}</strong>
+                    </div>
+                    <div class="totals-row grand">
+                        <span>Total Quantity:</span>
+                        <span>${data.items?.reduce((sum, item) => sum + Number(item.quantity), 0) || 0}</span>
+                    </div>
+                </div>
+
+                <div class="signatures">
+                    <div class="sig-box">
+                        <div class="sig-line">Prepared By</div>
+                        <p style="font-size: 10px; color: #64748b; margin-top: 5px;">${data.requestedBy || 'System'}</p>
+                    </div>
+                    <div class="sig-box">
+                        <div class="sig-line">Driver / Transporter</div>
+                    </div>
+                    <div class="sig-box">
+                        <div class="sig-line">Received By</div>
+                    </div>
+                </div>
+
+                <div class="footer">
+                    Gate Pass Generated by BillBull ERP System at ${generatedAt}
+                </div>
+            </body>
+            </html>
+        `;
+        printHtml(htmlContent);
+    };
+
     const handleNewTransfer = () => setActiveTab("create");
 
     return (
@@ -1386,6 +1726,7 @@ const StockTransfer = () => {
                                 warehouses={warehouses}
                                 onView={handleViewTransfer}
                                 onSend={handleSendTransfer}
+                                onPrint={handlePrintGatePass}
                             />
                         )}
                         {activeTab === "receive" && (
@@ -1402,6 +1743,7 @@ const StockTransfer = () => {
                 isOpen={isViewModalOpen}
                 onClose={() => setIsViewModalOpen(false)}
                 data={selectedTransfer}
+                onPrint={handlePrintGatePass}
             />
         </div>
     );

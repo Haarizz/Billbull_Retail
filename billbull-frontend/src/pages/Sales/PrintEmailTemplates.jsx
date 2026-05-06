@@ -87,13 +87,7 @@ const buildPreviewImage = (label, accent, base = '#f8fafc') => {
 };
 
 const getSalesDefaultDisplayOptions = (overrides = {}) =>
-    sanitizeTemplateDisplayOptions(
-        {
-            ...DEFAULT_TEMPLATE_DISPLAY_OPTIONS,
-            ...overrides
-        },
-        DEFAULT_TEMPLATE_DISPLAY_OPTIONS
-    );
+    sanitizeTemplateDisplayOptions(overrides, DEFAULT_TEMPLATE_DISPLAY_OPTIONS);
 
 const getSalesDefaultColumns = (category, overrides = {}) => {
     const categoryDefaults = {
@@ -101,16 +95,16 @@ const getSalesDefaultColumns = (category, overrides = {}) => {
         discount: !['Sales Invoice', 'Delivery Note (DO/DN)'].includes(category),
         tax: category !== 'Sales Order (SO)' && category !== 'Delivery Note (DO/DN)',
         total: category !== 'Delivery Note (DO/DN)',
-        unitPrice: category !== 'Delivery Note (DO/DN)'
+        unitPrice: category !== 'Delivery Note (DO/DN)',
+        taxableAmount: category !== 'Delivery Note (DO/DN)',
+        barcode: false,
+        discountPercent: false,
+        taxPercent: false,
+        salesPerson: false,
+        location: false
     };
 
-    return sanitizeTemplateColumns(
-        {
-            ...categoryDefaults,
-            ...overrides
-        },
-        categoryDefaults
-    );
+    return sanitizeTemplateColumns(overrides, categoryDefaults);
 };
 
 const normalizeSalesTemplate = (template, category = template?.category) => ({
@@ -154,29 +148,35 @@ const buildSalesPreviewData = (category, companyProfile = {}) => {
         {
             code: "ITM-SAMPLE-01",
             sku: "SAL-SKU-01",
+            barcode: "6912345678901",
             localName: "منتج مبيعات 01",
             name: "Product Name Sample 01",
             description: { title: "Product Name Sample 01", details: ["Color: Sample Black", "Size: Standard", "Sku: SKU-SAMPLE-01"] },
             image: buildPreviewImage("INV 1", "#2563eb"),
-            unit: "Pcs", qty: 3, price: 420, taxableAmount: 1260, taxAmt: 63, taxPercent: 5, total: 1323,
+            unit: "Pcs", qty: 3, price: 420, taxableAmount: 1260, taxAmt: 63, taxPercent: 5, discountPercent: 0,
+            salesPerson: "Demo User", location: "Main Showroom", total: 1323,
         },
         {
             code: "ITM-SAMPLE-02",
             sku: "SAL-SKU-02",
+            barcode: "6912345678902",
             localName: "منتج مبيعات 02",
             name: "Product Name Sample 02",
             description: { title: "Product Name Sample 02", details: ["Variant: Standard", "Sku: SKU-SAMPLE-02"] },
             image: buildPreviewImage("INV 2", "#0f766e"),
-            unit: "Pcs", qty: 2, price: 580, taxableAmount: 1160, taxAmt: 58, taxPercent: 5, total: 1218,
+            unit: "Pcs", qty: 2, price: 580, taxableAmount: 1160, taxAmt: 58, taxPercent: 5, discountPercent: 10,
+            salesPerson: "Demo User", location: "Main Showroom", total: 1218,
         },
         {
             code: "ITM-SAMPLE-03",
             sku: "SAL-SKU-03",
+            barcode: "6912345678903",
             localName: "منتج مبيعات 03",
             name: "Product Name Sample 03",
             description: { title: "Product Name Sample 03", details: ["Specification: Demo Item", "Sku: SKU-SAMPLE-03"] },
             image: buildPreviewImage("INV 3", "#1d4ed8"),
-            unit: "Pcs", qty: 1, price: 310, taxableAmount: 310, taxAmt: 15.5, taxPercent: 5, total: 325.5,
+            unit: "Pcs", qty: 1, price: 310, taxableAmount: 310, taxAmt: 15.5, taxPercent: 5, discountPercent: 0,
+            salesPerson: "Demo User", location: "Warehouse A", total: 325.5,
         },
     ];
     return {
@@ -200,8 +200,12 @@ const buildSalesPreviewData = (category, companyProfile = {}) => {
             paymentTerm: "NET 30",
             validTill: "2026-05-18",
             validTillLabel: category === "Quotation" ? "Valid Until" : "Due Date",
-            reference: "SO: SO-SAMPLE-0001 | DN: DN-SAMPLE-0001",
-            notes: "Salesperson: Demo User | Branch: Main Showroom",
+            reference: "SO-SAMPLE-0001",
+            location: "DXB-01",
+            salesPerson: "Demo User",
+            poNumber: "PO-SAMPLE-001",
+            accountExecutive: "Mr. Demo User",
+            notes: "Thank you for your business.",
         },
     };
 };
@@ -242,7 +246,7 @@ Late payments may be subject to finance charges as per the agreed customer terms
         category: "Sales Order (SO)",
         name: "Standard Sales Order",
         isDefault: true,
-        paperSize: "Letter",
+        paperSize: "A4",
         orientation: "Portrait",
         headerContent: "",
         termsContent: `1. Acceptance: This order is subject to acceptance by the seller.
@@ -589,90 +593,75 @@ const TemplateDesigner = ({ category, onCancel, onSave, initialData, previewComp
                                 <FaListUl />
                                 <h3 className="font-bold text-gray-900 text-sm">Table Columns</h3>
                             </div>
-                            <p className="text-xs text-gray-500 mb-3">Select columns to display in item table:</p>
+                            <p className="text-xs text-gray-500 mb-3">Select columns to display in the item table:</p>
                             <div className="space-y-3">
-                                <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider pt-1">Product Details</p>
+
+                                <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider pt-1">Item Identity</p>
                                 <label className="flex items-center gap-2 cursor-pointer">
-                                    <input
-                                        type="checkbox"
-                                        checked={columns.productId}
-                                        onChange={() => handleColumnChange('productId')}
-                                        className="w-4 h-4 text-yellow-500 rounded border-gray-300 focus:ring-yellow-400"
-                                    />
-                                    <span className="text-sm text-gray-700 font-medium">Product ID</span>
+                                    <input type="checkbox" checked={columns.description !== false} onChange={() => handleColumnChange('description')} className="w-4 h-4 text-yellow-500 rounded border-gray-300 focus:ring-yellow-400" />
+                                    <span className="text-sm text-gray-700 font-medium">Description of Product / Services</span>
                                 </label>
                                 <label className="flex items-center gap-2 cursor-pointer">
-                                    <input
-                                        type="checkbox"
-                                        checked={columns.sku}
-                                        onChange={() => handleColumnChange('sku')}
-                                        className="w-4 h-4 text-yellow-500 rounded border-gray-300 focus:ring-yellow-400"
-                                    />
+                                    <input type="checkbox" checked={columns.productId} onChange={() => handleColumnChange('productId')} className="w-4 h-4 text-yellow-500 rounded border-gray-300 focus:ring-yellow-400" />
+                                    <span className="text-sm text-gray-700 font-medium">Item Code</span>
+                                </label>
+                                <label className="flex items-center gap-2 cursor-pointer">
+                                    <input type="checkbox" checked={columns.sku} onChange={() => handleColumnChange('sku')} className="w-4 h-4 text-yellow-500 rounded border-gray-300 focus:ring-yellow-400" />
                                     <span className="text-sm text-gray-700 font-medium">SKU</span>
                                 </label>
                                 <label className="flex items-center gap-2 cursor-pointer">
-                                    <input
-                                        type="checkbox"
-                                        checked={columns.arabicName}
-                                        onChange={() => handleColumnChange('arabicName')}
-                                        className="w-4 h-4 text-yellow-500 rounded border-gray-300 focus:ring-yellow-400"
-                                    />
+                                    <input type="checkbox" checked={columns.barcode} onChange={() => handleColumnChange('barcode')} className="w-4 h-4 text-yellow-500 rounded border-gray-300 focus:ring-yellow-400" />
+                                    <span className="text-sm text-gray-700 font-medium">Item Barcode</span>
+                                </label>
+                                <label className="flex items-center gap-2 cursor-pointer">
+                                    <input type="checkbox" checked={columns.arabicName} onChange={() => handleColumnChange('arabicName')} className="w-4 h-4 text-yellow-500 rounded border-gray-300 focus:ring-yellow-400" />
                                     <span className="text-sm text-gray-700 font-medium">Arabic Name</span>
                                 </label>
-                                <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider pt-1">Line Item</p>
+
+                                <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider pt-2">Quantities & Pricing</p>
                                 <label className="flex items-center gap-2 cursor-pointer">
-                                    <input
-                                        type="checkbox"
-                                        checked={columns.description}
-                                        onChange={() => handleColumnChange('description')}
-                                        className="w-4 h-4 text-yellow-500 rounded border-gray-300 focus:ring-yellow-400"
-                                    />
-                                    <span className="text-sm text-gray-700 font-medium">Description</span>
-                                </label>
-                                <label className="flex items-center gap-2 cursor-pointer">
-                                    <input
-                                        type="checkbox"
-                                        checked={columns.qty}
-                                        onChange={() => handleColumnChange('qty')}
-                                        className="w-4 h-4 text-yellow-500 rounded border-gray-300 focus:ring-yellow-400"
-                                    />
+                                    <input type="checkbox" checked={columns.qty} onChange={() => handleColumnChange('qty')} className="w-4 h-4 text-yellow-500 rounded border-gray-300 focus:ring-yellow-400" />
                                     <span className="text-sm text-gray-700 font-medium">Qty</span>
                                 </label>
                                 <label className="flex items-center gap-2 cursor-pointer">
-                                    <input
-                                        type="checkbox"
-                                        checked={columns.unitPrice}
-                                        onChange={() => handleColumnChange('unitPrice')}
-                                        className="w-4 h-4 text-yellow-500 rounded border-gray-300 focus:ring-yellow-400"
-                                    />
+                                    <input type="checkbox" checked={columns.unitPrice} onChange={() => handleColumnChange('unitPrice')} className="w-4 h-4 text-yellow-500 rounded border-gray-300 focus:ring-yellow-400" />
                                     <span className="text-sm text-gray-700 font-medium">Unit Price</span>
                                 </label>
                                 <label className="flex items-center gap-2 cursor-pointer">
-                                    <input
-                                        type="checkbox"
-                                        checked={columns.discount}
-                                        onChange={() => handleColumnChange('discount')}
-                                        className="w-4 h-4 text-yellow-500 rounded border-gray-300 focus:ring-yellow-400"
-                                    />
-                                    <span className="text-sm text-gray-700 font-medium">Discount</span>
+                                    <input type="checkbox" checked={columns.taxableAmount} onChange={() => handleColumnChange('taxableAmount')} className="w-4 h-4 text-yellow-500 rounded border-gray-300 focus:ring-yellow-400" />
+                                    <span className="text-sm text-gray-700 font-medium">Taxable Amount</span>
                                 </label>
                                 <label className="flex items-center gap-2 cursor-pointer">
-                                    <input
-                                        type="checkbox"
-                                        checked={columns.tax}
-                                        onChange={() => handleColumnChange('tax')}
-                                        className="w-4 h-4 text-yellow-500 rounded border-gray-300 focus:ring-yellow-400"
-                                    />
-                                    <span className="text-sm text-gray-700 font-medium">Tax</span>
+                                    <input type="checkbox" checked={columns.total} onChange={() => handleColumnChange('total')} className="w-4 h-4 text-yellow-500 rounded border-gray-300 focus:ring-yellow-400" />
+                                    <span className="text-sm text-gray-700 font-medium">Line Total</span>
+                                </label>
+
+                                <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider pt-2">Discount & Tax</p>
+                                <label className="flex items-center gap-2 cursor-pointer">
+                                    <input type="checkbox" checked={columns.discount} onChange={() => handleColumnChange('discount')} className="w-4 h-4 text-yellow-500 rounded border-gray-300 focus:ring-yellow-400" />
+                                    <span className="text-sm text-gray-700 font-medium">Discount % (in Taxable Amount col)</span>
                                 </label>
                                 <label className="flex items-center gap-2 cursor-pointer">
-                                    <input
-                                        type="checkbox"
-                                        checked={columns.total}
-                                        onChange={() => handleColumnChange('total')}
-                                        className="w-4 h-4 text-yellow-500 rounded border-gray-300 focus:ring-yellow-400"
-                                    />
-                                    <span className="text-sm text-gray-700 font-medium">Total</span>
+                                    <input type="checkbox" checked={columns.discountPercent} onChange={() => handleColumnChange('discountPercent')} className="w-4 h-4 text-yellow-500 rounded border-gray-300 focus:ring-yellow-400" />
+                                    <span className="text-sm text-gray-700 font-medium">Discount % (separate column)</span>
+                                </label>
+                                <label className="flex items-center gap-2 cursor-pointer">
+                                    <input type="checkbox" checked={columns.tax} onChange={() => handleColumnChange('tax')} className="w-4 h-4 text-yellow-500 rounded border-gray-300 focus:ring-yellow-400" />
+                                    <span className="text-sm text-gray-700 font-medium">VAT Amount</span>
+                                </label>
+                                <label className="flex items-center gap-2 cursor-pointer">
+                                    <input type="checkbox" checked={columns.taxPercent} onChange={() => handleColumnChange('taxPercent')} className="w-4 h-4 text-yellow-500 rounded border-gray-300 focus:ring-yellow-400" />
+                                    <span className="text-sm text-gray-700 font-medium">Tax % (separate column)</span>
+                                </label>
+
+                                <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider pt-2">Document / Line Info</p>
+                                <label className="flex items-center gap-2 cursor-pointer">
+                                    <input type="checkbox" checked={columns.salesPerson} onChange={() => handleColumnChange('salesPerson')} className="w-4 h-4 text-yellow-500 rounded border-gray-300 focus:ring-yellow-400" />
+                                    <span className="text-sm text-gray-700 font-medium">Sales Person</span>
+                                </label>
+                                <label className="flex items-center gap-2 cursor-pointer">
+                                    <input type="checkbox" checked={columns.location} onChange={() => handleColumnChange('location')} className="w-4 h-4 text-yellow-500 rounded border-gray-300 focus:ring-yellow-400" />
+                                    <span className="text-sm text-gray-700 font-medium">Location / Branch</span>
                                 </label>
                             </div>
                         </div>
@@ -904,7 +893,6 @@ const PrintEmailTemplates = () => {
 
             // Auto-seed if empty
             if (data.length === 0) {
-                console.log("No templates found. Seeding defaults...");
                 await seedDefaultTemplates();
                 return;
             }

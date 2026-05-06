@@ -7,10 +7,12 @@ import {
 } from 'lucide-react';
 import { getInvoices } from '../../../api/purchaseInvoiceApi';
 import toast from 'react-hot-toast';
-
-const formatCurrency = (val) => `AED ${parseFloat(val || 0).toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',')}`;
+import CurrencyAmount from '../../../components/CurrencyAmount';
+import { useCompany } from '../../../context/CompanyContext';
 
 const PurchaseSummaryReport = () => {
+    const { company } = useCompany();
+    const reportCurrency = company?.currency || 'AED';
     const [invoices, setInvoices] = useState([]);
     const [loading, setLoading] = useState(false);
     const [dateFrom, setDateFrom] = useState(() => {
@@ -182,14 +184,14 @@ const PurchaseSummaryReport = () => {
                         <span style={{ background: '#f3f4f6', borderRadius: 12, padding: '2px 8px', fontWeight: 500, fontSize: 11, color: '#4b5563' }}>{filtered.length} records</span>
                     </div>
                     {[
-                        { label: 'Total Purchases', value: formatCurrency(totalPurchases) },
-                        { label: 'Total Tax (VAT)', value: formatCurrency(totalTax) },
-                        { label: 'Paid Amount', value: formatCurrency(totalPaid) },
-                        { label: 'Outstanding', value: formatCurrency(totalOutstanding) },
+                        { label: 'Total Purchases', value: totalPurchases },
+                        { label: 'Total Tax (VAT)', value: totalTax },
+                        { label: 'Paid Amount', value: totalPaid },
+                        { label: 'Outstanding', value: totalOutstanding },
                     ].map((stat, i) => (
                         <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '6px 8px', borderRadius: 8, marginBottom: 4, background: '#f9fafb' }}>
                             <span style={{ fontSize: 11, color: '#6b7280' }}>{stat.label}</span>
-                            <span style={{ fontSize: 12, fontWeight: 700, color: '#111827' }}>{stat.value}</span>
+                            <CurrencyAmount value={stat.value} currency={reportCurrency} className="text-xs font-bold text-slate-900" />
                         </div>
                     ))}
                 </div>
@@ -235,10 +237,10 @@ const PurchaseSummaryReport = () => {
                     {/* Summary Cards */}
                     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-5">
                         {[
-                            { label: 'Total Purchases', value: formatCurrency(totalPurchases), sub: `${filtered.length} invoices`, icon: TrendingDown, color: 'text-blue-600', bg: 'bg-blue-50' },
-                            { label: 'Total Tax (VAT)', value: formatCurrency(totalTax), sub: 'VAT paid', icon: DollarSign, color: 'text-purple-600', bg: 'bg-purple-50' },
-                            { label: 'Paid Amount', value: formatCurrency(totalPaid), sub: 'Fully paid invoices', icon: ShoppingCart, color: 'text-green-600', bg: 'bg-green-50' },
-                            { label: 'Outstanding', value: formatCurrency(totalOutstanding), sub: 'Pending payment', icon: Calendar, color: 'text-amber-600', bg: 'bg-amber-50' },
+                            { label: 'Total Purchases', value: totalPurchases, sub: `${filtered.length} invoices`, icon: TrendingDown, color: 'text-blue-600', bg: 'bg-blue-50' },
+                            { label: 'Total Tax (VAT)', value: totalTax, sub: 'VAT paid', icon: DollarSign, color: 'text-purple-600', bg: 'bg-purple-50' },
+                            { label: 'Paid Amount', value: totalPaid, sub: 'Fully paid invoices', icon: ShoppingCart, color: 'text-green-600', bg: 'bg-green-50' },
+                            { label: 'Outstanding', value: totalOutstanding, sub: 'Pending payment', icon: Calendar, color: 'text-amber-600', bg: 'bg-amber-50' },
                         ].map((card, i) => (
                             <div key={i} className="bg-white p-4 rounded-lg border border-slate-200 shadow-sm">
                                 <div className="flex items-center justify-between mb-3">
@@ -247,7 +249,7 @@ const PurchaseSummaryReport = () => {
                                         <card.icon className={`w-3.5 h-3.5 ${card.color}`} />
                                     </div>
                                 </div>
-                                <div className="text-lg font-bold text-slate-800">{card.value}</div>
+                                <CurrencyAmount value={card.value} currency={reportCurrency} className="text-lg font-bold text-slate-800" />
                                 <div className="text-xs text-slate-400 mt-1">{card.sub}</div>
                             </div>
                         ))}
@@ -272,8 +274,8 @@ const PurchaseSummaryReport = () => {
                                             <div className="text-xs text-slate-400">{row.count} invoice{row.count !== 1 ? 's' : ''}</div>
                                         </div>
                                         <div className="text-right">
-                                            <div className="text-sm font-bold text-slate-800">{formatCurrency(row.total)}</div>
-                                            {row.paid > 0 && <div className="text-xs text-emerald-500">{formatCurrency(row.paid)} paid</div>}
+                                            <CurrencyAmount value={row.total} currency={reportCurrency} className="text-sm font-bold text-slate-800" />
+                                            {row.paid > 0 && <div className="text-xs text-emerald-500"><CurrencyAmount value={row.paid} currency={reportCurrency} /> paid</div>}
                                         </div>
                                     </div>
                                 ))}
@@ -314,7 +316,7 @@ const PurchaseSummaryReport = () => {
                                                         'bg-amber-100 text-amber-700'
                                                     }`}>{inv.status || 'Draft'}</span>
                                                 </td>
-                                                <td className="px-4 py-2.5 text-right font-bold text-slate-800">{formatCurrency(inv.grandTotal || inv.totalAmount)}</td>
+                                                <td className="px-4 py-2.5 text-right font-bold text-slate-800"><CurrencyAmount value={inv.grandTotal || inv.totalAmount} currency={reportCurrency} /></td>
                                             </tr>
                                         ))}
                                     </tbody>
@@ -322,7 +324,7 @@ const PurchaseSummaryReport = () => {
                                         <tfoot>
                                             <tr className="border-t-2 border-slate-300 bg-slate-50">
                                                 <td colSpan="4" className="px-4 py-3 font-bold text-slate-700 text-sm">Total ({filtered.length} invoices)</td>
-                                                <td className="px-4 py-3 text-right font-bold text-slate-900 text-sm">{formatCurrency(totalPurchases)}</td>
+                                                <td className="px-4 py-3 text-right font-bold text-slate-900 text-sm"><CurrencyAmount value={totalPurchases} currency={reportCurrency} /></td>
                                             </tr>
                                         </tfoot>
                                     )}

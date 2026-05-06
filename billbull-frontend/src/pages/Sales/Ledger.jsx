@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useMemo } from 'react';
 import {
   BookOpen,
   FileText,
@@ -30,9 +30,14 @@ import {
   AlertTriangle,
   RotateCcw
 } from 'lucide-react';
+import ExportDropdown from '../../components/common/ExportDropdown';
+import { exportToExcel, exportToPDF } from '../../utils/exportUtils';
 
 // Import API functions
 import * as api from '../../api/ledgerApi';
+import { useBranch } from '../../context/BranchContext';
+import { useCompany } from '../../context/CompanyContext';
+import { resolveCurrencyDisplayCode } from '../../utils/countryCurrencyOptions';
 
 // --- HELPER: CUSTOM SELECT COMPONENT ---
 const CustomSelect = ({ label, placeholder, options, value, onChange }) => {
@@ -81,25 +86,100 @@ const CustomSelect = ({ label, placeholder, options, value, onChange }) => {
   );
 };
 
+// = ::::::::::::::::::::::::::::::::::::::
+// 1. CONFIGURATION (Standard Export)
+// = ::::::::::::::::::::::::::::::::::::::
+
+const ACCOUNT_COLUMNS = [
+  { header: 'Code', key: 'code', width: 15 },
+  { header: 'Account Name', key: 'name', width: 25 },
+  { header: 'Group', key: 'group', width: 15 },
+  { header: 'Branch', key: 'branch', width: 15 },
+  { header: 'Cost Center', key: 'cc', width: 15 },
+  { header: 'Balance', key: 'balance', width: 20 },
+  { header: 'Status', key: 'status', width: 12 }
+];
+
+const GL_COLUMNS = [
+  { header: 'Date', key: 'date', width: 12 },
+  { header: 'Voucher', key: 'voucher', width: 15 },
+  { header: 'Type', key: 'type', width: 12 },
+  { header: 'Account', key: 'accName', width: 25 },
+  { header: 'Description', key: 'desc', width: 30 },
+  { header: 'Debit', key: 'debit', width: 15 },
+  { header: 'Credit', key: 'credit', width: 15 },
+  { header: 'Balance', key: 'balance', width: 20 }
+];
+
+const COST_CENTER_COLUMNS = [
+  { header: 'Code', key: 'code', width: 15 },
+  { header: 'Name', key: 'name', width: 25 },
+  { header: 'Manager', key: 'manager', width: 20 },
+  { header: 'Branch', key: 'branch', width: 15 },
+  { header: 'Budget', key: 'budget', width: 15 },
+  { header: 'Spent', key: 'spent', width: 15 },
+  { header: 'Status', key: 'status', width: 12 }
+];
+
+const TRANSACTION_COLUMNS = GL_COLUMNS; // Same as GL for now
+
 const Ledger = () => {
-  const [activeTab, setActiveTab] = useState('chart'); 
+  const { branches, defaultBranchName } = useBranch();
+  const { company } = useCompany();
+  const currency = resolveCurrencyDisplayCode(company || {});
+  const [activeTab, setActiveTab] = useState('chart');
   const [loading, setLoading] = useState(true);
 
   // --- FILTER STATES ---
   const [searchQuery, setSearchQuery] = useState('');
   const [filterGroup, setFilterGroup] = useState('');
   const [filterBranch, setFilterBranch] = useState('');
-  const [showArchived, setShowArchived] = useState(false); 
+  const [showArchived, setShowArchived] = useState(false);
+
+  // --- GL FILTER STATES ---
+  const today = new Date().toISOString().split('T')[0];
+  const firstOfMonth = new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().split('T')[0];
+  const [glFilterFrom, setGlFilterFrom] = useState(firstOfMonth);
+  const [glFilterTo, setGlFilterTo] = useState(today);
+  const [glFilterAccount, setGlFilterAccount] = useState('');
 
   // --- CORE DATA STATES ---
   const [accounts, setAccounts] = useState([]);
   const [costCenters, setCostCenters] = useState([]);
   const [glData, setGlData] = useState([]);
+  const branchOptions = useMemo(() => {
+    const options = new Set();
+
+    if (defaultBranchName) {
+      options.add(defaultBranchName);
+    }
+
+    branches.forEach((branch) => {
+      if (branch?.name) {
+        options.add(branch.name);
+      }
+    });
+
+    accounts.forEach((account) => {
+      if (account.branch && account.branch !== 'All Branches') {
+        options.add(account.branch);
+      }
+    });
+
+    costCenters.forEach((costCenter) => {
+      if (costCenter.branch && costCenter.branch !== 'All Branches') {
+        options.add(costCenter.branch);
+      }
+    });
+
+    return Array.from(options);
+  }, [accounts, branches, costCenters, defaultBranchName]);
+  const branchSelectOptions = ['All Branches', ...branchOptions];
 
   // --- DATA MAPPERS (Backend -> UI) ---
   const formatBalance = (amount, type) => {
     const num = parseFloat(amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-    return `AED ${num} ${type || 'Dr'}`;
+    return `${currency} ${num} ${type || 'Dr'}`;
   };
 
   const mapAccountToUI = (acc) => ({
@@ -132,8 +212,8 @@ const Ledger = () => {
     accCode: txn.accountCode,
     accName: txn.accountName,
     desc: txn.description,
-    debit: txn.debitAmount ? `AED ${parseFloat(txn.debitAmount).toLocaleString()}` : '',
-    credit: txn.creditAmount ? `AED ${parseFloat(txn.creditAmount).toLocaleString()}` : '',
+    debit: txn.debitAmount ? `${currency} ${parseFloat(txn.debitAmount).toLocaleString()}` : '',
+    credit: txn.creditAmount ? `${currency} ${parseFloat(txn.creditAmount).toLocaleString()}` : '',
     balance: formatBalance(txn.runningBalance, txn.balanceType),
     balType: txn.balanceType
   });
@@ -161,6 +241,16 @@ const Ledger = () => {
   useEffect(() => {
     fetchData();
   }, []);
+
+  const filteredGlData = useMemo(() => {
+    return glData.filter(entry => {
+      const matchesAccount = !glFilterAccount || entry.accCode === glFilterAccount || entry.accName === glFilterAccount;
+      const matchesFrom = !glFilterFrom || (entry.date && entry.date >= glFilterFrom);
+      const matchesTo = !glFilterTo || (entry.date && entry.date <= glFilterTo);
+      return matchesAccount && matchesFrom && matchesTo;
+    });
+  }, [glData, glFilterAccount, glFilterFrom, glFilterTo]);
+
 
   // --- MODAL STATES ---
   const [isAccountModalOpen, setIsAccountModalOpen] = useState(false);
@@ -488,13 +578,13 @@ const Ledger = () => {
   const handleOpenAddAccount = () => {
     setAccId(null); setAccName(''); setAccCode(''); setAccSubGroup('');
     setAccOpeningBalance(''); setAccDescription(''); setSelectedGroup('');
-    setSelectedBranch(''); setSelectedCostCenter(''); setSelectedBalType('Debit (Dr)');
+    setSelectedBranch(defaultBranchName || ''); setSelectedCostCenter(''); setSelectedBalType('Debit (Dr)');
     setIsActive(true);
     setIsAccountModalOpen(true);
   };
 
   const handleOpenAddCostCenter = () => {
-    setCcId(null); setCcName(''); setCcCode(''); setCcBranch(''); setCcManager('');
+    setCcId(null); setCcName(''); setCcCode(''); setCcBranch(defaultBranchName || ''); setCcManager('');
     setCcBudget(''); setCcDescription('');
     setIsCostCenterModalOpen(true);
   };
@@ -533,9 +623,21 @@ const Ledger = () => {
           <p className="text-xs text-slate-500 mt-1">Manage chart of accounts, general ledger, cost centers, and financial transactions</p>
         </div>
         <div className="flex gap-2">
-          <button className="flex items-center gap-2 px-3 py-2 bg-white border border-slate-200 rounded text-xs font-bold text-slate-600 hover:bg-slate-50 shadow-sm">
-            <FileSpreadsheet size={16} /> Export Excel
-          </button>
+          <ExportDropdown
+            onExportExcel={() => {
+              if (activeTab === 'chart') exportToExcel(filteredAccounts, ACCOUNT_COLUMNS, 'Chart_of_Accounts');
+              else if (activeTab === 'gl') exportToExcel(filteredGlData, GL_COLUMNS, 'General_Ledger');
+              else if (activeTab === 'cost') exportToExcel(costCenters.map(cc => ({ ...cc, ...getCostCenterMetrics(cc.code) })), COST_CENTER_COLUMNS, 'Cost_Centers');
+              else if (activeTab === 'transactions') exportToExcel(glData, TRANSACTION_COLUMNS, 'Transactions_History');
+            }}
+            onExportPdf={() => {
+              if (activeTab === 'chart') exportToPDF(filteredAccounts, ACCOUNT_COLUMNS, 'Chart of Accounts', 'Chart_of_Accounts');
+              else if (activeTab === 'gl') exportToPDF(filteredGlData, GL_COLUMNS, 'General Ledger', 'General_Ledger');
+              else if (activeTab === 'cost') exportToPDF(costCenters.map(cc => ({ ...cc, ...getCostCenterMetrics(cc.code) })), COST_CENTER_COLUMNS, 'Cost Centers', 'Cost_Centers');
+              else if (activeTab === 'transactions') exportToPDF(glData, TRANSACTION_COLUMNS, 'Transactions History', 'Transactions_History');
+            }}
+          />
+          
           
           {/* QUICK ADD DROPDOWN */}
           <div className="relative group" ref={quickAddRef}>
@@ -612,7 +714,7 @@ const Ledger = () => {
                       <IconComp size={16} className={color} />
                       <span className="text-xs font-bold text-slate-500">{type}</span>
                     </div>
-                    <div className="text-xl font-bold text-slate-800 mb-1">AED {total.toLocaleString()}</div>
+                    <div className="text-xl font-bold text-slate-800 mb-1">{currency} {total.toLocaleString()}</div>
                     <div className="text-[10px] text-slate-400 font-medium">{typeAccounts.length} active</div>
                   </div>
                 )
@@ -655,9 +757,9 @@ const Ledger = () => {
                         onChange={(e) => setFilterBranch(e.target.value)}
                       >
                          <option value="">All Branches</option>
-                         <option value="Dubai Branch">Dubai Branch</option>
-                         <option value="Marina Branch">Marina Branch</option>
-                         <option value="Warehouse">Warehouse</option>
+                         {branchOptions.map((branchName) => (
+                           <option key={branchName} value={branchName}>{branchName}</option>
+                         ))}
                       </select>
                       
                       <div className="flex items-center gap-2 ml-2">
@@ -828,20 +930,27 @@ const Ledger = () => {
                <div className="grid grid-cols-1 md:grid-cols-4 gap-4 items-end">
                  <div className="md:col-span-1">
                    <label className="block text-xs font-bold text-slate-500 mb-1">Account</label>
-                   <select className="w-full px-3 py-2 text-xs border border-slate-200 rounded-md bg-white text-slate-700 font-medium">
-                     <option>All Accounts</option>
+                   <select
+                     value={glFilterAccount}
+                     onChange={(e) => setGlFilterAccount(e.target.value)}
+                     className="w-full px-3 py-2 text-xs border border-slate-200 rounded-md bg-white text-slate-700 font-medium"
+                   >
+                     <option value="">All Accounts</option>
+                     {accounts.map(a => (
+                       <option key={a.code} value={a.code}>{a.code} - {a.name}</option>
+                     ))}
                    </select>
                  </div>
                  <div>
                    <label className="block text-xs font-bold text-slate-500 mb-1">From Date</label>
-                   <input type="date" defaultValue="2024-01-01" className="w-full px-3 py-2 text-xs border border-slate-200 rounded-md text-slate-700"/>
+                   <input type="date" value={glFilterFrom} onChange={(e) => setGlFilterFrom(e.target.value)} className="w-full px-3 py-2 text-xs border border-slate-200 rounded-md text-slate-700"/>
                  </div>
                  <div>
                    <label className="block text-xs font-bold text-slate-500 mb-1">To Date</label>
-                   <input type="date" defaultValue="2024-01-31" className="w-full px-3 py-2 text-xs border border-slate-200 rounded-md text-slate-700"/>
+                   <input type="date" value={glFilterTo} onChange={(e) => setGlFilterTo(e.target.value)} className="w-full px-3 py-2 text-xs border border-slate-200 rounded-md text-slate-700"/>
                  </div>
                  <div>
-                   <button className="w-full flex items-center justify-center gap-2 px-4 py-2 bg-[#F5C742] text-slate-900 rounded-md text-xs font-bold hover:bg-yellow-400 shadow-sm">
+                   <button onClick={() => { setGlFilterFrom(glFilterFrom); setGlFilterTo(glFilterTo); }} className="w-full flex items-center justify-center gap-2 px-4 py-2 bg-[#F5C742] text-slate-900 rounded-md text-xs font-bold hover:bg-yellow-400 shadow-sm">
                       <FileText size={14}/> Generate Report
                    </button>
                  </div>
@@ -850,7 +959,7 @@ const Ledger = () => {
 
              <div className="mb-4">
                <h3 className="text-sm font-bold text-slate-700">General Ledger Entries</h3>
-               <p className="text-xs text-slate-500">All journal entries and transactions ({glData.length} entries)</p>
+               <p className="text-xs text-slate-500">{filteredGlData.length} of {glData.length} entries</p>
              </div>
 
              <div className="overflow-x-auto">
@@ -867,7 +976,7 @@ const Ledger = () => {
                    </tr>
                  </thead>
                  <tbody className="divide-y divide-slate-50">
-                    {glData.map((entry, idx) => (
+                    {filteredGlData.map((entry, idx) => (
                       <tr key={entry.id || idx} className="hover:bg-slate-50 group">
                         <td className="px-4 py-3 font-medium text-slate-700">{entry.date}</td>
                         <td className="px-4 py-3">
@@ -964,11 +1073,11 @@ const Ledger = () => {
                       <div className="flex justify-between items-end mb-4">
                         <div>
                           <div className="text-[10px] text-slate-400">Spent</div>
-                          <div className="text-xs font-bold text-red-600">AED {parseFloat(cc.spent).toLocaleString()}</div>
+                          <div className="text-xs font-bold text-red-600">{currency} {parseFloat(cc.spent).toLocaleString()}</div>
                         </div>
                         <div className="text-right">
                           <div className="text-[10px] text-slate-400">Budget</div>
-                          <div className="text-xs font-bold text-slate-700">AED {parseFloat(cc.budget).toLocaleString()}</div>
+                          <div className="text-xs font-bold text-slate-700">{currency} {parseFloat(cc.budget).toLocaleString()}</div>
                         </div>
                       </div>
 
@@ -1210,7 +1319,7 @@ const Ledger = () => {
 
                         <div className="col-span-1">
                             <label className="block text-xs font-bold text-slate-600 mb-1">Branch</label>
-                            <CustomSelect placeholder="Select branch" options={['All Branches', 'Dubai Branch', 'Marina Branch', 'Warehouse']} value={selectedBranch} onChange={setSelectedBranch} />
+                            <CustomSelect placeholder="Select branch" options={branchSelectOptions} value={selectedBranch} onChange={setSelectedBranch} />
                         </div>
                         <div className="col-span-1">
                             <label className="block text-xs font-bold text-slate-600 mb-1">Cost Center</label>
@@ -1285,7 +1394,7 @@ const Ledger = () => {
 
                         <div className="col-span-1">
                             <label className="block text-xs font-bold text-slate-600 mb-1">Branch <span className="text-red-500">*</span></label>
-                            <CustomSelect placeholder="Select branch" options={['All Branches', 'Dubai Branch', 'Marina Branch', 'Warehouse']} value={ccBranch} onChange={setCcBranch} />
+                            <CustomSelect placeholder="Select branch" options={branchSelectOptions} value={ccBranch} onChange={setCcBranch} />
                         </div>
                         <div className="col-span-1">
                             <label className="block text-xs font-bold text-slate-600 mb-1">Manager</label>
@@ -1293,7 +1402,7 @@ const Ledger = () => {
                         </div>
 
                         <div className="col-span-1">
-                            <label className="block text-xs font-bold text-slate-600 mb-1">Budget Amount (AED)</label>
+                            <label className="block text-xs font-bold text-slate-600 mb-1">Budget Amount ({currency})</label>
                             <input type="number" value={ccBudget} onChange={(e) => setCcBudget(e.target.value)} placeholder="0.00" className="w-full px-3 py-2 text-xs border border-slate-200 rounded-md focus:border-blue-500 focus:outline-none placeholder:text-slate-400"/>
                         </div>
                         
@@ -1343,7 +1452,7 @@ const Ledger = () => {
                                 <CustomSelect placeholder="Debit" options={['Debit', 'Credit']} value={txnType} onChange={setTxnType} />
                             </div>
                             <div>
-                                <label className="block text-xs font-bold text-slate-600 mb-1">Amount (AED) <span className="text-red-500">*</span></label>
+                                <label className="block text-xs font-bold text-slate-600 mb-1">Amount ({currency}) <span className="text-red-500">*</span></label>
                                 <input type="number" value={txnAmount} onChange={(e) => setTxnAmount(e.target.value)} placeholder="0.00" className="w-full px-3 py-2 text-xs border border-slate-200 rounded-md focus:border-blue-500 focus:outline-none"/>
                             </div>
                         </div>

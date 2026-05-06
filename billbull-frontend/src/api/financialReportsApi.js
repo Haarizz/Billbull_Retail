@@ -33,12 +33,12 @@ export const getFinancialReportsData = async (startDate, endDate) => {
         return {
             accounts,
             costCenters,
-            transactions,
+            transactions: filterByDateRange(transactions, startDate, endDate, 'transactionDate'),
             receiptVouchers,
             journalVouchers,
-            expenses,
+            expenses: filterByDateRange(expenses, startDate, endDate, 'date'),
             taxConfigs,
-            taxFilings
+            taxFilings: filterByDateRange(taxFilings, startDate, endDate, 'periodEndDate')
         };
     } catch (error) {
         console.error('Error fetching financial reports data:', error);
@@ -47,18 +47,23 @@ export const getFinancialReportsData = async (startDate, endDate) => {
 };
 
 /**
- * Calculate key financial metrics
+ * Calculate key financial metrics from raw data
  */
-export const calculateFinancialMetrics = (data) => {
-    const { accounts, transactions, expenses } = data;
+export const calculateFinancialMetrics = (data, startDate, endDate) => {
+    const accounts = data?.accounts || [];
+    const transactions = data?.transactions || [];
+    const expenses = data?.expenses || [];
+    
+    // Filter transactions and expenses if not already filtered
+    const filteredTransactions = filterByDateRange(transactions, startDate, endDate, 'transactionDate');
+    const filteredExpenses = filterByDateRange(expenses, startDate, endDate, 'date');
 
-    // Calculate total revenue (Income accounts)
-    const totalRevenue = accounts
-        .filter(acc => acc.accountGroup === 'Income' && acc.status !== 'archived')
-        .reduce((sum, acc) => sum + parseFloat(acc.balanceAmount || 0), 0);
+    // Calculate total revenue from credit-side ledger movement.
+    const totalRevenue = filteredTransactions
+        .reduce((sum, txn) => sum + parseFloat(txn.creditAmount || 0), 0);
 
     // Calculate total expenses
-    const totalExpenses = expenses
+    const totalExpenses = filteredExpenses
         .reduce((sum, exp) => sum + parseFloat(exp.amount || 0), 0);
 
     // Calculate net profit
@@ -66,22 +71,22 @@ export const calculateFinancialMetrics = (data) => {
 
     // Calculate total assets
     const totalAssets = accounts
-        .filter(acc => acc.accountGroup === 'Assets' && acc.status !== 'archived')
-        .reduce((sum, acc) => sum + parseFloat(acc.balanceAmount || 0), 0);
+        .filter(acc => (acc.accountGroup === 'Assets' || acc.type === 'ASSET') && acc.status !== 'archived')
+        .reduce((sum, acc) => sum + parseFloat(acc.balanceAmount || acc.balance || 0), 0);
 
     // Calculate total liabilities
     const totalLiabilities = accounts
-        .filter(acc => acc.accountGroup === 'Liabilities' && acc.status !== 'archived')
-        .reduce((sum, acc) => sum + parseFloat(acc.balanceAmount || 0), 0);
+        .filter(acc => (acc.accountGroup === 'Liabilities' || acc.type === 'LIABILITY') && acc.status !== 'archived')
+        .reduce((sum, acc) => sum + parseFloat(acc.balanceAmount || acc.balance || 0), 0);
 
     // Calculate cash balance (assuming Cash/Bank accounts are in Assets)
     const cashBalance = accounts
         .filter(acc =>
-            acc.accountGroup === 'Assets' &&
+            (acc.accountGroup === 'Assets' || acc.type === 'ASSET') &&
             acc.status !== 'archived' &&
-            (acc.name.toLowerCase().includes('cash') || acc.name.toLowerCase().includes('bank'))
+            ((acc.name || '').toLowerCase().includes('cash') || (acc.name || '').toLowerCase().includes('bank'))
         )
-        .reduce((sum, acc) => sum + parseFloat(acc.balanceAmount || 0), 0);
+        .reduce((sum, acc) => sum + parseFloat(acc.balanceAmount || acc.balance || 0), 0);
 
     return {
         totalRevenue,
@@ -95,6 +100,37 @@ export const calculateFinancialMetrics = (data) => {
 };
 
 /**
+ * Calculate tax summary from raw data
+ */
+export const calculateTaxSummary = (data, startDate, endDate) => {
+    const transactions = data?.transactions || [];
+    const filteredTransactions = filterByDateRange(transactions, startDate, endDate, 'transactionDate');
+
+    // Simple heuristic: look for transactions involving tax accounts or having tax fields
+    const outputTax = filteredTransactions
+        .filter(txn => {
+            const accName = (txn.accountName || '').toLowerCase();
+            return accName.includes('vat output') || accName.includes('tax output') || accName.includes('tax collected');
+        })
+        .reduce((sum, txn) => sum + Math.abs(parseFloat(txn.creditAmount || 0) - parseFloat(txn.debitAmount || 0)), 0);
+
+    const inputTax = filteredTransactions
+        .filter(txn => {
+            const accName = (txn.accountName || '').toLowerCase();
+            return accName.includes('vat input') || accName.includes('tax input') || accName.includes('tax paid');
+        })
+        .reduce((sum, txn) => sum + Math.abs(parseFloat(txn.debitAmount || 0) - parseFloat(txn.creditAmount || 0)), 0);
+
+    return {
+        outputTax,
+        inputTax,
+        netTaxPayable: outputTax - inputTax,
+        taxableSalesBase: outputTax / 0.05,
+        taxablePurchaseBase: inputTax / 0.05
+    };
+};
+
+/**
  * Filter transactions by date range
  */
 export const filterByDateRange = (items, startDate, endDate, dateField = 'transactionDate') => {
@@ -103,7 +139,7 @@ export const filterByDateRange = (items, startDate, endDate, dateField = 'transa
     const start = new Date(startDate);
     const end = new Date(endDate);
 
-    return items.filter(item => {
+    return (items || []).filter(item => {
         const itemDate = new Date(item[dateField]);
         return itemDate >= start && itemDate <= end;
     });
@@ -113,7 +149,7 @@ export const filterByDateRange = (items, startDate, endDate, dateField = 'transa
  * Group expenses by category
  */
 export const groupExpensesByCategory = (expenses) => {
-    const grouped = expenses.reduce((acc, expense) => {
+    const grouped = (expenses || []).reduce((acc, expense) => {
         const category = expense.category || 'Uncategorized';
         if (!acc[category]) {
             acc[category] = { category, total: 0, count: 0 };
@@ -130,7 +166,7 @@ export const groupExpensesByCategory = (expenses) => {
  * Group expenses by cost center
  */
 export const groupExpensesByCostCenter = (expenses) => {
-    const grouped = expenses.reduce((acc, expense) => {
+    const grouped = (expenses || []).reduce((acc, expense) => {
         const costCenter = expense.costCenter || 'Unassigned';
         if (!acc[costCenter]) {
             acc[costCenter] = { costCenter, total: 0, count: 0 };
@@ -155,21 +191,20 @@ export const getMonthlyTrends = (transactions, expenses, months = 6) => {
         const monthName = date.toLocaleDateString('en-US', { month: 'short', year: 'numeric' });
 
         // Filter transactions for this month
-        const monthTransactions = transactions.filter(txn => {
+        const monthTransactions = (transactions || []).filter(txn => {
             const txnDate = new Date(txn.transactionDate);
             return txnDate.getMonth() === date.getMonth() &&
                 txnDate.getFullYear() === date.getFullYear();
         });
 
         // Filter expenses for this month
-        const monthExpenses = expenses.filter(exp => {
+        const monthExpenses = (expenses || []).filter(exp => {
             const expDate = new Date(exp.date || exp.createdAt);
             return expDate.getMonth() === date.getMonth() &&
                 expDate.getFullYear() === date.getFullYear();
         });
 
         const revenue = monthTransactions
-            .filter(txn => txn.type === 'Credit' || txn.creditAmount > 0)
             .reduce((sum, txn) => sum + parseFloat(txn.creditAmount || 0), 0);
 
         const expenseTotal = monthExpenses
@@ -187,15 +222,125 @@ export const getMonthlyTrends = (transactions, expenses, months = 6) => {
 };
 
 /**
+ * Calculate detailed Balance Sheet structure
+ */
+export const calculateBalanceSheetDetails = (data, endDate) => {
+    const accounts = data?.accounts || [];
+    
+    const mapToItem = (a) => ({
+        accountName: a.name,
+        accountCode: a.code,
+        amount: Math.abs(parseFloat(a.balanceAmount || a.balance || 0)),
+        category: a.subGroup || a.accountGroup
+    });
+
+    const assetItems = accounts
+        .filter(a => (a.accountGroup === 'Assets' || a.type === 'ASSET') && a.status !== 'archived')
+        .map(mapToItem);
+
+    const liabilityItems = accounts
+        .filter(a => (a.accountGroup === 'Liabilities' || a.type === 'LIABILITY') && a.status !== 'archived')
+        .map(mapToItem);
+
+    const equityItems = accounts
+        .filter(a => (a.accountGroup === 'Equity' || a.type === 'EQUITY') && a.status !== 'archived')
+        .map(mapToItem);
+
+    const totalAssets = assetItems.reduce((sum, i) => sum + i.amount, 0);
+    const totalLiabilities = liabilityItems.reduce((sum, i) => sum + i.amount, 0);
+    const totalEquity = equityItems.reduce((sum, i) => sum + i.amount, 0);
+
+    return {
+        asOfDate: endDate || new Date().toISOString().split('T')[0],
+        assetItems,
+        liabilityItems,
+        equityItems,
+        totalAssets,
+        totalLiabilities,
+        totalEquity,
+        balanced: Math.abs(totalAssets - (totalLiabilities + totalEquity)) < 0.01
+    };
+};
+
+/**
+ * Calculate detailed Cash Flow structure (Heuristic)
+ */
+export const calculateCashFlowDetails = (data, startDate, endDate) => {
+    const transactions = data?.transactions || [];
+    const filteredTxns = filterByDateRange(transactions, startDate, endDate, 'transactionDate');
+
+    // Heuristic categorization
+    const operating = filteredTxns.filter(t => 
+        ['Income', 'Expenses', 'Revenue', 'Sales', 'Purchase'].some(k => (t.accountName || '').includes(k))
+    );
+    const investing = filteredTxns.filter(t => 
+        ['Asset', 'Fixed Asset', 'Investment'].some(k => (t.accountName || '').includes(k))
+    );
+    const financing = filteredTxns.filter(t => 
+        ['Equity', 'Capital', 'Loan', 'Liability'].some(k => (t.accountName || '').includes(k))
+    );
+
+    const calcTotal = (txns) => txns.reduce((sum, t) => sum + (parseFloat(t.debitAmount || 0) - parseFloat(t.creditAmount || 0)), 0);
+
+    const totalOperating = calcTotal(operating);
+    const totalInvesting = calcTotal(investing);
+    const totalFinancing = calcTotal(financing);
+
+    const mapToActivity = (t) => ({
+        accountName: t.accountName,
+        accountCode: t.accountCode,
+        amount: Math.abs(parseFloat(t.debitAmount || t.creditAmount || 0)),
+        category: t.type,
+        transactionDate: t.transactionDate
+    });
+
+    return {
+        startDate,
+        endDate,
+        totalOperating,
+        totalInvesting,
+        totalFinancing,
+        netCashFlow: totalOperating + totalInvesting + totalFinancing,
+        operatingActivities: operating.map(mapToActivity),
+        investingActivities: investing.map(mapToActivity),
+        financingActivities: financing.map(mapToActivity)
+    };
+};
+
+/**
+ * Calculate detailed Expense Analysis structure
+ */
+export const calculateExpenseAnalysisDetails = (data, startDate, endDate) => {
+    const expenses = data?.expenses || [];
+    const filteredExpenses = filterByDateRange(expenses, startDate, endDate, 'date');
+
+    const byCategoryRaw = groupExpensesByCategory(filteredExpenses);
+    const byCostCenterRaw = groupExpensesByCostCenter(filteredExpenses);
+
+    return {
+        byCategory: byCategoryRaw.map(c => ({ groupName: c.category, amount: c.total })),
+        byCostCenter: byCostCenterRaw.map(c => ({ groupName: c.costCenter, amount: c.total })),
+        detailLines: filteredExpenses.map(e => ({
+            transactionDate: e.date || e.createdAt,
+            voucherNo: e.voucherNo,
+            accountName: e.category,
+            accountCode: e.id,
+            costCenter: e.costCenter,
+            amount: e.amount
+        }))
+    };
+};
+
+/**
  * Get account balance distribution
  */
 export const getAccountBalanceDistribution = (accounts) => {
     const groups = ['Assets', 'Liabilities', 'Income', 'Expenses', 'Equity'];
 
     return groups.map(group => {
-        const total = accounts
-            .filter(acc => acc.accountGroup === group && acc.status !== 'archived')
-            .reduce((sum, acc) => sum + Math.abs(parseFloat(acc.balanceAmount || 0)), 0);
+        const total = (accounts || [])
+            .filter(acc => (acc.accountGroup === group || acc.type === group.toUpperCase()) && acc.status !== 'archived')
+            .reduce((sum, acc) => sum + Math.abs(parseFloat(acc.balanceAmount || acc.balance || 0)), 0);
 
         return {
             name: group,
@@ -207,6 +352,10 @@ export const getAccountBalanceDistribution = (accounts) => {
 export default {
     getFinancialReportsData,
     calculateFinancialMetrics,
+    calculateBalanceSheetDetails,
+    calculateCashFlowDetails,
+    calculateExpenseAnalysisDetails,
+    calculateTaxSummary,
     filterByDateRange,
     groupExpensesByCategory,
     groupExpensesByCostCenter,

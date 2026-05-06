@@ -31,11 +31,18 @@ import {
     ChevronRight,
     Copy,
     Trash,
+    Zap
 } from 'lucide-react';
 
 import { employeesApi } from '../../api/employeesApi';
 import { receiptVoucherApi } from '../../api/receiptVoucherApi';
+import { generateDocFilename, generateReportFilename } from '../../utils/filenameUtils';
+import { usePrintDocument } from '../../hooks/usePrintDocument';
 import { getImageUrl } from '../../utils/urlUtils';
+import { useBranch } from '../../context/BranchContext';
+import { useCompany } from '../../context/CompanyContext';
+import { exportToExcel, exportToPDF } from '../../utils/exportUtils';
+import { resolveCurrencyDisplayCode } from '../../utils/countryCurrencyOptions';
 
 // --- HELPER: CUSTOM SELECT ---
 const CustomSelect = ({ placeholder, options, value, onChange }) => {
@@ -88,6 +95,10 @@ const CustomSelect = ({ placeholder, options, value, onChange }) => {
 
 // --- COMPONENT: RECEIPT VOUCHER ---
 const ReceiptVoucher = () => {
+    const { print } = usePrintDocument();
+    const { branchNames, defaultBranchName } = useBranch();
+    const { company } = useCompany();
+    const currency = resolveCurrencyDisplayCode(company || {});
     const [isAddModalOpen, setIsAddModalOpen] = useState(false);
     const fileInputRef = useRef(null);
 
@@ -99,12 +110,23 @@ const ReceiptVoucher = () => {
     const [employees, setEmployees] = useState([]);
     const [isLoadingEmployees, setIsLoadingEmployees] = useState(false);
 
+    const RECEIPT_COLUMNS = [
+        { header: 'ID', key: 'id', width: 10 },
+        { header: 'Date', key: 'date', width: 12 },
+        { header: 'Member', key: 'member', width: 25 },
+        { header: 'Source', key: 'source', width: 15 },
+        { header: 'Branch', key: 'branch', width: 15 },
+        { header: 'Amount', key: 'amount', width: 12 },
+        { header: 'Mode', key: 'mode', width: 10 },
+        { header: 'Status', key: 'status', width: 12 }
+    ];
+
     // --- FORM STATE ---
     const [receipts, setReceipts] = useState([]);
     const [editingReceipt, setEditingReceipt] = useState(null);
     const [formData, setFormData] = useState({
         date: '2026-01-22',
-        branch: 'Dubai Branch',
+        branch: '',
         member: '',
         category: '',
         amount: '',
@@ -121,7 +143,7 @@ const ReceiptVoucher = () => {
         setEditingReceipt(null);
         setFormData({
             date: new Date().toISOString().split('T')[0],
-            branch: 'Dubai Branch',
+            branch: defaultBranchName,
             member: '',
             category: '',
             amount: '',
@@ -144,6 +166,23 @@ const ReceiptVoucher = () => {
     const [filterPayment, setFilterPayment] = useState('All Payments');
     const [filterBranch, setFilterBranch] = useState('All Branches');
     const [filterDateRange, setFilterDateRange] = useState('All Time');
+    const branchOptions = useMemo(() => {
+        const options = new Set();
+        if (defaultBranchName) {
+            options.add(defaultBranchName);
+        }
+        branchNames.forEach((branchName) => {
+            if (branchName) {
+                options.add(branchName);
+            }
+        });
+        receipts.forEach((receipt) => {
+            if (receipt.branch) {
+                options.add(receipt.branch);
+            }
+        });
+        return Array.from(options);
+    }, [branchNames, defaultBranchName, receipts]);
 
     // --- DATA FETCHING ---
     const fetchReceipts = async () => {
@@ -159,6 +198,7 @@ const ReceiptVoucher = () => {
                 memberId: 'EMP-000', // Placeholder
                 amount: r.amount.toLocaleString(),
                 mode: r.paymentMode,
+                branch: r.branch || '',
                 status: r.status,
                 purpose: r.purpose,
                 icon: getIconForCategory(r.category),
@@ -178,6 +218,18 @@ const ReceiptVoucher = () => {
     useEffect(() => {
         fetchReceipts();
     }, []);
+
+    useEffect(() => {
+        if (!defaultBranchName) {
+            return;
+        }
+
+        setFormData((prev) => (
+            prev.branch
+                ? prev
+                : { ...prev, branch: defaultBranchName }
+        ));
+    }, [defaultBranchName]);
 
     // --- MOCK DATA INITIALIZATION ---
     // Moved mock data to state to support duplicate/delete actions
@@ -227,11 +279,12 @@ const ReceiptVoucher = () => {
             }
 
             // Income Sources
-            if (!sourceMap[r.source]) {
-                sourceMap[r.source] = { amount: 0, count: 0, icon: r.icon, color: r.color, bg: r.bg };
+            const sourceKey = r.source || 'Other';
+            if (!sourceMap[sourceKey]) {
+                sourceMap[sourceKey] = { amount: 0, count: 0, icon: r.icon, color: r.color, bg: r.bg };
             }
-            sourceMap[r.source].amount += amount;
-            sourceMap[r.source].count++;
+            sourceMap[sourceKey].amount += amount;
+            sourceMap[sourceKey].count++;
 
             // Payment Mode
             if (!paymentModeMap[r.mode]) paymentModeMap[r.mode] = 0;
@@ -353,7 +406,7 @@ const ReceiptVoucher = () => {
         setEditingReceipt(receipt);
         setFormData({
             date: new Date(receipt.date).toISOString().split('T')[0], // approx conversion for demo
-            branch: 'Dubai Branch', // Default or from receipt if available
+            branch: receipt.branch || defaultBranchName,
             member: receipt.member,
             category: receipt.source,
             amount: receipt.amount.replace(/,/g, ''),
@@ -372,7 +425,7 @@ const ReceiptVoucher = () => {
         setEditingReceipt(null); // Treat as new
         setFormData({
             date: new Date().toISOString().split('T')[0], // Current date
-            branch: receipt.branch || 'Dubai Branch',
+            branch: receipt.branch || defaultBranchName,
             member: receipt.member,
             category: receipt.source,
             amount: receipt.amount.replace(/,/g, ''),
@@ -390,7 +443,7 @@ const ReceiptVoucher = () => {
     const handleSave = async () => {
         const payload = {
             date: formData.date,
-            branch: formData.branch,
+            branch: formData.branch || defaultBranchName,
             memberName: formData.member,
             category: formData.category,
             amount: Number(formData.amount),
@@ -423,10 +476,14 @@ const ReceiptVoucher = () => {
     };
 
     const handlePrint = (receipt) => {
-        // Ideally this would print a specific receipt template
-        // For now, we simulate by invoking browser print, usually printing the whole page
-        // A real app would open a new window with just the receipt content
-        window.print();
+        const title = generateDocFilename(
+            'Receipt Voucher',
+            receipt.id,
+            receipt.member,
+            receipt.date,
+            currency
+        );
+        print(title);
         setOpenActionId(null);
     };
 
@@ -541,11 +598,19 @@ const ReceiptVoucher = () => {
             if (filterSource !== 'All Sources' && r.source !== filterSource) return false;
             if (filterStatus !== 'All Status' && r.status !== filterStatus) return false;
             if (filterPayment !== 'All Payments' && r.mode !== filterPayment) return false;
-            if (filterBranch !== 'All Branches' && (r.branch || 'Dubai Branch') !== filterBranch) return false;
+            if (filterBranch !== 'All Branches' && (r.branch || defaultBranchName) !== filterBranch) return false;
 
             return true;
         });
     }, [receipts, filterDate, searchQuery, filterSource, filterStatus, filterPayment, filterBranch, filterDateRange]);
+
+    const handleExportExcel = () => {
+        exportToExcel(filteredReceipts, RECEIPT_COLUMNS, 'Receipt_Vouchers');
+    };
+
+    const handleExportPdf = () => {
+        exportToPDF(filteredReceipts, RECEIPT_COLUMNS, 'Receipt Vouchers', 'Receipt_Vouchers');
+    };
 
 
     return (
@@ -561,10 +626,16 @@ const ReceiptVoucher = () => {
                     <div className="text-[10px] text-slate-400 mt-1">Financials &rarr; <span className="font-semibold text-slate-600">Receipt Voucher</span></div>
                 </div>
                 <div className="flex gap-2">
-                    <button className="flex items-center gap-2 px-3 py-2 bg-white border border-slate-200 rounded text-xs font-bold text-slate-600 hover:bg-slate-50 shadow-sm">
+                    <button 
+                        onClick={handleExportExcel}
+                        className="flex items-center gap-2 px-3 py-2 bg-white border border-slate-200 rounded text-xs font-bold text-slate-600 hover:bg-slate-50 shadow-sm"
+                    >
                         <FileSpreadsheet size={16} /> Export Excel
                     </button>
-                    <button className="flex items-center gap-2 px-3 py-2 bg-white border border-slate-200 rounded text-xs font-bold text-slate-600 hover:bg-slate-50 shadow-sm">
+                    <button 
+                        onClick={handleExportPdf}
+                        className="flex items-center gap-2 px-3 py-2 bg-white border border-slate-200 rounded text-xs font-bold text-slate-600 hover:bg-slate-50 shadow-sm"
+                    >
                         <Download size={16} /> Export PDF
                     </button>
                     <button
@@ -582,7 +653,7 @@ const ReceiptVoucher = () => {
                     <div className="flex justify-between items-start">
                         <div>
                             <p className="text-xs text-slate-500 font-semibold">Today's Receipts</p>
-                            <h3 className="text-2xl font-bold text-slate-800 mt-1">AED {stats.todayTotal}</h3>
+                            <h3 className="text-2xl font-bold text-slate-800 mt-1">{currency} {stats.todayTotal}</h3>
                             <p className="text-[10px] text-slate-400 mt-1">{stats.todayCount} transactions</p>
                         </div>
                         <div className="p-2 bg-[#F5C742] rounded text-slate-900">
@@ -595,8 +666,8 @@ const ReceiptVoucher = () => {
                     <div className="flex justify-between items-start">
                         <div>
                             <p className="text-xs text-slate-500 font-semibold">This Month</p>
-                            <h3 className="text-2xl font-bold text-slate-800 mt-1">AED {stats.monthTotal}</h3>
-                            <p className="text-[10px] text-slate-400 mt-1">January 2024</p>
+                            <h3 className="text-2xl font-bold text-slate-800 mt-1">{currency} {stats.monthTotal}</h3>
+                            <p className="text-[10px] text-slate-400 mt-1">{new Date().toLocaleString('default', { month: 'long', year: 'numeric' })}</p>
                         </div>
                         <div className="p-2 bg-emerald-50 rounded text-emerald-600">
                             <TrendingUp size={20} />
@@ -608,7 +679,7 @@ const ReceiptVoucher = () => {
                     <div className="flex justify-between items-start">
                         <div>
                             <p className="text-xs text-slate-500 font-semibold">Pending Amount</p>
-                            <h3 className="text-2xl font-bold text-slate-800 mt-1">AED {stats.pendingTotal}</h3>
+                            <h3 className="text-2xl font-bold text-slate-800 mt-1">{currency} {stats.pendingTotal}</h3>
                             <p className="text-[10px] text-slate-400 mt-1">Awaiting payment</p>
                         </div>
                         <div className="p-2 bg-orange-50 rounded text-orange-600">
@@ -646,7 +717,7 @@ const ReceiptVoucher = () => {
                                     <item.icon size={20} />
                                 </div>
                                 <p className="text-[10px] text-slate-500 font-semibold text-center mb-0.5">{item.label}</p>
-                                <p className="text-sm font-bold text-slate-800">AED {item.amount}</p>
+                                <p className="text-sm font-bold text-slate-800">{currency} {item.amount}</p>
                                 <p className="text-[10px] text-slate-400">{item.count}</p>
                             </div>
                         ))}
@@ -816,8 +887,9 @@ const ReceiptVoucher = () => {
                                 onChange={(e) => setFilterBranch(e.target.value)}
                             >
                                 <option>All Branches</option>
-                                <option>Dubai Branch</option>
-                                <option>Marina Branch</option>
+                                {branchOptions.map((branchName) => (
+                                    <option key={branchName}>{branchName}</option>
+                                ))}
                             </select>
                         </div>
                     </div>
@@ -845,7 +917,7 @@ const ReceiptVoucher = () => {
                                 <th className="px-4 py-3">Date</th>
                                 <th className="px-4 py-3">Source Channel</th>
                                 <th className="px-4 py-3">Payer / Employee</th>
-                                <th className="px-4 py-3 text-right">Amount (AED)</th>
+                                <th className="px-4 py-3 text-right">Amount ({currency})</th>
                                 <th className="px-4 py-3">Payment Mode</th>
                                 <th className="px-4 py-3">Status</th>
                                 <th className="px-4 py-3 text-center">Actions</th>
@@ -894,7 +966,7 @@ const ReceiptVoucher = () => {
                                                 </div>
                                             </div>
                                         </td>
-                                        <td className="px-4 py-3 text-right font-bold text-emerald-600">AED {row.amount}</td>
+                                        <td className="px-4 py-3 text-right font-bold text-emerald-600">{currency} {row.amount}</td>
                                         <td className="px-4 py-3">
                                             <div className="flex items-center gap-1 text-slate-600">
                                                 {row.mode === 'Card' ? <CreditCard size={12} /> : <DollarSign size={12} />}
@@ -988,7 +1060,7 @@ const ReceiptVoucher = () => {
                                     <label className="block text-xs font-bold text-slate-600 mb-1">Branch</label>
                                     <CustomSelect
                                         placeholder="Select branch"
-                                        options={['Dubai Branch', 'Marina Branch']}
+                                        options={branchOptions}
                                         value={formData.branch}
                                         onChange={(val) => setFormData({ ...formData, branch: val })}
                                     />
@@ -1036,7 +1108,7 @@ const ReceiptVoucher = () => {
                                 </div>
 
                                 <div>
-                                    <label className="block text-xs font-bold text-slate-600 mb-1">Amount (AED) <span className="text-red-500">*</span></label>
+                                    <label className="block text-xs font-bold text-slate-600 mb-1">Amount ({currency}) <span className="text-red-500">*</span></label>
                                     <input
                                         type="number"
                                         placeholder="0.00"
@@ -1165,7 +1237,7 @@ const ReceiptVoucher = () => {
                             {/* Amount & Status Row */}
                             <div className="grid grid-cols-2 gap-4 mb-6">
                                 <div className="border border-slate-200 rounded-lg p-4 text-center bg-white shadow-sm">
-                                    <p className="text-2xl font-bold text-emerald-600">AED {selectedReceipt.amount}</p>
+                                    <p className="text-2xl font-bold text-emerald-600">{currency} {selectedReceipt.amount}</p>
                                     <p className="text-[10px] text-slate-400 uppercase tracking-wider mt-1">Receipt Amount</p>
                                 </div>
                                 <div className="border border-slate-200 rounded-lg p-4 text-center flex flex-col items-center justify-center bg-white shadow-sm">
@@ -1220,7 +1292,7 @@ const ReceiptVoucher = () => {
                                     </div>
                                     <div>
                                         <p className="text-[10px] text-slate-400 font-bold uppercase">Branch</p>
-                                        <p className="text-xs font-medium text-slate-700">Dubai Branch</p>
+                                        <p className="text-xs font-medium text-slate-700">{selectedReceipt.branch || defaultBranchName || 'Unassigned'}</p>
                                     </div>
                                     <div>
                                         <p className="text-[10px] text-slate-400 font-bold uppercase">Accounting Purpose</p>

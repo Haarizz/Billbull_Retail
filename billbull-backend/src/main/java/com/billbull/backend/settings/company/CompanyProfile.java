@@ -32,6 +32,16 @@ public class CompanyProfile {
     @Column(name = "logo_path")
     private String logoPath;
 
+    /** Relative path for company stamp image, e.g. /uploads/company/stamp.png */
+    @Column(name = "stamp_path")
+    private String stampPath;
+
+    @Column(name = "show_stamp_in_print")
+    private Boolean showStampInPrint;
+
+    @Column(name = "show_stamp_in_email")
+    private Boolean showStampInEmail;
+
     private String currency;
 
     @Column(name = "currency_symbol")
@@ -75,6 +85,15 @@ public class CompanyProfile {
 
     public String getLogoPath() { return logoPath; }
     public void setLogoPath(String logoPath) { this.logoPath = logoPath; }
+
+    public String getStampPath() { return stampPath; }
+    public void setStampPath(String stampPath) { this.stampPath = stampPath; }
+
+    public Boolean getShowStampInPrint() { return showStampInPrint; }
+    public void setShowStampInPrint(Boolean showStampInPrint) { this.showStampInPrint = showStampInPrint; }
+
+    public Boolean getShowStampInEmail() { return showStampInEmail; }
+    public void setShowStampInEmail(Boolean showStampInEmail) { this.showStampInEmail = showStampInEmail; }
 
     public String getCurrency() { return currency; }
     public void setCurrency(String currency) { this.currency = currency; }

@@ -22,6 +22,10 @@ public class Quotation {
     private LocalDate date;
     private LocalDate validTill;
     private String currency;
+    private Long branchId;
+    private String branchName;
+    private String branchCode;
+    private String branchLocation;
 
     private String paymentTerms;
     private String deliveryType;
@@ -42,6 +46,7 @@ public class Quotation {
     private BigDecimal subTotal;
     private BigDecimal taxAmount;
     private BigDecimal totalAmount;
+    private BigDecimal billDiscount;
 
     // ---------------- RELATIONSHIPS ----------------
 
@@ -79,6 +84,18 @@ public class Quotation {
     public String getCurrency() { return currency; }
     public void setCurrency(String currency) { this.currency = currency; }
 
+    public Long getBranchId() { return branchId; }
+    public void setBranchId(Long branchId) { this.branchId = branchId; }
+
+    public String getBranchName() { return branchName; }
+    public void setBranchName(String branchName) { this.branchName = branchName; }
+
+    public String getBranchCode() { return branchCode; }
+    public void setBranchCode(String branchCode) { this.branchCode = branchCode; }
+
+    public String getBranchLocation() { return branchLocation; }
+    public void setBranchLocation(String branchLocation) { this.branchLocation = branchLocation; }
+
     public String getPaymentTerms() { return paymentTerms; }
     public void setPaymentTerms(String paymentTerms) { this.paymentTerms = paymentTerms; }
 
@@ -108,6 +125,9 @@ public class Quotation {
 
     public BigDecimal getTotalAmount() { return totalAmount; }
     public void setTotalAmount(BigDecimal totalAmount) { this.totalAmount = totalAmount; }
+
+    public BigDecimal getBillDiscount() { return billDiscount; }
+    public void setBillDiscount(BigDecimal billDiscount) { this.billDiscount = billDiscount; }
 
     public List<QuotationItem> getItems() { return items; }
     public void setItems(List<QuotationItem> items) { this.items = items; }

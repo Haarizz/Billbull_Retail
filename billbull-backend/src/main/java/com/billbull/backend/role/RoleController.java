@@ -56,4 +56,14 @@ public class RoleController {
         Role role = roleService.getRoleByName(name);
         return ResponseEntity.ok(role);
     }
+
+    /**
+     * Create a new role - ADMIN ONLY.
+     */
+    @PostMapping
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<Role> createRole(@RequestBody Role role, HttpServletRequest request) {
+        auditLogService.logAllowedAccess("/api/roles", "POST", request);
+        return ResponseEntity.ok(roleService.createRole(role));
+    }
 }

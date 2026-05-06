@@ -11,7 +11,13 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
+import java.math.BigDecimal;
+import java.math.RoundingMode;
+
 import com.billbull.backend.inventory.product.ProductMediaRepository;
+import com.billbull.backend.inventory.warehouse.Warehouse;
+import com.billbull.backend.settings.branch.Branch;
+import com.billbull.backend.settings.branch.BranchAccessService;
 import com.billbull.backend.util.DocumentOrderingUtil;
 
 @Service
@@ -23,6 +29,8 @@ public class SalesOrderService {
     private final com.billbull.backend.inventory.product.ProductRepository productRepo;
     private final com.billbull.backend.inventory.product.ProductBarcodeRepository barcodeRepo;
     private final ProductMediaRepository productMediaRepository;
+    private final com.billbull.backend.inventory.product.ProductPackingRepository packingRepo;
+    private final BranchAccessService branchAccessService;
 
     public SalesOrderService(
             SalesOrderRepository orderRepo,
@@ -30,13 +38,17 @@ public class SalesOrderService {
             com.billbull.backend.inventory.warehouse.WarehouseStockService warehouseStockService,
             com.billbull.backend.inventory.product.ProductRepository productRepo,
             com.billbull.backend.inventory.product.ProductBarcodeRepository barcodeRepo,
-            ProductMediaRepository productMediaRepository) {
+            ProductMediaRepository productMediaRepository,
+            com.billbull.backend.inventory.product.ProductPackingRepository packingRepo,
+            BranchAccessService branchAccessService) {
         this.orderRepo = orderRepo;
         this.quotationRepo = quotationRepo;
         this.warehouseStockService = warehouseStockService;
         this.productRepo = productRepo;
         this.barcodeRepo = barcodeRepo;
         this.productMediaRepository = productMediaRepository;
+        this.packingRepo = packingRepo;
+        this.branchAccessService = branchAccessService;
     }
 
     // ----------------------------
@@ -48,6 +60,17 @@ public class SalesOrderService {
     })
     @Transactional(rollbackFor = Exception.class)
     public SalesOrder save(SalesOrder order) {
+        Branch currentBranch = branchAccessService.getRequiredCurrentUserBranch();
+        Warehouse reservationWarehouse = resolveReservationWarehouse(order, currentBranch);
+        order.setWarehouse(reservationWarehouse);
+
+        order.setLinkedQuotation(normalizeOptional(order.getLinkedQuotation()));
+        order.setLinkedProforma(normalizeOptional(order.getLinkedProforma()));
+
+        if (order.getLinkedQuotation() != null && order.getLinkedProforma() != null) {
+            throw new IllegalStateException(
+                    "Sales Order can be linked to either a quotation or a PI / Proforma, not both.");
+        }
 
         double subTotal = 0;
         double tax = 0;
@@ -70,10 +93,13 @@ public class SalesOrderService {
                                 order.getWarehouse().getId(),
                                 product.getId());
 
-                        if (available.compareTo(java.math.BigDecimal.valueOf(item.getQuantity())) < 0) {
+                        // Convert requested quantity to base units so the comparison is against
+                        // the StockMovement ledger (which always stores base units).
+                        int baseRequired = resolvePackingBaseQty(product.getId(), item.getUnit(), item.getQuantity());
+                        if (available.compareTo(java.math.BigDecimal.valueOf(baseRequired)) < 0) {
                             throw new IllegalStateException(
                                     "Insufficient available stock for item " + item.getItemCode() +
-                                            ". Available: " + available + ", Required: " + item.getQuantity());
+                                            ". Available: " + available + ", Required (base units): " + baseRequired);
                         }
                     }
                 }
@@ -86,11 +112,16 @@ public class SalesOrderService {
             }
         }
 
-        double total = subTotal + tax;
+        double billDiscPct = order.getBillDiscount() != null ? order.getBillDiscount() : 0;
+        double billDiscAmt = BigDecimal.valueOf(subTotal * (billDiscPct / 100))
+                .setScale(2, RoundingMode.HALF_UP).doubleValue();
+        subTotal = BigDecimal.valueOf(subTotal).setScale(2, RoundingMode.HALF_UP).doubleValue();
+        double tax2 = BigDecimal.valueOf(tax).setScale(2, RoundingMode.HALF_UP).doubleValue();
+        double total = BigDecimal.valueOf(subTotal - billDiscAmt + tax2).setScale(2, RoundingMode.HALF_UP).doubleValue();
         double advance = order.getAdvanceAmount() != null ? order.getAdvanceAmount() : 0;
 
         order.setSubTotal(subTotal);
-        order.setTaxTotal(tax);
+        order.setTaxTotal(tax2);
         order.setOrderTotal(total);
         order.setBalanceDue(total - advance);
 
@@ -123,7 +154,44 @@ public class SalesOrderService {
                     com.billbull.backend.sales.quotation.QuotationStatus.CONVERTED);
         }
 
+        // Force the lazy warehouse proxy to load while the transaction is still open,
+        // so Jackson can serialize it after the session closes (open-in-view=false).
+        Hibernate.initialize(saved.getWarehouse());
+
         return saved;
+    }
+
+    private Warehouse resolveReservationWarehouse(SalesOrder order, Branch currentBranch) {
+        if (order == null) {
+            throw new IllegalStateException("Sales Order payload is missing.");
+        }
+
+        if (order.getId() != null) {
+            Warehouse existingWarehouse = orderRepo.findById(order.getId())
+                    .map(SalesOrder::getWarehouse)
+                    .orElse(null);
+            if (existingWarehouse != null) {
+                return existingWarehouse;
+            }
+        }
+
+        Warehouse branchDefaultWarehouse = currentBranch.getDefaultWarehouse();
+        if (branchDefaultWarehouse == null) {
+            throw new IllegalStateException(
+                    "No default warehouse is configured for branch " + currentBranch.getName()
+                            + ". Set a default warehouse before confirming sales orders.");
+        }
+
+        return branchDefaultWarehouse;
+    }
+
+    private String normalizeOptional(String value) {
+        if (value == null) {
+            return null;
+        }
+
+        String trimmed = value.trim();
+        return trimmed.isEmpty() ? null : trimmed;
     }
 
     // ----------------------------
@@ -135,6 +203,7 @@ public class SalesOrderService {
                 .orElseThrow(() -> new RuntimeException("Sales Order not found: " + id));
 
         Hibernate.initialize(order.getItems());
+        Hibernate.initialize(order.getWarehouse());
         hydrateOrderItemDisplayData(order);
         return order;
     }
@@ -155,6 +224,7 @@ public class SalesOrderService {
         // ✅ FORCE LAZY INITIALIZATION
         orders.forEach(order -> {
             Hibernate.initialize(order.getItems());
+            Hibernate.initialize(order.getWarehouse());
             hydrateOrderItemDisplayData(order);
         });
 
@@ -279,5 +349,46 @@ public class SalesOrderService {
                 item.setBarcode(barcode);
             }
         }
+
+        // Hydrate price: packing-level price first, then product retail price
+        if (item.getPrice() == null) {
+            java.math.BigDecimal packingPrice = lookupPackingValue(product.getId(), item.getUnit(), true);
+            if (packingPrice != null) {
+                item.setPrice(packingPrice.doubleValue());
+            } else if (product.getPricing() != null && product.getPricing().getRetailPrice() != null) {
+                item.setPrice(product.getPricing().getRetailPrice().doubleValue());
+            }
+        }
+
+        // Hydrate cost: packing-level cost first, then product cost
+        if (item.getCost() == null) {
+            java.math.BigDecimal packingCost = lookupPackingValue(product.getId(), item.getUnit(), false);
+            if (packingCost != null) {
+                item.setCost(packingCost.doubleValue());
+            } else if (product.getPricing() != null && product.getPricing().getCost() != null) {
+                item.setCost(product.getPricing().getCost().doubleValue());
+            }
+        }
+    }
+
+    private java.math.BigDecimal lookupPackingValue(Long productId, String unitName, boolean isPrice) {
+        if (unitName == null || unitName.isBlank()) return null;
+        return packingRepo.findByProductId(productId).stream()
+                .filter(p -> p.getUnit() != null && unitName.equalsIgnoreCase(p.getUnit().getName()))
+                .findFirst()
+                .map(p -> isPrice ? p.getPrice() : p.getCost())
+                .orElse(null);
+    }
+
+    private int resolvePackingBaseQty(Long productId, String unitName, int qty) {
+        if (qty <= 0 || unitName == null || unitName.isBlank()) return qty;
+        return packingRepo.findByProductId(productId).stream()
+                .filter(p -> p.getUnit() != null && unitName.equalsIgnoreCase(p.getUnit().getName()))
+                .findFirst()
+                .map(p -> p.getConversion() != null
+                        ? p.getConversion().multiply(java.math.BigDecimal.valueOf(qty))
+                                .setScale(0, RoundingMode.HALF_UP).intValue()
+                        : qty)
+                .orElse(qty);
     }
 }

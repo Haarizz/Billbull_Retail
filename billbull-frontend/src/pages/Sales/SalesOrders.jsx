@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import {
   Printer,
@@ -13,6 +13,7 @@ import {
   FileText,
   Calendar,
   CreditCard,
+  DollarSign,
   Truck,
   ShoppingCart,
   Box,
@@ -24,12 +25,15 @@ import {
   Trash2,
   Paperclip,
   Save,
-  ChevronRight
+  ChevronRight,
+  AlertCircle
 } from 'lucide-react';
 
 // ✅ API IMPORTS
+import api from '../../api/axiosConfig';
 import { getAllCustomers } from '../../api/customerledgerApi';
 import { getAllQuotations } from '../../api/quotationApi';
+import { getAllProformas } from '../../api/proformaApi';
 import {
   getAllSalesOrders,
   saveSalesOrder,
@@ -39,15 +43,19 @@ import {
 import { getTemplatesByCategory } from '../../api/printTemplateApi';
 import { generatePrintHtml, printHtml } from '../../utils/printGenerator';
 import { getImageUrl } from '../../utils/urlUtils';
+import { getDefaultProductUnit, resolveUnitAmount } from '../../utils/unitPricing';
 import { getStockAvailability } from '../../api/stockAvailabilityApi';
+import { getSalesSettings } from '../../api/salesSettingsApi';
 import billBullLogo from '../../assets/billBullLogo.png';
 import { useCompany } from '../../context/CompanyContext';
+import { summarizeSalesItems } from '../../utils/documentSummaryUtils';
 
 // ✅ PRODUCT SELECTOR
 import ProductSelector from '../../components/ProductSelector';
 
 // ✅ CUSTOMER SELECTOR
 import CustomerSelector from '../../components/CustomerSelector';
+import CustomerShippingPanel from '../../components/CustomerShippingPanel';
 
 // ✅ GLOBAL COMPONENTS
 import { ItemDescriptionCell, ItemDescriptionHeader } from '../../components/ItemDescriptionCell';
@@ -61,9 +69,36 @@ import useShortcuts from '../../hooks/useShortcuts';
 
 // ✅ PERMISSIONS
 import { usePermissions } from '../../context/PermissionContext';
+import ExportDropdown from '../../components/common/ExportDropdown';
+import { exportToExcel, exportToPDF } from '../../utils/exportUtils';
+import CurrencyAmount from '../../components/CurrencyAmount';
+import { formatCurrencyDisplay, resolveCurrencyDisplayCode } from '../../utils/countryCurrencyOptions';
+
+// ==========================================
+// 1. CONFIGURATION
+// ==========================================
+
+const SALES_ORDER_COLUMNS = [
+  { header: 'SO No', key: 'soNumber', width: 15 },
+  { header: 'Date', key: 'orderDate', width: 12 },
+  { header: 'Customer', key: 'customerName', width: 25 },
+  { header: 'Quotation', key: 'linkedQuotation', width: 15 },
+  { header: 'PI No', key: 'linkedProforma', width: 15 },
+  { header: 'Total', key: 'orderTotal', width: 15 },
+  { header: 'Advance', key: 'advanceAmount', width: 12 },
+  { header: 'Balance', key: 'balanceAmount', width: 12 },
+  { header: 'Status', key: 'status', width: 12 }
+];
 
 // ✅ MOBILE CARD COMPONENT
-const MobileCard = ({ order, onClick, getStatusBadge }) => (
+const resolveCurrencyLabel = (company) => {
+  return resolveCurrencyDisplayCode(company || {});
+};
+
+const formatCurrencyAmount = (value, companyProfile) =>
+  formatCurrencyDisplay(value, companyProfile);
+
+const MobileCard = ({ order, onClick, getStatusBadge, currency }) => (
   <div onClick={() => onClick(order)} className="bg-white p-4 rounded-lg shadow-sm border border-slate-200 mb-3 active:scale-[0.98] transition-transform">
     <div className="flex justify-between items-start mb-2">
       <div>
@@ -82,10 +117,10 @@ const MobileCard = ({ order, onClick, getStatusBadge }) => (
 
     <div className="flex justify-between items-center border-t border-slate-100 pt-2 mt-2">
       <div className="text-xs text-slate-500">
-        Total: <span className="font-bold text-slate-800">{Number(order.orderTotal).toFixed(2)}</span>
+        Total: <CurrencyAmount value={order.orderTotal} currency={currency} className="font-bold text-slate-800" />
       </div>
       <div className="text-xs text-slate-500">
-        Balance: <span className="font-bold text-slate-800">{(Number(order.orderTotal) - Number(order.advanceAmount)).toFixed(2)}</span>
+        Balance: <CurrencyAmount value={Number(order.orderTotal) - Number(order.advanceAmount)} currency={currency} className="font-bold text-slate-800" />
       </div>
       <ChevronDown size={16} className="text-slate-300 -rotate-90" />
     </div>
@@ -122,6 +157,8 @@ const MobileFloatingActions = ({ status, onConfirm, onMarkInvoiced, onSave, onPr
 
 const SalesOrders = () => {
   const { company } = useCompany();
+  const currencyLabel = resolveCurrencyLabel(company);
+  const orderCurrency = company?.currency || currencyLabel || 'AED';
   const { canCreate, canEdit, canApprove, canExport } = usePermissions();
   const [activeTab, setActiveTab] = useState('list');
 
@@ -131,13 +168,20 @@ const SalesOrders = () => {
   // --- DATA STATES ---
   const [customersList, setCustomersList] = useState([]);
   const [quotationsList, setQuotationsList] = useState([]);
+  const [proformasList, setProformasList] = useState([]);
   const [selectedCustomer, setSelectedCustomer] = useState(null);
   const [isCustomerOpen, setIsCustomerOpen] = useState(false);
   const [isCustomerSearchOpen, setIsCustomerSearchOpen] = useState(false);
-  const [isQuotationOpen, setIsQuotationOpen] = useState(false);
+  const [isLinkedSourceOpen, setIsLinkedSourceOpen] = useState(false);
 
   // --- ORDER LIST STATE ---
   const [ordersList, setOrdersList] = useState([]);
+  const exportOrdersList = useMemo(() => ordersList.map((order) => ({
+    ...order,
+    orderTotal: formatCurrencyAmount(order.orderTotal, company),
+    advanceAmount: formatCurrencyAmount(order.advanceAmount, company),
+    balanceAmount: formatCurrencyAmount(Number(order.orderTotal) - Number(order.advanceAmount), company)
+  })), [company, ordersList]);
 
   // --- FORM STATES ---
   const [status, setStatus] = useState('DRAFT');
@@ -145,6 +189,9 @@ const SalesOrders = () => {
 
   // ✅ NEW STATE: Track the currently focused item for the sidebar
   const [focusedItem, setFocusedItem] = useState(null);
+
+  // Sales settings (stock check, credit limit policy)
+  const [salesSettings, setSalesSettings] = useState(null);
 
   // ✅ LIVE STOCK MAP
   const [liveStockMap, setLiveStockMap] = useState({});
@@ -170,16 +217,37 @@ const SalesOrders = () => {
   // Header Info
   const [soNumber, setSoNumber] = useState(() => `SO-${Math.floor(100000 + Math.random() * 900000)}`);
   const [orderDate, setOrderDate] = useState(new Date().toISOString().split('T')[0]);
+  const [linkedSourceType, setLinkedSourceType] = useState('');
+  const [linkedSourceSearch, setLinkedSourceSearch] = useState('');
   const [linkedQtn, setLinkedQtn] = useState('');
   const [linkedPi, setLinkedPi] = useState('');
+
+  const createBlankOrderItem = () => ({
+    id: Date.now() + Math.random(),
+    code: '',
+    barcode: '',
+    image: '',
+    desc: '',
+    remarks: '',
+    unit: 'PCS',
+    qty: 0,
+    price: 0,
+    cost: 0,
+    foc: 0,
+    focUnit: 'PCS',
+    availableUnits: ['PCS'],
+    disc: 0,
+    tax: 5,
+    taxAmt: 0,
+    total: 0
+  });
 
   // ✅ PRODUCT SELECTOR STATE
   const [isProductSelectorOpen, setIsProductSelectorOpen] = useState(false);
 
   // Items
-  const [items, setItems] = useState([
-    { id: Date.now(), code: '', barcode: '', image: '', desc: '', remarks: '', unit: 'PCS', qty: 0, price: 0, cost: 0, foc: 0, focUnit: 'PCS', availableUnits: ['PCS'], disc: 0, tax: 5, taxAmt: 0, total: 0 }
-  ]);
+  const [items, setItems] = useState([createBlankOrderItem()]);
+  const [billDiscount, setBillDiscount] = useState(0);
 
   // ✅ GLOBAL SHORTCUTS
   useShortcuts({
@@ -216,6 +284,17 @@ const SalesOrders = () => {
   const [advanceAmount, setAdvanceAmount] = useState(0);
   const [paymentRef, setPaymentRef] = useState('');
   const [paymentNotes, setPaymentNotes] = useState('');
+  const [bankAccountOptions, setBankAccountOptions] = useState([]);
+
+  // Payment Modal State
+  const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
+  const [modalPaymentDate, setModalPaymentDate] = useState(new Date().toISOString().split('T')[0]);
+  const [modalPaymentAmount, setModalPaymentAmount] = useState(0);
+  const [modalPaymentRef, setModalPaymentRef] = useState('');
+  const [modalPaymentMode, setModalPaymentMode] = useState('Cash');
+  const [modalBankAccount, setModalBankAccount] = useState('');
+  const [modalChequeDate, setModalChequeDate] = useState(new Date().toISOString().split('T')[0]);
+  const [modalNotes, setModalNotes] = useState('');
 
   // Delivery
   const [deliveryType, setDeliveryType] = useState('Delivery');
@@ -250,6 +329,46 @@ const SalesOrders = () => {
   // ✅ HANDLE INCOMING QUOTATION
   const location = useLocation();
   const navigate = useNavigate();
+  const activeLinkedDocumentNumber = linkedSourceType === 'quotation'
+    ? linkedQtn
+    : linkedSourceType === 'proforma'
+      ? linkedPi
+      : '';
+  const hasLinkedDocument = Boolean(linkedQtn || linkedPi);
+
+  const filteredLinkedDocuments = useMemo(() => {
+    const query = linkedSourceSearch.trim().toLowerCase();
+
+    if (linkedSourceType === 'quotation') {
+      return quotationsList.filter((quotation) => {
+        const number = (quotation.qtnNo || '').toLowerCase();
+        const customer = (quotation.customer || '').toLowerCase();
+
+        return !query || number.includes(query) || customer.includes(query);
+      });
+    }
+
+    if (linkedSourceType === 'proforma') {
+      return proformasList.filter((proforma) => {
+        const number = (proforma.piNumber || '').toLowerCase();
+        const customerName = (proforma.customerName || '').toLowerCase();
+        const customerCode = (proforma.customerCode || '').toLowerCase();
+
+        return !query
+          || number.includes(query)
+          || customerName.includes(query)
+          || customerCode.includes(query);
+      });
+    }
+
+    return [];
+  }, [linkedSourceSearch, linkedSourceType, proformasList, quotationsList]);
+
+  useEffect(() => {
+    if (!isLinkedSourceOpen) {
+      setLinkedSourceSearch(activeLinkedDocumentNumber);
+    }
+  }, [activeLinkedDocumentNumber, isLinkedSourceOpen]);
 
   useEffect(() => {
     if (location.state?.quotation) {
@@ -257,6 +376,8 @@ const SalesOrders = () => {
       handleSelectQuotation({
         qtnNo: qtn.qtnNo,
         customer: qtn.customer,
+        billDiscount: qtn.billDiscount,
+        shippingAddress: qtn.shippingAddress || '',
         items: qtn.items || []
       });
       setActiveTab('create');
@@ -267,7 +388,21 @@ const SalesOrders = () => {
 
   const fetchAllData = async () => {
     try {
-      const custData = await getAllCustomers();
+      const [custResult, qtnResult, proformaResult, bankAccResult, settingsResult] = await Promise.allSettled([
+        getAllCustomers(),
+        getAllQuotations(),
+        getAllProformas(),
+        api.get('/api/ledger/accounts/bank-accounts').then(r => r.data),
+        getSalesSettings()
+      ]);
+
+      const custData = custResult.status === 'fulfilled' ? custResult.value : [];
+      const qtnData = qtnResult.status === 'fulfilled' ? qtnResult.value : [];
+      const proformaData = proformaResult.status === 'fulfilled' ? proformaResult.value : [];
+      const bankAccData = bankAccResult.status === 'fulfilled' ? bankAccResult.value : [];
+      setBankAccountOptions(Array.isArray(bankAccData) ? bankAccData : []);
+      if (settingsResult.status === 'fulfilled') setSalesSettings(settingsResult.value);
+
       let validCustomers = Array.isArray(custData) ? custData : [];
 
       // Ensure a default Walk-in Customer exists in the list for quick selection
@@ -293,8 +428,8 @@ const SalesOrders = () => {
         setSelectedCustomer(current => current || walkIn);
       }
 
-      const qtnData = await getAllQuotations();
       setQuotationsList(Array.isArray(qtnData) ? qtnData : []);
+      setProformasList(Array.isArray(proformaData) ? proformaData : []);
     } catch (error) {
       console.error("Failed to fetch master data:", error);
     }
@@ -311,9 +446,13 @@ const SalesOrders = () => {
 
   // --- CALCULATIONS ---
   const calculateTotals = () => {
-    const subTotal = items.reduce((acc, i) => acc + (i.total - i.taxAmt), 0);
-    const totalTax = items.reduce((acc, i) => acc + i.taxAmt, 0);
-    const orderTotal = subTotal + totalTax;
+    const itemSummary = summarizeSalesItems(items, billDiscount);
+    const grossTotal = itemSummary.grossTotal;
+    const totalDiscount = itemSummary.itemDiscountTotal;
+    const subTotal = itemSummary.subTotal;
+    const billDiscountAmount = itemSummary.billDiscountAmount;
+    const totalTax = itemSummary.tax;
+    const orderTotal = itemSummary.grandTotal;
     const balanceDue = orderTotal - Number(advanceAmount);
 
     const totalCost = items.reduce((acc, i) => {
@@ -325,10 +464,10 @@ const SalesOrders = () => {
     const profit = subTotal - totalCost;
     const marginPercent = subTotal > 0 ? (profit / subTotal) * 100 : 0;
 
-    return { subTotal, totalTax, orderTotal, balanceDue, totalCost, profit, marginPercent };
+    return { grossTotal, totalDiscount, subTotal, billDiscountAmount, totalTax, orderTotal, balanceDue, totalCost, profit, marginPercent };
   };
 
-  const { subTotal, totalTax, orderTotal, balanceDue, totalCost, profit, marginPercent } = calculateTotals();
+  const { grossTotal, totalDiscount, subTotal, billDiscountAmount, totalTax, orderTotal, balanceDue, totalCost, profit, marginPercent } = calculateTotals();
 
   // --- ACTIONS ---
 
@@ -342,13 +481,13 @@ const SalesOrders = () => {
     const grossAmount = price * qty;
     let focDeduction = 0;
 
-    if (focQty > 0 && item.focUnit && item.unitConversions) {
+    if (focQty > 0 && item.focUnit) {
       const sellingUnit = item.unit;
       const focUnit = item.focUnit;
 
       if (sellingUnit === focUnit) {
         focDeduction = price * focQty;
-      } else {
+      } else if (item.unitConversions) {
         const focConversion = item.unitConversions[focUnit] || 1;
         const sellingConversion = item.unitConversions[sellingUnit] || 1;
         const focInBaseUnit = focQty * focConversion;
@@ -371,6 +510,7 @@ const SalesOrders = () => {
       disc: discPercent,
       tax: taxPercent,
       taxAmt: taxAmount,
+      discountAmount,
       total
     };
   };
@@ -381,9 +521,10 @@ const SalesOrders = () => {
       id: fallbackId,
       soItemId: item.soItemId || null,
       code: item.code || item.itemCode || '',
+      name: item.name || item.itemName || item.productName || '',
       barcode: item.barcode || item.itemBarcode || '',
       image: item.primaryImage || item.image || item.thumbnailUrl || item.imageUrl || '',
-      desc: item.desc || item.description || item.name || '',
+      desc: item.desc || item.description || '',
       remarks: item.remarks || item.description || item.desc || '',
       unit: resolvedUnit,
       qty: Number(item.qty ?? item.quantity) || 0,
@@ -397,7 +538,7 @@ const SalesOrders = () => {
       unitConversions: item.unitConversions || {},
       unitPrices: item.unitPrices || {},
       disc: Number(item.disc ?? item.discount) || 0,
-      tax: Number(item.tax ?? item.taxRate) || 5,
+      tax: Number(item.tax ?? item.taxRate ?? item.taxPercent) || 5,
       taxAmt: Number(item.taxAmt ?? item.taxAmount) || 0,
       total: Number(item.total ?? item.lineTotal) || 0
     };
@@ -407,7 +548,13 @@ const SalesOrders = () => {
 
   // ✅ PRODUCT SELECTOR HANDLER
   const handleAddSingleProduct = (product) => {
-    const price = parseFloat(product.retailPrice) || parseFloat(product.sellingPrice) || 0;
+    const defaultUnit = getDefaultProductUnit(product);
+    const price = resolveUnitAmount({
+      targetUnit: defaultUnit,
+      amountMap: product.unitPrices,
+      unitConversions: product.unitConversions,
+      fallbackAmount: product.retailPrice ?? product.sellingPrice ?? 0
+    });
     const cost = parseFloat(product.cost) || 0;
     const disc = parseFloat(product.maxDiscount) || 0;
     const tax = parseFloat(product.salesTax) || 5;
@@ -415,16 +562,17 @@ const SalesOrders = () => {
     const rawItem = {
       id: Date.now() + Math.random(),
       code: product.code,
+      name: product.name || '',
       barcode: product.barcode || '',
       image: product.primaryImage || product.image || product.thumbnailUrl || product.imageUrl || '',
       desc: product.description || product.name,
       remarks: product.description || product.remarks || '',
-      unit: product.unitName || product.unit || (product.availableUnits && product.availableUnits[0]) || 'PCS',
+      unit: defaultUnit,
       qty: 1,
       price: price,
       cost: cost,
       foc: 0,
-      focUnit: product.unitName || product.unit || (product.availableUnits && product.availableUnits[0]) || 'PCS',
+      focUnit: defaultUnit,
       availableUnits: product.availableUnits || ['PCS'],
       unitConversions: product.unitConversions || {},
       unitPrices: product.unitPrices || {},
@@ -443,6 +591,94 @@ const SalesOrders = () => {
     });
 
     setIsProductSelectorOpen(false); // ✅ Close modal after adding
+  };
+
+  const handleFastEntryAdd = (product, qty, price, disc) => {
+    if (isLocked) return;
+    const defaultUnit = getDefaultProductUnit(product);
+    const cost = parseFloat(product.cost) || 0;
+    const tax = parseFloat(product.salesTax) || 5;
+    const rawItem = {
+      id: Date.now() + Math.random(),
+      code: product.code,
+      name: product.name || '',
+      barcode: product.barcode || '',
+      image: product.primaryImage || product.image || '',
+      desc: product.description || product.name,
+      unit: defaultUnit,
+      qty,
+      price,
+      cost,
+      foc: 0,
+      focUnit: defaultUnit,
+      availableUnits: product.availableUnits || ['PCS'],
+      unitConversions: product.unitConversions || {},
+      unitPrices: product.unitPrices || {},
+      disc,
+      netPrice: price * (1 - disc / 100),
+      tax,
+      taxAmt: 0,
+      total: 0,
+      remarks: product.description || '',
+      isProductSelected: true,
+    };
+    const newItem = calculateRow(rawItem);
+    setItems(prev => {
+      const isFirstItemEmpty = prev.length === 1 && !prev[0].code && !prev[0].desc;
+      return isFirstItemEmpty ? [newItem] : [...prev, newItem];
+    });
+  };
+
+  const buildFallbackCustomer = (name, code = '') => ({
+    code,
+    name: name || code || 'Linked Customer',
+    trn: '',
+    phone: '',
+    mobile: '',
+    balance: 0,
+    creditStatus: 'Good'
+  });
+
+  const applyLinkedDocumentItems = (sourceItems = []) => {
+    const mappedItems = sourceItems.map((item, index) =>
+      normalizeOrderItem(item, Date.now() + index + Math.random())
+    );
+
+    if (mappedItems.length > 0) {
+      setItems(mappedItems);
+      setFocusedItem(mappedItems[0] || null);
+      return;
+    }
+
+    setItems([createBlankOrderItem()]);
+    setFocusedItem(null);
+  };
+
+  const handleLinkedSourceTypeChange = (nextType) => {
+    if (isLocked) return;
+    if (nextType === linkedSourceType) return;
+
+    setLinkedSourceType(nextType);
+    setLinkedSourceSearch('');
+    setLinkedQtn('');
+    setLinkedPi('');
+    setBillDiscount(0);
+    setIsLinkedSourceOpen(false);
+  };
+
+  const handleLinkedSourceSearchFocus = (event) => {
+    event.stopPropagation();
+    if (isLocked || !linkedSourceType) return;
+
+    setLinkedSourceSearch(activeLinkedDocumentNumber);
+    setIsLinkedSourceOpen(true);
+  };
+
+  const handleLinkedSourceSearchChange = (value) => {
+    if (isLocked || !linkedSourceType) return;
+
+    setLinkedSourceSearch(value);
+    setIsLinkedSourceOpen(true);
   };
 
   const handleConfirmOrder = () => {
@@ -478,6 +714,9 @@ const SalesOrders = () => {
           customer: selectedCustomer?.name || selectedCustomer?.code || '',
           customerCode: selectedCustomer?.code || '',
           linkedQuotation: linkedQtn || '',
+          linkedProforma: linkedPi || '',
+          billDiscount: Number(billDiscount) || 0,
+          shippingAddress: shippingAddress || '',
           items: items
             .filter(i => i.code && i.qty > 0)
             .map(i => ({
@@ -526,6 +765,8 @@ const SalesOrders = () => {
             sku: i.sku || '',
             localName: i.localName || '',
             barcode: i.barcode || '',
+            salesPerson: '',
+            location: '',
             unit: i.unit,
             qty: Number(i.qty),
             price: Number(i.price),
@@ -539,9 +780,9 @@ const SalesOrders = () => {
             subTotal,
             tax: totalTax,
             grandTotal: orderTotal,
-            currency: 'AED',
-            billDiscount: 0,
-            billDiscountAmount: 0
+            currency: company?.currencySymbol || company?.currency || 'AED',
+            billDiscount: Number(billDiscount) || 0,
+            billDiscountAmount
           },
           meta: {
             paymentTerm: '30 Days',
@@ -565,17 +806,34 @@ const SalesOrders = () => {
   };
 
   // ✅ New Handler for Pay Button
-  const handleLogPayment = () => {
-    if (Number(advanceAmount) <= 0) {
-      alert("Please enter a valid amount to pay.");
-      return;
+  const handleOpenPaymentModal = () => {
+    const outstanding = Math.max(orderTotal - Number(advanceAmount), 0);
+    setModalPaymentAmount(outstanding > 0 ? outstanding.toFixed(2) : '');
+    setModalPaymentDate(new Date().toISOString().split('T')[0]);
+    setModalPaymentMode('Cash');
+    setModalBankAccount('');
+    setModalChequeDate(new Date().toISOString().split('T')[0]);
+    setModalPaymentRef('');
+    setModalNotes('');
+    setIsPaymentModalOpen(true);
+  };
+
+  const handleAddPaymentFromModal = () => {
+    if (!modalPaymentAmount || Number(modalPaymentAmount) <= 0) {
+      return alert("Please enter a valid amount.");
     }
-    // Saving the order effectively "Logs" the payment in this context
-    saveOrUpdateOrder();
+    setAdvanceAmount(prev => Number(prev) + Number(modalPaymentAmount));
+    setPaymentMethod(modalPaymentMode);
+    setPaymentRef(modalPaymentRef);
+    setPaymentNotes(modalNotes);
+    setIsPaymentModalOpen(false);
   };
 
   // ✅ FIX 4: INCLUDE ID IN PAYLOAD
   const saveOrUpdateOrder = async () => {
+    const sanitizedLinkedQuotation = linkedSourceType === 'quotation' ? linkedQtn.trim() : '';
+    const sanitizedLinkedProforma = linkedSourceType === 'proforma' ? linkedPi.trim() : '';
+
     const payload = {
       id: orderId, // <--- Sent ID to backend to update existing record
       soNumber,
@@ -583,8 +841,9 @@ const SalesOrders = () => {
 
       customerCode: selectedCustomer?.code || '',
       customerName: selectedCustomer?.name || '',
-      linkedQuotation: linkedQtn,
-      linkedProforma: linkedPi,
+      linkedQuotation: sanitizedLinkedQuotation,
+      linkedProforma: sanitizedLinkedProforma,
+      billDiscount: Number(billDiscount) || 0,
 
       // Payment & Delivery
       advanceAmount: Number(advanceAmount),
@@ -620,6 +879,36 @@ const SalesOrders = () => {
       }))
     };
 
+    // Stock check enforcement
+    if (salesSettings?.stockCheckRequired) {
+      const stockIssues = [];
+      for (const item of items) {
+        if (!item.code) continue;
+        try {
+          const stockData = await getStockAvailability(item.code);
+          const locs = stockData?.locations || [];
+          const available = locs.reduce((sum, l) => sum + (Number(l.available) || 0), 0);
+          if (Number(item.qty) > available) {
+            stockIssues.push(`${item.name || item.code}: requested ${item.qty}, available ${available}`);
+          }
+        } catch {
+          // skip items where stock check fails
+        }
+      }
+      if (stockIssues.length > 0) {
+        alert(`Insufficient stock for the following items:\n\n${stockIssues.join('\n')}\n\nPlease adjust quantities or disable stock check in Sales Settings.`);
+        return;
+      }
+    }
+
+    // Credit limit BLOCK enforcement
+    if (salesSettings?.creditLimitPolicy === 'BLOCK' &&
+      selectedCustomer?.creditLimitAmount > 0 &&
+      (Number(selectedCustomer.balance || 0) + orderTotal) > selectedCustomer.creditLimitAmount) {
+      alert(`Credit Limit Exceeded: The projected outstanding balance (${formatCurrencyDisplay(Number(selectedCustomer.balance || 0) + orderTotal, company)}) exceeds this customer's credit limit of ${formatCurrencyDisplay(selectedCustomer.creditLimitAmount, company)}.\n\nThis order cannot be saved. Please collect payment first or adjust the credit limit in the customer profile.`);
+      return;
+    }
+
     try {
       const savedOrder = await saveSalesOrder(payload);
 
@@ -639,9 +928,19 @@ const SalesOrders = () => {
       setAttachmentFile(null);
     } catch (e) {
       console.error("Save failed", e);
-      const msg = e?.response?.data?.message || e?.message || "Please check inputs.";
+      const msg = e?.response?.data?.message || e?.response?.data || e?.message || "Please check inputs.";
       alert(`Failed to save Sales Order: ${msg}`);
     }
+  };
+
+  const handleSelectCustomer = (cust) => {
+    setSelectedCustomer(cust);
+    const _defaultAddr = (cust.savedAddresses || []).find(a => a.isDefault);
+    const _resolvedAddr = _defaultAddr
+      ? [_defaultAddr.address1, _defaultAddr.address2, _defaultAddr.city, _defaultAddr.country].filter(Boolean).join(', ')
+      : (cust.defaultShippingAddress || cust.shippingAddress || cust.billingAddress || cust.address || '');
+    setShippingAddress(_resolvedAddr);
+    setIsCustomerSearchOpen(false);
   };
 
   const handleFileUpload = (e) => {
@@ -667,24 +966,64 @@ const SalesOrders = () => {
     if (!orderId) {
       setSoNumber(`SO-${Math.floor(100000 + Math.random() * 900000)}`);
     }
+    setLinkedSourceType('quotation');
     setLinkedQtn(qtn.qtnNo);
+    setLinkedPi('');
+    setLinkedSourceSearch(qtn.qtnNo || '');
+    setBillDiscount(Number(qtn.billDiscount) || 0);
 
     if (qtn.customer) {
       const matchedCustomer = customersList.find(c =>
         qtn.customer.includes(c.name) || qtn.customer.includes(c.code)
       );
-      if (matchedCustomer) {
-        setSelectedCustomer(matchedCustomer);
+      const cust = matchedCustomer || buildFallbackCustomer(qtn.customer);
+      setSelectedCustomer(cust);
+      // Always resolve shipping: prefer passed-through address, then customer master
+      if (qtn.shippingAddress) {
+        setShippingAddress(qtn.shippingAddress);
+      } else {
+        const _defaultAddr = (cust.savedAddresses || []).find(a => a.isDefault);
+        const _resolvedAddr = _defaultAddr
+          ? [_defaultAddr.address1, _defaultAddr.address2, _defaultAddr.city, _defaultAddr.country].filter(Boolean).join(', ')
+          : (cust.defaultShippingAddress || cust.shippingAddress || cust.billingAddress || cust.address || '');
+        setShippingAddress(_resolvedAddr);
       }
     }
 
-    if (qtn.items && qtn.items.length > 0) {
-      const mappedItems = qtn.items.map((item, index) => normalizeOrderItem(item, Date.now() + index));
-      setItems(mappedItems);
-      setFocusedItem(mappedItems[0] || null);
+    applyLinkedDocumentItems(qtn.items || []);
+
+    setIsLinkedSourceOpen(false);
+  };
+
+  const handleSelectProforma = (proforma) => {
+    if (!orderId) {
+      setSoNumber(`SO-${Math.floor(100000 + Math.random() * 900000)}`);
     }
 
-    setIsQuotationOpen(false);
+    setLinkedSourceType('proforma');
+    setLinkedPi(proforma.piNumber || '');
+    setLinkedQtn('');
+    setLinkedSourceSearch(proforma.piNumber || '');
+    setBillDiscount(Number(proforma.billDiscount) || 0);
+
+    const matchedCustomer = customersList.find((customer) =>
+      (proforma.customerCode && customer.code === proforma.customerCode)
+      || (proforma.customerName && customer.name === proforma.customerName)
+    );
+
+    const cust = matchedCustomer || buildFallbackCustomer(proforma.customerName, proforma.customerCode);
+    setSelectedCustomer(cust);
+    if (cust.address || cust.shippingAddress || cust.billingAddress) {
+      const _defaultAddr = (cust.savedAddresses || []).find(a => a.isDefault);
+      const _resolvedAddr = _defaultAddr
+        ? [_defaultAddr.address1, _defaultAddr.address2, _defaultAddr.city, _defaultAddr.country].filter(Boolean).join(', ')
+        : (cust.defaultShippingAddress || cust.shippingAddress || cust.billingAddress || cust.address || '');
+      setShippingAddress(_resolvedAddr);
+    }
+
+    applyLinkedDocumentItems(proforma.items || []);
+
+    setIsLinkedSourceOpen(false);
   };
 
   // ✅ FIX 2: SET ID WHEN LOADING
@@ -700,8 +1039,12 @@ const SalesOrders = () => {
       name: order.customerName,
     });
 
+    const hasLinkedQuotation = Boolean(order.linkedQuotation);
+    const hasLinkedProforma = Boolean(order.linkedProforma);
+    setLinkedSourceType(hasLinkedQuotation ? 'quotation' : hasLinkedProforma ? 'proforma' : '');
     setLinkedQtn(order.linkedQuotation || '');
     setLinkedPi(order.linkedProforma || '');
+    setLinkedSourceSearch(hasLinkedQuotation ? (order.linkedQuotation || '') : (order.linkedProforma || ''));
 
     // Map items back
     if (order.items) {
@@ -709,11 +1052,12 @@ const SalesOrders = () => {
       setItems(mappedItems);
       setFocusedItem(mappedItems[0] || null);
     } else {
-      setItems([]);
+      setItems([createBlankOrderItem()]);
       setFocusedItem(null);
     }
 
     setAdvanceAmount(order.advanceAmount || 0);
+    setBillDiscount(Number(order.billDiscount) || 0);
     setPaymentMethod(order.paymentMethod || 'Cash');
     setPaymentRef(order.paymentReference || '');
     setDeliveryType(order.deliveryType || 'Delivery');
@@ -740,8 +1084,12 @@ const SalesOrders = () => {
     const walkIn = customersList.find(c => c.name.toLowerCase().includes('walk-in') || c.name.toLowerCase().includes('walkin') || c.name.toLowerCase() === 'cash customer');
     setSelectedCustomer(walkIn || null);
 
+    setLinkedSourceType('');
+    setLinkedSourceSearch('');
     setLinkedQtn('');
-    setItems([{ id: Date.now(), code: '', barcode: '', image: '', desc: '', remarks: '', unit: 'PCS', qty: 0, price: 0, cost: 0, foc: 0, focUnit: 'PCS', availableUnits: ['PCS'], disc: 0, tax: 5, taxAmt: 0, total: 0 }]);
+    setLinkedPi('');
+    setItems([createBlankOrderItem()]);
+    setBillDiscount(0);
     setAdvanceAmount(0);
     setPaymentMethod('Cash');
     setPaymentRef('');
@@ -777,20 +1125,14 @@ const SalesOrders = () => {
         if (field === 'unit' && item.unitConversions) {
           const newUnit = value;
 
-          if (item.unitPrices && item.unitPrices[newUnit]) {
-            newItem.price = item.unitPrices[newUnit];
-          } else {
-            const baseUnit = Object.keys(item.unitConversions).find(u => item.unitConversions[u] === 1);
-            if (baseUnit) {
-              let basePrice = item.unitPrices && item.unitPrices[baseUnit] ? item.unitPrices[baseUnit] : null;
-              if (!basePrice) {
-                const currentUnitConversion = item.unitConversions[item.unit] || 1;
-                basePrice = item.price / currentUnitConversion;
-              }
-              const newUnitConversion = item.unitConversions[newUnit] || 1;
-              newItem.price = basePrice * newUnitConversion;
-            }
-          }
+          newItem.price = resolveUnitAmount({
+            targetUnit: newUnit,
+            amountMap: item.unitPrices,
+            unitConversions: item.unitConversions,
+            currentUnit: item.unit,
+            currentAmount: item.price,
+            fallbackAmount: item.price
+          });
 
           if (newItem.price) {
             newItem.cost = newItem.price * 0.75;
@@ -817,11 +1159,10 @@ const SalesOrders = () => {
 
   const handleDeleteItem = (id) => {
     if (isLocked) return;
-    if (items.length > 1) {
-      setItems(items.filter(i => i.id !== id));
-      if (focusedItem && focusedItem.id === id) {
-        setFocusedItem(null);
-      }
+    const nextItems = items.filter(i => i.id !== id);
+    setItems(nextItems.length > 0 ? nextItems : [createBlankOrderItem()]);
+    if (focusedItem && focusedItem.id === id) {
+      setFocusedItem(null);
     }
   };
 
@@ -853,15 +1194,17 @@ const SalesOrders = () => {
   };
 
   return (
-    <div className="min-h-screen bg-slate-50 font-sans text-slate-800 p-4" onClick={() => { setIsCustomerOpen(false); setIsQuotationOpen(false); }}>
+    <div className="min-h-screen bg-slate-50 font-sans text-slate-800 p-4" onClick={() => { setIsCustomerOpen(false); setIsLinkedSourceOpen(false); }}>
 
       {/* ✅ PRODUCT SELECTOR MODAL */}
       <ProductSelector
         isOpen={isProductSelectorOpen}
         onClose={() => setIsProductSelectorOpen(false)}
         onSelect={handleAddSingleProduct}
+        onInlineAdd={handleFastEntryAdd}
         title="Select Items from Products / Services"
         actionLabel="Add to Order"
+        mode="sales"
       />
 
       {/* ✅ STOCK AVAILABILITY MODAL */}
@@ -888,7 +1231,7 @@ const SalesOrders = () => {
           <p className="text-xs text-slate-500">Approved quotations & proforma invoices converted into sales orders.</p>
         </div>
         {/* ── VERTICAL: canExport('sales') for Print/Email/WhatsApp/SMS ── */}
-        {canExport('sales') && (
+        {canExport('sales.order') && (
           <div className="flex flex-wrap gap-2">
             {['Email', 'WhatsApp', 'SMS', 'Print'].map((label) => (
               <button key={label} onClick={label === 'Print' ? handlePrintClick : undefined} disabled={label === 'Print' && isPrinting} className="flex items-center gap-1 px-3 py-1.5 bg-white border border-slate-200 rounded text-xs font-medium text-slate-600 hover:bg-slate-50 shadow-sm disabled:opacity-50">
@@ -912,7 +1255,7 @@ const SalesOrders = () => {
           Sales Order List
         </button>
         {/* ── VERTICAL: canCreate('sales') ── */}
-        {canCreate('sales') && (
+        {canCreate('sales.order') && (
           <button
             onClick={handleCreateNew}
             className={`px-4 py-1.5 text-xs font-bold rounded-md transition-colors ${activeTab === 'create' ? 'bg-white shadow-sm border border-slate-200 text-slate-900' : 'text-slate-500 hover:text-slate-700'}`}
@@ -938,8 +1281,14 @@ const SalesOrders = () => {
                   <option>Confirmed</option>
                   <option>Partially Paid</option>
                 </select>
+                {canExport('sales.order') && (
+                  <ExportDropdown
+                    onExportExcel={() => exportToExcel(exportOrdersList, SALES_ORDER_COLUMNS, 'Sales_Orders')}
+                    onExportPdf={() => exportToPDF(exportOrdersList, SALES_ORDER_COLUMNS, 'Sales Orders', 'Sales_Orders')}
+                  />
+                )}
                 {/* ── VERTICAL: canCreate('sales') ── */}
-                {canCreate('sales') && (
+                {canCreate('sales.order') && (
                   <button onClick={handleCreateNew} className="flex items-center justify-center gap-1 px-3 py-1.5 bg-yellow-400 text-slate-900 text-xs font-bold rounded hover:bg-yellow-500 whitespace-nowrap flex-1 md:flex-none">
                     <Plus size={14} /> New Sales Order
                   </button>
@@ -973,9 +1322,9 @@ const SalesOrders = () => {
                     <td className="px-4 py-3 text-slate-600">{order.customerName}</td>
                     <td className="px-4 py-3 text-slate-500">{order.linkedQuotation || '-'}</td>
                     <td className="px-4 py-3 text-slate-500">{order.linkedProforma || '-'}</td>
-                    <td className="px-4 py-3 font-medium">{Number(order.orderTotal).toFixed(2)}</td>
-                    <td className="px-4 py-3">{Number(order.advanceAmount).toFixed(2)}</td>
-                    <td className="px-4 py-3">{(Number(order.orderTotal) - Number(order.advanceAmount)).toFixed(2)}</td>
+                    <td className="px-4 py-3 font-medium"><CurrencyAmount value={order.orderTotal} currency={orderCurrency} /></td>
+                    <td className="px-4 py-3"><CurrencyAmount value={order.advanceAmount} currency={orderCurrency} /></td>
+                    <td className="px-4 py-3"><CurrencyAmount value={Number(order.orderTotal) - Number(order.advanceAmount)} currency={orderCurrency} /></td>
                     <td className="px-4 py-3 text-right">
                       {renderStatusBadge(order.status)}
                     </td>
@@ -992,6 +1341,7 @@ const SalesOrders = () => {
                   order={order}
                   onClick={handleLoadOrder}
                   getStatusBadge={renderStatusBadge}
+                  currency={orderCurrency}
                 />
               ))}
             </div>
@@ -1020,106 +1370,141 @@ const SalesOrders = () => {
                   <input type="date" disabled={isLocked} value={orderDate} onChange={(e) => setOrderDate(e.target.value)} className="text-xs p-2 border border-slate-200 rounded text-slate-700 focus:outline-none focus:border-yellow-400" />
                 </div>
 
-                {/* LINKED QUOTATION WITH DROPDOWN */}
+                <div className="flex flex-col">
+                  <label className="text-xs font-semibold text-slate-500 mb-1">Linked Source</label>
+                  <div className="relative">
+                    <select
+                      value={linkedSourceType}
+                      disabled={isLocked}
+                      onChange={(e) => handleLinkedSourceTypeChange(e.target.value)}
+                      className="w-full text-xs p-2 border border-slate-200 rounded text-slate-700 bg-white appearance-none focus:outline-none focus:border-yellow-400 disabled:bg-slate-50 disabled:text-slate-500"
+                    >
+                      <option value="">Direct / No Link</option>
+                      <option value="quotation">Quotation</option>
+                      <option value="proforma">PI / Proforma</option>
+                    </select>
+                    <ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
+                  </div>
+                </div>
+
                 <div className="flex flex-col relative">
-                  <label className="text-xs font-semibold text-slate-500 mb-1">Linked Quotation</label>
-                  <input
-                    type="text"
-                    value={linkedQtn}
-                    onChange={(e) => { setLinkedQtn(e.target.value); setIsQuotationOpen(true); }}
-                    onClick={(e) => { e.stopPropagation(); setIsQuotationOpen(true); }}
-                    placeholder="QTN-xxxxx"
-                    className="text-xs p-2 border border-slate-200 rounded text-slate-700 focus:outline-none focus:border-yellow-400"
-                    disabled={isLocked}
-                  />
-                  {isQuotationOpen && !isLocked && (
-                    <div className="absolute top-full left-0 w-full bg-white border border-slate-200 rounded-md shadow-xl mt-1 max-h-48 overflow-y-auto z-30">
-                      {quotationsList.length > 0 ? (
-                        quotationsList.filter(q => q.qtnNo.toLowerCase().includes(linkedQtn.toLowerCase())).map(qtn => (
-                          <div
-                            key={qtn.id}
-                            className="px-3 py-2 text-xs hover:bg-slate-50 cursor-pointer text-slate-700 border-b border-slate-50 last:border-0 flex justify-between"
-                            onClick={() => handleSelectQuotation(qtn)}
-                          >
-                            <span className="font-bold">{qtn.qtnNo}</span>
-                            <span className="text-slate-400">{qtn.customer}</span>
-                          </div>
-                        ))
+                  <label className="text-xs font-semibold text-slate-500 mb-1">Linked Document No.</label>
+                  <div className="relative">
+                    <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
+                    <input
+                      type="text"
+                      value={isLinkedSourceOpen ? linkedSourceSearch : activeLinkedDocumentNumber}
+                      onChange={(e) => handleLinkedSourceSearchChange(e.target.value)}
+                      onClick={handleLinkedSourceSearchFocus}
+                      onFocus={handleLinkedSourceSearchFocus}
+                      placeholder={
+                        !linkedSourceType
+                          ? 'Select source type first'
+                          : linkedSourceType === 'quotation'
+                            ? 'Search quotation number or customer'
+                            : 'Search PI / Proforma number or customer'
+                      }
+                      className="w-full text-xs p-2 pl-8 border border-slate-200 rounded text-slate-700 focus:outline-none focus:border-yellow-400 disabled:bg-slate-50 disabled:text-slate-500"
+                      disabled={isLocked || !linkedSourceType}
+                    />
+                  </div>
+                  {isLinkedSourceOpen && linkedSourceType && !isLocked && (
+                    <div
+                      className="absolute top-full left-0 w-full bg-white border border-slate-200 rounded-md shadow-xl mt-1 max-h-56 overflow-y-auto z-30"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      {filteredLinkedDocuments.length > 0 ? (
+                        filteredLinkedDocuments.map((document) => {
+                          const documentNumber = linkedSourceType === 'quotation'
+                            ? document.qtnNo
+                            : document.piNumber;
+                          const customerLabel = linkedSourceType === 'quotation'
+                            ? (document.customer || 'No customer')
+                            : [document.customerCode, document.customerName].filter(Boolean).join(' - ') || document.customerName || 'No customer';
+
+                          return (
+                            <div
+                              key={`${linkedSourceType}-${document.id || documentNumber}`}
+                              className="px-3 py-2 text-xs hover:bg-slate-50 cursor-pointer text-slate-700 border-b border-slate-50 last:border-0 flex justify-between gap-3"
+                              onClick={() => {
+                                if (linkedSourceType === 'quotation') {
+                                  handleSelectQuotation(document);
+                                  return;
+                                }
+                                handleSelectProforma(document);
+                              }}
+                            >
+                              <span className="font-bold">{documentNumber}</span>
+                              <span className="text-slate-400 truncate">{customerLabel}</span>
+                            </div>
+                          );
+                        })
                       ) : (
-                        <div className="px-3 py-2 text-xs text-slate-400">No quotations found</div>
+                        <div className="px-3 py-2 text-xs text-slate-400">
+                          {linkedSourceType === 'quotation' ? 'No quotations found' : 'No proforma invoices found'}
+                        </div>
                       )}
                     </div>
                   )}
                 </div>
-
-                <div className="flex flex-col">
-                  <label className="text-xs font-semibold text-slate-500 mb-1">Linked PI / Proforma</label>
-                  <input type="text" value={linkedPi} disabled={isLocked} onChange={(e) => setLinkedPi(e.target.value)} placeholder="PI-xxxxx" className="text-xs p-2 border border-slate-200 rounded text-slate-700 focus:outline-none focus:border-yellow-400" />
-                </div>
               </div>
             </div>
 
-            <div className="bg-white rounded-lg border border-slate-200 shadow-sm p-5 relative z-20">
-              <div className="flex justify-between items-center mb-4">
-                <h3 className="text-sm font-bold text-slate-800 flex items-center gap-2">
-                  <User size={16} className="text-yellow-500" /> Customer
-                </h3>
-              </div>
+            <CustomerShippingPanel
+              selectedCustomer={selectedCustomer}
+              onOpenCustomerSearch={() => { if (!hasLinkedDocument && !isLocked) setIsCustomerSearchOpen(true); }}
+              shippingAddress={shippingAddress}
+              onShippingChange={setShippingAddress}
+              deliveryType={deliveryType}
+              onDeliveryTypeChange={setDeliveryType}
+              expectedDispatch={expectedDelivery}
+              onExpectedDispatchChange={setExpectedDelivery}
+              isReadOnly={isLocked}
+              currency={orderCurrency}
+            />
 
-              <div className="mb-4">
-                <label className="block text-xs font-semibold text-slate-500 mb-1">Select Customer</label>
-
-                <div
-                  className={`w-full text-xs p-2 border border-slate-200 rounded text-slate-700 flex items-center gap-2 ${linkedQtn || isLocked ? 'bg-slate-50 cursor-not-allowed' : 'bg-white cursor-pointer hover:border-yellow-400'} transition-colors`}
-                  onClick={() => {
-                    if (!linkedQtn && !isLocked) setIsCustomerSearchOpen(true);
-                  }}
-                >
-                  <Search size={14} className="text-slate-400 shrink-0" />
-                  <span className="flex-1 truncate">{selectedCustomer ? `${selectedCustomer.code} - ${selectedCustomer.name}` : 'Search customer...'}</span>
+            {selectedCustomer && salesSettings?.creditLimitPolicy === 'WARNING' &&
+              selectedCustomer.creditLimitAmount > 0 &&
+              (Number(selectedCustomer.balance || 0) + orderTotal) > selectedCustomer.creditLimitAmount && (
+                <div className="p-2.5 bg-yellow-50 shadow-sm border border-yellow-200 rounded-md text-yellow-800 text-[11px] leading-relaxed flex items-start gap-2">
+                  <AlertCircle size={14} className="mt-0.5 shrink-0 text-yellow-600" />
+                  <p>
+                    <strong>Credit Warning:</strong> The projected outstanding balance
+                    (<CurrencyAmount value={Number(selectedCustomer.balance || 0) + orderTotal} currency={orderCurrency} />) exceeds this customer's
+                    credit limit of <CurrencyAmount value={selectedCustomer.creditLimitAmount} currency={orderCurrency} />.
+                  </p>
                 </div>
-              </div>
-
-              {selectedCustomer && (
-                <>
-                  <div className="mb-4">
-                    <label className="block text-xs font-semibold text-slate-500 mb-1">Customer Group</label>
-                    <div className="w-full text-xs p-2 bg-slate-50 border border-slate-200 rounded text-slate-700">
-                      {selectedCustomer.group || selectedCustomer.groupType || 'General'}
-                    </div>
-                  </div>
-
-                  <div className="bg-slate-50 border border-slate-200 rounded-md p-4">
-                    <div className="flex justify-between items-start">
-                      <div>
-                        <div className="font-bold text-slate-800 text-sm mb-1">{selectedCustomer.name}</div>
-                        <div className="text-xs text-slate-500">Code: {selectedCustomer.code}</div>
-                        <div className="text-xs text-slate-500">TRN: {selectedCustomer.trn || 'N/A'}</div>
-                        <div className="text-xs text-slate-500">Phone: {selectedCustomer.phone || selectedCustomer.mobile || 'N/A'}</div>
-                      </div>
-                      <div className="text-right">
-                        <span className={`inline-block px-2 py-0.5 rounded text-[10px] font-bold border mb-2 ${selectedCustomer.creditStatus === 'Good' ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-orange-50 text-orange-700 border-orange-200'}`}>
-                          Credit: {selectedCustomer.creditStatus || 'N/A'}
-                        </span>
-                        <div className="text-xs text-slate-500">Terms: {selectedCustomer.payTerms || 'Cash'}</div>
-                        <div className="text-xs text-slate-500 mt-1">
-                          Outstanding: <span className="font-bold text-slate-700">{selectedCustomer.balance ? Number(selectedCustomer.balance).toFixed(2) : '0.00'} AED</span>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                </>
+              )}
+            {selectedCustomer && salesSettings?.creditLimitPolicy === 'BLOCK' &&
+              selectedCustomer.creditLimitAmount > 0 &&
+              (Number(selectedCustomer.balance || 0) + orderTotal) > selectedCustomer.creditLimitAmount && (
+                <div className="p-2.5 bg-red-50 shadow-sm border border-red-300 rounded-md text-red-800 text-[11px] leading-relaxed flex items-start gap-2">
+                  <AlertCircle size={14} className="mt-0.5 shrink-0 text-red-600" />
+                  <p>
+                    <strong>Credit Limit Blocked:</strong> The projected outstanding balance
+                    (<CurrencyAmount value={Number(selectedCustomer.balance || 0) + orderTotal} currency={orderCurrency} />) exceeds this customer's
+                    credit limit of <CurrencyAmount value={selectedCustomer.creditLimitAmount} currency={orderCurrency} />.
+                    Saving this order is blocked until the balance is within limit.
+                  </p>
+                </div>
               )}
 
-              {/* CUSTOMER SELECTOR MODAL */}
-              <CustomerSelector
-                isOpen={isCustomerSearchOpen}
-                onClose={() => setIsCustomerSearchOpen(false)}
-                onSelect={(cust) => setSelectedCustomer(cust)}
-                customers={customersList}
-                selectedCode={selectedCustomer?.code || ''}
-                onCustomerCreated={fetchAllData}
-              />
+            {/* CUSTOMER SELECTOR MODAL */}
+            <CustomerSelector
+              isOpen={isCustomerSearchOpen}
+              onClose={() => setIsCustomerSearchOpen(false)}
+              onSelect={handleSelectCustomer}
+              customers={customersList}
+              selectedCode={selectedCustomer?.code || ''}
+              onCustomerCreated={fetchAllData}
+            />
+
+            {/* Delivery Instructions */}
+            <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-5">
+              <h3 className="text-sm font-bold text-slate-800 flex items-center gap-2 mb-3">
+                Delivery Instructions
+              </h3>
+              <textarea rows="3" disabled={isLocked} value={deliveryInstructions} onChange={(e) => setDeliveryInstructions(e.target.value)} className="w-full text-xs p-2 border border-slate-200 rounded resize-none focus:border-yellow-400 outline-none" />
             </div>
 
             {/* 4. ATTACHMENTS (Moved to Left Column) */}
@@ -1150,40 +1535,6 @@ const SalesOrders = () => {
                 </div>
               </div>
             </div>
-
-            {/* 5. DELIVERY & SHIPPING */}
-            <div className="bg-white rounded-lg border border-slate-200 shadow-sm p-5">
-              <h3 className="text-sm font-bold text-slate-800 flex items-center gap-2 mb-4">
-                <Truck size={16} className="text-yellow-500" /> Delivery & Shipping
-              </h3>
-              <div className="grid grid-cols-2 gap-6">
-                <div>
-                  <label className="block text-xs font-semibold text-slate-500 mb-1">Delivery Type</label>
-                  <select
-                    value={deliveryType}
-                    disabled={isLocked}
-                    onChange={(e) => setDeliveryType(e.target.value)}
-                    className="w-full text-xs p-2 border border-slate-200 rounded focus:border-yellow-400 outline-none bg-white"
-                  >
-                    <option>Delivery</option>
-                    <option>Pickup</option>
-                    <option>Courier</option>
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-xs font-semibold text-slate-500 mb-1">Expected Delivery</label>
-                  <input type="date" disabled={isLocked} value={expectedDelivery} onChange={(e) => setExpectedDelivery(e.target.value)} className="w-full text-xs p-2 border border-slate-200 rounded focus:border-yellow-400 outline-none" />
-                </div>
-                <div>
-                  <label className="block text-xs font-semibold text-slate-500 mb-1">Shipping Address</label>
-                  <textarea rows="3" disabled={isLocked} value={shippingAddress} onChange={(e) => setShippingAddress(e.target.value)} className="w-full text-xs p-2 border border-slate-200 rounded resize-none focus:border-yellow-400 outline-none"></textarea>
-                </div>
-                <div>
-                  <label className="block text-xs font-semibold text-slate-500 mb-1">Delivery Instructions</label>
-                  <textarea rows="3" disabled={isLocked} value={deliveryInstructions} onChange={(e) => setDeliveryInstructions(e.target.value)} className="w-full text-xs p-2 border border-slate-200 rounded resize-none focus:border-yellow-400 outline-none"></textarea>
-                </div>
-              </div>
-            </div>
           </div> {/* End Left Column */}
 
           {/* ======================= MIDDLE COLUMN ======================= */}
@@ -1205,7 +1556,7 @@ const SalesOrders = () => {
 
                 {!isLocked && (
                   <div className="flex gap-2">
-                  {/* ✅ SELECT FROM CATALOG BUTTON */}
+                    {/* ✅ SELECT FROM CATALOG BUTTON */}
                     <button
                       onClick={() => setIsProductSelectorOpen(true)}
                       className="flex items-center gap-1 px-3 py-1.5 bg-yellow-400 text-slate-900 text-xs font-medium rounded hover:bg-yellow-500"
@@ -1325,7 +1676,7 @@ const SalesOrders = () => {
                           <td className="p-2 text-center align-middle">
                             <div className="flex items-center justify-center gap-1.5">
                               {/* ── VERTICAL: canEdit('sales') for delete line item ── */}
-                              {!isLocked && canEdit('sales') && (
+                              {!isLocked && canEdit('sales.order') && (
                                 <button onClick={() => handleDeleteItem(item.id)} className="p-1.5 text-red-500 border border-red-100 hover:bg-red-50 rounded transition-colors group">
                                   <Trash2 size={14} className="group-hover:scale-110 transition-transform" />
                                 </button>
@@ -1373,83 +1724,6 @@ const SalesOrders = () => {
 
             {/* 4. Combined Attachments & Notes */}
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-              {/* Advance Payment (Moved to Middle Column) */}
-              <div className="h-full">
-                <div className="bg-white rounded-lg border border-slate-200/50 shadow-sm p-4 h-full">
-                  <h3 className="text-sm font-bold text-slate-800 flex items-center gap-2 mb-4">
-                    <CreditCard size={15} className="text-emerald-500" /> Advance Payment
-                  </h3>
-                  <div className="grid grid-cols-2 gap-3">
-                    <div>
-                      <label className="block text-[10px] font-semibold text-slate-500 mb-1">Payment Method</label>
-                      <select
-                        className="w-full text-xs p-2 border border-slate-300/50 bg-white rounded text-slate-700 focus:border-emerald-400 outline-none disabled:bg-slate-50 disabled:text-slate-500"
-                        value={paymentMethod}
-                        onChange={(e) => setPaymentMethod(e.target.value)}
-                        disabled={isLocked}
-                      >
-                        <option>Cash</option>
-                        <option>Bank Transfer</option>
-                        <option>Card</option>
-                        <option>Cheque</option>
-                        <option>Online</option>
-                      </select>
-                    </div>
-                    <div className="relative">
-                      <label className="flex justify-between items-center w-full text-[10px] font-semibold text-slate-500 mb-1">
-                        Amount
-                        <button
-                          type="button"
-                          disabled={isLocked}
-                          onClick={() => setAdvanceAmount(orderTotal.toFixed(2))}
-                          className="text-[9px] text-emerald-600 hover:text-emerald-700 font-bold bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-100 hover:border-emerald-200 transition-colors"
-                          title="Auto-fill with total order amount"
-                        >
-                          Auto fill max
-                        </button>
-                      </label>
-                      <input
-                        type="number"
-                        placeholder="0.00"
-                        value={advanceAmount}
-                        disabled={isLocked}
-                        onChange={(e) => {
-                          const val = parseFloat(e.target.value) || 0;
-                          setAdvanceAmount(val > orderTotal ? orderTotal : val);
-                        }}
-                        className="w-full text-xs p-2 text-right border border-slate-300/50 rounded text-slate-800 font-bold focus:border-emerald-400 outline-none disabled:bg-slate-50 disabled:text-slate-500"
-                      />
-                    </div>
-                    <div className="col-span-2">
-                      <label className="block text-[10px] font-semibold text-slate-500 mb-1">Payment Ref</label>
-                      <div className="flex">
-                        <input
-                          type="text"
-                          placeholder="Ref no... (e.g. Cheque No / Txn ID)"
-                          value={paymentRef}
-                          disabled={isLocked}
-                          onChange={(e) => setPaymentRef(e.target.value)}
-                          className="w-full text-xs p-2 border border-slate-300/50 rounded-l text-slate-700 focus:border-emerald-400 outline-none disabled:bg-slate-50 disabled:text-slate-500"
-                        />
-                        <button disabled={isLocked} onClick={handleLogPayment} className="bg-emerald-600 text-white px-3 py-2 rounded-r font-medium hover:bg-emerald-700 active:bg-emerald-800 transition-colors whitespace-nowrap text-xs flex items-center gap-1.5 disabled:opacity-50">
-                          <CreditCard size={12} /> Log Pay
-                        </button>
-                      </div>
-                    </div>
-                    <div className="col-span-2">
-                      <label className="block text-[10px] font-semibold text-slate-500 mb-1">Notes (optional)</label>
-                      <input
-                        type="text"
-                        placeholder="Any additional info..."
-                        disabled={isLocked}
-                        value={paymentNotes}
-                        onChange={(e) => setPaymentNotes(e.target.value)}
-                        className="w-full text-xs p-2 border border-slate-300/50 rounded text-slate-700 focus:border-emerald-400 outline-none disabled:bg-slate-50"
-                      />
-                    </div>
-                  </div>
-                </div>
-              </div>
 
               {/* Notes */}
               <div className="h-full">
@@ -1481,28 +1755,47 @@ const SalesOrders = () => {
               <h3 className="text-sm font-bold text-slate-800 mb-3 border-b border-slate-100 pb-2">Order Summary</h3>
               <div className="space-y-3 text-xs mb-4">
                 <div className="flex justify-between text-slate-600">
-                  <span>Subtotal</span>
-                  <span className="font-medium">{subTotal.toFixed(2)}</span>
+                  <span>Gross Amount</span>
+                  <CurrencyAmount value={grossTotal} currency={orderCurrency} className="font-medium" />
+                </div>
+                <div className="flex justify-between text-red-500">
+                  <span>Discount</span>
+                  <span className="font-medium">- <CurrencyAmount value={totalDiscount} currency={orderCurrency} /></span>
                 </div>
                 <div className="flex justify-between text-slate-600">
-                  <span>Discount</span>
-                  <span>0.00</span>
+                  <span>Subtotal</span>
+                  <CurrencyAmount value={subTotal} currency={orderCurrency} className="font-medium" />
+                </div>
+                <div className="flex justify-between text-slate-600 items-center">
+                  <span className="flex items-center gap-2">
+                    Bill Discount
+                    <input
+                      type="number"
+                      min="0"
+                      max="100"
+                      disabled={isLocked}
+                      className="w-10 border border-slate-300/50 rounded px-1 text-center focus:outline-none focus:border-yellow-400 disabled:bg-slate-50 disabled:text-slate-500 disabled:cursor-not-allowed"
+                      value={billDiscount}
+                      onChange={(e) => setBillDiscount(Number(e.target.value))}
+                    /> %
+                  </span>
+                  <span className="font-medium text-red-500">- <CurrencyAmount value={billDiscountAmount} currency={orderCurrency} /></span>
                 </div>
                 <div className="flex justify-between text-slate-600">
                   <span>Tax</span>
-                  <span>{totalTax.toFixed(2)}</span>
+                  <CurrencyAmount value={totalTax} currency={orderCurrency} />
                 </div>
                 <div className="flex justify-between text-slate-800 text-sm font-bold border-t border-slate-100 pt-2">
                   <span>Order Total</span>
-                  <span>{orderTotal.toFixed(2)}</span>
+                  <CurrencyAmount value={orderTotal} currency={orderCurrency} />
                 </div>
                 <div className="flex justify-between text-emerald-600 font-medium">
-                  <span>$ Advance Received</span>
-                  <span>{Number(advanceAmount).toFixed(2)}</span>
+                  <span>Advance Received</span>
+                  <CurrencyAmount value={advanceAmount} currency={orderCurrency} />
                 </div>
                 <div className="flex justify-between text-red-600 font-bold text-sm">
                   <span>Balance Due</span>
-                  <span>{balanceDue.toFixed(2)}</span>
+                  <CurrencyAmount value={balanceDue} currency={orderCurrency} />
                 </div>
 
                 {/* PAYMENT STATUS BADGE - Logic Updated */}
@@ -1558,15 +1851,15 @@ const SalesOrders = () => {
               <div className="space-y-3 text-xs">
                 <div className="flex justify-between text-slate-600">
                   <span>Total Sell (before tax)</span>
-                  <span className="font-medium">{subTotal.toFixed(2)}</span>
+                  <CurrencyAmount value={subTotal} currency={orderCurrency} className="font-medium" />
                 </div>
                 <div className="flex justify-between text-slate-600">
                   <span>Total Cost</span>
-                  <span className="font-medium">{totalCost.toFixed(2)}</span>
+                  <CurrencyAmount value={totalCost} currency={orderCurrency} className="font-medium" />
                 </div>
                 <div className="flex justify-between text-slate-600">
                   <span>Profit</span>
-                  <span className={`font-medium ${profit >= 0 ? 'text-emerald-600' : 'text-red-500'}`}>{profit.toFixed(2)}</span>
+                  <CurrencyAmount value={profit} currency={orderCurrency} className={`font-medium ${profit >= 0 ? 'text-emerald-600' : 'text-red-500'}`} />
                 </div>
                 <div className="flex justify-between items-center border-t border-slate-100 pt-2 mt-2">
                   <span className="font-bold text-slate-800">Margin %</span>
@@ -1627,6 +1920,12 @@ const SalesOrders = () => {
                   </button>
                 </>
               )}
+              <button
+                onClick={handleOpenPaymentModal}
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-slate-300 text-slate-700 rounded text-xs font-bold hover:bg-slate-50 transition-colors shadow-sm"
+              >
+                <DollarSign size={14} /> Pay
+              </button>
             </div>
           </div>
 
@@ -1641,6 +1940,139 @@ const SalesOrders = () => {
         </div>
       )}
 
+      {/* Receive Payment Modal */}
+      {isPaymentModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-[1px]">
+          <div className="bg-white w-[500px] rounded-lg shadow-2xl overflow-hidden">
+            {/* Header */}
+            <div className="px-6 py-4 border-b border-slate-100 flex justify-between items-start">
+              <div>
+                <h3 className="text-lg font-bold text-slate-800">Receive Payment</h3>
+                <p className="text-xs text-slate-500 mt-1">Record a payment received from the customer for this invoice</p>
+              </div>
+              <button onClick={() => setIsPaymentModalOpen(false)} className="text-slate-400 hover:text-slate-600">
+                <X size={20} />
+              </button>
+            </div>
+
+            {/* Body */}
+            <div className="p-6 space-y-4">
+              {/* Balance Display */}
+              <div className="flex justify-between items-center text-sm mb-2">
+                <span className="text-slate-500 font-medium">Balance Due</span>
+                <CurrencyAmount value={Math.max(orderTotal - Number(advanceAmount), 0)} currency={orderCurrency} className="text-red-600 font-bold text-lg" />
+              </div>
+
+              {/* Date */}
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">Payment Date</label>
+                <input
+                  type="date"
+                  value={modalPaymentDate}
+                  onChange={e => setModalPaymentDate(e.target.value)}
+                  className="w-full text-sm p-2 border border-slate-300 rounded focus:border-[#F5C742] focus:ring-1 focus:ring-[#F5C742] outline-none"
+                />
+              </div>
+
+              {/* Payment Mode */}
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">Payment Mode</label>
+                <select
+                  value={modalPaymentMode}
+                  onChange={e => { setModalPaymentMode(e.target.value); setModalBankAccount(''); setModalChequeDate(new Date().toISOString().split('T')[0]); }}
+                  className="w-full text-sm p-2 border border-slate-300 rounded focus:border-[#F5C742] focus:ring-1 focus:ring-[#F5C742] outline-none bg-white"
+                >
+                  <option>Cash</option>
+                  <option>Bank Transfer</option>
+                  <option>Cheque</option>
+                  <option>Credit Card</option>
+                </select>
+              </div>
+
+              {/* Bank Account — non-Cash modes */}
+              {modalPaymentMode !== 'Cash' && (
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">Bank Account</label>
+                  <select
+                    value={modalBankAccount}
+                    onChange={e => setModalBankAccount(e.target.value)}
+                    className="w-full text-sm p-2 border border-slate-300 rounded focus:border-[#F5C742] focus:ring-1 focus:ring-[#F5C742] outline-none bg-white"
+                  >
+                    <option value="">Select bank account...</option>
+                    {bankAccountOptions.map(acc => (
+                      <option key={acc.id} value={acc.name}>{acc.code} — {acc.name}</option>
+                    ))}
+                  </select>
+                </div>
+              )}
+
+              {/* Cheque Date — Cheque only */}
+              {modalPaymentMode === 'Cheque' && (
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">Cheque Date</label>
+                  <input
+                    type="date"
+                    value={modalChequeDate}
+                    onChange={e => setModalChequeDate(e.target.value)}
+                    className="w-full text-sm p-2 border border-slate-300 rounded focus:border-[#F5C742] focus:ring-1 focus:ring-[#F5C742] outline-none"
+                  />
+                </div>
+              )}
+
+              {/* Amount */}
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">Amount</label>
+                <input
+                  type="number"
+                  value={modalPaymentAmount}
+                  onChange={e => setModalPaymentAmount(e.target.value)}
+                  className="w-full text-sm p-2 border border-slate-300 rounded focus:border-[#F5C742] focus:ring-1 focus:ring-[#F5C742] outline-none"
+                />
+              </div>
+
+              {/* Reference */}
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">Reference / Instrument No</label>
+                <input
+                  type="text"
+                  placeholder="Cheque no, Transaction ID, etc."
+                  value={modalPaymentRef}
+                  onChange={e => setModalPaymentRef(e.target.value)}
+                  className="w-full text-sm p-2 border border-slate-300 rounded focus:border-[#F5C742] focus:ring-1 focus:ring-[#F5C742] outline-none"
+                />
+              </div>
+
+              {/* Notes */}
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">Notes</label>
+                <textarea
+                  rows={2}
+                  placeholder="Additional notes..."
+                  value={modalNotes}
+                  onChange={e => setModalNotes(e.target.value)}
+                  className="w-full text-sm p-2 border border-slate-300 rounded focus:border-[#F5C742] focus:ring-1 focus:ring-[#F5C742] outline-none resize-none"
+                />
+              </div>
+            </div>
+
+            {/* Footer */}
+            <div className="px-6 py-4 bg-slate-50 flex justify-end gap-3 border-t border-slate-100">
+              <button
+                onClick={() => setIsPaymentModalOpen(false)}
+                className="px-4 py-2 bg-white border border-slate-300 text-slate-700 text-xs font-bold rounded hover:bg-slate-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleAddPaymentFromModal}
+                className="px-6 py-2 bg-[#F5C742] text-slate-900 text-xs font-bold rounded hover:bg-yellow-500 shadow-sm flex items-center gap-2"
+              >
+                <DollarSign size={14} /> Add Payment
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

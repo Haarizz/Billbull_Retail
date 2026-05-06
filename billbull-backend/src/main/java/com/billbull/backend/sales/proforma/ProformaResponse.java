@@ -18,8 +18,11 @@ public class ProformaResponse {
 
     private String quotationNo;
     private String salesOrderNo;
+    private Long warehouseId;
+    private String warehouseName;
 
     private BigDecimal subTotal;
+    private BigDecimal billDiscount;
     private BigDecimal taxTotal;
     private BigDecimal grandTotal;
 
@@ -74,8 +77,24 @@ public class ProformaResponse {
 		return salesOrderNo;
 	}
 
+	public Long getWarehouseId() {
+		return warehouseId;
+	}
+
+	public String getWarehouseName() {
+		return warehouseName;
+	}
+
 	public BigDecimal getSubTotal() {
 		return subTotal;
+	}
+
+	public BigDecimal getBillDiscount() {
+		return billDiscount;
+	}
+
+	public void setBillDiscount(BigDecimal billDiscount) {
+		this.billDiscount = billDiscount;
 	}
 
 	public BigDecimal getTaxTotal() {
@@ -152,6 +171,14 @@ public class ProformaResponse {
 
 	public void setSalesOrderNo(String salesOrderNo) {
 		this.salesOrderNo = salesOrderNo;
+	}
+
+	public void setWarehouseId(Long warehouseId) {
+		this.warehouseId = warehouseId;
+	}
+
+	public void setWarehouseName(String warehouseName) {
+		this.warehouseName = warehouseName;
 	}
 
 	public void setSubTotal(BigDecimal subTotal) {

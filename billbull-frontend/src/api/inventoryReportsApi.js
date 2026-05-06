@@ -17,7 +17,6 @@ export const getStockOnHandReport = async (warehouseId, abortSignal) => {
         return res.data;
     } catch (error) {
         if (error.name === 'AbortError' || error.name === 'CanceledError' || error.code === 'ERR_CANCELED') {
-            console.log("Stock on hand request aborted");
             return null;
         }
         console.error("Failed to fetch stock on hand report", error);
@@ -42,7 +41,6 @@ export const getLowStockReport = async (warehouseId, abortSignal) => {
         return res.data;
     } catch (error) {
         if (error.name === 'AbortError' || error.name === 'CanceledError' || error.code === 'ERR_CANCELED') {
-            console.log("Low stock request aborted");
             return null;
         }
         console.error("Failed to fetch low stock report", error);
@@ -67,7 +65,6 @@ export const getOutOfStockReport = async (warehouseId, abortSignal) => {
         return res.data;
     } catch (error) {
         if (error.name === 'AbortError' || error.name === 'CanceledError' || error.code === 'ERR_CANCELED') {
-            console.log("Out of stock request aborted");
             return null;
         }
         console.error("Failed to fetch out of stock report", error);
@@ -92,7 +89,6 @@ export const getStockValuationReport = async (warehouseId, abortSignal) => {
         return res.data;
     } catch (error) {
         if (error.name === 'AbortError' || error.name === 'CanceledError' || error.code === 'ERR_CANCELED') {
-            console.log("Stock valuation request aborted");
             return null;
         }
         console.error("Failed to fetch stock valuation report", error);

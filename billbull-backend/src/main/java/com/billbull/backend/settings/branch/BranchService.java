@@ -34,7 +34,7 @@ public class BranchService {
         validateCode(req.getCode(), null);
 
         Branch branch = new Branch();
-        applyRequest(branch, req);
+        applyRequest(branch, req, true);
 
         // First branch created becomes default automatically
         if (repo.count() == 0) {
@@ -48,7 +48,7 @@ public class BranchService {
         Branch branch = getEntity(id);
         validateName(req.getName());
         validateCode(req.getCode(), id);
-        applyRequest(branch, req);
+        applyRequest(branch, req, false);
         return BranchResponse.from(repo.save(branch));
     }
 
@@ -74,19 +74,39 @@ public class BranchService {
 
     // ── helpers ──────────────────────────────────────────────────────────────
 
-    private void applyRequest(Branch branch, BranchRequest req) {
+    private void applyRequest(Branch branch, BranchRequest req, boolean creating) {
         branch.setName(req.getName().trim());
         branch.setCode(req.getCode() != null ? req.getCode().trim() : null);
-        branch.setAddress(req.getAddress());
-        branch.setPhone(req.getPhone());
+        branch.setAddress(normalizeOptional(req.getAddress()));
+        branch.setPhone(normalizeOptional(req.getPhone()));
 
         if (req.getDefaultWarehouseId() != null) {
+            if (creating || branch.getId() == null) {
+                throw new IllegalStateException(
+                        "Create the branch first, then assign one of its warehouses as the default.");
+            }
+
             Warehouse wh = warehouseRepo.findById(req.getDefaultWarehouseId())
                     .orElseThrow(() -> new IllegalArgumentException("Warehouse not found"));
+            if (wh.getBranch() == null) {
+                throw new IllegalStateException(
+                        "Default warehouse must be assigned to the same branch before it can be selected.");
+            }
+            if (branch.getId() != null && !branch.getId().equals(wh.getBranch().getId())) {
+                throw new IllegalStateException("Default warehouse must belong to the selected branch.");
+            }
             branch.setDefaultWarehouse(wh);
         } else {
             branch.setDefaultWarehouse(null);
         }
+    }
+
+    private String normalizeOptional(String value) {
+        if (value == null) {
+            return null;
+        }
+        String trimmed = value.trim();
+        return trimmed.isEmpty() ? null : trimmed;
     }
 
     private Branch getEntity(Long id) {

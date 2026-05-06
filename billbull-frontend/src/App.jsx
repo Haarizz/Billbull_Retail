@@ -11,10 +11,12 @@ import Dashboard from "./pages/Dashboard";
 
 // Route Guards
 import PrivateRoute from "./auth/PrivateRoute";
-import RoleRoute from "./auth/RoleRoute";
 import { PermissionProvider } from "./context/PermissionContext";
 import { CompanyProvider } from "./context/CompanyContext";
-import { BranchProvider } from "./context/BranchContext";// import CustomerInquiries from "./pages/Customer/CustomerInquiries";
+import { BranchProvider } from "./context/BranchContext";
+import ResourceGuard from "./components/auth/ResourceGuard";// import CustomerInquiries from "./pages/Customer/CustomerInquiries";
+import AedSymbolRenderer from "./components/AedSymbolRenderer";
+import AppAlertBridge from "./components/AppAlertBridge";
 // import FollowUpModal from "./pages/Customer/FollowUpModal";
 // import MessageModal from "./pages/Customer/MessageModal";
 // import CustomerLedger from "./pages/Sales/CustomerLedger";
@@ -123,7 +125,9 @@ function App() {
     <BrowserRouter>
       <CompanyProvider>
         <BranchProvider>
-        <Toaster position="top-right" reverseOrder={false} />
+        <AedSymbolRenderer />
+        <AppAlertBridge />
+        <Toaster position="top-right" reverseOrder={false} containerStyle={{ zIndex: 10000 }} />
         <Routes>
           {/* 🔓 Public Route */}
           <Route path="/login" element={<Login />} />
@@ -150,9 +154,9 @@ function App() {
                     <Route
                       path="/dashboard"
                       element={
-                        <RoleRoute role="ADMIN|SALES">
+                        <ResourceGuard module="dashboard">
                           <Dashboard />
-                        </RoleRoute>
+                        </ResourceGuard>
                       }
                     />
 
@@ -160,116 +164,116 @@ function App() {
                     <Route
                       path="/inventory/departments"
                       element={
-                        <RoleRoute role="ADMIN|SALES|INVENTORY_MANAGER|ACCOUNTANT|HR">
+                        <ResourceGuard module="inventory.category">
                           <Departments />
-                        </RoleRoute>
+                        </ResourceGuard>
                       }
                     />
 
                     <Route
                       path="/inventory/subDepartments"
                       element={
-                        <RoleRoute role="ADMIN|SALES|INVENTORY_MANAGER|ACCOUNTANT|HR">
+                        <ResourceGuard module="inventory.category">
                           <SubDepartments />
-                        </RoleRoute>
+                        </ResourceGuard>
                       }
                     />
 
                     <Route
                       path="/inventory/brands"
                       element={
-                        <RoleRoute role="ADMIN|SALES|INVENTORY_MANAGER|ACCOUNTANT|HR">
+                        <ResourceGuard module="inventory.category">
                           <Brand />
-                        </RoleRoute>
+                        </ResourceGuard>
                       }
                     />
 
                     <Route
                       path="/inventory/units"
                       element={
-                        <RoleRoute role="ADMIN|SALES|INVENTORY_MANAGER|ACCOUNTANT|HR">
+                        <ResourceGuard module="inventory.category">
                           <Units />
-                        </RoleRoute>
+                        </ResourceGuard>
                       }
                     />
 
                     <Route
                       path="/inventory/products"
                       element={
-                        <RoleRoute role="ADMIN|SALES|INVENTORY_MANAGER|ACCOUNTANT|HR">
+                        <ResourceGuard module="inventory.product">
                           <Products />
-                        </RoleRoute>
+                        </ResourceGuard>
                       }
                     />
 
                     <Route
                       path="/inventory/warehouses"
                       element={
-                        <RoleRoute role="ADMIN|SALES|INVENTORY_MANAGER|ACCOUNTANT|HR">
+                        <ResourceGuard module="inventory.warehouse">
                           <Warehouse />
-                        </RoleRoute>
+                        </ResourceGuard>
                       }
                     />
 
                     <Route
                       path="/inventory/stock-transfer"
                       element={
-                        <RoleRoute role="ADMIN|SALES|INVENTORY_MANAGER|ACCOUNTANT|HR">
+                        <ResourceGuard module="inventory.stock">
                           <StockTransfer />
-                        </RoleRoute>
+                        </ResourceGuard>
                       }
                     />
 
                     <Route
                       path="/inventory/barcode"
                       element={
-                        <RoleRoute role="ADMIN|SALES|INVENTORY_MANAGER|ACCOUNTANT|HR">
+                        <ResourceGuard module="inventory.stock">
                           <BarcodePrinter />
-                        </RoleRoute>
+                        </ResourceGuard>
                       }
                     />
 
                     <Route
                       path="/purchases/vendors"
                       element={
-                        <RoleRoute role="ADMIN|SALES|INVENTORY_MANAGER|ACCOUNTANT|HR">
+                        <ResourceGuard module="purchases.vendor">
                           <Vendor />
-                        </RoleRoute>
+                        </ResourceGuard>
                       }
                     />
                     <Route
                       path="/customer/inquiries"
                       element={
-                        <RoleRoute role="ADMIN|SALES">
+                        <ResourceGuard module="customer.inquiry">
                           <Customer />
-                        </RoleRoute>
+                        </ResourceGuard>
                       }
                     />
 
                     <Route
                       path="/purchases/lpo"
                       element={
-                        <RoleRoute role="ADMIN|SALES|INVENTORY_MANAGER|ACCOUNTANT|HR">
+                        <ResourceGuard module="purchases.lpo">
                           <LPOList />
-                        </RoleRoute>
+                        </ResourceGuard>
                       }
                     />
 
                     <Route
                       path="/purchases/invoice"
                       element={
-                        <RoleRoute role="ADMIN|SALES|INVENTORY_MANAGER|ACCOUNTANT|HR">
+                        <ResourceGuard module="purchases.invoice">
                           <PurchaseInvoices />
-                        </RoleRoute>
+                        </ResourceGuard>
                       }
                     />
 
                     <Route
                       path="/purchases/grn"
                       element={
-                        <RoleRoute role="ADMIN|SALES|INVENTORY_MANAGER|ACCOUNTANT|HR">
+                        <ResourceGuard module="purchases.grn">
                           <GRN />
-                        </RoleRoute>
+                        </ResourceGuard>
                       }
                     />
 
@@ -278,17 +282,17 @@ function App() {
                     <Route
                       path="/purchases/payment"
                       element={
-                        <RoleRoute role="ADMIN|SALES|INVENTORY_MANAGER|ACCOUNTANT|HR">
+                        <ResourceGuard module="purchases.invoice">
                           <PaymentVoucher />
-                        </RoleRoute>
+                        </ResourceGuard>
                       }
                     />
                     <Route
                       path="/purchases/templates"
                       element={
-                        <RoleRoute role="ADMIN|SALES|INVENTORY_MANAGER|ACCOUNTANT|HR">
+                        <ResourceGuard module="purchases.invoice">
                           <PurchasePrintEmailTemplates />
-                        </RoleRoute>
+                        </ResourceGuard>
                       }
                     />
 
@@ -297,279 +301,275 @@ function App() {
                     <Route
                       path="/payroll/employees"
                       element={
-                        <RoleRoute role="ADMIN|SALES|INVENTORY_MANAGER|ACCOUNTANT|HR">
+                        <ResourceGuard module="hr.employee">
                           <Employees />
-                        </RoleRoute>
+                        </ResourceGuard>
                       }
                     />
 
                     <Route
                       path="/payroll/salary_payment"
                       element={
-                        <RoleRoute role="ADMIN|SALES|INVENTORY_MANAGER|ACCOUNTANT|HR">
+                        <ResourceGuard module="hr.payroll">
                           <SalaryPayments />
-                        </RoleRoute>
+                        </ResourceGuard>
                       }
                     />
 
                     <Route
                       path="/payroll/salary_advance"
                       element={
-                        <RoleRoute role="ADMIN|SALES|INVENTORY_MANAGER|ACCOUNTANT|HR">
+                        <ResourceGuard module="hr.payroll">
                           <SalaryAdvances />
-                        </RoleRoute>
+                        </ResourceGuard>
                       }
                     />
 
                     <Route
                       path="/sales/customers"
                       element={
-                        <RoleRoute role="ADMIN|SALES|SALES|INVENTORY_MANAGER|ACCOUNTANT|HR">
+                        <ResourceGuard module="sales.customer">
                           <CustomerLedger />
-                        </RoleRoute>
+                        </ResourceGuard>
                       }
                     />
 
                     <Route
                       path="/sales/quotation"
                       element={
-                        <RoleRoute role="ADMIN|SALES|SALES|INVENTORY_MANAGER|ACCOUNTANT|HR">
+                        <ResourceGuard module="sales.quotation">
                           <Quotations />
-                        </RoleRoute>
+                        </ResourceGuard>
                       }
                     />
 
                     <Route
                       path="/sales/order"
                       element={
-                        <RoleRoute role="ADMIN|SALES|SALES|INVENTORY_MANAGER|ACCOUNTANT|HR">
+                        <ResourceGuard module="sales.order">
                           <SalesOrders />
-                        </RoleRoute>
+                        </ResourceGuard>
                       }
                     />
 
                     <Route
                       path="/sales/pro-forma"
                       element={
-                        <RoleRoute role="ADMIN|SALES|SALES|INVENTORY_MANAGER|ACCOUNTANT|HR">
+                        <ResourceGuard module="sales.invoice">
                           <ProformaInvoice />
-                        </RoleRoute>
+                        </ResourceGuard>
                       }
                     />
 
                     <Route
                       path="/sales/deliverynote"
                       element={
-                        <RoleRoute role="ADMIN|SALES|SALES|INVENTORY_MANAGER|ACCOUNTANT|HR">
+                        <ResourceGuard module="sales.invoice">
                           <DeliveryNote />
-                        </RoleRoute>
+                        </ResourceGuard>
                       }
                     />
 
                     <Route
                       path="/sales/invoice"
                       element={
-                        <RoleRoute role="ADMIN|SALES|SALES|INVENTORY_MANAGER|ACCOUNTANT|HR">
+                        <ResourceGuard module="sales.invoice">
                           <SalesInvoice />
-                        </RoleRoute>
+                        </ResourceGuard>
                       }
                     />
 
                     <Route
                       path="/sales/return"
                       element={
-                        <RoleRoute role="ADMIN|SALES|SALES|INVENTORY_MANAGER|ACCOUNTANT|HR">
+                        <ResourceGuard module="sales.invoice">
                           <SalesReturn />
-                        </RoleRoute>
+                        </ResourceGuard>
                       }
                     />
 
                     <Route
                       path="/finance/ledger"
                       element={
-                        <RoleRoute role="ADMIN|ACCOUNTANT">
+                        <ResourceGuard module="finance.ledger">
                           <Ledger />
-                        </RoleRoute>
+                        </ResourceGuard>
                       }
                     />
 
                     <Route
                       path="/finance/receiptvoucher"
                       element={
-                        <RoleRoute role="ADMIN|ACCOUNTANT">
+                        <ResourceGuard module="finance.voucher">
                           <ReceiptVoucher />
-                        </RoleRoute>
+                        </ResourceGuard>
                       }
                     />
 
                     <Route
                       path="/finance/journalvoucher"
                       element={
-                        <RoleRoute role="ADMIN|ACCOUNTANT">
+                        <ResourceGuard module="finance.voucher">
                           <JournalVoucher />
-                        </RoleRoute>
+                        </ResourceGuard>
                       }
                     />
 
                     <Route
                       path="/finance/Expenses"
                       element={
-                        <RoleRoute role="ADMIN|ACCOUNTANT">
+                        <ResourceGuard module="finance.voucher">
                           <Expenses />
-                        </RoleRoute>
+                        </ResourceGuard>
                       }
                     />
 
                     <Route
                       path="/finance/reconciliation"
                       element={
-                        <RoleRoute role="ADMIN|ACCOUNTANT">
+                        <ResourceGuard module="finance.reconcile">
                           <BankReconciliation />
-                        </RoleRoute>
+                        </ResourceGuard>
                       }
                     />
 
                     <Route
                       path="/finance/tax"
                       element={
-                        <RoleRoute role="ADMIN|ACCOUNTANT">
+                        <ResourceGuard module="finance.tax">
                           <TaxCompliance />
-                        </RoleRoute>
+                        </ResourceGuard>
                       }
                     />
 
                     <Route
                       path="/finance/reports"
                       element={
-                        <RoleRoute role="ADMIN|ACCOUNTANT">
+                        <ResourceGuard module="finance.tax">
                           <FinancialReports />
-                        </RoleRoute>
+                        </ResourceGuard>
                       }
                     />
 
                     <Route
                       path="/finance/config"
                       element={
-                        <RoleRoute role="ADMIN|ACCOUNTANT">
+                        <ResourceGuard module="finance.tax">
                           <FinancialConfig />
-                        </RoleRoute>
+                        </ResourceGuard>
                       }
                     />
 
                     <Route
                       path="/customer/followups"
                       element={
-                        <RoleRoute role="ADMIN|SALES|SALES|INVENTORY_MANAGER|ACCOUNTANT|HR">
+                        <ResourceGuard module="customer.followup">
                           <Followups />
-                        </RoleRoute>
+                        </ResourceGuard>
                       }
                     />
 
                     <Route
                       path="/sales/payment"
                       element={
-                        <RoleRoute role="ADMIN|SALES|SALES|INVENTORY_MANAGER|ACCOUNTANT|HR">
+                        <ResourceGuard module="sales.payment">
                           <Payment />
-                        </RoleRoute>
+                        </ResourceGuard>
                       }
                     />
 
                     <Route
                       path="/customer/messaging"
                       element={
-                        <RoleRoute role="ADMIN|SALES|SALES|INVENTORY_MANAGER|ACCOUNTANT|HR">
+                        <ResourceGuard module="customer.message">
                           <Messaging />
-                        </RoleRoute>
+                        </ResourceGuard>
                       }
                     />
 
                     <Route
                       path="/myprofile"
-                      element={
-                        <RoleRoute role="ADMIN|SALES|INVENTORY_MANAGER|ACCOUNTANT|HR|SALES">
-                          <MyProfile />
-                        </RoleRoute>
-                      }
+                      element={<MyProfile />}
                     />
 
                     <Route
                       path="/sales/templates"
                       element={
-                        <RoleRoute role="ADMIN|SALES|SALES|INVENTORY_MANAGER|ACCOUNTANT|HR">
+                        <ResourceGuard module="sales.invoice">
                           <PrintEmailTemplates />
-                        </RoleRoute>
+                        </ResourceGuard>
                       }
                     />
 
                     <Route
                       path="/sales/settings"
                       element={
-                        <RoleRoute role="ADMIN">
+                        <ResourceGuard module="sales.invoice">
                           <SalesSettings />
-                        </RoleRoute>
+                        </ResourceGuard>
                       }
                     />
 
                     <Route
                       path="/inventory/stock-take"
                       element={
-                        <RoleRoute role="ADMIN|INVENTORY_MANAGER">
+                        <ResourceGuard module="inventory.stock">
                           <StockTaking />
-                        </RoleRoute>
+                        </ResourceGuard>
                       }
                     />
 
                     <Route
                       path="/inventory/reports"
                       element={
-                        <RoleRoute role="ADMIN|INVENTORY_MANAGER">
+                        <ResourceGuard module="inventory.stock">
                           <InventoryReports />
-                        </RoleRoute>
+                        </ResourceGuard>
                       }
                     />
 
                     <Route
                       path="/sales/reports/summary"
                       element={
-                        <RoleRoute role="ADMIN|SALES|ACCOUNTANT">
+                        <ResourceGuard module="sales.invoice">
                           <SalesSummaryReport />
-                        </RoleRoute>
+                        </ResourceGuard>
                       }
                     />
 
                     <Route
                       path="/purchases/reports/summary"
                       element={
-                        <RoleRoute role="ADMIN|ACCOUNTANT|INVENTORY_MANAGER">
+                        <ResourceGuard module="purchases.invoice">
                           <PurchaseSummaryReport />
-                        </RoleRoute>
+                        </ResourceGuard>
                       }
                     />
 
                     <Route
                       path="/settings/company"
                       element={
-                        <RoleRoute role="ADMIN">
+                        <ResourceGuard module="userManagement.setup">
                           <CompanySettings />
-                        </RoleRoute>
+                        </ResourceGuard>
                       }
                     />
 
                     <Route
                       path="/settings/roles"
                       element={
-                        <RoleRoute role="ADMIN">
+                        <ResourceGuard module="userManagement.role">
                           <UserRoleConfig />
-                        </RoleRoute>
+                        </ResourceGuard>
                       }
                     />
 
                     <Route
                       path="/settings/branches"
                       element={
-                        <RoleRoute role="ADMIN">
+                        <ResourceGuard module="userManagement.setup">
                           <BranchSetup />
-                        </RoleRoute>
+                        </ResourceGuard>
                       }
                     />
 

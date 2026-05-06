@@ -1,4 +1,4 @@
-﻿import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import {
     Printer,
@@ -33,7 +33,8 @@ import {
     ChevronRight,
     ArrowLeft,
     SlidersHorizontal,
-    MoreVertical
+    MoreVertical,
+    AlertCircle
 } from 'lucide-react';
 
 // ✅ API IMPORTS
@@ -51,6 +52,7 @@ import {
     getItemPriceHistory
 } from '../../api/quotationApi';
 import { getStockAvailability } from '../../api/stockAvailabilityApi';
+import { getSalesSettings } from '../../api/salesSettingsApi';
 
 // Ensure you have an axios instance or use fetch
 import api from "../../api/axiosConfig";
@@ -64,6 +66,8 @@ import ProductSelector from '../../components/ProductSelector';
 
 // ✅ CUSTOMER SELECTOR — search modal + new customer
 import CustomerSelector from '../../components/CustomerSelector';
+import CustomerShippingPanel from '../../components/CustomerShippingPanel';
+import CurrencyAmount from '../../components/CurrencyAmount';
 
 // ✅ SHARED Item Add-Ons modal (BB-026)
 import ItemAddOnsModal from '../../components/ItemAddOnsModal';
@@ -79,10 +83,76 @@ import billBullLogo from '../../assets/billBullLogo.png';
 import { getTemplatesByCategory } from '../../api/printTemplateApi';
 import { generatePrintHtml, printHtml } from '../../utils/printGenerator';
 import { getImageUrl } from '../../utils/urlUtils';
+import { getDefaultProductUnit, resolveUnitAmount } from '../../utils/unitPricing';
+import { summarizeSalesItems } from '../../utils/documentSummaryUtils';
+import {
+    resolveCurrencyDisplayConfig,
+    resolveCurrencyDisplayCode,
+    UAE_DIRHAM_SYMBOL_IMAGE
+} from '../../utils/countryCurrencyOptions';
 import { useCompany } from '../../context/CompanyContext';
+import { useBranch } from '../../context/BranchContext';
+import ExportDropdown from '../../components/common/ExportDropdown';
+import { exportToExcel, exportToPDF } from '../../utils/exportUtils';
+import { generateDocFilename } from '../../utils/filenameUtils';
+
+// ==========================================
+// 1. CONFIGURATION
+// ==========================================
+
+const QUOTATION_COLUMNS = [
+    { header: 'Quotation No', key: 'qtnNo', width: 15 },
+    { header: 'Date', key: 'date', width: 12 },
+    { header: 'Customer', key: 'customer', width: 25 },
+    { header: 'Total', key: 'total', width: 15 },
+    { header: 'Status', key: 'status', width: 12 }
+];
+
+const WORLD_CURRENCY_CODES = [
+    "AED", "AFN", "ALL", "AMD", "ANG", "AOA", "ARS", "AUD", "AWG", "AZN", "BAM", "BBD",
+    "BDT", "BGN", "BHD", "BIF", "BMD", "BND", "BOB", "BRL", "BSD", "BTN", "BWP", "BYN",
+    "BZD", "CAD", "CDF", "CHF", "CLP", "CNY", "COP", "CRC", "CUC", "CUP", "CVE", "CZK",
+    "DJF", "DKK", "DOP", "DZD", "EGP", "ERN", "ETB", "EUR", "FJD", "FKP", "GBP", "GEL",
+    "GHS", "GIP", "GMD", "GNF", "GTQ", "GYD", "HKD", "HNL", "HRK", "HTG", "HUF", "IDR",
+    "ILS", "INR", "IQD", "IRR", "ISK", "JMD", "JOD", "JPY", "KES", "KGS", "KHR", "KMF",
+    "KPW", "KRW", "KWD", "KYD", "KZT", "LAK", "LBP", "LKR", "LRD", "LSL", "LYD", "MAD",
+    "MDL", "MGA", "MKD", "MMK", "MNT", "MOP", "MRU", "MUR", "MVR", "MWK", "MXN", "MYR",
+    "MZN", "NAD", "NGN", "NIO", "NOK", "NPR", "NZD", "OMR", "PAB", "PEN", "PGK", "PHP",
+    "PKR", "PLN", "PYG", "QAR", "RON", "RSD", "RUB", "RWF", "SAR", "SBD", "SCR", "SDG",
+    "SEK", "SGD", "SHP", "SLE", "SLL", "SOS", "SRD", "SSP", "STN", "SVC", "SYP", "SZL",
+    "THB", "TJS", "TMT", "TND", "TOP", "TRY", "TTD", "TWD", "TZS", "UAH", "UGX", "USD",
+    "UYU", "UZS", "VES", "VND", "VUV", "WST", "XAF", "XCD", "XCG", "XDR", "XOF", "XPF",
+    "XSU", "YER", "ZAR", "ZMW", "ZWG", "ZWL"
+];
+
+const getCurrencyDisplayName = (code) => {
+    if (typeof Intl !== 'undefined' && typeof Intl.DisplayNames === 'function') {
+        const displayNames = new Intl.DisplayNames(['en'], { type: 'currency' });
+        return displayNames.of(code) || code;
+    }
+    return code;
+};
+
+const escapeHtml = (value) =>
+    String(value ?? '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+
+const renderCurrencyDisplayHtml = (currencyProps = {}) => {
+    const currencyConfig = resolveCurrencyDisplayConfig(currencyProps);
+    const currencyLabel = currencyConfig.label;
+    if (currencyConfig.hasImage) {
+        return `<img src="${UAE_DIRHAM_SYMBOL_IMAGE}" alt="${escapeHtml(currencyLabel)}" style="height:0.82em;width:auto;display:inline-block;vertical-align:-0.08em;margin:0 0.12em;" />`;
+    }
+
+    return escapeHtml(currencyLabel);
+};
 
 // ✅ MOBILE COMPONENTS
-const MobileCard = ({ qtn, onClick, renderStatusBadge, isExpanded, onToggleExpand }) => (
+const MobileCard = ({ qtn, onClick, renderStatusBadge, isExpanded, onToggleExpand, currencyProps = {} }) => (
     <div className="bg-white rounded-xl shadow-sm border border-slate-200/60 transition-all relative overflow-hidden">
         {/* Main Card Content */}
         <div onClick={onClick} className="p-4 active:bg-slate-50 cursor-pointer">
@@ -116,7 +186,7 @@ const MobileCard = ({ qtn, onClick, renderStatusBadge, isExpanded, onToggleExpan
                 </div>
                 <div className="flex justify-between text-xs">
                     <span className="text-slate-500">Amount</span>
-                    <span className="font-bold text-slate-800">{qtn.total ? qtn.total.toFixed(2) : '0.00'} {qtn.currency}</span>
+                    <CurrencyAmount value={qtn.total || 0} {...currencyProps} className="font-bold text-slate-800" />
                 </div>
             </div>
         </div>
@@ -134,7 +204,7 @@ const MobileCard = ({ qtn, onClick, renderStatusBadge, isExpanded, onToggleExpan
                             <div className="text-slate-500 mt-0.5">{rev.date}</div>
                         </div>
                         <div className="text-right flex flex-col items-end gap-1">
-                            <div className="font-bold text-slate-700">{rev.total ? Number(rev.total).toFixed(2) : '0.00'} {qtn.currency}</div>
+                            <CurrencyAmount value={rev.total || 0} {...currencyProps} className="font-bold text-slate-700" />
                             <div className="scale-90 origin-right">{renderStatusBadge(rev.status)}</div>
                         </div>
                     </div>
@@ -198,6 +268,7 @@ const MobileFloatingActions = ({ status, onSaveDraft, onConfirm, onApprove, onRe
 
 const Quotations = () => {
     const { company } = useCompany();
+    const { defaultBranch, defaultBranchName, formatBranchLocationLabel } = useBranch();
     const navigate = useNavigate();
     const [activeTab, setActiveTab] = useState('list');
     const [editorMode, setEditorMode] = useState('edit');
@@ -209,6 +280,7 @@ const Quotations = () => {
     const [toastMessage, setToastMessage] = useState('');
     const [toastType, setToastType] = useState('success');
     const [printOptions, setPrintOptions] = useState({ printWithImages: false });
+    const [salesSettings, setSalesSettings] = useState(null);
 
     // Add state for expandable rows in Quotation Form
     const [expandedRows, setExpandedRows] = useState({});
@@ -254,6 +326,15 @@ const Quotations = () => {
     const [editingId, setEditingId] = useState(null);
     const [nextQtnNo, setNextQtnNo] = useState("QTN-NEW");
 
+    const createBranchSnapshot = () => ({
+        id: defaultBranch?.id ?? null,
+        name: defaultBranch?.name || '',
+        code: defaultBranch?.code || '',
+        location: defaultBranch?.defaultWarehouseName || defaultBranch?.address || ''
+    });
+
+    const [quotationBranch, setQuotationBranch] = useState(createBranchSnapshot);
+
     // --- ATTACHMENT STATE ---
     const [attachments, setAttachments] = useState([]);
 
@@ -264,6 +345,7 @@ const Quotations = () => {
     // --- DROPDOWN STATES ---
     const [currency, setCurrency] = useState('AED');
     const [isCurrencyOpen, setIsCurrencyOpen] = useState(false);
+    const [currencySearch, setCurrencySearch] = useState('');
 
     const [customer, setCustomer] = useState('');
     const [isCustomerOpen, setIsCustomerOpen] = useState(false);
@@ -278,6 +360,12 @@ const Quotations = () => {
 
     const [deliveryType, setDeliveryType] = useState('Delivery');
     const [isDeliveryTypeOpen, setIsDeliveryTypeOpen] = useState(false);
+    const branchLocationDisplay = formatBranchLocationLabel({
+        name: quotationBranch.name || defaultBranch?.name,
+        code: quotationBranch.code || defaultBranch?.code,
+        defaultWarehouseName: quotationBranch.location || defaultBranch?.defaultWarehouseName,
+        address: quotationBranch.location || defaultBranch?.address,
+    }) || quotationBranch.name || defaultBranchName || 'No branch assigned';
 
     // Form Dates
     const [qtnDate, setQtnDate] = useState(new Date().toISOString().split('T')[0]);
@@ -311,6 +399,66 @@ const Quotations = () => {
     const [selectedAddonItem, setSelectedAddonItem] = useState(null);
     const [isPrinting, setIsPrinting] = useState(false);
 
+    const companyCurrencyCode = company?.currency || '';
+    const companyCurrencySymbol = company?.currencySymbol || '';
+    const getDisplayCurrencyProps = (fallbackCurrency = currency) => ({
+        currency: companyCurrencyCode || fallbackCurrency || 'AED',
+        currencySymbol: companyCurrencySymbol || companyCurrencyCode || fallbackCurrency || 'AED'
+    });
+    const displayCurrencyProps = getDisplayCurrencyProps(currency);
+    const displayCurrencyHtml = renderCurrencyDisplayHtml(displayCurrencyProps);
+
+    useEffect(() => {
+        if (editingId) {
+            return;
+        }
+
+        setQuotationBranch(createBranchSnapshot());
+    }, [
+        defaultBranch?.id,
+        defaultBranch?.name,
+        defaultBranch?.code,
+        defaultBranch?.defaultWarehouseName,
+        defaultBranch?.address,
+        editingId
+    ]);
+
+    useEffect(() => {
+        if (editingId || activeTab !== 'create' || !companyCurrencyCode) {
+            return;
+        }
+
+        setCurrency(prev => (prev && prev !== 'AED' ? prev : companyCurrencyCode));
+    }, [activeTab, companyCurrencyCode, editingId]);
+
+    const currencyOptions = useMemo(() => {
+        return WORLD_CURRENCY_CODES
+            .map((code) => {
+                const name = getCurrencyDisplayName(code);
+                return {
+                    code,
+                    name,
+                    searchText: `${code} ${name}`.toLowerCase()
+                };
+            })
+            .sort((a, b) => a.code.localeCompare(b.code));
+    }, []);
+
+    const filteredCurrencyOptions = useMemo(() => {
+        const query = currencySearch.trim().toLowerCase();
+        if (!query) {
+            return currencyOptions;
+        }
+        return currencyOptions.filter((option) => option.searchText.includes(query));
+    }, [currencyOptions, currencySearch]);
+
+    const selectedCurrencyOption = useMemo(() => {
+        return currencyOptions.find((option) => option.code === currency) || {
+            code: currency,
+            name: getCurrencyDisplayName(currency)
+        };
+    }, [currencyOptions, currency]);
+
     const canEditQuotation = (quotationStatus) => !['Approved', 'Invoiced', 'Converted'].includes(quotationStatus);
     const isViewMode = activeTab === 'create' && editorMode === 'view';
     const canEditCurrentQuotation = canEditQuotation(status);
@@ -322,6 +470,24 @@ const Quotations = () => {
     const [items, setItems] = useState([
         { id: Date.now(), code: '', image: '', desc: '', unit: 'PCS', qty: 0, price: 0, foc: 0, focUnit: 'PCS', availableUnits: ['PCS'], disc: 0, tax: 5, taxAmt: 0.00, total: 0.00, remarks: '', isProductSelected: false }
     ]);
+    const createBlankQuotationItem = () => ({
+        id: Date.now() + Math.random(),
+        code: '',
+        image: '',
+        desc: '',
+        unit: 'PCS',
+        qty: 0,
+        price: 0,
+        foc: 0,
+        focUnit: 'PCS',
+        availableUnits: ['PCS'],
+        disc: 0,
+        tax: 5,
+        taxAmt: 0.00,
+        total: 0.00,
+        remarks: '',
+        isProductSelected: false
+    });
 
     // ✅ GLOBAL SHORTCUTS
     useShortcuts({
@@ -383,13 +549,17 @@ const Quotations = () => {
             customer: data.customer,
             date: data.date,
             validTill: data.validTill,
+            branchId: data.branchId || null,
+            branchName: data.branchName || '',
+            branchCode: data.branchCode || '',
+            branchLocation: data.branchLocation || '',
             total: data.totalAmount,
             billDiscount: data.billDiscount || 0,
             status: data.status === 'PENDING_APPROVAL' ? 'Pending Approval' :
                 data.status === 'APPROVED' ? 'Approved' :
-                data.status === 'REJECTED' ? 'Rejected' :
-                data.status === 'CONVERTED' ? 'Converted' :
-                data.status === 'EXPIRED' ? 'Expired' : 'Draft',
+                    data.status === 'REJECTED' ? 'Rejected' :
+                        data.status === 'CONVERTED' ? 'Converted' :
+                            data.status === 'EXPIRED' ? 'Expired' : 'Draft',
             currency: data.currency,
             paymentTerm: data.paymentTerms,
             deliveryType: data.deliveryType,
@@ -411,6 +581,7 @@ const Quotations = () => {
             items: data.items.map(i => ({
                 id: i.id || Math.random(),
                 code: i.itemCode,
+                name: i.itemName || i.name || '',
                 barcode: i.barcode || '',
                 // ✅ FIX: Check both primaryImage (from backend) and image
                 image: i.primaryImage || i.image || '',
@@ -564,6 +735,13 @@ const Quotations = () => {
             const nextNo = await getNextQuotationNo();
             setNextQtnNo(nextNo);
 
+            try {
+                const settings = await getSalesSettings();
+                setSalesSettings(settings);
+            } catch {
+                // settings are optional
+            }
+
         } catch (error) {
             console.error("Error loading data:", error);
         }
@@ -646,24 +824,14 @@ const Quotations = () => {
                 if (field === 'unit' && item.unitConversions) {
                     const newUnit = value;
 
-                    // Check if we have a direct price for this unit
-                    if (item.unitPrices && item.unitPrices[newUnit]) {
-                        updatedItem.price = item.unitPrices[newUnit];
-
-                    } else {
-                        // Calculate price based on conversion ratio
-                        const baseUnit = Object.keys(item.unitConversions).find(u => item.unitConversions[u] === 1);
-
-                        if (baseUnit) {
-                            let basePrice = item.unitPrices && item.unitPrices[baseUnit] ? item.unitPrices[baseUnit] : null;
-                            if (!basePrice) {
-                                const currentUnitConversion = item.unitConversions[item.unit] || 1;
-                                basePrice = item.price / currentUnitConversion;
-                            }
-                            const newUnitConversion = item.unitConversions[newUnit] || 1;
-                            updatedItem.price = basePrice * newUnitConversion;
-                        }
-                    }
+                    updatedItem.price = resolveUnitAmount({
+                        targetUnit: newUnit,
+                        amountMap: item.unitPrices,
+                        unitConversions: item.unitConversions,
+                        currentUnit: item.unit,
+                        currentAmount: item.price,
+                        fallbackAmount: item.price
+                    });
                 }
 
                 return calculateRow(updatedItem);
@@ -698,22 +866,29 @@ const Quotations = () => {
 
     const handleAddSingleProduct = (product) => {
         if (isViewMode) return;
-        const price = parseFloat(product.retailPrice) || parseFloat(product.sellingPrice) || 0;
+        const defaultUnit = getDefaultProductUnit(product);
+        const price = resolveUnitAmount({
+            targetUnit: defaultUnit,
+            amountMap: product.unitPrices,
+            unitConversions: product.unitConversions,
+            fallbackAmount: product.retailPrice ?? product.sellingPrice ?? 0
+        });
         const cost = parseFloat(product.cost) || 0;
         const disc = parseFloat(product.maxDiscount) || 0;
         const tax = parseFloat(product.salesTax) || 5;
         const rawItem = {
             id: Date.now() + Math.random(),
             code: product.code,
+            name: product.name || '',
             barcode: product.barcode || '',
             image: product.primaryImage || product.image || '', // ✅ Set Image URL
             desc: product.description || product.name,
-            unit: product.unitName || product.unit || (product.availableUnits && product.availableUnits[0]) || 'PCS',
+            unit: defaultUnit,
             qty: 1,
             price: price,
             cost: cost, // ✅ Capture Cost
             foc: 0,
-            focUnit: product.unitName || product.unit || (product.availableUnits && product.availableUnits[0]) || 'PCS',
+            focUnit: defaultUnit,
             availableUnits: product.availableUnits || ['PCS'],
             unitConversions: product.unitConversions || {},
             unitPrices: product.unitPrices || {},
@@ -749,6 +924,41 @@ const Quotations = () => {
             const qtyInput = document.getElementById(`qty-${newItem.id}`);
             if (qtyInput) qtyInput.focus();
         }, 100);
+    };
+
+    const handleFastEntryAdd = (product, qty, price, disc) => {
+        const defaultUnit = getDefaultProductUnit(product);
+        const cost = parseFloat(product.cost) || 0;
+        const tax = parseFloat(product.salesTax) || 5;
+        const rawItem = {
+            id: Date.now() + Math.random(),
+            code: product.code,
+            name: product.name || '',
+            barcode: product.barcode || '',
+            image: product.primaryImage || product.image || '',
+            desc: product.description || product.name,
+            unit: defaultUnit,
+            qty,
+            price,
+            cost,
+            foc: 0,
+            focUnit: defaultUnit,
+            availableUnits: product.availableUnits || ['PCS'],
+            unitConversions: product.unitConversions || {},
+            unitPrices: product.unitPrices || {},
+            disc,
+            netPrice: price * (1 - disc / 100),
+            tax,
+            taxAmt: 0,
+            total: 0,
+            remarks: product.description || '',
+            isProductSelected: true,
+        };
+        const newItem = calculateRow(rawItem);
+        setItems(prev => {
+            const isFirstItemEmpty = prev.length === 1 && !prev[0].code && !prev[0].desc;
+            return isFirstItemEmpty ? [newItem] : [...prev, newItem];
+        });
     };
 
     // --- STOCK CHECK MODAL LOGIC ---
@@ -819,17 +1029,22 @@ const Quotations = () => {
 
     const handleDeleteItem = (id) => {
         if (isViewMode) return;
-        setItems(items.filter(item => item.id !== id));
+        const nextItems = items.filter(item => item.id !== id);
+        setItems(nextItems.length > 0 ? nextItems : [createBlankQuotationItem()]);
+        if (focusedRowId === id) setFocusedRowId(null);
     };
 
     // ✅ UPDATED CALCULATIONS
-    const sumOfLineTotals = items.reduce((acc, item) => acc + item.total, 0);
-    const totalTax = items.reduce((acc, item) => acc + item.taxAmt, 0);
-    const subTotal = sumOfLineTotals - totalTax;
-
-    const billDiscountAmount = subTotal * (billDiscount / 100);
-
-    const grandTotal = subTotal - billDiscountAmount + totalTax;
+    const quotationSummary = useMemo(
+        () => summarizeSalesItems(items, billDiscount),
+        [items, billDiscount]
+    );
+    const grossTotal = quotationSummary.grossTotal;
+    const totalItemDiscount = quotationSummary.itemDiscountTotal;
+    const subTotal = quotationSummary.subTotal;
+    const totalTax = quotationSummary.tax;
+    const billDiscountAmount = quotationSummary.billDiscountAmount;
+    const grandTotal = quotationSummary.grandTotal;
 
     // ------------------------------------------------------------------
     // ✅ LOGIC FOR WORKFLOW & REVISIONS
@@ -843,6 +1058,10 @@ const Quotations = () => {
             date: qtnDate,
             validTill: validTill,
             currency: currency,
+            branchId: quotationBranch.id,
+            branchName: quotationBranch.name || defaultBranch?.name || '',
+            branchCode: quotationBranch.code || defaultBranch?.code || '',
+            branchLocation: quotationBranch.location || defaultBranch?.defaultWarehouseName || defaultBranch?.address || '',
             paymentTerms: paymentTerm,
             deliveryType: deliveryType,
             expectedDispatch: expectedDispatch,
@@ -902,6 +1121,50 @@ const Quotations = () => {
 
     const handleConfirm = async () => {
         if (isViewMode) return;
+
+        // Stock check enforcement
+        if (salesSettings?.stockCheckRequired) {
+            const stockIssues = [];
+            for (const item of items) {
+                if (!item.code) continue;
+                try {
+                    const stockData = await getStockAvailability(item.code);
+                    const locs = stockData?.locations || [];
+                    const available = locs.reduce((sum, l) => sum + (Number(l.available) || 0), 0);
+
+                    if (Number(item.qty) > available) {
+                        stockIssues.push(`${item.name || item.code}: requested ${item.qty}, available ${available}`);
+                    }
+                } catch {
+                    // skip items where stock check fails
+                }
+            }
+            if (stockIssues.length > 0) {
+                setToastMessage(`Insufficient stock:\n${stockIssues.join(', ')}`);
+                setToastType('info');
+                setShowToast(true);
+                return;
+            }
+        }
+
+        // Credit limit BLOCK enforcement
+        if (salesSettings?.creditLimitPolicy === 'BLOCK' &&
+            selectedCustomerData?.creditLimitAmount > 0 &&
+            (Number(selectedCustomerData.balance || 0) + grandTotal) > selectedCustomerData.creditLimitAmount) {
+            const projectedOutstanding = Number(selectedCustomerData.balance || 0) + grandTotal;
+            setToastMessage(
+                <>
+                    Credit Limit Exceeded: The projected outstanding balance (
+                    <CurrencyAmount value={projectedOutstanding} {...displayCurrencyProps} />
+                    ) exceeds this customer's credit limit of{' '}
+                    <CurrencyAmount value={selectedCustomerData.creditLimitAmount} {...displayCurrencyProps} />.
+                </>
+            );
+            setToastType('info');
+            setShowToast(true);
+            return;
+        }
+
         try {
             const payload = constructPayload('Pending Approval');
 
@@ -1024,9 +1287,10 @@ const Quotations = () => {
             const recalculated = revision.items.map((i, idx) => ({
                 id: Date.now() + idx,
                 code: i.code || i.itemCode || '',
+                name: i.name || i.productName || i.itemName || '',
                 barcode: i.barcode || '',
                 image: i.image || i.primaryImage || '',
-                desc: i.desc || i.description || i.name || '',
+                desc: i.desc || i.description || '',
                 unit: i.unit || 'PCS',
                 qty: Number(i.qty || i.quantity) || 1,
                 price: Number(i.price) || 0,
@@ -1053,6 +1317,16 @@ const Quotations = () => {
         }
     };
 
+    const handleSelectCustomer = (cust) => {
+        setCustomer(`${cust.name} - ${cust.code}`);
+        const _defaultAddr = (cust.savedAddresses || []).find(a => a.isDefault);
+        const _resolvedAddr = _defaultAddr
+            ? [_defaultAddr.address1, _defaultAddr.address2, _defaultAddr.city, _defaultAddr.country].filter(Boolean).join(', ')
+            : (cust.defaultShippingAddress || cust.shippingAddress || cust.billingAddress || cust.address || '');
+        setShippingAddress(_resolvedAddr);
+        setIsCustomerSearchOpen(false);
+    };
+
 
     const handleEditQuotation = (qtn, mode = 'edit') => {
         const allowEdit = mode === 'edit' && canEditQuotation(qtn.status);
@@ -1060,6 +1334,12 @@ const Quotations = () => {
         setCustomer(qtn.customer);
         setQtnDate(qtn.date);
         setValidTill(qtn.validTill);
+        setQuotationBranch({
+            id: qtn.branchId || null,
+            name: qtn.branchName || defaultBranch?.name || '',
+            code: qtn.branchCode || defaultBranch?.code || '',
+            location: qtn.branchLocation || defaultBranch?.defaultWarehouseName || defaultBranch?.address || ''
+        });
         setItems(qtn.items.length > 0 ? qtn.items : [{ id: 1, code: '', image: '', desc: '', unit: 'PCS', qty: 0, price: 0, foc: 0, focUnit: 'PCS', availableUnits: ['PCS'], disc: 0, tax: 5, taxAmt: 0.00, total: 0.00, remarks: '', isProductSelected: false }]);
         setCurrency(qtn.currency || 'AED');
         setStatus(qtn.status);
@@ -1072,6 +1352,7 @@ const Quotations = () => {
         setAttachments(qtn.attachments || []);
         setBillDiscount(qtn.billDiscount || 0);
         setEditorMode(allowEdit ? 'edit' : 'view');
+        setCurrencySearch('');
         setIsCustomerSearchOpen(false);
         setIsCurrencyOpen(false);
         setIsPaymentTermOpen(false);
@@ -1167,6 +1448,8 @@ const Quotations = () => {
                         id: qtn.id,
                         qtnNo: qtn.qtnNo,
                         customer: qtn.customer,
+                        billDiscount: qtn.billDiscount,
+                        shippingAddress: qtn.shippingAddress || '',
                         items: qtn.items
                     }
                 }
@@ -1186,6 +1469,8 @@ const Quotations = () => {
                     id: qtn.id,
                     qtnNo: qtn.qtnNo,
                     customer: qtn.customer,
+                    billDiscount: qtn.billDiscount,
+                    shippingAddress: qtn.shippingAddress || '',
                     items: qtn.items
                 }
             }
@@ -1206,6 +1491,8 @@ const Quotations = () => {
         try {
             const templates = await getTemplatesByCategory('Quotation');
             const defaultTemplate = templates.find(t => t.isDefault);
+            const resolvedBillDiscount = Number(qtn.billDiscount || 0);
+            const resolvedSummary = summarizeSalesItems(qtn.items || [], resolvedBillDiscount);
             const printData = {
                 title: 'QUOTATION',
                 docNo: qtn.qtnNo,
@@ -1215,6 +1502,7 @@ const Quotations = () => {
                     code: i.code,
                     name: i.name || i.productName || '',
                     desc: i.desc || '',
+                    remarks: i.remarks || '',
                     sku: i.sku || i.productSku || '',
                     localName: i.localName || i.productLocalName || '',
                     barcode: i.barcode || '',
@@ -1228,12 +1516,12 @@ const Quotations = () => {
                     image: i.image ? getImageUrl(i.image) : ''
                 })),
                 totals: {
-                    subTotal: (qtn.items || []).reduce((s, i) => s + (Number(i.price) * Number(i.qty) * (1 - Number(i.disc) / 100)), 0),
-                    tax: (qtn.items || []).reduce((s, i) => s + Number(i.taxAmt || 0), 0),
-                    grandTotal: qtn.total || 0,
-                    currency: qtn.currency,
-                    billDiscount: qtn.billDiscount || 0,
-                    billDiscountAmount: 0
+                    subTotal: resolvedSummary.subTotal,
+                    tax: resolvedSummary.tax,
+                    grandTotal: resolvedSummary.grandTotal,
+                    currency: getDisplayCurrencyProps(qtn.currency).currency,
+                    billDiscount: resolvedBillDiscount,
+                    billDiscountAmount: resolvedSummary.billDiscountAmount
                 },
                 meta: { validTill: qtn.validTill, paymentTerm: qtn.paymentTerm, status: qtn.status, notes: qtn.notesToCustomer, reference: '' }
             };
@@ -1313,6 +1601,7 @@ const Quotations = () => {
                         id: editingId,
                         qtnNo: getQuotationNo(),
                         customer: customer,
+                        billDiscount,
                         items: items
                     }
                 }
@@ -1326,6 +1615,7 @@ const Quotations = () => {
     const handleCreateNew = async () => {
         setEditingId(null);
         setEditorMode('edit');
+        setQuotationBranch(createBranchSnapshot());
         setCustomer('');
         const walkin = customersList.find(c => c.name.toLowerCase().includes('walkin') || c.name.toLowerCase().includes('walk-in'));
         if (walkin) {
@@ -1339,6 +1629,9 @@ const Quotations = () => {
         setStatus('Draft');
         setQtnDate(new Date().toISOString().split('T')[0]);
         setValidTill(new Date().toISOString().split('T')[0]);
+        setCurrency(companyCurrencyCode || 'AED');
+        setCurrencySearch('');
+        setIsCurrencyOpen(false);
         setAttachments([]);
         setNotesToCustomer('');
         setInternalNotes('');
@@ -1405,9 +1698,12 @@ const Quotations = () => {
                         code: i.code,
                         name: i.name || i.productName || '',
                         desc: i.desc || '',
+                        remarks: i.remarks || '',
                         sku: i.sku || i.productSku || '',
                         localName: i.localName || i.productLocalName || '',
                         barcode: i.barcode || '',
+                        salesPerson: '',
+                        location: quotationBranch?.location || '',
                         unit: i.unit,
                         qty: Number(i.qty),
                         price: Number(i.price),
@@ -1421,7 +1717,7 @@ const Quotations = () => {
                         subTotal,
                         tax: totalTax,
                         grandTotal,
-                        currency,
+                        currency: displayCurrencyProps.currency,
                         billDiscount,
                         billDiscountAmount
                     },
@@ -1430,7 +1726,8 @@ const Quotations = () => {
                         paymentTerm,
                         status,
                         notes: notesToCustomer,
-                        reference: ''
+                        reference: quotationBranch?.code || '',
+                        location: branchLocationDisplay || quotationBranch?.location || ''
                     }
                 };
 
@@ -1526,7 +1823,7 @@ const Quotations = () => {
 <html>
 <head>
     <meta charset="UTF-8">
-    <title>Quotation - ${qtnNo}</title>
+    <title>${generateDocFilename('Quotation', qtnNo, customerName, qtnDate, currency)}</title>
     <style>
         @page { size: A4; margin: 15mm; }
         * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -1566,7 +1863,7 @@ const Quotations = () => {
             <table style="margin-left:auto; border-spacing:0;">
                 <tr><td style="padding:4px 16px 4px 0; font-size:12px; color:#94a3b8; text-align:right;">Date:</td><td style="font-size:13px; font-weight:600; color:#1e293b;">${qtnDate}</td></tr>
                 <tr><td style="padding:4px 16px 4px 0; font-size:12px; color:#94a3b8; text-align:right;">Valid Till:</td><td style="font-size:13px; font-weight:600; color:#1e293b;">${validTill}</td></tr>
-                <tr><td style="padding:4px 16px 4px 0; font-size:12px; color:#94a3b8; text-align:right;">Currency:</td><td style="font-size:13px; font-weight:600; color:#1e293b;">${currency}</td></tr>
+                <tr><td style="padding:4px 16px 4px 0; font-size:12px; color:#94a3b8; text-align:right;">Currency:</td><td style="font-size:13px; font-weight:600; color:#1e293b;">${displayCurrencyHtml}</td></tr>
                 <tr><td style="padding:4px 16px 4px 0; font-size:12px; color:#94a3b8; text-align:right;">Payment:</td><td style="font-size:13px; font-weight:600; color:#1e293b;">${paymentTerm}</td></tr>
                 <tr><td style="padding:4px 16px 4px 0; font-size:12px; color:#94a3b8; text-align:right;">Status:</td><td style="font-size:13px; font-weight:700; color:${status === 'Approved' ? '#16a34a' : status === 'Rejected' ? '#dc2626' : '#F5C742'};">${status}</td></tr>
             </table>
@@ -1598,12 +1895,12 @@ const Quotations = () => {
     <!-- TOTALS -->
     <div style="padding:20px 32px; display:flex; justify-content:flex-end;">
         <table style="border-spacing:0; min-width:280px;">
-            <tr><td style="padding:6px 20px 6px 0; font-size:13px; color:#64748b;">Sub Total</td><td style="text-align:right; font-size:14px; font-weight:600; color:#1e293b;">${currency} ${subTotal.toFixed(2)}</td></tr>
-            ${billDiscount > 0 ? `<tr><td style="padding:6px 20px 6px 0; font-size:13px; color:#dc2626;">Bill Discount (${billDiscount}%)</td><td style="text-align:right; font-size:14px; font-weight:600; color:#dc2626;">-${currency} ${billDiscountAmount.toFixed(2)}</td></tr>` : ''}
-            <tr><td style="padding:6px 20px 6px 0; font-size:13px; color:#64748b;">Tax (VAT 5%)</td><td style="text-align:right; font-size:14px; font-weight:600; color:#1e293b;">${currency} ${totalTax.toFixed(2)}</td></tr>
+            <tr><td style="padding:6px 20px 6px 0; font-size:13px; color:#64748b;">Sub Total</td><td style="text-align:right; font-size:14px; font-weight:600; color:#1e293b;">${displayCurrencyHtml} ${subTotal.toFixed(2)}</td></tr>
+            ${billDiscount > 0 ? `<tr><td style="padding:6px 20px 6px 0; font-size:13px; color:#dc2626;">Bill Discount (${billDiscount}%)</td><td style="text-align:right; font-size:14px; font-weight:600; color:#dc2626;">-${displayCurrencyHtml} ${billDiscountAmount.toFixed(2)}</td></tr>` : ''}
+            <tr><td style="padding:6px 20px 6px 0; font-size:13px; color:#64748b;">Tax (VAT 5%)</td><td style="text-align:right; font-size:14px; font-weight:600; color:#1e293b;">${displayCurrencyHtml} ${totalTax.toFixed(2)}</td></tr>
             <tr style="border-top:2px solid ${t.accentColor};">
                 <td style="padding:12px 20px 6px 0; font-size:16px; font-weight:800; color:#1e293b;">Grand Total</td>
-                <td style="text-align:right; padding-top:12px; font-size:18px; font-weight:800; color:${template === 'Premium' ? '#D4AF37' : '#1e293b'};">${currency} ${grandTotal.toFixed(2)}</td>
+                <td style="text-align:right; padding-top:12px; font-size:18px; font-weight:800; color:${template === 'Premium' ? '#D4AF37' : '#1e293b'};">${displayCurrencyHtml} ${grandTotal.toFixed(2)}</td>
             </tr>
         </table>
     </div>
@@ -1620,7 +1917,7 @@ const Quotations = () => {
     <div style="padding:24px 32px; margin-top:20px; border-top:1px solid #e2e8f0; display:flex; justify-content:space-between; align-items:center;">
         <div>
             <p style="font-size:13px; color:#64748b; font-weight:500;">Thank you for your business!</p>
-            <p style="font-size:11px; color:#94a3b8; margin-top:6px;">This quotation is valid until ${validTill}. Prices are in ${currency}.</p>
+            <p style="font-size:11px; color:#94a3b8; margin-top:6px;">This quotation is valid until ${validTill}. Prices are in ${displayCurrencyHtml}.</p>
         </div>
         <div style="text-align:right; opacity:0.5;">
             <img src="${window.location.origin}${billBullLogo}" alt="BillBull" style="height:24px; width:auto;" />
@@ -1631,15 +1928,8 @@ const Quotations = () => {
 </body>
 </html>`;
 
-        // Open in new window and print
-        const printWindow = window.open('', '_blank', 'width=900,height=700');
-        if (printWindow) {
-            printWindow.document.write(htmlContent);
-            printWindow.document.close();
-            setTimeout(() => {
-                printWindow.print();
-            }, 400);
-        }
+        // Open in new window and print using centralized utility
+        printHtml(htmlContent);
     };
 
     // =====================================================
@@ -1812,6 +2102,10 @@ const Quotations = () => {
                                     <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={14} />
                                 </div>
 
+                                <ExportDropdown
+                                    onExportExcel={() => exportToExcel(filteredQuotations, QUOTATION_COLUMNS, 'Quotations')}
+                                    onExportPdf={() => exportToPDF(filteredQuotations, QUOTATION_COLUMNS, 'Quotations List', 'Quotations')}
+                                />
                                 <button onClick={handleCreateNew} className="flex items-center justify-center gap-1 px-4 py-2 bg-yellow-400 text-slate-900 text-sm font-bold rounded-lg hover:bg-yellow-500 transition-colors shadow-sm whitespace-nowrap">
                                     <Plus size={16} /> Create New
                                 </button>
@@ -1883,7 +2177,9 @@ const Quotations = () => {
                                                 </td>
                                                 <td className="px-4 py-3 text-slate-600">{qtn.date}</td>
                                                 <td className="px-4 py-3 text-slate-700 font-medium">{qtn.customer}</td>
-                                                <td className="px-4 py-3 text-right font-bold text-slate-800">{qtn.total ? qtn.total.toFixed(2) : '0.00'} {qtn.currency}</td>
+                                                <td className="px-4 py-3 text-right font-bold text-slate-800">
+                                                    <CurrencyAmount value={qtn.total || 0} {...getDisplayCurrencyProps(qtn.currency)} />
+                                                </td>
                                                 <td className="px-4 py-3 text-right">
                                                     {renderStatusBadge(qtn.status)}
                                                 </td>
@@ -1997,7 +2293,9 @@ const Quotations = () => {
                                                         </td>
                                                         <td className="px-4 py-2 text-slate-500 text-xs">{rev.date}</td>
                                                         <td className="px-4 py-2 text-slate-500 text-xs italic opacity-70">revised version</td>
-                                                        <td className="px-4 py-2 text-right font-bold text-slate-600 text-xs">{rev.total ? Number(rev.total).toFixed(2) : '0.00'} {qtn.currency}</td>
+                                                        <td className="px-4 py-2 text-right font-bold text-slate-600 text-xs">
+                                                            <CurrencyAmount value={rev.total || 0} {...getDisplayCurrencyProps(qtn.currency)} />
+                                                        </td>
                                                         <td className="px-4 py-2 text-right scale-90 origin-right">
                                                             {renderStatusBadge(rev.status)}
                                                         </td>
@@ -2034,6 +2332,7 @@ const Quotations = () => {
                                         renderStatusBadge={renderStatusBadge}
                                         isExpanded={expandedListRows[qtn.id]}
                                         onToggleExpand={toggleListRow}
+                                        currencyProps={getDisplayCurrencyProps(qtn.currency)}
                                     />
                                 ))
                             ) : (
@@ -2080,133 +2379,168 @@ const Quotations = () => {
                                             <input type="text" value={editingId ? `0${currentRevisions.length + 1}` : '00'} readOnly className="text-sm p-1.5 bg-slate-50 border border-slate-200/50 rounded text-center text-slate-700" />
                                         </div>
                                         <div className="flex flex-col col-span-2 sm:col-span-1">
-
+                                            <label className="text-xs font-semibold text-slate-500 mb-1">Date</label>
                                             <input type="date" value={qtnDate} onChange={(e) => setQtnDate(e.target.value)} disabled={isViewMode} className="w-full text-sm p-1.5 border border-slate-300/50 rounded text-slate-700 disabled:bg-slate-50 disabled:text-slate-500 disabled:cursor-not-allowed" />
-
                                         </div>
                                         <div className="flex flex-col col-span-2 sm:col-span-1">
-
+                                            <label className="text-xs font-semibold text-slate-500 mb-1">Valid Until</label>
                                             <input type="date" value={validTill} onChange={(e) => setValidTill(e.target.value)} disabled={isViewMode} className="w-full text-sm p-1.5 border border-slate-300/50 rounded text-slate-700 disabled:bg-slate-50 disabled:text-slate-500 disabled:cursor-not-allowed" />
-
                                         </div>
 
                                         <div className="flex flex-col relative col-span-2 sm:col-span-1">
                                             <label className="text-xs font-semibold text-slate-500 mb-1">Currency</label>
                                             <div
                                                 className={`w-full text-sm p-1.5 border border-slate-300/50 rounded text-slate-700 bg-white flex justify-between items-center ${isViewMode ? 'cursor-not-allowed bg-slate-50 text-slate-500' : 'cursor-pointer'}`}
-                                                onClick={(e) => { if (isViewMode) return; e.stopPropagation(); setIsCurrencyOpen(!isCurrencyOpen); }}
+                                                onClick={(e) => {
+                                                    if (isViewMode) return;
+                                                    e.stopPropagation();
+                                                    setIsCurrencyOpen(prev => {
+                                                        const next = !prev;
+                                                        if (next) {
+                                                            setCurrencySearch('');
+                                                        }
+                                                        return next;
+                                                    });
+                                                }}
                                             >
-                                                {currency} <ChevronDown size={14} className="text-slate-400" />
+                                                <span className="truncate pr-2">{selectedCurrencyOption.code} - {selectedCurrencyOption.name}</span>
+                                                <ChevronDown size={14} className="text-slate-400 shrink-0" />
                                             </div>
                                             {isCurrencyOpen && !isViewMode && (
-                                                <div className="absolute top-full left-0 w-full bg-white border border-slate-200 rounded shadow-lg z-20 mt-1">
-                                                    {['AED', 'USD', 'SAR', 'EUR'].map(opt => (
-                                                        <div
-                                                            key={opt}
-                                                            onClick={() => { setCurrency(opt); setIsCurrencyOpen(false); }}
-                                                            className={`px-3 py-2 text-sm cursor-pointer flex justify-between items-center hover:bg-slate-50 ${currency === opt ? 'bg-red-500 text-white hover:bg-red-600' : 'text-slate-700'}`}
-                                                        >
-                                                            {opt} {currency === opt && <Check size={14} />}
+                                                <div
+                                                    className="absolute top-full left-0 w-full bg-white border border-slate-200 rounded shadow-lg z-20 mt-1 overflow-hidden"
+                                                    onClick={(e) => e.stopPropagation()}
+                                                >
+                                                    <div className="p-2 border-b border-slate-100 bg-white">
+                                                        <div className="relative">
+                                                            <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                                                            <input
+                                                                type="text"
+                                                                value={currencySearch}
+                                                                autoFocus
+                                                                onChange={(e) => setCurrencySearch(e.target.value)}
+                                                                onClick={(e) => e.stopPropagation()}
+                                                                onKeyDown={(e) => {
+                                                                    if (e.key === 'Enter' && filteredCurrencyOptions.length > 0) {
+                                                                        setCurrency(filteredCurrencyOptions[0].code);
+                                                                        setCurrencySearch('');
+                                                                        setIsCurrencyOpen(false);
+                                                                    }
+                                                                }}
+                                                                placeholder="Search currency code or name..."
+                                                                className="w-full pl-9 pr-3 py-2 text-sm border border-slate-200 rounded bg-slate-50 focus:outline-none focus:ring-2 focus:ring-yellow-400/50 focus:border-yellow-400"
+                                                            />
                                                         </div>
-                                                    ))}
+                                                    </div>
+                                                    <div className="max-h-72 overflow-y-auto">
+                                                        {filteredCurrencyOptions.length > 0 ? filteredCurrencyOptions.map((option) => (
+                                                            <div
+                                                                key={option.code}
+                                                                onClick={() => {
+                                                                    setCurrency(option.code);
+                                                                    setCurrencySearch('');
+                                                                    setIsCurrencyOpen(false);
+                                                                }}
+                                                                className={`px-3 py-2.5 text-sm cursor-pointer flex justify-between items-center hover:bg-slate-50 ${currency === option.code ? 'bg-yellow-50 text-slate-900' : 'text-slate-700'}`}
+                                                            >
+                                                                <div className="min-w-0">
+                                                                    <div className="font-semibold">{option.code}</div>
+                                                                    <div className={`text-xs truncate ${currency === option.code ? 'text-slate-600' : 'text-slate-500'}`}>{option.name}</div>
+                                                                </div>
+                                                                {currency === option.code && <Check size={14} className="text-yellow-600 shrink-0" />}
+                                                            </div>
+                                                        )) : (
+                                                            <div className="px-3 py-6 text-sm text-center text-slate-400">
+                                                                No currencies match your search.
+                                                            </div>
+                                                        )}
+                                                    </div>
                                                 </div>
                                             )}
                                         </div>
 
                                         <div className="flex flex-col col-span-2 sm:col-span-1">
                                             <label className="text-xs font-semibold text-slate-500 mb-1">Branch / Location</label>
-                                            <div className="relative">
-                                                <select disabled={isViewMode} className="w-full text-sm p-1.5 border border-slate-300/50 rounded text-slate-700 appearance-none bg-white disabled:bg-slate-50 disabled:text-slate-500 disabled:cursor-not-allowed">
-                                                    <option>Main Branch</option>
-                                                </select>
-                                                <ChevronDown className="absolute right-2 top-2 text-slate-400" size={14} />
-                                            </div>
+                                            <input
+                                                type="text"
+                                                value={branchLocationDisplay}
+                                                readOnly
+                                                title={branchLocationDisplay}
+                                                className="w-full text-sm p-1.5 border border-slate-300/50 rounded text-slate-700 bg-slate-50"
+                                            />
                                         </div>
                                     </div>
                                 </div>
 
-                                {/* 2. Customer Card */}
-                                <div className="bg-white rounded-lg border border-slate-200/50 p-4 shadow-sm z-10 relative">
-                                    <div className="flex justify-between items-center mb-4 border-b border-slate-100/50 pb-2">
-                                        <h3 className="text-sm font-bold text-slate-800 flex items-center gap-2">
-                                            <User size={16} className="text-yellow-500" /> Customer
-                                        </h3>
-                                    </div>
+                                {/* 2. Customer + Shipping — unified panel */}
+                                <CustomerShippingPanel
+                                    selectedCustomer={selectedCustomerData}
+                                    onOpenCustomerSearch={() => setIsCustomerSearchOpen(true)}
+                                    shippingAddress={shippingAddress}
+                                    onShippingChange={setShippingAddress}
+                                    deliveryType={deliveryType}
+                                    onDeliveryTypeChange={setDeliveryType}
+                                    expectedDispatch={expectedDispatch}
+                                    onExpectedDispatchChange={setExpectedDispatch}
+                                    isReadOnly={isViewMode}
+                                    currency={displayCurrencyProps.currency}
+                                    currencySymbol={displayCurrencyProps.currencySymbol}
+                                />
 
-
-                                    <div className="mb-3 relative">
-                                        <label className="text-xs font-semibold text-slate-500 mb-1 block">Select Customer</label>
-                                        <div
-                                            className={`w-full text-sm p-2 border border-slate-300/50 rounded text-slate-700 bg-white flex items-center gap-2 transition-colors ${isViewMode ? 'cursor-not-allowed bg-slate-50 text-slate-500' : 'cursor-pointer hover:border-yellow-400'}`}
-                                            onClick={() => { if (!isViewMode) setIsCustomerSearchOpen(true); }}
-                                        >
-                                            <Search size={14} className="text-slate-400 shrink-0" />
-                                            <span className="flex-1 truncate">{selectedCustomerData ? `${selectedCustomerData.code} - ${selectedCustomerData.name}` : 'Search customer...'}</span>
+                                {selectedCustomerData && salesSettings?.creditLimitPolicy === 'WARNING' &&
+                                    selectedCustomerData.creditLimitAmount > 0 &&
+                                    (Number(selectedCustomerData.balance || 0) + grandTotal) > selectedCustomerData.creditLimitAmount && (
+                                        <div className="p-2.5 bg-yellow-50 shadow-sm border border-yellow-200 rounded-md text-yellow-800 text-[11px] leading-relaxed flex items-start gap-2">
+                                            <AlertCircle size={14} className="mt-0.5 shrink-0 text-yellow-600" />
+                                            <p>
+                                                <strong>Credit Warning:</strong> The projected outstanding balance
+                                                (<CurrencyAmount value={Number(selectedCustomerData.balance || 0) + grandTotal} {...displayCurrencyProps} />) exceeds this customer's
+                                                credit limit of <CurrencyAmount value={selectedCustomerData.creditLimitAmount} {...displayCurrencyProps} />.
+                                            </p>
                                         </div>
-                                    </div>
-
-
-                                    {/* DYNAMIC CUSTOMER DATA DISPLAY */}
-                                    {selectedCustomerData && (
-                                        <div className="bg-slate-50 border border-slate-200/50 rounded p-3 text-sm animate-in fade-in zoom-in-95 duration-200">
-                                            <div className="flex justify-between items-start">
-                                                <div>
-                                                    <div className="text-xs text-slate-500 font-semibold mb-1">Customer Group</div>
-                                                    <div className="bg-white border border-slate-200/50 px-2 py-0.5 rounded text-xs inline-block mb-3 text-slate-600">
-                                                        {selectedCustomerData.groupType || selectedCustomerData.group || 'General'}
-                                                    </div>
-
-                                                    <div className="font-bold text-slate-800">{selectedCustomerData.name}</div>
-                                                    <div className="text-xs text-slate-500">Code: {selectedCustomerData.code}</div>
-                                                    <div className="text-xs text-slate-500">Tax ID: {selectedCustomerData.trn || 'N/A'}</div>
-                                                    <div className="text-xs text-slate-500">Phone: {selectedCustomerData.mobile || selectedCustomerData.phone || 'N/A'}</div>
-                                                </div>
-                                                <div className="text-right">
-                                                    <span className={`text-[10px] font-bold px-2 py-0.5 rounded border ${selectedCustomerData.creditStatus === 'Good' ? 'bg-emerald-100 text-emerald-700 border-emerald-200' : 'bg-yellow-100 text-yellow-700 border-yellow-200'}`}>
-                                                        Credit: {selectedCustomerData.creditStatus || 'N/A'}
-                                                    </span>
-                                                    <div className="text-xs text-slate-500 mt-2">Terms: {selectedCustomerData.payTerms || 'Cash'}</div>
-                                                    <div className="text-xs text-slate-500 mt-1">
-                                                        Outstanding: <span className="font-semibold text-slate-700">{selectedCustomerData.balance ? Number(selectedCustomerData.balance).toFixed(2) : '0.00'} AED</span>
-                                                    </div>
-                                                </div>
-                                            </div>
+                                    )}
+                                {selectedCustomerData && salesSettings?.creditLimitPolicy === 'BLOCK' &&
+                                    selectedCustomerData.creditLimitAmount > 0 &&
+                                    (Number(selectedCustomerData.balance || 0) + grandTotal) > selectedCustomerData.creditLimitAmount && (
+                                        <div className="p-2.5 bg-red-50 shadow-sm border border-red-300 rounded-md text-red-800 text-[11px] leading-relaxed flex items-start gap-2">
+                                            <AlertCircle size={14} className="mt-0.5 shrink-0 text-red-600" />
+                                            <p>
+                                                <strong>Credit Limit Blocked:</strong> The projected outstanding balance
+                                                (<CurrencyAmount value={Number(selectedCustomerData.balance || 0) + grandTotal} {...displayCurrencyProps} />) exceeds this customer's
+                                                credit limit of <CurrencyAmount value={selectedCustomerData.creditLimitAmount} {...displayCurrencyProps} />.
+                                                Confirming this quotation is blocked until the balance is within limit.
+                                            </p>
                                         </div>
                                     )}
 
-                                    {/* CUSTOMER SELECTOR MODAL */}
-                                    <CustomerSelector
-                                        isOpen={!isViewMode && isCustomerSearchOpen}
-                                        onClose={() => setIsCustomerSearchOpen(false)}
-                                        onSelect={(cust) => {
-                                            setCustomer(`${cust.name} - ${cust.code}`);
-                                        }}
-                                        customers={customersList}
-                                        selectedCode={selectedCustomerData?.code || ''}
-                                        onCustomerCreated={refreshData}
-                                    />
-                                </div>
+                                {/* CustomerSelector modal (unchanged) */}
+                                <CustomerSelector
+                                    isOpen={!isViewMode && isCustomerSearchOpen}
+                                    onClose={() => setIsCustomerSearchOpen(false)}
+                                    onSelect={handleSelectCustomer}
+                                    customers={customersList}
+                                    selectedCode={selectedCustomerData?.code || ''}
+                                    onCustomerCreated={refreshData}
+                                />
 
-                                {/* Right Column: Payment Terms & Shipping Details (merged to left col) */}
                                 {/* Payment Terms */}
-                                <div className="bg-white rounded-lg border border-slate-200/50 p-4 shadow-sm h-fit relative">
+                                <div className="bg-white rounded-xl border border-slate-200 p-4 shadow-sm relative">
                                     <h3 className="text-xs font-bold text-slate-700 mb-3">Payment Terms</h3>
-
                                     <div className="flex flex-col relative">
                                         <label className="text-[10px] font-semibold text-slate-500 mb-1">Terms</label>
                                         <div
-                                            className={`w-full text-xs p-2 border border-slate-300/50 rounded text-slate-700 bg-white flex justify-between items-center ${isViewMode ? 'cursor-not-allowed bg-slate-50 text-slate-500' : 'cursor-pointer'}`}
+                                            className={`w-full text-xs p-2 border border-slate-200 rounded-lg text-slate-700 bg-white flex justify-between items-center ${isViewMode ? 'cursor-not-allowed bg-slate-50 text-slate-500' : 'cursor-pointer hover:border-yellow-400'}`}
                                             onClick={(e) => { if (isViewMode) return; e.stopPropagation(); setIsPaymentTermOpen(!isPaymentTermOpen); }}
                                         >
                                             {paymentTerm} <ChevronDown size={12} className="text-slate-400" />
                                         </div>
                                         {isPaymentTermOpen && !isViewMode && (
-                                            <div className="absolute top-full left-0 w-full bg-white border border-slate-200 rounded shadow-lg z-20 mt-1">
+                                            <div className="absolute top-full left-0 w-full bg-white border border-slate-200 rounded-lg shadow-lg z-20 mt-1 overflow-hidden">
                                                 {['Cash', '7 Days', '30 Days', '60 Days', 'Custom'].map(opt => (
                                                     <div
                                                         key={opt}
                                                         onClick={() => { setPaymentTerm(opt); setIsPaymentTermOpen(false); }}
-                                                        className={`px-3 py-2 text-xs cursor-pointer flex justify-between items-center hover:bg-slate-50 ${paymentTerm === opt ? 'bg-red-500 text-white hover:bg-red-600' : 'text-slate-700'}`}
+                                                        className={`px-3 py-2 text-xs cursor-pointer flex justify-between items-center hover:bg-slate-50 ${paymentTerm === opt ? 'bg-yellow-50 text-yellow-700 font-semibold' : 'text-slate-700'}`}
                                                     >
                                                         {opt} {paymentTerm === opt && <Check size={12} />}
                                                     </div>
@@ -2214,53 +2548,7 @@ const Quotations = () => {
                                             </div>
                                         )}
                                     </div>
-
                                 </div>
-
-                                {/* Shipping Details */}
-                                <div className="bg-white rounded-lg border border-slate-200/50 p-4 shadow-sm h-fit">
-                                    <h3 className="text-xs font-bold text-slate-700 mb-3">Shipping Details</h3>
-                                    <div className="grid grid-cols-2 gap-4 mb-3">
-
-                                        <div className="flex flex-col relative">
-                                            <label className="text-[10px] font-semibold text-slate-500 mb-1">Type</label>
-                                            <div
-                                                className={`w-full text-xs p-2 border border-slate-300/50 rounded text-slate-700 bg-white flex justify-between items-center ${isViewMode ? 'cursor-not-allowed bg-slate-50 text-slate-500' : 'cursor-pointer'}`}
-                                                onClick={(e) => { if (isViewMode) return; e.stopPropagation(); setIsDeliveryTypeOpen(!isDeliveryTypeOpen); }}
-                                            >
-                                                {deliveryType} <ChevronDown size={12} className="text-slate-400" />
-                                            </div>
-                                            {isDeliveryTypeOpen && !isViewMode && (
-                                                <div className="absolute top-full left-0 w-full bg-white border border-slate-200 rounded shadow-lg z-20 mt-1">
-                                                    {['Delivery', 'Pickup'].map(opt => (
-                                                        <div
-                                                            key={opt}
-                                                            onClick={() => { setDeliveryType(opt); setIsDeliveryTypeOpen(false); }}
-                                                            className={`px-3 py-2 text-xs cursor-pointer flex justify-between items-center hover:bg-slate-50 ${deliveryType === opt ? 'bg-red-500 text-white hover:bg-red-600' : 'text-slate-700'}`}
-                                                        >
-                                                            {opt} {deliveryType === opt && <Check size={12} />}
-                                                        </div>
-                                                    ))}
-                                                </div>
-                                            )}
-                                        </div>
-
-
-                                        <div className="flex flex-col">
-                                            <label className="text-[10px] font-semibold text-slate-500 mb-1">Expected Dispatch</label>
-                                            <input type="date" value={expectedDispatch} onChange={(e) => setExpectedDispatch(e.target.value)} disabled={isViewMode} className="text-xs p-2 border border-slate-300/50 rounded text-slate-700 disabled:bg-slate-50 disabled:text-slate-500 disabled:cursor-not-allowed" />
-                                        </div>
-
-                                    </div>
-
-                                    <div className="flex flex-col">
-                                        <label className="text-[10px] font-semibold text-slate-500 mb-1">Shipping Address</label>
-                                        <textarea rows="2" value={shippingAddress} onChange={(e) => setShippingAddress(e.target.value)} readOnly={isViewMode} className="w-full text-xs p-2 border border-slate-300/50 rounded resize-none read-only:bg-slate-50 read-only:text-slate-500" />
-                                    </div>
-
-                                </div>
-
-
 
                             </div> {/* End Left Column */}
 
@@ -2274,12 +2562,12 @@ const Quotations = () => {
                                         </h3>
                                         {!isViewMode && (
                                             <div className="flex gap-2">
-                                            <button
-                                                onClick={() => setIsProductSelectionOpen(true)}
-                                                className="flex items-center gap-1 px-3 py-1.5 bg-yellow-400 text-slate-900 text-xs font-medium rounded hover:bg-yellow-500"
-                                            >
-                                                <Plus size={14} /> Select from Products
-                                            </button>
+                                                <button
+                                                    onClick={() => setIsProductSelectionOpen(true)}
+                                                    className="flex items-center gap-1 px-3 py-1.5 bg-yellow-400 text-slate-900 text-xs font-medium rounded hover:bg-yellow-500"
+                                                >
+                                                    <Plus size={14} /> Select from Products
+                                                </button>
                                             </div>
                                         )}
                                     </div>
@@ -2391,9 +2679,9 @@ const Quotations = () => {
                                                             <td className="p-2 text-center align-middle">
                                                                 <div className="flex items-center justify-center gap-1.5">
                                                                     {!isViewMode && (
-                                                                    <button onClick={() => handleDeleteItem(item.id)} className="p-1.5 text-red-500 border border-red-100 hover:bg-red-50 rounded transition-colors group">
-                                                                        <Trash2 size={14} className="group-hover:scale-110 transition-transform" />
-                                                                    </button>
+                                                                        <button onClick={() => handleDeleteItem(item.id)} className="p-1.5 text-red-500 border border-red-100 hover:bg-red-50 rounded transition-colors group">
+                                                                            <Trash2 size={14} className="group-hover:scale-110 transition-transform" />
+                                                                        </button>
                                                                     )}
                                                                 </div>
                                                             </td>
@@ -2448,10 +2736,10 @@ const Quotations = () => {
                                             <p className="text-[10px] text-slate-500 mb-2">Upload documents (Customer PO, Specs)</p>
 
                                             {!isViewMode && (
-                                            <label className="cursor-pointer mb-2">
-                                                <span className="px-3 py-1 bg-white border border-slate-300/50 rounded text-[10px] font-bold text-slate-700 hover:bg-slate-50">Choose Files</span>
-                                                <input type="file" className="hidden" multiple onChange={handleFileUpload} />
-                                            </label>
+                                                <label className="cursor-pointer mb-2">
+                                                    <span className="px-3 py-1 bg-white border border-slate-300/50 rounded text-[10px] font-bold text-slate-700 hover:bg-slate-50">Choose Files</span>
+                                                    <input type="file" className="hidden" multiple onChange={handleFileUpload} />
+                                                </label>
                                             )}
 
                                             <div className="w-full max-h-[120px] overflow-y-auto">
@@ -2463,9 +2751,9 @@ const Quotations = () => {
                                                             <div key={idx} className="flex justify-between items-center bg-slate-50 border border-slate-100 p-1.5 rounded text-[10px]">
                                                                 <span className="truncate max-w-[150px] text-slate-700">{file.fileName || file.name}</span>
                                                                 {!isViewMode && (
-                                                                <button onClick={() => handleRemoveAttachment(idx)} className="text-slate-400 hover:text-red-500">
-                                                                    <X size={12} />
-                                                                </button>
+                                                                    <button onClick={() => handleRemoveAttachment(idx)} className="text-slate-400 hover:text-red-500">
+                                                                        <X size={12} />
+                                                                    </button>
                                                                 )}
                                                             </div>
                                                         ))}
@@ -2514,10 +2802,18 @@ const Quotations = () => {
                                 {/* 5. Summary & Footer */}
                                 <div className="bg-white rounded-lg border border-slate-200/50 p-4 shadow-sm mb-4 md:mb-6">
                                     <h3 className="text-xs font-bold text-slate-700 mb-3 border-b border-slate-100/50 pb-2">Quotation Summary</h3>
-                                    <div className="space-y-2 text-xs">
+                                    <div className="space-y-2 text-xs" data-bb-skip-aed-symbol="true">
+                                        <div className="flex justify-between text-slate-600">
+                                            <span>Gross Amount</span>
+                                            <CurrencyAmount value={grossTotal} {...displayCurrencyProps} className="font-medium" />
+                                        </div>
+                                        <div className="flex justify-between text-red-500">
+                                            <span>Item Discount</span>
+                                            <span className="font-medium">- <CurrencyAmount value={totalItemDiscount} {...displayCurrencyProps} /></span>
+                                        </div>
                                         <div className="flex justify-between text-slate-600">
                                             <span>Subtotal</span>
-                                            <span className="font-medium">{subTotal.toFixed(2)} AED</span>
+                                            <CurrencyAmount value={subTotal} {...displayCurrencyProps} className="font-medium" />
                                         </div>
                                         <div className="flex justify-between text-slate-600 items-center">
                                             <span className="flex items-center gap-2">
@@ -2532,15 +2828,15 @@ const Quotations = () => {
                                                     onChange={(e) => setBillDiscount(Number(e.target.value))}
                                                 /> %
                                             </span>
-                                            <span className="font-medium">- {billDiscountAmount.toFixed(2)} AED</span>
+                                            <span className="font-medium">- <CurrencyAmount value={billDiscountAmount} {...displayCurrencyProps} /></span>
                                         </div>
                                         <div className="flex justify-between text-slate-600">
                                             <span>Tax Total</span>
-                                            <span className="font-medium">{totalTax.toFixed(2)} AED</span>
+                                            <CurrencyAmount value={totalTax} {...displayCurrencyProps} className="font-medium" />
                                         </div>
                                         <div className="flex justify-between text-emerald-600 text-sm font-bold border-t border-slate-100/50 pt-2 mt-2">
                                             <span>Grand Total</span>
-                                            <span>{grandTotal.toFixed(2)} AED</span>
+                                            <CurrencyAmount value={grandTotal} {...displayCurrencyProps} />
                                         </div>
                                     </div>
 
@@ -2613,7 +2909,7 @@ const Quotations = () => {
                                                         </div>
                                                         <div className="flex justify-between items-center text-[10px]">
                                                             <span className="text-slate-600">Qty: {hist.quantity}</span>
-                                                            <span className="font-bold text-slate-800">{currency} {Number(hist.price).toFixed(2)}</span>
+                                                            <CurrencyAmount value={hist.price || 0} {...displayCurrencyProps} className="font-bold text-slate-800" />
                                                         </div>
                                                     </div>
                                                 ))
@@ -2633,17 +2929,17 @@ const Quotations = () => {
                                     <h3 className="text-xs font-bold text-slate-800 mb-3 flex items-center gap-2">
                                         <Info size={14} className="text-yellow-600" /> Profitability Analysis
                                     </h3>
-                                    <div className="space-y-3">
+                                    <div className="space-y-3" data-bb-skip-aed-symbol="true">
                                         <div className="flex justify-between items-center text-xs border-b border-slate-100 pb-2">
                                             <span className="text-slate-500 font-semibold">Total Cost</span>
                                             {(() => {
                                                 const totalCost = items.reduce((sum, item) => sum + ((item.cost || 0) * (item.qty || 0)), 0);
-                                                return <span className="font-bold text-slate-700">{totalCost.toFixed(2)} AED</span>;
+                                                return <CurrencyAmount value={totalCost} {...displayCurrencyProps} className="font-bold text-slate-700" />;
                                             })()}
                                         </div>
                                         <div className="flex justify-between items-center text-xs border-b border-slate-100 pb-2">
                                             <span className="text-slate-500 font-semibold">Net Revenue</span>
-                                            <span className="font-bold text-slate-700">{subTotal.toFixed(2)} AED</span>
+                                            <CurrencyAmount value={subTotal} {...displayCurrencyProps} className="font-bold text-slate-700" />
                                         </div>
                                         <div className="flex justify-between items-center text-xs pt-1">
                                             <span className="text-slate-500 font-semibold">Margin</span>
@@ -2653,7 +2949,7 @@ const Quotations = () => {
                                                 const marginPercent = subTotal > 0 ? (margin / subTotal) * 100 : 0;
                                                 return (
                                                     <div className={`font-bold flex items-center gap-1.5 ${marginPercent < 15 ? 'text-orange-500' : 'text-emerald-600'}`}>
-                                                        <span>{margin.toFixed(2)} AED</span>
+                                                        <CurrencyAmount value={margin} {...displayCurrencyProps} />
                                                         <span className="text-[10px] bg-slate-100 px-1.5 py-0.5 rounded text-slate-600">({marginPercent.toFixed(1)}%)</span>
                                                     </div>
                                                 );
@@ -2707,6 +3003,7 @@ const Quotations = () => {
                                                         id: editingId,
                                                         qtnNo: getQuotationNo(),
                                                         customer: customer,
+                                                        billDiscount,
                                                         items: items
                                                     }
                                                 }
@@ -2791,14 +3088,29 @@ const Quotations = () => {
                 {/* --- TOAST NOTIFICATION --- */}
                 {
                     showToast && (
-                        <div className="fixed bottom-6 right-6 bg-white border border-slate-200 shadow-xl rounded-lg p-4 flex items-center gap-3 animate-in slide-in-from-right-10 fade-in duration-300 z-50 max-w-sm mb-16 md:mb-0">
-                            <div className={`rounded-full p-1 text-white ${toastType === 'info' ? 'bg-slate-800' : 'bg-black'}`}>
-                                {toastType === 'info' ? <Info size={16} /> : <CheckCircle2 size={16} />}
-                            </div>
-                            <div>
-                                <h4 className="text-sm font-bold text-slate-800">{toastMessage.includes('rejected') || toastMessage.includes('Rejected') ? 'Quotation Rejected' : toastMessage.includes('Approved') ? 'Quotation Approved' : 'Quotation confirmed'}</h4>
-                                <p className="text-xs text-slate-500">{toastMessage}</p>
-                            </div>
+                        <div className="fixed bottom-24 right-6 bg-white border border-slate-200 shadow-xl rounded-lg p-4 flex items-center gap-3 animate-in slide-in-from-right-10 fade-in duration-300 z-[120] max-w-sm">
+                            {(() => {
+                                const toastMessageText = typeof toastMessage === 'string' ? toastMessage : '';
+                                const toastTitle = toastMessageText.includes('rejected') || toastMessageText.includes('Rejected')
+                                    ? 'Quotation Rejected'
+                                    : toastMessageText.includes('Approved')
+                                        ? 'Quotation Approved'
+                                        : toastType === 'info'
+                                            ? 'Notice'
+                                            : 'Quotation confirmed';
+
+                                return (
+                                    <>
+                                        <div className={`rounded-full p-1 text-white ${toastType === 'info' ? 'bg-slate-800' : 'bg-black'}`}>
+                                            {toastType === 'info' ? <Info size={16} /> : <CheckCircle2 size={16} />}
+                                        </div>
+                                        <div>
+                                            <h4 className="text-sm font-bold text-slate-800">{toastTitle}</h4>
+                                            <p className="text-xs text-slate-500">{toastMessage}</p>
+                                        </div>
+                                    </>
+                                );
+                            })()}
                             <button onClick={() => setShowToast(false)} className="ml-auto text-slate-400 hover:text-slate-600">
                                 <X size={16} />
                             </button>
@@ -2912,8 +3224,10 @@ const Quotations = () => {
                     isOpen={!isViewMode && isProductSelectionOpen}
                     onClose={() => setIsProductSelectionOpen(false)}
                     onSelect={handleAddSingleProduct}
+                    onInlineAdd={handleFastEntryAdd}
                     title="Select Items from Products / Services"
                     actionLabel="Add to Quotation"
+                    mode="sales"
                 />
 
                 {/* --- PRINT TEMPLATE PICKER MODAL --- */}
@@ -3016,9 +3330,7 @@ const Quotations = () => {
                                                         <div className="font-bold text-slate-700 text-sm">
                                                             {idx + 1}. {item.desc || item.name || 'Unnamed Item'}
                                                         </div>
-                                                        <div className="font-black text-slate-800 text-sm">
-                                                            {(parseFloat(item.total) || 0).toFixed(2)} {currency}
-                                                        </div>
+                                                        <CurrencyAmount value={item.total || 0} {...displayCurrencyProps} className="font-black text-slate-800 text-sm" />
                                                     </div>
                                                     <div className="flex justify-between items-center text-xs text-slate-500">
                                                         <div className="flex gap-4">
@@ -3037,7 +3349,10 @@ const Quotations = () => {
                                         <div className="p-4 bg-slate-50 border-t border-slate-200 shrink-0">
                                             <div className="flex justify-between items-center font-black text-lg text-slate-800">
                                                 <span>Total</span>
-                                                <span>{items.reduce((sum, i) => sum + (parseFloat(i.total) || 0), 0).toFixed(2)} {currency}</span>
+                                                <CurrencyAmount
+                                                    value={items.reduce((sum, i) => sum + (parseFloat(i.total) || 0), 0)}
+                                                    {...displayCurrencyProps}
+                                                />
                                             </div>
                                         </div>
                                     </div>
@@ -3069,9 +3384,11 @@ const Quotations = () => {
                                                             <div className="font-bold text-slate-700 text-sm">
                                                                 {idx + 1}. {item.description || item.desc || item.name || 'Unnamed Item'}
                                                             </div>
-                                                            <div className="font-black text-slate-800 text-sm">
-                                                                {(parseFloat(item.lineTotal || item.total) || 0).toFixed(2)} {currency}
-                                                            </div>
+                                                            <CurrencyAmount
+                                                                value={parseFloat(item.lineTotal || item.total) || 0}
+                                                                {...displayCurrencyProps}
+                                                                className="font-black text-slate-800 text-sm"
+                                                            />
                                                         </div>
                                                         <div className="flex justify-between items-center text-xs text-slate-500">
                                                             <div className="flex gap-4">
@@ -3093,7 +3410,7 @@ const Quotations = () => {
                                         <div className="p-4 bg-white border-t border-slate-200 shrink-0">
                                             <div className="flex justify-between items-center font-black text-lg text-slate-800">
                                                 <span>Total</span>
-                                                <span>{(parseFloat(compareRevision.total) || 0).toFixed(2)} {currency}</span>
+                                                <CurrencyAmount value={compareRevision.total || 0} {...displayCurrencyProps} />
                                             </div>
                                         </div>
                                     </div>

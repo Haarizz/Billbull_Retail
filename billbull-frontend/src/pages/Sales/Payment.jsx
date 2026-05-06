@@ -30,10 +30,28 @@ import {
 import { getAllSalesPayments, saveSalesPayment, getNextSalesPaymentNumber, getSalesPaymentStats, deleteSalesPayment } from '../../api/salesPaymentApi';
 import { getAllSalesInvoices } from '../../api/salesInvoiceApi';
 import { getAllCustomers } from '../../api/customerledgerApi';
+import { getBankAccounts } from '../../api/ledgerApi';
 import { getTemplatesByCategory } from '../../api/printTemplateApi';
 import { generatePrintHtml, printHtml } from '../../utils/printGenerator';
 import { useCompany } from '../../context/CompanyContext';
 import billBullLogo from '../../assets/billBullLogo.png';
+import ExportDropdown from '../../components/common/ExportDropdown';
+import { exportToExcel, exportToPDF } from '../../utils/exportUtils';
+import CurrencyAmount, { CurrencySymbol } from '../../components/CurrencyAmount';
+
+// ==========================================
+// 1. CONFIGURATION
+// ==========================================
+
+const PAYMENT_COLUMNS = [
+    { header: 'Payment No', key: 'paymentNo', width: 15 },
+    { header: 'Date', key: 'date', width: 12 },
+    { header: 'Customer', key: 'customerName', width: 25 },
+    { header: 'Invoice No', key: 'invoiceNo', width: 15 },
+    { header: 'Amount', key: 'amount', width: 15 },
+    { header: 'Mode', key: 'mode', width: 12 },
+    { header: 'Status', key: 'status', width: 12 }
+];
 
 // ==========================================
 // PAYMENT MODULE COMPONENT
@@ -41,6 +59,7 @@ import billBullLogo from '../../assets/billBullLogo.png';
 
 const Payment = () => {
     const { company } = useCompany();
+    const currency = company?.currency || 'AED';
     const [activeTab, setActiveTab] = useState('list');
     const [isLoading, setIsLoading] = useState(false);
 
@@ -48,6 +67,8 @@ const Payment = () => {
     const [paymentsList, setPaymentsList] = useState([]);
     const [customersList, setCustomersList] = useState([]);
     const [invoicesList, setInvoicesList] = useState([]);
+    const [searchQuery, setSearchQuery] = useState('');
+    const [statusFilter, setStatusFilter] = useState('All Status');
 
     // --- FORM STATES ---
     const [paymentId, setPaymentId] = useState(null);
@@ -68,6 +89,8 @@ const Payment = () => {
     // Auto-allocate & cheque date
     const [receivedAmount, setReceivedAmount] = useState('');
     const [chequeDate, setChequeDate] = useState('');
+    const [bankAccount, setBankAccount] = useState('');
+    const [bankAccounts, setBankAccounts] = useState([]);
 
     // Payment Details
     const [referenceNo, setReferenceNo] = useState('');
@@ -93,6 +116,7 @@ const Payment = () => {
         fetchCustomers();
         fetchInvoices();
         fetchStats();
+        getBankAccounts().then(data => setBankAccounts(Array.isArray(data) ? data : [])).catch(() => {});
     }, []);
 
     const fetchPayments = async () => {
@@ -214,7 +238,7 @@ const Payment = () => {
                     subTotal: amount,
                     tax: 0,
                     grandTotal: amount,
-                    currency: 'AED',
+                    currency: company?.currencySymbol || company?.currency || 'AED',
                     billDiscount: 0,
                     billDiscountAmount: 0,
                 },
@@ -255,6 +279,7 @@ const Payment = () => {
         setSettleAmounts({});
         setReceivedAmount('');
         setChequeDate('');
+        setBankAccount('');
         setReferenceNo('');
         setNotes('');
         setActiveTab('create');
@@ -399,6 +424,7 @@ const Payment = () => {
                     amount: amountToSettle,
                     paymentMode: paymentMode,
                     referenceNumber: referenceNo,
+                    bankName: paymentMode !== 'Cash' ? bankAccount : null,
                     notes: notes,
                     chequeDate: paymentMode === 'Cheque' ? chequeDate : null,
                     status: status
@@ -413,6 +439,7 @@ const Payment = () => {
             setSettleAmounts({});
             setReceivedAmount('');
             setChequeDate('');
+            setBankAccount('');
             setReferenceNo('');
             setNotes('');
             setActiveTab('list');
@@ -478,6 +505,23 @@ const Payment = () => {
     };
 
     // ==========================================
+    // FILTER LOGIC
+    // ==========================================
+    const filteredPayments = useMemo(() => {
+        return paymentsList.filter(p => {
+            const matchesSearch = !searchQuery || 
+                p.paymentNo.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                p.customerName.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                p.customerCode.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                p.invoiceNo.toLowerCase().includes(searchQuery.toLowerCase());
+            
+            const matchesStatus = statusFilter === 'All Status' || p.status === statusFilter;
+            
+            return matchesSearch && matchesStatus;
+        });
+    }, [paymentsList, searchQuery, statusFilter]);
+
+    // ==========================================
     // RENDER
     // ==========================================
     return (
@@ -505,7 +549,7 @@ const Payment = () => {
                             <div className="flex justify-between items-start">
                                 <div>
                                     <p className="text-xs text-slate-500 font-semibold">Today's Receipts</p>
-                                    <h3 className="text-2xl font-bold text-slate-800 mt-1">AED {stats.todayReceived.toLocaleString()}</h3>
+                                    <CurrencyAmount value={stats.todayReceived} currency={currency} className="text-2xl font-bold text-slate-800 mt-1" />
                                     <p className="text-[10px] text-slate-400 mt-1">Payments received today</p>
                                 </div>
                                 <div className="p-2 bg-[#F5C742] rounded text-slate-900">
@@ -518,7 +562,7 @@ const Payment = () => {
                             <div className="flex justify-between items-start">
                                 <div>
                                     <p className="text-xs text-slate-500 font-semibold">This Month</p>
-                                    <h3 className="text-2xl font-bold text-slate-800 mt-1">AED {stats.thisMonthReceived.toLocaleString()}</h3>
+                                    <CurrencyAmount value={stats.thisMonthReceived} currency={currency} className="text-2xl font-bold text-slate-800 mt-1" />
                                     <p className="text-[10px] text-slate-400 mt-1">January 2026</p>
                                 </div>
                                 <div className="p-2 bg-emerald-50 rounded text-emerald-600">
@@ -531,7 +575,7 @@ const Payment = () => {
                             <div className="flex justify-between items-start">
                                 <div>
                                     <p className="text-xs text-slate-500 font-semibold">Pending Collection</p>
-                                    <h3 className="text-2xl font-bold text-slate-800 mt-1">AED {stats.pendingAmount.toLocaleString()}</h3>
+                                    <CurrencyAmount value={stats.pendingAmount} currency={currency} className="text-2xl font-bold text-slate-800 mt-1" />
                                     <p className="text-[10px] text-slate-400 mt-1">Outstanding balance</p>
                                 </div>
                                 <div className="p-2 bg-orange-50 rounded text-orange-600">
@@ -581,7 +625,13 @@ const Payment = () => {
                                     <div className="md:col-span-2 relative">
                                         <label className="block text-[10px] font-bold text-slate-500 mb-1">Search</label>
                                         <Search className="absolute left-3 top-[26px] text-slate-400" size={14} />
-                                        <input type="text" placeholder="Search payments..." className="w-full pl-9 pr-3 py-2 text-xs border border-slate-200 rounded-md focus:outline-none focus:border-[#F5C742]" />
+                                        <input 
+                                            type="text" 
+                                            placeholder="Search payments..." 
+                                            className="w-full pl-9 pr-3 py-2 text-xs border border-slate-200 rounded-md focus:outline-none focus:border-[#F5C742]" 
+                                            value={searchQuery}
+                                            onChange={(e) => setSearchQuery(e.target.value)}
+                                        />
                                     </div>
                                     <div>
                                         <label className="block text-[10px] font-bold text-slate-500 mb-1">Date Range</label>
@@ -594,14 +644,23 @@ const Payment = () => {
                                     </div>
                                     <div>
                                         <label className="block text-[10px] font-bold text-slate-500 mb-1">Status</label>
-                                        <select className="w-full px-3 py-2 text-xs border border-slate-200 rounded-md bg-white text-slate-600">
+                                        <select 
+                                            className="w-full px-3 py-2 text-xs border border-slate-200 rounded-md bg-white text-slate-600"
+                                            value={statusFilter}
+                                            onChange={(e) => setStatusFilter(e.target.value)}
+                                        >
                                             <option>All Status</option>
                                             <option>Completed</option>
                                             <option>Partial</option>
                                             <option>Pending</option>
+                                            <option>Cancelled</option>
                                         </select>
                                     </div>
-                                    <div>
+                                    <div className="flex gap-2">
+                                        <ExportDropdown
+                                            onExportExcel={() => exportToExcel(filteredPayments, PAYMENT_COLUMNS, 'Sales_Payments')}
+                                            onExportPdf={() => exportToPDF(filteredPayments, PAYMENT_COLUMNS, 'Sales Payments List', 'Sales_Payments')}
+                                        />
                                         <button
                                             onClick={handleCreateNew}
                                             className="w-full flex items-center justify-center gap-2 px-4 py-2 bg-[#F5C742] rounded-md text-xs font-bold text-slate-900 hover:bg-yellow-400 shadow-sm transition-colors"
@@ -629,7 +688,7 @@ const Payment = () => {
                                         </tr>
                                     </thead>
                                     <tbody className="divide-y divide-slate-100">
-                                        {paymentsList.map((payment) => (
+                                        {filteredPayments.map((payment) => (
                                             <tr key={payment.id} className="hover:bg-slate-50 cursor-pointer group" onClick={() => handleViewPayment(payment)}>
                                                 <td className="px-4 py-3 font-medium text-slate-700">{payment.paymentNo}</td>
                                                 <td className="px-4 py-3 text-slate-500">{payment.date}</td>
@@ -638,8 +697,8 @@ const Payment = () => {
                                                     <div className="text-[10px] text-slate-400">{payment.customerCode}</div>
                                                 </td>
                                                 <td className="px-4 py-3 text-blue-600 font-medium">{payment.invoiceNo}</td>
-                                                <td className="px-4 py-3 text-right text-slate-600">AED {payment.invoiceAmount.toLocaleString()}</td>
-                                                <td className="px-4 py-3 text-right font-bold text-emerald-600">AED {payment.amount.toLocaleString()}</td>
+                                                <td className="px-4 py-3 text-right text-slate-600"><CurrencyAmount value={payment.invoiceAmount} currency={currency} /></td>
+                                                <td className="px-4 py-3 text-right font-bold text-emerald-600"><CurrencyAmount value={payment.amount} currency={currency} /></td>
                                                 <td className="px-4 py-3">
                                                     <div className="flex items-center gap-1 text-slate-600">
                                                         {renderPaymentModeIcon(payment.mode)}
@@ -658,7 +717,7 @@ const Payment = () => {
                                                 </td>
                                             </tr>
                                         ))}
-                                        {paymentsList.length === 0 && (
+                                        {filteredPayments.length === 0 && (
                                             <tr>
                                                 <td colSpan="10" className="text-center py-8 text-slate-400">No payments found</td>
                                             </tr>
@@ -704,7 +763,7 @@ const Payment = () => {
                                             <div className="bg-blue-100 p-2.5 rounded-full text-blue-600"><DollarSign size={20} /></div>
                                             <div>
                                                 <p className="text-sm font-bold text-blue-800">Outstanding Balance</p>
-                                                <p className="text-2xl font-bold text-blue-600">AED {customerBalance.toLocaleString('en-US', { minimumFractionDigits: 2 })}</p>
+                                                <CurrencyAmount value={customerBalance} currency={currency} className="text-2xl font-bold text-blue-600" />
                                             </div>
                                         </div>
                                     )}
@@ -762,8 +821,8 @@ const Payment = () => {
                                                                     <span className={isOverdue ? 'text-red-500 font-bold' : 'text-slate-500'}>{inv.dueDate || '-'}</span>
                                                                     {isOverdue && <span className="block text-[9px] text-red-400">Overdue</span>}
                                                                 </td>
-                                                                <td className="px-4 py-3 text-right text-slate-600 font-medium">AED {inv.total.toLocaleString()}</td>
-                                                                <td className="px-4 py-3 text-right font-bold text-orange-600">AED {inv.balance.toLocaleString()}</td>
+                                                                <td className="px-4 py-3 text-right text-slate-600 font-medium"><CurrencyAmount value={inv.total} currency={currency} /></td>
+                                                                <td className="px-4 py-3 text-right font-bold text-orange-600"><CurrencyAmount value={inv.balance} currency={currency} /></td>
                                                                 <td className="px-4 py-3 text-center">
                                                                     {isOverdue
                                                                         ? <span className="px-2 py-0.5 rounded bg-orange-100 text-orange-700 text-[10px] font-bold">Overdue</span>
@@ -815,7 +874,7 @@ const Payment = () => {
                                             <div>
                                                 <label className="block text-xs font-bold text-slate-500 mb-1">Received Amount (Auto-Allocate) <span className="text-red-500">*</span></label>
                                                 <div className="relative">
-                                                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 font-bold text-xs">AED</span>
+                                                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 font-bold text-xs"><CurrencySymbol currency={currency} /></span>
                                                     <input type="number" value={receivedAmount}
                                                         onChange={(e) => handleAutoAllocate(e.target.value)}
                                                         placeholder="0.00"
@@ -832,7 +891,7 @@ const Payment = () => {
                                                 </div>
                                                 <div>
                                                     <label className="block text-xs font-bold text-slate-500 mb-1">Method</label>
-                                                    <select value={paymentMode} onChange={e => setPaymentMode(e.target.value)}
+                                                    <select value={paymentMode} onChange={e => { setPaymentMode(e.target.value); setBankAccount(''); }}
                                                         className="w-full text-xs border border-slate-200 rounded px-3 py-2 focus:border-yellow-400 outline-none bg-white">
                                                         <option>Cash</option>
                                                         <option>Bank Transfer</option>
@@ -842,6 +901,19 @@ const Payment = () => {
                                                     </select>
                                                 </div>
                                             </div>
+
+                                            {paymentMode !== 'Cash' && (
+                                                <div className="animate-in fade-in slide-in-from-top-2 duration-200">
+                                                    <label className="block text-xs font-bold text-slate-500 mb-1">Bank Account <span className="text-red-500">*</span></label>
+                                                    <select value={bankAccount} onChange={e => setBankAccount(e.target.value)}
+                                                        className="w-full text-xs border border-slate-200 rounded px-3 py-2 focus:border-yellow-400 outline-none bg-white">
+                                                        <option value="">Select Bank Account...</option>
+                                                        {bankAccounts.map(acc => (
+                                                            <option key={acc.id} value={acc.name}>{acc.code} — {acc.name}</option>
+                                                        ))}
+                                                    </select>
+                                                </div>
+                                            )}
 
                                             {paymentMode === 'Cheque' && (
                                                 <div className="animate-in fade-in slide-in-from-top-2 duration-200">
@@ -868,7 +940,7 @@ const Payment = () => {
                                             <div className="pt-4 border-t border-slate-100">
                                                 <div className="flex justify-between items-center mb-4">
                                                     <span className="text-sm font-bold text-slate-600">Total Settlement</span>
-                                                    <span className="text-xl font-bold text-[#F5C742]">AED {totalSettlement.toLocaleString()}</span>
+                                                    <CurrencyAmount value={totalSettlement} currency={currency} className="text-xl font-bold text-[#F5C742]" />
                                                 </div>
                                                 <button onClick={handleSave} disabled={isLoading || !selectedCustomer || totalSettlement <= 0}
                                                     className={`w-full bg-[#F5C742] text-slate-900 font-bold py-3 rounded-md hover:bg-yellow-400 transition-colors shadow-sm flex items-center justify-center gap-2 ${isLoading || totalSettlement <= 0 ? 'opacity-50 cursor-not-allowed' : ''}`}>
@@ -897,7 +969,7 @@ const Payment = () => {
                                                 <div className="flex-1 min-w-0">
                                                     <div className="flex justify-between items-start">
                                                         <p className="font-bold text-slate-800 text-xs truncate">{p.customerName}</p>
-                                                        <span className="text-xs font-bold text-emerald-600 px-1.5 py-0.5 bg-emerald-50 rounded">AED {(p.amount || 0).toLocaleString()}</span>
+                                                        <CurrencyAmount value={p.amount || 0} currency={currency} className="text-xs font-bold text-emerald-600 px-1.5 py-0.5 bg-emerald-50 rounded" />
                                                     </div>
                                                     <div className="flex justify-between items-center mt-1">
                                                         <p className="text-[10px] text-slate-500">{p.paymentNo} • {p.mode}</p>
@@ -950,7 +1022,7 @@ const Payment = () => {
                             {/* Amount & Status */}
                             <div className="grid grid-cols-2 gap-4 mb-6">
                                 <div className="border border-slate-200 rounded-lg p-4 text-center bg-white shadow-sm">
-                                    <p className="text-2xl font-bold text-emerald-600">AED {selectedPayment.amount.toLocaleString()}</p>
+                                    <CurrencyAmount value={selectedPayment.amount} currency={currency} className="text-2xl font-bold text-emerald-600" />
                                     <p className="text-[10px] text-slate-400 uppercase tracking-wider mt-1">Amount Paid</p>
                                 </div>
                                 <div className="border border-slate-200 rounded-lg p-4 text-center flex flex-col items-center justify-center bg-white shadow-sm">
@@ -1001,15 +1073,15 @@ const Payment = () => {
                                     </div>
                                     <div>
                                         <p className="text-[10px] text-slate-400">Invoice Amount</p>
-                                        <p className="text-xs font-medium text-slate-700">AED {selectedPayment.invoiceAmount.toLocaleString()}</p>
+                                        <CurrencyAmount value={selectedPayment.invoiceAmount} currency={currency} className="text-xs font-medium text-slate-700" />
                                     </div>
                                     <div>
                                         <p className="text-[10px] text-slate-400">This Payment</p>
-                                        <p className="text-xs font-bold text-emerald-600">AED {selectedPayment.amount.toLocaleString()}</p>
+                                        <CurrencyAmount value={selectedPayment.amount} currency={currency} className="text-xs font-bold text-emerald-600" />
                                     </div>
                                     <div>
                                         <p className="text-[10px] text-slate-400">Remaining</p>
-                                        <p className="text-xs font-bold text-red-600">AED {(selectedPayment.invoiceAmount - selectedPayment.amount).toLocaleString()}</p>
+                                        <CurrencyAmount value={selectedPayment.invoiceAmount - selectedPayment.amount} currency={currency} className="text-xs font-bold text-red-600" />
                                     </div>
                                 </div>
                             </div>

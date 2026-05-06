@@ -8,6 +8,15 @@ const StockAvailabilityModal = ({ isOpen, onClose, selectedStockItem }) => {
     const [incomingLpos, setIncomingLpos] = useState([]);
     const [isLoading, setIsLoading] = useState(false);
     const abortControllerRef = useRef(null);
+    const stockScope = {
+        warehouseId: selectedStockItem?.warehouseId || null,
+        zoneId: selectedStockItem?.zoneId || null,
+        locatorId: selectedStockItem?.locatorId || null,
+        binId: selectedStockItem?.binId || null
+    };
+    const isScopedView = Boolean(
+        stockScope.warehouseId || stockScope.zoneId || stockScope.locatorId || stockScope.binId
+    );
 
     useEffect(() => {
         if (!isOpen || !selectedStockItem?.code) {
@@ -24,7 +33,11 @@ const StockAvailabilityModal = ({ isOpen, onClose, selectedStockItem }) => {
 
             setIsLoading(true);
             try {
-                const data = await getStockAvailability(selectedStockItem.code, abortControllerRef.current.signal);
+                const data = await getStockAvailability(
+                    selectedStockItem.code,
+                    stockScope,
+                    abortControllerRef.current.signal
+                );
                 if (data) {
                     setLocations(data.locations || []);
                     setIncomingLpos(data.incomingLpos || []);
@@ -43,7 +56,14 @@ const StockAvailabilityModal = ({ isOpen, onClose, selectedStockItem }) => {
                 abortControllerRef.current.abort();
             }
         };
-    }, [isOpen, selectedStockItem?.code]);
+    }, [
+        isOpen,
+        selectedStockItem?.code,
+        stockScope.warehouseId,
+        stockScope.zoneId,
+        stockScope.locatorId,
+        stockScope.binId
+    ]);
 
     if (!isOpen || !selectedStockItem) return null;
 
@@ -57,7 +77,11 @@ const StockAvailabilityModal = ({ isOpen, onClose, selectedStockItem }) => {
                     <button onClick={onClose}><X size={18} className="text-slate-400" /></button>
                 </div>
                 <div className="p-6">
-                    <p className="text-xs text-slate-500 mb-4">View stock across locations and reserve from incoming orders.</p>
+                    <p className="text-xs text-slate-500 mb-4">
+                        {isScopedView
+                            ? 'View stock for the selected warehouse location and reserve from incoming orders.'
+                            : 'View stock across locations and reserve from incoming orders.'}
+                    </p>
 
                     <div className="flex items-start gap-4 mb-6">
                         {selectedStockItem.image ? (
@@ -102,7 +126,11 @@ const StockAvailabilityModal = ({ isOpen, onClose, selectedStockItem }) => {
                                         ))
                                     ) : locations.length === 0 ? (
                                         <tr>
-                                            <td className="p-4 text-center text-slate-400 font-medium" colSpan="5">No stock available across locations for this item.</td>
+                                            <td className="p-4 text-center text-slate-400 font-medium" colSpan="5">
+                                                {isScopedView
+                                                    ? 'No stock available for the selected location.'
+                                                    : 'No stock available across locations for this item.'}
+                                            </td>
                                         </tr>
                                     ) : (
                                         <>
@@ -115,13 +143,14 @@ const StockAvailabilityModal = ({ isOpen, onClose, selectedStockItem }) => {
                                                     <td className="p-2 text-right font-bold text-emerald-600">{loc.available}</td>
                                                 </tr>
                                             ))}
-                                            {/* Total Row */}
-                                            <tr className="bg-slate-50 font-bold">
-                                                <td className="p-2" colSpan="2">Total</td>
-                                                <td className="p-2 text-right">{locations.reduce((a, b) => a + (b.onHand || 0), 0)}</td>
-                                                <td className="p-2 text-right text-orange-600">{locations.reduce((a, b) => a + (b.reserved || 0), 0)}</td>
-                                                <td className="p-2 text-right text-emerald-600">{locations.reduce((a, b) => a + (b.available || 0), 0)}</td>
-                                            </tr>
+                                            {locations.length > 1 && (
+                                                <tr className="bg-slate-50 font-bold">
+                                                    <td className="p-2" colSpan="2">Total</td>
+                                                    <td className="p-2 text-right">{locations.reduce((a, b) => a + (b.onHand || 0), 0)}</td>
+                                                    <td className="p-2 text-right text-orange-600">{locations.reduce((a, b) => a + (b.reserved || 0), 0)}</td>
+                                                    <td className="p-2 text-right text-emerald-600">{locations.reduce((a, b) => a + (b.available || 0), 0)}</td>
+                                                </tr>
+                                            )}
                                         </>
                                     )}
                                 </tbody>
@@ -160,7 +189,7 @@ const StockAvailabilityModal = ({ isOpen, onClose, selectedStockItem }) => {
                                                 <td className="p-2 font-bold text-blue-600">{lpo.lpoNumber}</td>
                                                 <td className="p-2">{lpo.supplierName}</td>
                                                 <td className="p-2 text-slate-500">{lpo.expectedDate ? new Date(lpo.expectedDate).toLocaleDateString() : 'TBD'}</td>
-                                                <td className="p-2 text-right font-bold text-emerald-600">+{lpo.quantity}</td>
+                                                <td className="p-2 text-right font-bold text-emerald-600">+{lpo.quantity} {lpo.uom || ''}</td>
                                             </tr>
                                         ))}
                                     </tbody>

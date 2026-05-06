@@ -3,20 +3,37 @@ package com.billbull.backend.inventory.stocktake;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.HashMap;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 import org.springframework.cache.annotation.CacheEvict;
 import org.springframework.cache.annotation.Caching;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageImpl;
+import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import com.billbull.backend.inventory.batch.BatchNumberGenerator;
+import com.billbull.backend.inventory.batch.StockIdentifier;
 import com.billbull.backend.inventory.product.Product;
+import com.billbull.backend.inventory.product.ProductBarcode;
 import com.billbull.backend.inventory.product.ProductBarcodeRepository;
+import com.billbull.backend.inventory.product.ProductMedia;
 import com.billbull.backend.inventory.product.ProductMediaRepository;
+import com.billbull.backend.inventory.product.ProductPricing;
 import com.billbull.backend.inventory.product.ProductRepository;
 import com.billbull.backend.inventory.warehouse.Bin;
 import com.billbull.backend.inventory.warehouse.BinRepository;
+import com.billbull.backend.inventory.warehouse.BinStockService;
 import com.billbull.backend.inventory.warehouse.WarehouseStockService;
 import com.billbull.backend.purchase.stockmovement.StockMovement;
 import com.billbull.backend.purchase.stockmovement.StockMovementRepository;
@@ -28,30 +45,36 @@ public class StockTakeService {
 
     private final StockTakeSessionRepository sessionRepo;
     private final StockTakeItemRepository itemRepo;
+    private final StockTakeItemBatchRepository batchRepo;
     private final WarehouseStockService warehouseStockService;
     private final ProductRepository productRepo;
     private final StockMovementRepository stockMovementRepo;
     private final ProductMediaRepository mediaRepo;
     private final ProductBarcodeRepository barcodeRepo;
     private final BinRepository binRepo;
+    private final BinStockService binStockService;
 
     public StockTakeService(
             StockTakeSessionRepository sessionRepo,
             StockTakeItemRepository itemRepo,
+            StockTakeItemBatchRepository batchRepo,
             WarehouseStockService warehouseStockService,
             ProductRepository productRepo,
             StockMovementRepository stockMovementRepo,
             ProductMediaRepository mediaRepo,
             ProductBarcodeRepository barcodeRepo,
-            BinRepository binRepo) {
+            BinRepository binRepo,
+            BinStockService binStockService) {
         this.sessionRepo = sessionRepo;
         this.itemRepo = itemRepo;
+        this.batchRepo = batchRepo;
         this.warehouseStockService = warehouseStockService;
         this.productRepo = productRepo;
         this.stockMovementRepo = stockMovementRepo;
         this.mediaRepo = mediaRepo;
         this.barcodeRepo = barcodeRepo;
         this.binRepo = binRepo;
+        this.binStockService = binStockService;
     }
 
     public StockTakeSession createSession(String warehouseName, Long warehouseId, String type, String countType,
@@ -82,29 +105,110 @@ public class StockTakeService {
     }
 
     @org.springframework.transaction.annotation.Transactional(readOnly = true)
-    public org.springframework.data.domain.Page<Product> getProductsForStockTake(
+    public Page<StockTakeProductResponse> getProductsForStockTake(
             String stockTakeType, Long warehouseId, String countType,
             Long categoryId, Long brandId, String search, int page, int size) {
 
         // COUNTING requires warehouse restriction; OPENING is global
         Long effectiveWarehouseId = "COUNTING".equalsIgnoreCase(stockTakeType) ? warehouseId : null;
+        Pageable pageable = org.springframework.data.domain.PageRequest.of(page, size);
 
         // Validate: if count type demands a filter but none provided → return empty
         boolean needsCategory = "Selected Categories".equalsIgnoreCase(countType);
         boolean needsBrand    = "Selected Brands".equalsIgnoreCase(countType);
-        if (needsCategory && categoryId == null) return org.springframework.data.domain.Page.empty();
-        if (needsBrand    && brandId    == null) return org.springframework.data.domain.Page.empty();
+        if (needsCategory && categoryId == null) return Page.empty(pageable);
+        if (needsBrand    && brandId    == null) return Page.empty(pageable);
 
         // Only apply category/brand filters when the count type explicitly requires them
         Long effectiveCategoryId = needsCategory ? categoryId : null;
         Long effectiveBrandId    = needsBrand    ? brandId    : null;
 
-        org.springframework.data.domain.Pageable pageable =
-                org.springframework.data.domain.PageRequest.of(page, size);
-
-        return productRepo.findForStockTake(
+        Page<Product> productPage = productRepo.findForStockTake(
                 effectiveWarehouseId, effectiveCategoryId, effectiveBrandId,
                 search != null ? search : "", pageable);
+
+        List<Product> products = productPage.getContent();
+        if (products.isEmpty()) {
+            return new PageImpl<>(List.of(), pageable, productPage.getTotalElements());
+        }
+
+        List<Long> productIds = products.stream().map(Product::getId).toList();
+
+        Map<Long, Integer> stockMap = new HashMap<>();
+        List<Object[]> stockRows = effectiveWarehouseId != null
+                ? stockMovementRepo.getAvailableStockForProductsInWarehouse(effectiveWarehouseId, productIds)
+                : stockMovementRepo.getTotalAvailableStockForProducts(productIds);
+        for (Object[] row : stockRows) {
+            if (row[0] == null || row[1] == null) continue;
+            stockMap.put(((Number) row[0]).longValue(), ((Number) row[1]).intValue());
+        }
+
+        Map<Long, List<String>> barcodeMap = barcodeRepo.findByProductIdIn(productIds)
+                .stream()
+                .filter(b -> b.getProduct() != null && b.getBarcode() != null && !b.getBarcode().isBlank())
+                .collect(Collectors.groupingBy(
+                        b -> b.getProduct().getId(),
+                        Collectors.mapping(ProductBarcode::getBarcode, Collectors.toList())));
+
+        Map<Long, String> imageMap = mediaRepo.findByProductIdInAndIsPrimaryTrue(productIds)
+                .stream()
+                .collect(Collectors.toMap(
+                        m -> m.getProduct().getId(),
+                        ProductMedia::getImageUrl,
+                        (a, b) -> a));
+
+        List<StockTakeProductResponse> content = new ArrayList<>();
+        for (Product product : products) {
+            content.add(toStockTakeProductResponse(
+                    product,
+                    stockMap.getOrDefault(product.getId(), 0),
+                    barcodeMap.getOrDefault(product.getId(), List.of()),
+                    imageMap.get(product.getId())));
+        }
+
+        return new PageImpl<>(content, pageable, productPage.getTotalElements());
+    }
+
+    private StockTakeProductResponse toStockTakeProductResponse(
+            Product product,
+            Integer stock,
+            List<String> barcodes,
+            String image) {
+        StockTakeProductResponse response = new StockTakeProductResponse();
+        response.setId(product.getId());
+        response.setCode(product.getCode());
+        response.setSku(product.getSku() != null ? product.getSku() : product.getCode());
+        response.setName(product.getName());
+        response.setDescription(product.getShortDesc() != null ? product.getShortDesc() : product.getName());
+        response.setCategory(product.getCategory());
+        response.setStock(stock != null ? stock : 0);
+        response.setImage(image);
+        response.setBatchEnabled(product.isBatch());
+        response.setExpiryEnabled(product.isExpiryEnabled());
+
+        if (product.getDepartment() != null) {
+            response.setDepartmentId(product.getDepartment().getId());
+            response.setDepartmentName(product.getDepartment().getName());
+            if (response.getCategory() == null || response.getCategory().isBlank()) {
+                response.setCategory(product.getDepartment().getName());
+            }
+        }
+        if (product.getBrand() != null) {
+            response.setBrandId(product.getBrand().getId());
+            response.setBrandName(product.getBrand().getName());
+        }
+
+        response.setBarcodes(barcodes != null ? barcodes : List.of());
+        response.setBarcode(response.getBarcodes().isEmpty() ? null : response.getBarcodes().get(0));
+
+        ProductPricing pricing = product.getPricing();
+        if (pricing != null) {
+            response.setCost(pricing.getCost());
+            response.setRetailPrice(pricing.getRetailPrice());
+            response.setSellingPrice(pricing.getRetailPrice());
+        }
+
+        return response;
     }
 
     public List<StockTakeSession> getAllSessions() {
@@ -170,9 +274,13 @@ public class StockTakeService {
     public StockTakeItem updateItemCount(Long itemId, Integer countedQty) {
         StockTakeItem item = itemRepo.findById(itemId)
                 .orElseThrow(() -> new RuntimeException("Item not found"));
-        
+
         if (item.getSession().getStatus() != StockTakeSession.StockTakeStatus.IN_PROGRESS) {
             throw new IllegalStateException("Session is not in progress");
+        }
+
+        if (item.isBatchEnabled() || item.isExpiryEnabled()) {
+            throw new IllegalStateException("Counted quantity for batch-enabled items is derived from batch entries");
         }
 
         // Refresh system qty scoped to the item's bin (or unlocated stock) to avoid comparing
@@ -229,11 +337,26 @@ public class StockTakeService {
             item.setZoneId(bin.getLocator().getZone().getId());
         }
 
+        refreshItemSystemQty(item);
+        if ((item.isBatchEnabled() || item.isExpiryEnabled())
+                && (item.getBatches() == null || item.getBatches().isEmpty())) {
+            seedExistingBatchCounts(item);
+        } else if (item.isBatchEnabled() || item.isExpiryEnabled()) {
+            recomputeFromBatches(item);
+        }
+
         return itemRepo.save(item);
     }
 
     public StockTakeSession submitForApproval(String sessionId) {
         StockTakeSession session = getSession(sessionId);
+
+        boolean anyItemMissingBin = session.getItems().stream()
+                .anyMatch(item -> item.getBinId() == null);
+        if (anyItemMissingBin) {
+            throw new IllegalStateException("All items must have a bin assigned before submitting for approval");
+        }
+
         session.setStatus(StockTakeSession.StockTakeStatus.PENDING_APPROVAL);
         return sessionRepo.save(session);
     }
@@ -253,50 +376,63 @@ public class StockTakeService {
             if (item.getCountedQty() == null) continue; // Skip items not counted
 
             int variance = item.getVariance();
-            if (variance != 0) {
-                // Idempotency guard: use item.getId() as sourceId so that each bin-level item
-                // gets its own movement key. Using session.getId() would collide when the same
-                // product appears in multiple bins (two items with the same productId & sessionId).
+            // Defensive OR — if either flag survived an old record, treat as batched.
+            boolean batched = item.isBatchEnabled() || item.isExpiryEnabled();
+
+            // Skip purely-zero non-batched items (no change to record).
+            // Batched items always post (even if variance=0) so the per-batch ledger is accurate.
+            if (!batched && variance == 0) continue;
+
+            // Resolve bin: prefer explicit assignment on item, else auto-detect from existing stock
+            Long resolvedBinId = item.getBinId();
+            Long resolvedZoneId = item.getZoneId();
+            Long resolvedLocatorId = item.getLocatorId();
+            String resolvedBinCode = item.getBinCode();
+
+            if (resolvedBinId == null) {
+                List<Object[]> activeBins = stockMovementRepo.findActiveBinsByWarehouseAndProduct(
+                        session.getWarehouseId(), item.getProductId());
+                if (activeBins.size() == 1) {
+                    Long autoBinId = ((Number) activeBins.get(0)[0]).longValue();
+                    Bin autoBin = binRepo.findByIdEager(autoBinId).orElse(null);
+                    if (autoBin != null) {
+                        resolvedBinId    = autoBin.getId();
+                        resolvedBinCode  = autoBin.getCode();
+                        resolvedLocatorId = autoBin.getLocator().getId();
+                        resolvedZoneId   = autoBin.getLocator().getZone().getId();
+                        item.setBinId(resolvedBinId);
+                        item.setBinCode(resolvedBinCode);
+                        item.setLocatorId(resolvedLocatorId);
+                        item.setZoneId(resolvedZoneId);
+                        itemRepo.save(item);
+                    }
+                }
+            }
+
+            // Hard capacity check: only block when adding stock into the bin (variance > 0)
+            if (variance > 0 && resolvedBinId != null) {
+                binStockService.validateBinCapacity(resolvedBinId, variance);
+            }
+
+            if (batched) {
+                // Two-step ledger:
+                //   1) STOCK_TAKE   correction = -current_on_hand (zeros out prior un-batched on-hand)
+                //   2) STOCK_TAKE_BATCH per-batch positives summing to counted_qty
+                // Net effect = -current_on_hand + sum(batches), so post-approval on-hand == counted_qty.
+                // Read on-hand fresh from the ledger here — item.system_qty may be stale if other
+                // movements landed between modal open and approval.
+                reconcileBatchedItem(session, item, resolvedBinId, resolvedZoneId, resolvedLocatorId);
+            } else {
                 boolean alreadyPosted = stockMovementRepo.existsBySourceTypeAndSourceIdAndProductId(
                         StockSourceType.STOCK_TAKE, item.getId(), item.getProductId());
                 if (alreadyPosted) continue;
 
-                // Resolve bin: prefer explicit assignment on item, else auto-detect from existing stock
-                Long resolvedBinId = item.getBinId();
-                Long resolvedZoneId = item.getZoneId();
-                Long resolvedLocatorId = item.getLocatorId();
-                String resolvedBinCode = item.getBinCode();
-
-                if (resolvedBinId == null) {
-                    // No bin assigned on the item. Find which bin(s) currently hold this product.
-                    // If it lives in exactly one bin → auto-assign that bin so bin-level stock is correct.
-                    // If spread across multiple bins → leave null (can't auto-decide; user should assign manually).
-                    List<Object[]> activeBins = stockMovementRepo.findActiveBinsByWarehouseAndProduct(
-                            session.getWarehouseId(), item.getProductId());
-                    if (activeBins.size() == 1) {
-                        Long autoBinId = ((Number) activeBins.get(0)[0]).longValue();
-                        Bin autoBin = binRepo.findByIdEager(autoBinId).orElse(null);
-                        if (autoBin != null) {
-                            resolvedBinId    = autoBin.getId();
-                            resolvedBinCode  = autoBin.getCode();
-                            resolvedLocatorId = autoBin.getLocator().getId();
-                            resolvedZoneId   = autoBin.getLocator().getZone().getId();
-                            // Persist the resolved bin back onto the item so the UI and audit trail are accurate
-                            item.setBinId(resolvedBinId);
-                            item.setBinCode(resolvedBinCode);
-                            item.setLocatorId(resolvedLocatorId);
-                            item.setZoneId(resolvedZoneId);
-                            itemRepo.save(item);
-                        }
-                    }
-                }
-
                 StockMovement sm = new StockMovement();
                 sm.setSourceType(StockSourceType.STOCK_TAKE);
-                sm.setSourceId(item.getId()); // Per-item key so multiple bins of the same product don't collide
+                sm.setSourceId(item.getId());
                 sm.setProductId(item.getProductId());
                 sm.setWarehouseId(session.getWarehouseId());
-                sm.setQuantity(variance); // Positive for excess, Negative for shortage
+                sm.setQuantity(variance);
                 sm.setReferenceNo(session.getSessionId());
                 sm.setMovementDate(LocalDate.now());
                 sm.setBinId(resolvedBinId);
@@ -332,6 +468,13 @@ public class StockTakeService {
         item.setCategory(p.getCategory());
         item.setDescription(p.getShortDesc() != null ? p.getShortDesc() : p.getName());
         item.setPrice(p.getPricing() != null ? p.getPricing().getRetailPrice() : BigDecimal.ZERO);
+        // Batch and Expiry are independent product-master toggles. Each item carries
+        // its own copy of the flag so downstream logic can gate batch-number entry and
+        // expiry entry separately. An item is "tracked" (uses the batch grid for its
+        // counted qty) whenever either flag is on.
+        item.setBatchEnabled(p.isBatch());
+        item.setExpiryEnabled(p.isExpiryEnabled());
+        boolean tracked = item.isBatchEnabled() || item.isExpiryEnabled();
 
         // Fetch barcode: use the first barcode entry for this product
         java.util.List<com.billbull.backend.inventory.product.ProductBarcode> barcodes = barcodeRepo.findByProductId(p.getId());
@@ -344,18 +487,503 @@ public class StockTakeService {
         // A physical stock count should reflect all units present, including reserved ones.
         BigDecimal available = stockMovementRepo.getAvailableStock(session.getWarehouseId(), p.getId());
         item.setSystemQty(available != null ? available.intValue() : 0);
-        item.setCountedQty(initialCount);
-        item.setVariance(initialCount - item.getSystemQty());
-        item.setVarianceValue(item.getPrice() != null ? 
+
+        // Tracked items (batch and/or expiry) start without an initial count —
+        // their countedQty is the sum of batch-grid entries.
+        Integer effectiveCount = tracked ? null : initialCount;
+        item.setCountedQty(effectiveCount);
+        item.setVariance(effectiveCount != null ? effectiveCount - item.getSystemQty() : 0 - item.getSystemQty());
+        item.setVarianceValue(item.getPrice() != null ?
                 item.getPrice().multiply(BigDecimal.valueOf(item.getVariance())) : BigDecimal.ZERO);
-        
-        if (item.getVariance() == 0) {
+
+        if (effectiveCount == null) {
+            item.setStatus(StockTakeItem.ItemStatus.PENDING);
+        } else if (item.getVariance() == 0) {
             item.setStatus(StockTakeItem.ItemStatus.MATCHED);
         } else {
             item.setStatus(StockTakeItem.ItemStatus.VARIANCE);
         }
 
         return itemRepo.save(item);
+    }
+
+    // === Batch operations ===
+
+    public List<StockTakeItemBatch> addBatch(Long itemId, String batchNumber, java.time.LocalDate expiryDate, Integer quantity) {
+        StockTakeItem item = itemRepo.findById(itemId)
+                .orElseThrow(() -> new RuntimeException("Item not found"));
+        StockTakeSession session = item.getSession();
+        if (session.getStatus() != StockTakeSession.StockTakeStatus.IN_PROGRESS) {
+            throw new IllegalStateException("Session is not in progress");
+        }
+        if (!(item.isBatchEnabled() || item.isExpiryEnabled())) {
+            throw new IllegalStateException("Item is not batch-enabled");
+        }
+        if (quantity == null || quantity <= 0) {
+            throw new IllegalArgumentException("Quantity must be positive");
+        }
+        if (item.isExpiryEnabled() && expiryDate == null) {
+            throw new IllegalArgumentException("Expiry date is required for this item");
+        }
+
+        // The "lot prefix" is what every unit in this batch shares; the trailing
+        // "-{unitIndex}" is what makes each unit_row's batch_number unique.
+        String lotPrefix = batchNumber != null && !batchNumber.trim().isEmpty()
+                ? batchNumber.trim()
+                : nextAutoLotPrefix(item);
+
+        List<StockTakeItemBatch> saved = new ArrayList<>(quantity);
+        for (int unitIndex = 1; unitIndex <= quantity; unitIndex++) {
+            String unitBatchNumber = lotPrefix + "-" + unitIndex;
+            if (batchRepo.existsIdentity(itemId, unitBatchNumber, expiryDate, null)) {
+                throw new IllegalStateException("Batch and expiry already exists for this item: " + unitBatchNumber);
+            }
+            StockTakeItemBatch batch = new StockTakeItemBatch();
+            batch.setItem(item);
+            batch.setBatchNumber(unitBatchNumber);
+            batch.setExpiryDate(expiryDate);
+            batch.setQuantity(1);
+            item.getBatches().add(batch);
+            saved.add(batchRepo.save(batch));
+        }
+
+        recomputeFromBatches(item);
+        itemRepo.save(item);
+        return saved;
+    }
+
+    public StockTakeItemBatch updateBatch(Long batchId, String batchNumber, java.time.LocalDate expiryDate, Integer quantity) {
+        StockTakeItemBatch batch = batchRepo.findById(batchId)
+                .orElseThrow(() -> new RuntimeException("Batch not found"));
+        StockTakeItem item = batch.getItem();
+        if (item.getSession().getStatus() != StockTakeSession.StockTakeStatus.IN_PROGRESS) {
+            throw new IllegalStateException("Session is not in progress");
+        }
+        if (quantity != null && quantity <= 0) {
+            throw new IllegalArgumentException("Quantity must be positive");
+        }
+        if (item.isExpiryEnabled() && expiryDate == null && batch.getExpiryDate() == null) {
+            throw new IllegalArgumentException("Expiry date is required for this item");
+        }
+        if (batchNumber != null && !batchNumber.trim().isEmpty()) {
+            String trimmed = batchNumber.trim();
+            java.time.LocalDate effectiveExpiry = expiryDate != null ? expiryDate : batch.getExpiryDate();
+            if (batchRepo.existsIdentity(item.getId(), trimmed, effectiveExpiry, batch.getId())) {
+                throw new IllegalStateException("Batch and expiry already exists for this item: " + trimmed);
+            }
+            batch.setBatchNumber(trimmed);
+        } else if (expiryDate != null
+                && batchRepo.existsIdentity(item.getId(), batch.getBatchNumber(), expiryDate, batch.getId())) {
+            throw new IllegalStateException("Batch and expiry already exists for this item: " + batch.getBatchNumber());
+        }
+        if (expiryDate != null) batch.setExpiryDate(expiryDate);
+        if (quantity != null) batch.setQuantity(quantity);
+        StockTakeItemBatch saved = batchRepo.save(batch);
+
+        recomputeFromBatches(item);
+        itemRepo.save(item);
+        return saved;
+    }
+
+    /**
+     * Update every per-unit row that belongs to a single lot in one call. Used by the
+     * BatchEditor when the user edits the batch number, expiry, or quantity on a logical
+     * lot whose underlying storage is N unit rows.
+     *
+     * lotPrefix matches StockTakeLotGroup.batchNumber (the trailing "-{unitIndex}" stripped
+     * for new-format rows; the full string for legacy rows).
+     */
+    public List<StockTakeItemBatch> updateLot(Long itemId,
+                                              String lotPrefix,
+                                              java.time.LocalDate matchExpiry,
+                                              boolean seeded,
+                                              String newBatchNumber,
+                                              java.time.LocalDate newExpiryDate,
+                                              Integer newQuantity) {
+        StockTakeItem item = itemRepo.findById(itemId)
+                .orElseThrow(() -> new RuntimeException("Item not found"));
+        if (item.getSession().getStatus() != StockTakeSession.StockTakeStatus.IN_PROGRESS) {
+            throw new IllegalStateException("Session is not in progress");
+        }
+        if (newQuantity != null && newQuantity <= 0) {
+            throw new IllegalArgumentException("Quantity must be positive");
+        }
+        if (item.isExpiryEnabled() && newExpiryDate == null && matchExpiry == null) {
+            throw new IllegalArgumentException("Expiry date is required for this item");
+        }
+
+        List<StockTakeItemBatch> rows = matchLot(item, lotPrefix, matchExpiry, seeded);
+        if (rows.isEmpty()) {
+            throw new IllegalStateException("Lot not found: " + lotPrefix);
+        }
+        // Sort by parsed unit index ascending (legacy rows fall to the end as 0).
+        rows.sort(Comparator.comparingInt(b -> BatchNumberGenerator.parseUnitIndex(b.getBatchNumber()).orElse(0)));
+
+        java.time.LocalDate effectiveExpiry = newExpiryDate != null ? newExpiryDate : matchExpiry;
+        String effectivePrefix = (newBatchNumber != null && !newBatchNumber.trim().isEmpty())
+                ? newBatchNumber.trim()
+                : lotPrefix;
+
+        // Apply the prefix/expiry rename to every existing row first.
+        for (StockTakeItemBatch b : rows) {
+            String renamed;
+            if (effectivePrefix.equals(lotPrefix)) {
+                renamed = b.getBatchNumber();
+            } else {
+                int unitIdx = BatchNumberGenerator.parseUnitIndex(b.getBatchNumber()).orElse(0);
+                // For new-format rows we substitute the prefix; for legacy rows we replace
+                // the whole batch_number with the user-supplied value (single row only).
+                renamed = unitIdx > 0 ? (effectivePrefix + "-" + unitIdx) : effectivePrefix;
+            }
+            if (!Objects.equals(renamed, b.getBatchNumber())
+                    && batchRepo.existsIdentity(item.getId(), renamed, effectiveExpiry, b.getId())) {
+                throw new IllegalStateException("Batch and expiry already exists for this item: " + renamed);
+            }
+            b.setBatchNumber(renamed);
+            if (newExpiryDate != null) b.setExpiryDate(newExpiryDate);
+            batchRepo.save(b);
+        }
+
+        // Sync row count to the requested quantity. Only valid for new-format lots: legacy
+        // single-row lots keep their integer quantity column and skip this branch.
+        boolean newFormat = BatchNumberGenerator.parseUnitIndex(rows.get(0).getBatchNumber()).isPresent();
+        if (newQuantity != null && newFormat) {
+            int current = rows.size();
+            if (newQuantity > current) {
+                int maxUnitIdx = rows.stream()
+                        .mapToInt(b -> BatchNumberGenerator.parseUnitIndex(b.getBatchNumber()).orElse(0))
+                        .max().orElse(0);
+                for (int i = 0; i < newQuantity - current; i++) {
+                    int unitIdx = maxUnitIdx + 1 + i;
+                    String unitBatchNumber = effectivePrefix + "-" + unitIdx;
+                    if (batchRepo.existsIdentity(item.getId(), unitBatchNumber, effectiveExpiry, null)) continue;
+                    StockTakeItemBatch added = new StockTakeItemBatch();
+                    added.setItem(item);
+                    added.setBatchNumber(unitBatchNumber);
+                    added.setExpiryDate(effectiveExpiry);
+                    added.setQuantity(1);
+                    added.setSeeded(seeded);
+                    item.getBatches().add(added);
+                    batchRepo.save(added);
+                }
+            } else if (newQuantity < current) {
+                // Drop rows from the highest unit index downward.
+                List<StockTakeItemBatch> toDrop = rows.subList(newQuantity, current);
+                for (StockTakeItemBatch b : toDrop) {
+                    item.getBatches().removeIf(x -> Objects.equals(x.getId(), b.getId()));
+                }
+            }
+        } else if (newQuantity != null) {
+            // Legacy single-row path: store the new qty directly on the one row.
+            StockTakeItemBatch only = rows.get(0);
+            only.setQuantity(newQuantity);
+            batchRepo.save(only);
+        }
+
+        recomputeFromBatches(item);
+        itemRepo.save(item);
+        return matchLot(item, effectivePrefix, effectiveExpiry, seeded);
+    }
+
+    public void deleteLot(Long itemId, String lotPrefix, java.time.LocalDate matchExpiry, boolean seeded) {
+        StockTakeItem item = itemRepo.findById(itemId)
+                .orElseThrow(() -> new RuntimeException("Item not found"));
+        if (item.getSession().getStatus() != StockTakeSession.StockTakeStatus.IN_PROGRESS) {
+            throw new IllegalStateException("Session is not in progress");
+        }
+        List<StockTakeItemBatch> rows = matchLot(item, lotPrefix, matchExpiry, seeded);
+        for (StockTakeItemBatch b : rows) {
+            item.getBatches().removeIf(x -> Objects.equals(x.getId(), b.getId()));
+        }
+        recomputeFromBatches(item);
+        itemRepo.save(item);
+    }
+
+    private List<StockTakeItemBatch> matchLot(StockTakeItem item,
+                                              String lotPrefix,
+                                              java.time.LocalDate matchExpiry,
+                                              boolean seeded) {
+        List<StockTakeItemBatch> rows = new ArrayList<>();
+        if (lotPrefix == null || item.getBatches() == null) return rows;
+        String normalized = lotPrefix.trim();
+        for (StockTakeItemBatch b : item.getBatches()) {
+            if (b.isSeeded() != seeded) continue;
+            if (!Objects.equals(b.getExpiryDate(), matchExpiry)) continue;
+            String parsedPrefix = BatchNumberGenerator.stripUnitIndex(b.getBatchNumber());
+            String key = parsedPrefix != null ? parsedPrefix : b.getBatchNumber();
+            if (Objects.equals(key, normalized)) rows.add(b);
+        }
+        return rows;
+    }
+
+    public void deleteBatch(Long batchId) {
+        StockTakeItemBatch batch = batchRepo.findById(batchId)
+                .orElseThrow(() -> new RuntimeException("Batch not found"));
+        StockTakeItem item = batch.getItem();
+        if (item.getSession().getStatus() != StockTakeSession.StockTakeStatus.IN_PROGRESS) {
+            throw new IllegalStateException("Session is not in progress");
+        }
+        item.getBatches().removeIf(b -> b.getId().equals(batchId));
+
+        recomputeFromBatches(item);
+        itemRepo.save(item);
+    }
+
+    public String previewNextBatchNumber(Long itemId) {
+        StockTakeItem item = itemRepo.findById(itemId)
+                .orElseThrow(() -> new RuntimeException("Item not found"));
+        return nextAutoLotPrefix(item);
+    }
+
+    /**
+     * Builds the lot prefix for the next logical batch the user is about to add to this item.
+     * Every unit row created from that batch will share this prefix and only differ in the
+     * trailing "-{unitIndex}" segment.
+     */
+    private String nextAutoLotPrefix(StockTakeItem item) {
+        // Opening Inventory sessions emit OS-prefixed batch numbers; regular counts emit ST.
+        StockIdentifier identifier =
+                item.getSession().getType() == StockTakeSession.StockTakeType.OPENING_INVENTORY
+                        ? StockIdentifier.OS
+                        : StockIdentifier.ST;
+
+        Product product = productRepo.findById(item.getProductId()).orElse(null);
+        String itemCode = product != null ? product.getCode() : ("P" + item.getProductId());
+
+        int lotIndex = nextLotIndexFor(item);
+        java.time.LocalDate today = java.time.LocalDate.now();
+        String prefix = BatchNumberGenerator.lotPrefix(identifier, today, lotIndex, itemCode);
+
+        // Defensive: ensure no existing row already starts with this prefix (would happen if
+        // a previous attempt aborted mid-write). Bump until clean.
+        while (anyBatchStartsWith(item, prefix + "-")) {
+            lotIndex++;
+            prefix = BatchNumberGenerator.lotPrefix(identifier, today, lotIndex, itemCode);
+        }
+        return prefix;
+    }
+
+    /** Highest lot index already in use on this item + 1; 1 if no new-format rows exist. */
+    private int nextLotIndexFor(StockTakeItem item) {
+        if (item.getBatches() == null || item.getBatches().isEmpty()) return 1;
+        int max = 0;
+        for (StockTakeItemBatch b : item.getBatches()) {
+            int parsed = BatchNumberGenerator.parseLotIndex(b.getBatchNumber()).orElse(0);
+            if (parsed > max) max = parsed;
+        }
+        return max + 1;
+    }
+
+    private boolean anyBatchStartsWith(StockTakeItem item, String prefix) {
+        if (item.getBatches() == null) return false;
+        for (StockTakeItemBatch b : item.getBatches()) {
+            if (b.getBatchNumber() != null && b.getBatchNumber().startsWith(prefix)) return true;
+        }
+        return false;
+    }
+
+    private void recomputeFromBatches(StockTakeItem item) {
+        if (!(item.isBatchEnabled() || item.isExpiryEnabled())) return;
+        int sum = item.getBatches().stream()
+                .filter(b -> b.getQuantity() != null)
+                .mapToInt(StockTakeItemBatch::getQuantity)
+                .sum();
+        item.setCountedQty(sum);
+        Integer sysQty = item.getSystemQty() != null ? item.getSystemQty() : 0;
+        item.setVariance(sum - sysQty);
+        item.setVarianceValue(item.getPrice() != null
+                ? item.getPrice().multiply(BigDecimal.valueOf(item.getVariance()))
+                : BigDecimal.ZERO);
+        if (item.getVariance() == 0 && sum > 0) {
+            item.setStatus(StockTakeItem.ItemStatus.MATCHED);
+        } else if (sum == 0) {
+            item.setStatus(StockTakeItem.ItemStatus.PENDING);
+        } else {
+            item.setStatus(StockTakeItem.ItemStatus.VARIANCE);
+        }
+    }
+
+    private void refreshItemSystemQty(StockTakeItem item) {
+        BigDecimal onHand;
+        if (item.getBinId() != null) {
+            onHand = stockMovementRepo.getStockByBin(item.getSession().getWarehouseId(), item.getProductId(), item.getBinId());
+        } else {
+            onHand = stockMovementRepo.getUnlocatedStock(item.getSession().getWarehouseId(), item.getProductId());
+        }
+        int systemQty = onHand != null ? onHand.intValue() : 0;
+        item.setSystemQty(systemQty);
+        if (item.getCountedQty() != null) {
+            item.setVariance(item.getCountedQty() - systemQty);
+            item.setVarianceValue(item.getPrice() != null
+                    ? item.getPrice().multiply(BigDecimal.valueOf(item.getVariance()))
+                    : BigDecimal.ZERO);
+        }
+    }
+
+    private void seedExistingBatchCounts(StockTakeItem item) {
+        if (!(item.isBatchEnabled() || item.isExpiryEnabled())) return;
+
+        List<Object[]> rows = stockMovementRepo.findStockIdentitiesByProductAndBin(
+                item.getSession().getWarehouseId(), item.getProductId(), item.getBinId());
+        if (rows == null || rows.isEmpty()) {
+            return;
+        }
+
+        for (Object[] row : rows) {
+            int qty = row[2] != null ? ((Number) row[2]).intValue() : 0;
+            if (qty <= 0) continue;
+
+            String sourceBatchNumber = row[0] != null && !row[0].toString().isBlank()
+                    ? row[0].toString()
+                    : null;
+            LocalDate expiryDate = (LocalDate) row[1];
+
+            if (sourceBatchNumber != null) {
+                // Existing system stock with a known identifier: seed it as one row whose
+                // quantity matches the on-hand qty. Whether the source string is in legacy
+                // form (W6-BIN01-...) or new per-unit form (...-L01-...-3), each
+                // (batch_number, expiry) row in stock_movements maps to a single
+                // StockTakeItemBatch row — preserving traceability.
+                if (batchRepo.existsIdentity(item.getId(), sourceBatchNumber, expiryDate, null)) {
+                    continue;
+                }
+                StockTakeItemBatch batch = new StockTakeItemBatch();
+                batch.setItem(item);
+                batch.setBatchNumber(sourceBatchNumber);
+                batch.setExpiryDate(expiryDate);
+                batch.setQuantity(qty);
+                batch.setSeeded(true);
+                item.getBatches().add(batch);
+                batchRepo.save(batch);
+            } else {
+                // Stock exists for this product/bin but no batch identifier was recorded.
+                // Mint a fresh lot of qty unit-rows so each on-hand unit becomes individually
+                // identifiable for this stock-take.
+                String lotPrefix = nextAutoLotPrefix(item);
+                for (int unitIndex = 1; unitIndex <= qty; unitIndex++) {
+                    String unitBatchNumber = lotPrefix + "-" + unitIndex;
+                    if (batchRepo.existsIdentity(item.getId(), unitBatchNumber, expiryDate, null)) continue;
+                    StockTakeItemBatch batch = new StockTakeItemBatch();
+                    batch.setItem(item);
+                    batch.setBatchNumber(unitBatchNumber);
+                    batch.setExpiryDate(expiryDate);
+                    batch.setQuantity(1);
+                    batch.setSeeded(true);
+                    item.getBatches().add(batch);
+                    batchRepo.save(batch);
+                }
+            }
+        }
+
+        recomputeFromBatches(item);
+    }
+
+    private void reconcileBatchedItem(
+            StockTakeSession session,
+            StockTakeItem item,
+            Long binId,
+            Long zoneId,
+            Long locatorId) {
+
+        Map<BatchIdentity, Integer> systemQty = loadSystemBatchIdentityQty(
+                session.getWarehouseId(), item.getProductId(), binId);
+        Map<BatchIdentity, Integer> countedQty = loadCountedBatchIdentityQty(item);
+
+        Set<BatchIdentity> identities = new LinkedHashSet<>();
+        identities.addAll(systemQty.keySet());
+        identities.addAll(countedQty.keySet());
+
+        BigDecimal adjustmentUnitCost = resolveAdjustmentUnitCost(item);
+        int sequence = 1;
+        for (BatchIdentity identity : identities.stream()
+                .sorted(Comparator
+                        .comparing((BatchIdentity i) -> i.batchNumber == null ? "" : i.batchNumber)
+                        .thenComparing(i -> i.expiryDate == null ? LocalDate.MIN : i.expiryDate))
+                .toList()) {
+            int delta = countedQty.getOrDefault(identity, 0) - systemQty.getOrDefault(identity, 0);
+            if (delta == 0) continue;
+
+            StockMovement movement = new StockMovement();
+            movement.setSourceType(StockSourceType.STOCK_TAKE_ADJUSTMENT);
+            movement.setSourceId(stockTakeAdjustmentSourceId(item.getId(), sequence++));
+            movement.setProductId(item.getProductId());
+            movement.setWarehouseId(session.getWarehouseId());
+            movement.setQuantity(delta);
+            movement.setReferenceNo(session.getSessionId());
+            movement.setMovementDate(LocalDate.now());
+            movement.setBinId(binId);
+            movement.setZoneId(zoneId);
+            movement.setLocatorId(locatorId);
+            movement.setBatchNumber(identity.batchNumber);
+            movement.setExpiryDate(identity.expiryDate);
+            if (delta > 0) {
+                movement.setUnitCost(adjustmentUnitCost);
+            }
+
+            stockMovementRepo.save(movement);
+        }
+    }
+
+    private Map<BatchIdentity, Integer> loadSystemBatchIdentityQty(Long warehouseId, Long productId, Long binId) {
+        Map<BatchIdentity, Integer> result = new LinkedHashMap<>();
+        for (Object[] row : stockMovementRepo.findStockIdentitiesByProductAndBin(warehouseId, productId, binId)) {
+            String batchNumber = row[0] != null ? row[0].toString() : null;
+            LocalDate expiryDate = (LocalDate) row[1];
+            int qty = row[2] != null ? ((Number) row[2]).intValue() : 0;
+            if (qty == 0) continue;
+            result.merge(new BatchIdentity(batchNumber, expiryDate), qty, Integer::sum);
+        }
+        return result;
+    }
+
+    private Map<BatchIdentity, Integer> loadCountedBatchIdentityQty(StockTakeItem item) {
+        Map<BatchIdentity, Integer> result = new LinkedHashMap<>();
+        if (item.getBatches() == null) return result;
+
+        for (StockTakeItemBatch batch : item.getBatches()) {
+            if (batch.getQuantity() == null || batch.getQuantity() <= 0) continue;
+            result.merge(
+                    new BatchIdentity(batch.getBatchNumber(), batch.getExpiryDate()),
+                    batch.getQuantity(),
+                    Integer::sum);
+        }
+        return result;
+    }
+
+    private BigDecimal resolveAdjustmentUnitCost(StockTakeItem item) {
+        return productRepo.findById(item.getProductId())
+                .map(Product::getPricing)
+                .map(ProductPricing::getCost)
+                .filter(cost -> cost.compareTo(BigDecimal.ZERO) > 0)
+                .orElse(null);
+    }
+
+    private long stockTakeAdjustmentSourceId(Long itemId, int sequence) {
+        long base = itemId != null ? itemId : 0L;
+        return (base * 10_000L) + sequence;
+    }
+
+    private static final class BatchIdentity {
+        private final String batchNumber;
+        private final LocalDate expiryDate;
+
+        private BatchIdentity(String batchNumber, LocalDate expiryDate) {
+            this.batchNumber = batchNumber != null && !batchNumber.isBlank() ? batchNumber.trim() : null;
+            this.expiryDate = expiryDate;
+        }
+
+        @Override
+        public boolean equals(Object o) {
+            if (this == o) return true;
+            if (!(o instanceof BatchIdentity that)) return false;
+            return Objects.equals(batchNumber, that.batchNumber)
+                    && Objects.equals(expiryDate, that.expiryDate);
+        }
+
+        @Override
+        public int hashCode() {
+            return Objects.hash(batchNumber, expiryDate);
+        }
     }
 
     public List<StockTakeItem> bulkUpdateItems(String sessionId, List<StockTakeItemUpdateDTO> updates) {
@@ -368,6 +996,7 @@ public class StockTakeService {
         for (StockTakeItemUpdateDTO update : updates) {
             items.stream()
                 .filter(i -> i.getSku().equalsIgnoreCase(update.getSku()))
+                .filter(i -> !(i.isBatchEnabled() || i.isExpiryEnabled())) // tracked items: countedQty is derived from batches
                 .findFirst()
                 .ifPresent(item -> {
                     item.setCountedQty(update.getCountedQty());
@@ -404,9 +1033,14 @@ public class StockTakeService {
     public void deleteItem(Long itemId) {
         StockTakeItem item = itemRepo.findById(itemId)
                 .orElseThrow(() -> new RuntimeException("Item not found"));
-        if (item.getSession().getStatus() != StockTakeSession.StockTakeStatus.IN_PROGRESS) {
+        StockTakeSession session = item.getSession();
+        if (session.getStatus() != StockTakeSession.StockTakeStatus.IN_PROGRESS) {
             throw new IllegalStateException("Cannot delete item from a session that is not in progress");
         }
-        itemRepo.delete(item);
+        // Remove from parent collection — with orphanRemoval=true this is the correct way
+        // to delete a child. Calling itemRepo.delete() directly while the item is still
+        // in the EAGER-loaded session.items collection can cause a cascade conflict at flush time.
+        session.getItems().remove(item);
+        item.setSession(null);
     }
 }

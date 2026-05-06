@@ -15,9 +15,15 @@ public class UserSafeDto {
     private String email;
     private String phone;
     private List<String> roles;
+    private String primaryRoleName;
     private boolean active;
     private Long linkedEmployeeId;
     private String linkedEmployeeCode;
+    private Long branchId;
+    private String branchName;
+    private String branchCode;
+    private Long defaultWarehouseId;
+    private String defaultWarehouseName;
     private LocalDateTime createdAt;
 
     public UserSafeDto(User user) {
@@ -29,12 +35,23 @@ public class UserSafeDto {
         this.roles = user.getRoles().stream()
                 .map(r -> r.getName())
                 .collect(Collectors.toList());
+        this.primaryRoleName = user.getPrimaryRole() != null ? user.getPrimaryRole().getName() : null;
         this.active = user.isActive();
         this.createdAt = user.getCreatedAt();
 
         if (user.getLinkedEmployee() != null) {
             this.linkedEmployeeId = user.getLinkedEmployee().getId();
             this.linkedEmployeeCode = user.getLinkedEmployee().getEmployeeCode();
+        }
+
+        if (user.getBranch() != null) {
+            this.branchId = user.getBranch().getId();
+            this.branchName = user.getBranch().getName();
+            this.branchCode = user.getBranch().getCode();
+            if (user.getBranch().getDefaultWarehouse() != null) {
+                this.defaultWarehouseId = user.getBranch().getDefaultWarehouse().getId();
+                this.defaultWarehouseName = user.getBranch().getDefaultWarehouse().getName();
+            }
         }
     }
 
@@ -46,8 +63,14 @@ public class UserSafeDto {
     public String getEmail() { return email; }
     public String getPhone() { return phone; }
     public List<String> getRoles() { return roles; }
+    public String getPrimaryRoleName() { return primaryRoleName; }
     public boolean isActive() { return active; }
     public Long getLinkedEmployeeId() { return linkedEmployeeId; }
     public String getLinkedEmployeeCode() { return linkedEmployeeCode; }
+    public Long getBranchId() { return branchId; }
+    public String getBranchName() { return branchName; }
+    public String getBranchCode() { return branchCode; }
+    public Long getDefaultWarehouseId() { return defaultWarehouseId; }
+    public String getDefaultWarehouseName() { return defaultWarehouseName; }
     public LocalDateTime getCreatedAt() { return createdAt; }
 }

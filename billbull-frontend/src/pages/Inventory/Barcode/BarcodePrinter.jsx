@@ -5,82 +5,290 @@ import {
     Barcode, Layout, CheckCircle, Square, ArrowLeft,
     FileText, Grid, Tag, ShoppingBag, AlertCircle,
     ChevronLeft, ChevronRight, RefreshCw, Send, Box,
-    Calendar, Filter, Loader, Save
+    Calendar, Filter, Loader, Save, SlidersHorizontal
 } from 'lucide-react';
 import { searchExactProducts } from "../../../api/productsApi";
 import { getLpos } from "../../../api/lpoApi";
 import { getPostedPurchaseInvoices } from '../../../api/purchaseInvoiceApi';
 import { getVendors } from "../../../api/vendorsApi";
 import { getBarcodeTemplates, createBarcodeTemplate, updateBarcodeTemplate, deleteBarcodeTemplate } from '../../../api/barcodeTemplateApi';
+import { getStockTakeSessions, getStockTakeSession } from '../../../api/stockTakeApi';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
+import { useCompany } from "../../../context/CompanyContext";
 import { getImageUrl } from "../../../utils/urlUtils";
+import {
+    resolveCurrencyDisplayConfig,
+    resolveCurrencyDisplayCode,
+    UAE_DIRHAM_SYMBOL_IMAGE
+} from "../../../utils/countryCurrencyOptions";
 
 const TEMPLATES = [
     {
-        id: 'standard_40x25',
-        name: 'Standard 40x25mm',
-        desc: '1 column, compact design',
-        width: 40, height: 25, type: 'Roll', perPage: 1,
-        fields: { barcode: true, name: true, price: true, sku: false, unit: false, company: false, qr: false },
-        isSystem: true // Protect system templates
-    },
-    {
-        id: 'medium_50x30',
-        name: 'Medium 50x30mm',
-        desc: '1 column with SKU',
-        width: 50, height: 30, type: 'Roll', perPage: 1,
-        fields: { barcode: true, name: true, price: true, sku: true, unit: true, company: false, qr: false },
+        id: 'dual_standard_70x50',
+        name: 'Standard Dual 70x50mm',
+        desc: 'Balanced two-barcode label',
+        width: 70, height: 50, type: 'Roll', perPage: 1, barcodeFormat: 'CODE128', contentScale: 0.9,
+        fields: { barcode: true, name: true, price: true, sku: true, unit: false, company: false, qr: false, itemCode: false, brandName: true, batchNumber: true, expiryDate: true },
         isSystem: true
     },
     {
-        id: 'large_70x40',
-        name: 'Large 70x40mm',
-        desc: 'Detailed with company info',
-        width: 70, height: 40, type: 'Roll', perPage: 1,
-        fields: { barcode: true, name: true, price: true, sku: true, unit: true, company: true, qr: false },
+        id: 'dual_compact_80x35',
+        name: 'Compact Dual 80x35mm',
+        desc: 'Compact batch barcode label',
+        width: 80, height: 35, type: 'Roll', perPage: 1, barcodeFormat: 'CODE128', contentScale: 0.78,
+        fields: { barcode: true, name: true, price: true, sku: false, unit: false, company: false, qr: false, itemCode: false, brandName: false, batchNumber: true, expiryDate: true },
         isSystem: true
     },
     {
-        id: 'two_col_50x25',
-        name: 'Two Column 50x25mm',
-        desc: '2 labels per row',
-        width: 50, height: 25, type: 'Sheet', perPage: 2,
-        fields: { barcode: true, name: true, price: true, sku: false, unit: false, company: false, qr: false },
+        id: 'dual_retail_90x50',
+        name: 'Retail Dual 90x50mm',
+        desc: 'Price and expiry focused',
+        width: 90, height: 50, type: 'Roll', perPage: 1, barcodeFormat: 'CODE128', contentScale: 0.9,
+        fields: { barcode: true, name: true, price: true, sku: true, unit: true, company: false, qr: false, itemCode: false, brandName: true, batchNumber: true, expiryDate: true },
         isSystem: true
     },
     {
-        id: 'qr_40x40',
-        name: 'QR Code 40x40mm',
-        desc: 'QR code format',
-        width: 40, height: 40, type: 'Roll', perPage: 1,
-        fields: { barcode: false, name: true, price: true, sku: false, unit: false, company: false, qr: true },
+        id: 'dual_detailed_100x60',
+        name: 'Detailed Dual 100x60mm',
+        desc: 'Company and item details',
+        width: 100, height: 60, type: 'Roll', perPage: 1, barcodeFormat: 'CODE128', contentScale: 0.95,
+        fields: { barcode: true, name: true, price: true, sku: true, unit: true, company: true, qr: false, itemCode: true, brandName: true, batchNumber: true, expiryDate: true },
         isSystem: true
     },
     {
-        id: 'shelf_60x30',
-        name: 'Shelf Label 60x30mm',
-        desc: 'Price-focused shelf tag',
-        width: 60, height: 30, type: 'Roll', perPage: 1,
-        fields: { barcode: true, name: true, price: true, sku: true, unit: true, company: false, qr: false },
+        id: 'dual_sheet_90x50',
+        name: 'Sheet Dual 90x50mm',
+        desc: 'Two-column sheet friendly',
+        width: 90, height: 50, type: 'Sheet', perPage: 2, barcodeFormat: 'CODE128', contentScale: 0.88,
+        fields: { barcode: true, name: true, price: true, sku: true, unit: false, company: false, qr: false, itemCode: false, brandName: true, batchNumber: true, expiryDate: true },
+        isSystem: true
+    },
+    {
+        id: 'qr_batch_50x50',
+        name: 'QR Code 50x50mm',
+        desc: 'QR label with expiry text',
+        width: 50, height: 50, type: 'Roll', perPage: 1, barcodeFormat: 'CODE128', contentScale: 0.9,
+        fields: { barcode: false, name: true, price: true, sku: false, unit: false, company: false, qr: true, itemCode: false, brandName: false, batchNumber: false, expiryDate: true },
         isSystem: true
     },
 ];
 
+const CONTENT_SCALE_FIELD = '_contentScale';
+const DEFAULT_CONTENT_SCALE = 1;
+const MIN_CONTENT_SCALE = 0.75;
+const MAX_CONTENT_SCALE = 1.35;
+
+const DEFAULT_TEMPLATE_FIELDS = {
+    barcode: true,
+    qr: false,
+    name: true,
+    sku: true,
+    unit: false,
+    price: true,
+    company: false,
+    itemCode: false,
+    brandName: false,
+    batchNumber: true,
+    expiryDate: true
+};
+
+const parseTemplateFields = (fields) => {
+    if (!fields) return {};
+    if (typeof fields === 'object') return fields;
+
+    try {
+        return JSON.parse(fields);
+    } catch (error) {
+        console.warn('Invalid barcode template fields JSON', error);
+        return {};
+    }
+};
+
+const clampContentScale = (value) => {
+    const numericValue = Number(value);
+    if (!Number.isFinite(numericValue)) return DEFAULT_CONTENT_SCALE;
+
+    const clamped = Math.min(MAX_CONTENT_SCALE, Math.max(MIN_CONTENT_SCALE, numericValue));
+    return Math.round(clamped * 100) / 100;
+};
+
+const normalizeTemplateFields = (fields) => ({
+    ...DEFAULT_TEMPLATE_FIELDS,
+    ...parseTemplateFields(fields)
+});
+
+const getTemplateContentScale = (template) => {
+    const fields = parseTemplateFields(template?.fields);
+    return clampContentScale(
+        template?.contentScale ??
+        fields?.[CONTENT_SCALE_FIELD] ??
+        fields?.contentScale ??
+        DEFAULT_CONTENT_SCALE
+    );
+};
+
+const countEnabledFields = (fields) => (
+    Object.entries(parseTemplateFields(fields))
+        .filter(([key, value]) => !key.startsWith('_') && value === true)
+        .length
+);
+
+const toBooleanFlag = (value) => value === true || value === 'true' || value === 1 || value === '1';
+
+const formatCurrencyAmount = (value, decimals = 2) => {
+    const numericValue = Number(value);
+
+    if (Number.isFinite(numericValue)) {
+        return numericValue.toLocaleString('en-AE', {
+            minimumFractionDigits: decimals,
+            maximumFractionDigits: decimals
+        });
+    }
+
+    const fallback = String(value ?? '').trim();
+    return fallback || Number(0).toFixed(decimals);
+};
+
+const CurrencySymbol = ({ currencyCode, currencyLabel }) => {
+    const currencyConfig = resolveCurrencyDisplayConfig({
+        currency: currencyCode,
+        currencySymbol: currencyLabel
+    });
+
+    if (currencyConfig.hasImage) {
+        return (
+            <img
+                src={UAE_DIRHAM_SYMBOL_IMAGE}
+                alt={currencyConfig.ariaLabel}
+                data-bb-currency-image="true"
+                style={{
+                    display: 'inline-block',
+                    height: '0.82em',
+                    width: 'auto',
+                    maxWidth: '1.05em',
+                    verticalAlign: '-0.08em'
+                }}
+            />
+        );
+    }
+
+    return <>{currencyConfig.label}</>;
+};
+
+const CurrencyAmount = ({ value, currencyCode, currencyLabel, decimals = 2 }) => (
+    <>
+        <CurrencySymbol currencyCode={currencyCode} currencyLabel={currencyLabel} /> {formatCurrencyAmount(value, decimals)}
+    </>
+);
+
+const PRINT_PAGE_WIDTH_MM = 210;
+const PRINT_PAGE_HEIGHT_MM = 297;
+const PRINT_PAGE_MARGIN_MM = 6;
+const PRINT_LABEL_GAP_MM = 2;
+
+const getTemplateMetrics = (template) => {
+    const labelWidthMm = Math.max(1, Number(template?.width) || 40);
+    const labelHeightMm = Math.max(1, Number(template?.height) || 25);
+    const usableWidthMm = PRINT_PAGE_WIDTH_MM - (PRINT_PAGE_MARGIN_MM * 2);
+    const usableHeightMm = PRINT_PAGE_HEIGHT_MM - (PRINT_PAGE_MARGIN_MM * 2);
+    const cols = Math.max(1, Math.floor((usableWidthMm + PRINT_LABEL_GAP_MM) / (labelWidthMm + PRINT_LABEL_GAP_MM)));
+    const rows = Math.max(1, Math.floor((usableHeightMm + PRINT_LABEL_GAP_MM) / (labelHeightMm + PRINT_LABEL_GAP_MM)));
+    const labelsPerPage = Math.max(1, cols * rows);
+
+    return {
+        cols,
+        rows,
+        labelWidthMm,
+        labelHeightMm,
+        gapMm: PRINT_LABEL_GAP_MM,
+        rowGapMm: PRINT_LABEL_GAP_MM,
+        pageWidthMm: PRINT_PAGE_WIDTH_MM,
+        pageHeightMm: PRINT_PAGE_HEIGHT_MM,
+        pageInnerWidthMm: usableWidthMm,
+        pageInnerHeightMm: usableHeightMm,
+        paddingMm: PRINT_PAGE_MARGIN_MM,
+        labelsPerPage
+    };
+};
+
+// Many JsBarcode formats reject inputs that don't match their length / charset rules.
+// Pick a sample value that's guaranteed to render so the preview reflects the chosen format.
+const getSampleBarcodeForFormat = (format) => {
+    switch ((format || 'CODE128').toUpperCase()) {
+        case 'EAN13':      return '5901234123457';   // 13 digits with valid check digit
+        case 'EAN8':       return '12345670';        // 8 digits with valid check digit
+        case 'UPC':        return '123456789012';    // 12 digits
+        case 'ITF14':      return '12345678901231';  // 14 digits
+        case 'ITF':        return '1234567890';      // even-length digits
+        case 'MSI':        return '1234567';
+        case 'CODABAR':    return 'A12345B';
+        case 'PHARMACODE': return '1234';
+        case 'CODE39':     return 'SAMPLE-123';
+        case 'CODE128':
+        default:           return '123456789012';
+    }
+};
+
+const getBarcodeRenderOptions = (template) => {
+    const height = Number(template?.height) || 25;
+    const width = Number(template?.width) || 40;
+    const isSmallHeight = height <= 25;
+    const format = template?.barcodeFormat || "CODE128";
+    const contentScale = getTemplateContentScale(template);
+    const baseWidth = width < 50 ? 1.4 : 1.8;
+    const baseHeight = isSmallHeight ? 32 : (height < 30 ? 40 : 55);
+
+    return {
+        format,
+        width: Math.max(1, Number((baseWidth * contentScale).toFixed(2))),
+        height: Math.max(20, Math.round(baseHeight * contentScale)),
+        displayValue: false,
+        fontSize: Math.max(8, Math.round((isSmallHeight ? 10 : 12) * contentScale)),
+        margin: 0
+    };
+};
+
+const renderBarcodesInRoot = (root, options) => {
+    if (!root?.querySelectorAll) return;
+
+    root.querySelectorAll('svg[data-barcode]').forEach((svg) => {
+        const barcodeValue = svg.getAttribute('data-barcode');
+        if (!barcodeValue) return;
+
+        try {
+            JsBarcode(svg, barcodeValue, options);
+        } catch (error) {
+            console.error("Barcode generation failed:", barcodeValue, error);
+        }
+    });
+};
+
 const BarcodePrinter = () => {
     const location = useLocation();
     const navigate = useNavigate();
+    const { company } = useCompany();
+    const currencyCode = company?.currency || 'AED';
+    const currencyLabel = resolveCurrencyDisplayCode(company || {});
     const [products, setProducts] = useState([]);
     const [filteredProducts, setFilteredProducts] = useState([]);
     const [cart, setCart] = useState([]);
     const [searchTerm, setSearchTerm] = useState('');
     const [isSearchFocused, setIsSearchFocused] = useState(false);
     const [searchLoading, setSearchLoading] = useState(false);
-    const [selectedTemplate, setSelectedTemplate] = useState('standard_40x25');
+    const [selectedTemplate, setSelectedTemplate] = useState('dual_standard_70x50');
     const [previewPage, setPreviewPage] = useState(1);
     const [loading, setLoading] = useState(true);
 
     // Modal State
     const [showSearchModal, setShowSearchModal] = useState(false);
+    const [showStockTakeModal, setShowStockTakeModal] = useState(false);
+    const [stockTakeSessions, setStockTakeSessions] = useState([]);
+    const [stockTakeLoading, setStockTakeLoading] = useState(false);
+    const [openedStockTakeSession, setOpenedStockTakeSession] = useState(null);
+    const [selectedBatchKeys, setSelectedBatchKeys] = useState({}); // key -> { selected, labelCount }
+    const [stockTakeSearch, setStockTakeSearch] = useState('');
+    const [stockTakeFilterStatus, setStockTakeFilterStatus] = useState('');
+    const [stockTakeFilterWarehouse, setStockTakeFilterWarehouse] = useState('');
     const [allPurchaseOrders, setAllPurchaseOrders] = useState([]); // Master list
     const [displayedPurchaseOrders, setDisplayedPurchaseOrders] = useState([]); // Filtered list
     const [vendors, setVendors] = useState([]);
@@ -104,32 +312,25 @@ const BarcodePrinter = () => {
         height: 25,
         type: 'Roll',
         perPage: 1,
-        fields: {
-            barcode: true,
-            qr: false,
-            name: true,
-            sku: true,
-            unit: false,
-            price: true,
-            company: false
-        }
+        barcodeFormat: 'CODE128',
+        contentScale: DEFAULT_CONTENT_SCALE,
+        fields: { ...DEFAULT_TEMPLATE_FIELDS }
     });
 
     const handleEditTemplate = (template) => {
-        // Parse fields string "x fields" to object if needed, or if we change data structure
-        // For now, let's just copy width/height/name and default fields
+        // System templates have string ids (e.g. 'dual_standard_70x50') and aren't persisted.
+        // Editing one means cloning into a new DB-backed template — null the id and rename.
+        const isSystemSeed = typeof template.id === 'string';
+        const baseTemplate = isSystemSeed
+            ? { ...template, id: null, name: `${template.name} (Copy)` }
+            : { ...template };
+        const fields = normalizeTemplateFields(template.fields);
+
         setEditingTemplate({
-            ...template,
-            // If template has fields object, use it; else fallback to defaults
-            fields: (template.fields && typeof template.fields === 'object') ? template.fields : {
-                barcode: true,
-                qr: false,
-                name: true,
-                sku: true,
-                unit: false,
-                price: true,
-                company: false
-            }
+            ...baseTemplate,
+            barcodeFormat: template.barcodeFormat || 'CODE128',
+            contentScale: getTemplateContentScale({ ...template, fields }),
+            fields
         });
         setManagerTab('create');
         setShowTemplateManager(true);
@@ -143,15 +344,9 @@ const BarcodePrinter = () => {
             height: 25,
             type: 'Roll',
             perPage: 1,
-            fields: {
-                barcode: true,
-                qr: false,
-                name: true,
-                sku: true,
-                unit: false,
-                price: true,
-                company: false
-            }
+            barcodeFormat: 'CODE128',
+            contentScale: DEFAULT_CONTENT_SCALE,
+            fields: { ...DEFAULT_TEMPLATE_FIELDS }
         });
         setManagerTab('create');
         setShowTemplateManager(true);
@@ -176,15 +371,20 @@ const BarcodePrinter = () => {
     const loadTemplates = async () => {
         try {
             const apiTemplates = await getBarcodeTemplates();
-            // Parse fields JSON string back to object if necessary
-            const parsed = (apiTemplates || []).map(t => ({
-                ...t,
-                fields: typeof t.fields === 'string' ? JSON.parse(t.fields) : t.fields,
-                width: Number(t.width),
-                height: Number(t.height),
-                perPage: Number(t.perPage),
-                isSystem: false
-            }));
+            const parsed = (apiTemplates || []).map(t => {
+                const fields = normalizeTemplateFields(t.fields);
+
+                return {
+                    ...t,
+                    desc: t.description || t.desc || 'Custom barcode label',
+                    fields,
+                    contentScale: getTemplateContentScale({ ...t, fields }),
+                    width: Number(t.width),
+                    height: Number(t.height),
+                    perPage: Number(t.perPage),
+                    isSystem: false
+                };
+            });
             setTemplates([...TEMPLATES, ...parsed]);
         } catch (e) {
             console.error("Failed to load templates", e);
@@ -199,7 +399,7 @@ const BarcodePrinter = () => {
         try {
             await deleteBarcodeTemplate(id);
             await loadTemplates();
-            if (selectedTemplate === id) setSelectedTemplate('standard_40x25');
+            if (selectedTemplate === id) setSelectedTemplate('dual_standard_70x50');
         } catch (e) {
             console.error("Failed to delete", e);
             alert("Failed to delete template");
@@ -208,23 +408,27 @@ const BarcodePrinter = () => {
 
     const saveNewTemplate = async () => {
         try {
-            // Check if trying to edit system template
-            const isSystem = TEMPLATES.some(t => t.id === editingTemplate.id);
-            if (isSystem) {
-                alert("Cannot modify system template directly. Please Create New.");
-                return;
-            }
+            const contentScale = getTemplateContentScale(editingTemplate);
+            const fieldsForSave = {
+                ...normalizeTemplateFields(editingTemplate.fields),
+                [CONTENT_SCALE_FIELD]: contentScale
+            };
 
+            // Send only fields the server cares about — drop BaseEntity audit fields
+            // (createdAt/updatedAt/createdBy/updatedBy/active) so Jackson doesn't trip on them.
             const payload = {
-                ...editingTemplate,
-                fields: JSON.stringify(editingTemplate.fields),
+                name: editingTemplate.name,
+                description: editingTemplate.description || '',
+                type: editingTemplate.type || 'Roll',
                 width: Number(editingTemplate.width),
                 height: Number(editingTemplate.height),
-                perPage: Number(editingTemplate.perPage)
+                perPage: Number(editingTemplate.perPage) || 1,
+                barcodeFormat: editingTemplate.barcodeFormat || 'CODE128',
+                fields: JSON.stringify(fieldsForSave),
             };
 
             let saved;
-            if (editingTemplate.id) {
+            if (typeof editingTemplate.id === 'number') {
                 saved = await updateBarcodeTemplate(editingTemplate.id, payload);
             } else {
                 saved = await createBarcodeTemplate(payload);
@@ -236,7 +440,8 @@ const BarcodePrinter = () => {
             alert("Template saved successfully!");
         } catch (e) {
             console.error("Failed to save template", e);
-            alert("Failed to save template");
+            const serverMsg = e?.response?.data?.message || e?.response?.data?.error || e?.message;
+            alert(`Failed to save template${serverMsg ? `: ${serverMsg}` : ''}`);
         }
     };
 
@@ -322,49 +527,17 @@ const BarcodePrinter = () => {
     useEffect(() => {
         setPreviewPage(1);
 
-        const generateBarcode = (selector, barcodeValue, width = 1.5, height = 40) => {
-            try {
-                if (barcodeValue) {
-                    JsBarcode(selector, barcodeValue, {
-                        format: "CODE128",
-                        width: width,
-                        height: height,
-                        displayValue: false,
-                        fontSize: 12,
-                        margin: 0
-                    });
-                }
-            } catch (e) { console.error("Barcode gen error for", selector, e); }
-        };
-
         const t = templates.find(temp => temp.id === selectedTemplate) || editingTemplate; // Check editingTemplate too
         if (!t) return;
 
         // If template is QR, don't generate standard barcodes as we use an icon
         if (t.name.toLowerCase().includes('qr')) return;
 
-        // Calculate suitable barcode dimensions
-        // For 40x25mm: 25mm height is very tight.
-        // Need to be very aggressive with space.
-        const isSmallHeight = t.height <= 25;
-        const barcodeHeight = isSmallHeight ? 15 : (t.height < 30 ? 25 : 40);
-        const barcodeWidth = t.width < 50 ? 1 : 1.5;
-        const fontSize = isSmallHeight ? 10 : 12;
-        const margin = isSmallHeight ? 0 : 0;
-
-        setTimeout(() => {
-            if (cart.length > 0) {
-                cart.forEach((item) => {
-                    // Use item.barcode if available for both selector and value to match renderLabels
-                    const selector = `.barcode-${item.barcode || item.product.id}`;
-                    const value = item.barcode || getBarcodeValue(item.product);
-                    generateBarcode(selector, value, barcodeWidth, barcodeHeight, fontSize, margin);
-                });
-            } else {
-                // Generate sample barcode for preview when empty
-                generateBarcode(".barcode-sample", "123456789012", barcodeWidth, barcodeHeight, fontSize, margin);
-            }
+        const timeoutId = setTimeout(() => {
+            renderBarcodesInRoot(document, getBarcodeRenderOptions(t));
         }, 0);
+
+        return () => clearTimeout(timeoutId);
     }, [cart, selectedTemplate, templates, editingTemplate]); // Added editingTemplate dependency
 
     const loadProducts = () => {
@@ -387,10 +560,6 @@ const BarcodePrinter = () => {
         try {
             setPoLoading(true);
             const data = await getPostedPurchaseInvoices();
-            console.log('📦 Purchase Orders loaded:', data);
-            console.log('📦 Data length:', data?.length);
-            console.log('📦 First PO:', data?.[0]);
-            console.log('📦 First PO items:', data?.[0]?.items);
             setAllPurchaseOrders(data || []);
             setDisplayedPurchaseOrders(data || []);
         } catch (error) {
@@ -402,11 +571,7 @@ const BarcodePrinter = () => {
     };
 
     const applyFilters = () => {
-        console.log('🔍 Applying filters:', filters);
         let filtered = allPurchaseOrders;
-        if (filtered.length > 0) {
-            console.log('📦 Sample PO for filtering:', filtered[0]);
-        }
         if (filters.lpoNumber) filtered = filtered.filter(po => po.lpoNumber && po.lpoNumber.toLowerCase().includes(filters.lpoNumber.toLowerCase()));
         if (filters.invoiceNumber) filtered = filtered.filter(po => po.invoiceNumber && po.invoiceNumber.toLowerCase().includes(filters.invoiceNumber.toLowerCase()));
 
@@ -457,11 +622,96 @@ const BarcodePrinter = () => {
                 product,
                 qty,
                 barcode: targetBarcode,
-                unit: resolvedUnit // Store unit name for display
+                productBarcode: targetBarcode,
+                unit: resolvedUnit, // Store unit name for display
+                batchNumber: options.batchNumber || null,
+                batchBarcode: options.batchBarcode || options.batchNumber || null,
+                expiryDate: options.expiryDate || null,
+                batchEnabled: options.batchEnabled ?? product.isBatch ?? product.batchEnabled ?? product.batchExpiryControlled ?? false,
+                expiryEnabled: options.expiryEnabled ?? product.expiryEnabled ?? product.batchExpiryControlled ?? product.isBatch ?? false
             }];
         });
         setSearchTerm('');
         setIsSearchFocused(false);
+    };
+
+    const openStockTakeModal = async () => {
+        setShowStockTakeModal(true);
+        setOpenedStockTakeSession(null);
+        setSelectedBatchKeys({});
+        setStockTakeLoading(true);
+        try {
+            const sessions = await getStockTakeSessions();
+            setStockTakeSessions(Array.isArray(sessions) ? sessions : []);
+        } catch (e) {
+            console.error('Failed to load stock take sessions', e);
+        } finally {
+            setStockTakeLoading(false);
+        }
+    };
+
+    const openStockTakeSession = async (sessionId) => {
+        setStockTakeLoading(true);
+        try {
+            const data = await getStockTakeSession(sessionId);
+            setOpenedStockTakeSession(data);
+            // Default-select all batched rows with labelCount = batch quantity
+            const initial = {};
+            (data?.items || []).forEach(item => {
+                (item.batches || []).forEach(b => {
+                    initial[`${item.id}:${b.id}`] = { selected: true, labelCount: b.quantity || 1 };
+                });
+            });
+            setSelectedBatchKeys(initial);
+        } catch (e) {
+            console.error('Failed to load stock take session', e);
+        } finally {
+            setStockTakeLoading(false);
+        }
+    };
+
+    const loadSelectedBatchesIntoCart = () => {
+        if (!openedStockTakeSession) return;
+        let added = 0;
+        (openedStockTakeSession.items || []).forEach(item => {
+            (item.batches || []).forEach(b => {
+                const key = `${item.id}:${b.id}`;
+                const sel = selectedBatchKeys[key];
+                if (!sel?.selected) return;
+                const labels = parseInt(sel.labelCount, 10) || 1;
+                const product = {
+                    id: `stk-${item.productId}-${b.id}`,
+                    code: item.sku,
+                    name: item.productName,
+                    sku: item.sku,
+                    price: item.price,
+                    image: item.image,
+                    barcode: item.barcode || null,
+                    packings: item.barcode ? [{ isSale: true, barcode: item.barcode }] : [],
+                    isBatch: !!item.batchEnabled,
+                    batchEnabled: !!item.batchEnabled,
+                    expiryEnabled: !!item.expiryEnabled,
+                };
+                setCart(prev => [...prev, {
+                    product,
+                    qty: labels,
+                    barcode: item.barcode || null,
+                    productBarcode: item.barcode || null,
+                    unit: null,
+                    batchNumber: b.batchNumber,
+                    batchBarcode: b.batchNumber,
+                    expiryDate: b.expiryDate,
+                    batchEnabled: !!item.batchEnabled,
+                    expiryEnabled: !!item.expiryEnabled,
+                }]);
+                added++;
+            });
+        });
+        if (added > 0) {
+            setShowStockTakeModal(false);
+            setOpenedStockTakeSession(null);
+            setSelectedBatchKeys({});
+        }
     };
 
     const loadPoItems = async (po) => {
@@ -501,8 +751,6 @@ const BarcodePrinter = () => {
             po.items.forEach(poItem => {
                 const product = fetchedProducts.find(p => p.code === poItem.itemCode);
                 if (product) {
-                    console.log('📦 DETAILED PRODUCT OBJECT:', product);
-
                     // Try to find matching barcode for the PO Item's UOM
                     let selectedBarcode = null;
                     let selectedUnit = poItem.uom || null;
@@ -527,7 +775,11 @@ const BarcodePrinter = () => {
 
                     addToCart(productWithPrice, poItem.qty || 1, {
                         barcode: selectedBarcode,
-                        unit: selectedUnit
+                        unit: selectedUnit,
+                        batchNumber: poItem.batchNumber || poItem.batchNo || null,
+                        expiryDate: poItem.expiryDate || poItem.exp || null,
+                        batchEnabled: productWithPrice.isBatch || productWithPrice.batchEnabled || productWithPrice.expiryEnabled,
+                        expiryEnabled: productWithPrice.expiryEnabled || productWithPrice.isBatch
                     });
                     loadedCount++;
                 }
@@ -567,8 +819,39 @@ const BarcodePrinter = () => {
         return null;
     };
 
+    const getProductBarcodeValue = (item) => item?.productBarcode || item?.barcode || getBarcodeValue(item?.product);
+    const getBatchBarcodeValue = (item) => item?.batchBarcode || item?.batchNumber || null;
+
+    const isBatchTrackingEnabled = (item) => {
+        const product = item?.product || {};
+        return (
+            toBooleanFlag(item?.batchEnabled) ||
+            toBooleanFlag(item?.batchManaged) ||
+            toBooleanFlag(product?.isBatch) ||
+            toBooleanFlag(product?.batchEnabled) ||
+            toBooleanFlag(product?.batchManaged) ||
+            toBooleanFlag(product?.batchExpiryControlled) ||
+            toBooleanFlag(product?.expiryEnabled)
+        );
+    };
+
+    const isExpiryTrackingEnabled = (item) => {
+        const product = item?.product || {};
+        return (
+            toBooleanFlag(item?.expiryEnabled) ||
+            toBooleanFlag(item?.batchEnabled) ||
+            toBooleanFlag(product?.expiryEnabled) ||
+            toBooleanFlag(product?.batchExpiryControlled) ||
+            toBooleanFlag(product?.isBatch)
+        );
+    };
+
     const handlePrint = () => {
         const printContent = document.getElementById('print-area');
+        const t = templates.find(temp => temp.id === selectedTemplate) || editingTemplate;
+        if (!printContent || !t) return;
+
+        const metrics = getTemplateMetrics(t);
         const iframe = document.createElement('iframe');
         Object.assign(iframe.style, { position: 'fixed', right: '0', bottom: '0', width: '0', height: '0', border: '0' });
         document.body.appendChild(iframe);
@@ -576,14 +859,67 @@ const BarcodePrinter = () => {
         const doc = iframe.contentWindow.document;
         const styles = `
             <style>
-                @page { margin: 0; size: auto; }
-                body { margin: 0; padding: 0; background: white; font-family: sans-serif; }
-                .print-page { page-break-after: always; display: flex; flex-wrap: wrap; align-content: flex-start; }
-                .print-label { box-sizing: border-box; display: flex; flex-col; align-items: center; justify-content: center; text-align: center; border: 1px dashed #ddd; page-break-inside: avoid; overflow: hidden; }
-                svg { max-width: 90%; max-height: 50%; display: block; margin: 0 auto; }
-                .label-name { font-size: 8px; font-weight: bold; width: 100%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding: 0 1mm; margin-bottom: 0px; line-height: 1.1; }
-                .label-code { font-size: 7px; font-family: monospace; line-height: 1; }
-                .label-price { font-size: 10px; font-weight: bold; margin-top: 1px; line-height: 1; }
+                @page { margin: 0; size: ${metrics.pageWidthMm}mm ${metrics.pageHeightMm}mm; }
+                html, body {
+                    margin: 0;
+                    padding: 0;
+                    background: white;
+                    width: ${metrics.pageWidthMm}mm;
+                    min-width: ${metrics.pageWidthMm}mm;
+                    font-family: sans-serif;
+                    -webkit-print-color-adjust: exact;
+                    print-color-adjust: exact;
+                }
+                body {
+                    overflow: hidden;
+                }
+                .print-page {
+                    box-sizing: border-box;
+                    width: ${metrics.pageWidthMm}mm !important;
+                    min-width: ${metrics.pageWidthMm}mm;
+                    min-height: ${metrics.pageHeightMm}mm;
+                    padding: ${metrics.paddingMm}mm;
+                    display: grid !important;
+                    grid-template-columns: repeat(${metrics.cols}, ${metrics.labelWidthMm}mm);
+                    grid-auto-rows: ${metrics.labelHeightMm}mm;
+                    column-gap: ${metrics.gapMm}mm;
+                    row-gap: ${metrics.rowGapMm}mm;
+                    align-content: start;
+                    justify-content: start;
+                    justify-items: start;
+                    page-break-after: always;
+                    break-after: page;
+                }
+                .print-page:last-child { page-break-after: auto; break-after: auto; }
+                .print-label {
+                    box-sizing: border-box;
+                    width: ${metrics.labelWidthMm}mm !important;
+                    height: ${metrics.labelHeightMm}mm !important;
+                    display: flex;
+                    flex-direction: column;
+                    align-items: stretch;
+                    justify-content: flex-start;
+                    text-align: left;
+                    padding: 1mm;
+                    border: 1px dashed #ddd;
+                    page-break-inside: avoid;
+                    break-inside: avoid;
+                    overflow: hidden;
+                    background: white;
+                }
+                svg { width: 100%; max-width: 100%; max-height: 50%; display: block; margin: 0; }
+                .label-name { font-size: 8px; font-weight: bold; width: 100%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding: 0; margin-bottom: 0px; line-height: 1.1; text-align: center; }
+                .label-code { font-size: 7px; font-family: monospace; line-height: 1; width: 100%; text-align: center; }
+                .label-price { font-size: 10px; font-weight: bold; margin-top: 1px; line-height: 1; width: 100%; text-align: center; }
+                .label-unit { width: 100%; text-align: center; }
+                img:not([data-bb-currency-image="true"]) { max-width: 100%; }
+                [data-bb-currency-image="true"] {
+                    display: inline-block;
+                    height: 0.82em !important;
+                    width: auto !important;
+                    max-width: 1.05em !important;
+                    vertical-align: -0.08em;
+                }
             </style>
         `;
 
@@ -593,16 +929,25 @@ const BarcodePrinter = () => {
         doc.write('</body></html>');
         doc.close();
 
+        setTimeout(() => {
+            renderBarcodesInRoot(doc, getBarcodeRenderOptions(t));
+        }, 50);
+
         iframe.contentWindow.focus();
         setTimeout(() => {
             iframe.contentWindow.print();
-            setTimeout(() => document.body.removeChild(iframe), 1000);
+            setTimeout(() => {
+                if (iframe.parentNode) {
+                    iframe.parentNode.removeChild(iframe);
+                }
+            }, 1000);
         }, 500);
     };
 
     const renderLabels = (isPreview = false, templateOverride = null, itemsOverride = null) => {
         const t = templateOverride || templates.find(temp => temp.id === selectedTemplate);
         if (!t) return null;
+        const companyName = company?.companyName || '';
 
         const isEnabled = (field) => !t.fields || typeof t.fields !== 'object' || t.fields[field];
 
@@ -616,96 +961,210 @@ const BarcodePrinter = () => {
 
         // If preview mode and no items, show a sample
         if (isPreview && allItems.length === 0) {
+            const sampleBarcode = getSampleBarcodeForFormat(t.barcodeFormat);
             allItems.push({
                 product: {
                     id: 'sample',
                     name: 'Sample Product Name',
                     code: 'SAMPLE-123',
+                    sku: 'SKU-001',
+                    brand: 'Sample Brand',
+                    brandName: 'Sample Brand',
                     price: '99.00',
-                    packings: [{ isSale: true, barcode: '123456789012' }],
-                    company: 'NEW EXTREME SPORTS TRADING LLC'
+                    packings: [{ isSale: true, barcode: sampleBarcode }],
+                    company: companyName,
+                    isBatch: true,
+                    expiryEnabled: true
                 },
-                qty: 1
+                qty: 1,
+                barcode: sampleBarcode,
+                productBarcode: sampleBarcode,
+                unit: 'PCS',
+                batchNumber: 'ST-040526-WH1-STK-PRD-1',
+                batchBarcode: 'ST-040526-WH1-STK-PRD-1',
+                expiryDate: '2026-12-31',
+                batchEnabled: true,
+                expiryEnabled: true
             });
         }
 
         const isSmallHeight = t.height <= 25;
-        const barcodeMaxHeight = isSmallHeight ? '15px' : (t.height < 30 ? '25px' : '40px');
-        const nameFontSize = isSmallHeight ? '8px' : '10px';
-        const codeFontSize = isSmallHeight ? '7px' : '8px';
-        const priceFontSize = isSmallHeight ? '10px' : '12px';
+        const contentScale = getTemplateContentScale(t);
+        const scaledPx = (value, min = 5) => `${Math.max(min, Math.round(value * contentScale * 100) / 100)}px`;
+        const barcodeBaseHeight = isSmallHeight ? 32 : (t.height < 30 ? 40 : 55);
+        const barcodeMaxHeight = `${Math.max(18, Math.round(barcodeBaseHeight * contentScale))}px`;
+        const nameFontSize = scaledPx(isSmallHeight ? 8 : 10, 6);
+        const codeFontSize = scaledPx(isSmallHeight ? 7 : 8, 5.5);
+        const barcodeFontSize = scaledPx(isSmallHeight ? 10 : 12, 7);
+        const priceFontSize = scaledPx(isSmallHeight ? 10 : 12, 7);
         const nameMarginBottom = isSmallHeight ? '0px' : '1px';
         const priceMarginTop = isSmallHeight ? '0px' : '1px';
 
+        const renderLabelCard = (item, key, compactPreview = false) => {
+            const productBarcodeValue = getProductBarcodeValue(item);
+            const batchBarcodeValue = getBatchBarcodeValue(item);
+            const showLinearBarcode = !isEnabled('qr') && isEnabled('barcode');
+            const showBatchDetails = isEnabled('batchNumber') && isBatchTrackingEnabled(item) && !!batchBarcodeValue;
+            const showBatchBarcode = showLinearBarcode && showBatchDetails && batchBarcodeValue !== productBarcodeValue;
+            const showExpiryDate = isEnabled('expiryDate') && isExpiryTrackingEnabled(item) && !!item.expiryDate;
+
+            return (
+                <div
+                    key={key}
+                    className="print-label bg-white border border-slate-200"
+                    style={{
+                        width: `${t.width}mm`,
+                        height: `${t.height}mm`,
+                        marginBottom: compactPreview ? '4px' : '0',
+                        marginRight: compactPreview ? '4px' : '0',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        alignItems: compactPreview ? 'center' : 'stretch',
+                        justifyContent: compactPreview ? 'center' : 'flex-start',
+                        textAlign: compactPreview ? 'center' : 'left',
+                        padding: compactPreview ? '0' : '1mm',
+                        boxSizing: 'border-box'
+                    }}
+                >
+                {isEnabled('company') && (
+                    <div className="label-name" style={{ fontSize: codeFontSize, marginBottom: '2px', fontWeight: 'bold', textTransform: 'uppercase' }}>{item.product.company || companyName}</div>
+                )}
+
+                {isEnabled('name') && (
+                    <div className="label-name" style={{ fontSize: nameFontSize, marginBottom: nameMarginBottom }}>{item.product.name}</div>
+                )}
+
+                {isEnabled('brandName') && (item.product.brand?.name || item.product.brandName) && (
+                    <div className="label-code" style={{ fontSize: codeFontSize, marginBottom: '1px', fontWeight: 'bold' }}>{item.product.brand?.name || item.product.brandName}</div>
+                )}
+
+                {isEnabled('itemCode') && item.product.code && (
+                    <div className="label-code" style={{ fontSize: codeFontSize, marginBottom: '1px' }}>Code: {item.product.code}</div>
+                )}
+
+                {isEnabled('qr') ? (
+                    <div className="flex items-center justify-center flex-1 w-full p-0.5">
+                        <img
+                            src={`https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=${encodeURIComponent(JSON.stringify({
+                                id: item.product.id,
+                                name: item.product.name,
+                                price: item.product.retailPrice || item.product.price || '0.00',
+                                barcode: productBarcodeValue,
+                                sku: item.product.sku || item.product.code,
+                                company: item.product.company || companyName
+                            }))}`}
+                            alt="QR Code"
+                            className="w-full h-full object-contain"
+                        />
+                    </div>
+                ) : showLinearBarcode && productBarcodeValue && (
+                    <svg
+                        className="w-full"
+                        data-barcode={productBarcodeValue}
+                        style={{ maxHeight: barcodeMaxHeight, maxWidth: '100%' }}
+                    ></svg>
+                )}
+
+                {showLinearBarcode && productBarcodeValue && (
+                    <div className="label-code" style={{ fontSize: barcodeFontSize, marginTop: '1px', letterSpacing: '0.08em', fontWeight: 'bold' }}>{productBarcodeValue}</div>
+                )}
+
+                {showBatchBarcode && (
+                    <svg
+                        className="w-full"
+                        data-barcode={batchBarcodeValue}
+                        style={{
+                            maxHeight: barcodeMaxHeight,
+                            width: 'calc(100% - 4mm)',
+                            maxWidth: 'calc(100% - 4mm)',
+                            marginLeft: '2mm',
+                            marginRight: '2mm'
+                        }}
+                    ></svg>
+                )}
+
+                {showBatchBarcode && (
+                    <div className="label-code" style={{ fontSize: barcodeFontSize, marginTop: '1px', letterSpacing: '0.08em', fontWeight: 'bold' }}>{batchBarcodeValue}</div>
+                )}
+
+                {showExpiryDate && (
+                    <div className="label-code" style={{ fontSize: codeFontSize, marginTop: '1px' }}>Exp: {item.expiryDate}</div>
+                )}
+
+                {isEnabled('sku') && item.product.sku && (
+                    <div className="label-code" style={{ fontSize: codeFontSize, marginTop: '1px' }}>{item.product.sku}</div>
+                )}
+
+                {isEnabled('unit') && (item.unit || item.product?.unit || item.product?.unitName) && (
+                    <div className="label-unit" style={{ fontSize: codeFontSize, marginTop: '1px', opacity: 0.8 }}>{item.unit || item.product?.unit || item.product?.unitName}</div>
+                )}
+
+                {isEnabled('price') && (
+                    <div className="label-price" style={{ fontSize: priceFontSize, marginTop: priceMarginTop }}>
+                        <CurrencyAmount
+                            value={item.product.retailPrice || item.product.price || '0.00'}
+                            currencyCode={currencyCode}
+                            currencyLabel={currencyLabel}
+                        />
+                    </div>
+                )}
+            </div>
+        );
+        };
+
+        if (!isPreview) {
+            const metrics = getTemplateMetrics(t);
+            const pagedItems = [];
+
+            for (let i = 0; i < allItems.length; i += metrics.labelsPerPage) {
+                pagedItems.push(allItems.slice(i, i + metrics.labelsPerPage));
+            }
+
+            return (
+                <>
+                    {pagedItems.map((pageItems, pageIndex) => (
+                        <div
+                            key={`page-${pageIndex}`}
+                            className="print-page"
+                            style={{
+                                width: `${metrics.pageWidthMm}mm`,
+                                minHeight: `${metrics.pageHeightMm}mm`,
+                                padding: `${metrics.paddingMm}mm`,
+                                display: 'grid',
+                                gridTemplateColumns: `repeat(${metrics.cols}, ${metrics.labelWidthMm}mm)`,
+                                gridAutoRows: `${metrics.labelHeightMm}mm`,
+                                columnGap: `${metrics.gapMm}mm`,
+                                rowGap: `${metrics.rowGapMm}mm`,
+                                justifyContent: 'start',
+                                justifyItems: 'start',
+                                alignContent: 'start',
+                                boxSizing: 'border-box',
+                                pageBreakAfter: pageIndex < pagedItems.length - 1 ? 'always' : 'auto',
+                                breakAfter: pageIndex < pagedItems.length - 1 ? 'page' : 'auto'
+                            }}
+                        >
+                            {pageItems.map((item, itemIndex) => renderLabelCard(item, `${pageIndex}-${itemIndex}`, false))}
+                        </div>
+                    ))}
+                </>
+            );
+        }
+
         const cols = t.perPage || 1;
-        // Calculate required width: label width * cols + gaps (approx 2mm gap per column)
         const totalPrintWidth = (t.width * cols) + ((cols - 1) * 2) + 2;
 
         return (
             <div className={`print-page ${isPreview ? 'flex flex-wrap gap-1 content-start justify-center' : ''}`} style={{ width: isPreview ? '100%' : `${totalPrintWidth}mm` }}>
-                {allItems.map((item, idx) => (
-                    <div
-                        key={idx}
-                        className="print-label bg-white border border-slate-200"
-                        style={{
-                            width: `${t.width}mm`,
-                            height: `${t.height}mm`,
-                            marginBottom: isPreview ? '4px' : '0',
-                            marginRight: isPreview ? '4px' : '0',
-                            display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center'
-                        }}
-                    >
-                        {isEnabled('company') && (
-                            <div className="label-name" style={{ fontSize: codeFontSize, marginBottom: '2px', fontWeight: 'bold', textTransform: 'uppercase' }}>{item.product.company || 'NEW EXTREME SPORTS TRADING LLC'}</div>
-                        )}
-
-                        {isEnabled('name') && (
-                            <div className="label-name" style={{ fontSize: nameFontSize, marginBottom: nameMarginBottom }}>{item.product.name}</div>
-                        )}
-
-                        {isEnabled('qr') ? (
-                            <div className="flex items-center justify-center flex-1 w-full p-0.5">
-                                <img
-                                    src={`https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=${encodeURIComponent(JSON.stringify({
-                                        id: item.product.id,
-                                        name: item.product.name,
-                                        price: item.product.retailPrice || item.product.price || '0.00',
-                                        barcode: item.barcode || getBarcodeValue(item.product),
-                                        sku: item.product.sku || item.product.code,
-                                        company: item.product.company || 'NEW EXTREME SPORTS TRADING LLC'
-                                    }))}`}
-                                    alt="QR Code"
-                                    className="w-full h-full object-contain"
-                                />
-                            </div>
-                        ) : isEnabled('barcode') && (
-                            <svg className={`barcode-${item.barcode || item.product.id} w-full`} data-barcode={item.barcode || getBarcodeValue(item.product)} style={{ maxHeight: barcodeMaxHeight, maxWidth: '100%' }}></svg>
-                        )}
-
-                        {isEnabled('sku') && (
-                            <div className="label-code" style={{ fontSize: codeFontSize, marginTop: '1px' }}>{item.product.sku}</div>
-                        )}
-
-                        {(isEnabled('barcode') && !isEnabled('sku')) && (
-                            <div className="label-code" style={{ fontSize: codeFontSize }}>{item.barcode || getBarcodeValue(item.product)}</div>
-                        )}
-
-                        {/* BB-008: Show unit on the label */}
-                        {isEnabled('unit') && (item.unit || item.product?.unit || item.product?.unitName) && (
-                            <div className="label-unit" style={{ fontSize: codeFontSize, marginTop: '1px', opacity: 0.8 }}>{item.unit || item.product?.unit || item.product?.unitName}</div>
-                        )}
-
-                        {isEnabled('price') && (
-                            <div className="label-price" style={{ fontSize: priceFontSize, marginTop: priceMarginTop }}>AED {item.product.retailPrice || item.product.price || '0.00'}</div>
-                        )}
-                    </div>
-                ))}
+                {allItems.map((item, idx) => renderLabelCard(item, idx, true))}
             </div>
         );
     };
 
     return (
-        <div className="flex flex-col h-screen bg-slate-50 font-sans text-slate-900 overflow-hidden">
+        <div
+            className="flex flex-col h-screen bg-slate-50 font-sans text-slate-900 overflow-hidden"
+            data-bb-skip-aed-symbol="true"
+        >
             {/* Header */}
             <div className="bg-white border-b border-slate-200 px-4 lg:px-6 py-4 flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4 lg:gap-0 shrink-0">
                 <div>
@@ -718,7 +1177,7 @@ const BarcodePrinter = () => {
                         <div className="bg-[#F5C742]/20 p-1.5 rounded-lg text-amber-900">
                             <Barcode size={20} />
                         </div>
-                        <h1 className="text-xl font-bold text-slate-900 flex items-center gap-2"><Barcode className="text-[#F5C742]" size={28} /> Barcode Print & Design</h1>
+                        <h1 className="text-xl font-bold text-slate-900">Barcode Print & Design</h1>
                     </div>
                     <p className="text-xs text-slate-500 mt-1 ml-11">Design and print custom barcode labels for inventory items</p>
                 </div>
@@ -746,11 +1205,11 @@ const BarcodePrinter = () => {
             </div>
 
             {/* Main Content */}
-            <div className="flex-1 overflow-y-auto lg:overflow-hidden p-4 lg:p-6 relative">
-                <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 lg:gap-6 h-auto lg:h-full">
+            <div className="flex-1 overflow-y-auto p-4 lg:p-6 relative">
+                <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 lg:gap-6">
 
                     {/* LEFT COLUMN: Templates */}
-                    <div className="col-span-1 lg:col-span-4 flex flex-col gap-4 h-[300px] lg:h-full overflow-y-auto pr-2 custom-scrollbar">
+                    <div className="col-span-1 lg:col-span-4 flex flex-col gap-4 overflow-y-auto pr-2 custom-scrollbar">
                         <div className="bg-white rounded-xl border border-slate-200 p-4 shadow-sm">
                             <div className="flex items-center gap-2 mb-4">
                                 <Layout className="text-[#F5C742]" size={18} />
@@ -793,7 +1252,7 @@ const BarcodePrinter = () => {
                                                 {t.type}
                                             </span>
                                             <span className="text-[10px] bg-slate-100 text-slate-600 px-2 py-1 rounded font-medium border border-slate-200">
-                                                {typeof t.fields === 'object' ? `${Object.values(t.fields).filter(Boolean).length} fields` : t.fields}
+                                                {typeof t.fields === 'object' ? `${countEnabledFields(t.fields)} fields` : t.fields}
                                             </span>
                                         </div>
                                     </div>
@@ -803,7 +1262,7 @@ const BarcodePrinter = () => {
                     </div>
 
                     {/* RIGHT COLUMN: Search & Queue */}
-                    <div className="col-span-1 lg:col-span-8 flex flex-col gap-4 lg:gap-6 h-auto lg:h-full overflow-visible lg:overflow-hidden">
+                    <div className="col-span-1 lg:col-span-8 flex flex-col gap-4 lg:gap-6">
 
                         {/* Top: Search */}
                         <div className="bg-white rounded-xl border border-slate-200 p-6 shadow-sm shrink-0 relative z-20" ref={searchRef}>
@@ -812,12 +1271,20 @@ const BarcodePrinter = () => {
                                     <ShoppingBag className="text-[#F5C742]" size={18} />
                                     Load Purchase Items
                                 </h2>
-                                <button
-                                    onClick={() => setShowSearchModal(true)}
-                                    className="bg-[#F5C742] hover:bg-[#E5B732] text-slate-900 font-bold px-6 py-2 rounded-lg text-sm flex items-center gap-2 transition-colors"
-                                >
-                                    <Search size={16} /> Search Purchase
-                                </button>
+                                <div className="flex items-center gap-2">
+                                    <button
+                                        onClick={() => setShowSearchModal(true)}
+                                        className="bg-[#F5C742] hover:bg-[#E5B732] text-slate-900 font-bold px-4 py-2 rounded-lg text-sm flex items-center gap-2 transition-colors"
+                                    >
+                                        <Search size={16} /> Purchase
+                                    </button>
+                                    <button
+                                        onClick={openStockTakeModal}
+                                        className="bg-white border border-[#F5C742] text-slate-900 font-bold px-4 py-2 rounded-lg text-sm flex items-center gap-2 hover:bg-[#FFF8E7] transition-colors"
+                                    >
+                                        <Box size={16} /> Stock Taking
+                                    </button>
+                                </div>
                             </div>
                             <p className="text-xs text-slate-500 mb-4">Search and select purchase orders to print labels</p>
 
@@ -864,7 +1331,7 @@ const BarcodePrinter = () => {
                                                     >
                                                         <div className="w-10 h-10 rounded bg-slate-100 flex items-center justify-center shrink-0 border border-slate-200 overflow-hidden">
                                                             {p.image ? (
-                                                                <img src={p.image.url} alt={p.name} className="w-full h-full object-cover" />
+                                                                <img src={getImageUrl(p.image?.url || p.image)} alt={p.name} className="w-full h-full object-cover" />
                                                             ) : (
                                                                 <Box className="text-slate-400" size={20} />
                                                             )}
@@ -901,7 +1368,7 @@ const BarcodePrinter = () => {
                         </div>
 
                         {/* Middle: Queue */}
-                        <div className="bg-white rounded-xl border border-slate-200 p-4 lg:p-6 shadow-sm h-[400px] lg:h-auto lg:flex-1 flex flex-col min-h-0">
+                        <div className="bg-white rounded-xl border border-slate-200 p-4 lg:p-6 shadow-sm flex flex-col" style={{ minHeight: '420px' }}>
                             <div className="flex justify-between items-center mb-4">
                                 <h2 className="font-bold text-slate-800 flex items-center gap-2">
                                     <Box className="text-[#F5C742]" size={18} />
@@ -912,7 +1379,7 @@ const BarcodePrinter = () => {
                                 </div>
                             </div>
 
-                            <div className="flex-1 overflow-y-auto custom-scrollbar bg-slate-50 rounded-lg border border-slate-200 p-2">
+                            <div className="overflow-y-auto custom-scrollbar bg-slate-50 rounded-lg border border-slate-200 p-2" style={{ minHeight: '320px', maxHeight: '480px' }}>
                                 {cart.length === 0 ? (
                                     <div className="h-full flex flex-col items-center justify-center text-slate-400">
                                         <Box size={48} className="mb-4 text-slate-200" />
@@ -948,7 +1415,11 @@ const BarcodePrinter = () => {
                                                                 )}
                                                             </div>
                                                             <div className="font-bold text-[#F5C742]">
-                                                                AED {item.product.retailPrice || item.product.price || '0.00'}
+                                                                <CurrencyAmount
+                                                                    value={item.product.retailPrice || item.product.price || '0.00'}
+                                                                    currencyCode={currencyCode}
+                                                                    currencyLabel={currencyLabel}
+                                                                />
                                                             </div>
                                                         </div>
 
@@ -969,6 +1440,7 @@ const BarcodePrinter = () => {
                                                                                 return {
                                                                                     ...cartItem,
                                                                                     barcode: selectedBarcode,
+                                                                                    productBarcode: selectedBarcode,
                                                                                     unit: selectedPacking ? (selectedPacking.unit?.name || selectedPacking.unitName) : null
                                                                                 };
                                                                             }
@@ -1018,15 +1490,22 @@ const BarcodePrinter = () => {
                             </div>
                         </div>
 
-                        {/* Bottom: Preview (Collapsed or Small) */}
+                        {/* Bottom: Preview — always shows ONE representative label, not the whole queue.
+                            Uses the first cart item if any (so users can see real data on the label),
+                            otherwise falls back to the built-in sample. */}
                         <div className="bg-white rounded-xl border border-slate-200 p-4 shadow-sm shrink-0">
                             <h2 className="font-bold text-slate-800 flex items-center gap-2 mb-2 text-sm">
                                 <Send className="text-[#F5C742]" size={16} />
                                 Template Preview
+                                {cart.length > 0 && (
+                                    <span className="text-[10px] font-medium text-slate-400 ml-1">
+                                        (showing first item — full queue prints when you click Print)
+                                    </span>
+                                )}
                             </h2>
-                            <div className="bg-slate-100 rounded border border-slate-200 h-32 flex items-center justify-center overflow-hidden relative">
-                                <div className="scale-75 origin-center" key={selectedTemplate}>
-                                    {renderLabels(true)}
+                            <div className="bg-slate-100 rounded border border-slate-200 flex items-center justify-center overflow-hidden relative" style={{ minHeight: '280px' }}>
+                                <div className="origin-center" key={selectedTemplate}>
+                                    {renderLabels(true, null, cart.length > 0 ? [{ ...cart[0], qty: 1 }] : null)}
                                 </div>
                             </div>
                         </div>
@@ -1035,6 +1514,242 @@ const BarcodePrinter = () => {
                 </div>
 
                 {/* SEARCH MODAL */}
+                {showStockTakeModal && (
+                    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50">
+                        <div className="bg-white rounded-2xl shadow-2xl w-full max-w-4xl max-h-[85vh] flex flex-col overflow-hidden">
+                            <div className="flex items-center justify-between px-5 py-3 border-b border-slate-200">
+                                <div>
+                                    <h3 className="text-base font-bold text-slate-900">Load from Stock Taking</h3>
+                                    <p className="text-xs text-slate-500">
+                                        {openedStockTakeSession
+                                            ? `Session ${openedStockTakeSession.sessionId} — select batches to print`
+                                            : 'Pick a stock take session'}
+                                    </p>
+                                </div>
+                                <button onClick={() => setShowStockTakeModal(false)} className="text-slate-400 hover:text-slate-600">
+                                    <X size={18} />
+                                </button>
+                            </div>
+
+                            <div className="flex-1 overflow-y-auto p-5">
+                                {stockTakeLoading && (
+                                    <div className="text-center text-sm text-slate-500 py-8">Loading...</div>
+                                )}
+
+                                {!stockTakeLoading && !openedStockTakeSession && (() => {
+                                    const allStatuses = [...new Set(stockTakeSessions.map(s => s.status).filter(Boolean))];
+                                    const allWarehouses = [...new Set(stockTakeSessions.map(s => s.warehouseName).filter(Boolean))];
+                                    const filteredStockTakeSessions = stockTakeSessions.filter(s => {
+                                        const q = stockTakeSearch.trim().toLowerCase();
+                                        const matchesSearch = !q ||
+                                            (s.sessionId && s.sessionId.toLowerCase().includes(q)) ||
+                                            (s.warehouseName && s.warehouseName.toLowerCase().includes(q));
+                                        const matchesStatus = !stockTakeFilterStatus || s.status === stockTakeFilterStatus;
+                                        const matchesWarehouse = !stockTakeFilterWarehouse || s.warehouseName === stockTakeFilterWarehouse;
+                                        return matchesSearch && matchesStatus && matchesWarehouse;
+                                    });
+                                    return (
+                                        <div className="space-y-3">
+                                            {/* Search + Filter bar */}
+                                            <div className="flex flex-col gap-2">
+                                                <div className="relative">
+                                                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={14} />
+                                                    <input
+                                                        type="text"
+                                                        placeholder="Search by session ID or warehouse..."
+                                                        className="w-full pl-9 pr-4 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:border-[#F5C742] focus:ring-2 focus:ring-[#F5C742]/40 transition-all"
+                                                        value={stockTakeSearch}
+                                                        onChange={e => setStockTakeSearch(e.target.value)}
+                                                    />
+                                                    {stockTakeSearch && (
+                                                        <button
+                                                            onClick={() => setStockTakeSearch('')}
+                                                            className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                                                        >
+                                                            <X size={13} />
+                                                        </button>
+                                                    )}
+                                                </div>
+                                                <div className="flex gap-2">
+                                                    <select
+                                                        className="flex-1 text-xs border border-slate-200 rounded-lg px-3 py-2 focus:outline-none focus:border-[#F5C742] bg-white text-slate-700"
+                                                        value={stockTakeFilterStatus}
+                                                        onChange={e => setStockTakeFilterStatus(e.target.value)}
+                                                    >
+                                                        <option value="">All Statuses</option>
+                                                        {allStatuses.map(st => (
+                                                            <option key={st} value={st}>{st}</option>
+                                                        ))}
+                                                    </select>
+                                                    <select
+                                                        className="flex-1 text-xs border border-slate-200 rounded-lg px-3 py-2 focus:outline-none focus:border-[#F5C742] bg-white text-slate-700"
+                                                        value={stockTakeFilterWarehouse}
+                                                        onChange={e => setStockTakeFilterWarehouse(e.target.value)}
+                                                    >
+                                                        <option value="">All Warehouses</option>
+                                                        {allWarehouses.map(wh => (
+                                                            <option key={wh} value={wh}>{wh}</option>
+                                                        ))}
+                                                    </select>
+                                                    {(stockTakeSearch || stockTakeFilterStatus || stockTakeFilterWarehouse) && (
+                                                        <button
+                                                            onClick={() => { setStockTakeSearch(''); setStockTakeFilterStatus(''); setStockTakeFilterWarehouse(''); }}
+                                                            className="px-3 py-2 text-xs font-bold text-slate-500 border border-slate-200 rounded-lg hover:bg-slate-50 flex items-center gap-1 whitespace-nowrap"
+                                                        >
+                                                            <RefreshCw size={11} /> Reset
+                                                        </button>
+                                                    )}
+                                                </div>
+                                                <div className="flex items-center justify-between">
+                                                    <p className="text-[10px] text-slate-400 font-medium">
+                                                        {filteredStockTakeSessions.length} of {stockTakeSessions.length} sessions
+                                                    </p>
+                                                    {filteredStockTakeSessions.length === 0 && stockTakeSessions.length > 0 && (
+                                                        <p className="text-[10px] text-amber-600 font-semibold">No sessions match your filters</p>
+                                                    )}
+                                                </div>
+                                            </div>
+
+                                            {/* Session list */}
+                                            <div className="space-y-2">
+                                                {stockTakeSessions.length === 0 ? (
+                                                    <div className="text-center text-sm text-slate-500 py-8">No stock take sessions found.</div>
+                                                ) : filteredStockTakeSessions.length === 0 ? (
+                                                    <div className="text-center text-sm text-slate-400 py-6">
+                                                        <Filter size={28} className="mx-auto mb-2 opacity-30" />
+                                                        No sessions match your search or filters.
+                                                    </div>
+                                                ) : filteredStockTakeSessions.map(s => {
+                                                    const batchCount = (s.items || []).reduce(
+                                                        (n, i) => n + ((i.batches || []).length), 0
+                                                    );
+                                                    const statusColor = s.status === 'COMPLETED'
+                                                        ? 'bg-emerald-100 text-emerald-700'
+                                                        : s.status === 'IN_PROGRESS'
+                                                        ? 'bg-amber-100 text-amber-700'
+                                                        : 'bg-slate-100 text-slate-600';
+                                                    return (
+                                                        <button
+                                                            key={s.id}
+                                                            onClick={() => openStockTakeSession(s.sessionId)}
+                                                            className="w-full text-left p-3 bg-slate-50 hover:bg-[#FFF8E7] rounded-lg border border-slate-200 flex items-center justify-between transition-colors"
+                                                        >
+                                                            <div>
+                                                                <div className="flex items-center gap-2 mb-0.5">
+                                                                    <span className="font-bold text-sm text-slate-900">{s.sessionId}</span>
+                                                                    <span className={`text-[10px] px-1.5 py-0.5 rounded font-bold ${statusColor}`}>
+                                                                        {s.status}
+                                                                    </span>
+                                                                </div>
+                                                                <div className="text-xs text-slate-500">
+                                                                    {s.warehouseName} &bull; {(s.items || []).length} items, {batchCount} batches
+                                                                </div>
+                                                            </div>
+                                                            <ChevronRight size={16} className="text-slate-400" />
+                                                        </button>
+                                                    );
+                                                })}
+                                            </div>
+                                        </div>
+                                    );
+                                })()}
+
+                                {!stockTakeLoading && openedStockTakeSession && (
+                                    <div className="space-y-3">
+                                        <button
+                                            onClick={() => { setOpenedStockTakeSession(null); setSelectedBatchKeys({}); }}
+                                            className="text-xs font-bold text-slate-600 hover:text-slate-900 inline-flex items-center gap-1"
+                                        >
+                                            <ArrowLeft size={12} /> Back to sessions
+                                        </button>
+
+                                        {(openedStockTakeSession.items || []).filter(it => (it.batches || []).length > 0).length === 0 && (
+                                            <div className="text-center text-sm text-slate-500 py-6">
+                                                No batched items in this session.
+                                            </div>
+                                        )}
+
+                                        {(openedStockTakeSession.items || []).map(item => {
+                                            if (!item.batches || item.batches.length === 0) return null;
+                                            return (
+                                                <div key={item.id} className="border border-slate-200 rounded-lg overflow-hidden">
+                                                    <div className="px-3 py-2 bg-slate-50 border-b border-slate-200">
+                                                        <div className="text-sm font-bold text-slate-900">{item.productName}</div>
+                                                        <div className="text-[11px] text-slate-500">Code: {item.sku}</div>
+                                                    </div>
+                                                    <table className="w-full text-xs">
+                                                        <thead className="bg-white text-[10px] uppercase tracking-wide text-slate-500">
+                                                            <tr>
+                                                                <th className="px-3 py-1.5 w-8"></th>
+                                                                <th className="px-3 py-1.5 text-left">Batch #</th>
+                                                                <th className="px-3 py-1.5 text-left">Expiry</th>
+                                                                <th className="px-3 py-1.5 text-right">Qty</th>
+                                                                <th className="px-3 py-1.5 text-right">Labels</th>
+                                                            </tr>
+                                                        </thead>
+                                                        <tbody>
+                                                            {item.batches.map(b => {
+                                                                const key = `${item.id}:${b.id}`;
+                                                                const sel = selectedBatchKeys[key] || { selected: false, labelCount: b.quantity || 1 };
+                                                                return (
+                                                                    <tr key={b.id} className="border-t border-slate-100">
+                                                                        <td className="px-3 py-1.5">
+                                                                            <input
+                                                                                type="checkbox"
+                                                                                checked={!!sel.selected}
+                                                                                onChange={(e) => setSelectedBatchKeys(prev => ({
+                                                                                    ...prev,
+                                                                                    [key]: { ...sel, selected: e.target.checked }
+                                                                                }))}
+                                                                            />
+                                                                        </td>
+                                                                        <td className="px-3 py-1.5 font-mono text-[11px]">{b.batchNumber}</td>
+                                                                        <td className="px-3 py-1.5">{b.expiryDate || '—'}</td>
+                                                                        <td className="px-3 py-1.5 text-right">{b.quantity}</td>
+                                                                        <td className="px-3 py-1.5 text-right">
+                                                                            <input
+                                                                                type="number"
+                                                                                min={1}
+                                                                                value={sel.labelCount}
+                                                                                onChange={(e) => setSelectedBatchKeys(prev => ({
+                                                                                    ...prev,
+                                                                                    [key]: { ...sel, labelCount: e.target.value }
+                                                                                }))}
+                                                                                className="w-16 border border-slate-200 rounded px-1 py-0.5 text-[11px] text-right"
+                                                                            />
+                                                                        </td>
+                                                                    </tr>
+                                                                );
+                                                            })}
+                                                        </tbody>
+                                                    </table>
+                                                </div>
+                                            );
+                                        })}
+                                    </div>
+                                )}
+                            </div>
+
+                            <div className="px-5 py-3 border-t border-slate-200 flex items-center justify-end gap-2 bg-slate-50">
+                                <button
+                                    onClick={() => setShowStockTakeModal(false)}
+                                    className="px-4 py-2 text-xs font-bold text-slate-600 bg-white border border-slate-200 rounded-lg hover:bg-slate-50"
+                                >
+                                    Close
+                                </button>
+                                {openedStockTakeSession && (
+                                    <button
+                                        onClick={loadSelectedBatchesIntoCart}
+                                        className="px-4 py-2 text-xs font-bold text-slate-900 bg-[#F5C742] hover:bg-amber-400 rounded-lg"
+                                    >
+                                        Load Selected Batches
+                                    </button>
+                                )}
+                            </div>
+                        </div>
+                    </div>
+                )}
+
                 {showSearchModal && (
                     <div className="absolute inset-0 z-50 bg-white/10 backdrop-blur-sm flex items-center justify-center p-6">
                         <div className="bg-white rounded-xl shadow-2xl w-full max-w-2xl h-full max-h-[85vh] flex flex-col overflow-hidden border border-slate-200">
@@ -1170,7 +1885,11 @@ const BarcodePrinter = () => {
                                                             {po.items.length} Items
                                                         </p>
                                                         <p className="text-xs font-bold text-[#F5C742]">
-                                                            Total: AED {po.grandTotal || '0.00'}
+                                                            Total: <CurrencyAmount
+                                                                value={po.grandTotal || '0.00'}
+                                                                currencyCode={currencyCode}
+                                                                currencyLabel={currencyLabel}
+                                                            />
                                                         </p>
                                                     </div>
 
@@ -1185,18 +1904,12 @@ const BarcodePrinter = () => {
                                                     {/* Table Body */}
                                                     <div className="border-x border-b border-slate-200 rounded-b-lg overflow-hidden">
                                                         {po.items.map((item, idx) => {
-                                                            console.log('🔍 Rendering item:', item);
                                                             const prod = products.find(p => p.code === item.itemCode);
-                                                            console.log('🔍 Found product:', prod ? prod.name : 'NOT FOUND');
 
                                                             // Fallback: Show item even if product not found
                                                             const displayName = prod?.name || item.itemName || 'Unknown Item';
                                                             const displaySku = prod?.sku || item.itemCode || '-';
                                                             const displayBarcode = prod ? getBarcodeValue(prod) : '-';
-
-                                                            if (prod?.image) {
-                                                                console.log('🖼️ Product Image URL:', prod.image);
-                                                            }
 
                                                             return (
                                                                 <div
@@ -1238,7 +1951,11 @@ const BarcodePrinter = () => {
 
                                                                     {/* Unit Cost */}
                                                                     <div className="col-span-2 text-right font-mono font-bold text-[#F5C742]">
-                                                                        AED {item.unitCost}
+                                                                        <CurrencyAmount
+                                                                            value={item.unitCost}
+                                                                            currencyCode={currencyCode}
+                                                                            currencyLabel={currencyLabel}
+                                                                        />
                                                                     </div>
                                                                 </div>
                                                             );
@@ -1372,10 +2089,14 @@ const BarcodePrinter = () => {
                                                             { id: 'barcode', label: 'Barcode', icon: <Barcode size={14} /> },
                                                             { id: 'qr', label: 'QR Code', icon: <Grid size={14} />, sub: 'Cannot use with Barcode' },
                                                             { id: 'name', label: 'Product Name', icon: <Tag size={14} /> },
+                                                            { id: 'itemCode', label: 'Item Code', icon: <Tag size={14} /> },
+                                                            { id: 'brandName', label: 'Brand Name', icon: <Tag size={14} /> },
                                                             { id: 'sku', label: 'SKU Code', icon: <Box size={14} /> },
                                                             { id: 'unit', label: 'Unit', icon: <Box size={14} /> },
                                                             { id: 'price', label: 'Selling Price', icon: <span className="font-bold text-xs">$</span> },
                                                             { id: 'company', label: 'Company Name', icon: <FileText size={14} /> },
+                                                            { id: 'batchNumber', label: 'Batch No + Barcode', icon: <Barcode size={14} />, sub: 'Shows only for batch-enabled items' },
+                                                            { id: 'expiryDate', label: 'Expiry Date', icon: <Calendar size={14} />, sub: 'Shows only for expiry-enabled items' },
                                                         ].map(attr => (
                                                             <div
                                                                 key={attr.id}
@@ -1403,7 +2124,7 @@ const BarcodePrinter = () => {
                                                         ))}
                                                     </div>
                                                     <div className="p-4 border-t border-slate-100 mt-auto">
-                                                        <p className="text-xs text-slate-500 text-center">{Object.values(editingTemplate.fields).filter(Boolean).length} attributes selected</p>
+                                                        <p className="text-xs text-slate-500 text-center">{countEnabledFields(editingTemplate.fields)} attributes selected</p>
                                                     </div>
                                                 </div>
 
@@ -1434,25 +2155,40 @@ const BarcodePrinter = () => {
 
                                                         {/* ACTUAL LABEL RENDER - Uses shared logic now */}
                                                         <div className="flex items-center justify-center">
-                                                            {renderLabels(true, editingTemplate, [{
-                                                                product: {
-                                                                    id: 'sample',
-                                                                    name: 'Sample Product Name',
-                                                                    code: 'SAMPLE-123',
-                                                                    price: '99.00',
-                                                                    packings: [{ isSale: true, barcode: '123456789012' }],
-                                                                    company: 'NEW EXTREME SPORTS TRADING LLC'
-                                                                },
-                                                                qty: 1,
-                                                                barcode: '123456789012'
-                                                            }])}
+                                                            {(() => {
+                                                                const sampleBarcode = getSampleBarcodeForFormat(editingTemplate.barcodeFormat);
+                                                                return renderLabels(true, editingTemplate, [{
+                                                                    product: {
+                                                                        id: 'sample',
+                                                                        name: 'Sample Product Name',
+                                                                        code: 'SAMPLE-123',
+                                                                        sku: 'SKU-001',
+                                                                        brand: 'Sample Brand',
+                                                                        brandName: 'Sample Brand',
+                                                                        price: '99.00',
+                                                                        packings: [{ isSale: true, barcode: sampleBarcode }],
+                                                                        company: company?.companyName || '',
+                                                                        isBatch: true,
+                                                                        expiryEnabled: true
+                                                                    },
+                                                                    qty: 1,
+                                                                    barcode: sampleBarcode,
+                                                                    productBarcode: sampleBarcode,
+                                                                    unit: 'PCS',
+                                                                    batchNumber: 'ST-040526-WH1-STK-PRD-1',
+                                                                    batchBarcode: 'ST-040526-WH1-STK-PRD-1',
+                                                                    expiryDate: '2026-12-31',
+                                                                    batchEnabled: true,
+                                                                    expiryEnabled: true
+                                                                }]);
+                                                            })()}
                                                         </div>
                                                     </div>
                                                 </div>
 
                                                 {/* Right: Summary & Save */}
-                                                <div className="col-span-3 flex flex-col gap-4 h-full">
-                                                    <div className="bg-white rounded-xl border border-slate-200 p-4 flex-1">
+                                                <div className="col-span-3 flex flex-col gap-4 h-full min-h-0">
+                                                    <div className="bg-white rounded-xl border border-slate-200 p-4 flex-1 overflow-y-auto min-h-0">
                                                         <h3 className="font-bold text-slate-800 text-sm mb-4">Template Summary</h3>
 
                                                         <div className="space-y-4">
@@ -1488,6 +2224,36 @@ const BarcodePrinter = () => {
                                                             </div>
 
                                                             <div>
+                                                                <div className="flex items-center justify-between gap-3">
+                                                                    <label className="text-[10px] font-bold text-slate-400 uppercase flex items-center gap-1">
+                                                                        <SlidersHorizontal size={12} /> Content Size
+                                                                    </label>
+                                                                    <span className="text-[10px] font-bold text-slate-500">
+                                                                        {Math.round(getTemplateContentScale(editingTemplate) * 100)}%
+                                                                    </span>
+                                                                </div>
+                                                                <input
+                                                                    type="range"
+                                                                    min={MIN_CONTENT_SCALE}
+                                                                    max={MAX_CONTENT_SCALE}
+                                                                    step="0.05"
+                                                                    className="w-full accent-[#F5C742]"
+                                                                    value={getTemplateContentScale(editingTemplate)}
+                                                                    onChange={e => {
+                                                                        const nextScale = clampContentScale(e.target.value);
+                                                                        setEditingTemplate(prev => ({
+                                                                            ...prev,
+                                                                            contentScale: nextScale,
+                                                                            fields: {
+                                                                                ...normalizeTemplateFields(prev.fields),
+                                                                                [CONTENT_SCALE_FIELD]: nextScale
+                                                                            }
+                                                                        }));
+                                                                    }}
+                                                                />
+                                                            </div>
+
+                                                            <div>
                                                                 <label className="text-[10px] font-bold text-slate-400 uppercase">Layout Style</label>
                                                                 <select
                                                                     className="w-full border-b border-slate-200 py-1 text-sm font-bold text-slate-900 focus:border-[#F5C742] outline-none bg-white"
@@ -1500,13 +2266,36 @@ const BarcodePrinter = () => {
                                                                 </select>
                                                             </div>
 
+                                                            <div>
+                                                                <label className="text-[10px] font-bold text-slate-400 uppercase">Barcode Format</label>
+                                                                <select
+                                                                    className="w-full border-b border-slate-200 py-1 text-sm font-bold text-slate-900 focus:border-[#F5C742] outline-none bg-white"
+                                                                    value={editingTemplate.barcodeFormat || 'CODE128'}
+                                                                    onChange={e => setEditingTemplate({ ...editingTemplate, barcodeFormat: e.target.value })}
+                                                                >
+                                                                    <option value="CODE128">Code 128 (default, alphanumeric)</option>
+                                                                    <option value="EAN13">EAN-13 (13-digit retail)</option>
+                                                                    <option value="EAN8">EAN-8 (8-digit short)</option>
+                                                                    <option value="UPC">UPC-A (12-digit US retail)</option>
+                                                                    <option value="CODE39">Code 39 (industrial)</option>
+                                                                    <option value="ITF14">ITF-14 (cartons)</option>
+                                                                    <option value="ITF">ITF (interleaved)</option>
+                                                                    <option value="MSI">MSI</option>
+                                                                    <option value="codabar">Codabar</option>
+                                                                    <option value="pharmacode">Pharmacode</option>
+                                                                </select>
+                                                                <p className="text-[10px] text-slate-400 mt-1">
+                                                                    EAN-13 needs exactly 13 digits, EAN-8 needs 8, UPC needs 12. Use Code 128 for general use.
+                                                                </p>
+                                                            </div>
+
                                                             <div className="bg-[#F5C742]/10 rounded-lg p-3 border border-[#F5C742]/20 text-xs text-amber-900">
                                                                 <strong>Note:</strong> Custom layouts will be saved to your local storage.
                                                             </div>
                                                         </div>
 
                                                     </div>
-                                                    <div className="flex flex-col gap-2">
+                                                    <div className="flex flex-col gap-2 shrink-0">
                                                         <button
                                                             onClick={saveNewTemplate}
                                                             className="w-full py-3 bg-[#F5C742] hover:bg-[#E5B732] text-slate-900 font-bold rounded-xl shadow-sm transition-colors flex items-center justify-center gap-2"

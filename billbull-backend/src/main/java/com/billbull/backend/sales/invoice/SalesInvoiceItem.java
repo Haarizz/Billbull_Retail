@@ -30,6 +30,8 @@ public class SalesInvoiceItem {
     private Integer foc;
     private String image;
     private Long warehouseId;
+    @Transient
+    private String barcode;
 
     // Cumulative revenue and COGS recognized via Delivery Notes for this item.
     // Used to track partial delivery recognition and prevent over-posting.
@@ -185,6 +187,14 @@ public class SalesInvoiceItem {
 
     public void setWarehouseId(Long warehouseId) {
         this.warehouseId = warehouseId;
+    }
+
+    public String getBarcode() {
+        return barcode;
+    }
+
+    public void setBarcode(String barcode) {
+        this.barcode = barcode;
     }
 
     public String getImage() {

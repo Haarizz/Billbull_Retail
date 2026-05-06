@@ -1,4 +1,4 @@
-﻿import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   FileText,
   Plus,
@@ -17,6 +17,7 @@ import {
   Box,
   Wallet,
   CreditCard,
+  DollarSign,
   Menu,
   ChevronUp,
   ChevronRight,
@@ -34,16 +35,21 @@ import {
 } from 'lucide-react';
 
 import { useMemo } from 'react';
+import CurrencyAmount from '../../components/CurrencyAmount';
 
 // âœ… REAL API IMPORTS
+import api from '../../api/axiosConfig';
 import { getAllCustomers } from '../../api/customerledgerApi';
-import { getAllQuotations } from '../../api/quotationApi';
-import { getAllSalesOrders } from '../../api/salesorderApi';
+import { getAllQuotations, getQuotationById } from '../../api/quotationApi';
+import { getAllSalesOrders, getSalesOrderById } from '../../api/salesorderApi';
 import { getTemplatesByCategory } from '../../api/printTemplateApi';
 import { generatePrintHtml, printHtml } from '../../utils/printGenerator';
 import { getImageUrl } from '../../utils/urlUtils';
+import { getDefaultProductUnit, resolveUnitAmount } from '../../utils/unitPricing';
+import { summarizeSalesItems } from '../../utils/documentSummaryUtils';
 import billBullLogo from '../../assets/billBullLogo.png';
 import { useCompany } from '../../context/CompanyContext';
+import { formatCurrencyDisplay } from '../../utils/countryCurrencyOptions';
 
 // âœ… STEP 2: PROFORMA API IMPORTS
 import {
@@ -54,11 +60,31 @@ import {
   getProformaById
 } from "../../api/proformaApi";
 
+import { receiptVoucherApi } from "../../api/receiptVoucherApi";
+import { useBranch } from "../../context/BranchContext";
+import ExportDropdown from '../../components/common/ExportDropdown';
+import { exportToExcel, exportToPDF } from '../../utils/exportUtils';
+
+// ==========================================
+// 1. CONFIGURATION
+// ==========================================
+
+const PROFORMA_COLUMNS = [
+  { header: 'PI Number', key: 'piNumber', width: 15 },
+  { header: 'Date', key: 'piDate', width: 12 },
+  { header: 'Customer', key: 'customerName', width: 25 },
+  { header: 'Valid Until', key: 'validUntil', width: 12 },
+  { header: 'Total', key: 'total', width: 15 },
+  { header: 'Paid', key: 'advancePaid', width: 12 },
+  { header: 'Status', key: 'status', width: 12 }
+];
+
 // âœ… PRODUCT SELECTOR
 import ProductSelector from '../../components/ProductSelector';
 
 // âœ… CUSTOMER SELECTOR
 import CustomerSelector from '../../components/CustomerSelector';
+import CustomerShippingPanel from '../../components/CustomerShippingPanel';
 
 // âœ… STOCK AVAILABILITY MODAL
 import StockAvailabilityModal from '../../components/StockAvailabilityModal';
@@ -73,8 +99,10 @@ import ItemAddOnsModal from '../../components/ItemAddOnsModal';
 
 const ProformaInvoice = () => {
   const { company } = useCompany();
+  const { defaultBranch, defaultBranchName } = useBranch();
   const [activeTab, setActiveTab] = useState('list');
   const [piId, setPiId] = useState(null);
+  const [reservationWarehouseId, setReservationWarehouseId] = useState(null);
 
   // --- DATA LIST STATES (Fetched from APIs) ---
   const [customersList, setCustomersList] = useState([]);
@@ -101,8 +129,10 @@ const ProformaInvoice = () => {
   const [isItemStockModalOpen, setIsItemStockModalOpen] = useState(false);
 
   // Linking States
+  const [sourceType, setSourceType] = useState('None');
   const [linkedQuote, setLinkedQuote] = useState('');
   const [isQuotationOpen, setIsQuotationOpen] = useState(false);
+  const [sourceSearch, setSourceSearch] = useState('');
 
   const [linkedSO, setLinkedSO] = useState('');
   const [isSalesOrderOpen, setIsSalesOrderOpen] = useState(false);
@@ -172,12 +202,29 @@ const ProformaInvoice = () => {
   const [advanceAmount, setAdvanceAmount] = useState(0);
   const [paymentRef, setPaymentRef] = useState('');
   const [paymentNotes, setPaymentNotes] = useState('');
+  const [bankAccountOptions, setBankAccountOptions] = useState([]);
+
+  // Payment Modal State
+  const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
+  const [modalPaymentDate, setModalPaymentDate] = useState(new Date().toISOString().split('T')[0]);
+  const [modalPaymentAmount, setModalPaymentAmount] = useState(0);
+  const [modalPaymentRef, setModalPaymentRef] = useState('');
+  const [modalPaymentMode, setModalPaymentMode] = useState('Cash');
+  const [modalBankAccount, setModalBankAccount] = useState('');
+  const [modalChequeDate, setModalChequeDate] = useState(new Date().toISOString().split('T')[0]);
+  const [modalNotes, setModalNotes] = useState('');
 
   // Sidebars & UI
   const [focusedItem, setFocusedItem] = useState(null);
 
   // âœ… LIVE STOCK CACHE FOR ITEM AVAILABILITY PANEL
   const [liveStockMap, setLiveStockMap] = useState({});
+
+  useEffect(() => {
+    if (!piId) {
+      setReservationWarehouseId(defaultBranch?.defaultWarehouseId || null);
+    }
+  }, [defaultBranch?.defaultWarehouseId, piId]);
 
   // Item Add-Ons Modal State
   const [selectedAddonItem, setSelectedAddonItem] = useState(null);
@@ -202,13 +249,20 @@ const ProformaInvoice = () => {
   // Notes
   const [notesToCustomer, setNotesToCustomer] = useState('');
   const [internalNotes, setInternalNotes] = useState('');
+  const [isSaving, setIsSaving] = useState(false);
 
   // Summary Calcs
-  const subTotal = items.reduce((sum, item) => sum + (Number(item.total) || 0), 0);
   const [billDiscount, setBillDiscount] = useState(0);
-  const billDiscountAmount = (subTotal * billDiscount) / 100;
-  const totalTax = items.reduce((sum, item) => sum + (Number(item.taxAmt) || 0), 0);
-  const grandTotal = subTotal - billDiscountAmount + totalTax;
+  const proformaSummary = useMemo(
+    () => summarizeSalesItems(items, billDiscount),
+    [items, billDiscount]
+  );
+  const grossTotal = proformaSummary.grossTotal;
+  const totalItemDiscount = proformaSummary.itemDiscountTotal;
+  const subTotal = proformaSummary.subTotal;
+  const billDiscountAmount = proformaSummary.billDiscountAmount;
+  const totalTax = proformaSummary.tax;
+  const grandTotal = proformaSummary.grandTotal;
   const paidAmount = Number(advanceAmount) || 0;
   const balanceDue = grandTotal - paidAmount;
 
@@ -216,7 +270,11 @@ const ProformaInvoice = () => {
   useEffect(() => {
     if (focusedItem && focusedItem.code) {
       if (!liveStockMap[focusedItem.code]) {
-        getStockAvailability(focusedItem.code)
+        const warehouseFilter = reservationWarehouseId || defaultBranch?.defaultWarehouseId;
+        getStockAvailability(
+          focusedItem.code,
+          warehouseFilter ? { warehouseId: warehouseFilter } : {}
+        )
           .then(data => {
             if (data && data.locations) {
               const totalAvail = data.locations.reduce((sum, loc) => sum + (loc.available || 0), 0);
@@ -234,7 +292,7 @@ const ProformaInvoice = () => {
           .catch(err => console.error("Failed to fetch live stock for Proforma", err));
       }
     }
-  }, [focusedItem]); // INTENTIONAL: NOT including liveStockMap to avoid loops
+  }, [focusedItem, reservationWarehouseId]); // eslint-disable-line react-hooks/exhaustive-deps
 
 
   // --- 1. FETCH DATA ON MOUNT ---
@@ -242,12 +300,14 @@ const ProformaInvoice = () => {
   useEffect(() => {
     const fetchAllData = async () => {
       try {
-        const [custData, qtnData, soData, piData] = await Promise.all([
+        const [custData, qtnData, soData, piData, bankAccData] = await Promise.all([
           getAllCustomers(),
           getAllQuotations(),
           getAllSalesOrders(),
-          getAllProformas() // Fetch list
+          getAllProformas(),
+          api.get('/api/ledger/accounts/bank-accounts').then(r => r.data).catch(() => [])
         ]);
+        setBankAccountOptions(Array.isArray(bankAccData) ? bankAccData : []);
         const customers = Array.isArray(custData) ? custData : [];
         let validCustomers = [...customers];
 
@@ -363,6 +423,8 @@ const ProformaInvoice = () => {
             desc: i.desc || '',
             sku: i.sku || '',
             localName: i.localName || '',
+            barcode: i.barcode || '',
+            location: defaultBranchName || '',
             unit: i.unit,
             qty: Number(i.qty),
             price: Number(i.price),
@@ -374,9 +436,9 @@ const ProformaInvoice = () => {
           })),
           totals: {
             subTotal,
-            tax: taxTotal,
+            tax: totalTax,
             grandTotal,
-            currency: 'AED',
+            currency: company?.currencySymbol || company?.currency || 'AED',
             billDiscount: 0,
             billDiscountAmount: 0
           },
@@ -385,7 +447,8 @@ const ProformaInvoice = () => {
             paymentTerm: paymentMethod,
             status,
             notes: paymentNotes,
-            reference: `Quote: ${linkedQuote || '-'} | SO: ${linkedSO || '-'}`
+            reference: `Quote: ${linkedQuote || '-'} | SO: ${linkedSO || '-'}`,
+            location: defaultBranchName || ''
           }
         };
 
@@ -452,10 +515,11 @@ const ProformaInvoice = () => {
     const normalized = {
       id: item.id || fallbackId,
       code: item.code || item.itemCode || '',
+      name: item.name || item.itemName || item.productName || '',
       barcode: item.barcode || item.itemBarcode || '',
       image: item.primaryImage || item.image || item.thumbnailUrl || item.imageUrl || '',
-      desc: item.desc || item.description || item.name || '',
-      remarks: item.remarks || item.description || item.desc || item.name || '',
+      desc: item.desc || item.description || '',
+      remarks: item.remarks || item.description || item.desc || '',
       unit: resolvedUnit,
       qty: Number(item.qty ?? item.quantity) || 0,
       price: Number(item.price) || 0,
@@ -467,10 +531,11 @@ const ProformaInvoice = () => {
         : [resolvedUnit],
       unitConversions: item.unitConversions || {},
       unitPrices: item.unitPrices || {},
-      disc: Number(item.disc ?? item.discount ?? item.discountPercent) || 0,
+      disc: Number(item.disc ?? item.discount ?? item.discountPercent ?? item.discPercent) || 0,
       tax: Number(item.tax ?? item.taxRate ?? item.taxPercent) || 5,
       taxAmt: Number(item.taxAmt ?? item.taxAmount) || 0,
-      total: Number(item.total ?? item.lineTotal) || 0
+      total: Number(item.total ?? item.lineTotal) || 0,
+      billDiscount: Number(item.billDiscount) || 0
     };
 
     return calculateRow(normalized);
@@ -478,7 +543,13 @@ const ProformaInvoice = () => {
 
   // âœ… PRODUCT SELECTOR HANDLER
   const handleAddSingleProduct = (product) => {
-    const price = parseFloat(product.retailPrice) || parseFloat(product.sellingPrice) || 0;
+    const defaultUnit = getDefaultProductUnit(product);
+    const price = resolveUnitAmount({
+      targetUnit: defaultUnit,
+      amountMap: product.unitPrices,
+      unitConversions: product.unitConversions,
+      fallbackAmount: product.retailPrice ?? product.sellingPrice ?? 0
+    });
     const cost = parseFloat(product.cost) || 0;
     const disc = parseFloat(product.maxDiscount) || 0;
     const tax = parseFloat(product.salesTax || product.taxPercent) || 5;
@@ -486,16 +557,17 @@ const ProformaInvoice = () => {
     const newItem = normalizeProformaItem({
       id: Date.now() + Math.random(),
       code: product.code,
+      name: product.name || '',
       barcode: product.barcode || '',
       image: product.primaryImage || product.image || product.thumbnailUrl || product.imageUrl || '',
       desc: product.description || product.name,
       remarks: product.description || product.remarks || '',
-      unit: product.unitName || product.unit || (product.availableUnits && product.availableUnits[0]) || 'PCS',
+      unit: defaultUnit,
       qty: 1,
       price,
       cost,
       foc: 0,
-      focUnit: product.unitName || product.unit || (product.availableUnits && product.availableUnits[0]) || 'PCS',
+      focUnit: defaultUnit,
       availableUnits: product.availableUnits || ['PCS'],
       unitConversions: product.unitConversions || {},
       unitPrices: product.unitPrices || {},
@@ -513,6 +585,41 @@ const ProformaInvoice = () => {
     setIsProductSelectorOpen(false); // âœ… Close modal after adding
   };
 
+  const handleFastEntryAdd = (product, qty, price, disc) => {
+    if (isReadOnly) return;
+    const defaultUnit = getDefaultProductUnit(product);
+    const cost = parseFloat(product.cost) || 0;
+    const tax = parseFloat(product.salesTax || product.taxPercent) || 5;
+
+    const newItem = normalizeProformaItem({
+      id: Date.now() + Math.random(),
+      code: product.code,
+      name: product.name || '',
+      barcode: product.barcode || '',
+      image: product.primaryImage || product.image || product.thumbnailUrl || product.imageUrl || '',
+      desc: product.description || product.name,
+      remarks: product.description || product.remarks || '',
+      unit: defaultUnit,
+      qty,
+      price,
+      cost,
+      foc: 0,
+      focUnit: defaultUnit,
+      availableUnits: product.availableUnits || ['PCS'],
+      unitConversions: product.unitConversions || {},
+      unitPrices: product.unitPrices || {},
+      disc,
+      tax,
+      taxAmt: 0,
+      total: 0
+    });
+
+    setItems(prev => {
+      const isFirstItemEmpty = prev.length === 1 && !prev[0].code && !prev[0].desc;
+      return isFirstItemEmpty ? [newItem] : [...prev, newItem];
+    });
+  };
+
   const handleAddItem = () => {
     if (isReadOnly) return;
     setItems(prev => [...prev, createBlankProformaItem()]);
@@ -520,7 +627,9 @@ const ProformaInvoice = () => {
 
   const handleDeleteItem = (id) => {
     if (isReadOnly) return;
-    if (items.length > 1) setItems(items.filter(i => i.id !== id));
+    const nextItems = items.filter(i => i.id !== id);
+    setItems(nextItems.length > 0 ? nextItems : [createBlankProformaItem()]);
+    if (focusedItem && focusedItem.id === id) setFocusedItem(null);
   };
 
   const handleItemChange = (id, field, value) => {
@@ -534,21 +643,14 @@ const ProformaInvoice = () => {
         // âœ… If unit is being changed, recalculate price based on conversion
         if (field === 'unit' && item.unitConversions) {
           const newUnit = value;
-
-          if (item.unitPrices && item.unitPrices[newUnit]) {
-            newItem.price = item.unitPrices[newUnit];
-          } else {
-            const baseUnit = Object.keys(item.unitConversions).find(u => item.unitConversions[u] === 1);
-            if (baseUnit) {
-              let basePrice = item.unitPrices && item.unitPrices[baseUnit] ? item.unitPrices[baseUnit] : null;
-              if (!basePrice) {
-                const currentUnitConversion = item.unitConversions[item.unit] || 1;
-                basePrice = item.price / currentUnitConversion;
-              }
-              const newUnitConversion = item.unitConversions[newUnit] || 1;
-              newItem.price = basePrice * newUnitConversion;
-            }
-          }
+          newItem.price = resolveUnitAmount({
+            targetUnit: newUnit,
+            amountMap: item.unitPrices,
+            unitConversions: item.unitConversions,
+            currentUnit: item.unit,
+            currentAmount: item.price,
+            fallbackAmount: item.price
+          });
         }
 
         newItem = calculateRow(newItem);
@@ -570,9 +672,8 @@ const ProformaInvoice = () => {
   // âœ… STEP 8: LOAD PI ON ROW CLICK (REAL DATA)
   const handleRowClick = async (pi) => {
     try {
-      // Use the pi object passed from the list directly
-      // this avoids relying on getProformaById if it doesn't return items.
-      const full = pi;
+      const latest = await getProformaById(pi.id).catch(() => null);
+      const full = latest && latest.id ? latest : pi;
       setPiId(full.id);
 
       setPiNumber(full.piNumber);
@@ -592,6 +693,11 @@ const ProformaInvoice = () => {
 
       setLinkedQuote(full.quotationNo || "");
       setLinkedSO(full.salesOrderNo || "");
+      setReservationWarehouseId(full.warehouseId || defaultBranch?.defaultWarehouseId || null);
+      setLiveStockMap({});
+      setBillDiscount(Number(full.billDiscount) || 0);
+      setSourceType(full.quotationNo ? 'Quotation' : full.salesOrderNo ? 'Sales Order' : 'None');
+      setSourceSearch('');
 
       setAdvanceAmount(full.advancePaid || 0);
       setPaymentMethod(full.paymentMethod || "Cash");
@@ -613,10 +719,15 @@ const ProformaInvoice = () => {
   };
 
   const handleCreateNew = () => {
-    setPiNumber('PI-' + Math.floor(Math.random() * 100000));
+    const now = new Date();
+    const dateStr = now.toISOString().split('T')[0].split('-').join('');
+    const timeStr = now.getHours().toString().padStart(2, '0') + now.getMinutes().toString().padStart(2, '0');
+    setPiNumber(`PI-${dateStr}-${timeStr}`);
     setStatus('DRAFT');
     setPiId(null);
     setIsReadOnly(false);
+    setReservationWarehouseId(defaultBranch?.defaultWarehouseId || null);
+    setLiveStockMap({});
     setVersion(1);
     setItems([createBlankProformaItem()]);
     setAdvanceAmount(0);
@@ -625,33 +736,36 @@ const ProformaInvoice = () => {
     const walkIn = customersList.find(c => c.name.toLowerCase().includes('walk-in') || c.name.toLowerCase().includes('walkin') || c.name.toLowerCase() === 'cash customer');
     setSelectedCustomer(walkIn || null);
 
+    setSourceType('None');
     setLinkedQuote('');
     setLinkedSO('');
+    setSourceSearch('');
     setPaymentRef('');
     setPaymentNotes('');
     setActiveTab('create');
   };
 
-  // âœ… STEP 6: SAVE DRAFT -> REAL API
-  const handleSaveDraft = async () => {
-    if (!selectedCustomer) return alert("Please select a customer.");
-
-    const validItems = items.filter(i => i.code || i.desc);
-    if (validItems.length === 0) return alert("Please add at least one item.");
-
+  // ✅ STEP 6: SAVE DRAFT -> REAL API
+  const handleSaveDraft = async (advanceOverride = null) => {
+    setIsSaving(true);
     try {
+      const validItems = items.filter(i => i.code || i.desc);
+
+      const finalAdvance = advanceOverride !== null ? Number(advanceOverride) : Number(advanceAmount);
+
       const payload = {
         piNumber,
         piDate,
         validUntil,
-        customerId: selectedCustomer.id,
+        customerId: selectedCustomer?.id === 'WALKIN-ID' ? null : selectedCustomer?.id,
         customerCode: selectedCustomer.code,
         customerName: selectedCustomer.name,
         customerTrn: selectedCustomer.trn,
         quotationNo: linkedQuote || null,
         salesOrderNo: linkedSO || null,
         paymentMethod,
-        advancePaid: Number(advanceAmount),
+        advancePaid: finalAdvance,
+        billDiscount: Number(billDiscount),
         paymentNotes,
         notesToCustomer,
         shippingAddress,
@@ -663,6 +777,7 @@ const ProformaInvoice = () => {
           quantity: Number(i.qty),
           price: Number(i.price),
           taxPercent: Number(i.tax),
+          discountPercent: Number(i.disc),
           foc: Number(i.foc) || 0,
           focUnit: i.focUnit || i.unit,
           remarks: i.remarks || ''
@@ -670,36 +785,121 @@ const ProformaInvoice = () => {
       };
 
       const saved = piId ? await updateProforma(piId, payload) : await createProforma(payload);
-      setPiId(saved?.id || piId);
-      alert(piId ? "Draft updated successfully" : "Draft saved successfully");
+      const currentPiId = saved?.id || piId;
+      setPiId(currentPiId);
+      setReservationWarehouseId(saved?.warehouseId || reservationWarehouseId || defaultBranch?.defaultWarehouseId || null);
+      setLiveStockMap({});
 
-      // Refresh list
-      const refreshed = await getAllProformas();
-      setProformaList(refreshed);
+      // Refresh list immediately to get accurate balance on list view
+      const refreshedList = await getAllProformas();
+      setProformaList(refreshedList);
+
+      // âœ… If payment override is provided and balance is now 0, auto-issue
+      const backendBalanceDue = Number(saved?.balanceDue ?? NaN);
+      const canAutoIssue = Number.isFinite(backendBalanceDue)
+        ? backendBalanceDue <= 0.01
+        : balanceDue <= 0.01;
+
+      if (advanceOverride !== null && canAutoIssue) {
+        const issued = await issueProforma(currentPiId);
+        setStatus(issued?.status || "ISSUED");
+        setIsReadOnly(true);
+        setReservationWarehouseId(issued?.warehouseId || reservationWarehouseId || defaultBranch?.defaultWarehouseId || null);
+        setLiveStockMap({});
+        const issuedList = await getAllProformas();
+        setProformaList(issuedList);
+        alert("Payment received and Proforma issued successfully!");
+      } else {
+        alert(piId ? "Draft updated successfully" : "Draft saved successfully");
+      }
+
       setActiveTab("list");
     } catch (err) {
       console.error(err);
-      alert("Failed to save draft");
+      const backendMessage = err.response?.data?.message || err.response?.data || err.message;
+      alert(backendMessage || "Failed to save draft");
+    } finally {
+      setIsSaving(false);
     }
   };
 
-  // âœ… STEP 7: ISSUE PI -> REAL API
+  // ✅ STEP 7: ISSUE PI -> REAL API (WITH AUTO-SAVE)
   const handleIssuePI = async () => {
     if (!selectedCustomer) {
       return alert("Select customer first");
     }
 
-    if (balanceDue > 0) {
-      return alert("Cannot Issue PI. Full payment is required.");
+    if (status === "ISSUED") {
+      setIsReadOnly(true);
+      return alert(`Proforma ${piNumber} is already issued.`);
     }
 
-    // Need an ID to issue
-    if (!piId) {
-      return alert("Please save the Draft first before issuing.");
+    if (balanceDue > 0.01) {
+      return alert(`Cannot Issue PI. Full payment is required. Current Balance Due: ${formatCurrencyDisplay(balanceDue, company)}`);
     }
 
+    setIsSaving(true);
     try {
-      await issueProforma(piId);
+      // 1. Auto-save current state as draft first to ensure the backend has latest data (including payments)
+      const validItems = items.filter(i => i.code || i.desc);
+      const payload = {
+        piNumber,
+        piDate,
+        validUntil,
+        customerId: selectedCustomer?.id === 'WALKIN-ID' ? null : selectedCustomer?.id,
+        customerCode: selectedCustomer.code,
+        customerName: selectedCustomer.name,
+        customerTrn: selectedCustomer.trn,
+        quotationNo: linkedQuote || null,
+        salesOrderNo: linkedSO || null,
+        paymentMethod,
+        advancePaid: Number(advanceAmount),
+        billDiscount: Number(billDiscount),
+        paymentNotes,
+        notesToCustomer,
+        shippingAddress,
+        items: validItems.map(i => ({
+          itemCode: i.code,
+          barcode: i.barcode || '',
+          description: i.desc,
+          unit: i.unit,
+          quantity: Number(i.qty),
+          price: Number(i.price),
+          taxPercent: Number(i.tax),
+          discountPercent: Number(i.disc),
+          foc: Number(i.foc) || 0,
+          focUnit: i.focUnit || i.unit,
+          remarks: i.remarks || ''
+        }))
+      };
+
+      let currentId = piId;
+      if (!currentId) {
+        const saved = await createProforma(payload);
+        currentId = saved?.id;
+        setPiId(currentId);
+        setReservationWarehouseId(saved?.warehouseId || reservationWarehouseId || defaultBranch?.defaultWarehouseId || null);
+      } else {
+        const latest = await getProformaById(currentId);
+        if (latest?.status === "ISSUED") {
+          setStatus("ISSUED");
+          setIsReadOnly(true);
+          setReservationWarehouseId(latest?.warehouseId || reservationWarehouseId || defaultBranch?.defaultWarehouseId || null);
+          const refreshed = await getAllProformas();
+          setProformaList(refreshed);
+          return alert(`Proforma ${latest.piNumber || piNumber} is already issued.`);
+        }
+        await updateProforma(currentId, payload);
+      }
+
+      if (!currentId) throw new Error("Failed to secure PI ID before issuing");
+
+      // 2. Now perform the actual Issue
+      const issued = await issueProforma(currentId);
+      setStatus(issued?.status || "ISSUED");
+      setIsReadOnly(true);
+      setReservationWarehouseId(issued?.warehouseId || reservationWarehouseId || defaultBranch?.defaultWarehouseId || null);
+      setLiveStockMap({});
       alert(`Proforma ${piNumber} issued successfully`);
 
       const refreshed = await getAllProformas();
@@ -707,15 +907,70 @@ const ProformaInvoice = () => {
       setActiveTab("list");
     } catch (err) {
       console.error(err);
-      alert("Failed to issue Proforma");
+      const backendMessage = err.response?.data?.message || err.response?.data || err.message;
+      alert(backendMessage || "Failed to issue Proforma");
+    } finally {
+      setIsSaving(false);
     }
   };
 
-  const handleLogPayment = () => {
-    if (Number(advanceAmount) <= 0) {
-      return alert("Please enter a valid amount to pay.");
+  const handleOpenPaymentModal = () => {
+    const outstanding = Math.max(grandTotal - Number(advanceAmount), 0);
+    setModalPaymentAmount(outstanding > 0 ? outstanding.toFixed(2) : '');
+    setModalPaymentDate(new Date().toISOString().split('T')[0]);
+    setModalPaymentMode('Cash');
+    setModalBankAccount('');
+    setModalChequeDate(new Date().toISOString().split('T')[0]);
+    setModalPaymentRef('');
+    setModalNotes('');
+    setIsPaymentModalOpen(true);
+  };
+
+  const handleAddPaymentFromModal = async () => {
+    const amount = Number(modalPaymentAmount);
+    if (!amount || amount <= 0) return alert("Enter valid amount");
+
+    // 1. Update UI State
+    const newAdvance = Number(advanceAmount) + amount;
+    setAdvanceAmount(newAdvance);
+    setPaymentMethod(modalPaymentMode);
+    setPaymentNotes(modalNotes);
+    setIsPaymentModalOpen(false);
+
+    // 2. Create a Receipt Voucher (Hit the Financials)
+    try {
+      const rvData = {
+        date: modalPaymentDate,
+        branch: defaultBranchName || 'Main Branch',
+        memberName: selectedCustomer?.name || 'Walk-in Customer',
+        category: 'Customer Advance',
+        amount: amount,
+        paymentMode: modalPaymentMode,
+        reference: `Advance for PI: ${piNumber}`,
+        notes: modalNotes || 'Automated receipt from Proforma Invoice module',
+        status: 'Completed',
+        purpose: 'ADVANCE_RECEIVED',
+        bankAccount: modalBankAccount || null,
+        chequeDate: modalChequeDate || null
+      };
+
+      const formData = new FormData();
+      formData.append('data', JSON.stringify(rvData));
+
+      await receiptVoucherApi.create(formData);
+    } catch (err) {
+      console.error("Failed to post Receipt Voucher to financials", err);
     }
-    alert(`Payment of AED ${Number(advanceAmount).toFixed(2)} recorded (UI Only). Save/Issue to persist.`);
+
+    // 3. Auto-save document to ensure payment is tracked in the record immediately
+    // If it's a new document, it will create one; otherwise, update
+    try {
+      setTimeout(() => {
+        handleSaveDraft(newAdvance); // PASS THE NEW AMOUNT DIRECTLY TO AVOID STALE STATE
+      }, 100);
+    } catch (err) {
+      console.error("Auto-save failed on payment", err);
+    }
   };
 
   const handleNewRevision = () => {
@@ -726,29 +981,70 @@ const ProformaInvoice = () => {
   };
 
   // --- Selection Handlers ---
-  const handleSelectQuotation = (qtn) => {
+  const handleSelectQuotation = async (qtn) => {
     setLinkedQuote(qtn.qtnNo);
     setIsQuotationOpen(false);
-    if (!selectedCustomer) {
+    setSourceSearch('');
+    try {
+      const full = await getQuotationById(qtn.id);
+      const matchedCust = customersList.find(c => c.code === (full.customerCode || qtn.customerCode) || c.name === (full.customerName || qtn.customerName));
+      if (matchedCust) {
+        setSelectedCustomer(matchedCust);
+        const _defaultAddr = (matchedCust.savedAddresses || []).find(a => a.isDefault);
+        const _resolvedAddr = _defaultAddr
+          ? [_defaultAddr.address1, _defaultAddr.address2, _defaultAddr.city, _defaultAddr.country].filter(Boolean).join(', ')
+          : (matchedCust.defaultShippingAddress || matchedCust.shippingAddress || matchedCust.billingAddress || matchedCust.address || '');
+        setShippingAddress(_resolvedAddr);
+      }
+      const srcItems = full.items || full.lineItems || [];
+      if (srcItems.length > 0) {
+        setItems(srcItems.map((item, i) => normalizeProformaItem(item, item.id || Date.now() + i + Math.random())));
+      }
+    } catch (err) {
+      console.error('Failed to fetch quotation details', err);
       const matchedCust = customersList.find(c => c.name === qtn.customerName || c.code === qtn.customerCode);
-      if (matchedCust) setSelectedCustomer(matchedCust);
+      if (matchedCust) {
+        setSelectedCustomer(matchedCust);
+        const _defaultAddr = (matchedCust.savedAddresses || []).find(a => a.isDefault);
+        const _resolvedAddr = _defaultAddr
+          ? [_defaultAddr.address1, _defaultAddr.address2, _defaultAddr.city, _defaultAddr.country].filter(Boolean).join(', ')
+          : (matchedCust.defaultShippingAddress || matchedCust.shippingAddress || matchedCust.billingAddress || matchedCust.address || '');
+        setShippingAddress(_resolvedAddr);
+      }
     }
   };
 
-  const handleSelectSalesOrder = (so) => {
+  const handleSelectSalesOrder = async (so) => {
     setLinkedSO(so.soNumber);
     setIsSalesOrderOpen(false);
-
-    if (!selectedCustomer) {
+    setSourceSearch('');
+    try {
+      const full = await getSalesOrderById(so.id);
+      const matchedCust = customersList.find(c => c.code === (full.customerCode || so.customerCode));
+      if (matchedCust) {
+        setSelectedCustomer(matchedCust);
+        const _defaultAddr = (matchedCust.savedAddresses || []).find(a => a.isDefault);
+        const _resolvedAddr = _defaultAddr
+          ? [_defaultAddr.address1, _defaultAddr.address2, _defaultAddr.city, _defaultAddr.country].filter(Boolean).join(', ')
+          : (matchedCust.defaultShippingAddress || matchedCust.shippingAddress || matchedCust.billingAddress || matchedCust.address || '');
+        // Prefer SO's shipping address if it has one, otherwise fall back to customer master
+        setShippingAddress(full.shippingAddress || _resolvedAddr);
+      }
+      const srcItems = full.items || full.lineItems || [];
+      if (srcItems.length > 0) {
+        setItems(srcItems.map((item, i) => normalizeProformaItem(item, item.id || Date.now() + i + Math.random())));
+      }
+    } catch (err) {
+      console.error('Failed to fetch sales order details', err);
       const matchedCust = customersList.find(c => c.code === so.customerCode);
-      if (matchedCust) setSelectedCustomer(matchedCust);
-    }
-
-    if (so.items && so.items.length > 0) {
-      const mappedItems = so.items.map((item, index) =>
-        normalizeProformaItem(item, item.id || Date.now() + index + Math.random())
-      );
-      setItems(mappedItems.length > 0 ? mappedItems : [createBlankProformaItem()]);
+      if (matchedCust) {
+        setSelectedCustomer(matchedCust);
+        const _defaultAddr = (matchedCust.savedAddresses || []).find(a => a.isDefault);
+        const _resolvedAddr = _defaultAddr
+          ? [_defaultAddr.address1, _defaultAddr.address2, _defaultAddr.city, _defaultAddr.country].filter(Boolean).join(', ')
+          : (matchedCust.defaultShippingAddress || matchedCust.shippingAddress || matchedCust.billingAddress || matchedCust.address || '');
+        setShippingAddress(_resolvedAddr);
+      }
     }
   };
 
@@ -810,8 +1106,10 @@ const ProformaInvoice = () => {
           isOpen={isProductSelectorOpen}
           onClose={() => setIsProductSelectorOpen(false)}
           onSelect={handleAddSingleProduct}
+          onInlineAdd={handleFastEntryAdd}
           title="Select Items"
           actionLabel="Add to PI"
+          mode="sales"
         />
         <StockAvailabilityModal
           isOpen={isItemStockModalOpen}
@@ -919,7 +1217,10 @@ const ProformaInvoice = () => {
                   </select>
                   <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={14} />
                 </div>
-
+                <ExportDropdown
+                  onExportExcel={() => exportToExcel(filteredProformas, PROFORMA_COLUMNS, 'Proforma_Invoices')}
+                  onExportPdf={() => exportToPDF(filteredProformas, PROFORMA_COLUMNS, 'Proforma Invoices', 'Proforma_Invoices')}
+                />
                 <button onClick={handleCreateNew} className="flex items-center justify-center gap-1 px-4 py-2 bg-yellow-400 text-slate-900 text-sm font-bold rounded-lg hover:bg-yellow-500 transition-colors shadow-sm whitespace-nowrap">
                   <Plus size={16} /> Create New
                 </button>
@@ -956,7 +1257,7 @@ const ProformaInvoice = () => {
                       <td className="px-4 py-3 text-blue-600 font-medium">{pi.piNumber}</td>
                       <td className="px-4 py-3 text-slate-600">{pi.piDate}</td>
                       <td className="px-4 py-3 text-slate-700 font-medium">{pi.customerName}</td>
-                      <td className="px-4 py-3 text-right font-bold text-slate-800">AED {Number(pi.grandTotal || 0).toFixed(2)}</td>
+                      <td className="px-4 py-3 text-right font-bold text-slate-800"><CurrencyAmount value={pi.grandTotal || 0} currency={currency} /></td>
                       <td className="px-4 py-3 text-right">{renderStatusBadge(pi.status)}</td>
                     </tr>
                   ))}
@@ -1005,7 +1306,13 @@ const ProformaInvoice = () => {
                     <div className="grid grid-cols-2 gap-3">
                       <div className="flex flex-col col-span-2 sm:col-span-1">
                         <label className="text-xs font-semibold text-slate-500 mb-1">PI Number</label>
-                        <input type="text" value={piNumber} readOnly className="text-sm p-1.5 bg-slate-50 border border-slate-200/50 rounded text-slate-700" />
+                        <input
+                          type="text"
+                          value={piNumber}
+                          onChange={(e) => setPiNumber(e.target.value)}
+                          className="text-sm p-1.5 bg-white border border-slate-300 rounded text-slate-700 focus:border-yellow-400 outline-none"
+                          placeholder="e.g. PI-1001"
+                        />
                       </div>
                       <div className="flex flex-col col-span-2 sm:col-span-1">
                         <label className="text-xs font-semibold text-slate-500 mb-1">PI Date <span className="text-red-500">*</span></label>
@@ -1015,124 +1322,174 @@ const ProformaInvoice = () => {
                         <label className="text-xs font-semibold text-slate-500 mb-1">Valid Till <span className="text-red-500">*</span></label>
                         <input type="date" value={validUntil} onChange={(e) => setValidUntil(e.target.value)} className="text-sm p-1.5 border border-slate-300/50 rounded text-slate-700" />
                       </div>
-                      <div className="flex flex-col relative col-span-2">
-                        <label className="text-xs font-semibold text-slate-500 mb-1">Link Quotation (Opt)</label>
-                        <div className="relative group">
-                          <input
-                            type="text"
-                            value={linkedQuote}
-                            onChange={(e) => setLinkedQuote(e.target.value)}
-                            onClick={(e) => { e.stopPropagation(); setIsQuotationOpen(true); }}
-                            placeholder="Select Quotation..."
-                            className="w-full text-sm p-1.5 border border-slate-300/50 rounded text-slate-700 cursor-pointer pr-8"
-                          />
-                          <ChevronDown size={14} className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
+                      {/* Source Type Selector */}
+                      <div className="flex flex-col col-span-2">
+                        <label className="text-xs font-semibold text-slate-500 mb-1">Source Type</label>
+                        <div className="flex gap-2">
+                          {['None', 'Quotation', 'Sales Order'].map(type => (
+                            <button
+                              key={type}
+                              type="button"
+                              onClick={() => {
+                                setSourceType(type);
+                                setLinkedQuote('');
+                                setLinkedSO('');
+                                setSourceSearch('');
+                                setIsQuotationOpen(false);
+                                setIsSalesOrderOpen(false);
+                              }}
+                              className={`flex-1 text-xs py-1.5 px-2 rounded border font-semibold transition-colors ${
+                                sourceType === type
+                                  ? 'bg-[#F5C742] border-[#F5C742] text-slate-900'
+                                  : 'bg-white border-slate-300/50 text-slate-500 hover:border-[#F5C742]'
+                              }`}
+                            >
+                              {type === 'None' ? 'None' : `Link ${type}`}
+                            </button>
+                          ))}
                         </div>
-                        {isQuotationOpen && (
-                          <div className="absolute top-full left-0 w-full bg-white border border-slate-200 rounded-md shadow-xl mt-1 max-h-48 overflow-y-auto z-50">
-                            {quotationsList.map(q => (
-                              <div key={q.id} className="px-3 py-2 text-xs hover:bg-slate-50 cursor-pointer text-slate-700 border-b border-slate-50 last:border-0 flex justify-between" onClick={() => handleSelectQuotation(q)}>
-                                <span className="font-bold">{q.qtnNo}</span>
-                                <span className="text-slate-400 truncate ml-2">{q.customer}</span>
-                              </div>
-                            ))}
-                          </div>
-                        )}
                       </div>
-                      <div className="flex flex-col relative col-span-2">
-                        <label className="text-xs font-semibold text-slate-500 mb-1">Link Sales Order (Opt)</label>
-                        <div className="relative group">
-                          <input
-                            type="text"
-                            value={linkedSO}
-                            onChange={(e) => setLinkedSO(e.target.value)}
-                            onClick={(e) => { e.stopPropagation(); setIsSalesOrderOpen(true); }}
-                            placeholder="Select Sales Order..."
-                            className="w-full text-sm p-1.5 border border-slate-300/50 rounded text-slate-700 cursor-pointer pr-8"
-                          />
-                          <ChevronDown size={14} className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
+
+                      {/* Searchable Source Picker */}
+                      {sourceType !== 'None' && (
+                        <div className="flex flex-col relative col-span-2">
+                          <label className="text-xs font-semibold text-slate-500 mb-1">
+                            {sourceType === 'Quotation' ? 'Select Quotation' : 'Select Sales Order'}
+                          </label>
+                          <div className="relative">
+                            <div
+                              className="w-full text-sm p-1.5 border border-slate-300/50 rounded flex items-center gap-2 cursor-pointer hover:border-[#F5C742] transition-colors bg-white pr-8"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                if (sourceType === 'Quotation') { setIsQuotationOpen(true); setIsSalesOrderOpen(false); }
+                                else { setIsSalesOrderOpen(true); setIsQuotationOpen(false); }
+                                setSourceSearch('');
+                              }}
+                            >
+                              <Search size={13} className="text-slate-400 shrink-0" />
+                              <span className={`flex-1 truncate ${(sourceType === 'Quotation' ? linkedQuote : linkedSO) ? 'text-slate-700 font-medium' : 'text-slate-400'}`}>
+                                {sourceType === 'Quotation'
+                                  ? (linkedQuote || 'Search quotation...')
+                                  : (linkedSO || 'Search sales order...')}
+                              </span>
+                              {(sourceType === 'Quotation' ? linkedQuote : linkedSO) && (
+                                <button
+                                  type="button"
+                                  onClick={(e) => { e.stopPropagation(); sourceType === 'Quotation' ? setLinkedQuote('') : setLinkedSO(''); }}
+                                  className="text-slate-400 hover:text-slate-600"
+                                >
+                                  <X size={12} />
+                                </button>
+                              )}
+                            </div>
+                            <ChevronDown size={14} className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
+
+                            {/* Quotation dropdown */}
+                            {isQuotationOpen && sourceType === 'Quotation' && (
+                              <div className="absolute top-full left-0 w-full bg-white border border-slate-200 rounded-md shadow-xl mt-1 z-50">
+                                <div className="p-2 border-b border-slate-100">
+                                  <div className="flex items-center gap-2 bg-slate-50 border border-slate-200 rounded px-2 py-1">
+                                    <Search size={12} className="text-slate-400 shrink-0" />
+                                    <input
+                                      autoFocus
+                                      type="text"
+                                      value={sourceSearch}
+                                      onChange={e => setSourceSearch(e.target.value)}
+                                      onClick={e => e.stopPropagation()}
+                                      placeholder="Search by number or customer..."
+                                      className="flex-1 text-xs bg-transparent outline-none text-slate-700"
+                                    />
+                                  </div>
+                                </div>
+                                <div className="max-h-48 overflow-y-auto">
+                                  {quotationsList
+                                    .filter(q => {
+                                      const s = sourceSearch.toLowerCase();
+                                      return !s || (q.qtnNo || '').toLowerCase().includes(s) || (q.customer || q.customerName || '').toLowerCase().includes(s);
+                                    })
+                                    .map(q => (
+                                      <div key={q.id} className="px-3 py-2 text-xs hover:bg-slate-50 cursor-pointer text-slate-700 border-b border-slate-50 last:border-0 flex justify-between items-center" onClick={() => handleSelectQuotation(q)}>
+                                        <span className="font-bold text-slate-800">{q.qtnNo}</span>
+                                        <span className="text-slate-400 truncate ml-2">{q.customer || q.customerName}</span>
+                                      </div>
+                                    ))}
+                                  {quotationsList.filter(q => { const s = sourceSearch.toLowerCase(); return !s || (q.qtnNo || '').toLowerCase().includes(s) || (q.customer || q.customerName || '').toLowerCase().includes(s); }).length === 0 && (
+                                    <div className="px-3 py-4 text-xs text-slate-400 text-center">No quotations found</div>
+                                  )}
+                                </div>
+                              </div>
+                            )}
+
+                            {/* Sales Order dropdown */}
+                            {isSalesOrderOpen && sourceType === 'Sales Order' && (
+                              <div className="absolute top-full left-0 w-full bg-white border border-slate-200 rounded-md shadow-xl mt-1 z-50">
+                                <div className="p-2 border-b border-slate-100">
+                                  <div className="flex items-center gap-2 bg-slate-50 border border-slate-200 rounded px-2 py-1">
+                                    <Search size={12} className="text-slate-400 shrink-0" />
+                                    <input
+                                      autoFocus
+                                      type="text"
+                                      value={sourceSearch}
+                                      onChange={e => setSourceSearch(e.target.value)}
+                                      onClick={e => e.stopPropagation()}
+                                      placeholder="Search by number or customer..."
+                                      className="flex-1 text-xs bg-transparent outline-none text-slate-700"
+                                    />
+                                  </div>
+                                </div>
+                                <div className="max-h-48 overflow-y-auto">
+                                  {salesOrdersList
+                                    .filter(so => {
+                                      const s = sourceSearch.toLowerCase();
+                                      return !s || (so.soNumber || '').toLowerCase().includes(s) || (so.customerName || '').toLowerCase().includes(s);
+                                    })
+                                    .map(so => (
+                                      <div key={so.id} className="px-3 py-2 text-xs hover:bg-slate-50 cursor-pointer text-slate-700 border-b border-slate-50 last:border-0 flex justify-between items-center" onClick={() => handleSelectSalesOrder(so)}>
+                                        <span className="font-bold text-slate-800">{so.soNumber}</span>
+                                        <span className="text-slate-400 truncate ml-2">{so.customerName}</span>
+                                      </div>
+                                    ))}
+                                  {salesOrdersList.filter(so => { const s = sourceSearch.toLowerCase(); return !s || (so.soNumber || '').toLowerCase().includes(s) || (so.customerName || '').toLowerCase().includes(s); }).length === 0 && (
+                                    <div className="px-3 py-4 text-xs text-slate-400 text-center">No sales orders found</div>
+                                  )}
+                                </div>
+                              </div>
+                            )}
+                          </div>
                         </div>
-                        {isSalesOrderOpen && (
-                          <div className="absolute top-full left-0 w-full bg-white border border-slate-200 rounded-md shadow-xl mt-1 max-h-48 overflow-y-auto z-50">
-                            {salesOrdersList.map(so => (
-                              <div key={so.id} className="px-3 py-2 text-xs hover:bg-slate-50 cursor-pointer text-slate-700 border-b border-slate-50 last:border-0 flex justify-between" onClick={() => handleSelectSalesOrder(so)}>
-                                <span className="font-bold">{so.soNumber}</span>
-                                <span className="text-slate-400 truncate ml-2">{so.customerName}</span>
-                              </div>
-                            ))}
-                          </div>
-                        )}
-                      </div>
+                      )}
                     </div>
                   </div>
                 </div>
 
-                {/* 2. Customer Details Card */}
-                <div className="bg-white rounded-lg border border-slate-200/50 shadow-sm relative">
-                  <div className="px-5 py-3 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
-                    <h3 className="text-sm font-bold text-slate-800 flex items-center gap-2">
-                      Customer Details
-                    </h3>
-                  </div>
-                  <div className="p-5">
-                    <div className="space-y-4">
-                      <div className="relative">
-                        <label className="text-xs font-semibold text-slate-500 mb-2 block">Customer <span className="text-red-500">*</span></label>
-                        <div
-                          className="w-full text-sm p-1.5 border border-slate-300/50 rounded flex items-center gap-3 cursor-pointer hover:border-yellow-400 transition-colors bg-white shadow-sm"
-                          onClick={() => setIsCustomerSearchOpen(true)}
-                        >
-                          <Search size={16} className="text-slate-400 shrink-0" />
-                          <span className="flex-1 truncate font-medium text-slate-700">
-                            {selectedCustomer ? `${selectedCustomer.code} - ${selectedCustomer.name}` : 'Search customer...'}
-                          </span>
-                        </div>
-                      </div>
+                <CustomerShippingPanel
+                    selectedCustomer={selectedCustomer}
+                    onOpenCustomerSearch={() => setIsCustomerSearchOpen(true)}
+                    shippingAddress={shippingAddress}
+                    onShippingChange={setShippingAddress}
+                    isReadOnly={isReadOnly}
+                    currency={currency}
+                />
 
-                      {selectedCustomer && (
-                        <div className="bg-slate-50 border border-slate-200/50 rounded p-3 text-sm animate-in fade-in zoom-in-95 duration-200">
-                          <div className="flex justify-between items-start">
-                            <div className="space-y-1">
-                              <div className="font-bold text-slate-800">{selectedCustomer.name}</div>
-                              <div className="text-xs text-slate-500">Code: {selectedCustomer.code}</div>
-                              <div className="text-xs text-slate-500">TRN: {selectedCustomer.trn || 'N/A'}</div>
-                              <div className="text-xs text-slate-500">Phone: {selectedCustomer.mobile || selectedCustomer.phone || 'N/A'}</div>
-                            </div>
-                            <div className="text-right">
-                              <span className={`text-[10px] font-bold px-2 py-0.5 rounded border ${selectedCustomer.creditStatus === 'Good' ? 'bg-emerald-100 text-emerald-700 border-emerald-200' : 'bg-red-50 text-red-700 border-red-100'}`}>
-                                Credit: {selectedCustomer.creditStatus === 'Good' ? 'Healthy' : 'Review'}
-                              </span>
-                            </div>
-                          </div>
-                        </div>
-                      )}
-
-                      <div className="border-t border-slate-100/50 pt-3">
-                        <label className="text-xs font-semibold text-slate-500 mb-2 block">Shipping Address</label>
-                        <textarea
-                          rows="3"
-                          value={shippingAddress}
-                          onChange={(e) => setShippingAddress(e.target.value)}
-                          className="w-full text-sm p-2 border border-slate-300/50 rounded outline-none focus:border-yellow-400 transition-colors resize-none placeholder:text-slate-300 bg-white"
-                          placeholder="Enter shipping details if different from registered address..."
-                        ></textarea>
-                      </div>
-                    </div>
-                  </div>
-
-                  <CustomerSelector
+                <CustomerSelector
                     isOpen={isCustomerSearchOpen}
                     onClose={() => setIsCustomerSearchOpen(false)}
-                    onSelect={(cust) => setSelectedCustomer(cust)}
+                    onSelect={(cust) => {
+                      setSelectedCustomer(cust);
+                      const _defaultAddr = (cust.savedAddresses || []).find(a => a.isDefault);
+                      const _resolvedAddr = _defaultAddr
+                          ? [_defaultAddr.address1, _defaultAddr.address2, _defaultAddr.city, _defaultAddr.country].filter(Boolean).join(', ')
+                          : (cust.defaultShippingAddress || cust.shippingAddress || cust.billingAddress || cust.address || '');
+                      setShippingAddress(_resolvedAddr);
+                    }}
                     customers={customersList}
                     selectedCode={selectedCustomer?.code || ''}
                     onCustomerCreated={async () => {
                       const data = await getAllCustomers();
                       setCustomersList(Array.isArray(data) ? data : []);
                     }}
-                  />
-                </div>
-              </div>
+                />
+              </div> {/* End Left Column */}
 
               {/* --- MIDDLE COLUMN: ITEMS & NOTES --- */}
               <div className="xl:col-span-2 space-y-4">
@@ -1143,12 +1500,14 @@ const ProformaInvoice = () => {
                       <ShoppingCart size={16} className="text-yellow-500" /> Proforma Invoice Items
                     </h3>
                     {!isReadOnly && (
-                      <button
-                        onClick={() => setIsProductSelectorOpen(true)}
-                        className="flex items-center gap-1 px-3 py-1.5 bg-yellow-400 text-slate-900 text-xs font-medium rounded hover:bg-yellow-500"
-                      >
-                        <Plus size={14} /> Select from Products
-                      </button>
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={() => setIsProductSelectorOpen(true)}
+                          className="flex items-center gap-1 px-3 py-1.5 bg-yellow-400 text-slate-900 text-xs font-medium rounded hover:bg-yellow-500"
+                        >
+                          <Plus size={14} /> Select from Products
+                        </button>
+                      </div>
                     )}
                   </div>
 
@@ -1197,7 +1556,10 @@ const ProformaInvoice = () => {
                                   onItemChange={handleItemChange}
                                   onFocusCode={() => setFocusedItem(item)}
                                   onOpenProductSelection={!isReadOnly ? () => setIsProductSelectorOpen(true) : undefined}
-                                  onCheckStock={() => { setSelectedStockItem(item); setIsItemStockModalOpen(true); }}
+                                  onCheckStock={() => {
+                                    setSelectedStockItem(item);
+                                    setIsItemStockModalOpen(true);
+                                  }}
                                   onOpenSettings={(selectedItem) => setSelectedAddonItem({ ...selectedItem })}
                                   showSettings={Boolean(item.code || item.desc || item.remarks)}
                                   showTaxDiscount={true}
@@ -1332,86 +1694,6 @@ const ProformaInvoice = () => {
                   </div>
                 </div>
 
-                {/* 5. Collect Payment Card */}
-                <div className="bg-white rounded-lg border border-slate-200/50 shadow-sm relative">
-                  <div className="px-5 py-3 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
-                    <div className="space-y-0.5">
-                      <h3 className="text-sm font-bold text-slate-800 flex items-center gap-2">
-                        <Wallet size={16} className="text-emerald-500" /> Collect Payment
-                      </h3>
-                      <p className="text-[10px] text-slate-400 font-medium">Record advance payments for this Proforma</p>
-                    </div>
-                  </div>
-                  <div className="p-5">
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                      {/* Row 1 */}
-                      <div className="flex flex-col">
-                        <label className="text-xs font-semibold text-slate-500 mb-1">Payment Method</label>
-                        <select
-                          value={paymentMethod}
-                          onChange={(e) => setPaymentMethod(e.target.value)}
-                          className="w-full text-xs p-1.5 border border-slate-200/50 rounded text-slate-700 outline-none focus:border-emerald-500 bg-white"
-                        >
-                          {['Cash', 'Bank Transfer', 'Cheque', 'Credit Card'].map(m => <option key={m} value={m}>{m}</option>)}
-                        </select>
-                      </div>
-
-                      <div className="flex flex-col">
-                        <label className="text-xs font-semibold text-slate-500 mb-1">Reference / Txn ID</label>
-                        <input
-                          type="text"
-                          value={paymentRef}
-                          onChange={(e) => setPaymentRef(e.target.value)}
-                          placeholder="Check #, Transfer ID, etc."
-                          className="w-full text-xs p-1.5 border border-slate-200/50 rounded text-slate-700 outline-none focus:border-emerald-500 bg-white"
-                        />
-                      </div>
-
-                      {/* Row 2 */}
-                      <div className="flex flex-col relative w-full">
-                        <div className="flex justify-between items-center mb-1">
-                          <label className="text-xs font-semibold text-slate-500">Advance Amount</label>
-                          <button
-                            onClick={(e) => { e.preventDefault(); setAdvanceAmount(grandTotal.toFixed(2)); }}
-                            className="text-[10px] font-bold text-blue-600 hover:underline flex items-center gap-1"
-                          >
-                            Auto Fill Full
-                          </button>
-                        </div>
-                        <div className="relative">
-                          <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400 font-bold text-[10px] pointer-events-none">AED</span>
-                          <input
-                            type="number"
-                            value={advanceAmount === 0 ? '' : advanceAmount}
-                            onChange={(e) => setAdvanceAmount(e.target.value)}
-                            className="w-full text-sm font-bold p-1.5 pl-10 border border-slate-200/50 rounded text-slate-800 outline-none focus:border-emerald-500 bg-white"
-                            placeholder="0.00"
-                          />
-                        </div>
-                      </div>
-
-                      <div className="flex flex-col">
-                        <label className="text-xs font-semibold text-slate-500 mb-1">Payment Notes</label>
-                        <input
-                          type="text"
-                          value={paymentNotes}
-                          onChange={(e) => setPaymentNotes(e.target.value)}
-                          className="w-full text-xs p-1.5 border border-slate-200/50 rounded text-slate-700 outline-none focus:border-emerald-500 bg-white"
-                          placeholder="Add any notes about this payment..."
-                        />
-                      </div>
-                    </div>
-
-                    <div className="mt-6 pt-5 border-t border-slate-100 flex justify-end">
-                      <button
-                        onClick={handleLogPayment}
-                        className="px-6 py-2 bg-emerald-500 text-white rounded font-bold text-sm shadow-sm hover:bg-emerald-600 active:scale-95 transition-all flex items-center gap-2"
-                      >
-                        <CreditCard size={18} /> Record Payment
-                      </button>
-                    </div>
-                  </div>
-                </div>
               </div>
 
               {/* --- RIGHT COLUMN: SUMMARY & SIDEBAR --- */}
@@ -1421,11 +1703,19 @@ const ProformaInvoice = () => {
                   <div className="px-5 py-3 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
                     <h3 className="text-sm font-bold text-slate-800">Proforma Summary</h3>
                   </div>
-                  <div className="p-5 space-y-4">
-                    <div className="space-y-2 text-xs">
+                    <div className="p-5 space-y-4">
+                    <div className="space-y-2 text-xs" data-bb-skip-aed-symbol="true">
                       <div className="flex justify-between text-slate-600">
+                        <span>Gross Amount</span>
+                        <CurrencyAmount value={grossTotal} currency={currency} className="font-medium" />
+                      </div>
+                      <div className="flex justify-between text-red-500">
+                        <span>Item Discount</span>
+                        <span className="font-medium">-<CurrencyAmount value={totalItemDiscount} currency={currency} /></span>
+                      </div>
+                      <div className="flex justify-between text-slate-800 font-bold border-t border-slate-100 pt-1">
                         <span>Sub Total</span>
-                        <span className="font-medium">{subTotal.toFixed(2)} AED</span>
+                        <CurrencyAmount value={subTotal} currency={currency} />
                       </div>
                       <div className="flex justify-between text-slate-600 items-center">
                         <div className="flex items-center gap-2">
@@ -1437,22 +1727,24 @@ const ProformaInvoice = () => {
                             onChange={(e) => setBillDiscount(Number(e.target.value))}
                           />
                         </div>
-                        <span className="font-medium">-{billDiscountAmount.toFixed(2)} AED</span>
+                        <span className="font-medium">
+                          {billDiscountAmount > 0 ? '-' : ''}<CurrencyAmount value={billDiscountAmount} currency={currency} />
+                        </span>
                       </div>
                       <div className="flex justify-between text-slate-600">
-                        <span>Tax Total (5%)</span>
-                        <span className="font-medium">{totalTax.toFixed(2)} AED</span>
+                        <span>Tax Total</span>
+                        <CurrencyAmount value={totalTax} currency={currency} className="font-medium" />
                       </div>
                     </div>
 
-                    <div className="pt-3 border-t border-slate-100 mt-3">
+                    <div className="pt-3 border-t border-slate-100 mt-3" data-bb-skip-aed-symbol="true">
                       <div className="flex justify-between items-center mb-1 text-xs">
                         <span className="font-semibold text-slate-500">Grand Total</span>
-                        <span className="font-bold text-slate-900">{grandTotal.toFixed(2)} AED</span>
+                        <CurrencyAmount value={grandTotal} currency={currency} className="font-bold text-slate-900" />
                       </div>
                       <div className="flex justify-between items-center text-xs mt-2 text-emerald-600 font-bold border-t border-slate-100/50 pt-2">
                         <span>Balance Due</span>
-                        <span>{balanceDue.toFixed(2)} AED</span>
+                        <CurrencyAmount value={balanceDue} currency={currency} />
                       </div>
                     </div>
 
@@ -1557,23 +1849,170 @@ const ProformaInvoice = () => {
               <div className="flex gap-2">
                 <button
                   onClick={handleSaveDraft}
-                  className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-slate-300 text-slate-700 rounded text-xs font-bold hover:bg-slate-50 transition-colors shadow-sm"
+                  disabled={isSaving}
+                  className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-slate-300 text-slate-700 rounded text-xs font-bold hover:bg-slate-50 transition-colors shadow-sm disabled:opacity-50"
                 >
-                  <Save size={14} /> Save Draft
+                  <Save size={14} /> {isSaving ? 'Saving...' : 'Save Draft'}
                 </button>
                 {status !== 'ISSUED' && (
                   <button
                     onClick={handleIssuePI}
-                    className="flex items-center gap-1.5 px-5 py-1.5 bg-yellow-400 text-slate-900 rounded text-xs font-bold hover:bg-yellow-500 transition-all shadow-sm"
+                    disabled={isSaving}
+                    className="flex items-center gap-1.5 px-5 py-1.5 bg-yellow-400 text-slate-900 rounded text-xs font-bold hover:bg-yellow-500 transition-all shadow-sm disabled:opacity-50"
                   >
-                    <CheckCircle2 size={14} /> Issue Proforma
+                    <CheckCircle2 size={14} /> {isSaving ? 'Processing...' : 'Issue Proforma'}
                   </button>
                 )}
+                <button
+                  onClick={handleOpenPaymentModal}
+                  className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-slate-300 text-slate-700 rounded text-xs font-bold hover:bg-slate-50 transition-colors shadow-sm"
+                >
+                  <DollarSign size={14} /> Pay
+                </button>
               </div>
             </div>
           )
         }
       </main >
+
+      {/* Receive Payment Modal */}
+      {isPaymentModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-[1px]">
+          <div className="bg-white w-[500px] rounded-lg shadow-2xl overflow-hidden">
+            {/* Header */}
+            <div className="px-6 py-4 border-b border-slate-100 flex justify-between items-start">
+              <div>
+                <h3 className="text-lg font-bold text-slate-800">Receive Payment</h3>
+                <p className="text-xs text-slate-500 mt-1">Record a payment received from the customer for this invoice</p>
+              </div>
+              <button onClick={() => setIsPaymentModalOpen(false)} className="text-slate-400 hover:text-slate-600">
+                <X size={20} />
+              </button>
+            </div>
+
+            {/* Body */}
+            <div className="p-6 space-y-4">
+              {/* Balance Display */}
+              <div className="flex justify-between items-center text-sm mb-2">
+                <span className="text-slate-500 font-medium">Balance Due</span>
+                <CurrencyAmount
+                  value={Math.max(grandTotal - Number(advanceAmount), 0)}
+                  currency={currency}
+                  className="text-red-600 font-bold text-lg"
+                />
+              </div>
+
+              {/* Date */}
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">Payment Date</label>
+                <input
+                  type="date"
+                  value={modalPaymentDate}
+                  onChange={e => setModalPaymentDate(e.target.value)}
+                  className="w-full text-sm p-2 border border-slate-300 rounded focus:border-[#F5C742] focus:ring-1 focus:ring-[#F5C742] outline-none"
+                />
+              </div>
+
+              {/* Payment Mode */}
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">Payment Mode</label>
+                <select
+                  value={modalPaymentMode}
+                  onChange={e => { setModalPaymentMode(e.target.value); setModalBankAccount(''); setModalChequeDate(new Date().toISOString().split('T')[0]); }}
+                  className="w-full text-sm p-2 border border-slate-300 rounded focus:border-[#F5C742] focus:ring-1 focus:ring-[#F5C742] outline-none bg-white"
+                >
+                  <option>Cash</option>
+                  <option>Bank Transfer</option>
+                  <option>Cheque</option>
+                  <option>Credit Card</option>
+                </select>
+              </div>
+
+              {/* Bank Account — non-Cash modes */}
+              {modalPaymentMode !== 'Cash' && (
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">Bank Account</label>
+                  <select
+                    value={modalBankAccount}
+                    onChange={e => setModalBankAccount(e.target.value)}
+                    className="w-full text-sm p-2 border border-slate-300 rounded focus:border-[#F5C742] focus:ring-1 focus:ring-[#F5C742] outline-none bg-white"
+                  >
+                    <option value="">Select bank account...</option>
+                    {bankAccountOptions.map(acc => (
+                      <option key={acc.id} value={acc.name}>{acc.code} — {acc.name}</option>
+                    ))}
+                  </select>
+                </div>
+              )}
+
+              {/* Cheque Date — Cheque only */}
+              {modalPaymentMode === 'Cheque' && (
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">Cheque Date</label>
+                  <input
+                    type="date"
+                    value={modalChequeDate}
+                    onChange={e => setModalChequeDate(e.target.value)}
+                    className="w-full text-sm p-2 border border-slate-300 rounded focus:border-[#F5C742] focus:ring-1 focus:ring-[#F5C742] outline-none"
+                  />
+                </div>
+              )}
+
+              {/* Amount */}
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">Amount</label>
+                <input
+                  type="number"
+                  value={modalPaymentAmount}
+                  onChange={e => setModalPaymentAmount(e.target.value)}
+                  className="w-full text-sm p-2 border border-slate-300 rounded focus:border-[#F5C742] focus:ring-1 focus:ring-[#F5C742] outline-none"
+                />
+              </div>
+
+              {/* Reference */}
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">Reference / Instrument No</label>
+                <input
+                  type="text"
+                  placeholder="Cheque no, Transaction ID, etc."
+                  value={modalPaymentRef}
+                  onChange={e => setModalPaymentRef(e.target.value)}
+                  className="w-full text-sm p-2 border border-slate-300 rounded focus:border-[#F5C742] focus:ring-1 focus:ring-[#F5C742] outline-none"
+                />
+              </div>
+
+              {/* Notes */}
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">Notes</label>
+                <textarea
+                  rows={2}
+                  placeholder="Additional notes..."
+                  value={modalNotes}
+                  onChange={e => setModalNotes(e.target.value)}
+                  className="w-full text-sm p-2 border border-slate-300 rounded focus:border-[#F5C742] focus:ring-1 focus:ring-[#F5C742] outline-none resize-none"
+                />
+              </div>
+            </div>
+
+            {/* Footer */}
+            <div className="px-6 py-4 bg-slate-50 flex justify-end gap-3 border-t border-slate-100">
+              <button
+                onClick={() => setIsPaymentModalOpen(false)}
+                className="px-4 py-2 bg-white border border-slate-300 text-slate-700 text-xs font-bold rounded hover:bg-slate-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleAddPaymentFromModal}
+                className="px-6 py-2 bg-[#F5C742] text-slate-900 text-xs font-bold rounded hover:bg-yellow-500 shadow-sm flex items-center gap-2"
+              >
+                <DollarSign size={14} /> Add Payment
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
     </div >
   );
 };

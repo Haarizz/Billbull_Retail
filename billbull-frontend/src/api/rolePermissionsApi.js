@@ -21,6 +21,12 @@ export const rolePermissionsApi = {
     api.get(`/api/role-permissions/by-role/${roleName}`).then((r) => r.data),
 
   /**
+   * Get merged permissions for the current user across all their roles.
+   */
+  getMyPermissions: () =>
+    api.get("/api/role-permissions/me").then((r) => r.data),
+
+  /**
    * Create a new permission row — ADMIN only.
    * payload: { roleName, module, canView, canCreate, canEdit, canApprove, canExport }
    */

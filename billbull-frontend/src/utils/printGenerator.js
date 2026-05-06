@@ -2,6 +2,12 @@ import {
     generateDocumentEmailHtml,
     generateDocumentPrintHtml
 } from './documentTemplateRenderer';
+import { generateReportFilename } from './filenameUtils';
+import {
+    resolveCurrencyDisplayConfig,
+    UAE_DIRHAM_SYMBOL_IMAGE
+} from './countryCurrencyOptions';
+import toast from 'react-hot-toast';
 
 const escapeHtml = (value) =>
     String(value ?? '')
@@ -10,6 +16,28 @@ const escapeHtml = (value) =>
         .replace(/>/g, '&gt;')
         .replace(/"/g, '&quot;')
         .replace(/'/g, '&#39;');
+
+const AED_TOKEN_PATTERN = /(^|[^A-Za-z0-9_])AED(?=$|[^A-Za-z0-9_])/gi;
+const AMOUNT_BEFORE_AED_PATTERN = /([+-]?\d[\d,]*(?:\.\d+)?)(\s+)AED(?=$|[^A-Za-z0-9_])/gi;
+
+const renderCurrencySymbolHtml = (companyProfile = {}) => {
+    const currencyConfig = resolveCurrencyDisplayConfig(companyProfile);
+    if (currencyConfig.hasImage) {
+        return `<img src="${UAE_DIRHAM_SYMBOL_IMAGE}" alt="${escapeHtml(currencyConfig.ariaLabel)}" style="height:0.82em;width:auto;display:inline-block;vertical-align:-0.08em;margin:0 0.12em;" />`;
+    }
+
+    return escapeHtml(currencyConfig.label);
+};
+
+const renderTextWithCurrencySymbols = (value, companyProfile = {}) => {
+    const currencySymbolHtml = renderCurrencySymbolHtml(companyProfile);
+    
+    return (
+    escapeHtml(value)
+        .replace(AMOUNT_BEFORE_AED_PATTERN, `${currencySymbolHtml} $1`)
+        .replace(AED_TOKEN_PATTERN, `$1${currencySymbolHtml}`)
+    );
+};
 
 export const generatePrintHtml = (template, data, options = {}) =>
     generateDocumentPrintHtml(template, data, options);
@@ -95,13 +123,13 @@ export const generateReportPrintHtml = (_template, reportTitle, columns, data, c
         }
     `;
 
-    const headers = columns.map((column) => `<th>${escapeHtml(column.header)}</th>`).join('');
+    const headers = columns.map((column) => `<th>${renderTextWithCurrencySymbols(column.header, companyProfile)}</th>`).join('');
     const rows = data.map((row) => `
         <tr>
             ${columns.map((column) => {
                 const value = row[column.key];
                 const isNumeric = typeof value === 'number';
-                return `<td class="${isNumeric ? 'text-right' : ''}">${value !== null && value !== undefined ? escapeHtml(value) : '-'}</td>`;
+                return `<td class="${isNumeric ? 'text-right' : ''}">${value !== null && value !== undefined ? renderTextWithCurrencySymbols(value, companyProfile) : '-'}</td>`;
             }).join('')}
         </tr>
     `).join('');
@@ -111,7 +139,7 @@ export const generateReportPrintHtml = (_template, reportTitle, columns, data, c
         <html lang="en">
         <head>
             <meta charset="UTF-8" />
-            <title>${escapeHtml(reportTitle)}</title>
+            <title>${escapeHtml(generateReportFilename(reportTitle))}</title>
             <style>${pageStyles}</style>
         </head>
         <body>
@@ -147,25 +175,40 @@ export const generateReportPrintHtml = (_template, reportTitle, columns, data, c
 export const printHtml = (htmlContent) => {
     const printWindow = window.open('', '_blank', 'width=960,height=760');
     if (!printWindow) {
-        alert('Pop-up blocked! Please allow pop-ups for this site.');
+        toast.error('Pop-up blocked! Please allow pop-ups for this site.');
         return;
     }
+
+    let hasPrinted = false;
+    const printDate = new Date().toISOString().slice(0, 10);
+    const runPrint = () => {
+        if (hasPrinted || printWindow.closed) return;
+        hasPrinted = true;
+        printWindow.focus();
+        printWindow.print();
+    };
 
     printWindow.document.open();
     printWindow.document.write(htmlContent);
     printWindow.document.close();
 
+    // Ensure the title is set for the Save as PDF filename
+    const titleMatch = htmlContent.match(/<title>(.*?)<\/title>/i);
+    if (titleMatch && titleMatch[1]) {
+        printWindow.document.title = titleMatch[1];
+    }
+
+    try {
+        printWindow.history.replaceState(null, '', `/print/${printDate}`);
+    } catch {
+        // Browser print helpers may block history changes in some contexts.
+    }
+
     printWindow.onload = () => {
-        setTimeout(() => {
-            printWindow.focus();
-            printWindow.print();
-        }, 300);
+        setTimeout(runPrint, 300);
     };
 
     setTimeout(() => {
-        if (printWindow && !printWindow.closed) {
-            printWindow.focus();
-            printWindow.print();
-        }
+        runPrint();
     }, 900);
 };

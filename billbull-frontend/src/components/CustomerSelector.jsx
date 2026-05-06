@@ -1,7 +1,9 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import ReactDOM from 'react-dom';
 import { Search, X, Plus, User, Check, Phone, Mail, MapPin, ChevronDown } from 'lucide-react';
-import { createCustomer, getCustomerGroups } from '../api/customerledgerApi';
+import { createCustomer, CUSTOMER_GROUPS } from '../api/customerledgerApi';
+import { useBranch } from '../context/BranchContext';
+import toast from 'react-hot-toast';
 
 // ==========================================
 // CUSTOMER SELECTOR — Search Modal + New Customer Panel
@@ -22,6 +24,7 @@ const CustomerSelector = ({
     selectedCode = '',
     onCustomerCreated
 }) => {
+    const { defaultBranchName } = useBranch();
     const [searchQuery, setSearchQuery] = useState('');
     const [highlightedIndex, setHighlightedIndex] = useState(0);
     const searchInputRef = useRef(null);
@@ -29,32 +32,16 @@ const CustomerSelector = ({
 
     // New Customer Panel
     const [isNewCustomerOpen, setIsNewCustomerOpen] = useState(false);
-    const [customerGroups, setCustomerGroups] = useState(['Retail', 'Wholesale', 'VIP', 'Corporate']);
     const [newCust, setNewCust] = useState({
         code: '',
         name: '',
-        groupType: 'Retail',
-        address: '',
+        group: 'Retail',
+        billingAddress: '',
         mobile: '',
         email: '',
         trn: ''
     });
     const [isSaving, setIsSaving] = useState(false);
-
-    // Fetch customer groups
-    useEffect(() => {
-        const loadGroups = async () => {
-            try {
-                const groups = await getCustomerGroups();
-                if (Array.isArray(groups) && groups.length > 0) {
-                    setCustomerGroups(groups);
-                }
-            } catch (err) {
-                console.error('Failed to load customer groups', err);
-            }
-        };
-        loadGroups();
-    }, []);
 
     // Focus search on open
     useEffect(() => {
@@ -152,20 +139,21 @@ const CustomerSelector = ({
     // Handle new customer save
     const handleSaveNewCustomer = async () => {
         if (!newCust.name.trim()) {
-            alert('Customer Name is required');
+            toast.error('Customer Name is required');
             return;
         }
 
         setIsSaving(true);
         try {
             const payload = {
-                code: newCust.code.trim() || undefined, // Let backend auto-generate if empty
+                code: newCust.code.trim() || undefined,
                 name: newCust.name.trim(),
-                group: newCust.groupType,        // QA-004: CustomerDTO field is 'group', not 'groupType'
-                billingAddress: newCust.address.trim(), // QA-004: CustomerDTO field is 'billingAddress'
+                group: newCust.group,
+                billingAddress: newCust.billingAddress.trim(),
                 mobile: newCust.mobile.trim(),
                 email: newCust.email.trim(),
                 trn: newCust.trn.trim(),
+                branch: defaultBranchName || '',
                 payTerms: 'Cash',
                 creditStatus: 'Good',
                 balance: 0
@@ -174,7 +162,7 @@ const CustomerSelector = ({
             const saved = await createCustomer(payload);
 
             // Reset form
-            setNewCust({ code: '', name: '', groupType: 'Retail', address: '', mobile: '', email: '', trn: '' });
+            setNewCust({ code: '', name: '', group: 'Retail', billingAddress: '', mobile: '', email: '', trn: '' });
             setIsNewCustomerOpen(false);
 
             // Refresh parent list
@@ -187,7 +175,7 @@ const CustomerSelector = ({
 
         } catch (err) {
             console.error('Failed to create customer', err);
-            alert('Failed to save customer. Please try again.');
+            toast.error('Failed to save customer. Please try again.');
         } finally {
             setIsSaving(false);
         }
@@ -274,7 +262,7 @@ const CustomerSelector = ({
                                                 )}
                                             </div>
                                             <div className="text-[11px] text-slate-400 mt-1">
-                                                Group: {cust.groupType || cust.group || 'General'}
+                                                Group: {cust.group || 'General'}
                                             </div>
                                         </div>
                                         <div className="flex items-center gap-2 shrink-0">
@@ -338,11 +326,11 @@ const CustomerSelector = ({
                                 <label className="block text-xs font-semibold text-slate-600 mb-1">Customer Group</label>
                                 <div className="relative">
                                     <select
-                                        value={newCust.groupType}
-                                        onChange={(e) => setNewCust({ ...newCust, groupType: e.target.value })}
+                                        value={newCust.group}
+                                        onChange={(e) => setNewCust({ ...newCust, group: e.target.value })}
                                         className="w-full text-sm p-2 border border-slate-200 rounded-lg appearance-none bg-white focus:outline-none focus:ring-2 focus:ring-yellow-400 focus:border-yellow-400 pr-8"
                                     >
-                                        {customerGroups.map(g => (
+                                        {CUSTOMER_GROUPS.map(g => (
                                             <option key={g} value={g}>{g}</option>
                                         ))}
                                     </select>
@@ -369,8 +357,8 @@ const CustomerSelector = ({
                             <textarea
                                 rows={2}
                                 placeholder="Enter address"
-                                value={newCust.address}
-                                onChange={(e) => setNewCust({ ...newCust, address: e.target.value })}
+                                value={newCust.billingAddress}
+                                onChange={(e) => setNewCust({ ...newCust, billingAddress: e.target.value })}
                                 className="w-full text-sm p-2 border border-slate-200 rounded-lg resize-none focus:outline-none focus:ring-2 focus:ring-yellow-400 focus:border-yellow-400"
                             />
                         </div>

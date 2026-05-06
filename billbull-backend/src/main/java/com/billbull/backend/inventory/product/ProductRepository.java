@@ -38,13 +38,14 @@ public interface ProductRepository extends JpaRepository<Product, Long> {
         @Query("SELECT p FROM Product p LEFT JOIN FETCH p.brand LEFT JOIN FETCH p.department WHERE p.isActive = true ORDER BY p.name ASC")
         Page<Product> findAllActiveForList(Pageable pageable);
 
-        /** Paginated search — filters on name, code, SKU, or brand name. */
+        /** Paginated search — filters on name, code, SKU, brand name, or any of the product's barcodes. */
         @Query("SELECT p FROM Product p LEFT JOIN FETCH p.brand LEFT JOIN FETCH p.department " +
                         "WHERE p.isActive = true AND (" +
                         "  LOWER(p.name) LIKE LOWER(CONCAT('%', :search, '%')) OR " +
                         "  LOWER(p.code) LIKE LOWER(CONCAT('%', :search, '%')) OR " +
                         "  LOWER(p.sku)  LIKE LOWER(CONCAT('%', :search, '%')) OR " +
-                        "  LOWER(p.brand.name) LIKE LOWER(CONCAT('%', :search, '%'))" +
+                        "  LOWER(p.brand.name) LIKE LOWER(CONCAT('%', :search, '%')) OR " +
+                        "  EXISTS (SELECT 1 FROM ProductBarcode pb WHERE pb.product = p AND LOWER(pb.barcode) LIKE LOWER(CONCAT('%', :search, '%')))" +
                         ") ORDER BY p.name ASC")
         Page<Product> findAllActiveBySearch(@org.springframework.data.repository.query.Param("search") String search,
                         Pageable pageable);
@@ -75,7 +76,8 @@ public interface ProductRepository extends JpaRepository<Product, Long> {
                         "  LOWER(p.name) LIKE LOWER(CONCAT('%', :search, '%')) OR " +
                         "  LOWER(p.code) LIKE LOWER(CONCAT('%', :search, '%')) OR " +
                         "  LOWER(p.sku)  LIKE LOWER(CONCAT('%', :search, '%')) OR " +
-                        "  LOWER(p.brand.name) LIKE LOWER(CONCAT('%', :search, '%'))" +
+                        "  LOWER(p.brand.name) LIKE LOWER(CONCAT('%', :search, '%')) OR " +
+                        "  EXISTS (SELECT 1 FROM ProductBarcode pb WHERE pb.product = p AND LOWER(pb.barcode) LIKE LOWER(CONCAT('%', :search, '%')))" +
                         ") ORDER BY p.name ASC")
         Page<Product> findAllActiveBySearchAndWarehouse(
                         @org.springframework.data.repository.query.Param("search") String search,
@@ -91,7 +93,8 @@ public interface ProductRepository extends JpaRepository<Product, Long> {
                         "AND (:search = '' OR LOWER(p.name) LIKE LOWER(CONCAT('%', :search, '%')) " +
                         "  OR LOWER(p.code) LIKE LOWER(CONCAT('%', :search, '%')) " +
                         "  OR LOWER(p.sku)  LIKE LOWER(CONCAT('%', :search, '%')) " +
-                        "  OR LOWER(p.brand.name) LIKE LOWER(CONCAT('%', :search, '%'))) " +
+                        "  OR LOWER(p.brand.name) LIKE LOWER(CONCAT('%', :search, '%')) " +
+                        "  OR EXISTS (SELECT 1 FROM ProductBarcode pb WHERE pb.product = p AND LOWER(pb.barcode) LIKE LOWER(CONCAT('%', :search, '%')))) " +
                         "AND (:departmentId IS NULL OR p.department.id = :departmentId) " +
                         "AND (:brandId IS NULL OR p.brand.id = :brandId) " +
                         "ORDER BY p.name ASC")
@@ -117,7 +120,8 @@ public interface ProductRepository extends JpaRepository<Product, Long> {
                         "AND (:search = '' OR LOWER(p.name) LIKE LOWER(CONCAT('%', :search, '%')) " +
                         "  OR LOWER(p.code) LIKE LOWER(CONCAT('%', :search, '%')) " +
                         "  OR LOWER(p.sku)  LIKE LOWER(CONCAT('%', :search, '%')) " +
-                        "  OR LOWER(p.brand.name) LIKE LOWER(CONCAT('%', :search, '%'))) " +
+                        "  OR LOWER(p.brand.name) LIKE LOWER(CONCAT('%', :search, '%')) " +
+                        "  OR EXISTS (SELECT 1 FROM ProductBarcode pb WHERE pb.product = p AND LOWER(pb.barcode) LIKE LOWER(CONCAT('%', :search, '%')))) " +
                         "ORDER BY p.name ASC")
         org.springframework.data.domain.Page<Product> findForStockTake(
                         @org.springframework.data.repository.query.Param("warehouseId") Long warehouseId,

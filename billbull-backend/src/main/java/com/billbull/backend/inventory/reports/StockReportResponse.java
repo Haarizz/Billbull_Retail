@@ -1,6 +1,7 @@
 package com.billbull.backend.inventory.reports;
 
 import java.math.BigDecimal;
+import java.time.LocalDate;
 
 public class StockReportResponse {
 
@@ -11,6 +12,11 @@ public class StockReportResponse {
     private String department;
     private String brand;
     private String warehouse;
+    private String batchNumber;
+    private LocalDate expiryDate;
+    private Long branchId;
+    private String branchName;
+    private String branchCode;
     
     private BigDecimal onHand = BigDecimal.ZERO;
     private String uom;
@@ -56,6 +62,21 @@ public class StockReportResponse {
 
     public String getWarehouse() { return warehouse; }
     public void setWarehouse(String warehouse) { this.warehouse = warehouse; }
+
+    public String getBatchNumber() { return batchNumber; }
+    public void setBatchNumber(String batchNumber) { this.batchNumber = batchNumber; }
+
+    public LocalDate getExpiryDate() { return expiryDate; }
+    public void setExpiryDate(LocalDate expiryDate) { this.expiryDate = expiryDate; }
+
+    public Long getBranchId() { return branchId; }
+    public void setBranchId(Long branchId) { this.branchId = branchId; }
+
+    public String getBranchName() { return branchName; }
+    public void setBranchName(String branchName) { this.branchName = branchName; }
+
+    public String getBranchCode() { return branchCode; }
+    public void setBranchCode(String branchCode) { this.branchCode = branchCode; }
 
     public BigDecimal getOnHand() { return onHand; }
     public void setOnHand(BigDecimal onHand) { this.onHand = onHand; }

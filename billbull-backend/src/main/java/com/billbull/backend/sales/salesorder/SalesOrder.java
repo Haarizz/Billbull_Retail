@@ -33,6 +33,7 @@ public class SalesOrder {
 
     private Double advanceAmount;
     private Double balanceDue;
+    private Double billDiscount;
 
     private String paymentMethod;
     private String paymentReference;
@@ -53,6 +54,7 @@ public class SalesOrder {
 
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "warehouse_id")
+    @com.fasterxml.jackson.annotation.JsonIgnore
     private com.billbull.backend.inventory.warehouse.Warehouse warehouse;
 
     @Enumerated(EnumType.STRING)
@@ -161,6 +163,14 @@ public class SalesOrder {
         this.balanceDue = balanceDue;
     }
 
+    public Double getBillDiscount() {
+        return billDiscount;
+    }
+
+    public void setBillDiscount(Double billDiscount) {
+        this.billDiscount = billDiscount;
+    }
+
     public String getPaymentMethod() {
         return paymentMethod;
     }
@@ -225,12 +235,23 @@ public class SalesOrder {
         this.internalNotes = internalNotes;
     }
 
+    @com.fasterxml.jackson.annotation.JsonIgnore
     public com.billbull.backend.inventory.warehouse.Warehouse getWarehouse() {
         return warehouse;
     }
 
     public void setWarehouse(com.billbull.backend.inventory.warehouse.Warehouse warehouse) {
         this.warehouse = warehouse;
+    }
+
+    @Transient
+    public Long getWarehouseId() {
+        return warehouse != null ? warehouse.getId() : null;
+    }
+
+    @Transient
+    public String getWarehouseName() {
+        return warehouse != null ? warehouse.getName() : null;
     }
 
     public SalesOrderStatus getStatus() {

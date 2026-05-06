@@ -8,6 +8,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
+import org.springframework.cache.annotation.CacheEvict;
 import org.springframework.stereotype.Service;
 
 import com.billbull.backend.inventory.product.Product;
@@ -31,6 +32,8 @@ import com.billbull.backend.purchase.invoice.PurchaseInvoiceRepository;
 import com.billbull.backend.purchase.invoice.InvoiceStatus;
 import com.billbull.backend.purchase.invoice.PurchaseInvoiceItem;
 import com.billbull.backend.purchase.lpo.workflow.*;
+import com.billbull.backend.settings.branch.Branch;
+import com.billbull.backend.settings.branch.BranchAccessService;
 import com.billbull.backend.util.DocumentOrderingUtil;
 import com.billbull.backend.common.workflow.ApprovalStatus;
 import jakarta.transaction.Transactional;
@@ -52,6 +55,7 @@ public class LpoService {
     private final ApprovalHistoryRepository approvalHistoryRepository;
     private final ProductMediaRepository productMediaRepository;
     private final ProductBarcodeRepository productBarcodeRepository;
+    private final BranchAccessService branchAccessService;
 
     public LpoService(
             LpoRepository repository,
@@ -66,7 +70,8 @@ public class LpoService {
             ApprovalWorkflowService approvalWorkflowService,
             ApprovalHistoryRepository approvalHistoryRepository,
             ProductMediaRepository productMediaRepository,
-            ProductBarcodeRepository productBarcodeRepository) {
+            ProductBarcodeRepository productBarcodeRepository,
+            BranchAccessService branchAccessService) {
         this.repository = repository;
         this.productRepository = productRepository;
         this.warehouseRepository = warehouseRepository;
@@ -80,12 +85,14 @@ public class LpoService {
         this.approvalHistoryRepository = approvalHistoryRepository;
         this.productMediaRepository = productMediaRepository;
         this.productBarcodeRepository = productBarcodeRepository;
+        this.branchAccessService = branchAccessService;
     }
 
     /* ================= CREATE ================= */
 
     /* ================= CREATE ================= */
 
+    @CacheEvict(value = "stockAvailability", allEntries = true)
     public LpoDetailResponse create(LpoRequest request) {
         Lpo lpo = new Lpo();
         lpo.setLpoNumber(generateLpoNumber());
@@ -103,9 +110,9 @@ public class LpoService {
     /* ================= LIST ================= */
 
     public List<LpoListResponse> list(LpoStatus status) {
-        List<Lpo> lpos = new ArrayList<>((status == null)
+        List<Lpo> lpos = new ArrayList<>(branchAccessService.filterBranchScoped((status == null)
                 ? repository.findAll()
-                : repository.findByStatus(status));
+                : repository.findByStatus(status), Lpo::getBranchId));
         DocumentOrderingUtil.sortByDocumentDateAndNumberDesc(
                 lpos,
                 Lpo::getLpoDate,
@@ -122,12 +129,14 @@ public class LpoService {
 
         Lpo lpo = repository.findByLpoNumber(lpoNumber)
                 .orElseThrow(() -> new RuntimeException("LPO not found"));
+        branchAccessService.assertTransactionBranchAccessible(lpo.getBranchId(), "LPO");
 
         return toDetailDto(lpo);
     }
 
     /* ================= UPDATE ================= */
 
+    @CacheEvict(value = "stockAvailability", allEntries = true)
     public LpoDetailResponse update(String lpoNumber, LpoRequest request) {
 
         Lpo lpo = getEntityByNumber(lpoNumber);
@@ -146,6 +155,7 @@ public class LpoService {
 
     /* ================= DELETE ================= */
 
+    @CacheEvict(value = "stockAvailability", allEntries = true)
     public void delete(String lpoNumber) {
 
         Lpo lpo = getEntityByNumber(lpoNumber);
@@ -160,13 +170,23 @@ public class LpoService {
     /* ================= WORKFLOW ================= */
 
     @Transactional
+    @CacheEvict(value = "stockAvailability", allEntries = true)
     public void submitForApproval(Long id) {
 
-        Lpo lpo = repository.findById(id)
-                .orElseThrow(() -> new RuntimeException("LPO not found"));
+        Lpo lpo = getScopedLpoById(id);
 
         if (lpo.getStatus() != LpoStatus.DRAFT) {
             throw new IllegalStateException("Only DRAFT LPO can be submitted");
+        }
+
+        if (lpo.getZone() == null) {
+            throw new IllegalArgumentException("Zone is required before submitting LPO for approval");
+        }
+        if (lpo.getLocator() == null) {
+            throw new IllegalArgumentException("Locator is required before submitting LPO for approval");
+        }
+        if (lpo.getBin() == null) {
+            throw new IllegalArgumentException("Bin is required before submitting LPO for approval");
         }
 
         lpo.setStatus(LpoStatus.PENDING_APPROVAL);
@@ -174,10 +194,10 @@ public class LpoService {
     }
 
     @Transactional
+    @CacheEvict(value = "stockAvailability", allEntries = true)
     public void approve(Long id, String username, List<String> roles, String remarks) {
 
-        Lpo lpo = repository.findById(id)
-                .orElseThrow(() -> new RuntimeException("LPO not found"));
+        Lpo lpo = getScopedLpoById(id);
 
         if (lpo.getStatus() != LpoStatus.PENDING_APPROVAL) {
             throw new IllegalStateException("Only PENDING_APPROVAL LPO can be approved");
@@ -192,9 +212,9 @@ public class LpoService {
     }
 
     @Transactional
+    @CacheEvict(value = "stockAvailability", allEntries = true)
     public void rejectById(Long id, String username, List<String> roles, String remarks) {
-        Lpo lpo = repository.findById(id)
-                .orElseThrow(() -> new RuntimeException("LPO not found"));
+        Lpo lpo = getScopedLpoById(id);
 
         if (lpo.getStatus() != LpoStatus.PENDING_APPROVAL) {
             throw new IllegalStateException("Only PENDING_APPROVAL LPO can be rejected");
@@ -205,9 +225,9 @@ public class LpoService {
     }
 
     @Transactional
+    @CacheEvict(value = "stockAvailability", allEntries = true)
     public void revertToDraft(Long id) {
-        Lpo lpo = repository.findById(id)
-                .orElseThrow(() -> new RuntimeException("LPO not found"));
+        Lpo lpo = getScopedLpoById(id);
 
         // Check if GRN or Invoice exists (safety check)
         // For now, allow revert if not fully completed
@@ -223,8 +243,10 @@ public class LpoService {
     /* ================= HELPERS ================= */
 
     private Lpo getEntityByNumber(String lpoNumber) {
-        return repository.findByLpoNumber(lpoNumber)
+        Lpo lpo = repository.findByLpoNumber(lpoNumber)
                 .orElseThrow(() -> new RuntimeException("LPO not found"));
+        branchAccessService.assertTransactionBranchAccessible(lpo.getBranchId(), "LPO");
+        return lpo;
     }
 
     private void mapHeader(Lpo lpo, LpoRequest r) {
@@ -240,6 +262,18 @@ public class LpoService {
 
         Warehouse warehouse = warehouseRepository.findById(r.getWarehouseId())
                 .orElseThrow(() -> new IllegalArgumentException("Invalid warehouseId: " + r.getWarehouseId()));
+
+        Branch branch = resolveBranchForLpo(lpo);
+        if (branch != null) {
+            branchAccessService.assertWarehouseMatchesBranch(warehouse, branch.getId(), "LPO");
+            lpo.setBranchId(branch.getId());
+            lpo.setBranchName(branch.getName());
+            lpo.setBranchCode(branch.getCode());
+        } else {
+            lpo.setBranchId(null);
+            lpo.setBranchName(null);
+            lpo.setBranchCode(null);
+        }
 
         lpo.setWarehouse(warehouse);
         lpo.setDeliveryLocation(warehouse.getName());
@@ -300,16 +334,32 @@ public class LpoService {
         }
     }
 
+    private static final BigDecimal DEFAULT_PURCHASE_TAX = BigDecimal.valueOf(5);
+
+    private BigDecimal resolveItemPurchaseTax(Product product) {
+        if (product != null && product.getTax() != null && product.getTax().getPurchaseTax() != null) {
+            return product.getTax().getPurchaseTax();
+        }
+        return DEFAULT_PURCHASE_TAX;
+    }
+
     private void calculateTotals(Lpo lpo) {
 
-        BigDecimal subtotal = lpo.getItems().stream()
-                .map(LpoItem::getLineTotal)
-                .reduce(BigDecimal.ZERO, BigDecimal::add);
+        BigDecimal subtotal = BigDecimal.ZERO;
+        BigDecimal taxTotal = BigDecimal.ZERO;
+
+        for (LpoItem item : lpo.getItems()) {
+            BigDecimal lineTotal = item.getLineTotal() != null ? item.getLineTotal() : BigDecimal.ZERO;
+            BigDecimal taxPercent = resolveItemPurchaseTax(item.getProduct());
+            BigDecimal lineTax = lineTotal.multiply(taxPercent).divide(BigDecimal.valueOf(100), 2, java.math.RoundingMode.HALF_UP);
+            subtotal = subtotal.add(lineTotal);
+            taxTotal = taxTotal.add(lineTax);
+        }
 
         lpo.setSubtotal(subtotal);
         lpo.setDiscount(BigDecimal.ZERO);
-        lpo.setTax(subtotal.multiply(BigDecimal.valueOf(0.05)));
-        lpo.setGrandTotal(subtotal.add(lpo.getTax()));
+        lpo.setTax(taxTotal);
+        lpo.setGrandTotal(subtotal.add(taxTotal));
     }
 
     private String generateLpoNumber() {
@@ -335,6 +385,9 @@ public class LpoService {
 
         dto.setDbId(lpo.getId());
         dto.setWarehouseId(lpo.getWarehouse() != null ? lpo.getWarehouse().getId() : null);
+        dto.setBranchId(lpo.getBranchId());
+        dto.setBranchName(lpo.getBranchName());
+        dto.setBranchCode(lpo.getBranchCode());
         return dto;
     }
 
@@ -363,6 +416,9 @@ public class LpoService {
         res.setBuyerAssigned(lpo.getBuyerAssigned());
         res.setReferenceDocument(lpo.getReferenceDocument());
         res.setCreatedFrom(lpo.getSource() != null ? lpo.getSource().name() : "MANUAL");
+        res.setBranchId(lpo.getBranchId());
+        res.setBranchName(lpo.getBranchName());
+        res.setBranchCode(lpo.getBranchCode());
 
         // 🟢 FULFILLMENT LOGIC: Calculate received or billed quantities
         Map<Long, Integer> fulfilledMap = getFulfilledQuantitiesMap(lpo);
@@ -493,15 +549,17 @@ public class LpoService {
     }
 
     public Lpo getById(Long id) {
-        return repository.findById(id)
+        Lpo lpo = repository.findById(id)
                 .orElseThrow(() -> new RuntimeException("LPO not found"));
+        branchAccessService.assertTransactionBranchAccessible(lpo.getBranchId(), "LPO");
+        return lpo;
     }
 
     @Transactional
+    @CacheEvict(value = "stockAvailability", allEntries = true)
     public void postStockFromLpo(Long lpoId) {
 
-        Lpo lpo = repository.findById(lpoId)
-                .orElseThrow(() -> new RuntimeException("LPO not found"));
+        Lpo lpo = getScopedLpoById(lpoId);
 
         if (lpo.getStatus() != LpoStatus.APPROVED) {
             throw new IllegalStateException("Only APPROVED LPO can post stock");
@@ -538,6 +596,20 @@ public class LpoService {
 
         lpo.setStockPosted(true);
         repository.save(lpo);
+    }
+
+    private Branch resolveBranchForLpo(Lpo lpo) {
+        if (lpo.getId() != null && lpo.getBranchId() == null) {
+            return null;
+        }
+        return branchAccessService.getRequiredCurrentUserBranch();
+    }
+
+    private Lpo getScopedLpoById(Long id) {
+        Lpo lpo = repository.findById(id)
+                .orElseThrow(() -> new RuntimeException("LPO not found"));
+        branchAccessService.assertTransactionBranchAccessible(lpo.getBranchId(), "LPO");
+        return lpo;
     }
 
 }

@@ -41,7 +41,8 @@ import {
 import { getAllCustomers } from '../../api/customerledgerApi';
 import { getAllSalesOrders } from '../../api/salesorderApi';
 import { getAllProformas } from '../../api/proformaApi';
-import { getDeliveryNotes, getUninvoicedDNsForCustomer } from '../../api/deliveryNoteApi';
+import { getDeliveryNotes, getPickingNotes, getUninvoicedDNsForCustomer } from '../../api/deliveryNoteApi';
+import { getEmployeeNames } from '../../api/employeeApi';
 import {
     getAllSalesInvoices,
     saveSalesInvoice,
@@ -56,15 +57,39 @@ import { getWarehouses } from '../../api/warehouseApi';
 import { getTemplatesByCategory } from '../../api/printTemplateApi';
 import { generatePrintHtml, printHtml } from '../../utils/printGenerator';
 import { getImageUrl } from '../../utils/urlUtils';
+import { getDefaultProductUnit, resolveUnitAmount } from '../../utils/unitPricing';
+import { summarizeSalesItems } from '../../utils/documentSummaryUtils';
 import billBullLogo from '../../assets/billBullLogo.png';
+import { generateDocFilename } from '../../utils/filenameUtils';
+import { usePrintDocument } from '../../hooks/usePrintDocument';
 import { useCompany } from '../../context/CompanyContext';
 import { useBranch } from '../../context/BranchContext';
+import ExportDropdown from '../../components/common/ExportDropdown';
+import { exportToExcel, exportToPDF } from '../../utils/exportUtils';
+import CurrencyAmount, { CurrencySymbol } from '../../components/CurrencyAmount';
+import { formatCurrencyDisplay } from '../../utils/countryCurrencyOptions';
+
+// ==========================================
+// 1. CONFIGURATION
+// ==========================================
+
+const SALES_INVOICE_COLUMNS = [
+    { header: 'Invoice No', key: 'invoiceNumber', width: 15 },
+    { header: 'Date', key: 'invoiceDate', width: 12 },
+    { header: 'Customer', key: 'customerName', width: 25 },
+    { header: 'Pay Mode', key: 'paymentMode', width: 12 },
+    { header: 'Total', key: 'invoiceTotal', width: 15 },
+    { header: 'Paid', key: 'amountPaid', width: 15 },
+    { header: 'Balance', key: 'balance', width: 15 },
+    { header: 'Status', key: 'status', width: 12 }
+];
 
 // ✅ PRODUCT SELECTOR
 import ProductSelector from '../../components/ProductSelector';
 
 // ✅ CUSTOMER SELECTOR
 import CustomerSelector from '../../components/CustomerSelector';
+import CustomerShippingPanel from '../../components/CustomerShippingPanel';
 import { ItemDescriptionCell, ItemDescriptionHeader } from '../../components/ItemDescriptionCell';
 
 // ✅ STOCK AVAILABILITY MODAL
@@ -81,8 +106,10 @@ import useShortcuts from '../../hooks/useShortcuts';
 // ==========================================
 
 const SalesInvoice = () => {
+    const { print } = usePrintDocument();
     const { company } = useCompany();
     const { defaultBranch } = useBranch();
+    const invoiceCurrency = company?.currency || company?.currencySymbol || 'AED';
     const location = useLocation();
     const fromQuotationHandled = useRef(false);
     const fromSOHandled = useRef(false);
@@ -189,17 +216,37 @@ const SalesInvoice = () => {
     const [linkedSO, setLinkedSO] = useState('');
     const [linkedDN, setLinkedDN] = useState('');
     const [linkedPI, setLinkedPI] = useState('');
+    const [shippingAddress, setShippingAddress] = useState('');
 
     // Payment Details
     const [paymentMode, setPaymentMode] = useState('Cash');
     const [paymentTerms, setPaymentTerms] = useState('Immediate');
-    const [salesperson, setSalesperson] = useState('John Doe');
-    const [branch, setBranch] = useState('Dubai Main');
+    const [salesperson, setSalesperson] = useState('');
+    const [employeesList, setEmployeesList] = useState([]);
+    const [branch, setBranch] = useState(defaultBranch?.name || '');
+    const createBlankInvoiceItem = () => ({
+        id: Date.now() + Math.random(),
+        code: '',
+        image: '',
+        name: '',
+        unit: 'PCS',
+        qty: 0,
+        price: 0,
+        disc: 0,
+        tax: 5,
+        taxAmt: 0,
+        gross: 0,
+        net: 0,
+        cost: 0,
+        gp: 0,
+        warehouseId: defaultBranch?.defaultWarehouseId || (warehousesList.length > 0 ? warehousesList[0].id : '')
+    });
 
     // Items
     const [items, setItems] = useState([
         { id: 1, code: '', image: '', name: '', unit: 'PCS', qty: 0, price: 0, disc: 0, tax: 5, taxAmt: 0, gross: 0, net: 0, cost: 0, gp: 0 }
     ]);
+    const [billDiscount, setBillDiscount] = useState(0);
 
     // ✅ PRODUCT SELECTOR STATE
     const [isProductSelectorOpen, setIsProductSelectorOpen] = useState(false);
@@ -208,6 +255,7 @@ const SalesInvoice = () => {
     // Payment Calculation State
     const [amountCollected, setAmountCollected] = useState(0);
     const [invoiceBalance, setInvoiceBalance] = useState(null); // server-side remaining balance
+    const [pickingNoteVerification, setPickingNoteVerification] = useState(null);
 
     // ✅ MODAL STATES
     const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
@@ -236,16 +284,31 @@ const SalesInvoice = () => {
     const [focusedItemPriceHistory, setFocusedItemPriceHistory] = useState([]);
     const [isContextLoading, setIsContextLoading] = useState(false);
 
+    const resolveInvoiceTypeUI = ({
+        linkedSalesOrder = '',
+        linkedDeliveryNote = '',
+        linkedProforma = '',
+        salesType: resolvedSalesType = 'STANDARD_FLOW'
+    } = {}) => {
+        if (linkedDeliveryNote) return 'Against Delivery Note';
+        if (linkedProforma) return 'Against Proforma Invoice';
+        if (linkedSalesOrder) return 'Against Sales Order';
+        return resolvedSalesType === 'DIRECT_SALE' ? 'Direct Sale' : 'Direct Sale';
+    };
+
     // ✅ GLOBAL SHORTCUTS
+    const normalizedInvoiceStatus = String(status || '').toUpperCase();
+    const isReadOnlyInvoice = Boolean(invoiceId) && !['', 'DRAFT', 'CANCELLED'].includes(normalizedInvoiceStatus);
+
     useShortcuts({
         'ctrl+p': (e) => {
-            if (activeTab === 'create') setIsProductSelectorOpen(prev => !prev);
+            if (activeTab === 'create' && !isReadOnlyInvoice) setIsProductSelectorOpen(prev => !prev);
         },
         'ctrl+s': (e) => {
             if (activeTab === 'create') handleSave('Draft');
         },
         'alt+c': (e) => {
-            if (activeTab === 'create') setIsCustomerSearchOpen(prev => !prev);
+            if (activeTab === 'create' && !isReadOnlyInvoice && !isGeneratedFromDN) setIsCustomerSearchOpen(prev => !prev);
         }
     });
 
@@ -372,8 +435,7 @@ const SalesInvoice = () => {
                                         </div>
                                     </td>
                                     <td className="px-4 py-2.5 text-right font-black text-slate-700">
-                                        <div className="text-[9px] text-slate-300 font-bold leading-none mb-0.5 uppercase tracking-tighter">AED</div>
-                                        {Number(h.rate).toFixed(2)}
+                                        <CurrencyAmount value={h.rate} currency={invoiceCurrency} />
                                     </td>
                                 </tr>
                             )) : (
@@ -399,7 +461,7 @@ const SalesInvoice = () => {
     useEffect(() => {
         const loadData = async () => {
             try {
-                const [custData, soData, piData, dnData, invData, whsData, settingsData, bankAccData] = await Promise.all([
+                const [custData, soData, piData, dnData, invData, whsData, settingsData, bankAccData, empData] = await Promise.all([
                     getAllCustomers(),
                     getAllSalesOrders(),
                     getAllProformas(),
@@ -407,9 +469,11 @@ const SalesInvoice = () => {
                     getAllSalesInvoices(),
                     getWarehouses(),
                     getSalesSettings().catch(() => null),
-                    api.get('/api/ledger/accounts/bank-accounts').then(r => r.data).catch(() => [])
+                    api.get('/api/ledger/accounts/bank-accounts').then(r => r.data).catch(() => []),
+                    getEmployeeNames().catch(() => [])
                 ]);
                 setBankAccountOptions(Array.isArray(bankAccData) ? bankAccData : []);
+                setEmployeesList(Array.isArray(empData) ? empData : []);
 
                 let validCustomers = Array.isArray(custData) ? custData : [];
                 const hasWalkin = validCustomers.some(c =>
@@ -446,6 +510,12 @@ const SalesInvoice = () => {
         })));
     }, [defaultBranch, warehousesList]);
 
+    useEffect(() => {
+        if (!invoiceId && defaultBranch?.name) {
+            setBranch(prev => prev || defaultBranch.name);
+        }
+    }, [defaultBranch?.name, invoiceId]);
+
     // Pre-fill form from Quotation navigation state
     useEffect(() => {
         const fromQtn = location.state?.fromQuotation;
@@ -462,6 +532,7 @@ const SalesInvoice = () => {
             .filter(i => i.code || i.desc)
             .map((i, idx) => ({
                 id: Date.now() + idx,
+                salesOrderItemId: i.id,
                 code: i.code || '',
                 name: i.desc || i.name || '',
                 image: i.image || i.primaryImage || '',
@@ -478,10 +549,24 @@ const SalesInvoice = () => {
 
         getNextInvoiceNumber()
             .then(nextNo => setInvoiceNo(nextNo))
-            .catch(() => {});
+            .catch(() => { });
 
-        setSelectedCustomer(matched || { name: fromQtn.customer, code: '', id: null });
+        const resolvedCustomer = matched || { name: fromQtn.customer, code: '', id: null };
+        setSelectedCustomer(resolvedCustomer);
+
+        // Resolve shipping address: prefer passed-through → customer master
+        if (fromQtn.shippingAddress) {
+            setShippingAddress(fromQtn.shippingAddress);
+        } else if (matched) {
+            const _defaultAddr = (matched.savedAddresses || []).find(a => a.isDefault);
+            const _resolvedAddr = _defaultAddr
+                ? [_defaultAddr.address1, _defaultAddr.address2, _defaultAddr.city, _defaultAddr.country].filter(Boolean).join(', ')
+                : (matched.defaultShippingAddress || matched.shippingAddress || matched.billingAddress || matched.address || '');
+            setShippingAddress(_resolvedAddr);
+        }
+
         setItems(mappedItems.length > 0 ? mappedItems : [{ id: Date.now(), code: '', name: '', unit: 'PCS', qty: 0, price: 0, disc: 0, tax: 5, taxAmt: 0, gross: 0, net: 0, cost: 0 }]);
+        setBillDiscount(Number(fromQtn.billDiscount) || 0);
         setReference(fromQtn.qtnNo || '');
         setInvoiceDate(new Date().toISOString().split('T')[0]);
         setStatus('Draft');
@@ -507,6 +592,7 @@ const SalesInvoice = () => {
             .filter(i => i.code || i.desc)
             .map((i, idx) => ({
                 id: Date.now() + idx,
+                salesOrderItemId: i.id,
                 code: i.code || '',
                 name: i.desc || i.name || '',
                 image: i.image || '',
@@ -523,12 +609,29 @@ const SalesInvoice = () => {
 
         getNextInvoiceNumber()
             .then(nextNo => setInvoiceNo(nextNo))
-            .catch(() => {});
+            .catch(() => { });
 
-        setSelectedCustomer(matched || { name: fromSO.customer, code: fromSO.customerCode || '', id: null });
+        const resolvedCustomer = matched || { name: fromSO.customer, code: fromSO.customerCode || '', id: null };
+        setSelectedCustomer(resolvedCustomer);
+
+        // Resolve shipping address: prefer passed-through → customer master
+        if (fromSO.shippingAddress) {
+            setShippingAddress(fromSO.shippingAddress);
+        } else if (matched) {
+            const _defaultAddr = (matched.savedAddresses || []).find(a => a.isDefault);
+            const _resolvedAddr = _defaultAddr
+                ? [_defaultAddr.address1, _defaultAddr.address2, _defaultAddr.city, _defaultAddr.country].filter(Boolean).join(', ')
+                : (matched.defaultShippingAddress || matched.shippingAddress || matched.billingAddress || matched.address || '');
+            setShippingAddress(_resolvedAddr);
+        }
+
         setItems(mappedItems.length > 0 ? mappedItems : [{ id: Date.now(), code: '', name: '', unit: 'PCS', qty: 0, price: 0, disc: 0, tax: 5, taxAmt: 0, gross: 0, net: 0, cost: 0 }]);
+        setInvoiceTypeUI('Against Sales Order');
+        setSalesType('STANDARD_FLOW');
         setLinkedSO(fromSO.soNumber || '');
-        setReference(fromSO.linkedQuotation || fromSO.soNumber || '');
+        setLinkedPI(fromSO.linkedProforma || '');
+        setBillDiscount(Number(fromSO.billDiscount) || 0);
+        setReference(fromSO.linkedQuotation || fromSO.linkedProforma || fromSO.soNumber || '');
         setInvoiceDate(new Date().toISOString().split('T')[0]);
         setStatus('Draft');
         setActiveTab('create');
@@ -543,6 +646,51 @@ const SalesInvoice = () => {
             setInvoicesList(Array.isArray(data) ? data : []);
         } catch (err) {
             console.error("Failed to fetch invoices", err);
+        }
+    };
+
+    const verifyPickingNoteAfterSave = async (savedInvoice) => {
+        if (!savedInvoice?.id) {
+            return null;
+        }
+
+        const expectedStatus =
+            salesSettings?.salesMode === 'FAST_SALE' || salesType === 'DIRECT_SALE'
+                ? 'DELIVERED'
+                : 'DRAFT';
+
+        try {
+            const pickingNotes = await getPickingNotes();
+            const generatedNote = pickingNotes.find(note =>
+                note?.sourceDocumentType === 'SALES_INVOICE' &&
+                (note?.sourceDocumentId === savedInvoice.id
+                    || note?.linkedSalesInvoiceNumber === savedInvoice.invoiceNumber)
+            );
+
+            if (!generatedNote) {
+                const message = `Picking note verification failed. No Picking document was found for invoice ${savedInvoice.invoiceNumber}.`;
+                setPickingNoteVerification({ kind: 'error', message });
+                return null;
+            }
+
+            if (generatedNote.status !== expectedStatus) {
+                const message = `Picking note created, but status is ${generatedNote.status} instead of expected ${expectedStatus} for invoice ${savedInvoice.invoiceNumber}.`;
+                setPickingNoteVerification({ kind: 'error', message });
+                return generatedNote;
+            }
+
+            setPickingNoteVerification({
+                kind: 'success',
+                message: `Picking note ${generatedNote.dnNumber} verified as ${generatedNote.status}.`
+            });
+            return generatedNote;
+        } catch (error) {
+            console.error("Failed to verify Picking note", error);
+            setPickingNoteVerification({
+                kind: 'error',
+                message: `Unable to verify the generated Picking note for invoice ${savedInvoice.invoiceNumber}.`
+            });
+            return null;
         }
     };
 
@@ -566,37 +714,16 @@ const SalesInvoice = () => {
     // ==========================================
     // CALCULATIONS
     // ==========================================
-    const calculateTotals = () => {
-        const subTotal = items.reduce((acc, i) => acc + (Number(i.gross) || 0), 0);
-        const totalDiscount = items.reduce((acc, i) => {
-            // Gross is Qty * Price. Discount is derived from that.
-            const base = Number(i.qty) * Number(i.price);
-            return acc + (base - (Number(i.gross) || base));
-        }, 0);
-
-        // Recalculating precisely for display
-        const rawSubTotal = items.reduce((acc, i) => acc + (Number(i.qty) * Number(i.price)), 0);
-        const rawDiscount = items.reduce((acc, i) => acc + ((Number(i.qty) * Number(i.price)) * (Number(i.disc) / 100)), 0);
-        const taxable = rawSubTotal - rawDiscount;
-        const totalTax = items.reduce((acc, i) => acc + Number(i.taxAmt), 0);
-        const netTotal = taxable + totalTax;
-
-        const totalCost = items.reduce((acc, i) => acc + (Number(i.qty) * Number(i.cost)), 0);
-        const totalProfit = (netTotal - totalTax) - totalCost;
-        const marginPercent = (netTotal - totalTax) > 0 ? (totalProfit / (netTotal - totalTax)) * 100 : 0;
-
-        return {
-            subTotal: rawSubTotal,
-            totalDiscount: rawDiscount,
-            totalTax,
-            netTotal,
-            totalCost,
-            totalProfit,
-            marginPercent
-        };
-    };
-
-    const { subTotal, totalDiscount, totalTax, netTotal, totalCost, totalProfit, marginPercent } = calculateTotals();
+    const invoiceSummary = useMemo(() => summarizeSalesItems(items, billDiscount), [items, billDiscount]);
+    const subTotal = invoiceSummary.grossTotal;
+    const taxableSubTotal = invoiceSummary.subTotal;
+    const totalDiscount = invoiceSummary.itemDiscountTotal;
+    const billDiscountAmount = invoiceSummary.billDiscountAmount;
+    const totalTax = invoiceSummary.tax;
+    const netTotal = invoiceSummary.grandTotal;
+    const totalCost = items.reduce((acc, i) => acc + ((Number(i.qty) || 0) * (Number(i.cost) || 0)), 0);
+    const totalProfit = taxableSubTotal - totalCost;
+    const marginPercent = taxableSubTotal > 0 ? (totalProfit / taxableSubTotal) * 100 : 0;
 
     // Calculate Outstanding
     const previousOutstanding = 0.00; // Mocked for now
@@ -607,6 +734,7 @@ const SalesInvoice = () => {
     // ==========================================
     const handleCreateNew = async (type = 'STANDARD_FLOW') => {
         setInvoiceId(null); // Reset ID for new creation
+        setPickingNoteVerification(null);
         try {
             const nextNumber = await getNextInvoiceNumber();
             setInvoiceNo(nextNumber);
@@ -615,6 +743,7 @@ const SalesInvoice = () => {
         }
         setStatus('Draft');
         setSalesType(type);
+        setInvoiceTypeUI(resolveInvoiceTypeUI({ salesType: type }));
         setInvoiceDate(new Date().toISOString().split('T')[0]);
         setDeliveryDate('');
         // BB-027: Default to Walk-In Customer for new invoices
@@ -629,17 +758,24 @@ const SalesInvoice = () => {
         setPaymentMode('Cash');
         setPaymentTerms('Immediate');
         setSalesperson('John Doe');
-        setBranch('Dubai Main');
+        setBranch(defaultBranch?.name || '');
         setItems([{ id: Date.now(), code: '', name: '', unit: 'PCS', qty: 0, price: 0, disc: 0, tax: 5, taxAmt: 0, gross: 0, net: 0, cost: 0 }]);
+        setBillDiscount(0);
         setAmountCollected(0);
         setInvoiceBalance(null);
         setActiveTab('create');
     };
 
     const handleSelectCustomer = async (cust) => {
+        if (isReadOnlyInvoice) return;
         if (isGeneratedFromDN) return; // Prevent changing customer if locked
 
         setSelectedCustomer(cust);
+        const _defaultAddr = (cust.savedAddresses || []).find(a => a.isDefault);
+        const _resolvedAddr = _defaultAddr
+            ? [_defaultAddr.address1, _defaultAddr.address2, _defaultAddr.city, _defaultAddr.country].filter(Boolean).join(', ')
+            : (cust.defaultShippingAddress || cust.shippingAddress || cust.billingAddress || cust.address || '');
+        setShippingAddress(_resolvedAddr);
         setIsCustomerOpen(false);
         setIsCustomerSearchOpen(false);
 
@@ -687,6 +823,12 @@ const SalesInvoice = () => {
 
         setLinkedDN(dnNumbers);
         if (soNumbers && !linkedSO) setLinkedSO(soNumbers);
+        const linkedSoDiscounts = [...new Set(selectedDocs.map(dn => dn.salesOrderNo).filter(Boolean))]
+            .map(soNumber => salesOrdersList.find(s => s.soNumber === soNumber))
+            .filter(Boolean);
+        if (linkedSoDiscounts.length === 1) {
+            setBillDiscount(Number(linkedSoDiscounts[0].billDiscount) || 0);
+        }
 
         // Merge Items with Composite Key (productCode + unit + warehouse + price if available)
         const combinedItemsMap = new Map();
@@ -763,11 +905,16 @@ const SalesInvoice = () => {
     // AUTO-FILL FROM LINKED DOCUMENTS
     // ===========================================
     const handleSOChange = (soNumber) => {
+        if (isReadOnlyInvoice) return;
         setLinkedSO(soNumber);
-        if (!soNumber) return;
+        if (!soNumber) {
+            setBillDiscount(0);
+            return;
+        }
 
         const so = salesOrdersList.find(s => s.soNumber === soNumber);
         if (so) {
+            setBillDiscount(Number(so.billDiscount) || 0);
             // Auto-fill customer
             setSelectedCustomer({
                 code: so.customerCode,
@@ -778,6 +925,7 @@ const SalesInvoice = () => {
             if (so.items && so.items.length > 0) {
                 setItems(so.items.map(i => ({
                     id: Date.now() + Math.random(),
+                    salesOrderItemId: i.id,
                     code: i.itemCode || '',
                     image: i.primaryImage || i.image || i.thumbnailUrl || i.imageUrl || '',
                     name: i.description || '',
@@ -797,8 +945,12 @@ const SalesInvoice = () => {
     };
 
     const handleDNChange = (dnNumber) => {
+        if (isReadOnlyInvoice) return;
         setLinkedDN(dnNumber);
-        if (!dnNumber) return;
+        if (!dnNumber) {
+            setBillDiscount(0);
+            return;
+        }
 
         const dn = deliveryNotesList.find(d => d.dnNumber === dnNumber);
         if (dn) {
@@ -816,6 +968,7 @@ const SalesInvoice = () => {
                 const linkedSO = salesOrdersList.find(s => s.soNumber === dn.salesOrderNo);
 
                 if (linkedSO && linkedSO.items && linkedSO.items.length > 0) {
+                    setBillDiscount(Number(linkedSO.billDiscount) || 0);
                     // Use SO items with DN quantities
                     setItems(dn.items.map(dnItem => {
                         // Find matching SO item for pricing
@@ -835,6 +988,7 @@ const SalesInvoice = () => {
 
                         return {
                             id: Date.now() + Math.random(),
+                            salesOrderItemId: soItem ? soItem.id : null,
                             code: dnItem.itemCode || '',
                             image: dnItem.primaryImage || dnItem.image || dnItem.thumbnailUrl || dnItem.imageUrl || '',
                             name: dnItem.description || '',
@@ -880,9 +1034,12 @@ const SalesInvoice = () => {
 
     const handlePIChange = (piNumber) => {
         setLinkedPI(piNumber);
-        if (!piNumber) return;
+        if (!piNumber) {
+            setBillDiscount(0);
+            return;
+        }
 
-        const pi = proformaList.find(p => p.piNumber === piNumber);
+        const pi = proformaList.find(p => p.piNumber === piNumber || p.proformaNo === piNumber);
         if (pi) {
             // Auto-fill customer
             setSelectedCustomer({
@@ -894,11 +1051,13 @@ const SalesInvoice = () => {
             if (pi.salesOrderNo) {
                 setLinkedSO(pi.salesOrderNo);
             }
+            setBillDiscount(Number(pi.billDiscount) || 0);
 
             // Auto-fill items from PI
             if (pi.items && pi.items.length > 0) {
                 setItems(pi.items.map(i => ({
                     id: Date.now() + Math.random(),
+                    salesOrderItemId: i.salesOrderItemId || null,
                     code: i.itemCode || '',
                     image: i.image || '',
                     desc: i.description || '',
@@ -970,6 +1129,7 @@ const SalesInvoice = () => {
     };
 
     const handleItemChange = (id, field, value) => {
+        if (isReadOnlyInvoice) return;
         setItems(items.map(item => {
             if (item.id === id) {
                 let updatedItem = { ...item, [field]: value };
@@ -978,21 +1138,14 @@ const SalesInvoice = () => {
                 // ✅ If unit is being changed, recalculate price based on conversion
                 if (field === 'unit' && item.unitConversions) {
                     const newUnit = value;
-
-                    if (item.unitPrices && item.unitPrices[newUnit]) {
-                        updatedItem.price = item.unitPrices[newUnit];
-                    } else {
-                        const baseUnit = Object.keys(item.unitConversions).find(u => item.unitConversions[u] === 1);
-                        if (baseUnit) {
-                            let basePrice = item.unitPrices && item.unitPrices[baseUnit] ? item.unitPrices[baseUnit] : null;
-                            if (!basePrice) {
-                                const currentUnitConversion = item.unitConversions[item.unit] || 1;
-                                basePrice = item.price / currentUnitConversion;
-                            }
-                            const newUnitConversion = item.unitConversions[newUnit] || 1;
-                            updatedItem.price = basePrice * newUnitConversion;
-                        }
-                    }
+                    updatedItem.price = resolveUnitAmount({
+                        targetUnit: newUnit,
+                        amountMap: item.unitPrices,
+                        unitConversions: item.unitConversions,
+                        currentUnit: item.unit,
+                        currentAmount: item.price,
+                        fallbackAmount: item.retailPrice ?? item.sellingPrice ?? item.price
+                    });
 
                     // BB-025: Do not auto-compute cost from price on unit change
                 }
@@ -1006,11 +1159,19 @@ const SalesInvoice = () => {
 
     // ✅ PRODUCT SELECTOR HANDLER
     const handleAddSingleProduct = (product) => {
+        if (isReadOnlyInvoice) return;
+        const defaultUnit = getDefaultProductUnit(product);
         // Use explicit null/undefined checks so that a master price of 0 does not
         // fall through to a sellingPrice from a different data path.
         const rawRetail = product.retailPrice != null ? parseFloat(product.retailPrice) : NaN;
         const rawSelling = product.sellingPrice != null ? parseFloat(product.sellingPrice) : NaN;
-        const price = !isNaN(rawRetail) ? rawRetail : (!isNaN(rawSelling) ? rawSelling : 0);
+        const masterPrice = !isNaN(rawRetail) ? rawRetail : (!isNaN(rawSelling) ? rawSelling : 0);
+        const price = resolveUnitAmount({
+            targetUnit: defaultUnit,
+            amountMap: product.unitPrices,
+            unitConversions: product.unitConversions,
+            fallbackAmount: masterPrice
+        });
         const disc = parseFloat(product.maxDiscount) || 0;
         const tax = parseFloat(product.salesTax) || 5;
         // Only carry through cost if the master explicitly has a non-null value
@@ -1026,14 +1187,16 @@ const SalesInvoice = () => {
             desc: product.shortDesc || product.description || '',
             sku: product.sku || '',
             localName: product.localName || '',
-            unit: product.unitName || product.unit || (product.availableUnits && product.availableUnits[0]) || 'PCS',
+            unit: defaultUnit,
             qty: 1,
             price: price,
             foc: 0,
-            focUnit: product.unitName || product.unit || (product.availableUnits && product.availableUnits[0]) || 'PCS',
+            focUnit: defaultUnit,
             availableUnits: product.availableUnits || ['PCS'],
             unitConversions: product.unitConversions || {},
             unitPrices: product.unitPrices || {},
+            retailPrice: masterPrice,
+            sellingPrice: masterPrice,
             disc: disc,
             tax: tax,
             taxAmt: 0,
@@ -1060,21 +1223,68 @@ const SalesInvoice = () => {
         setIsProductSelectorOpen(false); // ✅ Close modal after adding
     };
 
+    const handleFastEntryAdd = (product, qty, price, disc) => {
+        if (isReadOnlyInvoice) return;
+        const defaultUnit = getDefaultProductUnit(product);
+        const tax = parseFloat(product.salesTax) || 5;
+        const cost = product.cost != null ? parseFloat(product.cost) : 0;
+        const rawItem = {
+            id: Date.now() + Math.random(),
+            code: product.code || '',
+            barcode: product.barcode || '',
+            image: product.primaryImage || product.image || '',
+            name: product.name || '',
+            desc: product.shortDesc || product.description || '',
+            unit: defaultUnit,
+            qty,
+            price,
+            foc: 0,
+            focUnit: defaultUnit,
+            availableUnits: product.availableUnits || ['PCS'],
+            unitConversions: product.unitConversions || {},
+            unitPrices: product.unitPrices || {},
+            retailPrice: price,
+            sellingPrice: price,
+            disc,
+            tax,
+            taxAmt: 0,
+            gross: 0,
+            net: 0,
+            cost,
+            gp: 0,
+            remarks: product.description || '',
+            warehouseId: defaultBranch?.defaultWarehouseId || (warehousesList.length > 0 ? warehousesList[0].id : ''),
+        };
+        const newItem = calculateRow(rawItem);
+        if (newItem.code) fetchItemContext(newItem.code);
+        setItems(prev => {
+            const hasData = prev.some(i => i.code || i.name);
+            return hasData ? [...prev, newItem] : [newItem];
+        });
+    };
+
     const handleAddItem = () => {
+        if (isReadOnlyInvoice) return;
         setItems([...items, { id: Date.now(), code: '', name: '', unit: 'PCS', qty: 0, price: 0, disc: 0, tax: 5, taxAmt: 0, gross: 0, net: 0, cost: 0, warehouseId: defaultBranch?.defaultWarehouseId || (warehousesList.length > 0 ? warehousesList[0].id : '') }]);
     };
 
     const handleDeleteItem = (id) => {
-        if (items.length > 1) setItems(items.filter(i => i.id !== id));
+        if (isReadOnlyInvoice) return;
+        const nextItems = items.filter(i => i.id !== id);
+        setItems(nextItems.length > 0 ? nextItems : [createBlankInvoiceItem()]);
     };
 
+
     const handleSave = async (newStatus = 'Draft') => {
+        if (isReadOnlyInvoice) {
+            alert("This invoice is view-only because it has already been completed.");
+            return;
+        }
         if (!selectedCustomer) { alert("Please select a customer"); return; }
 
         // Build payload for backend
         // Resolve invoice-level warehouse ID for fallback on items that have no warehouseId
         const invoiceLevelWarehouseId =
-            warehousesList.find(w => w.name === branch)?.id ||
             defaultBranch?.defaultWarehouseId ||
             (warehousesList.length > 0 ? warehousesList[0].id : null);
 
@@ -1095,34 +1305,87 @@ const SalesInvoice = () => {
             paymentTerms: paymentTerms,
             salesperson: salesperson,
             branch: branch,
-
+            shippingAddress: shippingAddress,
             amountPaid: Number(amountCollected),
+            billDiscount: 0,
+            billDiscountAmount: 0,
+            totalDiscount: 0,
+            subTotal: Number(taxableSubTotal),
+            taxableSubTotal: Number(taxableSubTotal),
+            totalTax: Number(totalTax),
+            netTotal: Number(netTotal),
             status: newStatus === 'Confirmed' ? 'CONFIRMED' : 'DRAFT',
             salesType: salesType,
+            requirePickingNote: true,
+            requestedFulfillmentType: 'Picking',
 
-            items: items.map(i => ({
-                id: (i.id > 1000000000000) ? null : i.id,
-                itemCode: i.code,
-                image: i.image,
-                itemName: i.name,
-                description: i.desc || '',
-                sku: i.sku || '',
-                localName: i.localName || '',
-                unit: i.unit,
-                quantity: Number(i.qty),
-                price: Number(i.price),
-                cost: Number(i.cost),
-                discount: Number(i.disc),
-                taxRate: Number(i.tax),
-                taxAmount: Number(i.taxAmt),
-                grossAmount: Number(i.gross),
-                netAmount: Number(i.net),
-                foc: Number(i.foc) || 0,
-                warehouseId: (i.warehouseId && i.warehouseId !== '')
-                    ? Number(i.warehouseId)
-                    : (invoiceLevelWarehouseId ? Number(invoiceLevelWarehouseId) : null)
-            }))
+            items: items.map(i => {
+                const discountFactor = 1 - (Number(billDiscount) / 100);
+                const finalNet = Number(i.net) * discountFactor;
+                const finalTax = Number(i.taxAmt) * discountFactor;
+                const finalTaxable = finalNet - finalTax;
+                const qty = Number(i.qty) || 1;
+
+                return {
+                    id: (i.id > 1000000000000) ? null : i.id,
+                    salesOrderItemId: i.salesOrderItemId || null,
+                    itemCode: i.code,
+                    barcode: i.barcode || '',
+                    image: i.image,
+                    itemName: i.name,
+                    description: i.desc || '',
+                    sku: i.sku || '',
+                    localName: i.localName || '',
+                    unit: i.unit,
+                    quantity: qty,
+                    price: finalTaxable / qty, // Use final net price as unit price
+                    cost: Number(i.cost),
+                    discount: 0, // Set to 0 to prevent backend re-calculating
+                    taxRate: Number(i.tax),
+                    taxAmount: finalTax,
+                    grossAmount: finalTaxable,
+                    netAmount: finalNet,
+                    foc: Number(i.foc) || 0,
+                    warehouseId: (i.warehouseId && i.warehouseId !== '')
+                        ? Number(i.warehouseId)
+                        : (invoiceLevelWarehouseId ? Number(invoiceLevelWarehouseId) : null)
+                };
+            })
         };
+
+        // Stock check enforcement (skip for Draft saves)
+        const isSourceLinkedInvoice = Boolean((linkedSO || '').trim() || (linkedDN || '').trim());
+        if (newStatus !== 'Draft' && salesSettings?.stockCheckRequired && !isSourceLinkedInvoice) {
+            const stockIssues = [];
+            for (const item of items) {
+                if (!item.code) continue;
+                try {
+                    const warehouseId = (item.warehouseId && item.warehouseId !== '')
+                        ? Number(item.warehouseId)
+                        : (invoiceLevelWarehouseId ? Number(invoiceLevelWarehouseId) : null);
+                    const stockData = await getStockAvailability(item.code, warehouseId);
+                    const locs = stockData?.locations || [];
+                    const available = locs.reduce((sum, l) => sum + (Number(l.available) || 0), 0);
+                    if (Number(item.qty) > available) {
+                        stockIssues.push(`${item.name || item.code}: requested ${item.qty}, available ${available}`);
+                    }
+                } catch {
+                    // skip items where stock check fails
+                }
+            }
+            if (stockIssues.length > 0) {
+                alert(`Insufficient stock for the following items:\n\n${stockIssues.join('\n')}\n\nPlease adjust quantities or disable stock check in Sales Settings.`);
+                return;
+            }
+        }
+
+        // Credit limit BLOCK enforcement
+        if (salesSettings?.creditLimitPolicy === 'BLOCK' &&
+            selectedCustomer.creditLimitAmount > 0 &&
+            (Number(selectedCustomer.balance || 0) + netTotal) > selectedCustomer.creditLimitAmount) {
+            alert(`Credit Limit Exceeded: The projected outstanding balance (${formatCurrencyDisplay(Number(selectedCustomer.balance || 0) + netTotal, company)}) exceeds this customer's credit limit of ${formatCurrencyDisplay(selectedCustomer.creditLimitAmount, company)}.\n\nThis invoice cannot be saved. Please collect payment first or adjust the credit limit in the customer profile.`);
+            return;
+        }
 
         try {
             const savedInvoice = await saveSalesInvoice(payload);
@@ -1136,6 +1399,8 @@ const SalesInvoice = () => {
                 setStatus('POSTED');
             }
 
+            await verifyPickingNoteAfterSave(savedInvoice);
+
             await fetchInvoices();
             setActiveTab('list');
         } catch (e) {
@@ -1146,6 +1411,7 @@ const SalesInvoice = () => {
 
     // ✅ Load existing invoice for editing
     const handleLoadInvoice = (invoice) => {
+        setPickingNoteVerification(null);
         setInvoiceId(invoice.id);
         setInvoiceNo(invoice.invoiceNumber);
         setInvoiceDate(invoice.invoiceDate);
@@ -1155,6 +1421,7 @@ const SalesInvoice = () => {
             code: invoice.customerCode,
             name: invoice.customerName
         });
+        setShippingAddress(invoice.shippingAddress || '');
 
         setLinkedSO(invoice.linkedSalesOrder || '');
         setLinkedDN(invoice.linkedDeliveryNote || '');
@@ -1163,25 +1430,36 @@ const SalesInvoice = () => {
         setPaymentMode(invoice.paymentMode || 'Cash');
         setPaymentTerms(invoice.paymentTerms || 'Immediate');
         setSalesperson(invoice.salesperson || 'John Doe');
-        setBranch(invoice.branch || 'Dubai Main');
+        setBranch(invoice.branch || defaultBranch?.name || '');
 
         setAmountCollected(invoice.amountPaid || 0);
+        setBillDiscount(Number(invoice.billDiscount) || 0);
         setInvoiceBalance(invoice.balance != null ? invoice.balance : null);
         setStatus(invoice.status || 'Draft');
-        setSalesType(invoice.salesType || 'STANDARD_FLOW');
+        const resolvedSalesType = invoice.salesType || 'STANDARD_FLOW';
+        setSalesType(resolvedSalesType);
+        setInvoiceTypeUI(resolveInvoiceTypeUI({
+            linkedSalesOrder: invoice.linkedSalesOrder || '',
+            linkedDeliveryNote: invoice.linkedDeliveryNote || '',
+            linkedProforma: invoice.linkedProforma || '',
+            salesType: resolvedSalesType
+        }));
         setIsGeneratedFromDN(!!invoice.linkedDeliveryNote && invoice.status !== 'CANCELLED');
 
         // Map items back
         if (invoice.items && invoice.items.length > 0) {
             setItems(invoice.items.map(i => ({
                 id: i.id || Date.now() + Math.random(),
+                salesOrderItemId: i.salesOrderItemId || null,
                 code: i.itemCode,
+                barcode: i.barcode || i.itemBarcode || '',
                 image: i.image || '',
                 name: i.itemName || '',
                 desc: i.description || '',
                 sku: i.sku || '',
                 localName: i.localName || '',
                 unit: i.unit,
+                availableUnits: i.availableUnits || [i.unit || 'PCS'],
                 qty: i.quantity,
                 price: i.price,
                 cost: i.cost || 0,
@@ -1191,6 +1469,7 @@ const SalesInvoice = () => {
                 gross: i.grossAmount || 0,
                 net: i.netAmount || 0,
                 foc: i.foc || 0,
+                focUnit: i.focUnit || i.unit || 'PCS',
                 gp: 0,
                 warehouseId: i.warehouseId || ''
             })));
@@ -1204,7 +1483,8 @@ const SalesInvoice = () => {
     // ✅ MODAL HANDLERS
     const handleOpenPaymentModal = (invRow) => {
         // Support being called from the list (with invRow) or from the editor (no arg)
-        if (invRow) {
+        // Check for specific properties to ensure it's not a React event object
+        if (invRow && (invRow.id || invRow.invoiceNumber)) {
             handleLoadInvoice(invRow);
         }
         // Use server-side balance if available (authoritative), otherwise compute locally
@@ -1282,10 +1562,12 @@ const SalesInvoice = () => {
             branch,
             paymentMode,
             items,
-            subTotal,
+            subTotal: taxableSubTotal,
             totalTax,
             invoiceTotal: netTotal,
             amountPaid: amountCollected,
+            billDiscount,
+            billDiscountAmount,
             status,
             paymentTerms,
             salesperson
@@ -1300,6 +1582,8 @@ const SalesInvoice = () => {
         try {
             const templates = await getTemplatesByCategory('Sales Invoice');
             const defaultTemplate = templates.find(t => t.isDefault);
+            const resolvedBillDiscount = Number(dataToPrint.billDiscount) || 0;
+            const resolvedSummary = summarizeSalesItems(dataToPrint.items || [], resolvedBillDiscount);
 
             if (defaultTemplate) {
                 // Find Customer details
@@ -1312,7 +1596,7 @@ const SalesInvoice = () => {
                     date: dataToPrint.invoiceDate,
                     customer: {
                         name: dataToPrint.customerName || '',
-                        address: fullCustomer?.address || fullCustomer?.billingAddress || '',
+                        address: dataToPrint.shippingAddress || shippingAddress || fullCustomer?.address || fullCustomer?.billingAddress || '',
                         trn: fullCustomer?.trn
                     },
                     items: (dataToPrint.items || []).map(i => ({
@@ -1322,6 +1606,8 @@ const SalesInvoice = () => {
                         sku: i.sku || i.productSku || '',
                         localName: i.localName || i.productLocalName || '',
                         barcode: i.barcode || i.itemBarcode || '',
+                        salesPerson: dataToPrint.salesperson || '',
+                        location: dataToPrint.branch || '',
                         unit: i.unit,
                         qty: Number(i.quantity || i.qty),
                         price: Number(i.price),
@@ -1332,18 +1618,20 @@ const SalesInvoice = () => {
                         image: i.image || i.imageUrl ? getImageUrl(i.image || i.imageUrl) : ''
                     })),
                     totals: {
-                        subTotal: Number(dataToPrint.subTotal),
-                        tax: Number(dataToPrint.totalTax || dataToPrint.taxTotal),
-                        grandTotal: Number(dataToPrint.invoiceTotal || dataToPrint.netTotal),
-                        currency: 'AED',
-                        billDiscount: Number(dataToPrint.totalDiscount || 0),
-                        billDiscountAmount: 0
+                        subTotal: resolvedSummary.subTotal,
+                        tax: resolvedSummary.tax,
+                        grandTotal: resolvedSummary.grandTotal,
+                        currency: dataToPrint.currency || company?.currencySymbol || company?.currency || 'AED',
+                        billDiscount: resolvedBillDiscount,
+                        billDiscountAmount: resolvedSummary.billDiscountAmount
                     },
                     meta: {
                         status: dataToPrint.status,
                         paymentTerm: dataToPrint.paymentTerms,
                         reference: `SO: ${dataToPrint.linkedSalesOrder || '-'} | DN: ${dataToPrint.linkedDeliveryNote || '-'}`,
-                        notes: `Branch: ${dataToPrint.branch || '-'} | Salesperson: ${dataToPrint.salesperson || '-'}`
+                        location: dataToPrint.branch || '',
+                        salesPerson: dataToPrint.salesperson || '',
+                        notes: dataToPrint.notes || ''
                     }
                 };
 
@@ -1351,11 +1639,25 @@ const SalesInvoice = () => {
                 printHtml(html);
             } else {
                 alert("No default template selected. Using browser print.");
-                window.print();
+                const title = generateDocFilename(
+                    'Sales Invoice',
+                    dataToPrint.invoiceNumber,
+                    dataToPrint.customerName,
+                    dataToPrint.invoiceDate,
+                    dataToPrint.currency || 'AED'
+                );
+                print(title);
             }
         } catch (error) {
             console.error("Print error:", error);
-            window.print();
+            const title = generateDocFilename(
+                'Sales Invoice',
+                dataToPrint.invoiceNumber,
+                dataToPrint.customerName,
+                dataToPrint.invoiceDate,
+                dataToPrint.currency || 'AED'
+            );
+            print(title);
         } finally {
             setIsPrinting(false);
         }
@@ -1368,13 +1670,14 @@ const SalesInvoice = () => {
         if (s === 'OVERDUE') return <span className="bg-red-100 text-red-700 px-2 py-0.5 rounded text-[10px] font-bold">Overdue</span>;
         if (s === 'PARTIALLY_PAID') return <span className="bg-orange-100 text-orange-700 px-2 py-0.5 rounded text-[10px] font-bold">Partially Paid</span>;
         if (s === 'CONFIRMED') return <span className="bg-blue-100 text-blue-700 px-2 py-0.5 rounded text-[10px] font-bold">Confirmed</span>;
+        if (s === 'COMPLETED') return <span className="bg-emerald-100 text-emerald-700 px-2 py-0.5 rounded text-[10px] font-bold">Completed</span>;
         return <span className="bg-slate-100 text-slate-600 px-2 py-0.5 rounded text-[10px] font-bold">{statusVal || 'Draft'}</span>;
     };
 
     const resolveSourceType = (inv) => {
         if (inv.linkedDeliveryNote) return { label: 'Against DN', ref: inv.linkedDeliveryNote, color: 'bg-green-100 text-green-700 border-green-200' };
-        if (inv.linkedSalesOrder)   return { label: 'Against SO', ref: inv.linkedSalesOrder,   color: 'bg-blue-100 text-blue-700 border-blue-200' };
-        if (inv.linkedProforma)     return { label: 'Against PI', ref: inv.linkedProforma,      color: 'bg-purple-100 text-purple-700 border-purple-200' };
+        if (inv.linkedSalesOrder) return { label: 'Against SO', ref: inv.linkedSalesOrder, color: 'bg-blue-100 text-blue-700 border-blue-200' };
+        if (inv.linkedProforma) return { label: 'Against PI', ref: inv.linkedProforma, color: 'bg-purple-100 text-purple-700 border-purple-200' };
         return { label: 'Direct Sale', ref: null, color: 'bg-orange-100 text-orange-700 border-orange-200' };
     };
 
@@ -1407,11 +1710,11 @@ const SalesInvoice = () => {
             <div className="grid grid-cols-2 gap-2 text-xs border-t border-slate-100 pt-3">
                 <div>
                     <span className="block text-slate-400 text-[10px] uppercase">Net Amount</span>
-                    <span className="font-bold text-slate-700">AED {Number(inv.invoiceTotal || 0).toLocaleString()}</span>
+                    <CurrencyAmount value={inv.invoiceTotal || 0} currency={invoiceCurrency} className="font-bold text-slate-700" />
                 </div>
                 <div className="text-right">
                     <span className="block text-slate-400 text-[10px] uppercase">Balance</span>
-                    <span className="font-bold text-red-500">AED {Number(inv.balance || 0).toLocaleString()}</span>
+                    <CurrencyAmount value={inv.balance || 0} currency={invoiceCurrency} className="font-bold text-red-500" />
                 </div>
             </div>
         </div>
@@ -1425,8 +1728,10 @@ const SalesInvoice = () => {
                 isOpen={isProductSelectorOpen}
                 onClose={() => setIsProductSelectorOpen(false)}
                 onSelect={handleAddSingleProduct}
+                onInlineAdd={handleFastEntryAdd}
                 title="Select Items from Products / Services"
                 actionLabel="Add to Invoice"
+                mode="sales"
             />
 
             {/* ✅ STOCK AVAILABILITY MODAL */}
@@ -1440,6 +1745,7 @@ const SalesInvoice = () => {
             <ItemAddOnsModal
                 item={selectedAddonItem}
                 onClose={() => setSelectedAddonItem(null)}
+                isReadOnly={isReadOnlyInvoice}
                 onSave={(updated) => {
                     setItems(prev => prev.map(i => i.id === updated.id ? updated : i));
                     setSelectedAddonItem(null);
@@ -1550,7 +1856,7 @@ const SalesInvoice = () => {
                                             <CheckCircle2 className="h-4 w-4" /> Confirm
                                         </button>
                                         <button
-                                            onClick={handleOpenPaymentModal}
+                                            onClick={() => handleOpenPaymentModal()}
                                             className="flex-1 sm:flex-none h-8 px-3 border border-slate-300 rounded-md bg-white hover:bg-slate-50 text-slate-700 flex items-center justify-center gap-1.5 text-sm font-medium transition-colors"
                                         >
                                             <DollarSign className="h-4 w-4" /> Pay
@@ -1569,12 +1875,18 @@ const SalesInvoice = () => {
                                 )}
 
                                 {activeTab === 'list' && (
-                                    <button
-                                        onClick={() => handleCreateNew('STANDARD_FLOW')}
-                                        className="flex-1 sm:flex-none h-8 px-4 rounded-md bg-[#F5C742] hover:bg-[#E5B732] text-slate-900 flex items-center justify-center gap-1.5 text-sm font-bold shadow-sm transition-colors"
-                                    >
-                                        <Plus className="h-4 w-4" /> Create New
-                                    </button>
+                                    <>
+                                        <ExportDropdown
+                                            onExportExcel={() => exportToExcel(filteredInvoices, SALES_INVOICE_COLUMNS, 'Sales_Invoices')}
+                                            onExportPdf={() => exportToPDF(filteredInvoices, SALES_INVOICE_COLUMNS, 'Sales Invoices', 'Sales_Invoices')}
+                                        />
+                                        <button
+                                            onClick={() => handleCreateNew('STANDARD_FLOW')}
+                                            className="flex-1 sm:flex-none h-8 px-4 rounded-md bg-[#F5C742] hover:bg-[#E5B732] text-slate-900 flex items-center justify-center gap-1.5 text-sm font-bold shadow-sm transition-colors"
+                                        >
+                                            <Plus className="h-4 w-4" /> Create New
+                                        </button>
+                                    </>
                                 )}
                             </div>
                         </div>
@@ -1689,10 +2001,10 @@ const SalesInvoice = () => {
                                                 <td className="px-4 py-3">
                                                     <span className="border border-slate-200 px-2 py-0.5 rounded text-[10px] bg-white text-slate-600">{inv.paymentMode || 'Cash'}</span>
                                                 </td>
-                                                <td className="px-4 py-3 font-medium text-slate-800">AED {Number(inv.invoiceTotal || 0).toLocaleString()}</td>
-                                                <td className="px-4 py-3 text-emerald-600">AED {Number(inv.amountPaid || 0).toLocaleString()}</td>
+                                                <td className="px-4 py-3 font-medium text-slate-800"><CurrencyAmount value={inv.invoiceTotal || 0} currency={invoiceCurrency} /></td>
+                                                <td className="px-4 py-3 text-emerald-600"><CurrencyAmount value={inv.amountPaid || 0} currency={invoiceCurrency} /></td>
                                                 <td className="px-4 py-3">
-                                                    <span className="text-red-500 font-medium mr-2">AED {Number(inv.balance || 0).toLocaleString()}</span>
+                                                    <CurrencyAmount value={inv.balance || 0} currency={invoiceCurrency} className="text-red-500 font-medium mr-2" />
                                                     {renderListStatus(inv.status)}
                                                 </td>
                                                 <td className="px-4 py-3 text-slate-500">Classic</td>
@@ -1745,7 +2057,26 @@ const SalesInvoice = () => {
                                 <div className="flex items-center gap-2.5 px-4 py-3 rounded-xl bg-amber-50 border border-amber-200">
                                     <Zap size={14} className="text-amber-500 shrink-0" />
                                     <p className="text-xs text-amber-700">
-                                        <strong>Fast Sale Mode is active.</strong> Saving this invoice will automatically create the Delivery Note, deduct stock, and recognise revenue in one step. Ensure every line item has a warehouse assigned.
+                                        <strong>Fast Sale Mode is active.</strong> Saving this invoice will automatically create a Picking delivery note, mark it delivered, deduct stock, and recognise revenue in one step. Ensure every line item has a warehouse assigned.
+                                    </p>
+                                </div>
+                            )}
+
+                            {pickingNoteVerification && (
+                                <div className={`flex items-center gap-2.5 px-4 py-3 rounded-xl border ${pickingNoteVerification.kind === 'success'
+                                        ? 'bg-emerald-50 border-emerald-200'
+                                        : 'bg-red-50 border-red-200'
+                                    }`}>
+                                    {pickingNoteVerification.kind === 'success' ? (
+                                        <CheckCircle2 size={14} className="text-emerald-500 shrink-0" />
+                                    ) : (
+                                        <AlertCircle size={14} className="text-red-500 shrink-0" />
+                                    )}
+                                    <p className={`text-xs ${pickingNoteVerification.kind === 'success'
+                                            ? 'text-emerald-700'
+                                            : 'text-red-700'
+                                        }`}>
+                                        <strong>Picking verification:</strong> {pickingNoteVerification.message}
                                     </p>
                                 </div>
                             )}
@@ -1753,222 +2084,209 @@ const SalesInvoice = () => {
                             <div className="grid grid-cols-1 xl:grid-cols-4 gap-6 flex-1">
                                 {/* LEFT COLUMN */}
                                 <div className="xl:col-span-1 space-y-4 min-w-0">
-                                {/* 1. TOP ACTION BAR */}
-                                <div className="hidden">
-                                    <div className="flex flex-col md:flex-row items-center gap-4 w-full xl:w-auto">
-                                        <span className="px-3 py-1 rounded bg-slate-100 text-slate-600 text-xs font-bold border border-slate-200 w-full md:w-auto text-center">{status}</span>
-                                        <input
-                                            type="text"
-                                            value={salesType === 'DIRECT_SALE' ? "Tax Invoice – Direct Sale" : "Tax Invoice – Standard VAT"}
-                                            className="text-sm font-medium text-slate-700 bg-transparent border-none focus:ring-0 w-full md:w-64"
-                                            readOnly
-                                        />
+                                    {/* 1. TOP ACTION BAR */}
+                                    <div className="hidden">
+                                        <div className="flex flex-col md:flex-row items-center gap-4 w-full xl:w-auto">
+                                            <span className="px-3 py-1 rounded bg-slate-100 text-slate-600 text-xs font-bold border border-slate-200 w-full md:w-auto text-center">{status}</span>
+                                            <input
+                                                type="text"
+                                                value={salesType === 'DIRECT_SALE' ? "Tax Invoice – Direct Sale" : "Tax Invoice – Standard VAT"}
+                                                className="text-sm font-medium text-slate-700 bg-transparent border-none focus:ring-0 w-full md:w-64"
+                                                readOnly
+                                            />
+                                        </div>
+                                        <div className="flex flex-wrap gap-2 w-full xl:w-auto">
+                                            <button
+                                                onClick={() => handleSave('Draft')}
+                                                className="flex items-center justify-center gap-1 px-3 py-1.5 bg-white border border-slate-200 rounded text-xs font-bold text-slate-600 hover:bg-slate-50 flex-1 md:flex-none"
+                                            >
+                                                <Save size={14} /> Save Draft
+                                            </button>
+                                            <button
+                                                onClick={() => handleSave('Confirmed')}
+                                                className="flex items-center justify-center gap-1 px-4 py-1.5 bg-[#F5C742] rounded text-xs font-bold text-slate-900 hover:bg-yellow-400 flex-1 md:flex-none"
+                                            >
+                                                <CheckCircle2 size={14} /> Confirm
+                                            </button>
+                                            <button
+                                                onClick={() => handleOpenPaymentModal()}
+                                                className="flex items-center justify-center gap-1 px-3 py-1.5 bg-white border border-slate-200 rounded text-xs font-bold text-slate-600 hover:bg-slate-50 flex-1 md:flex-none"
+                                            >
+                                                <DollarSign size={14} /> Pay
+                                            </button>
+                                            <button onClick={() => handlePrintClick()} disabled={isPrinting} className="p-2 hover:bg-slate-50 rounded border border-slate-200 text-slate-600 hidden md:block disabled:opacity-50"><Printer size={16} /></button>
+                                            <button className="flex items-center justify-center gap-1 px-3 py-1.5 bg-white border border-slate-200 rounded text-xs font-medium text-slate-600 hover:bg-slate-50 flex-1 md:flex-none"><Mail size={14} /></button>
+                                        </div>
                                     </div>
-                                    <div className="flex flex-wrap gap-2 w-full xl:w-auto">
-                                        <button
-                                            onClick={() => handleSave('Draft')}
-                                            className="flex items-center justify-center gap-1 px-3 py-1.5 bg-white border border-slate-200 rounded text-xs font-bold text-slate-600 hover:bg-slate-50 flex-1 md:flex-none"
-                                        >
-                                            <Save size={14} /> Save Draft
-                                        </button>
-                                        <button
-                                            onClick={() => handleSave('Confirmed')}
-                                            className="flex items-center justify-center gap-1 px-4 py-1.5 bg-[#F5C742] rounded text-xs font-bold text-slate-900 hover:bg-yellow-400 flex-1 md:flex-none"
-                                        >
-                                            <CheckCircle2 size={14} /> Confirm
-                                        </button>
-                                        <button
-                                            onClick={handleOpenPaymentModal}
-                                            className="flex items-center justify-center gap-1 px-3 py-1.5 bg-white border border-slate-200 rounded text-xs font-bold text-slate-600 hover:bg-slate-50 flex-1 md:flex-none"
-                                        >
-                                            <DollarSign size={14} /> Pay
-                                        </button>
-                                        <button onClick={() => handlePrintClick()} disabled={isPrinting} className="p-2 hover:bg-slate-50 rounded border border-slate-200 text-slate-600 hidden md:block disabled:opacity-50"><Printer size={16} /></button>
-                                        <button className="flex items-center justify-center gap-1 px-3 py-1.5 bg-white border border-slate-200 rounded text-xs font-medium text-slate-600 hover:bg-slate-50 flex-1 md:flex-none"><Mail size={14} /></button>
-                                    </div>
-                                </div>
 
-                                {/* 2. INVOICE DETAILS FORM */}
-                                <div className="bg-white p-4 rounded-lg border border-slate-200 shadow-sm">
-                                    <h3 className="text-sm font-bold text-slate-700 mb-4">Invoice Details</h3>
-                                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-2 gap-4">
-
-                                        <div>
-                                            <label className="block text-xs font-bold text-slate-700 mb-1">Invoice Number</label>
-                                            <input type="text" value={invoiceNo} readOnly className="w-full text-xs p-2 bg-slate-50 border border-slate-200 rounded text-slate-700 font-bold" />
+                                    {/* 2. INVOICE DETAILS FORM */}
+                                    <div className="bg-white p-4 rounded-lg border border-slate-200 shadow-sm">
+                                        <div className="flex items-center justify-between gap-3 mb-4">
+                                            <h3 className="text-sm font-bold text-slate-700">Invoice Details</h3>
+                                            {isReadOnlyInvoice && (
+                                                <span className="text-[10px] font-bold px-2 py-1 rounded border border-slate-200 bg-slate-50 text-slate-600">
+                                                    View Only
+                                                </span>
+                                            )}
                                         </div>
+                                        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-2 gap-4">
 
-                                        <div>
-                                            <label className="block text-xs font-bold text-slate-700 mb-1">Invoice Date</label>
-                                            <input type="date" value={invoiceDate} onChange={e => setInvoiceDate(e.target.value)} className="w-full text-xs p-2 border border-slate-200 rounded focus:border-[#F5C742] outline-none" />
-                                        </div>
-
-                                        <div>
-                                            <label className="block text-xs font-bold text-slate-700 mb-1">Due Date</label>
-                                            <input type="date" value={deliveryDate} onChange={e => setDeliveryDate(e.target.value)} className="w-full text-xs p-2 border border-slate-200 rounded focus:border-[#F5C742] outline-none" />
-                                        </div>
-
-                                        <div>
-                                            <label className="block text-xs font-bold text-slate-700 mb-1">Reference</label>
-                                            <input type="text" value={reference} onChange={e => setReference(e.target.value)} placeholder="e.g. PO Number" className="w-full text-xs p-2 border border-slate-200 rounded focus:border-[#F5C742] outline-none" />
-                                        </div>
-
-                                        <div>
-                                            <label className="block text-xs font-bold text-slate-700 mb-1">Payment Terms</label>
-                                            <div className="relative">
-                                                <select value={paymentTerms} onChange={e => setPaymentTerms(e.target.value)} className="w-full text-xs p-2 border border-slate-200 rounded bg-white appearance-none focus:outline-none focus:border-[#F5C742]">
-                                                    <option>Immediate</option>
-                                                    <option>Net 30</option>
-                                                    <option>Net 60</option>
-                                                </select>
-                                                <ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
-                                            </div>
-                                        </div>
-
-                                        <div>
-                                            <label className="block text-xs font-bold text-slate-700 mb-1">Invoice Type</label>
-                                            <div className="relative">
-                                                <select
-                                                    value={invoiceTypeUI}
-                                                    onChange={e => {
-                                                        setInvoiceTypeUI(e.target.value);
-                                                        setSalesType(e.target.value === 'Direct Sale' ? 'DIRECT_SALE' : 'STANDARD_FLOW');
-                                                        // Reset links when switching type
-                                                        setLinkedSO(''); setLinkedDN(''); setLinkedPI('');
-                                                    }}
-                                                    className="w-full text-xs p-2 border border-slate-200 rounded bg-white appearance-none focus:outline-none focus:border-[#F5C742]">
-                                                    <option>Direct Sale</option>
-                                                    <option>Against Sales Order</option>
-                                                    <option>Against Delivery Note</option>
-                                                    <option>Against Proforma Invoice</option>
-                                                </select>
-                                                <ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
-                                            </div>
-                                        </div>
-
-                                        {/* CONDITIONAL SOURCE DOCUMENT SELECTOR */}
-                                        {invoiceTypeUI === 'Against Sales Order' && (
                                             <div>
-                                                <label className="block text-xs font-bold text-slate-700 mb-1">Sales Order</label>
+                                                <label className="block text-xs font-bold text-slate-700 mb-1">Invoice Number</label>
+                                                <input type="text" value={invoiceNo} readOnly className="w-full text-xs p-2 bg-slate-50 border border-slate-200 rounded text-slate-700 font-bold" />
+                                            </div>
+
+                                            <div>
+                                                <label className="block text-xs font-bold text-slate-700 mb-1">Invoice Date</label>
+                                                <input type="date" value={invoiceDate} onChange={e => setInvoiceDate(e.target.value)} disabled={isReadOnlyInvoice} className="w-full text-xs p-2 border border-slate-200 rounded focus:border-[#F5C742] outline-none disabled:bg-slate-50 disabled:text-slate-500" />
+                                            </div>
+
+                                            <div>
+                                                <label className="block text-xs font-bold text-slate-700 mb-1">Due Date</label>
+                                                <input type="date" value={deliveryDate} onChange={e => setDeliveryDate(e.target.value)} disabled={isReadOnlyInvoice} className="w-full text-xs p-2 border border-slate-200 rounded focus:border-[#F5C742] outline-none disabled:bg-slate-50 disabled:text-slate-500" />
+                                            </div>
+
+                                            <div>
+                                                <label className="block text-xs font-bold text-slate-700 mb-1">Reference</label>
+                                                <input type="text" value={reference} onChange={e => setReference(e.target.value)} readOnly={isReadOnlyInvoice} placeholder="e.g. PO Number" className="w-full text-xs p-2 border border-slate-200 rounded focus:border-[#F5C742] outline-none read-only:bg-slate-50 read-only:text-slate-500" />
+                                            </div>
+
+                                            <div>
+                                                <label className="block text-xs font-bold text-slate-700 mb-1">Payment Terms</label>
                                                 <div className="relative">
-                                                    <select value={linkedSO} onChange={e => handleSOChange(e.target.value)} className="w-full text-xs p-2 border border-slate-200 rounded bg-white appearance-none focus:outline-none focus:border-[#F5C742]">
-                                                        <option value="">Select SO...</option>
-                                                        {salesOrdersList.filter(s => s.status !== 'CANCELLED').map(s => <option key={s.id} value={s.soNumber}>{s.soNumber} - {s.customerName}</option>)}
+                                                    <select value={paymentTerms} onChange={e => setPaymentTerms(e.target.value)} disabled={isReadOnlyInvoice} className="w-full text-xs p-2 border border-slate-200 rounded bg-white appearance-none focus:outline-none focus:border-[#F5C742] disabled:bg-slate-50 disabled:text-slate-500">
+                                                        <option>Immediate</option>
+                                                        <option>Net 30</option>
+                                                        <option>Net 60</option>
                                                     </select>
                                                     <ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
                                                 </div>
                                             </div>
-                                        )}
 
-                                        {invoiceTypeUI === 'Against Delivery Note' && (
                                             <div>
-                                                <label className="block text-xs font-bold text-slate-700 mb-1">Delivery Note</label>
+                                                <label className="block text-xs font-bold text-slate-700 mb-1">Invoice Type</label>
                                                 <div className="relative">
-                                                    <select value={linkedDN} onChange={e => handleDNChange(e.target.value)} className="w-full text-xs p-2 border border-slate-200 rounded bg-white appearance-none focus:outline-none focus:border-[#F5C742]">
-                                                        <option value="">Select DN...</option>
-                                                        {deliveryNotesList.filter(d => d.status !== 'CANCELLED').map(d => <option key={d.id} value={d.dnNumber}>{d.dnNumber} - {d.customerName}</option>)}
+                                                    <select
+                                                        value={invoiceTypeUI}
+                                                        disabled={isReadOnlyInvoice}
+                                                        onChange={e => {
+                                                            setInvoiceTypeUI(e.target.value);
+                                                            setSalesType(e.target.value === 'Direct Sale' ? 'DIRECT_SALE' : 'STANDARD_FLOW');
+                                                            // Reset links when switching type
+                                                            setLinkedSO(''); setLinkedDN(''); setLinkedPI('');
+                                                            setBillDiscount(0);
+                                                        }}
+                                                        className="w-full text-xs p-2 border border-slate-200 rounded bg-white appearance-none focus:outline-none focus:border-[#F5C742] disabled:bg-slate-50 disabled:text-slate-500">
+                                                        <option>Direct Sale</option>
+                                                        <option>Against Sales Order</option>
+                                                        <option>Against Delivery Note</option>
+                                                        <option>Against Proforma Invoice</option>
                                                     </select>
                                                     <ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
                                                 </div>
                                             </div>
-                                        )}
 
-                                        {invoiceTypeUI === 'Against Proforma Invoice' && (
-                                            <div>
-                                                <label className="block text-xs font-bold text-slate-700 mb-1">Proforma Invoice</label>
-                                                <div className="relative">
-                                                    <select value={linkedPI} onChange={e => setLinkedPI(e.target.value)} className="w-full text-xs p-2 border border-slate-200 rounded bg-white appearance-none focus:outline-none focus:border-[#F5C742]">
-                                                        <option value="">Select PI...</option>
-                                                        {proformaList.filter(p => p.status !== 'CANCELLED').map(p => <option key={p.id} value={p.proformaNo}>{p.proformaNo} - {p.customerName}</option>)}
-                                                    </select>
-                                                    <ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
-                                                </div>
-                                            </div>
-                                        )}
-
-                                        <div>
-                                            <label className="block text-xs font-bold text-slate-700 mb-1">Warehouse</label>
-                                            <div className="relative">
-                                                <select value={branch} onChange={e => setBranch(e.target.value)} className="w-full text-xs p-2 border border-slate-200 rounded bg-white appearance-none focus:outline-none focus:border-[#F5C742]">
-                                                    {warehousesList.map(w => <option key={w.id} value={w.name}>{w.name}</option>)}
-                                                </select>
-                                                <ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
-                                            </div>
-                                        </div>
-
-                                        <div>
-                                            <label className="block text-xs font-bold text-slate-700 mb-1">Payment Mode</label>
-                                            <div className="relative">
-                                                <select value={paymentMode} onChange={e => setPaymentMode(e.target.value)} className="w-full text-xs p-2 border border-slate-200 rounded bg-white appearance-none focus:outline-none focus:border-[#F5C742]">
-                                                    <option>Cash</option><option>Credit</option><option>Bank Transfer</option>
-                                                </select>
-                                                <ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
-                                            </div>
-                                        </div>
-
-                                        <div>
-                                            <label className="block text-xs font-bold text-slate-700 mb-1">Salesperson</label>
-                                            <div className="relative">
-                                                <select value={salesperson} onChange={e => setSalesperson(e.target.value)} className="w-full text-xs p-2 border border-slate-200 rounded bg-white appearance-none focus:outline-none focus:border-[#F5C742]">
-                                                    <option>John Doe</option><option>Jane Smith</option>
-                                                </select>
-                                                <ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
-                                            </div>
-                                        </div>
-
-                                    </div>
-                                </div>
-
-                                {/* 3. CUSTOMER SECTION */}
-                                <div className="bg-white p-5 rounded-lg border border-slate-200 shadow-sm relative z-20">
-                                    <div className="flex justify-between items-center mb-4">
-                                        <h3 className="text-sm font-bold text-slate-700">Customer & Shipping</h3>
-                                    </div>
-                                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-2 gap-4 mb-4">
-
-                                        <div
-                                            onClick={() => { if (!isGeneratedFromDN) setIsCustomerSearchOpen(true) }}
-                                            className={`w-full text-xs p-2 border border-slate-200 rounded flex items-center gap-2 ${isGeneratedFromDN ? 'bg-slate-50 cursor-not-allowed opacity-80 text-slate-500' : 'bg-white cursor-pointer hover:border-yellow-400'} transition-colors h-9`}
-                                        >
-                                            <Search size={14} className="text-slate-400 shrink-0" />
-                                            <span className="flex-1 truncate">{selectedCustomer ? `${selectedCustomer.code} - ${selectedCustomer.name}` : 'Search customer...'}</span>
-                                        </div>
-
-                                    </div>                                    {selectedCustomer && (
-                                        <div className="bg-slate-50 border border-slate-200 rounded p-3 text-xs mt-3">
-                                            <div className="flex justify-between items-start">
+                                            {/* CONDITIONAL SOURCE DOCUMENT SELECTOR */}
+                                            {invoiceTypeUI === 'Against Sales Order' && (
                                                 <div>
-                                                    <div className="font-bold text-slate-700">{selectedCustomer.name}</div>
-                                                    <div className="text-slate-500">Code: {selectedCustomer.code}</div>
-                                                    <div className="text-slate-500">TRN: {selectedCustomer.trn || 'N/A'}</div>
-                                                    <div className="text-slate-500">Phone: {selectedCustomer.mobile || selectedCustomer.phone || 'N/A'}</div>
-                                                </div>
-                                                <div className="text-right">
-                                                    <span className={`inline-block px-2 py-0.5 rounded text-[10px] font-bold border mb-1 ${selectedCustomer.creditStatus === 'Good' ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-orange-50 text-orange-700 border-orange-200'}`}>
-                                                        Credit: {selectedCustomer.creditStatus || 'N/A'}
-                                                    </span>
-                                                    <div className="text-slate-500">Terms: {selectedCustomer.payTerms || 'Cash'}</div>
-                                                    <div className="text-slate-500 mt-1">
-                                                        Outstanding: <span className="font-bold text-slate-700">{selectedCustomer.balance ? Number(selectedCustomer.balance).toFixed(2) : '0.00'} AED</span>
+                                                    <label className="block text-xs font-bold text-slate-700 mb-1">Sales Order</label>
+                                                    <div className="relative">
+                                                        <select value={linkedSO} onChange={e => handleSOChange(e.target.value)} disabled={isReadOnlyInvoice} className="w-full text-xs p-2 border border-slate-200 rounded bg-white appearance-none focus:outline-none focus:border-[#F5C742] disabled:bg-slate-50 disabled:text-slate-500">
+                                                            <option value="">Select SO...</option>
+                                                            {salesOrdersList.filter(s => s.status !== 'CANCELLED').map(s => <option key={s.id} value={s.soNumber}>{s.soNumber} - {s.customerName}</option>)}
+                                                        </select>
+                                                        <ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
                                                     </div>
+                                                </div>
+                                            )}
+
+                                            {invoiceTypeUI === 'Against Delivery Note' && (
+                                                <div>
+                                                    <label className="block text-xs font-bold text-slate-700 mb-1">Delivery Note</label>
+                                                    <div className="relative">
+                                                        <select value={linkedDN} onChange={e => handleDNChange(e.target.value)} disabled={isReadOnlyInvoice} className="w-full text-xs p-2 border border-slate-200 rounded bg-white appearance-none focus:outline-none focus:border-[#F5C742] disabled:bg-slate-50 disabled:text-slate-500">
+                                                            <option value="">Select DN...</option>
+                                                            {deliveryNotesList.filter(d => d.status !== 'CANCELLED').map(d => <option key={d.id} value={d.dnNumber}>{d.dnNumber} - {d.customerName}</option>)}
+                                                        </select>
+                                                        <ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
+                                                    </div>
+                                                </div>
+                                            )}
+
+                                            {invoiceTypeUI === 'Against Proforma Invoice' && (
+                                                <div>
+                                                    <label className="block text-xs font-bold text-slate-700 mb-1">Proforma Invoice</label>
+                                                    <div className="relative">
+                                                        <select value={linkedPI} onChange={e => handlePIChange(e.target.value)} disabled={isReadOnlyInvoice} className="w-full text-xs p-2 border border-slate-200 rounded bg-white appearance-none focus:outline-none focus:border-[#F5C742] disabled:bg-slate-50 disabled:text-slate-500">
+                                                            <option value="">Select PI...</option>
+                                                            {proformaList.filter(p => p.status !== 'CANCELLED').map(p => <option key={p.id} value={p.proformaNo}>{p.proformaNo} - {p.customerName}</option>)}
+                                                        </select>
+                                                        <ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
+                                                    </div>
+                                                </div>
+                                            )}
+
+                                            <div>
+                                                <label className="block text-xs font-bold text-slate-700 mb-1">Branch</label>
+                                                <input
+                                                    value={branch || defaultBranch?.name || ''}
+                                                    readOnly
+                                                    className="w-full text-xs p-2 border border-slate-200 rounded bg-slate-50 text-slate-600 focus:outline-none"
+                                                />
+                                            </div>
+
+                                            <div>
+                                                <label className="block text-xs font-bold text-slate-700 mb-1">Salesperson</label>
+                                                <div className="relative">
+                                                    <select value={salesperson} onChange={e => setSalesperson(e.target.value)} disabled={isReadOnlyInvoice} className="w-full text-xs p-2 border border-slate-200 rounded bg-white appearance-none focus:outline-none focus:border-[#F5C742] disabled:bg-slate-50 disabled:text-slate-500">
+                                                        <option value="">Select salesperson...</option>
+                                                        {employeesList.map(emp => (
+                                                            <option key={emp.id} value={emp.name}>{emp.name}</option>
+                                                        ))}
+                                                    </select>
+                                                    <ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
                                                 </div>
                                             </div>
 
-                                            {salesSettings?.creditLimitPolicy === 'WARNING' &&
-                                                selectedCustomer.creditLimitAmount > 0 &&
-                                                (Number(selectedCustomer.balance || 0) + netTotal) > selectedCustomer.creditLimitAmount && (
-                                                    <div className="mt-3 p-2.5 bg-yellow-50 shadow-sm border border-yellow-200 rounded-md text-yellow-800 text-[11px] leading-relaxed flex items-start gap-2">
-                                                        <AlertCircle size={14} className="mt-0.5 shrink-0 text-yellow-600" />
-                                                        <p>
-                                                            <strong>Credit Warning:</strong> The projected outstanding balance
-                                                            ({(Number(selectedCustomer.balance || 0) + netTotal).toFixed(2)} AED) exceeds this customer's
-                                                            credit limit of {Number(selectedCustomer.creditLimitAmount).toFixed(2)} AED.
-                                                        </p>
-                                                    </div>
-                                                )}
-
                                         </div>
-                                    )}
+                                    </div>
+
+                                    {/* 3. CUSTOMER + SHIPPING — unified panel */}
+                                    <CustomerShippingPanel
+                                        selectedCustomer={selectedCustomer}
+                                        onOpenCustomerSearch={() => { if (!isGeneratedFromDN && !isReadOnlyInvoice) setIsCustomerSearchOpen(true); }}
+                                        shippingAddress={shippingAddress}
+                                        onShippingChange={setShippingAddress}
+                                        isReadOnly={isReadOnlyInvoice}
+                                        currency={invoiceCurrency}
+                                    />
+
+                                    {/* Credit warning (kept outside panel so it's always visible) */}
+                                    {selectedCustomer && salesSettings?.creditLimitPolicy === 'WARNING' &&
+                                        selectedCustomer.creditLimitAmount > 0 &&
+                                        (Number(selectedCustomer.balance || 0) + netTotal) > selectedCustomer.creditLimitAmount && (
+                                            <div className="p-2.5 bg-yellow-50 shadow-sm border border-yellow-200 rounded-md text-yellow-800 text-[11px] leading-relaxed flex items-start gap-2">
+                                                <AlertCircle size={14} className="mt-0.5 shrink-0 text-yellow-600" />
+                                                <p>
+                                                    <strong>Credit Warning:</strong> The projected outstanding balance
+                                                    (<CurrencyAmount value={Number(selectedCustomer.balance || 0) + netTotal} currency={invoiceCurrency} />) exceeds this customer's
+                                                    credit limit of <CurrencyAmount value={selectedCustomer.creditLimitAmount} currency={invoiceCurrency} />.
+                                                </p>
+                                            </div>
+                                        )}
+                                    {selectedCustomer && salesSettings?.creditLimitPolicy === 'BLOCK' &&
+                                        selectedCustomer.creditLimitAmount > 0 &&
+                                        (Number(selectedCustomer.balance || 0) + netTotal) > selectedCustomer.creditLimitAmount && (
+                                            <div className="p-2.5 bg-red-50 shadow-sm border border-red-300 rounded-md text-red-800 text-[11px] leading-relaxed flex items-start gap-2">
+                                                <AlertCircle size={14} className="mt-0.5 shrink-0 text-red-600" />
+                                                <p>
+                                                    <strong>Credit Limit Blocked:</strong> The projected outstanding balance
+                                                    (<CurrencyAmount value={Number(selectedCustomer.balance || 0) + netTotal} currency={invoiceCurrency} />) exceeds this customer's
+                                                    credit limit of <CurrencyAmount value={selectedCustomer.creditLimitAmount} currency={invoiceCurrency} />.
+                                                    Saving this invoice is blocked until the balance is within limit.
+                                                </p>
+                                            </div>
+                                        )}
 
                                     {/* CUSTOMER SELECTOR MODAL */}
                                     <CustomerSelector
@@ -1983,435 +2301,373 @@ const SalesInvoice = () => {
                                         }}
                                     />
                                 </div>
-                            </div>
 
-                            {/* MIDDLE COLUMN */}
-                            <div className="xl:col-span-2 space-y-4 min-w-0">
-                                {/* 4. INVOICE ITEMS */}
-                                <div className="bg-white p-5 rounded-lg border border-slate-200 shadow-sm">
-                                    <div className="flex justify-between items-center mb-2">
-                                        <h3 className="text-[13px] font-bold text-slate-700">Invoice Items {isGeneratedFromDN && <span className="ml-2 text-[10px] bg-purple-100 text-purple-700 px-2 py-0.5 rounded font-medium border border-purple-200">Generated from DNs</span>}</h3>
-                                        <div className="flex items-center gap-2">
-                                            {/* ✅ SELECT FROM CATALOG BUTTON */}
-                                            {!isGeneratedFromDN && (
-                                                <button
-                                                    onClick={() => setIsProductSelectorOpen(true)}
-                                                    className="flex items-center gap-1 px-2.5 py-1 bg-yellow-400 text-slate-900 text-[11px] font-semibold rounded hover:bg-yellow-500"
-                                                >
-                                                    <Plus size={14} /> Select from Catalog
-                                                </button>
-                                            )}
+                                {/* MIDDLE COLUMN */}
+                                <div className="xl:col-span-2 space-y-4 min-w-0">
+                                    {/* 4. INVOICE ITEMS */}
+                                    <div className="bg-white p-5 rounded-lg border border-slate-200 shadow-sm">
+                                        <div className="flex justify-between items-center mb-2">
+                                            <h3 className="text-[13px] font-bold text-slate-700">Invoice Items {isGeneratedFromDN && <span className="ml-2 text-[10px] bg-purple-100 text-purple-700 px-2 py-0.5 rounded font-medium border border-purple-200">Generated from DNs</span>}</h3>
+                                            <div className="flex items-center gap-2">
+                                                {/* ✅ SELECT FROM CATALOG BUTTON */}
+                                                {!isGeneratedFromDN && !isReadOnlyInvoice && (
+                                                    <>
+                                                        <button
+                                                            onClick={() => setIsProductSelectorOpen(true)}
+                                                            className="flex items-center gap-1 px-2.5 py-1 bg-yellow-400 text-slate-900 text-[11px] font-semibold rounded hover:bg-yellow-500"
+                                                        >
+                                                            <Plus size={14} /> Select from Catalog
+                                                        </button>
+                                                    </>
+                                                )}
+                                            </div>
                                         </div>
-                                    </div>
-                                    <div className="border border-slate-100 rounded-lg overflow-hidden">
-                                        {/* Show more rows (closer to the left column height), then scroll inside for long invoices */}
-                                        <div className="min-h-[320px] md:min-h-[420px] xl:min-h-[520px] max-h-[380px] md:max-h-[520px] xl:max-h-[680px] overflow-auto">
-                                            <table className="w-full text-[11px] text-left min-w-[1000px]">
-                                                <thead className="sticky top-0 z-10 bg-[#FBFBFD] border-b border-slate-200 text-[10px] font-semibold text-slate-600">
-                                                <tr>
-                                                    <th className="px-3 py-2 w-8 text-center text-slate-400">#</th>
-                                                    <th className="px-3 py-2 min-w-[320px]">
-                                                        <ItemDescriptionHeader
-                                                            itemCount={items.length}
-                                                            expandedRowsCount={Object.keys(expandedRows).length}
-                                                            onToggleAll={toggleAllDescriptions}
-                                                        />
-                                                    </th>
-                                                    <th className="px-3 py-2 w-16 text-center">Unit</th>
-                                                    <th className="px-3 py-2 w-16 text-center">Qty</th>
-                                                    {salesType === 'DIRECT_SALE' && (
-                                                        <th className="px-3 py-2 w-32 text-left">Warehouse</th>
-                                                    )}
-                                                    <th className="px-3 py-2 w-16 text-center">Foc</th>
-                                                    <th className="px-3 py-2 w-20 text-right">Price</th>
-                                                    <th className="px-3 py-2 w-16 text-right">Discount</th>
-                                                    <th className="px-3 py-2 w-16 text-right">Tax rate</th>
-                                                    <th className="px-3 py-2 w-20 text-right">Tax amount</th>
-                                                    <th className="px-3 py-2 w-24 text-right">Line total</th>
-                                                    <th className="px-3 py-2 w-16 text-center">Remarks</th>
-                                                </tr>
-                                            </thead>
-                                            <tbody className="divide-y divide-slate-100/50">
-                                                {items.map((item, index) => (
-                                                    <React.Fragment key={item.id}>
-                                                        <tr className="group hover:bg-slate-50/50 transition-colors bg-white align-middle">
-                                                            {/* Index */}
-                                                            <td className="px-3 py-2 text-center text-slate-400 text-[11px] font-medium">{index + 1}</td>
-
-                                                            {/* Item / Description */}
-                                                            <td className="px-3 py-2">
-
-                                                                <ItemDescriptionCell
-                                                                    item={item}
-                                                                    isExpanded={expandedRows[item.id]}
-                                                                    onToggleExpand={toggleRowDescription}
-                                                                    onItemChange={handleItemChange}
-                                                                    onFocusCode={() => {
-                                                                        fetchItemContext(item.code || item.itemCode);
-                                                                    }}
-                                                                    onOpenProductSelection={() => setIsProductSelectorOpen(true)}
-                                                                    onCheckStock={() => { setSelectedStockItem(item); setIsItemStockModalOpen(true); }}
-                                                                    onOpenSettings={() => setSelectedAddonItem({ ...item })}
-                                                                    showSettings={true}
-                                                                    page="salesInvoice"
+                                        <div className="border border-slate-100 rounded-lg overflow-hidden">
+                                            {/* Show more rows (closer to the left column height), then scroll inside for long invoices */}
+                                            <div className="min-h-[320px] md:min-h-[420px] xl:min-h-[520px] max-h-[380px] md:max-h-[520px] xl:max-h-[680px] overflow-auto">
+                                                <table className="w-full text-[11px] text-left min-w-[860px]">
+                                                    <thead className="sticky top-0 z-10 bg-[#FBFBFD] border-b border-slate-200 text-[10px] font-semibold text-slate-600">
+                                                        <tr>
+                                                            <th className="px-3 py-2 w-8 text-center text-slate-400">#</th>
+                                                            <th className="px-3 py-2 min-w-[320px]">
+                                                                <ItemDescriptionHeader
+                                                                    itemCount={items.length}
+                                                                    expandedRowsCount={Object.keys(expandedRows).length}
+                                                                    onToggleAll={toggleAllDescriptions}
                                                                 />
-
-                                                            </td>
-
-                                                            {/* Unit */}
-                                                            <td className="px-3 py-2 text-center">
-
-                                                                <select
-                                                                    className="w-full bg-transparent outline-none text-center text-xs text-slate-600 appearance-none font-medium cursor-pointer"
-                                                                    value={item.unit}
-                                                                    onChange={(e) => handleItemChange(item.id, 'unit', e.target.value)}
-                                                                >
-                                                                    {(item.availableUnits || ['PCS']).map(u => <option key={u} value={u}>{u}</option>)}
-                                                                </select>
-
-                                                            </td>
-
-                                                            {/* Qty */}
-                                                            <td className="px-3 py-2 text-center">
-
-                                                                <input
-                                                                    disabled={isGeneratedFromDN}
-                                                                    id={`qty-${item.id}`}
-                                                                    type="number"
-                                                                    min="1"
-                                                                    className={`w-full bg-transparent border-b border-transparent hover:border-slate-200 focus:border-yellow-400/50 text-center outline-none font-semibold text-xs transition-colors py-1 ${isGeneratedFromDN ? 'text-slate-400 cursor-not-allowed' : 'text-slate-700'}`}
-                                                                    value={item.qty === 0 ? '' : item.qty}
-                                                                    onChange={(e) => handleItemChange(item.id, 'qty', e.target.value)}
-                                                                    placeholder="0"
-                                                                />
-
-                                                            </td>
-
-                                                            {/* Warehouse (Direct Sale Only) */}
+                                                            </th>
+                                                            <th className="px-3 py-2 w-16 text-center">Unit</th>
+                                                            <th className="px-3 py-2 w-16 text-center">Qty</th>
                                                             {salesType === 'DIRECT_SALE' && (
-                                                                <td className="px-3 py-2">
-
-                                                                    <select
-                                                                        className="w-full bg-transparent border-b border-transparent hover:border-slate-200 focus:border-yellow-400/50 outline-none text-xs font-semibold text-slate-700 transition-colors py-1 appearance-none cursor-pointer"
-                                                                        value={item.warehouseId || ''}
-                                                                        onChange={(e) => handleItemChange(item.id, 'warehouseId', e.target.value)}
-                                                                    >
-                                                                        <option value="" className="text-slate-400">Select...</option>
-                                                                        {warehousesList.map(w => (
-                                                                            <option key={w.id} value={w.id}>{w.name}</option>
-                                                                        ))}
-                                                                    </select>
-
-                                                                </td>
+                                                                <th className="px-3 py-2 w-32 text-left">Warehouse</th>
                                                             )}
-
-                                                            {/* FOC */}
-                                                            <td className="px-3 py-2 text-center align-top">
-
-                                                                <div className="flex flex-col gap-1">
-                                                                    <input
-                                                                        type="number"
-                                                                        className="w-full bg-transparent border-b border-transparent hover:border-slate-200 focus:border-yellow-400/50 text-center outline-none font-semibold text-xs text-slate-700 transition-colors py-1"
-                                                                        value={item.foc === 0 ? '' : item.foc || ''}
-                                                                        onChange={(e) => handleItemChange(item.id, 'foc', e.target.value)}
-                                                                        placeholder="—"
-                                                                    />
-                                                                    <select
-                                                                        className="w-full bg-transparent outline-none text-center text-[10px] text-slate-500 appearance-none font-medium cursor-pointer opacity-70 hover:opacity-100 transition-opacity"
-                                                                        value={item.focUnit || 'PCS'}
-                                                                        onChange={(e) => handleItemChange(item.id, 'focUnit', e.target.value)}
-                                                                    >
-                                                                        {(item.availableUnits || ['PCS']).map(u => <option key={u} value={u}>{u}</option>)}
-                                                                    </select>
-                                                                </div>
-
-                                                            </td>
-
-                                                            {/* Price */}
-                                                            <td className="px-3 py-2 text-right">
-
-                                                                <input
-                                                                    disabled={isGeneratedFromDN}
-                                                                    type="number"
-                                                                    className={`w-full text-right bg-transparent border-b border-transparent hover:border-slate-200 focus:border-yellow-400/50 outline-none font-semibold text-xs transition-colors py-1 ${isGeneratedFromDN ? 'text-slate-400 cursor-not-allowed' : 'text-slate-700'}`}
-                                                                    value={item.price === 0 ? '' : item.price}
-                                                                    onChange={(e) => handleItemChange(item.id, 'price', e.target.value)}
-                                                                    placeholder="0.00"
-                                                                />
-
-                                                            </td>
-
-                                                            {/* Disc % */}
-                                                            <td className="px-3 py-2 text-right">
-
-                                                                <input
-                                                                    disabled={isGeneratedFromDN}
-                                                                    type="number"
-                                                                    className={`w-full text-right bg-transparent border-b border-transparent hover:border-slate-200 focus:border-yellow-400/50 outline-none font-semibold text-xs transition-colors py-1 ${isGeneratedFromDN ? 'text-slate-400 cursor-not-allowed' : 'text-slate-700'}`}
-                                                                    value={item.disc === 0 ? '' : item.disc}
-                                                                    onChange={(e) => handleItemChange(item.id, 'disc', e.target.value)}
-                                                                    placeholder="0"
-                                                                />
-
-                                                            </td>
-
-                                                            {/* Tax % */}
-                                                            <td className="px-3 py-2 text-right">
-
-                                                                <input
-                                                                    disabled={isGeneratedFromDN}
-                                                                    type="number"
-                                                                    className={`w-full text-right bg-transparent border-b border-transparent hover:border-slate-200 focus:border-yellow-400/50 outline-none font-semibold text-xs transition-colors py-1 ${isGeneratedFromDN ? 'text-slate-400 cursor-not-allowed' : 'text-slate-700'}`}
-                                                                    value={item.tax === 0 ? '' : item.tax}
-                                                                    onChange={(e) => handleItemChange(item.id, 'tax', e.target.value)}
-                                                                    placeholder="5"
-                                                                />
-
-                                                            </td>
-
-                                                            {/* Tax Amt */}
-                                                            <td className="px-3 py-2 text-right text-slate-500">
-
-                                                                {((item.taxAmt) || 0).toFixed(2)}
-
-                                                            </td>
-
-                                                            {/* Line Total */}
-                                                            <td className="px-3 py-2 text-right">
-
-                                                                <div className="font-bold text-slate-800 text-[13px] flex flex-col items-end">
-                                                                    {((item.net) || (item.total) || 0).toFixed(2)}
-                                                                </div>
-
-                                                            </td>
-
-                                                            {/* Remarks / Action */}
-                                                            <td className="px-3 py-2 text-center">
-                                                                <div className="flex items-center justify-center">
-                                                                    {!isGeneratedFromDN && (
-                                                                        <button onClick={() => handleDeleteItem(item.id)} className="text-slate-300 hover:text-red-500 transition-colors">
-                                                                            <Trash2 size={16} />
-                                                                        </button>
-                                                                    )}
-                                                                </div>
-                                                            </td>
+                                                            <th className="px-3 py-2 w-20 text-right">Price</th>
+                                                            <th className="px-3 py-2 w-24 text-right">Line total</th>
+                                                            <th className="px-3 py-2 w-16 text-center">Remarks</th>
                                                         </tr>
+                                                    </thead>
+                                                    <tbody className="divide-y divide-slate-100/50">
+                                                        {items.map((item, index) => (
+                                                            <React.Fragment key={item.id}>
+                                                                <tr className="group hover:bg-slate-50/50 transition-colors bg-white align-middle">
+                                                                    {/* Index */}
+                                                                    <td className="px-3 py-2 text-center text-slate-400 text-[11px] font-medium">{index + 1}</td>
 
-                                                        {/* Expanded Description Row */}
-                                                        {expandedRows[item.id] && (
-                                                            <tr className="bg-white">
-                                                                <td></td>
-                                                                <td colSpan={salesType === 'DIRECT_SALE' ? 11 : 10} className="px-0 pb-4 pt-1">
-                                                                    <div className="ml-[60px] mr-4 p-3 rounded-r-[10px] border-l-[3px] border-[#FFD700] bg-[#FFFDE7]/60 shadow-[inset_0_1px_4px_rgba(0,0,0,0.02)]">
-                                                                        <div className="flex justify-between items-center mb-1.5">
-                                                                            <div className="flex items-center gap-1.5 text-[9px] font-bold text-[#B8860B] tracking-widest uppercase">
-                                                                                <Menu size={10} strokeWidth={3} className="opacity-80" /> PRODUCT DESCRIPTION
-                                                                            </div>
-                                                                            <span className="text-[9px] text-yellow-700/50 font-medium">
-                                                                                {(item.remarks || '').length} chars
-                                                                            </span>
-                                                                        </div>
-                                                                        <textarea
-                                                                            rows="1"
-                                                                            className="w-full bg-transparent text-[11px] text-slate-600 outline-none placeholder:text-yellow-700/30 resize-none font-medium leading-relaxed"
-                                                                            value={item.remarks || ''}
-                                                                            onChange={(e) => handleItemChange(item.id, 'remarks', e.target.value)}
-                                                                            placeholder="Enter product description — auto-loaded from product master, fully editable..."
-                                                                            onInput={(e) => {
-                                                                                e.target.style.height = 'auto';
-                                                                                e.target.style.height = (e.target.scrollHeight) + 'px';
+                                                                    {/* Item / Description */}
+                                                                    <td className="px-3 py-2">
+
+                                                                        <ItemDescriptionCell
+                                                                            item={item}
+                                                                            isExpanded={expandedRows[item.id]}
+                                                                            onToggleExpand={toggleRowDescription}
+                                                                            onItemChange={handleItemChange}
+                                                                            onFocusCode={() => {
+                                                                                fetchItemContext(item.code || item.itemCode);
                                                                             }}
+                                                                            onOpenProductSelection={() => setIsProductSelectorOpen(true)}
+                                                                            onCheckStock={() => { setSelectedStockItem(item); setIsItemStockModalOpen(true); }}
+                                                                            onOpenSettings={() => setSelectedAddonItem({ ...item })}
+                                                                            showSettings={true}
+                                                                            isReadOnly={isReadOnlyInvoice}
+                                                                            page="salesInvoice"
                                                                         />
-                                                                    </div>
-                                                                </td>
-                                                            </tr>
-                                                        )}
-                                                    </React.Fragment>
-                                                ))}
-                                            </tbody>
-                                            </table>
+
+                                                                    </td>
+
+                                                                    {/* Unit */}
+                                                                    <td className="px-3 py-2 text-center">
+
+                                                                        <select
+                                                                            disabled={isReadOnlyInvoice || isGeneratedFromDN}
+                                                                            className="w-full bg-transparent outline-none text-center text-xs text-slate-600 appearance-none font-medium cursor-pointer disabled:text-slate-400 disabled:cursor-not-allowed"
+                                                                            value={item.unit}
+                                                                            onChange={(e) => handleItemChange(item.id, 'unit', e.target.value)}
+                                                                        >
+                                                                            {(item.availableUnits || ['PCS']).map(u => <option key={u} value={u}>{u}</option>)}
+                                                                        </select>
+
+                                                                    </td>
+
+                                                                    {/* Qty */}
+                                                                    <td className="px-3 py-2 text-center">
+
+                                                                        <input
+                                                                            disabled={isGeneratedFromDN || isReadOnlyInvoice}
+                                                                            id={`qty-${item.id}`}
+                                                                            type="number"
+                                                                            min="1"
+                                                                            className={`w-full bg-transparent border-b border-transparent hover:border-slate-200 focus:border-yellow-400/50 text-center outline-none font-semibold text-xs transition-colors py-1 ${(isGeneratedFromDN || isReadOnlyInvoice) ? 'text-slate-400 cursor-not-allowed' : 'text-slate-700'}`}
+                                                                            value={item.qty === 0 ? '' : item.qty}
+                                                                            onChange={(e) => handleItemChange(item.id, 'qty', e.target.value)}
+                                                                            placeholder="0"
+                                                                        />
+
+                                                                    </td>
+
+                                                                    {/* Warehouse (Direct Sale Only) */}
+                                                                    {salesType === 'DIRECT_SALE' && (
+                                                                        <td className="px-3 py-2">
+
+                                                                            <select
+                                                                                disabled={isReadOnlyInvoice}
+                                                                                className="w-full bg-transparent border-b border-transparent hover:border-slate-200 focus:border-yellow-400/50 outline-none text-xs font-semibold text-slate-700 transition-colors py-1 appearance-none cursor-pointer disabled:text-slate-400 disabled:cursor-not-allowed"
+                                                                                value={item.warehouseId || ''}
+                                                                                onChange={(e) => handleItemChange(item.id, 'warehouseId', e.target.value)}
+                                                                            >
+                                                                                <option value="" className="text-slate-400">Select...</option>
+                                                                                {warehousesList.map(w => (
+                                                                                    <option key={w.id} value={w.id}>{w.name}</option>
+                                                                                ))}
+                                                                            </select>
+
+                                                                        </td>
+                                                                    )}
+
+                                                                    {/* FOC */}
+                                                                    <td className="hidden px-3 py-2 text-center align-top">
+
+                                                                        <div className="flex flex-col gap-1">
+                                                                            <input
+                                                                                type="number"
+                                                                                className="w-full bg-transparent border-b border-transparent hover:border-slate-200 focus:border-yellow-400/50 text-center outline-none font-semibold text-xs text-slate-700 transition-colors py-1"
+                                                                                value={item.foc === 0 ? '' : item.foc || ''}
+                                                                                onChange={(e) => handleItemChange(item.id, 'foc', e.target.value)}
+                                                                                placeholder="—"
+                                                                            />
+                                                                            <select
+                                                                                className="w-full bg-transparent outline-none text-center text-[10px] text-slate-500 appearance-none font-medium cursor-pointer opacity-70 hover:opacity-100 transition-opacity"
+                                                                                value={item.focUnit || 'PCS'}
+                                                                                onChange={(e) => handleItemChange(item.id, 'focUnit', e.target.value)}
+                                                                            >
+                                                                                {(item.availableUnits || ['PCS']).map(u => <option key={u} value={u}>{u}</option>)}
+                                                                            </select>
+                                                                        </div>
+
+                                                                    </td>
+
+                                                                    {/* Price */}
+                                                                    <td className="px-3 py-2 text-right">
+
+                                                                        <input
+                                                                            disabled={isGeneratedFromDN || isReadOnlyInvoice}
+                                                                            type="number"
+                                                                            className={`w-full text-right bg-transparent border-b border-transparent hover:border-slate-200 focus:border-yellow-400/50 outline-none font-semibold text-xs transition-colors py-1 ${(isGeneratedFromDN || isReadOnlyInvoice) ? 'text-slate-400 cursor-not-allowed' : 'text-slate-700'}`}
+                                                                            value={item.price === 0 ? '' : item.price}
+                                                                            onChange={(e) => handleItemChange(item.id, 'price', e.target.value)}
+                                                                            placeholder="0.00"
+                                                                        />
+
+                                                                    </td>
+
+                                                                    {/* Disc % */}
+                                                                    <td className="hidden px-3 py-2 text-right">
+
+                                                                        <input
+                                                                            disabled={isGeneratedFromDN || isReadOnlyInvoice}
+                                                                            type="number"
+                                                                            className={`w-full text-right bg-transparent border-b border-transparent hover:border-slate-200 focus:border-yellow-400/50 outline-none font-semibold text-xs transition-colors py-1 ${(isGeneratedFromDN || isReadOnlyInvoice) ? 'text-slate-400 cursor-not-allowed' : 'text-slate-700'}`}
+                                                                            value={item.disc === 0 ? '' : item.disc}
+                                                                            onChange={(e) => handleItemChange(item.id, 'disc', e.target.value)}
+                                                                            placeholder="0"
+                                                                        />
+
+                                                                    </td>
+
+                                                                    {/* Line Total */}
+                                                                    <td className="px-3 py-2 text-right">
+
+                                                                        <div className="font-bold text-slate-800 text-[13px] flex flex-col items-end">
+                                                                            {((item.net) || (item.total) || 0).toFixed(2)}
+                                                                        </div>
+
+                                                                    </td>
+
+                                                                    {/* Remarks / Action */}
+                                                                    <td className="px-3 py-2 text-center">
+                                                                        <div className="flex items-center justify-center">
+                                                                            {!isGeneratedFromDN && !isReadOnlyInvoice && (
+                                                                                <button onClick={() => handleDeleteItem(item.id)} className="text-slate-300 hover:text-red-500 transition-colors">
+                                                                                    <Trash2 size={16} />
+                                                                                </button>
+                                                                            )}
+                                                                        </div>
+                                                                    </td>
+                                                                </tr>
+
+                                                                {/* Expanded Description Row */}
+                                                                {expandedRows[item.id] && (
+                                                                    <tr className="bg-white">
+                                                                        <td></td>
+                                                                        <td colSpan={salesType === 'DIRECT_SALE' ? 7 : 6} className="px-0 pb-4 pt-1">
+                                                                            <div className="ml-[60px] mr-4 p-3 rounded-r-[10px] border-l-[3px] border-[#FFD700] bg-[#FFFDE7]/60 shadow-[inset_0_1px_4px_rgba(0,0,0,0.02)]">
+                                                                                <div className="flex justify-between items-center mb-1.5">
+                                                                                    <div className="flex items-center gap-1.5 text-[9px] font-bold text-[#B8860B] tracking-widest uppercase">
+                                                                                        <Menu size={10} strokeWidth={3} className="opacity-80" /> PRODUCT DESCRIPTION
+                                                                                    </div>
+                                                                                    <span className="text-[9px] text-yellow-700/50 font-medium">
+                                                                                        {(item.remarks || '').length} chars
+                                                                                    </span>
+                                                                                </div>
+                                                                                <textarea
+                                                                                    rows="1"
+                                                                                    readOnly={isReadOnlyInvoice}
+                                                                                    className="w-full bg-transparent text-[11px] text-slate-600 outline-none placeholder:text-yellow-700/30 resize-none font-medium leading-relaxed read-only:text-slate-500"
+                                                                                    value={item.remarks || ''}
+                                                                                    onChange={(e) => handleItemChange(item.id, 'remarks', e.target.value)}
+                                                                                    placeholder="Enter product description — auto-loaded from product master, fully editable..."
+                                                                                    onInput={(e) => {
+                                                                                        e.target.style.height = 'auto';
+                                                                                        e.target.style.height = (e.target.scrollHeight) + 'px';
+                                                                                    }}
+                                                                                />
+                                                                            </div>
+                                                                        </td>
+                                                                    </tr>
+                                                                )}
+                                                            </React.Fragment>
+                                                        ))}
+                                                    </tbody>
+                                                </table>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    {/* 6. NOTES */}
+                                    <div className="bg-white p-5 rounded-lg border border-slate-200 shadow-sm">
+                                        <h3 className="text-sm font-bold text-slate-700 mb-3">Notes & Communications</h3>
+                                        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                                            <textarea rows="2" readOnly={isReadOnlyInvoice} className="w-full text-xs p-2 border border-slate-200 rounded resize-none focus:outline-none focus:border-[#F5C742] read-only:bg-slate-50 read-only:text-slate-500" placeholder="Thank you for your business!"></textarea>
+                                            <textarea rows="2" readOnly={isReadOnlyInvoice} className="w-full text-xs p-2 border border-slate-200 rounded resize-none focus:outline-none focus:border-[#F5C742] read-only:bg-slate-50 read-only:text-slate-500" placeholder="e.g., Special discount approved by manager"></textarea>
                                         </div>
                                     </div>
                                 </div>
 
-                                {/* 6. NOTES */}
-                                <div className="bg-white p-5 rounded-lg border border-slate-200 shadow-sm">
-                                    <h3 className="text-sm font-bold text-slate-700 mb-3">Notes & Communications</h3>
-                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                                        <textarea rows="2" className="w-full text-xs p-2 border border-slate-200 rounded resize-none focus:outline-none focus:border-[#F5C742]" placeholder="Thank you for your business!"></textarea>
-                                        <textarea rows="2" className="w-full text-xs p-2 border border-slate-200 rounded resize-none focus:outline-none focus:border-[#F5C742]" placeholder="e.g., Special discount approved by manager"></textarea>
+                                {/* RIGHT COLUMN */}
+                                <div className="xl:col-span-1 space-y-4">
+                                    {/* 5. TOTALS & PAYMENT SECTION */}
+                                    <div className="bg-white p-5 rounded-lg border border-slate-200 shadow-sm">
+                                        <h3 className="text-sm font-bold text-slate-700 mb-4">Totals & Payment Summary</h3>
+                                        <div className="flex flex-col gap-6">
+
+                                            {/* LEFT: Invoice Totals */}
+                                            <div className="flex-1 space-y-2" data-bb-skip-aed-symbol="true">
+                                                <div className="flex justify-between text-xs text-slate-600">
+                                                    <span>Subtotal</span>
+                                                    <CurrencyAmount value={subTotal} currency={invoiceCurrency} />
+                                                </div>
+                                                <div className="flex justify-between text-xs text-red-500">
+                                                    <span>Total Discount</span>
+                                                    <span>- <CurrencyAmount value={totalDiscount} currency={invoiceCurrency} /></span>
+                                                </div>
+                                                <div className="flex justify-between text-xs text-slate-600 items-center">
+                                                    <span className="flex items-center gap-2">
+                                                        Bill Discount
+                                                        <input
+                                                            type="number"
+                                                            min="0"
+                                                            max="100"
+                                                            disabled={isReadOnlyInvoice}
+                                                            value={billDiscount}
+                                                            onChange={(e) => setBillDiscount(Number(e.target.value))}
+                                                            className="w-10 border border-slate-300/50 rounded px-1 text-center focus:outline-none focus:border-yellow-400 disabled:bg-slate-50 disabled:text-slate-500 disabled:cursor-not-allowed"
+                                                        /> %
+                                                    </span>
+                                                    <span className="font-medium text-red-500">- <CurrencyAmount value={billDiscountAmount} currency={invoiceCurrency} /></span>
+                                                </div>
+                                                <div className="flex justify-between text-xs text-slate-600">
+                                                    <span>Total Tax (VAT)</span>
+                                                    <CurrencyAmount value={totalTax} currency={invoiceCurrency} />
+                                                </div>
+                                                <div className="flex justify-between text-base font-bold text-slate-800 border-t border-slate-200 pt-2 my-2">
+                                                    <span>Net Invoice Amount</span>
+                                                    <CurrencyAmount value={netTotal} currency={invoiceCurrency} />
+                                                </div>
+                                            </div>
+
+                                            {/* RIGHT: Payment */}
+                                            <div className="flex-1 space-y-2" data-bb-skip-aed-symbol="true">
+                                                <div className="flex justify-between text-xs text-slate-600">
+                                                    <span>Previous Outstanding</span>
+                                                    <CurrencyAmount value={previousOutstanding} currency={invoiceCurrency} />
+                                                </div>
+                                                <div className="flex justify-between text-xs text-slate-600">
+                                                    <span>This Invoice Amount</span>
+                                                    <CurrencyAmount value={netTotal} currency={invoiceCurrency} />
+                                                </div>
+
+                                                <div className="flex items-center gap-1 text-xs text-emerald-600 font-medium">
+                                                    <span>- <CurrencySymbol currency={invoiceCurrency} /></span>
+                                                    <input
+                                                        type="number"
+                                                        value={amountCollected}
+                                                        disabled={isReadOnlyInvoice}
+                                                        onChange={e => setAmountCollected(Number(e.target.value))}
+                                                        className="w-20 text-right border-b border-slate-300 focus:border-emerald-500 outline-none text-emerald-600 bg-transparent disabled:text-slate-400 disabled:cursor-not-allowed"
+                                                    />
+                                                </div>
+
+                                                <div className="flex justify-between text-base font-bold text-red-600 border-t border-slate-200 pt-2 my-2">
+                                                    <span>New Total Outstanding</span>
+                                                    <CurrencyAmount value={newTotalOutstanding} currency={invoiceCurrency} />
+                                                </div>
+                                                <div>
+                                                    <span className={`text-[10px] font-bold px-2 py-1 rounded text-white ${paymentMode === 'Cash' ? 'bg-emerald-500' : 'bg-blue-500'}`}>
+                                                        {paymentMode} Invoice
+                                                    </span>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    {/* BOTTOM SPACE FOR SPACING */}
+                                    <div className="h-4"></div>
+
+                                    {/* SIDEBAR - INTELLIGENCE PANELS */}
+                                    <div className="space-y-5 xl:sticky xl:top-6">
+                                        <StockSidebarPanel stock={focusedItemStock} isLoading={isContextLoading} itemCode={focusedItemCode} />
+                                        <PriceHistorySidebarPanel history={focusedItemPriceHistory} isLoading={isContextLoading} itemCode={focusedItemCode} />
                                     </div>
                                 </div>
                             </div>
 
-                            {/* RIGHT COLUMN */}
-                            <div className="xl:col-span-1 space-y-4">
-                                {/* 5. TOTALS & PAYMENT SECTION */}
-                                <div className="bg-white p-5 rounded-lg border border-slate-200 shadow-sm">
-                                    <h3 className="text-sm font-bold text-slate-700 mb-4">Totals & Payment Summary</h3>
-                                    <div className="flex flex-col gap-6">
-
-                                        {/* LEFT: Invoice Totals */}
-                                        <div className="flex-1 space-y-2">
-                                            <div className="flex justify-between text-xs text-slate-600">
-                                                <span>Subtotal</span>
-                                                <span>AED {subTotal.toFixed(2)}</span>
-                                            </div>
-                                            <div className="flex justify-between text-xs text-red-500">
-                                                <span>Total Discount</span>
-                                                <span>- AED {totalDiscount.toFixed(2)}</span>
-                                            </div>
-                                            <div className="flex justify-between text-xs text-slate-600">
-                                                <span>Total Tax (VAT)</span>
-                                                <span>AED {totalTax.toFixed(2)}</span>
-                                            </div>
-                                            <div className="flex justify-between text-base font-bold text-slate-800 border-t border-slate-200 pt-2 my-2">
-                                                <span>Net Invoice Amount</span>
-                                                <span>AED {netTotal.toFixed(2)}</span>
-                                            </div>
-
-                                            {/* Internal Margin Summary */}
-                                            <div className="bg-slate-50 p-3 rounded border border-slate-100 mt-4">
-                                                <div className="flex justify-between text-xs text-slate-500 mb-2">
-                                                    <span>Internal Margin Summary</span>
-                                                </div>
-                                                <div className="flex justify-between text-xs text-slate-600 mb-1">
-                                                    <span>Total Cost</span>
-                                                    <span>AED {totalCost.toFixed(2)}</span>
-                                                </div>
-                                                <div className="flex justify-between text-xs text-emerald-600 font-bold mb-1">
-                                                    <span>Total Profit</span>
-                                                    <span>AED {totalProfit.toFixed(2)}</span>
-                                                </div>
-                                                <div className="flex justify-between text-xs text-emerald-600 font-bold">
-                                                    <span>Margin %</span>
-                                                    <span>{marginPercent.toFixed(1)}%</span>
-                                                </div>
-                                            </div>
-                                        </div>
-
-                                        {/* RIGHT: Payment */}
-                                        <div className="flex-1 space-y-2">
-                                            <div className="flex justify-between text-xs text-slate-600">
-                                                <span>Previous Outstanding</span>
-                                                <span>AED {previousOutstanding.toFixed(2)}</span>
-                                            </div>
-                                            <div className="flex justify-between text-xs text-slate-600">
-                                                <span>This Invoice Amount</span>
-                                                <span>AED {netTotal.toFixed(2)}</span>
-                                            </div>
-
-                                            <div className="flex items-center gap-1 text-xs text-emerald-600 font-medium">
-                                                <span>- AED</span>
-                                                <input
-                                                    type="number"
-                                                    value={amountCollected}
-                                                    onChange={e => setAmountCollected(Number(e.target.value))}
-                                                    className="w-20 text-right border-b border-slate-300 focus:border-emerald-500 outline-none text-emerald-600 bg-transparent"
-                                                />
-                                            </div>
-
-                                            <div className="flex justify-between text-base font-bold text-red-600 border-t border-slate-200 pt-2 my-2">
-                                                <span>New Total Outstanding</span>
-                                                <span>AED {newTotalOutstanding.toFixed(2)}</span>
-                                            </div>
-                                            <div>
-                                                <span className={`text-[10px] font-bold px-2 py-1 rounded text-white ${paymentMode === 'Cash' ? 'bg-emerald-500' : 'bg-blue-500'}`}>
-                                                    {paymentMode} Invoice
-                                                </span>
-                                            </div>
-                                        </div>
+                            {/* Desktop bottom action bar (match Quotation editor pattern) */}
+                            <div className="hidden md:flex fixed bottom-0 md:left-64 left-0 right-0 bg-white border-t border-slate-200 px-6 py-3 shadow-[0_-4px_10px_rgba(0,0,0,0.05)] justify-between items-center z-30">
+                                <div className="flex items-center gap-3">
+                                    <div className="px-2 py-1 bg-slate-100 border border-slate-200/50 rounded-md text-[11px] font-bold text-slate-600 shadow-sm flex items-center gap-2">
+                                        Status: {renderListStatus(status)}
                                     </div>
+                                    <span className="text-[11px] font-medium text-slate-500 hidden lg:inline">
+                                        Invoice No: <span className="text-slate-700 font-bold">{invoiceNo || '-'}</span>
+                                    </span>
+                                    <span className="text-[11px] font-medium text-slate-500 hidden xl:inline">
+                                        Net: <CurrencyAmount value={netTotal} currency={invoiceCurrency} className="text-slate-700 font-bold" />
+                                    </span>
                                 </div>
 
-                                {/* 7. ITEM INTELLIGENCE (BOTTOM SUMMARY) */}
-                                <div className="bg-gradient-to-r from-slate-800 to-slate-900 p-5 rounded-lg shadow-lg border-l-4 border-[#F5C742] mt-4">
-                                    <div className="flex items-center justify-between">
-                                        <h3 className="text-sm font-bold text-white flex items-center gap-2">
-                                            <AlertCircle size={16} className="text-[#F5C742]" />
-                                            Item Intelligence
-                                        </h3>
-                                        {focusedItemCode && (
-                                            <div className="px-3 py-1 bg-white/10 rounded-full text-[10px] text-white/70 font-medium tracking-wide">
-                                                Currently viewing: <span className="text-[#F5C742] font-medium">{focusedItemCode}</span>
-                                            </div>
-                                        )}
-                                    </div>
-                                    {!focusedItemCode ? (
-                                        <div className="text-center py-6 text-white/30 text-xs italic flex flex-col items-center gap-2">
-                                            Focus an item row to view real-time pricing analysis and warehouse-level stock reservations.
-                                        </div>
-                                    ) : (() => {
-                                        const _locs = focusedItemStock?.locations || [];
-                                        const _totalAvailable = _locs.reduce((s, l) => s + (l.available || 0), 0);
-                                        return (
-                                        <div className="mt-4 grid grid-cols-1 md:grid-cols-3 gap-6 text-white">
-                                            <div className="bg-white/5 p-3 rounded-md border border-white/5">
-                                                <div className="text-[10px] text-white/40 font-bold uppercase mb-1">Stock Position</div>
-                                                <div className="text-lg font-black">{_totalAvailable} <span className="text-[10px] font-normal text-white/40 ml-1">Available</span></div>
-                                            </div>
-                                            <div className="bg-white/5 p-3 rounded-md border border-white/5">
-                                                <div className="text-[10px] text-white/40 font-bold uppercase mb-1">Pricing Trend</div>
-                                                <div className="text-lg font-black">
-                                                    {focusedItemPriceHistory.length > 0 ? (
-                                                        <>AED {Number(focusedItemPriceHistory[0].rate).toFixed(2)} <span className="text-[10px] font-normal text-emerald-400 ml-1">Last Rate</span></>
-                                                    ) : <span className="text-white/20">N/A</span>}
-                                                </div>
-                                            </div>
-                                            <div className="bg-white/5 p-3 rounded-md border border-white/5">
-                                                <div className="text-[10px] text-white/40 font-bold uppercase mb-1">Status</div>
-                                                <div className="flex items-center gap-2 mt-1">
-                                                    <div className={`w-2 h-2 rounded-full ${_totalAvailable > 0 ? 'bg-emerald-500' : 'bg-red-500'}`}></div>
-                                                    <span className="text-sm font-bold">{_totalAvailable > 0 ? 'In Stock' : 'Out of Stock'}</span>
-                                                </div>
-                                            </div>
-                                        </div>
-                                        );
-                                    })()}
-                                </div>
-
-                                {/* SIDEBAR - INTELLIGENCE PANELS */}
-                                <div className="space-y-5 xl:sticky xl:top-6">
-                                    <StockSidebarPanel stock={focusedItemStock} isLoading={isContextLoading} itemCode={focusedItemCode} />
-                                    <PriceHistorySidebarPanel history={focusedItemPriceHistory} isLoading={isContextLoading} itemCode={focusedItemCode} />
+                                <div className="flex gap-2">
+                                    {!isReadOnlyInvoice && (
+                                        <button onClick={() => handleSave('Draft')} className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-slate-300 text-slate-700 rounded text-xs font-bold hover:bg-slate-50 transition-colors shadow-sm">
+                                            <Save size={14} /> Save Draft
+                                        </button>
+                                    )}
+                                    {!isReadOnlyInvoice && (
+                                        <button onClick={() => handleSave('Confirmed')} className="flex items-center gap-1.5 px-3 py-1.5 bg-[#F5C742] text-slate-900 rounded text-xs font-bold hover:bg-yellow-500 transition-colors shadow-sm">
+                                            <CheckCircle2 size={14} /> Confirm
+                                        </button>
+                                    )}
+                                    <button onClick={() => handleOpenPaymentModal()} className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-slate-300 text-slate-700 rounded text-xs font-bold hover:bg-slate-50 transition-colors shadow-sm">
+                                        <DollarSign size={14} /> Pay
+                                    </button>
+                                    <button onClick={() => handlePrintClick()} disabled={isPrinting} className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-slate-300 text-slate-700 rounded text-xs font-bold hover:bg-slate-50 transition-colors shadow-sm disabled:opacity-50">
+                                        <Printer size={14} /> {isPrinting ? 'Printing...' : 'Print'}
+                                    </button>
+                                    <button className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-slate-300 text-slate-700 rounded text-xs font-bold hover:bg-slate-50 transition-colors shadow-sm">
+                                        <Mail size={14} /> Email
+                                    </button>
                                 </div>
                             </div>
                         </div>
-
-                        {/* Desktop bottom action bar (match Quotation editor pattern) */}
-                        <div className="hidden md:flex fixed bottom-0 md:left-64 left-0 right-0 bg-white border-t border-slate-200 px-6 py-3 shadow-[0_-4px_10px_rgba(0,0,0,0.05)] justify-between items-center z-30">
-                            <div className="flex items-center gap-3">
-                                <div className="px-2 py-1 bg-slate-100 border border-slate-200/50 rounded-md text-[11px] font-bold text-slate-600 shadow-sm flex items-center gap-2">
-                                    Status: {renderListStatus(status)}
-                                </div>
-                                <span className="text-[11px] font-medium text-slate-500 hidden lg:inline">
-                                    Invoice No: <span className="text-slate-700 font-bold">{invoiceNo || '-'}</span>
-                                </span>
-                                <span className="text-[11px] font-medium text-slate-500 hidden xl:inline">
-                                    Net: <span className="text-slate-700 font-bold">AED {netTotal.toFixed(2)}</span>
-                                </span>
-                            </div>
-
-                            <div className="flex gap-2">
-                                <button onClick={() => handleSave('Draft')} className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-slate-300 text-slate-700 rounded text-xs font-bold hover:bg-slate-50 transition-colors shadow-sm">
-                                    <Save size={14} /> Save Draft
-                                </button>
-                                <button onClick={() => handleSave('Confirmed')} className="flex items-center gap-1.5 px-3 py-1.5 bg-[#F5C742] text-slate-900 rounded text-xs font-bold hover:bg-yellow-500 transition-colors shadow-sm">
-                                    <CheckCircle2 size={14} /> Confirm
-                                </button>
-                                <button onClick={handleOpenPaymentModal} className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-slate-300 text-slate-700 rounded text-xs font-bold hover:bg-slate-50 transition-colors shadow-sm">
-                                    <DollarSign size={14} /> Pay
-                                </button>
-                                <button onClick={() => handlePrintClick()} disabled={isPrinting} className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-slate-300 text-slate-700 rounded text-xs font-bold hover:bg-slate-50 transition-colors shadow-sm disabled:opacity-50">
-                                    <Printer size={14} /> {isPrinting ? 'Printing...' : 'Print'}
-                                </button>
-                                <button className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-slate-300 text-slate-700 rounded text-xs font-bold hover:bg-slate-50 transition-colors shadow-sm">
-                                    <Mail size={14} /> Email
-                                </button>
-                            </div>
-                        </div>
-                    </div>
-                )}
+                    )}
                 </div>
             </main >
 
@@ -2437,7 +2693,11 @@ const SalesInvoice = () => {
                                 {/* Balance Display */}
                                 <div className="flex justify-between items-center text-sm mb-2">
                                     <span className="text-slate-500 font-medium">Balance Due</span>
-                                    <span className="text-red-600 font-bold text-lg">AED {(netTotal - amountCollected).toFixed(2)}</span>
+                                    <CurrencyAmount
+                                        value={netTotal - amountCollected}
+                                        currency={invoiceCurrency}
+                                        className="text-red-600 font-bold text-lg"
+                                    />
                                 </div>
 
                                 {/* Date */}

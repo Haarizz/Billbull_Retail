@@ -7,8 +7,12 @@ import {
 } from 'lucide-react';
 import { getAccounts, getTransactions, finalizeReconciliation } from '../../api/ledgerApi';
 import toast from 'react-hot-toast';
+import { useCompany } from '../../context/CompanyContext';
+import CurrencyAmount from '../../components/CurrencyAmount';
 
 const BankReconciliation = () => {
+    const { company } = useCompany();
+    const currency = company?.currency || 'AED';
     // --- STATE ---
     const [dateFilter, setDateFilter] = useState('Today');
     const [bankAccount, setBankAccount] = useState('');
@@ -253,12 +257,7 @@ const BankReconciliation = () => {
                         <p className="text-xs text-slate-500 font-semibold">Bank Balance</p>
                         <Landmark size={18} className="text-blue-600" />
                     </div>
-                    <div className="flex items-center gap-1">
-                        <span className="text-xl font-bold text-slate-900">AED</span>
-                        <span className="text-xl font-bold text-slate-900 w-32">
-                            {bankBalance.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                        </span>
-                    </div>
+                    <CurrencyAmount value={bankBalance} currency={currency} className="text-xl font-bold text-slate-900" />
                     <p className="text-xs text-slate-400 mt-1">Actual balance</p>
                 </div>
 
@@ -268,7 +267,7 @@ const BankReconciliation = () => {
                         <p className="text-xs text-slate-500 font-semibold">Ledger Balance</p>
                         <BookOpen size={18} className="text-emerald-600" />
                     </div>
-                    <h3 className="text-xl font-bold text-slate-900">AED {matchedLedgerAmount.toLocaleString()}</h3>
+                    <CurrencyAmount value={matchedLedgerAmount} currency={currency} className="text-xl font-bold text-slate-900" />
                     <p className="text-xs text-slate-400 mt-1">Accounting records</p>
                 </div>
 
@@ -279,7 +278,7 @@ const BankReconciliation = () => {
                         {Math.abs(difference) < 0.01 ? <CheckCircle size={18} className="text-emerald-600" /> : <AlertTriangle size={18} className="text-red-600" />}
                     </div>
                     <h3 className={`text-xl font-bold ${Math.abs(difference) < 0.01 ? 'text-emerald-600' : 'text-red-700'}`}>
-                        {Math.abs(difference) < 0.01 ? "Balanced ✓" : `AED ${difference.toLocaleString()}`}
+                        {Math.abs(difference) < 0.01 ? "Balanced ✓" : <CurrencyAmount value={difference} currency={currency} />}
                     </h3>
                     <p className="text-xs text-slate-400 mt-1">{Math.abs(difference) < 0.01 ? "No discrepancy" : "Requires reconciliation"}</p>
                 </div>
@@ -424,7 +423,7 @@ const BankReconciliation = () => {
                                         </td>
                                         <td className="px-4 py-3 text-xs text-slate-500 font-mono">{tx.voucherNo || 'V-742541'}</td>
                                         <td className="px-4 py-3 text-right text-xs font-bold">
-                                            <span className={sign === '+' ? 'text-emerald-600' : 'text-red-600'}>{sign}AED {amountVal.toFixed(2)}</span>
+                                            <span className={sign === '+' ? 'text-emerald-600' : 'text-red-600'}>{sign}<CurrencyAmount value={amountVal} currency={currency} /></span>
                                         </td>
                                         <td className="px-4 py-3">
                                             <span className={`inline-flex items-center gap-1 px-2 py-1 rounded text-xs font-semibold border ${statusBadgeClass}`}>
@@ -476,15 +475,15 @@ const BankReconciliation = () => {
                     <div className="flex-1 grid grid-cols-1 md:grid-cols-3 gap-4">
                         <div className="bg-blue-50 p-4 rounded-lg text-center border border-blue-100">
                             <p className="text-xs text-blue-600 font-semibold mb-1">Total Bank</p>
-                            <h3 className="text-xl font-bold text-slate-900">AED {bankBalance.toLocaleString()}</h3>
+                            <CurrencyAmount value={bankBalance} currency={currency} className="text-xl font-bold text-slate-900" />
                         </div>
                         <div className="bg-emerald-50 p-4 rounded-lg text-center border border-emerald-100">
                             <p className="text-xs text-emerald-600 font-semibold mb-1">Total Ledger</p>
-                            <h3 className="text-xl font-bold text-slate-900">AED {matchedLedgerAmount.toLocaleString()}</h3>
+                            <CurrencyAmount value={matchedLedgerAmount} currency={currency} className="text-xl font-bold text-slate-900" />
                         </div>
                         <div className={`p-4 rounded-lg text-center border ${Math.abs(difference) < 0.01 ? 'bg-emerald-50 border-emerald-100' : 'bg-red-50 border-red-100'}`}>
                             <p className={`text-xs font-semibold mb-1 ${Math.abs(difference) < 0.01 ? 'text-emerald-600' : 'text-red-600'}`}>Difference</p>
-                            <h3 className={`text-xl font-bold ${Math.abs(difference) < 0.01 ? 'text-slate-900' : 'text-red-900'}`}>AED {difference.toLocaleString()}</h3>
+                            <CurrencyAmount value={difference} currency={currency} className={`text-xl font-bold ${Math.abs(difference) < 0.01 ? 'text-slate-900' : 'text-red-900'}`} />
                         </div>
                     </div>
                     <div className="lg:w-64">
@@ -537,7 +536,7 @@ const BankReconciliation = () => {
                                     <div>
                                         <p className="text-xs text-slate-500 font-semibold">Amount</p>
                                         <p className={`text-sm font-bold mt-1 ${parseFloat(selectedTx.debitAmount || 0) > 0 ? 'text-emerald-600' : 'text-red-600'}`}>
-                                            {parseFloat(selectedTx.debitAmount || 0) > 0 ? '+' : '-'}AED {Math.abs(parseFloat(selectedTx.debitAmount || 0) - parseFloat(selectedTx.creditAmount || 0)).toFixed(2)}
+                                            {parseFloat(selectedTx.debitAmount || 0) > 0 ? '+' : '-'}<CurrencyAmount value={Math.abs(parseFloat(selectedTx.debitAmount || 0) - parseFloat(selectedTx.creditAmount || 0))} currency={currency} />
                                         </p>
                                     </div>
                                     <div>

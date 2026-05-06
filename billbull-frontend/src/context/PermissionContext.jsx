@@ -27,97 +27,69 @@ export const PermissionProvider = ({ children }) => {
         tally: false,
     });
 
-    useEffect(() => {
-        const roles = getRoles();
-        setUserRoles(roles);
+  useEffect(() => {
+    refreshPermissions();
+  }, []);
 
-        if (!isAuthenticated() || roles.length === 0) return;
+  const refreshPermissions = async () => {
+    if (!isAuthenticated()) return;
 
-        const fetchPermissions = async () => {
-            try {
-                // Fetch granular permissions for ALL roles the user has (including ADMIN)
-                const allRolePerms = await Promise.all(
-                    roles.map((roleName) => rolePermissionsApi.getByRole(roleName))
-                );
+    try {
+      const merged = await rolePermissionsApi.getMyPermissions();
+      setGranularPermissions(merged);
 
-                // Merge: ALLOW wins (union across all roles)
-                const merged = {};
-                allRolePerms.flat().forEach((rp) => {
-                    const mod = rp.module?.toLowerCase();
-                    if (!merged[mod]) {
-                        merged[mod] = {
-                            canView: false,
-                            canCreate: false,
-                            canEdit: false,
-                            canApprove: false,
-                            canExport: false,
-                        };
-                    }
-                    merged[mod].canView    = merged[mod].canView    || rp.canView;
-                    merged[mod].canCreate  = merged[mod].canCreate  || rp.canCreate;
-                    merged[mod].canEdit    = merged[mod].canEdit    || rp.canEdit;
-                    merged[mod].canApprove = merged[mod].canApprove || rp.canApprove;
-                    merged[mod].canExport  = merged[mod].canExport  || rp.canExport;
-                });
+      // Feature toggles fallback to top-level view permissions
+      const toggles = {};
+      Object.keys(merged).forEach((mod) => {
+        if (!mod.includes('.')) {
+          toggles[mod] = merged[mod].view;
+        }
+      });
+      setFeatureToggles((prev) => ({ ...prev, ...toggles }));
+      setPermissionsLoaded(true);
+    } catch (e) {
+      console.warn('Could not load role permissions from /api/rbac/me:', e);
+    }
+  };
 
-                setGranularPermissions(merged);
+    /**
+     * CORE PERMISSION LOGIC:
+     * Check if user can perform an ACTION in a MODULE.
+     * 1. If exact match exists (e.g. sales.quotation) -> use it (true or false).
+     * 2. If no exact match AND it is a sub-key -> fallback to parent key (e.g. sales).
+     * 3. Default to false.
+     */
+    const canAction = (module, action) => {
+        const modKey = module?.toLowerCase();
+        const actionKey = action?.replace('can', '').toLowerCase(); // match 'view', 'create', etc.
 
-                // Enable featureToggles only for modules where canView is true
-                // Keys in merged are already lowercased
-                const toggles = {};
-                Object.keys(merged).forEach((mod) => {
-                    toggles[mod] = merged[mod].canView;
-                });
-                setFeatureToggles((prev) => ({ ...prev, ...toggles }));
-                setPermissionsLoaded(true);
+        // 1. Check Exact Match
+        const exact = granularPermissions[modKey];
+        if (exact && exact[actionKey] === true) {
+            return true;
+        }
 
-            } catch (e) {
-                console.warn('Could not load role permissions from API:', e);
-                // Do NOT set permissionsLoaded = true on error.
-                // Sidebar will keep using the role-based fallback so users
-                // are never locked out due to a transient API failure.
+        // 2. Check Parent Fallback (if it's a sub-key like sales.quotation)
+        if (modKey?.includes('.')) {
+            const parentKey = modKey.split('.')[0];
+            const parent = granularPermissions[parentKey];
+            if (parent && parent[actionKey] === true) {
+                return true;
             }
-        };
+        }
 
-        fetchPermissions();
-    }, []);
+        // 3. Explicit check for EXACT false (if exact exists and is false, it means NO role granted it)
+        // But since we are doing "ALLOW wins", we only return true if WE FOUND an allow.
+        // If we reach here, neither exact nor parent was explicitly true.
+        return false;
+    };
 
-    /**
-     * Check if user can VIEW a module.
-     * Default = false (DENY) if no permission row exists.
-     */
-    const canView = (module) =>
-        granularPermissions[module?.toLowerCase()]?.canView ?? false;
-
-    /**
-     * Check if user can CREATE in a module.
-     */
-    const canCreate = (module) =>
-        granularPermissions[module?.toLowerCase()]?.canCreate ?? false;
-
-    /**
-     * Check if user can EDIT in a module.
-     */
-    const canEdit = (module) =>
-        granularPermissions[module?.toLowerCase()]?.canEdit ?? false;
-
-    /**
-     * Check if user can DELETE in a module (maps to canEdit in the permission model).
-     */
-    const canDelete = (module) =>
-        granularPermissions[module?.toLowerCase()]?.canEdit ?? false;
-
-    /**
-     * Check if user can APPROVE in a module.
-     */
-    const canApprove = (module) =>
-        granularPermissions[module?.toLowerCase()]?.canApprove ?? false;
-
-    /**
-     * Check if user can EXPORT from a module.
-     */
-    const canExport = (module) =>
-        granularPermissions[module?.toLowerCase()]?.canExport ?? false;
+    const canView    = (module) => canAction(module, 'view');
+    const canCreate  = (module) => canAction(module, 'create');
+    const canEdit    = (module) => canAction(module, 'edit');
+    const canDelete  = (module) => canAction(module, 'edit');
+    const canApprove = (module) => canAction(module, 'approve');
+    const canExport  = (module) => canAction(module, 'export');
 
     /**
      * Check if user has any of the specified roles.
@@ -147,9 +119,11 @@ export const PermissionProvider = ({ children }) => {
         granularPermissions,
         featureToggles,
         permissionsLoaded,
+        refreshPermissions,
         hasPermission,
         hasAnyRole,
         canView,
+        canAction,
         canCreate,
         canEdit,
         canDelete,

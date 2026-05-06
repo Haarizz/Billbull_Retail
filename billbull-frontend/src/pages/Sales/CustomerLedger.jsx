@@ -6,6 +6,9 @@ import {
 } from 'lucide-react';
 import SearchableDropdown from '../../components/SearchableDropdown'; // ✅ Import Searchable Dropdown
 
+import StatementPrintPreview from '../../components/StatementPrintPreview';
+import CurrencyAmount, { CurrencySymbol } from '../../components/CurrencyAmount';
+
 // --- API IMPORTS ---
 import { getAllCustomers, getCustomerById, createCustomer, deleteCustomer, getOpeningInvoicesByCustomerCode } from '../../api/customerledgerApi';
 import { fetchStatementOfAccount } from '../../api/financialsApi';
@@ -14,18 +17,64 @@ import { getWarehouses } from '../../api/warehouseApi';
 // ✅ Import Sales Payment & Invoice API
 import { getAllSalesPayments, saveSalesPayment, getNextSalesPaymentNumber, getSalesPaymentStats } from '../../api/salesPaymentApi';
 import { getAllSalesInvoices } from '../../api/salesInvoiceApi';
+import { getBankAccounts } from '../../api/ledgerApi';
+import { useBranch } from '../../context/BranchContext';
+import { useCompany } from '../../context/CompanyContext';
+import {
+    getCountryOptions,
+    getCurrencyOptions,
+    normalizeCountryValue,
+    normalizeCurrencyValue,
+    withFallbackOption
+} from '../../utils/countryCurrencyOptions';
+import ExportDropdown from '../../components/common/ExportDropdown';
+import { exportToExcel, exportToPDF } from '../../utils/exportUtils';
+import { generateSOAFilename } from '../../utils/filenameUtils';
+import { usePrintDocument } from '../../hooks/usePrintDocument';
+
+// ==========================================
+// 1. CONFIGURATION
+// ==========================================
+
+const CUSTOMER_COLUMNS = [
+    { header: 'Code', key: 'code', width: 15 },
+    { header: 'Customer Name', key: 'name', width: 30 },
+    { header: 'Group', key: 'group', width: 15 },
+    { header: 'Contact', key: 'contact', width: 20 },
+    { header: 'Email', key: 'email', width: 25 },
+    { header: 'Balance', key: 'balance', width: 15 },
+    { header: 'Status', key: 'status', width: 12 }
+];
 
 // ==========================================
 // 1. ADD ADDRESS MODAL (Nested)
 // ==========================================
 
 const AddAddressModal = ({ isOpen, onClose, onSave, initialData }) => {
-    const defaultData = { name: '', address1: '', address2: '', city: 'Dubai', state: '', postalCode: '', country: 'UAE', mapLink: '' };
-    const [addressData, setAddressData] = useState(defaultData);
+    const createDefaultAddressData = () => ({
+        name: '',
+        address1: '',
+        address2: '',
+        city: 'Dubai',
+        state: '',
+        postalCode: '',
+        country: 'United Arab Emirates',
+        mapLink: ''
+    });
+    const [addressData, setAddressData] = useState(createDefaultAddressData);
+    const countryOptions = useMemo(() => withFallbackOption(
+        getCountryOptions(),
+        normalizeCountryValue(addressData.country)
+    ), [addressData.country]);
 
     useEffect(() => {
-        setAddressData(initialData || defaultData);
-    }, [isOpen]);
+        const defaultData = createDefaultAddressData();
+        setAddressData({
+            ...defaultData,
+            ...(initialData || {}),
+            country: normalizeCountryValue(initialData?.country || defaultData.country)
+        });
+    }, [initialData, isOpen]);
 
     if (!isOpen) return null;
 
@@ -79,7 +128,13 @@ const AddAddressModal = ({ isOpen, onClose, onSave, initialData }) => {
                     </div>
                     <div>
                         <label className="block text-xs font-medium text-slate-500 mb-1">Country</label>
-                        <input type="text" value={addressData.country} onChange={e => setAddressData({ ...addressData, country: e.target.value })} className="w-full text-sm border border-slate-200 rounded-md px-3 py-2 focus:outline-none focus:border-[#F5C742]" />
+                        <SearchableDropdown
+                            options={countryOptions}
+                            value={addressData.country}
+                            onChange={(value) => setAddressData((prev) => ({ ...prev, country: value }))}
+                            placeholder="Search country"
+                            className="w-full"
+                        />
                     </div>
                     <div>
                         <label className="block text-xs font-medium text-slate-500 mb-1">Google Maps Pin (Optional)</label>
@@ -259,6 +314,10 @@ const AddContactModal = ({ isOpen, onClose, onSave, initialData }) => {
 // ==========================================
 
 const AddCustomerModal = ({ isOpen, onClose, customerToEdit, onSaveCustomer }) => {
+    const { defaultBranchName } = useBranch();
+    const { company } = useCompany();
+    const currency = company?.currency || 'AED';
+    const defaultCurrency = normalizeCurrencyValue(company?.currency || 'AED');
     const [activeTab, setActiveTab] = useState('general');
 
     // --- Nested Modal States ---
@@ -283,22 +342,66 @@ const AddCustomerModal = ({ isOpen, onClose, customerToEdit, onSaveCustomer }) =
     const videoRef = useRef(null);
     const canvasRef = useRef(null);
 
-    const initialFormState = {
+    const createInitialFormState = () => ({
         code: 'CUST-' + Math.floor(10000 + Math.random() * 90000),
-        name: '', localName: '', group: '', trn: '', status: 'Active',
-        mobile: '', phone: '', email: '', whatsapp: '',
-        country: 'United Arab Emirates', city: 'Dubai', postalCode: '',
-        payMode: 'Cash', payTerms: 'Immediate', creditLimitDays: '', creditLimitAmount: '', maxCreditInvoices: '',
-        discountLimitPercent: '', discountLimitAmount: '', creditStatus: 'Good', blockCredit: false,
-        priceList: 'Default', currency: 'AED - UAE Dirham', salesman: '', taxGroup: 'Standard VAT 5%', branch: 'Main Branch', warehouse: '', // Warehouse empty by default
-        billingAddress: '', shippingAddress: '', notes: '',
+        name: '',
+        localName: '',
+        group: '',
+        trn: '',
+        status: 'Active',
+        mobile: '',
+        phone: '',
+        email: '',
+        whatsapp: '',
+        country: 'United Arab Emirates',
+        city: 'Dubai',
+        postalCode: '',
+        payMode: 'Cash',
+        payTerms: 'Immediate',
+        creditLimitDays: '',
+        creditLimitAmount: '',
+        maxCreditInvoices: '',
+        discountLimitPercent: '',
+        discountLimitAmount: '',
+        creditStatus: 'Good',
+        blockCredit: false,
+        priceList: 'Default',
+        currency: defaultCurrency,
+        salesman: '',
+        taxGroup: 'Standard VAT 5%',
+        branch: defaultBranchName || '',
+        warehouse: '',
+        billingAddress: '',
+        shippingAddress: '',
+        notes: '',
         savedAddresses: [],
         openingInvoices: [],
         contactPersons: [],
         documents: []
-    };
-
-    const [formData, setFormData] = useState(initialFormState);
+    });
+    const normalizeSavedAddress = (address = {}) => ({
+        ...address,
+        country: normalizeCountryValue(address.country || '')
+    });
+    const normalizeCustomerFormData = (data = {}) => ({
+        ...data,
+        country: normalizeCountryValue(data.country || ''),
+        currency: normalizeCurrencyValue(data.currency || ''),
+        savedAddresses: (data.savedAddresses || []).map(normalizeSavedAddress),
+        openingInvoices: data.openingInvoices || [],
+        contactPersons: data.contactPersons || [],
+        documents: data.documents || []
+    });
+    const [formData, setFormData] = useState(createInitialFormState);
+    const countryOptions = useMemo(() => withFallbackOption(
+        getCountryOptions(),
+        normalizeCountryValue(formData.country)
+    ), [formData.country]);
+    const currencyOptions = useMemo(() => withFallbackOption(
+        getCurrencyOptions(),
+        normalizeCurrencyValue(formData.currency),
+        (value) => ({ value, label: value, displayLabel: value })
+    ), [formData.currency]);
 
     // ✅ FETCH WAREHOUSES ON MOUNT
     useEffect(() => {
@@ -316,23 +419,35 @@ const AddCustomerModal = ({ isOpen, onClose, customerToEdit, onSaveCustomer }) =
     // ✅ SYNC FORM STATE WHEN EDITING
     useEffect(() => {
         if (isOpen && customerToEdit) {
+            const initialFormState = createInitialFormState();
+            const normalizedCustomer = normalizeCustomerFormData(customerToEdit);
             setFormData({
-                ...initialFormState, // Base structure
-                ...customerToEdit,   // Overwrite with existing data
-                // Safeguard arrays
-                savedAddresses: customerToEdit.savedAddresses || [],
-                openingInvoices: customerToEdit.openingInvoices || [],
-                contactPersons: customerToEdit.contactPersons || [],
-                documents: customerToEdit.documents || []
+                ...initialFormState,
+                ...normalizedCustomer,
+                savedAddresses: normalizedCustomer.savedAddresses,
+                openingInvoices: normalizedCustomer.openingInvoices,
+                contactPersons: normalizedCustomer.contactPersons,
+                documents: normalizedCustomer.documents
             });
             setAvatarPreview(customerToEdit.avatar || null);
         } else if (isOpen && !customerToEdit) {
-            // Reset if Adding New
-            setFormData(initialFormState);
+            setFormData(createInitialFormState());
             setAvatarPreview(null);
             setActiveTab('general');
         }
-    }, [customerToEdit, isOpen]);
+    }, [customerToEdit, defaultBranchName, defaultCurrency, isOpen]);
+
+    useEffect(() => {
+        if (!isOpen || customerToEdit || !defaultBranchName) {
+            return;
+        }
+
+        setFormData((prev) => (
+            prev.branch
+                ? prev
+                : { ...prev, branch: defaultBranchName }
+        ));
+    }, [customerToEdit, defaultBranchName, isOpen]);
 
     // --- VALIDATION LOGIC ---
     const isFormValid = useMemo(() => {
@@ -353,7 +468,10 @@ const AddCustomerModal = ({ isOpen, onClose, customerToEdit, onSaveCustomer }) =
 
     const handleMainSave = () => {
         if (!isFormValid) return;
-        onSaveCustomer({ ...formData, avatar: avatarPreview });
+        onSaveCustomer({
+            ...normalizeCustomerFormData(formData),
+            avatar: avatarPreview
+        });
     };
 
     const navItems = [
@@ -387,6 +505,16 @@ const AddCustomerModal = ({ isOpen, onClose, customerToEdit, onSaveCustomer }) =
         } else {
             setFormData(prev => ({ ...prev, savedAddresses: [...prev.savedAddresses, data] }));
         }
+    };
+
+    const handleSetDefaultAddress = (idx) => {
+        setFormData(prev => ({
+            ...prev,
+            savedAddresses: prev.savedAddresses.map((addr, i) => ({
+                ...addr,
+                isDefault: i === idx
+            }))
+        }));
     };
 
     const handleSaveInvoice = (data) => {
@@ -553,7 +681,16 @@ const AddCustomerModal = ({ isOpen, onClose, customerToEdit, onSaveCustomer }) =
                             <div><label className="block text-xs font-medium text-slate-500 mb-1.5">Phone (Optional)</label><input name="phone" value={formData.phone} onChange={handleInputChange} type="text" className="w-full text-sm border border-slate-200 rounded-md px-3 py-2 focus:outline-none focus:border-[#F5C742]" /></div>
                             <div><label className="block text-xs font-medium text-slate-500 mb-1.5">Email <span className="text-red-500">*</span></label><input name="email" value={formData.email} onChange={handleInputChange} type="email" className="w-full text-sm border border-slate-200 rounded-md px-3 py-2 focus:outline-none focus:border-[#F5C742]" /></div>
                             <div><label className="block text-xs font-medium text-slate-500 mb-1.5">WhatsApp (Optional)</label><input name="whatsapp" value={formData.whatsapp} onChange={handleInputChange} type="text" className="w-full text-sm border border-slate-200 rounded-md px-3 py-2 focus:outline-none focus:border-[#F5C742]" /></div>
-                            <div><label className="block text-xs font-medium text-slate-500 mb-1.5">Country <span className="text-red-500">*</span></label><div className="relative"><select name="country" value={formData.country} onChange={handleInputChange} className="w-full text-sm border border-slate-200 rounded-md px-3 py-2 bg-white text-slate-700 appearance-none"><option value="United Arab Emirates">United Arab Emirates</option><option value="Saudi Arabia">Saudi Arabia</option><option value="Oman">Oman</option><option value="Qatar">Qatar</option><option value="Kuwait">Kuwait</option><option value="Bahrain">Bahrain</option></select><ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" /></div></div>
+                            <div>
+                                <label className="block text-xs font-medium text-slate-500 mb-1.5">Country <span className="text-red-500">*</span></label>
+                                <SearchableDropdown
+                                    options={countryOptions}
+                                    value={formData.country}
+                                    onChange={(value) => setFormData((prev) => ({ ...prev, country: value }))}
+                                    placeholder="Search country"
+                                    className="w-full"
+                                />
+                            </div>
                             <div className="grid grid-cols-2 gap-4"><div><label className="block text-xs font-medium text-slate-500 mb-1.5">City</label><input name="city" value={formData.city} onChange={handleInputChange} type="text" className="w-full text-sm border border-slate-200 rounded-md px-3 py-2 focus:outline-none focus:border-[#F5C742]" /></div><div><label className="block text-xs font-medium text-slate-500 mb-1.5">Postal Code</label><input name="postalCode" value={formData.postalCode} onChange={handleInputChange} type="text" className="w-full text-sm border border-slate-200 rounded-md px-3 py-2 focus:outline-none focus:border-[#F5C742]" /></div></div>
                         </div>
                     </div>
@@ -590,8 +727,17 @@ const AddCustomerModal = ({ isOpen, onClose, customerToEdit, onSaveCustomer }) =
                             <span className="text-xs text-slate-400 ml-auto">Default settings for sales transactions</span>
                         </div>
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                            <div><label className="block text-xs font-medium text-slate-500 mb-1.5">Price List</label><div className="relative"><select name="priceList" value={formData.priceList} onChange={handleInputChange} className="w-full text-sm border border-slate-200 rounded-md px-3 py-2 bg-white text-slate-700 appearance-none"><option>Default</option><option>Standard</option><option>VIP</option><option>Wholesale</option><option>Retail</option><option>Main Branch</option></select><ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" /></div></div>
-                            <div><label className="block text-xs font-medium text-slate-500 mb-1.5">Default Currency</label><div className="relative"><select name="currency" value={formData.currency} onChange={handleInputChange} className="w-full text-sm border border-slate-200 rounded-md px-3 py-2 bg-white text-slate-700 appearance-none"><option>AED - UAE Dirham</option><option>USD - US Dollar</option><option>EUR - Euro</option><option>SAR - Saudi Riyal</option></select><ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" /></div></div>
+                            <div><label className="block text-xs font-medium text-slate-500 mb-1.5">Price List</label><div className="relative"><select name="priceList" value={formData.priceList} onChange={handleInputChange} className="w-full text-sm border border-slate-200 rounded-md px-3 py-2 bg-white text-slate-700 appearance-none"><option>Default</option><option>Standard</option><option>VIP</option><option>Wholesale</option><option>Retail</option></select><ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" /></div></div>
+                            <div>
+                                <label className="block text-xs font-medium text-slate-500 mb-1.5">Default Currency</label>
+                                <SearchableDropdown
+                                    options={currencyOptions}
+                                    value={formData.currency}
+                                    onChange={(value) => setFormData((prev) => ({ ...prev, currency: value }))}
+                                    placeholder="Search currency"
+                                    className="w-full"
+                                />
+                            </div>
                             <div><label className="block text-xs font-medium text-slate-500 mb-1.5">Default Salesman</label><input name="salesman" value={formData.salesman} onChange={handleInputChange} type="text" className="w-full text-sm border border-slate-200 rounded-md px-3 py-2 focus:outline-none focus:border-[#F5C742]" /></div>
                             <div><label className="block text-xs font-medium text-slate-500 mb-1.5">Default Tax Group</label><input name="taxGroup" value={formData.taxGroup} onChange={handleInputChange} type="text" className="w-full text-sm border border-slate-200 rounded-md px-3 py-2 focus:outline-none focus:border-[#F5C742]" /></div>
                             <div><label className="block text-xs font-medium text-slate-500 mb-1.5">Default Branch</label><input name="branch" value={formData.branch} onChange={handleInputChange} type="text" className="w-full text-sm border border-slate-200 rounded-md px-3 py-2 focus:outline-none focus:border-[#F5C742]" /></div>
@@ -644,15 +790,31 @@ const AddCustomerModal = ({ isOpen, onClose, customerToEdit, onSaveCustomer }) =
                             {formData.savedAddresses.length > 0 ? (
                                 <div className="grid grid-cols-1 gap-3">
                                     {formData.savedAddresses.map((addr, idx) => (
-                                        <div key={idx} className="p-3 border border-slate-100 rounded bg-slate-50 flex justify-between items-start group">
+                                        <div key={idx} className={`p-3 border rounded flex justify-between items-start group transition-all ${addr.isDefault ? 'border-yellow-300 bg-yellow-50/60' : 'border-slate-100 bg-slate-50'}`}>
                                             <div className="flex items-start gap-2">
-                                                <MapPin size={14} className="text-slate-400 mt-0.5 flex-shrink-0" />
+                                                <MapPin size={14} className={`mt-0.5 flex-shrink-0 ${addr.isDefault ? 'text-yellow-500' : 'text-slate-400'}`} />
                                                 <div>
-                                                    <div className="font-bold text-sm text-slate-700">{addr.name}</div>
+                                                    <div className="flex items-center gap-2">
+                                                        <div className="font-bold text-sm text-slate-700">{addr.name}</div>
+                                                        {addr.isDefault && (
+                                                            <span className="inline-flex items-center gap-1 text-[10px] font-bold px-1.5 py-0.5 bg-yellow-400 text-slate-900 rounded">
+                                                                ★ Default
+                                                            </span>
+                                                        )}
+                                                    </div>
                                                     <div className="text-xs text-slate-500">{addr.address1}, {addr.city}</div>
                                                 </div>
                                             </div>
                                             <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                                {!addr.isDefault && (
+                                                    <button
+                                                        onClick={() => handleSetDefaultAddress(idx)}
+                                                        title="Set as Default"
+                                                        className="p-1.5 text-slate-400 hover:text-yellow-500 rounded hover:bg-yellow-50 flex items-center gap-1 text-xs font-medium"
+                                                    >
+                                                        ☆ Default
+                                                    </button>
+                                                )}
                                                 <button onClick={() => { setEditingAddressIdx(idx); setIsAddressModalOpen(true); }} className="p-1.5 text-slate-400 hover:text-blue-600 rounded hover:bg-blue-50"><Edit size={14} /></button>
                                                 <button onClick={() => handleDeleteAddress(idx)} className="p-1.5 text-slate-400 hover:text-red-500 rounded hover:bg-red-50"><Trash2 size={14} /></button>
                                             </div>
@@ -700,7 +862,7 @@ const AddCustomerModal = ({ isOpen, onClose, customerToEdit, onSaveCustomer }) =
                             <div className="bg-blue-50 border border-blue-100 rounded-lg p-4 flex justify-between items-center mb-8">
                                 <span className="text-sm font-medium text-blue-800">Total Opening Balance</span>
                                 <span className="text-xl font-bold text-blue-700">
-                                    AED {formData.openingInvoices.reduce((acc, curr) => acc + Number(curr.amount || 0), 0).toFixed(2)}
+                                    <CurrencyAmount value={formData.openingInvoices.reduce((acc, curr) => acc + Number(curr.outstanding || curr.amount || 0), 0)} currency={currency} />
                                 </span>
                             </div>
 
@@ -713,7 +875,7 @@ const AddCustomerModal = ({ isOpen, onClose, customerToEdit, onSaveCustomer }) =
                                                 <div className="text-xs text-slate-400">{inv.date}</div>
                                             </div>
                                             <div className="flex items-center gap-2">
-                                                <span className="font-mono text-slate-800">AED {inv.amount}</span>
+                                                <CurrencyAmount value={inv.outstanding || inv.amount} currency={currency} className="font-mono text-slate-800" />
                                                 <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                                                     <button onClick={() => { setEditingInvoiceIdx(idx); setIsInvoiceModalOpen(true); }} className="p-1.5 text-slate-400 hover:text-blue-600 rounded hover:bg-blue-50"><Edit size={14} /></button>
                                                     <button onClick={() => handleDeleteInvoice(idx)} className="p-1.5 text-slate-400 hover:text-red-500 rounded hover:bg-red-50"><Trash2 size={14} /></button>
@@ -1132,6 +1294,8 @@ const AddCustomerModal = ({ isOpen, onClose, customerToEdit, onSaveCustomer }) =
 // ==========================================
 
 const ReceiveMoneyView = () => {
+    const { company } = useCompany();
+    const currency = company?.currency || 'AED';
     const [isLoading, setIsLoading] = useState(false);
 
     // Data States
@@ -1149,6 +1313,8 @@ const ReceiveMoneyView = () => {
     // ✅ NEW: Received Amount & Cheque Date
     const [receivedAmount, setReceivedAmount] = useState('');
     const [chequeDate, setChequeDate] = useState('');
+    const [bankAccount, setBankAccount] = useState('');
+    const [bankAccounts, setBankAccounts] = useState([]);
 
     // Selection & Settlement States
     const [selectedCustomer, setSelectedCustomer] = useState(null);
@@ -1182,6 +1348,7 @@ const ReceiveMoneyView = () => {
         } finally {
             setIsLoading(false);
         }
+        getBankAccounts().then(data => setBankAccounts(Array.isArray(data) ? data : [])).catch(() => {});
     };
 
     // Filtered Data
@@ -1377,9 +1544,10 @@ const ReceiveMoneyView = () => {
                     amount: amount,
                     paymentMode: paymentMode,
                     referenceNumber: referenceNo,
+                    bankName: paymentMode !== 'Cash' ? bankAccount : null,
                     notes: notes,
                     status: status,
-                    chequeDate: paymentMode === 'Cheque' ? chequeDate : null // ✅ Include Cheque Date
+                    chequeDate: paymentMode === 'Cheque' ? chequeDate : null
                 };
 
                 await saveSalesPayment(payload);
@@ -1394,8 +1562,9 @@ const ReceiveMoneyView = () => {
             setSettleAmounts({});
             setReferenceNo('');
             setNotes('');
-            setReceivedAmount(''); // Reset
-            setChequeDate(''); // Reset
+            setReceivedAmount('');
+            setChequeDate('');
+            setBankAccount('');
 
         } catch (error) {
             console.error("Error saving payments:", error);
@@ -1436,7 +1605,7 @@ const ReceiveMoneyView = () => {
                                 </div>
                                 <div>
                                     <p className="text-sm font-bold text-blue-800">Outstanding Balance</p>
-                                    <p className="text-2xl font-bold text-blue-600">AED {customerBalance.toLocaleString()}</p>
+                                    <CurrencyAmount value={customerBalance} currency={currency} className="text-2xl font-bold text-blue-600" />
                                 </div>
                             </div>
                         </div>
@@ -1497,8 +1666,8 @@ const ReceiveMoneyView = () => {
                                                         <span className={isOverdue ? "text-red-500 font-bold" : "text-slate-500"}>{inv.dueDate || '-'}</span>
                                                         {isOverdue && <span className="block text-[9px] text-red-400">Overdue</span>}
                                                     </td>
-                                                    <td className="px-4 py-3 text-right text-slate-600 font-medium">AED {inv.invoiceTotal.toLocaleString()}</td>
-                                                    <td className="px-4 py-3 text-right font-bold text-orange-600">AED {balance.toLocaleString()}</td>
+                                                    <td className="px-4 py-3 text-right text-slate-600 font-medium"><CurrencyAmount value={inv.invoiceTotal} currency={currency} /></td>
+                                                    <td className="px-4 py-3 text-right font-bold text-orange-600"><CurrencyAmount value={balance} currency={currency} /></td>
                                                     <td className="px-4 py-3 text-center">
                                                         {inv._isOpening
                                                             ? <span className="px-2 py-0.5 rounded bg-blue-100 text-blue-700 text-[10px] font-bold">Opening</span>
@@ -1564,7 +1733,7 @@ const ReceiveMoneyView = () => {
                             <div>
                                 <label className="block text-xs font-bold text-slate-500 mb-1">Received Amount (Auto-Allocate) <span className="text-red-500">*</span></label>
                                 <div className="relative">
-                                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 font-bold text-xs">AED</span>
+                                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 font-bold text-xs"><CurrencySymbol currency={currency} /></span>
                                     <input
                                         type="number"
                                         value={receivedAmount}
@@ -1583,7 +1752,7 @@ const ReceiveMoneyView = () => {
                                 </div>
                                 <div>
                                     <label className="block text-xs font-bold text-slate-500 mb-1">Method</label>
-                                    <select value={paymentMode} onChange={(e) => setPaymentMode(e.target.value)} className="w-full text-xs border border-slate-200 rounded px-3 py-2 focus:border-yellow-400 outline-none bg-white">
+                                    <select value={paymentMode} onChange={(e) => { setPaymentMode(e.target.value); setBankAccount(''); }} className="w-full text-xs border border-slate-200 rounded px-3 py-2 focus:border-yellow-400 outline-none bg-white">
                                         <option>Cash</option>
                                         <option>Bank Transfer</option>
                                         <option>Cheque</option>
@@ -1592,7 +1761,18 @@ const ReceiveMoneyView = () => {
                                 </div>
                             </div>
 
-                            {/* ✅ NEW: Cheque Date Field */}
+                            {paymentMode !== 'Cash' && (
+                                <div className="animate-in fade-in slide-in-from-top-2 duration-200">
+                                    <label className="block text-xs font-bold text-slate-500 mb-1">Bank Account <span className="text-red-500">*</span></label>
+                                    <select value={bankAccount} onChange={(e) => setBankAccount(e.target.value)} className="w-full text-xs border border-slate-200 rounded px-3 py-2 focus:border-yellow-400 outline-none bg-white">
+                                        <option value="">Select Bank Account...</option>
+                                        {bankAccounts.map(acc => (
+                                            <option key={acc.id} value={acc.name}>{acc.code} — {acc.name}</option>
+                                        ))}
+                                    </select>
+                                </div>
+                            )}
+
                             {paymentMode === 'Cheque' && (
                                 <div className="animate-in fade-in slide-in-from-top-2 duration-200">
                                     <label className="block text-xs font-bold text-slate-500 mb-1">Cheque Date <span className="text-red-500">*</span></label>
@@ -1618,7 +1798,7 @@ const ReceiveMoneyView = () => {
                             <div className="pt-4 border-t border-slate-100">
                                 <div className="flex justify-between items-center mb-4">
                                     <span className="text-sm font-bold text-slate-600">Total Settlement</span>
-                                    <span className="text-xl font-bold text-[#F5C742]">AED {totalToSettle.toLocaleString()}</span>
+                                    <CurrencyAmount value={totalToSettle} currency={currency} className="text-xl font-bold text-[#F5C742]" />
                                 </div>
 
                                 <button
@@ -1652,7 +1832,7 @@ const ReceiveMoneyView = () => {
                                     <div className="flex-1 min-w-0">
                                         <div className="flex justify-between items-start">
                                             <p className="font-bold text-slate-800 text-xs truncate">{payment.customerName || 'Unknown'}</p>
-                                            <span className="text-xs font-bold text-emerald-600 px-1.5 py-0.5 bg-emerald-50 rounded">AED {(payment.amount || 0).toLocaleString()}</span>
+                                            <CurrencyAmount value={payment.amount || 0} currency={currency} className="text-xs font-bold text-emerald-600 px-1.5 py-0.5 bg-emerald-50 rounded" />
                                         </div>
                                         <div className="flex justify-between items-center mt-1">
                                             <p className="text-[10px] text-slate-500">{payment.paymentNumber} • {payment.mode}</p>
@@ -1676,6 +1856,9 @@ const ReceiveMoneyView = () => {
 };
 
 const CustomerSOAView = ({ customers = [] }) => {
+    const { company } = useCompany();
+    const { print } = usePrintDocument();
+    const currency = company?.currency || 'AED';
     const defaultStartDate = `${new Date().getFullYear()}-01-01`;
     const defaultEndDate = new Date().toISOString().split('T')[0];
 
@@ -1712,8 +1895,42 @@ const CustomerSOAView = ({ customers = [] }) => {
     }, [selectedCustomerCode]);
 
     const handlePrint = () => {
-        window.print();
+        const filename = generateSOAFilename(
+            selectedCustomerDetails?.name || 'Customer',
+            selectedCustomerDetails?.code || selectedCustomerCode || 'N/A',
+            startDate,
+            endDate,
+            currency
+        );
+        print(filename);
     };
+
+    const handleExportExcel = () => {
+        if (!statementData) return;
+        const filename = generateSOAFilename(
+            selectedCustomerDetails?.name || 'Customer',
+            selectedCustomerDetails?.code || selectedCustomerCode || 'N/A',
+            startDate,
+            endDate,
+            currency
+        );
+
+        const columns = [
+            { header: 'Date', key: 'date', width: 12 },
+            { header: 'Reference', key: 'reference', width: 15 },
+            { header: 'Description', key: 'description', width: 25 },
+            { header: 'Debit', key: 'debit', width: 12 },
+            { header: 'Credit', key: 'credit', width: 12 },
+            { header: 'Balance', key: 'balance', width: 12 }
+        ];
+
+        exportToExcel(statementData.transactions || [], columns, filename);
+    };
+
+    const selectedCustomerDetails = useMemo(
+        () => customers.find((customer) => customer.code === selectedCustomerCode) || null,
+        [customers, selectedCustomerCode]
+    );
 
     return (
         <div className="space-y-6">
@@ -1766,33 +1983,36 @@ const CustomerSOAView = ({ customers = [] }) => {
                     <button onClick={handlePrint} className="px-4 py-2 border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 text-sm font-medium rounded-md shadow-sm flex items-center gap-2">
                         <Printer className="h-4 w-4" /> Print
                     </button>
+                    <button onClick={handleExportExcel} disabled={!statementData} className="px-4 py-2 border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 text-sm font-medium rounded-md shadow-sm flex items-center gap-2 disabled:opacity-50">
+                        <Download className="h-4 w-4" /> Export Excel
+                    </button>
                 </div>
             </div>
 
             {/* Stats Cards */}
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 print:hidden">
                 <div className="bg-white p-4 rounded-lg border border-slate-200 shadow-sm">
                     <div className="text-xs text-slate-500 mb-1">Opening Balance</div>
                     <div className="text-xl font-bold text-slate-800">
-                        AED {statementData ? statementData.openingBalance.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '0.00'}
+                        <CurrencyAmount value={statementData?.openingBalance || 0} currency={currency} />
                     </div>
                 </div>
                 <div className="bg-white p-4 rounded-lg border border-slate-200 shadow-sm">
                     <div className="text-xs text-slate-500 mb-1">Total Sales ({statementData?.entries?.filter(e => e.type === 'INVOICE').length || 0})</div>
                     <div className="text-xl font-bold text-green-600">
-                        AED {statementData ? statementData.totalDebit.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '0.00'}
+                        <CurrencyAmount value={statementData?.totalDebit || 0} currency={currency} />
                     </div>
                 </div>
                 <div className="bg-white p-4 rounded-lg border border-slate-200 shadow-sm">
                     <div className="text-xs text-slate-500 mb-1">Closing Balance</div>
                     <div className="text-xl font-bold text-orange-600">
-                        AED {statementData ? statementData.closingBalance.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '0.00'}
+                        <CurrencyAmount value={statementData?.closingBalance || 0} currency={currency} />
                     </div>
                 </div>
             </div>
 
             {/* Table */}
-            <div className="bg-white rounded-lg border border-slate-200 shadow-sm overflow-hidden">
+            <div className="bg-white rounded-lg border border-slate-200 shadow-sm overflow-hidden print:hidden">
                 <table className="w-full text-sm text-left">
                     <thead className="bg-[#F7F7FA] text-slate-500 border-b border-slate-200">
                         <tr>
@@ -1841,6 +2061,22 @@ const CustomerSOAView = ({ customers = [] }) => {
                     </tfoot>
                 </table>
             </div>
+
+            <StatementPrintPreview
+                statementData={statementData}
+                party={selectedCustomerDetails}
+                partyLabel="Customer"
+                statementLabel="Statement of Account"
+                startDate={startDate}
+                endDate={endDate}
+                debitSummaryLabel={`Total Sales (${statementData?.entries?.filter((entry) => entry.type === 'INVOICE').length || 0})`}
+                creditSummaryLabel="Total Receipts"
+                debitColumnLabel="Debit"
+                creditColumnLabel="Credit"
+                positiveBalanceLabel="Dr"
+                negativeBalanceLabel="Cr"
+                emptyMessage="No transactions found for the selected period."
+            />
         </div>
     );
 };
@@ -1867,6 +2103,8 @@ const StatCard = ({ label, value, subtext, icon: Icon, bgClass, iconColor }) => 
 // ==========================================
 
 const CustomerLedger = () => {
+    const { company } = useCompany();
+    const currency = company?.currency || 'AED';
     const [isAddModalOpen, setIsAddModalOpen] = useState(false);
     const [customerToEdit, setCustomerToEdit] = useState(null);
 
@@ -2002,7 +2240,7 @@ const CustomerLedger = () => {
                         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
                             <StatCard label="Total Customers" value={customers.length} icon={Users} bgClass="bg-blue-50" iconColor="text-blue-500" />
                             <StatCard label="Active Customers" value={customers.filter(c => c.status === 'Active').length} icon={CheckCircle2} bgClass="bg-emerald-50" iconColor="text-emerald-500" />
-                            <StatCard label="Total Receivables" value={`AED ${customers.reduce((acc, curr) => acc + (curr.balance || 0), 0).toLocaleString()}`} icon={DollarSign} bgClass="bg-yellow-50" iconColor="text-yellow-600" />
+                            <StatCard label="Total Receivables" value={<CurrencyAmount value={customers.reduce((acc, curr) => acc + (curr.balance || 0), 0)} currency={currency} />} icon={DollarSign} bgClass="bg-yellow-50" iconColor="text-yellow-600" />
                             <StatCard label="Credit Customers" value={customers.filter(c => c.group !== 'Cash').length} icon={CreditCard} bgClass="bg-orange-50" iconColor="text-orange-500" />
                         </div>
 
@@ -2094,8 +2332,8 @@ const CustomerLedger = () => {
                                                         <div className="text-xs text-slate-700 leading-tight">{cust.location && cust.location.split('\n').map((line, i) => <div key={i}>{line}</div>)}</div>
                                                     </td>
                                                     <td className="px-6 py-4 whitespace-nowrap text-right align-top pt-4">
-                                                        <div className="font-bold text-orange-500 text-xs">AED {(cust.balance || 0).toLocaleString()}</div>
-                                                        {cust.totalSales > 0 && <div className="text-[10px] text-slate-400 mt-1">Total: AED {cust.totalSales.toLocaleString()}</div>}
+                                                        <div className="font-bold text-orange-500 text-xs"><CurrencyAmount value={cust.balance || 0} currency={currency} /></div>
+                                                        {cust.totalSales > 0 && <div className="text-[10px] text-slate-400 mt-1">Total: <CurrencyAmount value={cust.totalSales} currency={currency} /></div>}
                                                     </td>
                                                     <td className="px-6 py-4 whitespace-nowrap align-top pt-5">
                                                         <span className={`flex w-fit items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold uppercase border ${cust.creditStatus === 'Good' ? 'bg-emerald-100 text-emerald-600 border-emerald-200' : 'bg-orange-100 text-orange-600 border-orange-200'}`}>
@@ -2187,7 +2425,7 @@ const CustomerLedger = () => {
                 <div className="p-4 md:p-6 space-y-6">
 
                     {/* Header */}
-                    <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4">
+                    <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4 print:hidden">
                         <div>
                             <div className="text-xs text-slate-500 mb-1">Customers & Sales  Customer Ledger</div>
                             <h1 className="text-2xl font-bold text-slate-800 flex items-center gap-2">
@@ -2198,9 +2436,10 @@ const CustomerLedger = () => {
                         </div>
 
                         <div className="flex flex-wrap gap-2 w-full lg:w-auto">
-                            <button className="flex items-center gap-2 px-3 py-2 bg-white border border-slate-200 rounded-md text-sm text-slate-600 hover:bg-slate-50 transition-colors">
-                                <Download size={16} /> Export
-                            </button>
+                            <ExportDropdown
+                                onExportExcel={() => exportToExcel(filteredCustomers, CUSTOMER_COLUMNS, 'Customers')}
+                                onExportPdf={() => exportToPDF(filteredCustomers, CUSTOMER_COLUMNS, 'Customer List', 'Customers')}
+                            />
                             <button className="flex items-center gap-2 px-3 py-2 bg-white border border-slate-200 rounded-md text-sm text-slate-600 hover:bg-slate-50 transition-colors">
                                 <Upload size={16} /> Import
                             </button>
@@ -2214,7 +2453,7 @@ const CustomerLedger = () => {
                     </div>
 
                     {/* Navigation Tabs */}
-                    <div className="bg-white border border-slate-200 rounded-lg p-1 inline-flex shadow-sm overflow-x-auto max-w-full">
+                    <div className="bg-white border border-slate-200 rounded-lg p-1 inline-flex shadow-sm overflow-x-auto max-w-full print:hidden">
                         {[
                             { id: 'Customer List', icon: Users },
                             { id: 'Receive Money', icon: Wallet },

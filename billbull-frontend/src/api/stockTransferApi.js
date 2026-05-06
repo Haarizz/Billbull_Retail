@@ -10,6 +10,19 @@ export const getStockTransferById = async (id) => {
     return res.data;
 };
 
+export const getStockTransferCostPreview = async (warehouseId, productIds = []) => {
+    const params = new URLSearchParams();
+    params.append("warehouseId", warehouseId);
+    (productIds || []).forEach(productId => {
+        if (productId != null) {
+            params.append("productIds", productId);
+        }
+    });
+
+    const res = await api.get(`/api/stock-transfers/cost-preview?${params.toString()}`);
+    return res.data;
+};
+
 export const createStockTransfer = async (payload) => {
     const res = await api.post("/api/stock-transfers", payload);
     return res.data;

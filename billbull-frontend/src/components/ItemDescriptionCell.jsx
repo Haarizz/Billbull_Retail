@@ -43,6 +43,9 @@ export const ItemDescriptionCell = React.memo(({
     const isQuotation = page === 'quotations';
     const isSalesOrder = page === 'sales_orders' || page === 'salesOrders';
     const isProforma = page === 'proforma_invoice';
+    const roundedMargin = Number.isFinite(Number(item?.margin))
+        ? Number(item.margin).toFixed(2)
+        : null;
     // Discount color logic
     const getDiscountColor = (disc) => {
         const d = parseFloat(disc) || 0;
@@ -140,19 +143,19 @@ export const ItemDescriptionCell = React.memo(({
                         {showTaxDiscount && (
                             <div className="flex items-center gap-3 overflow-hidden">
                                 <span className="text-[10px] text-slate-500 font-medium whitespace-nowrap">
-                                    Tax {item.tax || 5}% <span className="text-slate-400">({(item.taxAmt || 0).toFixed(2)})</span>
+                                    Tax {Number(item.tax ?? 0)}% <span className="text-slate-400">({(item.taxAmt || 0).toFixed(2)})</span>
                                 </span>
                                 <span className={`text-[10px] font-medium whitespace-nowrap ${getDiscountColor(item.disc)}`}>
-                                    Disc {item.disc || 0}%
+                                    Disc {Number(item.disc ?? 0)}%
                                 </span>
                                 {item.foc > 0 && (
                                     <span className="text-[10px] text-emerald-600 font-black whitespace-nowrap bg-emerald-50 px-1 rounded border border-emerald-100">
                                         FOC: {item.foc} {item.focUnit || item.unit}
                                     </span>
                                 )}
-                                {item.margin !== undefined && (
-                                    <span className={`text-[10px] font-bold whitespace-nowrap ${item.margin < 10 ? 'text-red-400' : 'text-slate-400'}`}>
-                                        Margin: {item.margin}%
+                                {roundedMargin !== null && (
+                                    <span className={`text-[10px] font-bold whitespace-nowrap ${Number(item.margin) < 10 ? 'text-red-400' : 'text-slate-400'}`}>
+                                        Margin: {roundedMargin}%
                                     </span>
                                 )}
                             </div>

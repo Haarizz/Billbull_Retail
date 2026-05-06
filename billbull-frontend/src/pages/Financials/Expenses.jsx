@@ -8,9 +8,13 @@ import { getVendors } from '../../api/vendorsApi';
 import { getCostCenters, getAccounts } from '../../api/ledgerApi';
 import { fetchExpenses, createExpense, updateExpense, deleteExpense } from '../../api/expensesApi';
 import toast from 'react-hot-toast';
+import { useCompany } from '../../context/CompanyContext';
+import CurrencyAmount, { CurrencySymbol } from '../../components/CurrencyAmount';
 
 
 const Expenses = () => {
+    const { company } = useCompany();
+    const currency = company?.currency || 'AED';
     // --- MOCK DATA REMOVED ---
 
 
@@ -90,7 +94,47 @@ const Expenses = () => {
 
     const loadExpenses = async () => {
         try {
-            const data = await fetchExpenses();
+            let data = await fetchExpenses();
+            
+            // Fallback: If no expenses from dedicated API, try filtering from global transactions
+            if (!data || data.length === 0) {
+                console.warn("Expenses API returned empty. Attempting fallback from ledger transactions...");
+                const allTransactions = await getTransactions();
+                
+                // We define expenses as transactions associated with expense-type accounts 
+                // OR specific transaction types like 'EXPENSE', 'PURCHASE_INVOICE'.
+                const expAccounts = glAccounts.filter(a => 
+                    (a.accountType || '').toLowerCase().includes('expense') || 
+                    (a.accountGroup || '').toLowerCase().includes('expense')
+                );
+                const expAccountCodes = new Set(expAccounts.map(a => a.code));
+
+                const expenseTransactions = allTransactions.filter(t => 
+                    t.type === 'EXPENSE' || 
+                    t.type === 'PURCHASE_INVOICE' ||
+                    t.type === 'PAYMENT_VOUCHER' ||
+                    expAccountCodes.has(t.accountCode)
+                );
+
+                if (expenseTransactions.length > 0) {
+                    data = expenseTransactions.map(t => ({
+                        id: t.id,
+                        date: t.transactionDate,
+                        vendor: t.accountName || 'Miscellaneous',
+                        category: t.accountGroup || 'Operational',
+                        glAccountId: expAccounts.find(a => a.code === t.accountCode)?.id || '',
+                        costCenter: t.costCenterName || '',
+                        location: t.branch || 'Head Office',
+                        amount: parseFloat(t.debitAmount || 0),
+                        taxRate: 0, // Placeholder
+                        taxAmount: 0,
+                        total: parseFloat(t.debitAmount || 0),
+                        status: 'Paid',
+                        notes: t.description || ''
+                    }));
+                }
+            }
+            
             setExpenses(data);
         } catch (error) {
             console.error("Failed to load expenses", error);
@@ -258,7 +302,7 @@ const Expenses = () => {
                 <div className="bg-white p-5 rounded-lg border border-slate-200 shadow-sm flex items-center justify-between">
                     <div>
                         <p className="text-xs text-slate-500 font-medium mb-1">Total Expenses</p>
-                        <h3 className="text-2xl font-bold text-slate-800">{stats.totalExpenses} AED</h3>
+                        <CurrencyAmount value={stats.totalExpenses} currency={currency} className="text-2xl font-bold text-slate-800" />
                         <p className="text-[10px] text-slate-400 mt-1">{stats.count} transactions</p>
                     </div>
                     <div className="p-3 bg-slate-50 rounded-lg text-slate-600">
@@ -269,7 +313,7 @@ const Expenses = () => {
                 <div className="bg-white p-5 rounded-lg border border-slate-200 shadow-sm flex items-center justify-between">
                     <div>
                         <p className="text-xs text-slate-500 font-medium mb-1">Total Tax Paid</p>
-                        <h3 className="text-2xl font-bold text-slate-800">{stats.totalTax} AED</h3>
+                        <CurrencyAmount value={stats.totalTax} currency={currency} className="text-2xl font-bold text-slate-800" />
                         <p className="text-[10px] text-slate-400 mt-1">VAT & other taxes</p>
                     </div>
                     <div className="p-3 bg-slate-50 rounded-lg text-slate-600">
@@ -281,7 +325,7 @@ const Expenses = () => {
                     <div>
                         <p className="text-xs text-slate-500 font-medium mb-1">Top Category</p>
                         <h3 className="text-xl font-bold text-slate-800">{stats.topCategory}</h3>
-                        <p className="text-[10px] text-slate-400 mt-1">{stats.topCategoryAmount} AED</p>
+                        <p className="text-[10px] text-slate-400 mt-1"><CurrencyAmount value={stats.topCategoryAmount} currency={currency} /></p>
                     </div>
                     <div className="p-3 bg-slate-50 rounded-lg text-slate-600">
                         <PieChart size={20} />
@@ -418,9 +462,9 @@ const Expenses = () => {
                                     </td>
                                     <td className="px-4 py-3 text-xs text-slate-600">{expense.costCenter}</td>
                                     <td className="px-4 py-3 text-xs text-slate-600">{expense.location}</td>
-                                    <td className="px-4 py-3 text-xs text-slate-600 text-right">{(expense.amount || 0).toFixed(2)} AED</td>
+                                    <td className="px-4 py-3 text-xs text-slate-600 text-right"><CurrencyAmount value={expense.amount || 0} currency={currency} /></td>
                                     <td className="px-4 py-3 text-xs text-slate-600 text-right">{expense.taxRate}%</td>
-                                    <td className="px-4 py-3 text-xs font-bold text-slate-800 text-right">{(expense.total || 0).toFixed(2)} AED</td>
+                                    <td className="px-4 py-3 text-xs font-bold text-slate-800 text-right"><CurrencyAmount value={expense.total || 0} currency={currency} /></td>
                                     <td className="px-4 py-3 text-center"><StatusBadge status={expense.status} /></td>
                                     <td className="px-4 py-3 text-xs text-slate-500 max-w-[200px] truncate">{expense.notes}</td>
                                     <td className="px-4 py-3 text-center relative">
@@ -619,7 +663,7 @@ const Expenses = () => {
                                 </select>
                             </div>
                             <div>
-                                <label className="block text-xs font-bold text-slate-500 mb-1">Amount (AED)</label>
+                                <label className="block text-xs font-bold text-slate-500 mb-1">Amount (<CurrencySymbol currency={currency} />)</label>
                                 <input
                                     type="number"
                                     placeholder="0.00"
@@ -655,7 +699,7 @@ const Expenses = () => {
                             </div>
 
                             <div>
-                                <label className="block text-xs font-bold text-slate-500 mb-1">Total Amount (AED)</label>
+                                <label className="block text-xs font-bold text-slate-500 mb-1">Total Amount (<CurrencySymbol currency={currency} />)</label>
                                 <input
                                     type="text"
                                     readOnly

@@ -13,7 +13,6 @@ import {
   Activity,
   DollarSign,
   Target,
-  Trophy,
   Store,
   Warehouse,
   Smartphone,
@@ -42,7 +41,8 @@ import {
   UserX,
   UserCheck,
   LayoutList,
-  LayoutGrid
+  LayoutGrid,
+  Star
 } from 'lucide-react';
 
 // Import the API helpers
@@ -50,9 +50,8 @@ import { employeesApi } from '../../../api/employeesApi';
 import { usersApi } from '../../../api/usersApi';
 import { hasRole } from '../../../api/auth';
 import { usePermissions } from '../../../context/PermissionContext';
-
-// Configuration for Image Base URL
-const SERVER_URL = window.location.origin;
+import { useBranch } from '../../../context/BranchContext';
+import { getImageUrl } from '../../../utils/urlUtils';
 
 // ==========================================
 // 0. CONSTANTS & UTILS
@@ -67,15 +66,75 @@ const STAT_COLORS = {
   purple: 'bg-purple-50 text-purple-600'
 };
 
-const buildInitialChecklist = () => ([
-  { id: 1, label: "Personal info completed", checked: false },
-  { id: 2, label: "Role assigned", checked: false },
-  { id: 3, label: "Permissions set", checked: false },
-  { id: 4, label: "Bank details added", checked: false },
-  { id: 5, label: "Mandatory docs uploaded", checked: false },
-]);
+const EMPTY_DATA_LABEL = '--';
 
-const buildInitialEmployeeForm = () => ({
+const normalizeOptionLabel = (value) => {
+  if (typeof value !== 'string') {
+    return '';
+  }
+
+  return value.trim();
+};
+
+const buildUniqueOptions = (...collections) => {
+  const seen = new Set();
+
+  return collections
+    .flat(Infinity)
+    .reduce((options, value) => {
+      const normalized = normalizeOptionLabel(value);
+      if (!normalized) {
+        return options;
+      }
+
+      const key = normalized.toLowerCase();
+      if (seen.has(key)) {
+        return options;
+      }
+
+      seen.add(key);
+      options.push(normalized);
+      return options;
+    }, []);
+};
+
+const findBranchByName = (branches, branchName) => {
+  const normalizedBranchName = normalizeOptionLabel(branchName).toLowerCase();
+  if (!normalizedBranchName) {
+    return null;
+  }
+
+  return branches.find((branch) => (
+    normalizeOptionLabel(branch?.name).toLowerCase() === normalizedBranchName
+  )) || null;
+};
+
+const formatDisplayDate = (value) => {
+  if (!value) {
+    return EMPTY_DATA_LABEL;
+  }
+
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return value;
+  }
+
+  return date.toLocaleDateString();
+};
+
+const hasFilledValue = (value) => {
+  if (typeof value === 'string') {
+    return value.trim().length > 0;
+  }
+
+  if (typeof value === 'number') {
+    return !Number.isNaN(value);
+  }
+
+  return Boolean(value);
+};
+
+const buildInitialEmployeeForm = (defaultBranchName = '') => ({
   firstName: '',
   middleName: '',
   lastName: '',
@@ -86,9 +145,9 @@ const buildInitialEmployeeForm = () => ({
   email: '',
   currentAddress: '',
   nationality: '',
-  role: 'Sales Executive',
-  department: 'Store Team',
-  branch: 'Downtown Store',
+  role: '',
+  department: '',
+  branch: defaultBranchName,
   reportingManager: '',
   workLocation: '',
   employmentType: 'Full Time',
@@ -108,19 +167,184 @@ const buildInitialEmployeeForm = () => ({
   systemRoleId: '',
 });
 
+const AutocompleteField = ({
+  options = [],
+  value = '',
+  onChange,
+  placeholder = 'Select or type',
+  disabled = false,
+  noOptionsMessage = 'No suggestions available',
+}) => {
+  const [isOpen, setIsOpen] = useState(false);
+  const containerRef = useRef(null);
+  const inputRef = useRef(null);
+
+  const normalizedOptions = useMemo(() => buildUniqueOptions(options), [options]);
+  const normalizedValue = normalizeOptionLabel(value);
+  const searchTerm = normalizedValue.toLowerCase();
+
+  const filteredOptions = useMemo(() => {
+    if (!searchTerm) {
+      return normalizedOptions;
+    }
+
+    return normalizedOptions.filter((option) => option.toLowerCase().includes(searchTerm));
+  }, [normalizedOptions, searchTerm]);
+
+  const hasExactMatch = normalizedOptions.some((option) => option.toLowerCase() === searchTerm);
+
+  useEffect(() => {
+    const handleClickOutside = (event) => {
+      if (containerRef.current && !containerRef.current.contains(event.target)) {
+        setIsOpen(false);
+      }
+    };
+
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, []);
+
+  const handleSelect = (nextValue) => {
+    onChange(nextValue);
+    setIsOpen(false);
+    inputRef.current?.focus();
+  };
+
+  const handleInputChange = (event) => {
+    onChange(event.target.value);
+    if (!isOpen) {
+      setIsOpen(true);
+    }
+  };
+
+  const handleToggle = () => {
+    if (disabled) {
+      return;
+    }
+
+    setIsOpen((prev) => !prev);
+    requestAnimationFrame(() => inputRef.current?.focus());
+  };
+
+  const handleKeyDown = (event) => {
+    if (event.key === 'Escape') {
+      setIsOpen(false);
+      return;
+    }
+
+    if (event.key === 'ArrowDown' && !isOpen) {
+      event.preventDefault();
+      setIsOpen(true);
+      return;
+    }
+
+    if (event.key === 'Enter' && normalizedValue && !hasExactMatch) {
+      setIsOpen(false);
+    }
+  };
+
+  return (
+    <div ref={containerRef} className="relative">
+      <div className={`relative rounded-md transition-all ${isOpen ? 'ring-1 ring-[#F5C742]' : ''}`}>
+        <input
+          ref={inputRef}
+          type="text"
+          value={value}
+          onChange={handleInputChange}
+          onFocus={() => setIsOpen(true)}
+          onKeyDown={handleKeyDown}
+          placeholder={placeholder}
+          disabled={disabled}
+          className={`w-full rounded-md border px-3 py-2 pr-10 text-sm transition-colors focus:outline-none ${
+            disabled
+              ? 'cursor-not-allowed border-slate-200 bg-slate-50 text-slate-400'
+              : isOpen
+                ? 'border-[#F5C742] bg-white text-slate-700'
+                : 'border-slate-200 bg-white text-slate-700 hover:border-slate-300 focus:border-[#F5C742]'
+          }`}
+        />
+        <button
+          type="button"
+          onMouseDown={(event) => event.preventDefault()}
+          onClick={handleToggle}
+          disabled={disabled}
+          className="absolute inset-y-0 right-0 flex w-10 items-center justify-center text-slate-400 transition-colors hover:text-slate-600 disabled:cursor-not-allowed disabled:text-slate-300"
+        >
+          <ChevronDown size={16} className={`transition-transform ${isOpen ? 'rotate-180' : ''}`} />
+        </button>
+      </div>
+
+      {isOpen && !disabled && (
+        <div className="absolute left-0 top-full z-30 mt-1 w-full overflow-hidden rounded-md border border-slate-200 bg-white shadow-lg">
+          {normalizedValue && !hasExactMatch && (
+            <button
+              type="button"
+              onMouseDown={(event) => event.preventDefault()}
+              onClick={() => handleSelect(normalizedValue)}
+              className="flex w-full items-center justify-between border-b border-slate-100 px-3 py-2 text-left text-sm text-slate-700 transition-colors hover:bg-yellow-50"
+            >
+              <span className="truncate">Use "{normalizedValue}"</span>
+              <span className="ml-3 text-[11px] font-medium uppercase tracking-wide text-slate-400">Custom</span>
+            </button>
+          )}
+
+          {filteredOptions.length > 0 ? (
+            <div className="max-h-56 overflow-y-auto py-1">
+              {filteredOptions.map((option) => {
+                const isSelected = option.toLowerCase() === searchTerm;
+
+                return (
+                  <button
+                    key={option}
+                    type="button"
+                    onMouseDown={(event) => event.preventDefault()}
+                    onClick={() => handleSelect(option)}
+                    className={`flex w-full items-center justify-between px-3 py-2 text-left text-sm transition-colors ${
+                      isSelected
+                        ? 'bg-yellow-50 font-medium text-slate-900'
+                        : 'text-slate-700 hover:bg-slate-50'
+                    }`}
+                  >
+                    <span className="truncate">{option}</span>
+                    {isSelected && <Check size={14} className="ml-3 shrink-0 text-yellow-700" />}
+                  </button>
+                );
+              })}
+            </div>
+          ) : (
+            <div className="px-3 py-3 text-xs text-slate-500">
+              {normalizedValue
+                ? `No matches found. Press Enter to keep "${normalizedValue}".`
+                : noOptionsMessage}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+};
+
 // ==========================================
 // 1. ADD / EDIT EMPLOYEE MODAL COMPONENT
 // ==========================================
 
-const AddEmployeeModal = ({ isOpen, onClose, onWorkflowStart, employeeToEdit }) => {
+const AddEmployeeModal = ({
+  isOpen,
+  onClose,
+  onWorkflowStart,
+  employeeToEdit,
+  managerOptions,
+  roleOptions,
+  departmentOptions,
+}) => {
+  const { branches, defaultBranchName, formatBranchLabel } = useBranch();
   const [activeTab, setActiveTab] = useState('personal');
   const [completedSteps, setCompletedSteps] = useState(new Set());
   const isAdmin = hasRole('ADMIN');
   const isCreateMode = !employeeToEdit;
   const canProvisionLoginAccess = isAdmin && isCreateMode;
-
-  // --- Checklist State ---
-  const [checklist, setChecklist] = useState(buildInitialChecklist);
 
   // --- Media & File Refs ---
   const [avatarPreview, setAvatarPreview] = useState(null);
@@ -140,15 +364,98 @@ const AddEmployeeModal = ({ isOpen, onClose, onWorkflowStart, employeeToEdit }) 
   const [systemRolesError, setSystemRolesError] = useState('');
   const [formError, setFormError] = useState('');
 
+  // --- Designation Roles (for Role/Designation dropdown) ---
+  const FALLBACK_ROLES = ['ADMIN', 'SALES', 'INVENTORY_MANAGER', 'ACCOUNTANT', 'CASHIER'];
+  const [designationRoles, setDesignationRoles] = useState([]);
+  const [designationRolesLoading, setDesignationRolesLoading] = useState(false);
+
   // --- Form Data State (Captures all inputs) ---
   const [formData, setFormData] = useState(buildInitialEmployeeForm);
+
+  const branchOptions = useMemo(() => (
+    buildUniqueOptions(
+      branches.map((branch) => branch?.name),
+      defaultBranchName,
+      employeeToEdit?.branch,
+      formData.branch,
+    )
+  ), [branches, defaultBranchName, employeeToEdit, formData.branch]);
+
+  const resolvedRoleOptions = useMemo(() => (
+    buildUniqueOptions(roleOptions, formData.role)
+  ), [roleOptions, formData.role]);
+
+  const resolvedDepartmentOptions = useMemo(() => (
+    buildUniqueOptions(departmentOptions, formData.department)
+  ), [departmentOptions, formData.department]);
+
+  const currentEmployeeName = useMemo(() => (
+    [employeeToEdit?.firstName, employeeToEdit?.lastName]
+      .map(normalizeOptionLabel)
+      .filter(Boolean)
+      .join(' ')
+  ), [employeeToEdit]);
+
+  const resolvedManagerOptions = useMemo(() => (
+    buildUniqueOptions(
+      managerOptions.filter((name) => (
+        normalizeOptionLabel(name).toLowerCase() !== currentEmployeeName.toLowerCase()
+      )),
+      formData.reportingManager,
+    )
+  ), [managerOptions, currentEmployeeName, formData.reportingManager]);
+
+  const selectedBranch = useMemo(() => (
+    findBranchByName(branches, formData.branch) || (formData.branch ? { name: formData.branch } : null)
+  ), [branches, formData.branch]);
+
+  const checklist = useMemo(() => {
+    const personalInfoCompleted = [
+      formData.firstName,
+      formData.lastName,
+      formData.phone,
+      formData.email,
+      formData.currentAddress,
+    ].every(hasFilledValue);
+
+    const roleAssigned = [
+      formData.role,
+      formData.department,
+      formData.branch,
+      formData.employmentType,
+      formData.joinDate,
+    ].every(hasFilledValue);
+
+    const permissionsSet = hasFilledValue(formData.permissionProfile) && (
+      !formData.createLoginAccess || (
+        hasFilledValue(formData.loginUsername) &&
+        hasFilledValue(formData.temporaryPassword) &&
+        hasFilledValue(formData.systemRoleId)
+      )
+    );
+
+    const payrollDetailsAdded = hasFilledValue(formData.salaryType) && hasFilledValue(formData.basicSalary);
+
+    const mandatoryDocsUploaded = (
+      hasFilledValue(formData.emiratesId) &&
+      hasFilledValue(formData.expiryDate) &&
+      Boolean(emiratesIdFile)
+    );
+
+    return [
+      { id: 1, label: 'Personal info completed', checked: personalInfoCompleted },
+      { id: 2, label: 'Role assigned', checked: roleAssigned },
+      { id: 3, label: 'Permissions set', checked: permissionsSet },
+      { id: 4, label: 'Payroll details added', checked: payrollDetailsAdded },
+      { id: 5, label: 'Mandatory docs uploaded', checked: mandatoryDocsUploaded },
+    ];
+  }, [emiratesIdFile, formData]);
 
   useEffect(() => {
     if (!isOpen) return;
 
     setActiveTab('personal');
     setCompletedSteps(new Set());
-    setChecklist(buildInitialChecklist());
     setAvatarFile(null);
     setIsCameraOpen(false);
     setCameraError('');
@@ -158,7 +465,7 @@ const AddEmployeeModal = ({ isOpen, onClose, onWorkflowStart, employeeToEdit }) 
 
     if (employeeToEdit) {
       setFormData({
-        ...buildInitialEmployeeForm(),
+        ...buildInitialEmployeeForm(defaultBranchName),
         firstName: employeeToEdit.firstName || "",
         middleName: employeeToEdit.middleName || "",
         lastName: employeeToEdit.lastName || "",
@@ -188,16 +495,52 @@ const AddEmployeeModal = ({ isOpen, onClose, onWorkflowStart, employeeToEdit }) 
       });
 
       if (employeeToEdit.avatarUrl) {
-        setAvatarPreview(`${SERVER_URL}${employeeToEdit.avatarUrl}`);
+        setAvatarPreview(getImageUrl(employeeToEdit.avatarUrl));
       } else {
         setAvatarPreview(null);
       }
       return;
     }
 
-    setFormData(buildInitialEmployeeForm());
+    setFormData(buildInitialEmployeeForm(defaultBranchName));
     setAvatarPreview(null);
   }, [isOpen, employeeToEdit]);
+
+  useEffect(() => {
+    if (!isOpen || employeeToEdit || formData.branch || !defaultBranchName) {
+      return;
+    }
+
+    setFormData((prev) => ({
+      ...prev,
+      branch: defaultBranchName,
+    }));
+  }, [defaultBranchName, employeeToEdit, formData.branch, isOpen]);
+
+  // Fetch designation roles from the /api/roles table whenever the modal opens
+  useEffect(() => {
+    if (!isOpen) return;
+
+    let cancelled = false;
+    setDesignationRolesLoading(true);
+
+    usersApi.getAllRoles()
+      .then((roles) => {
+        if (!cancelled) {
+          setDesignationRoles(roles || []);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setDesignationRoles([]);
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setDesignationRolesLoading(false);
+      });
+
+    return () => { cancelled = true; };
+  }, [isOpen]);
 
   useEffect(() => {
     if (!isOpen || !canProvisionLoginAccess) {
@@ -240,10 +583,13 @@ const AddEmployeeModal = ({ isOpen, onClose, onWorkflowStart, employeeToEdit }) 
   }, [isOpen, canProvisionLoginAccess]);
 
   // --- Computed Values ---
+  const completedChecklistCount = useMemo(() => (
+    checklist.filter((item) => item.checked).length
+  ), [checklist]);
+
   const checklistProgress = useMemo(() => {
-    const completed = checklist.filter(i => i.checked).length;
-    return (completed / checklist.length) * 100;
-  }, [checklist]);
+    return checklist.length > 0 ? (completedChecklistCount / checklist.length) * 100 : 0;
+  }, [checklist.length, completedChecklistCount]);
 
   // --- Navigation Data ---
   const navItems = [
@@ -268,16 +614,15 @@ const AddEmployeeModal = ({ isOpen, onClose, onWorkflowStart, employeeToEdit }) 
 
   // --- Handlers ---
 
-  const handleInputChange = (e) => {
-    const { name, value, type, checked } = e.target;
+  const updateFormField = (name, value) => {
     setFormError('');
-    setFormData(prev => {
+    setFormData((prev) => {
       const next = {
         ...prev,
-        [name]: type === 'checkbox' ? checked : value
+        [name]: value
       };
 
-      if (name === 'createLoginAccess' && !checked) {
+      if (name === 'createLoginAccess' && !value) {
         next.loginUsername = '';
         next.temporaryPassword = '';
         next.systemRoleId = '';
@@ -285,6 +630,11 @@ const AddEmployeeModal = ({ isOpen, onClose, onWorkflowStart, employeeToEdit }) 
 
       return next;
     });
+  };
+
+  const handleInputChange = (e) => {
+    const { name, value, type, checked } = e.target;
+    updateFormField(name, type === 'checkbox' ? checked : value);
   };
 
   const handleNext = () => {
@@ -375,12 +725,6 @@ const AddEmployeeModal = ({ isOpen, onClose, onWorkflowStart, employeeToEdit }) 
     if (success) {
       onClose();
     }
-  };
-
-  const toggleChecklist = (id) => {
-    setChecklist(checklist.map(item =>
-      item.id === id ? { ...item, checked: !item.checked } : item
-    ));
   };
 
   // --- Avatar Logic ---
@@ -621,27 +965,34 @@ const AddEmployeeModal = ({ isOpen, onClose, onWorkflowStart, employeeToEdit }) 
                 <div>
                   <label className="block text-xs font-medium text-slate-500 mb-1">Role / Designation *</label>
                   <div className="relative">
-                    <select name="role" value={formData.role} onChange={handleInputChange} className="w-full text-sm border border-slate-200 rounded-md px-3 py-2 appearance-none bg-white focus:outline-none focus:border-[#F5C742] text-slate-600">
-                      <option value="Cashier">Cashier</option>
-                      <option value="Sales Executive">Sales Executive</option>
-                      <option value="Manager">Manager</option>
-                      <option value="Warehouse Supervisor">Warehouse Supervisor</option>
+                    <select
+                      name="role"
+                      value={formData.role}
+                      onChange={handleInputChange}
+                      disabled={designationRolesLoading}
+                      className="w-full text-sm border border-slate-200 rounded-md px-3 py-2 appearance-none bg-white focus:outline-none focus:border-[#F5C742] text-slate-600 disabled:bg-slate-50 disabled:text-slate-400"
+                    >
+                      <option value="">
+                        {designationRolesLoading ? 'Loading roles...' : 'Select a role'}
+                      </option>
+                      {(designationRoles.length > 0 ? designationRoles : FALLBACK_ROLES.map(r => ({ name: r }))).map((role) => (
+                        <option key={role.id ?? role.name} value={role.name}>
+                          {role.name}
+                        </option>
+                      ))}
                     </select>
                     <ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
                   </div>
-                  <p className="text-[10px] text-slate-400 mt-1">Select to auto-fill permissions & KPIs</p>
                 </div>
                 <div>
                   <label className="block text-xs font-medium text-slate-500 mb-1">Department *</label>
-                  <div className="relative">
-                    <select name="department" value={formData.department} onChange={handleInputChange} className="w-full text-sm border border-slate-200 rounded-md px-3 py-2 appearance-none bg-white focus:outline-none focus:border-[#F5C742] text-slate-600">
-                      <option value="Store Team">Store Team</option>
-                      <option value="Warehouse Team">Warehouse Team</option>
-                      <option value="Management">Management</option>
-                      <option value="Back Office">Back Office</option>
-                    </select>
-                    <ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
-                  </div>
+                  <AutocompleteField
+                    options={resolvedDepartmentOptions}
+                    value={formData.department}
+                    onChange={(nextValue) => updateFormField('department', nextValue)}
+                    placeholder="Enter or select department"
+                    noOptionsMessage="No saved departments yet"
+                  />
                 </div>
               </div>
             </div>
@@ -653,22 +1004,33 @@ const AddEmployeeModal = ({ isOpen, onClose, onWorkflowStart, employeeToEdit }) 
                   <label className="block text-xs font-medium text-slate-500 mb-1">Branch (Default) *</label>
                   <div className="relative">
                     <select name="branch" value={formData.branch} onChange={handleInputChange} className="w-full text-sm border border-slate-200 rounded-md px-3 py-2 appearance-none bg-white focus:outline-none focus:border-[#F5C742] text-slate-600">
-                      <option value="Downtown Store">Downtown Store</option>
-                      <option value="Mall Branch">Mall Branch</option>
-                      <option value="Main Warehouse">Main Warehouse</option>
+                      <option value="">{branchOptions.length > 0 ? 'Select branch' : 'No branches available'}</option>
+                      {branchOptions.map((branchName) => {
+                        const branch = findBranchByName(branches, branchName);
+                        return (
+                          <option key={branchName} value={branchName}>
+                            {branch ? formatBranchLabel(branch) : branchName}
+                          </option>
+                        );
+                      })}
                     </select>
                     <ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
                   </div>
+                  {selectedBranch?.defaultWarehouseName && (
+                    <p className="mt-1 text-[10px] text-slate-400">
+                      Default warehouse: {selectedBranch.defaultWarehouseName}
+                    </p>
+                  )}
                 </div>
                 <div>
                   <label className="block text-xs font-medium text-slate-500 mb-1">Reporting Manager</label>
-                  <div className="relative">
-                    <select name="reportingManager" value={formData.reportingManager} onChange={handleInputChange} className="w-full text-sm border border-slate-200 rounded-md px-3 py-2 appearance-none bg-white focus:outline-none focus:border-[#F5C742] text-slate-600">
-                      <option value="">Select manager</option>
-                      <option value="Mohammed Hassan">Mohammed Hassan</option>
-                    </select>
-                    <ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
-                  </div>
+                  <AutocompleteField
+                    options={resolvedManagerOptions}
+                    value={formData.reportingManager}
+                    onChange={(nextValue) => updateFormField('reportingManager', nextValue)}
+                    placeholder={resolvedManagerOptions.length > 0 ? 'Select or type manager' : 'Enter manager name'}
+                    noOptionsMessage="No managers available yet"
+                  />
                 </div>
                 <div>
                   <label className="block text-xs font-medium text-slate-500 mb-1">Work Location</label>
@@ -867,37 +1229,42 @@ const AddEmployeeModal = ({ isOpen, onClose, onWorkflowStart, employeeToEdit }) 
 
             <div className="bg-white border border-slate-200 rounded-lg p-6 shadow-sm">
               <h3 className="text-sm font-semibold text-slate-700 mb-4">Branch & Warehouse Access</h3>
-              <div className="space-y-4">
-                <div>
-                  <label className="block text-xs font-medium text-slate-500 mb-2">Allowed Branches (Multi-select)</label>
-                  <div className="space-y-2">
-                    <label className="flex items-center gap-2">
-                      <input type="checkbox" className="w-4 h-4 text-[#F5C742] rounded focus:ring-[#F5C742]" defaultChecked />
-                      <span className="text-sm text-slate-700">Downtown Store</span>
-                    </label>
-                    <label className="flex items-center gap-2">
-                      <input type="checkbox" className="w-4 h-4 text-[#F5C742] rounded focus:ring-[#F5C742]" />
-                      <span className="text-sm text-slate-700">Mall Branch</span>
-                    </label>
-                    <label className="flex items-center gap-2">
-                      <input type="checkbox" className="w-4 h-4 text-[#F5C742] rounded focus:ring-[#F5C742]" />
-                      <span className="text-sm text-slate-700">Airport Outlet</span>
-                    </label>
+              <div className="rounded-md border border-slate-200 bg-slate-50 p-4 space-y-4">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <div className="text-[11px] font-medium uppercase tracking-wide text-slate-500">Saved Branch</div>
+                    <div className="mt-1 text-sm font-medium text-slate-700">
+                      {selectedBranch ? (formatBranchLabel(selectedBranch) || selectedBranch.name) : 'Select a branch in Job & Organization'}
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-[11px] font-medium uppercase tracking-wide text-slate-500">Default Warehouse</div>
+                    <div className="mt-1 text-sm font-medium text-slate-700">
+                      {selectedBranch?.defaultWarehouseName || 'No default warehouse configured'}
+                    </div>
                   </div>
                 </div>
-                <div className="pt-2 border-t border-slate-100">
-                  <label className="block text-xs font-medium text-slate-500 mb-2">Allowed Warehouses</label>
-                  <div className="space-y-2">
-                    <label className="flex items-center gap-2">
-                      <input type="checkbox" className="w-4 h-4 text-[#F5C742] rounded focus:ring-[#F5C742]" defaultChecked />
-                      <span className="text-sm text-slate-700">Main Warehouse</span>
-                    </label>
-                    <label className="flex items-center gap-2">
-                      <input type="checkbox" className="w-4 h-4 text-[#F5C742] rounded focus:ring-[#F5C742]" />
-                      <span className="text-sm text-slate-700">Distribution Center</span>
-                    </label>
+
+                {(selectedBranch?.address || selectedBranch?.phone) && (
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 border-t border-slate-200 pt-4">
+                    <div>
+                      <div className="text-[11px] font-medium uppercase tracking-wide text-slate-500">Branch Address</div>
+                      <div className="mt-1 text-sm text-slate-600">
+                        {selectedBranch?.address || EMPTY_DATA_LABEL}
+                      </div>
+                    </div>
+                    <div>
+                      <div className="text-[11px] font-medium uppercase tracking-wide text-slate-500">Branch Phone</div>
+                      <div className="mt-1 text-sm text-slate-600">
+                        {selectedBranch?.phone || EMPTY_DATA_LABEL}
+                      </div>
+                    </div>
                   </div>
-                </div>
+                )}
+
+                <p className="text-xs text-slate-500">
+                  This form now shows only live branch setup data. The old placeholder branch and warehouse options were removed because they were not tied to saved employee data.
+                </p>
               </div>
             </div>
 
@@ -1185,23 +1552,24 @@ const AddEmployeeModal = ({ isOpen, onClose, onWorkflowStart, employeeToEdit }) 
 
             {/* Onboarding Checklist (Functional) */}
             <div>
-              <h4 className="text-xs font-semibold text-slate-700 mb-3">Onboarding Checklist</h4>
+              <div className="mb-3">
+                <h4 className="text-xs font-semibold text-slate-700">Onboarding Checklist</h4>
+                <p className="mt-1 text-[10px] text-slate-400">Updates automatically as you complete each section.</p>
+              </div>
               <div className="space-y-2">
                 {checklist.map((item) => (
-                  <label key={item.id} className="flex items-center gap-2 cursor-pointer group select-none">
+                  <div key={item.id} className="flex items-center gap-2 select-none">
                     <div
-                      onClick={() => toggleChecklist(item.id)}
                       className={`w-4 h-4 rounded border flex items-center justify-center transition-colors ${item.checked ? 'bg-slate-800 border-slate-800' : 'border-slate-300 bg-white'}`}
                     >
                       {item.checked && <CheckCircle2 size={10} className="text-white" />}
                     </div>
                     <span
-                      onClick={() => toggleChecklist(item.id)}
                       className={`text-xs ${item.checked ? 'text-slate-800 font-medium' : 'text-slate-500'}`}
                     >
                       {item.label}
                     </span>
-                  </label>
+                  </div>
                 ))}
               </div>
 
@@ -1209,7 +1577,7 @@ const AddEmployeeModal = ({ isOpen, onClose, onWorkflowStart, employeeToEdit }) 
               <div className="mt-4">
                 <div className="flex justify-between text-[10px] text-slate-500 mb-1">
                   <span>Progress</span>
-                  <span>{checklist.filter(i => i.checked).length} / {checklist.length}</span>
+                  <span>{completedChecklistCount} / {checklist.length}</span>
                 </div>
                 <div className="w-full bg-slate-100 rounded-full h-1.5">
                   <div
@@ -1309,21 +1677,6 @@ const StatCard = ({
           {subValue}
         </div>
       )}
-    </div>
-  </div>
-);
-
-const TopPerformerCard = ({ name, score }) => (
-  <div className="bg-white p-4 rounded-lg border border-yellow-400 shadow-sm h-24 flex flex-col justify-between hover:shadow-md transition-shadow">
-    <div className="flex justify-between items-start mb-2">
-      <div className="text-sm font-semibold text-slate-800">Top Performer</div>
-      <div className="p-1.5 rounded-full bg-yellow-100 text-yellow-600">
-        <Trophy className="w-4 h-4" />
-      </div>
-    </div>
-    <div className="flex items-end justify-between">
-      <div className="text-lg font-bold text-slate-800 truncate pr-2">{name}</div>
-      <div className="text-xs font-medium text-yellow-600">{score}% Achieved</div>
     </div>
   </div>
 );
@@ -1433,6 +1786,7 @@ const ACCESS_STATUS = {
 };
 
 const EmployeeAccessPanel = ({ employee, onClose }) => {
+  const { branches, formatBranchLabel } = useBranch();
   const [accessData, setAccessData]     = useState(null);
   const [loading, setLoading]           = useState(true);
   const [actionLoading, setActionLoading] = useState(false);
@@ -1443,9 +1797,31 @@ const EmployeeAccessPanel = ({ employee, onClose }) => {
   const [showRoles, setShowRoles]       = useState(false);
   const [allRoles, setAllRoles]         = useState([]);       // [{ id, name }]
   const [selectedIds, setSelectedIds]   = useState(new Set()); // role ids currently checked
+  const [primaryRoleId, setPrimaryRoleId] = useState(null);   // starred primary role id
   const [rolesLoading, setRolesLoading] = useState(false);
   const [rolesSaving, setRolesSaving]   = useState(false);
   const [rolesLayout, setRolesLayout]   = useState('vertical'); // 'vertical' | 'horizontal'
+
+  const resolvedEmployeeBranch = useMemo(() => {
+    const branchLabel = normalizeOptionLabel(employee?.branch);
+    if (!branchLabel) {
+      return null;
+    }
+
+    const normalizedLabel = branchLabel.toLowerCase();
+
+    return branches.find((branch) => {
+      const branchName = normalizeOptionLabel(branch?.name)?.toLowerCase();
+      const branchCode = normalizeOptionLabel(branch?.code)?.toLowerCase();
+      const formattedLabel = normalizeOptionLabel(formatBranchLabel(branch))?.toLowerCase();
+
+      return (
+        normalizedLabel === branchName ||
+        normalizedLabel === branchCode ||
+        normalizedLabel === formattedLabel
+      );
+    }) || null;
+  }, [branches, employee?.branch, formatBranchLabel]);
 
   // ── data loading ──────────────────────────────────────────
   const loadAccess = async () => {
@@ -1491,6 +1867,7 @@ const EmployeeAccessPanel = ({ employee, onClose }) => {
       fullName: employee.name,
       phone:    employee.rawPhone || '',
       linkedEmployeeId: employee.id,
+      branchId: accessData?.branchId || resolvedEmployeeBranch?.id || null,
       roleIds: [],
     });
   });
@@ -1521,6 +1898,11 @@ const EmployeeAccessPanel = ({ employee, onClose }) => {
       const currentNames = new Set(accessData?.assignedRoles || []);
       const preSelected  = new Set(roles.filter(r => currentNames.has(r.name)).map(r => r.id));
       setSelectedIds(preSelected);
+      // Pre-populate primary role
+      const currentPrimary = accessData?.primaryRoleName
+        ? roles.find(r => r.name === accessData.primaryRoleName)?.id ?? null
+        : null;
+      setPrimaryRoleId(currentPrimary);
     } catch (e) {
       setInlineError(e.response?.data?.message || e.message || 'Failed to load roles');
       setShowRoles(false);
@@ -1532,7 +1914,13 @@ const EmployeeAccessPanel = ({ employee, onClose }) => {
   const toggleRole = (id) => {
     setSelectedIds(prev => {
       const next = new Set(prev);
-      next.has(id) ? next.delete(id) : next.add(id);
+      if (next.has(id)) {
+        next.delete(id);
+        // Clear primary if deselecting it
+        if (primaryRoleId === id) setPrimaryRoleId(null);
+      } else {
+        next.add(id);
+      }
       return next;
     });
   };
@@ -1541,7 +1929,7 @@ const EmployeeAccessPanel = ({ employee, onClose }) => {
     setRolesSaving(true);
     setInlineError(null);
     try {
-      await usersApi.assignRoles(accessData.linkedUserId, [...selectedIds]);
+      await usersApi.assignRoles(accessData.linkedUserId, [...selectedIds], primaryRoleId);
       await loadAccess();
       setShowRoles(false);
     } catch (e) {
@@ -1650,6 +2038,7 @@ const EmployeeAccessPanel = ({ employee, onClose }) => {
                 <div className="space-y-1.5">
                   {allRoles.map(role => {
                     const checked = selectedIds.has(role.id);
+                    const isPrimary = primaryRoleId === role.id;
                     return (
                       <label key={role.id}
                         className={`flex items-center gap-3 p-3 rounded-lg border cursor-pointer transition-all select-none
@@ -1667,7 +2056,15 @@ const EmployeeAccessPanel = ({ employee, onClose }) => {
                             {role.name}
                           </span>
                         </div>
-                        {checked && <Check size={14} className="text-yellow-600 shrink-0" />}
+                        {checked && (
+                          <button
+                            type="button"
+                            onClick={e => { e.preventDefault(); setPrimaryRoleId(isPrimary ? null : role.id); }}
+                            title={isPrimary ? 'Remove as primary role' : 'Set as primary role'}
+                            className="shrink-0 p-0.5 rounded transition-colors">
+                            <Star size={14} className={isPrimary ? 'fill-yellow-500 text-yellow-500' : 'text-slate-300 hover:text-yellow-400'} />
+                          </button>
+                        )}
                       </label>
                     );
                   })}
@@ -1677,6 +2074,7 @@ const EmployeeAccessPanel = ({ employee, onClose }) => {
                 <div className="grid grid-cols-2 gap-2">
                   {allRoles.map(role => {
                     const checked = selectedIds.has(role.id);
+                    const isPrimary = primaryRoleId === role.id;
                     return (
                       <label key={role.id}
                         className={`relative flex flex-col items-center gap-2 p-3 rounded-lg border cursor-pointer transition-all select-none text-center
@@ -1694,6 +2092,16 @@ const EmployeeAccessPanel = ({ employee, onClose }) => {
                           <span className="absolute top-1.5 right-1.5 w-4 h-4 flex items-center justify-center rounded-full bg-[#F5C742]">
                             <Check size={10} className="text-slate-900" />
                           </span>
+                        )}
+                        {/* Star for primary role in bottom-left */}
+                        {checked && (
+                          <button
+                            type="button"
+                            onClick={e => { e.preventDefault(); setPrimaryRoleId(isPrimary ? null : role.id); }}
+                            title={isPrimary ? 'Remove as primary role' : 'Set as primary role'}
+                            className="absolute bottom-1.5 left-1.5 p-0.5 rounded transition-colors">
+                            <Star size={12} className={isPrimary ? 'fill-yellow-500 text-yellow-500' : 'text-slate-300 hover:text-yellow-400'} />
+                          </button>
                         )}
                         {/* Role initial avatar */}
                         <span className={`w-9 h-9 flex items-center justify-center rounded-full text-sm font-bold ${roleBadge[role.name] || 'bg-slate-100 text-slate-600'}`}>
@@ -1988,24 +2396,24 @@ const Employees = () => {
   // --- 3. Mapper Helper ---
   const mapBackendToFrontend = (emp) => ({
     id: emp.id,
-    name: `${emp.firstName} ${emp.lastName}`,
-    code: emp.employeeCode,
-    role: emp.role,
-    dept: emp.department,
-    branch: emp.branch,
-    sales: "₹0", // No sales backend yet
-    avg: "Avg: ₹0",
-    bills: 0,
-    disc: "Disc: ₹0",
-    ret: "Ret: ₹0",
+    name: `${emp.firstName || ''} ${emp.lastName || ''}`.trim() || 'Unnamed Employee',
+    code: emp.employeeCode || EMPTY_DATA_LABEL,
+    role: emp.role || EMPTY_DATA_LABEL,
+    dept: emp.department || EMPTY_DATA_LABEL,
+    branch: emp.branch || '',
+    sales: null,
+    avg: null,
+    bills: null,
+    disc: null,
+    ret: null,
     target: null,
     status: emp.status,
     stage: emp.workflowStage,
-    submittedAt: emp.submittedAt || new Date().toLocaleDateString(),
+    submittedAt: formatDisplayDate(emp.submittedAt),
     initials: (emp.firstName?.[0] || "") + (emp.lastName?.[0] || ""),
     color: emp.status === 'Active' ? "bg-blue-100 text-blue-600" : "bg-slate-100 text-slate-600",
     // Construct Full Image URL
-    avatar: emp.avatarUrl ? `${SERVER_URL}${emp.avatarUrl}` : null,
+    avatar: emp.avatarUrl ? getImageUrl(emp.avatarUrl) : null,
     // Raw fields needed by EmployeeAccessPanel for user creation
     email: emp.email,
     rawEmail: emp.email,
@@ -2015,8 +2423,28 @@ const Employees = () => {
   // --- 4. Filtering Logic (New) ---
 
   // Extract unique roles/branches for dropdowns from active employees
-  const availableRoles = useMemo(() => ["All Roles", ...new Set(employeeData.map(e => e.role))], [employeeData]);
-  const availableBranches = useMemo(() => ["All Branches", ...new Set(employeeData.map(e => e.branch))], [employeeData]);
+  const availableRoles = useMemo(() => ["All Roles", ...buildUniqueOptions(employeeData.map((employee) => employee.role))], [employeeData]);
+  const availableBranches = useMemo(() => ["All Branches", ...buildUniqueOptions(employeeData.map((employee) => employee.branch))], [employeeData]);
+
+  const employeeSuggestions = useMemo(() => (
+    [...employeeData, ...pendingRequests]
+  ), [employeeData, pendingRequests]);
+
+  const modalRoleOptions = useMemo(() => (
+    buildUniqueOptions(employeeSuggestions.map((employee) => employee.role))
+  ), [employeeSuggestions]);
+
+  const modalDepartmentOptions = useMemo(() => (
+    buildUniqueOptions(employeeSuggestions.map((employee) => employee.dept))
+  ), [employeeSuggestions]);
+
+  const managerOptions = useMemo(() => (
+    buildUniqueOptions(
+      employeeData
+        .filter((employee) => employee.status === 'Active')
+        .map((employee) => employee.name)
+    )
+  ), [employeeData]);
 
   const filteredEmployees = useMemo(() => {
     // Determine source data
@@ -2065,49 +2493,59 @@ const Employees = () => {
   ];
 
   const totalEmployees = employeeData.length;
-  const activeOnShift = employeeData.filter(e => e.status === "Active").length;
+  const activeEmployees = employeeData.filter((employee) => employee.status === "Active").length;
+  const inactiveEmployees = employeeData.filter((employee) => employee.status === "Inactive").length;
+  const pendingApprovalCount = pendingRequests.length;
 
   const statsData = [
     {
       label: "Total Employees",
       value: totalEmployees.toString(),
-      subValue: "+2 this month",
-      trend: 'up',
+      subValue: pendingApprovalCount > 0 ? `${pendingApprovalCount} pending approvals` : 'No pending approvals',
+      trend: pendingApprovalCount > 0 ? 'warning' : 'neutral',
       icon: Users,
       color: STAT_COLORS.primary
     },
     {
-      label: "Active on Shift",
-      value: activeOnShift.toString(),
-      subValue: "Currently online",
+      label: "Active Employees",
+      value: activeEmployees.toString(),
+      subValue: inactiveEmployees > 0 ? `${inactiveEmployees} inactive` : 'All active',
       trend: 'neutral',
       icon: Activity,
       color: STAT_COLORS.success
     },
     {
       label: "Sales MTD",
-      value: "₹0",
-      subValue: "No data yet",
+      value: EMPTY_DATA_LABEL,
+      subValue: "Sales data not connected",
       trend: 'neutral',
       icon: DollarSign,
       color: STAT_COLORS.purple
     },
     {
       label: "Avg Achievement",
-      value: "0%",
-      subValue: "Target pending",
-      trend: 'warning',
+      value: EMPTY_DATA_LABEL,
+      subValue: "Target data not connected",
+      trend: 'neutral',
       icon: Target,
       color: STAT_COLORS.warning
     },
   ];
 
   const renderStageBadge = (stage) => {
-    const stages = ["HR Review", "Manager Approval", "Accounts Approval", "Admin Finalization"];
-    const index = stages.indexOf(stage);
+    const stageLabel = stage || EMPTY_DATA_LABEL;
+    const stages = ["HR Review", "Manager Approval", "Accounts Approval", "Completed"];
+    const index = stages.indexOf(stageLabel);
+
+    if (index === -1) {
+      return (
+        <span className="text-xs font-semibold text-slate-700">{stageLabel}</span>
+      );
+    }
+
     return (
       <div className="flex flex-col gap-1">
-        <span className="text-xs font-semibold text-slate-700">{stage}</span>
+        <span className="text-xs font-semibold text-slate-700">{stageLabel}</span>
         <div className="flex gap-1">
           {stages.map((s, i) => (
             <div key={s} className={`h-1.5 w-6 rounded-full ${i <= index ? 'bg-green-500' : 'bg-slate-200'}`}></div>
@@ -2158,6 +2596,9 @@ const Employees = () => {
         onClose={() => setIsAddModalOpen(false)}
         onWorkflowStart={handleWorkflowStart}
         employeeToEdit={employeeToEdit}
+        managerOptions={managerOptions}
+        roleOptions={modalRoleOptions}
+        departmentOptions={modalDepartmentOptions}
       />
 
       {/* EMPLOYEE ACCESS PANEL (ADMIN only) */}
@@ -2238,7 +2679,6 @@ const Employees = () => {
                 color={stat.color}
               />
             ))}
-            <TopPerformerCard name="N/A" score={0} />
           </div>
 
           {/* Filters */}
@@ -2445,19 +2885,19 @@ const Employees = () => {
                             <td className="px-6 py-4 text-slate-600 whitespace-nowrap">
                               <div className="flex items-center gap-1 text-xs">
                                 <Store size={12} className="text-slate-400" />
-                                {emp.branch}
+                                {emp.branch || 'Unassigned'}
                               </div>
                             </td>
                             <td className="px-6 py-4 whitespace-nowrap">
-                              <div className="font-medium text-slate-800">{emp.sales}</div>
-                              <div className="text-xs text-slate-400">{emp.avg}</div>
+                              <div className="font-medium text-slate-800">{emp.sales ?? EMPTY_DATA_LABEL}</div>
+                              <div className="text-xs text-slate-400">{emp.avg ?? 'Sales data not connected'}</div>
                             </td>
                             <td className="px-6 py-4 text-slate-600 whitespace-nowrap">
-                              {emp.bills}
+                              {emp.bills ?? EMPTY_DATA_LABEL}
                             </td>
                             <td className="px-6 py-4 whitespace-nowrap">
-                              <div className="text-xs text-orange-600">{emp.disc}</div>
-                              <div className="text-xs text-red-500">{emp.ret}</div>
+                              <div className="text-xs text-orange-600">{emp.disc ?? EMPTY_DATA_LABEL}</div>
+                              <div className="text-xs text-red-500">{emp.ret ?? EMPTY_DATA_LABEL}</div>
                             </td>
                             <td className="px-6 py-4 whitespace-nowrap">
                               {emp.target ? (

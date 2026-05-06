@@ -14,6 +14,7 @@ public class UserCreateRequest {
     private String phone;
     private Set<Long> roleIds;
     private Long linkedEmployeeId;
+    private Long branchId;
 
     // Getters and Setters
 
@@ -71,5 +72,13 @@ public class UserCreateRequest {
 
     public void setLinkedEmployeeId(Long linkedEmployeeId) {
         this.linkedEmployeeId = linkedEmployeeId;
+    }
+
+    public Long getBranchId() {
+        return branchId;
+    }
+
+    public void setBranchId(Long branchId) {
+        this.branchId = branchId;
     }
 }

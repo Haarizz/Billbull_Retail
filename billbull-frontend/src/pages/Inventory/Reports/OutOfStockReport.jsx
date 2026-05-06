@@ -31,6 +31,7 @@ const OutOfStockReport = () => {
         { header: 'Department', key: 'department', width: 20 },
         { header: 'Brand', key: 'brand', width: 20 },
         { header: 'Warehouse', key: 'warehouse', width: 25 },
+        { header: 'Batch No', key: 'batchNumber', width: 20 },
         { header: 'Last Sold', key: 'lastSold', width: 20 },
         { header: 'Last Received', key: 'lastReceived', width: 20 }
     ];
@@ -47,7 +48,8 @@ const OutOfStockReport = () => {
             const q = filters.searchQuery.toLowerCase();
             d = d.filter(r =>
                 (r.sku && r.sku.toLowerCase().includes(q)) ||
-                (r.item && r.item.toLowerCase().includes(q))
+                (r.item && r.item.toLowerCase().includes(q)) ||
+                (r.batchNumber && r.batchNumber.toLowerCase().includes(q))
             );
         }
         if (filters.dateFrom) {
@@ -283,9 +285,9 @@ const OutOfStockReport = () => {
                         </div>
                     ) : (
                         <div style={{ overflowX: 'auto' }}>
-                            <table style={{ width: '100%', minWidth: 860, borderCollapse: 'collapse', fontSize: 13 }}>
+                            <table style={{ width: '100%', minWidth: 940, borderCollapse: 'collapse', fontSize: 13 }}>
                                 <thead style={{ background: '#f9fafb' }}>
-                                    <tr>{['SKU', 'Item', 'Department', 'Brand', 'Warehouse', 'Last Sold', 'Last Received'].map(h =>
+                                    <tr>{['SKU', 'Item', 'Department', 'Brand', 'Warehouse', 'Batch No', 'Last Sold', 'Last Received'].map(h =>
                                         <th key={h} style={{ padding: '8px 12px', textAlign: 'left', fontSize: 11, fontWeight: 600, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.05em', borderBottom: '1px solid #e5e7eb', whiteSpace: 'nowrap' }}>{h}</th>
                                     )}</tr>
                                 </thead>
@@ -297,6 +299,7 @@ const OutOfStockReport = () => {
                                             <td style={{ padding: '10px 12px', color: '#6b7280' }}>{row.department || '-'}</td>
                                             <td style={{ padding: '10px 12px', color: '#6b7280' }}>{row.brand || '-'}</td>
                                             <td style={{ padding: '10px 12px', color: '#6b7280' }}>{row.warehouse}</td>
+                                            <td style={{ padding: '10px 12px', color: '#6b7280', fontFamily: 'monospace', fontSize: 12 }}>{row.batchNumber || '-'}</td>
                                             <td style={{ padding: '10px 12px', color: '#6b7280' }}>{row.lastSold || 'N/A'}</td>
                                             <td style={{ padding: '10px 12px', color: '#6b7280' }}>{row.lastReceived || 'N/A'}</td>
                                         </tr>

@@ -142,11 +142,13 @@ public class FinancialReportService {
         Map<String, BigDecimal> accountBalances = new LinkedHashMap<>();
         Map<String, String> accountNames = new HashMap<>();
         Map<String, String> accountReportGroup = new HashMap<>();
+        Map<String, String> accountGroupMap = new HashMap<>();
 
         List<Account> allAccounts = accountRepository.findAll();
         for (Account acc : allAccounts) {
             accountReportGroup.put(acc.getCode(),
                     acc.getReportGroup() != null ? acc.getReportGroup() : "UNCATEGORIZED");
+            accountGroupMap.put(acc.getCode(), acc.getAccountGroup());
         }
 
         for (LedgerEntry entry : entries) {
@@ -169,7 +171,9 @@ public class FinancialReportService {
         for (Map.Entry<String, BigDecimal> balanceEntry : accountBalances.entrySet()) {
             String code = balanceEntry.getKey();
             BigDecimal netBal = balanceEntry.getValue();
-            String group = accountReportGroup.getOrDefault(code, "UNCATEGORIZED");
+            String group = normalizeProfitLossGroup(
+                    accountReportGroup.getOrDefault(code, "UNCATEGORIZED"),
+                    accountGroupMap.get(code));
             String name = accountNames.get(code);
 
             ReportLineDTO line = new ReportLineDTO(code, name, group, netBal.abs());
@@ -292,7 +296,7 @@ public class FinancialReportService {
             }
         }
 
-        ProfitLossDTO pl = generateProfitLoss(null, asOfDate);
+        ProfitLossDTO pl = generateProfitLoss(LocalDate.of(1970, 1, 1), asOfDate);
         if (pl.getNetProfit() != null && pl.getNetProfit().compareTo(BigDecimal.ZERO) != 0) {
             BigDecimal displayRetained = pl.getNetProfit();
             equityItems.add(new ReportLineDTO("3999", "Retained Earnings", "Retained Earnings", displayRetained));
@@ -338,16 +342,16 @@ public class FinancialReportService {
                     continue;
 
                 String bucket = entry.getCfBucket().toUpperCase();
-                ReportLineDTO line = new ReportLineDTO(entry.getAccountCode(), entry.getVoucherNo(), bucket,
+                ReportLineDTO line = new ReportLineDTO(entry.getAccountCode(), entry.getAccountName(), bucket,
                         cashEffect);
 
-                if ("OPERATING".equals(bucket)) {
+                if (bucket.startsWith("OPERATING")) {
                     operatingItems.add(line);
                     totalOperating = totalOperating.add(cashEffect);
-                } else if ("INVESTING".equals(bucket)) {
+                } else if (bucket.startsWith("INVESTING")) {
                     investingItems.add(line);
                     totalInvesting = totalInvesting.add(cashEffect);
-                } else if ("FINANCING".equals(bucket)) {
+                } else if (bucket.startsWith("FINANCING")) {
                     financingItems.add(line);
                     totalFinancing = totalFinancing.add(cashEffect);
                 } else {
@@ -386,6 +390,7 @@ public class FinancialReportService {
         Map<String, Integer> byCategoryCount = new LinkedHashMap<>();
         Map<String, BigDecimal> byCostCenterMap = new LinkedHashMap<>();
         Map<String, Integer> byCostCenterCount = new LinkedHashMap<>();
+        List<ExpenseDetailDTO> detailLines = new ArrayList<>();
         BigDecimal totalExpenses = BigDecimal.ZERO;
 
         List<Account> expenseAccounts = accountRepository.findAll().stream()
@@ -408,6 +413,14 @@ public class FinancialReportService {
                 String costCenter = entry.getCostCenter() != null ? entry.getCostCenter() : "Unassigned";
                 byCostCenterMap.merge(costCenter, amount, (a, b) -> a.add(b));
                 byCostCenterCount.merge(costCenter, 1, (a, b) -> a + b);
+
+                detailLines.add(new ExpenseDetailDTO(
+                        entry.getTransactionDate() != null ? entry.getTransactionDate().toString() : null,
+                        entry.getVoucherNo(),
+                        entry.getAccountCode(),
+                        entry.getAccountName(),
+                        costCenter,
+                        amount));
             }
         }
 
@@ -424,6 +437,9 @@ public class FinancialReportService {
         ExpenseAnalysisDTO dto = new ExpenseAnalysisDTO();
         dto.setByCategory(byCategory);
         dto.setByCostCenter(byCostCenter);
+        dto.setDetailLines(detailLines.stream()
+                .sorted((a, b) -> b.getAmount().compareTo(a.getAmount()))
+                .collect(Collectors.toList()));
         dto.setTotalExpenses(totalExpenses);
         dto.setStartDate(startDate.toString());
         dto.setEndDate(endDate.toString());
@@ -701,6 +717,22 @@ public class FinancialReportService {
             default:
                 return code;
         }
+    }
+
+    private String normalizeProfitLossGroup(String reportGroup, String accountGroup) {
+        if (reportGroup != null && !"UNCATEGORIZED".equalsIgnoreCase(reportGroup)) {
+            return reportGroup;
+        }
+
+        if ("Income".equalsIgnoreCase(accountGroup)) {
+            return "REVENUE";
+        }
+
+        if ("Expenses".equalsIgnoreCase(accountGroup)) {
+            return "OPERATING_EXPENSES";
+        }
+
+        return reportGroup != null ? reportGroup : "UNCATEGORIZED";
     }
 
     private BigDecimal safe(BigDecimal value) {

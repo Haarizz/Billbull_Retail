@@ -1,6 +1,7 @@
 package com.billbull.backend.purchase.invoice;
 
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
@@ -13,6 +14,7 @@ import org.springframework.stereotype.Service;
 import com.billbull.backend.financials.generalledger.postingengine.PostingEngineService;
 import com.billbull.backend.inventory.product.ProductMediaRepository;
 import com.billbull.backend.inventory.product.ProductBarcodeRepository;
+import com.billbull.backend.inventory.product.ProductPackingRepository;
 import com.billbull.backend.inventory.product.ProductPricingRepository;
 import com.billbull.backend.inventory.product.ProductRepository;
 import com.billbull.backend.inventory.warehouse.BinRepository;
@@ -30,6 +32,8 @@ import com.billbull.backend.purchase.payment.PaymentVoucher;
 import com.billbull.backend.purchase.payment.PaymentVoucherService;
 import com.billbull.backend.purchase.stockmovement.StockMovementService;
 import com.billbull.backend.purchase.stockmovement.StockSourceType;
+import com.billbull.backend.settings.branch.Branch;
+import com.billbull.backend.settings.branch.BranchAccessService;
 import com.billbull.backend.util.DocumentOrderingUtil;
 
 import jakarta.transaction.Transactional;
@@ -53,6 +57,8 @@ public class PurchaseInvoiceService {
     private final PaymentVoucherService paymentVoucherService;
     private final ProductMediaRepository productMediaRepository;
     private final ProductBarcodeRepository productBarcodeRepository;
+    private final BranchAccessService branchAccessService;
+    private final ProductPackingRepository packingRepository;
 
     public PurchaseInvoiceService(PurchaseInvoiceRepository repository, GrnRepository grnRepo,
             PostingEngineService postingEngineService, StockMovementService stockService,
@@ -61,7 +67,9 @@ public class PurchaseInvoiceService {
             ZoneRepository zoneRepository, LocatorRepository locatorRepository, BinRepository binRepository,
             LpoRepository lpoRepository, PaymentVoucherService paymentVoucherService,
             ProductMediaRepository productMediaRepository,
-            ProductBarcodeRepository productBarcodeRepository) {
+            ProductBarcodeRepository productBarcodeRepository,
+            BranchAccessService branchAccessService,
+            ProductPackingRepository packingRepository) {
         super();
         this.repository = repository;
         this.grnRepo = grnRepo;
@@ -78,6 +86,73 @@ public class PurchaseInvoiceService {
         this.paymentVoucherService = paymentVoucherService;
         this.productMediaRepository = productMediaRepository;
         this.productBarcodeRepository = productBarcodeRepository;
+        this.branchAccessService = branchAccessService;
+        this.packingRepository = packingRepository;
+    }
+
+    /* ================= UOM CONVERSION HELPERS ================= */
+
+    private int resolveBaseQty(Long productId, String unitName, int qty) {
+        if (qty <= 0 || unitName == null || unitName.isBlank()) return qty;
+        return packingRepository.findByProductId(productId).stream()
+                .filter(p -> p.getUnit() != null && unitName.equalsIgnoreCase(p.getUnit().getName()))
+                .findFirst()
+                .map(p -> p.getConversion() != null
+                        ? BigDecimal.valueOf(qty).multiply(p.getConversion())
+                                .setScale(0, java.math.RoundingMode.HALF_UP).intValue()
+                        : qty)
+                .orElse(qty);
+    }
+
+    private BigDecimal resolveBaseUnitCost(Long productId, String unitName, BigDecimal uomCost) {
+        if (uomCost == null || unitName == null || unitName.isBlank()) return uomCost;
+        return packingRepository.findByProductId(productId).stream()
+                .filter(p -> p.getUnit() != null && unitName.equalsIgnoreCase(p.getUnit().getName()))
+                .findFirst()
+                .map(p -> (p.getConversion() != null && p.getConversion().compareTo(BigDecimal.ZERO) > 0)
+                        ? uomCost.divide(p.getConversion(), 4, java.math.RoundingMode.HALF_UP)
+                        : uomCost)
+                .orElse(uomCost);
+    }
+
+    private BigDecimal nvl(BigDecimal value) {
+        return value != null ? value : BigDecimal.ZERO;
+    }
+
+    private List<BigDecimal> calculateLandedCostShares(PurchaseInvoice invoice) {
+        List<PurchaseInvoiceItem> items = invoice.getItems() != null ? invoice.getItems() : List.of();
+        BigDecimal landedCostTotal = nvl(invoice.getLandedCost());
+        if (items.isEmpty() || landedCostTotal.compareTo(BigDecimal.ZERO) <= 0) {
+            return java.util.Collections.nCopies(items.size(), BigDecimal.ZERO);
+        }
+
+        List<BigDecimal> lineValues = new ArrayList<>(items.size());
+        BigDecimal totalLineValue = BigDecimal.ZERO;
+        for (PurchaseInvoiceItem item : items) {
+            BigDecimal lineValue = nvl(item.getUnitCost())
+                    .multiply(BigDecimal.valueOf(item.getQty() != null ? item.getQty() : 0));
+            lineValues.add(lineValue);
+            totalLineValue = totalLineValue.add(lineValue);
+        }
+
+        if (totalLineValue.compareTo(BigDecimal.ZERO) <= 0) {
+            return java.util.Collections.nCopies(items.size(), BigDecimal.ZERO);
+        }
+
+        List<BigDecimal> shares = new ArrayList<>(items.size());
+        BigDecimal allocated = BigDecimal.ZERO;
+        for (int i = 0; i < items.size(); i++) {
+            BigDecimal share;
+            if (i == items.size() - 1) {
+                share = landedCostTotal.subtract(allocated);
+            } else {
+                share = landedCostTotal.multiply(lineValues.get(i))
+                        .divide(totalLineValue, 4, RoundingMode.HALF_UP);
+                allocated = allocated.add(share);
+            }
+            shares.add(share.max(BigDecimal.ZERO));
+        }
+        return shares;
     }
 
     /* ================= VENDOR INVOICE NO VALIDATION ================= */
@@ -112,6 +187,7 @@ public class PurchaseInvoiceService {
     public PurchaseInvoiceResponse createDraftFromLpo(Long lpoId) {
         Lpo lpo = lpoRepository.findById(lpoId)
                 .orElseThrow(() -> new IllegalArgumentException("LPO not found"));
+        branchAccessService.assertTransactionBranchAccessible(lpo.getBranchId(), "LPO");
 
         List<LpoStatus> allowed = List.of(
                 LpoStatus.APPROVED, LpoStatus.SENT_TO_VENDOR, LpoStatus.PARTIALLY_RECEIVED);
@@ -133,39 +209,66 @@ public class PurchaseInvoiceService {
         if (lpo.getBin() != null) dto.setBinId(lpo.getBin().getId());
         dto.setLpoId(lpo.getId());
         dto.setReferenceNo(lpo.getLpoNumber());
+        dto.setBranchId(lpo.getBranchId());
+        dto.setBranchName(lpo.getBranchName());
+        dto.setBranchCode(lpo.getBranchCode());
 
         BigDecimal headerSubTotal = BigDecimal.ZERO;
         BigDecimal headerTaxTotal = BigDecimal.ZERO;
+        BigDecimal headerDiscountTotal = BigDecimal.ZERO;
+        var imageMap = buildPrimaryImageMap(
+                lpo.getItems().stream()
+                        .map(i -> i.getItemCode())
+                        .toList());
 
         var lineItems = lpo.getItems().stream().map(i -> {
             InvoiceItemDraft d = new InvoiceItemDraft();
             d.setItemCode(i.getItemCode());
             d.setItemName(i.getItemName());
+            d.setImage(imageMap.get(i.getItemCode()));
             d.setUom(i.getUom());
             d.setQty(i.getQuantity());
             BigDecimal unitCost = i.getUnitPrice() != null ? i.getUnitPrice() : BigDecimal.ZERO;
             d.setUnitCost(unitCost);
 
-            BigDecimal taxPercent = BigDecimal.valueOf(5);
+            BigDecimal taxPercent = (i.getProduct() != null
+                    && i.getProduct().getTax() != null
+                    && i.getProduct().getTax().getPurchaseTax() != null)
+                    ? i.getProduct().getTax().getPurchaseTax()
+                    : BigDecimal.valueOf(5);
+            
             BigDecimal base = unitCost.multiply(BigDecimal.valueOf(i.getQuantity() != null ? i.getQuantity() : 0));
-            BigDecimal taxAmount = base.multiply(taxPercent).divide(BigDecimal.valueOf(100));
+            
+            d.setDiscountPercent(i.getDiscountPercent());
+            BigDecimal discountAmt = BigDecimal.ZERO;
+            if (i.getDiscountPercent() != null && i.getDiscountPercent().compareTo(BigDecimal.ZERO) > 0) {
+                discountAmt = base.multiply(i.getDiscountPercent()).divide(BigDecimal.valueOf(100), 2, java.math.RoundingMode.HALF_UP);
+            }
+            d.setDiscountAmount(discountAmt);
+            
+            BigDecimal taxableBase = base.subtract(discountAmt);
+            BigDecimal taxAmount = taxableBase.multiply(taxPercent).divide(BigDecimal.valueOf(100), 2, java.math.RoundingMode.HALF_UP);
 
             d.setTaxPercent(taxPercent);
             d.setTaxAmount(taxAmount);
-            d.setLineTotal(base.add(taxAmount));
+            d.setLineTotal(taxableBase.add(taxAmount));
+            d.setFocQty(i.getFocQty());
+            d.setFocUnit(i.getFocUnit());
+            d.setRemarks(i.getRemarks());
             return d;
         }).toList();
 
         for (InvoiceItemDraft d : lineItems) {
             BigDecimal lineBase = d.getUnitCost().multiply(BigDecimal.valueOf(d.getQty() != null ? d.getQty() : 0));
             headerSubTotal = headerSubTotal.add(lineBase);
+            headerDiscountTotal = headerDiscountTotal.add(d.getDiscountAmount() != null ? d.getDiscountAmount() : BigDecimal.ZERO);
             headerTaxTotal = headerTaxTotal.add(d.getTaxAmount() != null ? d.getTaxAmount() : BigDecimal.ZERO);
         }
 
         dto.setItems(lineItems);
         dto.setSubTotal(headerSubTotal);
         dto.setTaxTotal(headerTaxTotal);
-        dto.setGrandTotal(headerSubTotal.add(headerTaxTotal));
+        dto.setGrandTotal(headerSubTotal.subtract(headerDiscountTotal).add(headerTaxTotal));
 
         return dto;
     }
@@ -174,6 +277,7 @@ public class PurchaseInvoiceService {
 
         GrnEntity grn = grnRepo.findById(grnId)
                 .orElseThrow(() -> new IllegalArgumentException("GRN not found"));
+        branchAccessService.assertTransactionBranchAccessible(grn.getBranchId(), "GRN");
 
         if (!grn.isStockPosted()) {
             throw new IllegalStateException("Only POSTED GRN can be invoiced");
@@ -193,35 +297,72 @@ public class PurchaseInvoiceService {
         dto.setGrnId(grn.getId());
         dto.setGrnNo(grn.getGrnNo());
         dto.setReferenceNo(grn.getGrnNo());
+        dto.setBranchId(grn.getBranchId());
+        dto.setBranchName(grn.getBranchName());
+        dto.setBranchCode(grn.getBranchCode());
 
         BigDecimal headerSubTotal = BigDecimal.ZERO;
         BigDecimal headerTaxTotal = BigDecimal.ZERO;
+        var imageMap = buildPrimaryImageMap(
+                grn.getItems().stream()
+                        .map(i -> i.getProductCode())
+                        .toList());
 
         var lineItems = grn.getItems().stream().map(i -> {
             InvoiceItemDraft d = new InvoiceItemDraft();
 
             d.setItemCode(i.getProductCode());
             d.setItemName(i.getProductName());
+            d.setImage(imageMap.get(i.getProductCode()));
             d.setUom(i.getUom());
             d.setQty(i.getAcceptedQty());
-            d.setUnitCost(i.getUnitCost());
+            BigDecimal qty = BigDecimal.valueOf(i.getAcceptedQty() != null ? i.getAcceptedQty() : 0);
+            BigDecimal grossUnitCost = nvl(i.getUnitCost());
+            BigDecimal netLineBase = i.getLineTotal() != null
+                    ? i.getLineTotal()
+                    : (i.getNetCost() != null ? i.getNetCost() : grossUnitCost).multiply(qty);
+            BigDecimal netUnitCost = i.getNetCost() != null
+                    ? i.getNetCost()
+                    : (qty.compareTo(BigDecimal.ZERO) > 0
+                            ? netLineBase.divide(qty, 4, java.math.RoundingMode.HALF_UP)
+                            : grossUnitCost);
+            BigDecimal grossBase = grossUnitCost.multiply(qty);
+            BigDecimal discountAmount = grossBase.subtract(netLineBase).max(BigDecimal.ZERO).setScale(2, java.math.RoundingMode.HALF_UP);
+            BigDecimal discountPercent = i.getDiscountPercent() != null
+                    ? i.getDiscountPercent()
+                    : (grossBase.compareTo(BigDecimal.ZERO) > 0
+                            ? discountAmount.multiply(BigDecimal.valueOf(100)).divide(grossBase, 4, java.math.RoundingMode.HALF_UP)
+                            : BigDecimal.ZERO);
 
-            BigDecimal taxPercent = BigDecimal.valueOf(5);
-            BigDecimal base = i.getUnitCost()
-                    .multiply(BigDecimal.valueOf(i.getAcceptedQty()));
-            BigDecimal taxAmount = base
-                    .multiply(taxPercent)
-                    .divide(BigDecimal.valueOf(100));
+            d.setUnitCost(netUnitCost);
+            d.setNetCost(netUnitCost);
+            d.setDiscountPercent(discountPercent);
+            d.setDiscountAmount(discountAmount);
+
+            BigDecimal taxPercent = i.getPurchaseTax() != null
+                    ? i.getPurchaseTax()
+                    : (i.getProduct() != null
+                    && i.getProduct().getTax() != null
+                    && i.getProduct().getTax().getPurchaseTax() != null)
+                    ? i.getProduct().getTax().getPurchaseTax()
+                    : BigDecimal.valueOf(5);
+            BigDecimal taxAmount = i.getTaxAmount() != null
+                    ? i.getTaxAmount()
+                    : netLineBase
+                            .multiply(taxPercent)
+                            .divide(BigDecimal.valueOf(100), 2, java.math.RoundingMode.HALF_UP);
 
             d.setTaxPercent(taxPercent);
             d.setTaxAmount(taxAmount);
-            d.setLineTotal(base.add(taxAmount));
+            d.setLineTotal(netLineBase.add(taxAmount));
 
             return d;
         }).toList();
 
         for (InvoiceItemDraft d : lineItems) {
-            BigDecimal lineBase = d.getUnitCost().multiply(BigDecimal.valueOf(d.getQty()));
+            BigDecimal lineBase = d.getNetCost() != null
+                    ? d.getNetCost().multiply(BigDecimal.valueOf(d.getQty() != null ? d.getQty() : 0))
+                    : d.getLineTotal().subtract(d.getTaxAmount() != null ? d.getTaxAmount() : BigDecimal.ZERO);
             headerSubTotal = headerSubTotal.add(lineBase);
             headerTaxTotal = headerTaxTotal.add(d.getTaxAmount());
         }
@@ -268,6 +409,19 @@ public class PurchaseInvoiceService {
             throw new IllegalArgumentException("Vendor invoice number is required before submitting for approval");
         }
 
+        if (invoice.getWarehouse() == null) {
+            throw new IllegalArgumentException("Warehouse is required before submitting invoice for approval");
+        }
+        if (invoice.getZone() == null) {
+            throw new IllegalArgumentException("Zone is required before submitting invoice for approval");
+        }
+        if (invoice.getLocator() == null) {
+            throw new IllegalArgumentException("Locator is required before submitting invoice for approval");
+        }
+        if (invoice.getBin() == null) {
+            throw new IllegalArgumentException("Bin is required before submitting invoice for approval");
+        }
+
         invoice.setStatus(InvoiceStatus.PENDING_APPROVAL);
         invoice.setSubmittedBy(username);
         invoice.setSubmittedAt(LocalDateTime.now());
@@ -308,52 +462,51 @@ public class PurchaseInvoiceService {
         // ─────────────────────────────────────────────────────────────────────────
         boolean isAgainstGrn = "AGAINST_GRN".equalsIgnoreCase(invoice.getSourceType())
                 && invoice.getGrnId() != null;
+        List<BigDecimal> landedCostShares = calculateLandedCostShares(invoice);
 
         if (isAgainstGrn) {
             // Validate the GRN still exists
             grnRepo.findById(invoice.getGrnId())
                     .orElseThrow(() -> new IllegalStateException(
                             "Referenced GRN #" + invoice.getGrnId() + " not found"));
-            // Stock already posted via GRN approval — nothing to do here.
+        } else if (invoice.getWarehouse() == null) {
+            throw new IllegalStateException(
+                    "Warehouse is required before stock can be posted. " +
+                            "Please update the invoice with a valid warehouse.");
+        }
 
-        } else {
-            // DIRECT or AGAINST_LPO → post stock now
+        Long warehouseId = invoice.getWarehouse() != null ? invoice.getWarehouse().getId() : null;
+        Long zoneId = invoice.getZone() != null ? invoice.getZone().getId() : null;
+        Long locatorId = invoice.getLocator() != null ? invoice.getLocator().getId() : null;
+        Long binId = invoice.getBin() != null ? invoice.getBin().getId() : null;
 
-            // Guard: warehouse must be selected before posting stock
-            if (invoice.getWarehouse() == null) {
+        for (int index = 0; index < invoice.getItems().size(); index++) {
+            PurchaseInvoiceItem item = invoice.getItems().get(index);
+
+            var productOpt = productRepository.findByCodeAndIsActiveTrue(item.getItemCode());
+            if (productOpt.isEmpty()) {
                 throw new IllegalStateException(
-                        "Warehouse is required before stock can be posted. " +
-                                "Please update the invoice with a valid warehouse.");
+                        "Product not found for code '" + item.getItemCode() +
+                                "'. Cannot process invoice " + invoice.getInvoiceNumber());
             }
 
-            // Resolve full location hierarchy from invoice
-            Long warehouseId = invoice.getWarehouse().getId();
-            Long zoneId = invoice.getZone() != null ? invoice.getZone().getId() : null;
-            Long locatorId = invoice.getLocator() != null ? invoice.getLocator().getId() : null;
-            Long binId = invoice.getBin() != null ? invoice.getBin().getId() : null;
+            int qty = item.getQty() != null ? item.getQty() : 0;
+            if (qty <= 0) {
+                continue;
+            }
 
-            for (PurchaseInvoiceItem item : invoice.getItems()) {
+            Long productId = productOpt.get().getId();
+            int baseQty = resolveBaseQty(productId, item.getUom(), qty);
+            if (baseQty <= 0) {
+                continue;
+            }
 
-                // Resolve product by item code (must exist and be active)
-                var productOpt = productRepository.findByCodeAndIsActiveTrue(item.getItemCode());
-                if (productOpt.isEmpty()) {
-                    throw new IllegalStateException(
-                            "Product not found for code '" + item.getItemCode() +
-                                    "'. Cannot post stock for invoice " + invoice.getInvoiceNumber());
-                }
+            int currentQty = binStockRepository.findByProductId(productId)
+                    .stream()
+                    .mapToInt(bs -> bs.getQuantity() != null ? bs.getQuantity() : 0)
+                    .sum();
 
-                int qty = item.getQty() != null ? item.getQty() : 0;
-                if (qty <= 0)
-                    continue; // Skip zero-qty lines
-
-                Long productId = productOpt.get().getId();
-
-                // Capture existing on-hand qty BEFORE posting (needed for WAC)
-                int existingQty = binStockRepository.findByProductId(productId)
-                        .stream()
-                        .mapToInt(bs -> bs.getQuantity() != null ? bs.getQuantity() : 0)
-                        .sum();
-
+            if (!isAgainstGrn) {
                 stockService.postInboundStock(
                         StockSourceType.DIRECT_PURCHASE,
                         invoice.getId(),
@@ -362,27 +515,43 @@ public class PurchaseInvoiceService {
                         zoneId,
                         locatorId,
                         binId,
-                        qty,
+                        baseQty,
                         invoice.getInvoiceNumber());
-
-                // BB-031: Update product cost using weighted-average cost (WAC)
-                if (item.getUnitCost() != null && item.getUnitCost().compareTo(BigDecimal.ZERO) > 0) {
-                    productPricingRepository.findByProductId(productId).ifPresent(pricing -> {
-                        BigDecimal existingCost = pricing.getCost() != null ? pricing.getCost() : BigDecimal.ZERO;
-                        BigDecimal incomingCost = item.getUnitCost();
-                        BigDecimal incomingQtyBD = BigDecimal.valueOf(qty);
-                        BigDecimal existingQtyBD = BigDecimal.valueOf(existingQty);
-                        BigDecimal totalQty = existingQtyBD.add(incomingQtyBD);
-                        BigDecimal newCost = totalQty.compareTo(BigDecimal.ZERO) > 0
-                                ? existingQtyBD.multiply(existingCost).add(incomingQtyBD.multiply(incomingCost))
-                                        .divide(totalQty, 4, java.math.RoundingMode.HALF_UP)
-                                : incomingCost;
-                        pricing.setCost(newCost);
-                        productPricingRepository.save(pricing);
-                    });
-                }
             }
 
+            BigDecimal landedCostShare = index < landedCostShares.size()
+                    ? landedCostShares.get(index)
+                    : BigDecimal.ZERO;
+
+            if (nvl(item.getUnitCost()).compareTo(BigDecimal.ZERO) > 0
+                    || landedCostShare.compareTo(BigDecimal.ZERO) > 0) {
+                BigDecimal baseUnitCost = nvl(resolveBaseUnitCost(productId, item.getUom(), nvl(item.getUnitCost())));
+                BigDecimal landedCostPerBaseUnit = landedCostShare.divide(
+                        BigDecimal.valueOf(baseQty),
+                        4,
+                        RoundingMode.HALF_UP);
+                BigDecimal enrichedBaseUnitCost = baseUnitCost.add(landedCostPerBaseUnit);
+
+                int qtyBeforeThisInvoice = isAgainstGrn
+                        ? Math.max(currentQty - baseQty, 0)
+                        : currentQty;
+
+                productPricingRepository.findByProductId(productId).ifPresent(pricing -> {
+                    BigDecimal existingCost = pricing.getCost() != null ? pricing.getCost() : BigDecimal.ZERO;
+                    BigDecimal incomingQtyBD = BigDecimal.valueOf(baseQty);
+                    BigDecimal existingQtyBD = BigDecimal.valueOf(qtyBeforeThisInvoice);
+                    BigDecimal totalQty = existingQtyBD.add(incomingQtyBD);
+                    BigDecimal newCost = totalQty.compareTo(BigDecimal.ZERO) > 0
+                            ? existingQtyBD.multiply(existingCost).add(incomingQtyBD.multiply(enrichedBaseUnitCost))
+                                    .divide(totalQty, 4, RoundingMode.HALF_UP)
+                            : enrichedBaseUnitCost;
+                    pricing.setCost(newCost);
+                    productPricingRepository.save(pricing);
+                });
+            }
+        }
+
+        if (!isAgainstGrn) {
             invoice.setStockPosted(true);
         }
 
@@ -476,7 +645,8 @@ public class PurchaseInvoiceService {
     /* ================= READ ================= */
 
     public List<PurchaseInvoiceResponse> listAll() {
-        List<PurchaseInvoice> invoices = new ArrayList<>(repository.findAll());
+        List<PurchaseInvoice> invoices = new ArrayList<>(
+                branchAccessService.filterBranchScoped(repository.findAll(), PurchaseInvoice::getBranchId));
         DocumentOrderingUtil.sortByDocumentDateAndNumberDesc(
                 invoices,
                 PurchaseInvoice::getInvoiceDate,
@@ -495,8 +665,10 @@ public class PurchaseInvoiceService {
     /* ================= INTERNAL HELPERS ================= */
 
     private PurchaseInvoice getEntity(Long id) {
-        return repository.findById(id)
+        PurchaseInvoice invoice = repository.findById(id)
                 .orElseThrow(() -> new RuntimeException("Purchase Invoice not found"));
+        branchAccessService.assertTransactionBranchAccessible(invoice.getBranchId(), "Purchase Invoice");
+        return invoice;
     }
 
     private PurchaseInvoice mapToEntity(PurchaseInvoiceRequest req) {
@@ -508,7 +680,11 @@ public class PurchaseInvoiceService {
     }
 
     private void mapHeader(PurchaseInvoice invoice, PurchaseInvoiceRequest req) {
-        invoice.setInvoiceNumber(req.getInvoiceNumber());
+        if (req.getInvoiceNumber() != null && !req.getInvoiceNumber().trim().isEmpty()) {
+            invoice.setInvoiceNumber(req.getInvoiceNumber());
+        } else if (invoice.getInvoiceNumber() == null || invoice.getInvoiceNumber().isBlank()) {
+            invoice.setInvoiceNumber("PINV-" + System.currentTimeMillis());
+        }
         invoice.setInvoiceDate(req.getInvoiceDate());
         invoice.setVendorName(req.getVendorName());
         invoice.setVendorInvoiceNo(req.getVendorInvoiceNo());
@@ -536,6 +712,20 @@ public class PurchaseInvoiceService {
             invoice.setWarehouseName(invoice.getWarehouse().getName());
         }
 
+        Branch branch = resolveBranchForInvoice(invoice, req);
+        if (branch != null) {
+            invoice.setBranchId(branch.getId());
+            invoice.setBranchName(branch.getName());
+            invoice.setBranchCode(branch.getCode());
+            if (invoice.getWarehouse() != null) {
+                branchAccessService.assertWarehouseMatchesBranch(invoice.getWarehouse(), branch.getId(), "Purchase Invoice");
+            }
+        } else {
+            invoice.setBranchId(null);
+            invoice.setBranchName(null);
+            invoice.setBranchCode(null);
+        }
+
         invoice.setSubTotal(req.getSubTotal());
         invoice.setDiscountTotal(req.getDiscountTotal());
         invoice.setTaxTotal(req.getTaxTotal());
@@ -549,6 +739,42 @@ public class PurchaseInvoiceService {
         invoice.setClearing(req.getClearing());
         invoice.setInsurance(req.getInsurance());
         invoice.setOtherCosts(req.getOtherCosts());
+    }
+
+    private Branch resolveBranchForInvoice(PurchaseInvoice invoice, PurchaseInvoiceRequest req) {
+        if (req.getGrnId() != null) {
+            GrnEntity grn = grnRepo.findById(req.getGrnId())
+                    .orElseThrow(() -> new IllegalArgumentException("GRN not found"));
+            branchAccessService.assertTransactionBranchAccessible(grn.getBranchId(), "GRN");
+            if (grn.getBranchId() == null) {
+                return null;
+            }
+            Branch currentBranch = branchAccessService.getRequiredCurrentUserBranch();
+            if (!currentBranch.getId().equals(grn.getBranchId())) {
+                throw new IllegalStateException("GRN belongs to another branch.");
+            }
+            return currentBranch;
+        }
+
+        if (req.getLpoId() != null) {
+            Lpo lpo = lpoRepository.findById(req.getLpoId())
+                    .orElseThrow(() -> new IllegalArgumentException("LPO not found"));
+            branchAccessService.assertTransactionBranchAccessible(lpo.getBranchId(), "LPO");
+            if (lpo.getBranchId() == null) {
+                return null;
+            }
+            Branch currentBranch = branchAccessService.getRequiredCurrentUserBranch();
+            if (!currentBranch.getId().equals(lpo.getBranchId())) {
+                throw new IllegalStateException("LPO belongs to another branch.");
+            }
+            return currentBranch;
+        }
+
+        if (invoice.getId() != null && invoice.getBranchId() == null) {
+            return null;
+        }
+
+        return branchAccessService.getRequiredCurrentUserBranch();
     }
 
     private void syncItems(PurchaseInvoice invoice, PurchaseInvoiceRequest req) {
@@ -609,6 +835,9 @@ public class PurchaseInvoiceService {
         dto.setGrnNo(invoice.getGrnNo());
         dto.setGrnId(invoice.getGrnId());
         dto.setLpoId(invoice.getLpoId());
+        dto.setBranchId(invoice.getBranchId());
+        dto.setBranchName(invoice.getBranchName());
+        dto.setBranchCode(invoice.getBranchCode());
         dto.setWarehouseName(invoice.getWarehouseName());
 
         if (invoice.getWarehouse() != null)
@@ -659,6 +888,7 @@ public class PurchaseInvoiceService {
                 d.setFocQty(i.getFocQty());
                 d.setFocUnit(i.getFocUnit());
                 d.setUnitCost(i.getUnitCost());
+                d.setNetCost(i.getUnitCost());
                 d.setDiscountPercent(i.getDiscountPercent());
                 d.setDiscountAmount(i.getDiscountAmount());
                 d.setTaxPercent(i.getTaxPercent());
@@ -680,6 +910,23 @@ public class PurchaseInvoiceService {
         }
 
         return dto;
+    }
+
+    private java.util.Map<String, String> buildPrimaryImageMap(List<String> itemCodes) {
+        java.util.List<String> codes = itemCodes.stream()
+                .filter(code -> code != null && !code.isBlank())
+                .distinct()
+                .toList();
+
+        java.util.Map<String, String> imageMap = new java.util.HashMap<>();
+        if (codes.isEmpty()) {
+            return imageMap;
+        }
+
+        productMediaRepository.findPrimaryByProductCodesIn(codes)
+                .forEach(media -> imageMap.put(media.getProduct().getCode(), media.getImageUrl()));
+
+        return imageMap;
     }
 
     private BigDecimal resolveAmountPaid(PurchaseInvoice invoice) {
@@ -718,7 +965,8 @@ public class PurchaseInvoiceService {
 
     @Transactional
     public List<PurchaseInvoiceResponse> getPostedInvoicesForPayment() {
-        List<PurchaseInvoice> invoices = new ArrayList<>(repository.findByStatus(InvoiceStatus.POSTED));
+        List<PurchaseInvoice> invoices = new ArrayList<>(
+                branchAccessService.filterBranchScoped(repository.findByStatus(InvoiceStatus.POSTED), PurchaseInvoice::getBranchId));
         DocumentOrderingUtil.sortByDocumentDateAndNumberDesc(
                 invoices,
                 PurchaseInvoice::getInvoiceDate,

@@ -64,6 +64,7 @@ import ProductSelector from '../../../components/ProductSelector';
 import SearchableDropdown from '../../../components/SearchableDropdown';
 import VendorSelector from '../../../components/VendorSelector';
 import { getImageUrl } from '../../../utils/urlUtils';
+import { getDefaultProductUnit, resolveUnitAmount } from '../../../utils/unitPricing';
 import { useBranch } from '../../../context/BranchContext';
 import { ItemDescriptionCell, ItemDescriptionHeader } from '../../../components/ItemDescriptionCell';
 import ItemAddOnsModal from '../../../components/ItemAddOnsModal';
@@ -81,12 +82,28 @@ import toast from 'react-hot-toast';
 import {
   buildGrnPrintData,
   findVendorRecord,
-  normalizePurchaseTemplate
+  resolvePurchasePrintTemplate
 } from '../../../utils/purchasePrintUtils';
+import ExportDropdown from '../../../components/common/ExportDropdown';
+import { exportToExcel, exportToPDF } from '../../../utils/exportUtils';
+import { formatCurrencyDisplay, resolveCurrencyDisplayCode } from '../../../utils/countryCurrencyOptions';
+import CurrencyAmount from '../../../components/CurrencyAmount';
 
 // ==========================================
 // 1. MOCK DATA & CONFIGURATION
 // ==========================================
+
+const GRN_COLUMNS = [
+  { header: 'GRN No', key: 'idDisplay', width: 15 },
+  { header: 'Date', key: 'date', width: 12 },
+  { header: 'Vendor', key: 'vendor', width: 25 },
+  { header: 'LPO/DP', key: 'lpoNumber', width: 15 },
+  { header: 'Warehouse', key: 'warehouse', width: 20 },
+  { header: 'Packages', key: 'packages', width: 10 },
+  { header: 'Value', key: 'value', width: 15 },
+  { header: 'Status', key: 'status', width: 15 },
+  { header: 'Inv Status', key: 'invStatus', width: 15 }
+];
 
 const navTabs = [
   { id: "list", label: "GRN List", icon: FileText },
@@ -124,7 +141,7 @@ const getStatusColor = (status) => {
 // ==========================================
 
 // --- LIST VIEW ---
-const GRNListView = ({ data, onView, onEdit, onDelete, onPost, onPrint, onProceedToInvoice, activeFilter, setActiveFilter }) => {
+const GRNListView = ({ data, onView, onEdit, onDelete, onPost, onPrint, onProceedToInvoice, activeFilter, setActiveFilter, currencyLabel }) => {
   const filteredData = data.filter(item => {
     if (activeFilter === "All GRNs") return true;
     if (activeFilter === "Today") {
@@ -214,7 +231,7 @@ const GRNListView = ({ data, onView, onEdit, onDelete, onPost, onPrint, onProcee
                     <LayoutDashboard className="h-3 w-3 text-slate-400" /> {row.warehouse}
                   </td>
                   <td className="px-6 py-4 text-center">{row.packages}</td>
-                  <td className="px-6 py-4 text-right font-bold text-slate-900">{row.value}</td>
+                  <td className="px-6 py-4 text-right font-bold text-slate-900"><CurrencyAmount value={row.value} currency={currencyLabel} /></td>
                   <td className="px-6 py-4">
                     <StatusBadge className={getStatusColor(row.status)}>{row.status}</StatusBadge>
                   </td>
@@ -559,6 +576,9 @@ const CompareLPOModal = ({ isOpen, onClose, items }) => {
 
 // --- EDITOR VIEW (Detailed UI) ---
 const EditorView = ({ initialData, onSaveDraft, onSubmitQC, onPost, onPrint, grnType, setGrnType }) => {
+  const { company } = useCompany();
+  const currencyLabel = resolveCurrencyDisplayCode(company);
+  const navigate = useNavigate();
   // Mock items linked from LPO
   const [items, setItems] = useState([]);
   const [vendors, setVendors] = useState([]);
@@ -805,13 +825,15 @@ const EditorView = ({ initialData, onSaveDraft, onSubmitQC, onPost, onPrint, grn
               accepted: pending, // Default accepted to pending
               rejected: 0,
 
+              // unitCost = Gross price per unit (base for discounts)
+              // lpoPrice = reference gross price
               unitCost: unitPrice,
               lpoPrice: unitPrice,
 
               disc: discount,
-              netCost: netCost,
-              tax: 5,
-              taxAmt: pending * netCost * 0.05,
+              netCost: netCost, // Initially calculated for reference
+              tax: parseFloat(lpoItem.purchaseTax) || 5,
+              taxAmt: pending * netCost * ((parseFloat(lpoItem.purchaseTax) || 5) / 100),
               foc: Number(lpoItem.focQty || lpoItem.foc || 0),
               focUnit: lpoItem.focUnit || lpoItem.uom || lpoItem.unit || "Unit",
               remarks: lpoItem.remarks || '',
@@ -822,7 +844,8 @@ const EditorView = ({ initialData, onSaveDraft, onSubmitQC, onPost, onPrint, grn
               batch: Boolean(lpoItem.isBatchTracked || lpoItem.batchTracked)
             };
           })
-          .filter(item => item.received > 0); // Only show items with pending quantity
+          .filter(item => item.received > 0)
+          .map(item => recalculateItemTotals(item));
 
         setItems(grnItems);
       } else {
@@ -873,15 +896,34 @@ const EditorView = ({ initialData, onSaveDraft, onSubmitQC, onPost, onPrint, grn
     if (initialData.locatorId) getLocatorBins(initialData.locatorId).then(setBinList).catch(console.error);
 
     setItems(
-      initialData.items.map(i => ({
-        ...i,
-        tax: Number(i.tax || 5),
-        taxAmt: Number(i.taxAmt || 0),
-        foc: Number(i.foc || i.focQty || 0),
-        focUnit: i.focUnit || i.uom || 'PCS',
-        remarks: i.remarks || '',
-        variance: i.received - i.lpoQty
-      }))
+      initialData.items.map(i => {
+        const acceptedQty = Number(i.accepted ?? i.acceptedQty ?? 0);
+        const unitCost = Number(i.unitCost ?? 0);
+        const storedLineTotal = Number(i.total ?? i.lineTotal ?? 0);
+        const netCost = Number(i.netCost ?? (acceptedQty > 0 ? storedLineTotal / acceptedQty : unitCost));
+        const netLineTotal = storedLineTotal || (acceptedQty * netCost);
+        const grossLineTotal = acceptedQty * unitCost;
+        const inferredDiscountAmount = Math.max(0, grossLineTotal - netLineTotal);
+        const inferredDiscountPercent = grossLineTotal > 0
+          ? (inferredDiscountAmount / grossLineTotal) * 100
+          : 0;
+        const taxPercent = parseFloat(i.purchaseTax) || parseFloat(i.tax) || 5;
+
+        return recalculateItemTotals({
+          ...i,
+          unitCost,
+          netCost,
+          total: netLineTotal,
+          discountAmount: Number(i.discountAmount ?? inferredDiscountAmount),
+          disc: Number(i.discountPercent ?? i.disc ?? inferredDiscountPercent),
+          tax: taxPercent,
+          taxAmt: Number(i.taxAmt ?? i.taxAmount ?? ((netLineTotal * taxPercent) / 100)),
+          foc: Number(i.foc || i.focQty || 0),
+          focUnit: i.focUnit || i.uom || 'PCS',
+          remarks: i.remarks || '',
+          variance: i.received - i.lpoQty
+        });
+      })
     );
   }, [initialData]);
 
@@ -958,8 +1000,13 @@ const EditorView = ({ initialData, onSaveDraft, onSubmitQC, onPost, onPrint, grn
   };
 
   const handleAddSingleProduct = (product) => {
-    const defaultUnit = product.unitName || product.unit || (product.availableUnits && product.availableUnits[0]) || 'PCS';
-    const unitCost = product.cost || product.salesPrice || 0;
+    const defaultUnit = getDefaultProductUnit(product);
+    const unitCost = resolveUnitAmount({
+      targetUnit: defaultUnit,
+      amountMap: product.unitCosts || product.unitPrices,
+      unitConversions: product.unitConversions,
+      fallbackAmount: product.cost ?? product.salesPrice ?? 0
+    });
     const newItem = {
       id: Date.now(),
       productId: product.id,
@@ -975,10 +1022,10 @@ const EditorView = ({ initialData, onSaveDraft, onSubmitQC, onPost, onPrint, grn
       rejected: 0,
       unitCost,
       lpoPrice: 0,
-      disc: 0,
+      disc: product.maxDiscount || 0,
       netCost: unitCost,
-      tax: product.taxRate || 5,
-      taxAmt: unitCost * ((product.taxRate || 5) / 100),
+      tax: parseFloat(product.purchaseTax) || parseFloat(product.taxRate) || 5,
+      taxAmt: unitCost * ((parseFloat(product.purchaseTax) || parseFloat(product.taxRate) || 5) / 100),
       total: unitCost,
       variance: 1, // Received 1 without LPO
       batch: false, // Default to false
@@ -986,10 +1033,47 @@ const EditorView = ({ initialData, onSaveDraft, onSubmitQC, onPost, onPrint, grn
       focUnit: defaultUnit,
       availableUnits: product.availableUnits || [defaultUnit],
       unitConversions: product.unitConversions || {},
-      unitPrices: product.unitPrices || {}
+      unitPrices: product.unitPrices || {},
+      unitCosts: product.unitCosts || {}
     };
-    setItems(prev => [...prev, newItem]);
+    setItems(prev => [...prev, recalculateItemTotals(newItem)]);
     setIsProductSelectionOpen(false);
+  };
+  const handleFastEntryAdd = (product, qty, price, disc) => {
+    if (isLocked) return;
+    const defaultUnit = getDefaultProductUnit(product);
+    const unitCost = price;
+    const netCost = unitCost * (1 - disc / 100);
+    const newItem = {
+      id: Date.now(),
+      productId: product.id,
+      code: product.code,
+      barcode: product.barcode || '',
+      name: product.description || product.name,
+      image: product.primaryImage || product.image || product.thumbnailUrl || product.imageUrl || null,
+      remarks: product.description || '',
+      uom: defaultUnit,
+      lpoQty: 0,
+      received: qty,
+      accepted: qty,
+      rejected: 0,
+      unitCost,
+      lpoPrice: 0,
+      disc,
+      netCost,
+      tax: parseFloat(product.purchaseTax) || parseFloat(product.taxRate) || 5,
+      taxAmt: netCost * ((parseFloat(product.purchaseTax) || parseFloat(product.taxRate) || 5) / 100),
+      total: netCost * qty,
+      variance: qty,
+      batch: false,
+      foc: 0,
+      focUnit: defaultUnit,
+      availableUnits: product.availableUnits || [defaultUnit],
+      unitConversions: product.unitConversions || {},
+      unitPrices: product.unitPrices || {},
+      unitCosts: product.unitCosts || {}
+    };
+    setItems(prev => [...prev, recalculateItemTotals ? recalculateItemTotals(newItem) : newItem]);
   };
 
   // Add Row Handler
@@ -1025,6 +1109,11 @@ const EditorView = ({ initialData, onSaveDraft, onSubmitQC, onPost, onPrint, grn
   };
 
   const recalculateItemTotals = (item) => {
+    const qty = Number(item.accepted) || 0;
+    const unitPrice = Number(item.unitCost) || 0;
+    const discPercent = Number(item.disc) || 0;
+    const taxPercent = Number(item.tax) || 5;
+
     const focQty = Number(item.foc) || 0;
     let focDeduction = 0;
 
@@ -1032,25 +1121,30 @@ const EditorView = ({ initialData, onSaveDraft, onSubmitQC, onPost, onPrint, grn
       const sellingUnit = item.uom;
       const focUnit = item.focUnit;
       if (sellingUnit === focUnit) {
-        focDeduction = item.unitCost * focQty;
+        focDeduction = unitPrice * focQty;
       } else {
         const focConvFactor = item.unitConversions[focUnit] || 1;
         const sellingConvFactor = item.unitConversions[sellingUnit] || 1;
         const focInSellingUnit = (focQty * focConvFactor) / sellingConvFactor;
-        focDeduction = item.unitCost * focInSellingUnit;
+        focDeduction = unitPrice * focInSellingUnit;
       }
     }
 
-    const grossCost = (Number(item.unitCost) || 0) * (Number(item.accepted) || 0);
-    const focAdjustedCost = Math.max(0, grossCost - focDeduction);
-    const discAmt = focAdjustedCost * ((Number(item.disc) || 0) / 100);
-    const netLineTotal = Math.max(0, focAdjustedCost - discAmt);
+    const grossLineValue = unitPrice * qty;
+    const focAdjustedValue = Math.max(0, grossLineValue - focDeduction);
+    const discAmt = focAdjustedValue * (discPercent / 100);
+    const netLineTotal = Math.max(0, focAdjustedValue - discAmt);
+    const taxAmt = netLineTotal * (taxPercent / 100);
+
+    // netCost = effective per-unit cost (line value / qty)
+    const effectiveNetCost = qty > 0 ? netLineTotal / qty : unitPrice;
 
     return {
       ...item,
-      tax: Number(item.tax) || 5,
-      taxAmt: netLineTotal * ((Number(item.tax) || 5) / 100),
-      netCost: Number(item.unitCost) || 0,
+      grossSubtotal: grossLineValue,
+      discountAmount: discAmt,
+      taxAmt: taxAmt,
+      netCost: effectiveNetCost,
       total: netLineTotal
     };
   };
@@ -1060,6 +1154,7 @@ const EditorView = ({ initialData, onSaveDraft, onSubmitQC, onPost, onPrint, grn
     return {
       ...item,
       desc: item.name || item.desc,
+      qty: Number(item.accepted) || 0,
       unit: resolvedUnit,
       price: Number(item.unitCost) || 0,
       disc: Number(item.disc) || 0,
@@ -1122,19 +1217,14 @@ const EditorView = ({ initialData, onSaveDraft, onSubmitQC, onPost, onPrint, grn
         else if (field === 'uom' && item.unitConversions) {
           // ✅ If unit changes, scale the cost
           const newUnit = value;
-          if (item.unitPrices && item.unitPrices[newUnit]) {
-            updated.unitCost = item.unitPrices[newUnit];
-          } else {
-            const baseUnit = Object.keys(item.unitConversions).find(u => item.unitConversions[u] === 1);
-            if (baseUnit) {
-              let basePrice = item.unitPrices && item.unitPrices[baseUnit] ? item.unitPrices[baseUnit] : null;
-              if (!basePrice) {
-                const currentConv = item.unitConversions[item.uom] || 1;
-                basePrice = item.unitCost / currentConv;
-              }
-              updated.unitCost = basePrice * (item.unitConversions[newUnit] || 1);
-            }
-          }
+          updated.unitCost = resolveUnitAmount({
+            targetUnit: newUnit,
+            amountMap: item.unitCosts || item.unitPrices,
+            unitConversions: item.unitConversions,
+            currentUnit: item.uom,
+            currentAmount: item.unitCost,
+            fallbackAmount: item.unitCost
+          });
         }
 
         return recalculateItemTotals(updated);
@@ -1148,9 +1238,20 @@ const EditorView = ({ initialData, onSaveDraft, onSubmitQC, onPost, onPrint, grn
       acc.received += curr.received;
       acc.accepted += curr.accepted;
       acc.rejected += curr.rejected;
-      acc.value += curr.total;
+      acc.grossTotal += (curr.grossSubtotal || (Number(curr.unitCost) * Number(curr.accepted)) || 0);
+      acc.discountTotal += (curr.discountAmount || 0);
+      acc.taxTotal += (curr.taxAmt || 0);
+      acc.netTotal += (curr.total || 0);
       return acc;
-    }, { received: 0, accepted: 0, rejected: 0, value: 0 });
+    }, {
+      received: 0,
+      accepted: 0,
+      rejected: 0,
+      grossTotal: 0,
+      discountTotal: 0,
+      taxTotal: 0,
+      netTotal: 0
+    });
   }, [items]);
 
   // FIX 1: Correct workflow badge logic based on single status
@@ -1554,9 +1655,9 @@ const EditorView = ({ initialData, onSaveDraft, onSubmitQC, onPost, onPrint, grn
             </div>
 
             {/* Table */}
-            <div className="flex-1 overflow-x-auto">
+            <div className="overflow-auto" style={{ maxHeight: 'calc(4 * 115px + 44px)' }}>
               <table className="w-full text-xs text-left min-w-[900px]">
-                <thead className="bg-slate-50 border-b border-slate-100 text-slate-500">
+                <thead className="bg-slate-50 border-b border-slate-100 text-slate-500 sticky top-0 z-10">
                   <tr>
                     <th className="p-3 font-medium w-10 text-center text-slate-400">#</th>
                     <th className="p-3 font-medium min-w-[280px]">
@@ -1572,15 +1673,13 @@ const EditorView = ({ initialData, onSaveDraft, onSubmitQC, onPost, onPrint, grn
                     <th className="p-3 font-medium text-center text-emerald-600">Accepted</th>
                     <th className="p-3 font-medium text-center text-red-600">Rejected</th>
                     <th className="p-3 font-medium text-right">Unit Cost</th>
-                    <th className="p-3 font-medium text-center w-12">Disc %</th>
-                    <th className="p-3 font-medium text-right">Net Cost</th>
                     <th className="p-3 font-medium text-right">Line Total</th>
                     <th className="p-3 font-medium text-center">Actions</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-50">
                   {items.length === 0 ? (
-                    <tr><td colSpan="12" className="p-8 text-center text-slate-400">No items added. {grnType === "Against LPO" || grnType === "Against Direct Purchase" ? "Select a document to load items or use Select from Products." : "Click Select from Products to add items."}</td></tr>
+                    <tr><td colSpan="10" className="p-8 text-center text-slate-400">No items added. {grnType === "Against LPO" || grnType === "Against Direct Purchase" ? "Select a document to load items or use Select from Products." : "Click Select from Products to add items."}</td></tr>
                   ) : items.map((item, index) => (
                     <React.Fragment key={item.id}>
                       <tr className="hover:bg-slate-50 group">
@@ -1643,12 +1742,6 @@ const EditorView = ({ initialData, onSaveDraft, onSubmitQC, onPost, onPrint, grn
                           />
                         </td>
                         <td className="p-3 text-right text-slate-500">{item.unitCost.toFixed(2)}</td>
-                        <td className="p-3 text-center text-slate-500">
-                          {item.disc}%
-                        </td>
-                        <td className="p-3 text-right text-slate-700 font-medium">
-                          {item.netCost.toFixed(2)}
-                        </td>
                         <td className="p-3 text-right font-bold text-[#F5C742]">{item.total.toFixed(2)}</td>
                         <td className="p-3 text-center">
                           {!isLocked && (
@@ -1665,7 +1758,7 @@ const EditorView = ({ initialData, onSaveDraft, onSubmitQC, onPost, onPrint, grn
                       {/* Expanded Description Row */}
                       {expandedRows[item.id] && (
                         <tr className="bg-white">
-                          <td colSpan={12} className="px-0 pb-4 pt-1">
+                          <td colSpan={10} className="px-0 pb-4 pt-1">
                             <div className="ml-0 mr-4 p-3 rounded-r-[10px] border-l-[3px] border-[#FFD700] bg-[#FFFDE7]/60 shadow-[inset_0_1px_4px_rgba(0,0,0,0.02)]">
                               <div className="flex justify-between items-center mb-1.5">
                                 <div className="flex items-center gap-1.5 text-[9px] font-bold text-[#B8860B] tracking-widest uppercase">
@@ -1764,20 +1857,24 @@ const EditorView = ({ initialData, onSaveDraft, onSubmitQC, onPost, onPrint, grn
 
             <div className="space-y-2 text-xs border-t border-slate-100 pt-3">
               <div className="flex justify-between">
-                <span className="text-slate-500 font-medium">Subtotal</span>
-                <span className="font-medium">{totals.value.toFixed(2)} AED</span>
+                <span className="text-slate-500 font-medium">Subtotal (Gross)</span>
+                <CurrencyAmount value={totals.grossTotal} currency={currencyLabel} className="font-medium text-slate-700" />
               </div>
-              <div className="flex justify-between text-green-600">
-                <span className="font-medium">Discount</span>
-                <span className="font-medium">-55.20 AED</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-slate-500">VAT (5%)</span>
-                <span className="font-medium">{(totals.value * 0.05).toFixed(2)} AED</span>
+              {totals.discountTotal > 0 && (
+                <div className="flex justify-between text-emerald-600">
+                  <span className="font-medium">Discount</span>
+                  <span className="font-medium">- <CurrencyAmount value={totals.discountTotal} currency={currencyLabel} /></span>
+                </div>
+              )}
+              <div className="flex justify-between text-slate-500">
+                <span>VAT (Tax)</span>
+                <CurrencyAmount value={totals.taxTotal} currency={currencyLabel} className="font-medium text-slate-700" />
               </div>
               <div className="flex justify-between text-base pt-2 border-t border-slate-100 mt-2">
                 <span className="font-bold text-slate-800">Grand Total</span>
-                <span className="font-bold text-[#F5C742]">{(totals.value * 1.05).toFixed(2)} AED</span>
+                <span className="font-bold text-[#F5C742]">
+                  <CurrencyAmount value={totals.netTotal + totals.taxTotal} currency={currencyLabel} />
+                </span>
               </div>
             </div>
           </div>
@@ -1802,11 +1899,14 @@ const EditorView = ({ initialData, onSaveDraft, onSubmitQC, onPost, onPrint, grn
             </div>
             <div className="bg-slate-50 bg-opacity-50 rounded p-3 text-[9px] space-y-1.5 font-mono text-slate-600 border border-slate-100">
               <div className="flex justify-between font-bold text-blue-700 mb-1 border-b border-blue-100 pb-1">GRNI Posting Preview</div>
-              <div className="flex justify-between"><span>Dr. Inventory</span><span>1698.80</span></div>
-              <div className="flex justify-between"><span>Cr. GRNI</span><span>1698.80</span></div>
-              <div className="flex justify-between"><span>Dr. VAT Recoverable</span><span>84.94</span></div>
+              <div className="flex justify-between"><span>Dr. Inventory</span><CurrencyAmount value={totals.netTotal} currency={currencyLabel} /></div>
+              <div className="flex justify-between"><span>Dr. VAT Recoverable</span><CurrencyAmount value={totals.taxTotal} currency={currencyLabel} /></div>
+              <div className="flex justify-between font-bold pt-1 border-t border-slate-200 mt-1"><span>Cr. GRNI (Accrued)</span><CurrencyAmount value={totals.netTotal + totals.taxTotal} currency={currencyLabel} /></div>
             </div>
-            <button className="w-full mt-2 py-1 border border-slate-200 rounded text-xs font-medium text-slate-500 hover:bg-slate-50 flex items-center justify-center gap-1">
+            <button
+              onClick={() => navigate('/finance/ledger')}
+              className="w-full mt-2 py-1 border border-slate-200 rounded text-xs font-medium text-slate-500 hover:bg-slate-50 flex items-center justify-center gap-1"
+            >
               <Eye className="h-3 w-3" /> View Details
             </button>
           </div>
@@ -1848,7 +1948,7 @@ const EditorView = ({ initialData, onSaveDraft, onSubmitQC, onPost, onPrint, grn
 
             {/* Only show Submit QC if Draft */}
             {formData.status === GRN_STATUS.DRAFT && (
-              <button onClick={() => onSubmitQC(formData, items)} className="px-4 py-2 bg-white border border-blue-200 text-blue-600 bg-blue-50 rounded hover:bg-blue-100 font-medium text-slate-700 flex items-center justify-center gap-2 transition-colors">
+              <button onClick={() => onSubmitQC(formData, items)} className="px-4 py-2 bg-[#F5C742] hover:bg-[#E5B732] text-slate-900 rounded font-medium flex items-center justify-center gap-2 transition-colors shadow-sm">
                 <ClipboardCheck className="h-4 w-4" /> Submit for QC
               </button>
             )}
@@ -1885,7 +1985,9 @@ const EditorView = ({ initialData, onSaveDraft, onSubmitQC, onPost, onPrint, grn
         isOpen={isProductSelectionOpen}
         onClose={() => setIsProductSelectionOpen(false)}
         onSelect={handleAddSingleProduct}
+        onInlineAdd={handleFastEntryAdd}
         actionLabel="Add to GRN"
+        mode="purchase"
       />
 
       {/* Compare LPO Modal */}
@@ -1904,6 +2006,7 @@ const EditorView = ({ initialData, onSaveDraft, onSubmitQC, onPost, onPrint, grn
 
 const GRN = () => {
   const { company } = useCompany();
+  const currencyLabel = resolveCurrencyDisplayCode(company);
   const navigate = useNavigate();
   const [activeNavTab, setActiveNavTab] = useState("list");
   const [grns, setGrns] = useState([]);
@@ -1955,8 +2058,13 @@ const GRN = () => {
         received: i.received,
         accepted: i.accepted,
         rejected: i.rejected,
+        // unitCost = gross LPO price per unit (for reference/audit).
+        // netCost  = effective per-unit cost after FOC+discount (invoice should use this).
         unitCost: i.unitCost,
         netCost: i.netCost,
+        discountPercent: Number(i.disc) || 0,
+        purchaseTax: Number(i.tax) || 0,
+        taxAmt: Number(i.taxAmt) || 0,
         total: i.total,
         batch: i.batch,
         focQty: Number(i.foc) || 0,
@@ -1988,6 +2096,38 @@ const GRN = () => {
   };
 
 
+
+
+  const filteredData = useMemo(() => {
+    return grns.filter(item => {
+      if (activeFilter === "All GRNs") return true;
+      if (activeFilter === "Today") {
+        const today = new Date().toISOString().split('T')[0];
+        return item.date === today;
+      }
+      if (activeFilter === "QC Pending") return item.status === GRN_STATUS.QC_PENDING;
+      if (activeFilter === "Pending Invoice") return item.status === GRN_STATUS.POSTED && item.invStatus !== 'Fully Invoiced';
+      if (activeFilter === "With Variance") return item.hasVariance || (item.variance && item.variance !== 0);
+      if (activeFilter === "Completed") return item.status === GRN_STATUS.QC_COMPLETED || item.status === GRN_STATUS.POSTED;
+      if (activeFilter === "Reversed") return item.status === GRN_STATUS.REVERSED;
+      return true;
+    });
+  }, [grns, activeFilter]);
+
+  const handleExportExcel = () => {
+    exportToExcel(filteredData.map((row) => ({
+      ...row,
+      value: formatCurrencyDisplay(row.value, currencyLabel)
+    })), GRN_COLUMNS, 'GRN_List');
+  };
+
+  const handleExportPdf = () => {
+    exportToPDF(filteredData.map((row) => ({
+      ...row,
+      value: formatCurrencyDisplay(row.value, currencyLabel)
+    })), GRN_COLUMNS, 'Goods Receipt Notes (GRN)', 'GRN_List');
+  };
+
   const handleSubmitQC = async (formData, items) => {
     // 1. Validation
     if (!items || items.length === 0) {
@@ -2002,6 +2142,21 @@ const GRN = () => {
 
     if (!formData.warehouseId) {
       alert("Validation Failed: Warehouse is required.");
+      return;
+    }
+
+    if (!formData.zoneId) {
+      alert("Validation Failed: Zone is required.");
+      return;
+    }
+
+    if (!formData.locatorId) {
+      alert("Validation Failed: Locator is required.");
+      return;
+    }
+
+    if (!formData.binId) {
+      alert("Validation Failed: Bin is required.");
       return;
     }
 
@@ -2099,24 +2254,20 @@ const GRN = () => {
   const handlePrint = async (grn) => {
     const loadingToast = toast.loading('Preparing print layout...');
     try {
-      const templates = await getTemplatesByCategory('Goods Receipt Note');
-
-      if (!templates || templates.length === 0) {
-        toast.error('No templates found for Goods Receipt Note');
-        return;
-      }
-
-      const defaultTemplate = normalizePurchaseTemplate(
-        templates.find(t => t.isDefault) || templates[0],
-        'Goods Receipt Note'
-      );
+      const templates = await getTemplatesByCategory('Goods Receipt Note').catch(() => []);
+      const defaultTemplate = resolvePurchasePrintTemplate('Goods Receipt Note', templates);
 
       // Fetch full GRN details if needed
       let fullGrn = grn;
-      if (!grn.items || grn.items.length === 0) {
-        fullGrn = await getGrnById(grn.id);
+      const grnId = grn?.dbId ?? grn?.id;
+      if ((!grn?.items || grn.items.length === 0) && grnId !== null && grnId !== undefined) {
+        try {
+          fullGrn = await getGrnById(grnId);
+        } catch (detailError) {
+          console.warn('Falling back to GRN data already loaded in the UI for printing.', detailError);
+        }
       }
-      const fullVendor = findVendorRecord(vendors, fullGrn, fullGrn?.vendor, fullGrn?.vendorName);
+      const fullVendor = findVendorRecord([], fullGrn, fullGrn?.vendor, fullGrn?.vendorName);
       const printData = buildGrnPrintData(fullGrn, fullVendor, company);
 
       const html = generatePrintHtml(defaultTemplate, printData, {
@@ -2127,7 +2278,8 @@ const GRN = () => {
       printHtml(html);
     } catch (error) {
       console.error("Error printing GRN:", error);
-      toast.error('Failed to generate print layout');
+      const message = error?.response?.data?.message || error?.message || 'Failed to generate print layout';
+      toast.error(message);
     } finally {
       toast.dismiss(loadingToast);
     }
@@ -2142,7 +2294,7 @@ const GRN = () => {
     switch (activeNavTab) {
       case 'list':
         return <GRNListView
-          data={grns}
+          data={filteredData}
           onView={handleEdit}
           onEdit={handleEdit}
           onDelete={handleDelete}
@@ -2151,6 +2303,7 @@ const GRN = () => {
           onProceedToInvoice={handleProceedToInvoice}
           activeFilter={activeFilter}
           setActiveFilter={setActiveFilter}
+          currencyLabel={currencyLabel}
         />;
       case 'editor':
         return <EditorView
@@ -2171,7 +2324,7 @@ const GRN = () => {
       // case 'putaway': return <PutawayView />;
       // case 'performance': return <VendorPerformanceView />;
       default: return <GRNListView
-        data={grns}
+        data={filteredData}
         onView={handleEdit}
         onEdit={handleEdit}
         onDelete={handleDelete}
@@ -2180,6 +2333,7 @@ const GRN = () => {
         onProceedToInvoice={handleProceedToInvoice}
         activeFilter={activeFilter}
         setActiveFilter={setActiveFilter}
+        currencyLabel={currencyLabel}
       />;
     }
   };
@@ -2219,7 +2373,10 @@ const GRN = () => {
             >
               <ArrowLeft className="h-4 w-4" /> Back
             </button>
-            {/* Import/Export Buttons Removed */}
+            <ExportDropdown
+              onExportExcel={handleExportExcel}
+              onExportPdf={handleExportPdf}
+            />
             <button
               onClick={handleNewGRN}
               className="flex-1 sm:flex-none h-8 px-4 rounded-md bg-[#F5C742] hover:bg-[#E5B732] text-slate-900 flex items-center justify-center gap-1.5 text-sm font-bold shadow-sm transition-colors"

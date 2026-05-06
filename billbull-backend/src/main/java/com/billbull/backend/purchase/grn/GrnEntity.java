@@ -46,6 +46,9 @@ public class GrnEntity extends BaseEntity {
     private BigDecimal subtotal;
     private BigDecimal taxAmount;
     private BigDecimal grandTotal;
+    private Long branchId;
+    private String branchName;
+    private String branchCode;
 
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "warehouse_id", nullable = false)
@@ -232,5 +235,29 @@ public class GrnEntity extends BaseEntity {
 
     public void setGrandTotal(BigDecimal grandTotal) {
         this.grandTotal = grandTotal;
+    }
+
+    public Long getBranchId() {
+        return branchId;
+    }
+
+    public void setBranchId(Long branchId) {
+        this.branchId = branchId;
+    }
+
+    public String getBranchName() {
+        return branchName;
+    }
+
+    public void setBranchName(String branchName) {
+        this.branchName = branchName;
+    }
+
+    public String getBranchCode() {
+        return branchCode;
+    }
+
+    public void setBranchCode(String branchCode) {
+        this.branchCode = branchCode;
     }
 }

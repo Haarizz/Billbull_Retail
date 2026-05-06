@@ -47,6 +47,7 @@ import {
 } from 'lucide-react';
 
 import { getImageUrl } from "../../../utils/urlUtils";
+import { getDefaultProductUnit, resolveUnitAmount } from "../../../utils/unitPricing";
 import { createDraftFromLpo } from '../../../api/purchaseInvoiceApi';
 import { ItemDescriptionCell, ItemDescriptionHeader } from '../../../components/ItemDescriptionCell';
 import ItemAddOnsModal from '../../../components/ItemAddOnsModal';
@@ -63,6 +64,24 @@ import {
   findVendorRecord,
   normalizePurchaseTemplate
 } from '../../../utils/purchasePrintUtils';
+import ExportDropdown from '../../../components/common/ExportDropdown';
+import { exportToExcel, exportToPDF } from '../../../utils/exportUtils';
+import { formatCurrencyDisplay, resolveCurrencyDisplayCode } from '../../../utils/countryCurrencyOptions';
+import CurrencyAmount from '../../../components/CurrencyAmount';
+
+// ==========================================
+// 1. MOCK DATA & CONFIGURATION
+// ==========================================
+
+const LPO_COLUMNS = [
+  { header: 'LPO No.', key: 'lpoNumber', width: 15 },
+  { header: 'Vendor', key: 'vendorName', width: 25 },
+  { header: 'Date', key: 'date', width: 12 },
+  { header: 'Total Value', key: 'totalValue', width: 15 },
+  { header: 'Status', key: 'status', width: 15 },
+  { header: 'ETA', key: 'eta', width: 12 },
+  { header: 'Received %', key: 'received', width: 12 }
+];
 
 // API Imports
 import {
@@ -245,7 +264,7 @@ const ConfirmationModal = ({ isOpen, onClose, onConfirm, config }) => {
 // 2. MOBILE CARD COMPONENT
 // ==========================================
 
-const MobileCard = ({ row, onView }) => (
+const MobileCard = ({ row, onView, currencyLabel }) => (
   <div
     onClick={() => onView(row)}
     className="bg-white p-4 rounded-lg shadow-sm border border-slate-200 mb-3 active:scale-[0.98] transition-all"
@@ -271,7 +290,7 @@ const MobileCard = ({ row, onView }) => (
     <div className="grid grid-cols-2 gap-2 text-xs border-t border-slate-100 pt-3">
       <div>
         <span className="block text-slate-400 text-[10px] uppercase">Value</span>
-        <span className="font-bold text-slate-700">{row.totalValue || '0.00'}</span>
+        <CurrencyAmount value={row.totalValue} currency={currencyLabel} className="font-bold text-slate-700" />
       </div>
       <div className="text-right">
         <span className="block text-slate-400 text-[10px] uppercase">Items</span>
@@ -285,7 +304,7 @@ const MobileCard = ({ row, onView }) => (
 // 3. VIEW COMPONENTS
 // ==========================================
 
-const ListView = ({ lpos, onEdit, onView, onPrint, activeFilter, onApprove, onReject, onStockApprove, onStockReject, onProceedToInvoice, searchQuery, setSearchQuery, sortConfig, requestSort, showFilterPanel, setShowFilterPanel, dateRange, setDateRange, selectedVendor, setSelectedVendor, vendors }) => {
+const ListView = ({ lpos, processedData, onEdit, onView, onPrint, activeFilter, onApprove, onReject, onStockApprove, onStockReject, onProceedToInvoice, searchQuery, setSearchQuery, sortConfig, requestSort, showFilterPanel, setShowFilterPanel, dateRange, setDateRange, selectedVendor, setSelectedVendor, vendors, currencyLabel }) => {
   const formatDate = (dateString) => {
     if (!dateString) return '-';
     try {
@@ -294,55 +313,6 @@ const ListView = ({ lpos, onEdit, onView, onPrint, activeFilter, onApprove, onRe
       return dateString;
     }
   };
-
-  /* --- Filter & Sort Logic --- */
-  const processedData = useMemo(() => {
-    let data = [...lpos];
-
-    // 1. Filter by Status
-    if (activeFilter !== "All LPOs") {
-      const dbStatus = activeFilter.toUpperCase().replace(/ /g, '_');
-      data = data.filter(l => l.status === dbStatus);
-    }
-
-    // 2. Filter by Search Query
-    if (searchQuery) {
-      const lowerQuery = searchQuery.toLowerCase();
-      data = data.filter(l =>
-        (l.lpoNumber && l.lpoNumber.toLowerCase().includes(lowerQuery)) ||
-        (l.vendorName && l.vendorName.toLowerCase().includes(lowerQuery))
-      );
-    }
-
-    // 3. Filter by Date Range
-    if (dateRange.from) {
-      data = data.filter(l => l.date >= dateRange.from);
-    }
-    if (dateRange.to) {
-      data = data.filter(l => l.date <= dateRange.to);
-    }
-
-    // 4. Filter by Vendor
-    if (selectedVendor) {
-      data = data.filter(l => l.vendorName === selectedVendor || l.vendorCode === selectedVendor);
-    }
-
-    // 5. Sort
-    if (sortConfig && sortConfig.key) {
-      data.sort((a, b) => {
-        if (a[sortConfig.key] < b[sortConfig.key]) {
-          return sortConfig.direction === 'asc' ? -1 : 1;
-        }
-        if (a[sortConfig.key] > b[sortConfig.key]) {
-          return sortConfig.direction === 'asc' ? 1 : -1;
-        }
-        return 0;
-      });
-    }
-
-    return data;
-    return data;
-  }, [lpos, activeFilter, searchQuery, sortConfig, dateRange, selectedVendor]);
 
   return (
     <div className="flex flex-col h-full">
@@ -516,7 +486,7 @@ const ListView = ({ lpos, onEdit, onView, onPrint, activeFilter, onApprove, onRe
                       {row.itemCount || (row.items ? row.items.length : 0)}
                     </td>
                     <td className="px-4 py-3 text-right font-bold text-slate-900">
-                      {row.totalValue || '0.00 AED'}
+                      <CurrencyAmount value={row.totalValue} currency={currencyLabel} />
                     </td>
                     <td className="px-4 py-3">
                       <span className={`text-[10px] font-semibold px-2.5 py-0.5 rounded border whitespace-nowrap ${row.statusColor}`}>
@@ -624,7 +594,7 @@ const ListView = ({ lpos, onEdit, onView, onPrint, activeFilter, onApprove, onRe
           <div className="text-center py-10 text-slate-400">No LPOs found.</div>
         ) : (
           processedData.map((row) => (
-            <MobileCard key={row.lpoNumber} row={row} onView={onView} />
+            <MobileCard key={row.lpoNumber} row={row} onView={onView} currencyLabel={currencyLabel} />
           ))
         )}
       </div>
@@ -674,7 +644,7 @@ const AutoGeneratedView = ({ suggestions, onReview }) => (
                 </div>
                 <div>
                   <div className="text-xs text-slate-500 mb-1">Total Value</div>
-                  <div className="font-bold text-[#F5C742] text-sm">{card.value}</div>
+                  <CurrencyAmount value={card.value} className="font-bold text-[#F5C742] text-sm" />
                 </div>
                 <div>
                   <div className="text-xs text-slate-500 mb-1">Items</div>
@@ -772,7 +742,7 @@ const ApprovalQueueView = ({ queue, onApprove, onReject }) => {
                       {formatDate(item.date)}
                     </td>
                     <td className="p-3 text-right font-bold text-slate-900">
-                      {item.totalValue || '0.00 AED'}
+                      <CurrencyAmount value={item.totalValue} />
                     </td>
                     <td className="p-3">
                       <span className="bg-orange-100 text-orange-800 px-2 py-0.5 rounded text-[10px] font-bold border border-orange-200">
@@ -853,7 +823,7 @@ const HistoryView = ({ lpos }) => {
                     {row.vendorName}
                   </td>
                   <td className="px-4 py-3 text-right font-bold text-slate-900">
-                    {row.totalValue || '0.00 AED'}
+                    <CurrencyAmount value={row.totalValue} />
                   </td>
                   <td className="px-4 py-3">
                     <span className={`text-[10px] font-semibold px-2.5 py-0.5 rounded border whitespace-nowrap ${row.statusColor || 'bg-slate-100 text-slate-600'}`}>
@@ -902,7 +872,32 @@ const HistoryView = ({ lpos }) => {
 // ==========================================
 
 const EditorView = ({ initialData, vendors, warehouses, onSave, onSubmit, onPrint, onRevert, isReadOnly, followUpNotes }) => {
+  const { company } = useCompany();
+  const currencyLabel = resolveCurrencyDisplayCode(company);
   // --- Editor Logic ---
+  const createBlankLpoItem = () => ({
+    id: Date.now() + Math.random(),
+    productId: null,
+    code: '',
+    barcode: '',
+    name: '',
+    uom: '',
+    lastPrice: 0,
+    currentCost: 0,
+    qty: 1,
+    unitPrice: 0,
+    disc: 0,
+    foc: 0,
+    focUnit: '',
+    tax: 5,
+    taxAmt: 0,
+    remarks: '',
+    image: null,
+    availableUnits: [],
+    unitConversions: {},
+    unitPrices: {}
+  });
+
   const defaultState = {
     id: '',
     lpoNumber: '',
@@ -919,9 +914,7 @@ const EditorView = ({ initialData, vendors, warehouses, onSave, onSubmit, onPrin
     purchaseType: "REGULAR",
     buyerAssigned: "SYSTEM",
     referenceDocument: "",
-    items: [
-      { id: Date.now(), productId: null, code: '', barcode: '', name: '', uom: '', lastPrice: 0, currentCost: 0, qty: 1, unitPrice: 0, disc: 0, foc: 0, focUnit: '', tax: 5, taxAmt: 0, remarks: '', image: null, availableUnits: [], unitConversions: {}, unitPrices: {} }
-    ]
+    items: [createBlankLpoItem()]
   };
 
   const [formData, setFormData] = useState(defaultState);
@@ -1007,7 +1000,7 @@ const EditorView = ({ initialData, vendors, warehouses, onSave, onSubmit, onPrin
             disc: i.discountPercent || 0,
             foc: i.focQty || i.foc || 0,
             focUnit: i.focUnit || i.uom || 'PCS',
-            tax: typeof i.tax === 'number' ? i.tax : 5,
+            tax: parseFloat(i.purchaseTax) || parseFloat(i.tax) || 5,
             taxAmt: Number(i.taxAmt || 0),
             remarks: i.remarks || '',
             image: i.image || i.imageUrl || null,
@@ -1046,21 +1039,15 @@ const EditorView = ({ initialData, vendors, warehouses, onSave, onSubmit, onPrin
         // ✅ If unit is being changed, recalculate price based on conversion
         if (field === 'uom' && item.unitConversions) {
           const newUnit = value;
-          if (item.unitPrices && item.unitPrices[newUnit]) {
-            updated.unitPrice = item.unitPrices[newUnit];
-            updated.currentCost = updated.unitPrice;
-          } else {
-            const baseUnit = Object.keys(item.unitConversions).find(u => item.unitConversions[u] === 1);
-            if (baseUnit) {
-              let basePrice = item.unitPrices && item.unitPrices[baseUnit] ? item.unitPrices[baseUnit] : null;
-              if (!basePrice) {
-                const currentConv = item.unitConversions[item.uom] || 1;
-                basePrice = item.unitPrice / currentConv;
-              }
-              updated.unitPrice = basePrice * (item.unitConversions[newUnit] || 1);
-              updated.currentCost = updated.unitPrice;
-            }
-          }
+          updated.unitPrice = resolveUnitAmount({
+            targetUnit: newUnit,
+            amountMap: item.unitCosts || item.unitPrices,
+            unitConversions: item.unitConversions,
+            currentUnit: item.uom,
+            currentAmount: item.unitPrice,
+            fallbackAmount: item.currentCost ?? item.unitPrice
+          });
+          updated.currentCost = updated.unitPrice;
         }
         return updated;
       }
@@ -1096,8 +1083,13 @@ const EditorView = ({ initialData, vendors, warehouses, onSave, onSubmit, onPrin
   };
 
   const handleAddSingleProduct = (product) => {
-    const cost = parseFloat(product.cost) || 0;
-    const defaultUnit = product.unitName || product.unit || (product.availableUnits && product.availableUnits[0]) || 'PCS';
+    const defaultUnit = getDefaultProductUnit(product);
+    const cost = resolveUnitAmount({
+      targetUnit: defaultUnit,
+      amountMap: product.unitCosts || product.unitPrices,
+      unitConversions: product.unitConversions,
+      fallbackAmount: product.cost ?? 0
+    });
     const newItem = {
       id: Date.now(),
       productId: product.id,
@@ -1112,13 +1104,14 @@ const EditorView = ({ initialData, vendors, warehouses, onSave, onSubmit, onPrin
       disc: product.maxDiscount || 0,
       foc: 0,
       focUnit: defaultUnit,
-      tax: product.taxRate || 5,
+      tax: parseFloat(product.purchaseTax) || 5,
       taxAmt: 0,
       remarks: product.description || '',
       image: product.primaryImage || product.image || product.thumbnailUrl || product.imageUrl || null,
       availableUnits: product.availableUnits || [defaultUnit],
       unitConversions: product.unitConversions || {},
-      unitPrices: product.unitPrices || {}
+      unitPrices: product.unitPrices || {},
+      unitCosts: product.unitCosts || {}
     };
 
     // If first item is empty, replace it
@@ -1127,6 +1120,36 @@ const EditorView = ({ initialData, vendors, warehouses, onSave, onSubmit, onPrin
 
     setFormData({ ...formData, items: updatedItems });
     setIsProductSelectionOpen(false);
+  };
+
+  const handleFastEntryAdd = (product, qty, price, disc) => {
+    if (isReadOnly) return;
+    const defaultUnit = getDefaultProductUnit(product);
+    const newItem = {
+      id: Date.now(),
+      productId: product.id,
+      code: product.code,
+      barcode: product.barcode || '',
+      name: product.description || product.name,
+      uom: defaultUnit,
+      lastPrice: price,
+      currentCost: price,
+      qty,
+      unitPrice: price,
+      disc,
+      foc: 0,
+      focUnit: defaultUnit,
+      tax: parseFloat(product.purchaseTax) || 5,
+      taxAmt: 0,
+      remarks: product.description || '',
+      image: product.primaryImage || product.image || null,
+      availableUnits: product.availableUnits || [defaultUnit],
+      unitConversions: product.unitConversions || {},
+      unitPrices: product.unitPrices || {},
+      unitCosts: product.unitCosts || {},
+    };
+    const isFirstItemEmpty = formData.items.length === 1 && !formData.items[0].productId;
+    setFormData({ ...formData, items: isFirstItemEmpty ? [newItem] : [...formData.items, newItem] });
   };
 
   const getAddonModalItem = (item) => {
@@ -1175,8 +1198,8 @@ const EditorView = ({ initialData, vendors, warehouses, onSave, onSubmit, onPrin
   };
 
   const handleRemoveItem = (id) => {
-    if (formData.items.length <= 1) return; // Keep at least one item
-    setFormData({ ...formData, items: formData.items.filter(item => item.id !== id) });
+    const nextItems = formData.items.filter(item => item.id !== id);
+    setFormData({ ...formData, items: nextItems.length > 0 ? nextItems : [createBlankLpoItem()] });
   };
 
   // Calculations
@@ -1196,12 +1219,12 @@ const EditorView = ({ initialData, vendors, warehouses, onSave, onSubmit, onPrin
       const gross = qty * unitPrice;
       let focDeduction = 0;
 
-      if (focQty > 0 && item.focUnit && item.unitConversions) {
+      if (focQty > 0 && item.focUnit) {
         const sellingUnit = item.uom;
         const focUnit = item.focUnit;
         if (sellingUnit === focUnit) {
           focDeduction = unitPrice * focQty;
-        } else {
+        } else if (item.unitConversions) {
           const focConversion = item.unitConversions[focUnit] || 1;
           const sellingConversion = item.unitConversions[sellingUnit] || 1;
           const focInSellingUnit = (focQty * focConversion) / sellingConversion;
@@ -1223,7 +1246,7 @@ const EditorView = ({ initialData, vendors, warehouses, onSave, onSubmit, onPrin
       return { ...item, tax: Number(item.tax) || 5, taxAmt, lineTotal, total: lineTotal + taxAmt };
     });
 
-    const tax = totalTaxable * 0.05;
+    const tax = calculatedItems.reduce((sum, item) => sum + item.taxAmt, 0);
     const grandTotal = totalTaxable + tax;
 
     return {
@@ -1337,6 +1360,24 @@ const EditorView = ({ initialData, vendors, warehouses, onSave, onSubmit, onPrin
 
       if (!formData.warehouseId) {
         alert("Please select a warehouse");
+        setLoading(false);
+        return;
+      }
+
+      if (!formData.zoneId) {
+        alert("Please select a zone");
+        setLoading(false);
+        return;
+      }
+
+      if (!formData.locatorId) {
+        alert("Please select a locator");
+        setLoading(false);
+        return;
+      }
+
+      if (!formData.binId) {
+        alert("Please select a bin");
         setLoading(false);
         return;
       }
@@ -1638,9 +1679,9 @@ const EditorView = ({ initialData, vendors, warehouses, onSave, onSubmit, onPrin
                 )}
               </div>
             </div>
-            <div className="flex-1 overflow-x-auto">
+            <div className="overflow-auto" style={{ maxHeight: 'calc(4 * 115px + 44px)' }}>
               <table className="w-full text-xs text-left min-w-[800px]">
-                <thead className="bg-slate-50 border-b border-slate-100 text-slate-500">
+                <thead className="bg-slate-50 border-b border-slate-100 text-slate-500 sticky top-0 z-10">
                   <tr>
                     <th className="p-3 font-medium w-10 text-center text-slate-400">#</th>
                     <th className="p-3 font-medium min-w-[280px]">
@@ -1651,10 +1692,8 @@ const EditorView = ({ initialData, vendors, warehouses, onSave, onSubmit, onPrin
                       />
                     </th>
                     <th className="p-3 font-medium text-center w-16">Unit</th>
-                    <th className="p-3 font-medium text-right w-20">Last Price</th>
                     <th className="p-3 font-medium text-center w-16">Order Qty</th>
                     <th className="p-3 font-medium text-center w-20">Unit Price</th>
-                    <th className="p-3 font-medium text-center w-16">Disc %</th>
                     <th className="p-3 font-medium text-right">Amount</th>
                     <th className="p-3 font-medium text-center">Actions</th>
                   </tr>
@@ -1689,9 +1728,6 @@ const EditorView = ({ initialData, vendors, warehouses, onSave, onSubmit, onPrin
                             {(item.availableUnits || [item.uom || 'PCS']).map(u => <option key={u} value={u}>{u}</option>)}
                           </select>
                         </td>
-                        <td className="p-3 text-right text-slate-400">
-                          {Number(item.lastPrice).toFixed(2)}
-                        </td>
                         <td className="p-3">
                           <input
                             type="number"
@@ -1721,20 +1757,6 @@ const EditorView = ({ initialData, vendors, warehouses, onSave, onSubmit, onPrin
                             />
                           </div>
                         </td>
-                        <td className="p-3">
-                          <input
-                            type="number"
-                            min="0"
-                            max="100"
-                            value={item.disc}
-                            onChange={(e) => handleItemChange(item.id, 'disc', e.target.value)}
-                            // Prevent Scroll & Paste
-                            onWheel={e => e.target.blur()}
-                            onPaste={e => e.preventDefault()}
-                            disabled={isReadOnly}
-                            className="w-12 text-center border border-slate-200 rounded p-1 text-xs disabled:bg-slate-50 disabled:text-slate-500"
-                          />
-                        </td>
                         <td className="p-3 text-right font-bold text-[#F5C742]">
                           {item.lineTotal.toFixed(2)}
                         </td>
@@ -1742,7 +1764,7 @@ const EditorView = ({ initialData, vendors, warehouses, onSave, onSubmit, onPrin
                           <button
                             onClick={() => handleRemoveItem(item.id)}
                             className="text-red-400 hover:text-red-600 disabled:opacity-50 disabled:cursor-not-allowed"
-                            disabled={formData.items.length <= 1 || isReadOnly}
+                            disabled={isReadOnly}
                           >
                             <Trash2 className="h-3.5 w-3.5" />
                           </button>
@@ -1752,7 +1774,7 @@ const EditorView = ({ initialData, vendors, warehouses, onSave, onSubmit, onPrin
                       {/* Expanded Description Row */}
                       {expandedRows[item.id] && (
                         <tr className="bg-white">
-                          <td colSpan={9} className="px-0 pb-4 pt-1">
+                          <td colSpan={7} className="px-0 pb-4 pt-1">
                             <div className="ml-0 mr-4 p-3 rounded-r-[10px] border-l-[3px] border-[#FFD700] bg-[#FFFDE7]/60 shadow-[inset_0_1px_4px_rgba(0,0,0,0.02)]">
                               <div className="flex justify-between items-center mb-1.5">
                                 <div className="flex items-center gap-1.5 text-[9px] font-bold text-[#B8860B] tracking-widest uppercase">
@@ -1803,25 +1825,25 @@ const EditorView = ({ initialData, vendors, warehouses, onSave, onSubmit, onPrin
               <div className="flex justify-between">
                 <span className="text-slate-500 font-medium">Subtotal</span>
                 <span className="font-medium">
-                  {calculations.subtotal.toFixed(2)} AED
+                  <CurrencyAmount value={calculations.subtotal} currency={currencyLabel} />
                 </span>
               </div>
               <div className="flex justify-between text-green-600">
                 <span className="font-medium">Discount</span>
                 <span className="font-medium">
-                  -{calculations.totalDiscount.toFixed(2)} AED
+                  -<CurrencyAmount value={calculations.totalDiscount} currency={currencyLabel} />
                 </span>
               </div>
               <div className="flex justify-between">
-                <span className="text-slate-500">Tax (5%)</span>
+                <span className="text-slate-500">Tax</span>
                 <span className="font-medium">
-                  {calculations.tax.toFixed(2)} AED
+                  <CurrencyAmount value={calculations.tax} currency={currencyLabel} />
                 </span>
               </div>
               <div className="flex justify-between text-base pt-2 border-t border-slate-100 mt-2">
                 <span className="font-bold text-slate-800">Grand Total</span>
                 <span className="font-bold text-[#F5C742]">
-                  {calculations.grandTotal.toFixed(2)} AED
+                  <CurrencyAmount value={calculations.grandTotal} currency={currencyLabel} />
                 </span>
               </div>
             </div>
@@ -2066,9 +2088,16 @@ const EditorView = ({ initialData, vendors, warehouses, onSave, onSubmit, onPrin
                       <span className="text-xs font-bold text-slate-800">LPO Created</span>
                       <span className="text-[10px] text-slate-400">{formData.createdAt ? new Date(formData.createdAt).toLocaleString() : 'N/A'}</span>
                     </div>
-                    <p className="text-[10px] text-slate-500 mt-0.5">
-                      LPO #{formData.lpoNumber} created{formData.createdBy ? ` by ${formData.createdBy}` : ''} with {formData.items?.length || 0} item(s) for <strong>{formData.vendorName}</strong>.
-                    </p>
+                    <div className="text-[10px] text-slate-500 mt-0.5 flex flex-wrap gap-x-1">
+                      <span key="lpo-prefix">LPO #</span>
+                      <span key="lpo-no" className="font-medium">{formData.lpoNumber}</span>
+                      <span key="created-text">created</span>
+                      {formData.createdBy ? <span key="created-by"> by {formData.createdBy}</span> : null}
+                      <span key="with-text"> with </span>
+                      <span key="item-count">{formData.items?.length || 0}</span>
+                      <span key="items-suffix"> item(s) for </span>
+                      <strong key="vendor-name" className="font-bold">{formData.vendorName}</strong>
+                    </div>
                   </div>
                 </div>
 
@@ -2133,7 +2162,9 @@ const EditorView = ({ initialData, vendors, warehouses, onSave, onSubmit, onPrin
         isOpen={isProductSelectionOpen}
         onClose={() => setIsProductSelectionOpen(false)}
         onSelect={handleAddSingleProduct}
+        onInlineAdd={handleFastEntryAdd}
         actionLabel="Add to LPO"
+        mode="purchase"
       />
 
       {/* Item Add-Ons Modal */}
@@ -2158,6 +2189,7 @@ const EditorView = ({ initialData, vendors, warehouses, onSave, onSubmit, onPrin
 
 const LPOList = () => {
   const { company } = useCompany();
+  const currencyLabel = resolveCurrencyDisplayCode(company);
   const navigate = useNavigate();
   const [activeStatusTab, setActiveStatusTab] = useState("All LPOs");
   const [activeNavTab, setActiveNavTab] = useState("list");
@@ -2500,14 +2532,72 @@ const LPOList = () => {
   };
 
   const executeStockReject = async (dbId) => {
-
-
     // Optimistic update
     setLpos(prevLpos =>
       prevLpos.map(lpo =>
-        lpo.dbId === dbId ? { ...lpo, status: 'CANCELLED' } : lpo
+        lpo.dbId === dbId ? { ...lpo, status: 'REJECTED' } : lpo
       )
     );
+  };
+
+  const processedData = useMemo(() => {
+    let data = [...lpos];
+
+    // 1. Filter by Status
+    if (activeStatusTab !== "All LPOs") {
+      const dbStatus = activeStatusTab.toUpperCase().replace(/ /g, '_');
+      data = data.filter(l => l.status === dbStatus);
+    }
+
+    // 2. Filter by Search Query
+    if (searchQuery) {
+      const lowerQuery = searchQuery.toLowerCase();
+      data = data.filter(l =>
+        (l.lpoNumber && l.lpoNumber.toLowerCase().includes(lowerQuery)) ||
+        (l.vendorName && l.vendorName.toLowerCase().includes(lowerQuery))
+      );
+    }
+
+    // 3. Filter by Date Range
+    if (dateRange.from) {
+      data = data.filter(l => l.date >= dateRange.from);
+    }
+    if (dateRange.to) {
+      data = data.filter(l => l.date <= dateRange.to);
+    }
+
+    // 4. Filter by Vendor
+    if (selectedVendor) {
+      data = data.filter(l => l.vendorName === selectedVendor || l.vendorCode === selectedVendor);
+    }
+
+    // 5. Sort
+    if (sortConfig && sortConfig.key) {
+      data.sort((a, b) => {
+        if (a[sortConfig.key] < b[sortConfig.key]) {
+          return sortConfig.direction === 'asc' ? -1 : 1;
+        }
+        if (a[sortConfig.key] > b[sortConfig.key]) {
+          return sortConfig.direction === 'asc' ? 1 : -1;
+        }
+        return 0;
+      });
+    }
+
+    return data;
+  }, [lpos, activeStatusTab, searchQuery, sortConfig, dateRange, selectedVendor]);
+
+  const exportProcessedData = useMemo(() => processedData.map((row) => ({
+    ...row,
+    totalValue: formatCurrencyDisplay(row.totalValue, currencyLabel)
+  })), [currencyLabel, processedData]);
+
+  const handleExportExcel = () => {
+    exportToExcel(exportProcessedData, LPO_COLUMNS, 'LPO_List');
+  };
+
+  const handleExportPdf = () => {
+    exportToPDF(exportProcessedData, LPO_COLUMNS, 'Local Purchase Orders', 'LPO_List');
   };
 
   return (
@@ -2521,9 +2611,9 @@ const LPOList = () => {
             {/* Title and Controls */}
             <div className="space-y-1">
               <div className="flex items-center gap-2 text-sm text-slate-500">
-                <span>Vendors & Purchases</span>
+                <span>Vendors {"&"} Purchases</span>
                 <ChevronRight size={12} />
-                <span className="font-medium text-slate-900">LPO & Approvals</span>
+                <span className="font-medium text-slate-900">LPO {"&"} Approvals</span>
               </div>
               <div className="flex items-center gap-3">
                 <h1 className="text-2xl font-bold text-slate-900 flex items-center gap-2"><ShoppingCart className="text-[#F5C742]" size={28} /> Local Purchase Orders (LPO)</h1>
@@ -2558,9 +2648,10 @@ const LPOList = () => {
               <button className="flex-1 sm:flex-none h-8 px-3 border border-slate-300 rounded-md bg-white hover:bg-slate-50 text-slate-700 flex items-center justify-center gap-1.5 text-sm font-medium transition-colors">
                 <Upload className="h-4 w-4" /> Import
               </button>
-              <button className="flex-1 sm:flex-none h-8 px-3 border border-slate-300 rounded-md bg-white hover:bg-slate-50 text-slate-700 flex items-center justify-center gap-1.5 text-sm font-medium transition-colors">
-                <Download className="h-4 w-4" /> Export
-              </button>
+              <ExportDropdown
+                onExportExcel={handleExportExcel}
+                onExportPdf={handleExportPdf}
+              />
               <button
                 onClick={handleCreateNew}
                 disabled={loading}
@@ -2647,6 +2738,7 @@ const LPOList = () => {
             {activeNavTab === 'list' && (
               <ListView
                 lpos={lpos}
+                processedData={processedData}
                 activeFilter={activeStatusTab}
                 onEdit={handleEditLPO}
                 onView={handleViewLPO}
@@ -2667,6 +2759,7 @@ const LPOList = () => {
                 selectedVendor={selectedVendor}
                 setSelectedVendor={setSelectedVendor}
                 vendors={vendors}
+                currencyLabel={currencyLabel}
               />
             )}
             {activeNavTab === 'auto' && (
@@ -2817,8 +2910,8 @@ const LPOList = () => {
                         const cardClass = isApproved
                           ? 'bg-emerald-50 border-emerald-200'
                           : isRejected
-                          ? 'bg-red-50 border-red-200'
-                          : 'bg-white border-slate-200';
+                            ? 'bg-red-50 border-red-200'
+                            : 'bg-white border-slate-200';
                         const labelColor = isApproved ? 'text-emerald-700' : isRejected ? 'text-red-600' : 'text-slate-500';
                         return (
                           <div key={idx} className="relative">
@@ -2880,7 +2973,14 @@ const LPOList = () => {
                           <span className="text-sm font-bold text-slate-800">LPO Created</span>
                           <span className="text-xs text-slate-400">{currentEditorData.createdAt ? new Date(currentEditorData.createdAt).toLocaleString() : 'N/A'}</span>
                         </div>
-                        <p className="text-xs text-slate-500">LPO #{currentEditorData.lpoNumber} created with {currentEditorData.items?.length || 0} item(s) for <strong>{currentEditorData.vendorName}</strong>.</p>
+                        <div className="text-xs text-slate-500 flex flex-wrap gap-x-1 mt-1">
+                          <span key="rev-lpo-prefix">LPO #</span>
+                          <span key="rev-lpo-no" className="font-medium">{currentEditorData.lpoNumber}</span>
+                          <span key="rev-created-text">created with </span>
+                          <span key="rev-item-count">{currentEditorData.items?.length || 0}</span>
+                          <span key="rev-items-suffix"> item(s) for </span>
+                          <strong key="rev-vendor-name" className="font-bold">{currentEditorData.vendorName}</strong>
+                        </div>
                       </div>
                     </div>
 

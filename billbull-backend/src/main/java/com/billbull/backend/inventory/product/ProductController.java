@@ -15,6 +15,7 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RequestPart;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.multipart.MultipartFile;
+import com.billbull.backend.security.ModulePermissionService;
 
 import com.billbull.backend.security.AuditLogService;
 import com.fasterxml.jackson.core.JsonProcessingException;
@@ -29,22 +30,26 @@ public class ProductController {
     private final AuditLogService auditLogService;
     private final ProductExportService exportService;
     private final ProductImportService importService;
+    private final ModulePermissionService modulePermissionService;
 
     public ProductController(ProductService service, ObjectMapper objectMapper, AuditLogService auditLogService,
-            ProductExportService exportService, ProductImportService importService) {
+            ProductExportService exportService, ProductImportService importService,
+            ModulePermissionService modulePermissionService) {
         this.service = service;
         this.objectMapper = objectMapper;
         this.auditLogService = auditLogService;
         this.exportService = exportService;
         this.importService = importService;
+        this.modulePermissionService = modulePermissionService;
     }
 
     // -------------------------------------------------
     // IMPORT FROM EXCEL
     // -------------------------------------------------
     @PostMapping(value = "/import/excel", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
-    @PreAuthorize("hasAnyRole('ADMIN','INVENTORY_MANAGER')")
+    @PreAuthorize("isAuthenticated()")
     public ResponseEntity<String> importFromExcel(@RequestParam("file") MultipartFile file) {
+        modulePermissionService.requireCanCreate("inventory");
         try {
             String result = importService.importProducts(file);
             return ResponseEntity.ok(result);
@@ -57,11 +62,12 @@ public class ProductController {
     // CREATE (Multipart)
     // -------------------------------------------------
     @PostMapping(consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
-    @PreAuthorize("hasAnyRole('ADMIN','INVENTORY_MANAGER')")
+    @PreAuthorize("isAuthenticated()")
     public ResponseEntity<ProductAggregateResponse> create(
             @RequestPart("data") String data,
             @RequestPart(value = "file", required = false) MultipartFile file) throws JsonProcessingException {
         // Manually parse the JSON string into the Request object
+        modulePermissionService.requireCanCreate("inventory");
         ProductAggregateRequest request = objectMapper.readValue(data, ProductAggregateRequest.class);
         return ResponseEntity.ok(service.create(request, file));
     }
@@ -70,8 +76,9 @@ public class ProductController {
     // EXPORT TO EXCEL
     // -------------------------------------------------
     @GetMapping("/export/excel")
-    @PreAuthorize("hasAnyRole('ADMIN','INVENTORY_MANAGER','SALES','ACCOUNTANT')")
+    @PreAuthorize("isAuthenticated()")
     public ResponseEntity<org.springframework.core.io.Resource> exportToExcel() {
+        modulePermissionService.requireCanExport("inventory");
         List<ProductAggregateResponse> products = service.getAll();
         java.io.ByteArrayInputStream in = exportService.export(products);
 
@@ -88,7 +95,7 @@ public class ProductController {
     // GET LIST (optimised — 4 queries total, supports pagination)
     // -------------------------------------------------
     @GetMapping("/list")
-    @PreAuthorize("hasAnyRole('ADMIN','INVENTORY_MANAGER','SALES','ACCOUNTANT')")
+    @PreAuthorize("isAuthenticated()")
     public ResponseEntity<java.util.Map<String, Object>> listPaged(
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "100") int size,
@@ -96,6 +103,7 @@ public class ProductController {
             @RequestParam(required = false) Long warehouseId,
             @RequestParam(required = false) Long departmentId,
             @RequestParam(required = false) Long brandId) {
+        modulePermissionService.requireCanView("inventory");
         return ResponseEntity.ok(service.getList(page, size, search, warehouseId, departmentId, brandId));
     }
 
@@ -137,11 +145,12 @@ public class ProductController {
     // UPDATE (Multipart)
     // -------------------------------------------------
     @PutMapping(value = "/{id}", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
-    @PreAuthorize("hasAnyRole('ADMIN','INVENTORY_MANAGER')")
+    @PreAuthorize("isAuthenticated()")
     public ResponseEntity<ProductAggregateResponse> update(
             @PathVariable Long id,
             @RequestPart("data") String data,
             @RequestPart(value = "file", required = false) MultipartFile file) throws JsonProcessingException {
+        modulePermissionService.requireCanEdit("inventory");
         ProductAggregateRequest request = objectMapper.readValue(data, ProductAggregateRequest.class);
         return ResponseEntity.ok(service.update(id, request, file));
     }
@@ -150,8 +159,9 @@ public class ProductController {
     // DELETE (SOFT)
     // -------------------------------------------------
     @DeleteMapping("/{id}")
-    @PreAuthorize("hasRole('ADMIN')")
+    @PreAuthorize("isAuthenticated()")
     public ResponseEntity<Void> delete(@PathVariable Long id) {
+        modulePermissionService.requireCanEdit("inventory");
         service.delete(id);
         return ResponseEntity.ok().build();
     }

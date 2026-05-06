@@ -40,11 +40,22 @@ const Login = () => {
 
       // ✅ Store Auth Data
       sessionStorage.setItem("token", data.token);
-      sessionStorage.setItem("role", data.role);
+      sessionStorage.setItem("role", data.primaryRole || data.role);
+      sessionStorage.setItem("primaryRole", data.primaryRole || data.role);
       sessionStorage.setItem("user", data.username);
 
       refreshCompany();
-      navigate("/");
+
+      // Redirect based on primary role
+      const roleRedirects = {
+        SALES:             "/customers",
+        INVENTORY_MANAGER: "/inventory/products",
+        ACCOUNTANT:        "/financials/ledger",
+        HR:                "/payroll/employees",
+        ADMIN:             "/dashboard",
+      };
+      const primaryRole = data.primaryRole || data.role;
+      navigate(roleRedirects[primaryRole] || "/");
     } catch (err) {
       console.error(err);
       setError("Invalid username or password");
@@ -56,13 +67,13 @@ const Login = () => {
   return (
     <div className="flex h-screen w-screen overflow-hidden bg-[#1C2838]">
       {/* LEFT BRAND PANEL */}
-      <div className="relative hidden w-[600px] flex-col items-center justify-center bg-white px-16 lg:flex">
+      <div className="relative hidden w-150 flex-col items-center justify-center bg-white px-16 lg:flex">
         <div className="flex flex-col items-center gap-8 text-center">
           <div className="flex flex-col items-center justify-center gap-4">
             <img
               src={billBullLogo}
               alt="BillBull Logo"
-              className="w-[400px] h-auto"
+              className="w-100 h-auto"
             />
             <h1 className="text-4xl font-bold text-[#1C2838]">
               Enterprise OS
@@ -87,7 +98,7 @@ const Login = () => {
 
       {/* RIGHT LOGIN PANEL */}
       <div className="flex flex-1 items-center justify-center bg-[#F7F7FA] px-6 lg:px-20">
-        <div className="w-full max-w-[480px]">
+        <div className="w-full max-w-120">
           <div className="rounded-3xl bg-white p-8 lg:p-10 shadow-xl border border-gray-100">
             <div className="mb-8 text-center">
               <h2 className="text-[28px] font-semibold text-[#26333C] mb-2">
@@ -147,7 +158,7 @@ const Login = () => {
               <button
                 type="submit"
                 disabled={isLoading}
-                className="w-full h-[56px] rounded-xl bg-[#F5C742] text-[18px] font-bold text-[#1A1A1A] shadow-lg hover:bg-[#E5B732] disabled:opacity-50 flex items-center justify-center gap-2"
+                className="w-full h-14 rounded-xl bg-[#F5C742] text-[18px] font-bold text-[#1A1A1A] shadow-lg hover:bg-[#E5B732] disabled:opacity-50 flex items-center justify-center gap-2"
               >
                 {isLoading ? (
                   <>

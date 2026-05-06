@@ -7,6 +7,7 @@ import { getWarehouses } from '../../../api/warehouseApi';
 import { getPrintTemplates } from '../../../api/printTemplateApi';
 import { generateReportPrintHtml, printHtml } from '../../../utils/printGenerator';
 import toast from 'react-hot-toast';
+import CurrencyAmount from '../../../components/CurrencyAmount';
 
 const StockValuationReport = () => {
     const [filters, setFilters] = useState({
@@ -31,6 +32,8 @@ const StockValuationReport = () => {
         { header: 'Department', key: 'department', width: 20 },
         { header: 'Brand', key: 'brand', width: 20 },
         { header: 'Warehouse', key: 'warehouse', width: 25 },
+        { header: 'Batch No', key: 'batchNumber', width: 20 },
+        { header: 'Expiry', key: 'expiryDate', width: 15 },
         { header: 'Cost Method', key: 'costMethod', width: 18 },
         { header: 'Qty', key: 'onHand', width: 15 },
         { header: 'Unit Cost', key: 'unitCost', width: 15 },
@@ -55,7 +58,8 @@ const StockValuationReport = () => {
             const q = filters.searchQuery.toLowerCase();
             d = d.filter(r =>
                 (r.sku && r.sku.toLowerCase().includes(q)) ||
-                (r.item && r.item.toLowerCase().includes(q))
+                (r.item && r.item.toLowerCase().includes(q)) ||
+                (r.batchNumber && r.batchNumber.toLowerCase().includes(q))
             );
         }
         if (filters.dateFrom) {
@@ -213,7 +217,7 @@ const StockValuationReport = () => {
             >
                 <div>
                     <p style={{ margin: '0 0 6px', fontSize: 12, color: '#6b7280', fontWeight: 500 }}>{label}</p>
-                    <p style={{ margin: 0, fontSize: 22, fontWeight: 700, color: '#111827' }}>AED {Number(value).toLocaleString('en-AE', { minimumFractionDigits: 2 })}</p>
+                    <CurrencyAmount value={value} style={{ margin: 0, fontSize: 22, fontWeight: 700, color: '#111827' }} />
                     {sub && <p style={{ margin: '4px 0 0', fontSize: 11, color: '#9ca3af' }}>{sub}</p>}
                 </div>
                 <div style={{ color, opacity: 0.6 }}><FaArrowUp style={{ fontSize: 18 }} /></div>
@@ -345,10 +349,10 @@ const StockValuationReport = () => {
                         <div style={{ padding: 60, textAlign: 'center', color: '#9ca3af', fontSize: 14 }}>No valuation data found. Check your stock movements.</div>
                     ) : (
                         <div style={{ overflowX: 'auto' }}>
-                            <table style={{ width: '100%', minWidth: 900, borderCollapse: 'collapse', fontSize: 13 }}>
+                            <table style={{ width: '100%', minWidth: 980, borderCollapse: 'collapse', fontSize: 13 }}>
                                 <thead style={{ background: '#f9fafb' }}>
                                     <tr>
-                                        {['SKU', 'Item', 'Category', 'Department', 'Brand', 'Warehouse', 'Cost Method', 'Qty', 'Unit Cost', 'FIFO Cost', 'LIFO Cost', 'Stock Value'].map(h => (
+                                        {['SKU', 'Item', 'Category', 'Department', 'Brand', 'Warehouse', 'Batch No', 'Expiry', 'Cost Method', 'Qty', 'Unit Cost', 'FIFO Cost', 'LIFO Cost', 'Stock Value'].map(h => (
                                             <th key={h} style={{ padding: '8px 12px', textAlign: ['Qty', 'Unit Cost', 'FIFO Cost', 'LIFO Cost', 'Stock Value'].includes(h) ? 'right' : 'left', fontSize: 11, fontWeight: 600, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.05em', borderBottom: '1px solid #e5e7eb', whiteSpace: 'nowrap' }}>{h}</th>
                                         ))}
                                     </tr>
@@ -366,16 +370,18 @@ const StockValuationReport = () => {
                                                 <td style={{ padding: '10px 12px', color: '#6b7280' }}>{row.department || '-'}</td>
                                                 <td style={{ padding: '10px 12px', color: '#6b7280' }}>{row.brand || '-'}</td>
                                                 <td style={{ padding: '10px 12px', color: '#6b7280' }}>{row.warehouse}</td>
+                                                <td style={{ padding: '10px 12px', color: '#6b7280', fontFamily: 'monospace', fontSize: 12 }}>{row.batchNumber || '-'}</td>
+                                                <td style={{ padding: '10px 12px', color: '#6b7280' }}>{row.expiryDate || '-'}</td>
                                                 <td style={{ padding: '10px 12px' }}>
                                                     <span style={{ background: '#eff6ff', borderRadius: 4, padding: '2px 7px', fontSize: 11, color: '#3b82f6', fontWeight: 600 }}>
                                                         {row.costMethod ? row.costMethod.replace('_', ' ') : 'STANDARD'}
                                                     </span>
                                                 </td>
                                                 <td style={{ padding: '10px 12px', textAlign: 'right', fontWeight: 600, color: '#111827' }}>{qty.toFixed(0)}</td>
-                                                <td style={{ padding: '10px 12px', textAlign: 'right', color: '#6b7280' }}>AED {cost.toFixed(2)}</td>
-                                                <td style={{ padding: '10px 12px', textAlign: 'right', color: '#6b7280', fontSize: 12 }}>AED {Number(row.fifoUnitCost ?? cost).toFixed(2)}</td>
-                                                <td style={{ padding: '10px 12px', textAlign: 'right', color: '#6b7280', fontSize: 12 }}>AED {Number(row.lifoUnitCost ?? cost).toFixed(2)}</td>
-                                                <td style={{ padding: '10px 12px', textAlign: 'right', fontWeight: 700, color: '#F5A742' }}>AED {val.toLocaleString('en-AE', { minimumFractionDigits: 2 })}</td>
+                                                <td style={{ padding: '10px 12px', textAlign: 'right', color: '#6b7280' }}><CurrencyAmount value={cost} /></td>
+                                                <td style={{ padding: '10px 12px', textAlign: 'right', color: '#6b7280', fontSize: 12 }}><CurrencyAmount value={row.fifoUnitCost ?? cost} /></td>
+                                                <td style={{ padding: '10px 12px', textAlign: 'right', color: '#6b7280', fontSize: 12 }}><CurrencyAmount value={row.lifoUnitCost ?? cost} /></td>
+                                                <td style={{ padding: '10px 12px', textAlign: 'right', fontWeight: 700, color: '#F5A742' }}><CurrencyAmount value={val} /></td>
                                             </tr>
                                         );
                                     })}
@@ -388,7 +394,7 @@ const StockValuationReport = () => {
                     <div className="px-4 sm:px-5 py-4 bg-[#F5C742] flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
                         <div>
                             <p style={{ margin: 0, fontSize: 11, fontWeight: 600, color: '#78350f', textTransform: 'uppercase' }}>Total Stock Valuation</p>
-                            <p style={{ margin: 0, fontSize: 22, fontWeight: 800, color: '#1c1917' }}>AED {totalValuation.toLocaleString('en-AE', { minimumFractionDigits: 2 })}</p>
+                            <CurrencyAmount value={totalValuation} style={{ margin: 0, fontSize: 22, fontWeight: 800, color: '#1c1917' }} />
                         </div>
                         <span style={{ background: 'rgba(0,0,0,0.08)', borderRadius: 8, padding: '4px 12px', fontSize: 12, fontWeight: 600, color: '#1c1917' }}>Per Configured Cost Method</span>
                     </div>

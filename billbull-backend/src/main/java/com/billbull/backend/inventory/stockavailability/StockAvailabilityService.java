@@ -1,7 +1,13 @@
 package com.billbull.backend.inventory.stockavailability;
 
 import com.billbull.backend.inventory.product.Product;
+import com.billbull.backend.inventory.product.ProductPacking;
+import com.billbull.backend.inventory.product.ProductPackingRepository;
 import com.billbull.backend.inventory.product.ProductRepository;
+import com.billbull.backend.inventory.warehouse.Bin;
+import com.billbull.backend.inventory.warehouse.BinRepository;
+import com.billbull.backend.inventory.warehouse.BinStockResponse;
+import com.billbull.backend.inventory.warehouse.BinStockService;
 import com.billbull.backend.inventory.warehouse.WarehouseStockResponse;
 import com.billbull.backend.inventory.warehouse.WarehouseStockService;
 import com.billbull.backend.purchase.lpo.LpoItem;
@@ -9,8 +15,6 @@ import com.billbull.backend.purchase.lpo.LpoItemRepository;
 import com.billbull.backend.purchase.lpo.LpoStatus;
 import com.billbull.backend.purchase.grn.GrnRepository;
 import com.billbull.backend.purchase.grn.GrnSourceType;
-import org.springframework.cache.annotation.Cacheable;
-import org.springframework.cache.annotation.CacheEvict;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
@@ -24,23 +28,38 @@ import java.util.stream.Collectors;
 public class StockAvailabilityService {
 
     private final ProductRepository productRepository;
+    private final ProductPackingRepository productPackingRepository;
     private final WarehouseStockService warehouseStockService;
+    private final BinStockService binStockService;
+    private final BinRepository binRepository;
     private final LpoItemRepository lpoItemRepository;
     private final GrnRepository grnRepository;
 
     public StockAvailabilityService(
             ProductRepository productRepository,
+            ProductPackingRepository productPackingRepository,
             WarehouseStockService warehouseStockService,
+            BinStockService binStockService,
+            BinRepository binRepository,
             LpoItemRepository lpoItemRepository,
             GrnRepository grnRepository) {
         this.productRepository = productRepository;
+        this.productPackingRepository = productPackingRepository;
         this.warehouseStockService = warehouseStockService;
+        this.binStockService = binStockService;
+        this.binRepository = binRepository;
         this.lpoItemRepository = lpoItemRepository;
         this.grnRepository = grnRepository;
     }
 
-    @Cacheable(value = "stockAvailability", key = "#itemCode")
+
     public StockAvailabilityResponse getStockAvailability(String itemCode) {
+        return getStockAvailability(itemCode, null, null, null, null);
+    }
+
+
+    public StockAvailabilityResponse getStockAvailability(String itemCode, Long warehouseId, Long zoneId, Long locatorId,
+            Long binId) {
         // Return empty structured response instead of throwing Exception
         if (itemCode == null || itemCode.trim().isEmpty()) {
             return new StockAvailabilityResponse();
@@ -62,20 +81,7 @@ public class StockAvailabilityService {
         // 1. Fetch Location Stock data
         List<LocationStockDTO> locationStockDTOS = Collections.emptyList();
         try {
-            List<WarehouseStockResponse> warehouseStocks = warehouseStockService.getStockByProduct(itemCode);
-            locationStockDTOS = warehouseStocks.stream().map(ws -> {
-                LocationStockDTO dto = new LocationStockDTO();
-                dto.setLocationId(ws.getWarehouseId());
-                dto.setName(ws.getWarehouseName());
-                // Currently returning warehouse level logic from WarehouseStockService
-                dto.setType(LocationType.WAREHOUSE);
-                dto.setOnHand(ws.getQuantity());
-                dto.setReserved(ws.getReserved());
-                dto.setAvailable(ws.getAvailable());
-                dto.setUom(finalUom);
-                dto.setLastUpdated(LocalDateTime.now());
-                return dto;
-            }).collect(Collectors.toList());
+            locationStockDTOS = buildLocationStock(itemCode, product, finalUom, warehouseId, zoneId, locatorId, binId);
         } catch (Exception e) {
             // Log error, but don't fail the whole request
         }
@@ -84,6 +90,8 @@ public class StockAvailabilityService {
         List<IncomingLpoDTO> incomingLpoDTOS = Collections.emptyList();
         try {
             List<LpoStatus> activeStatuses = Arrays.asList(
+                    LpoStatus.DRAFT,
+                    LpoStatus.PENDING_APPROVAL,
                     LpoStatus.APPROVED,
                     LpoStatus.SENT_TO_VENDOR,
                     LpoStatus.PARTIALLY_RECEIVED);
@@ -106,8 +114,20 @@ public class StockAvailabilityService {
                                 (gi.getFocQty() != null ? gi.getFocQty() : 0))
                         .sum();
 
-                int totalOrdered = item.getQuantity() != null ? item.getQuantity() : 0;
-                int remaining = Math.max(0, totalOrdered - totalReceived);
+                int rawOrdered = item.getQuantity() != null ? item.getQuantity() : 0;
+
+                // Normalize LPO quantity to base unit using packing conversion
+                int baseOrdered = rawOrdered;
+                String itemUom = item.getUom();
+                if (itemUom != null && !itemUom.equalsIgnoreCase(finalUom)) {
+                    java.util.Optional<ProductPacking> packing =
+                            productPackingRepository.findByProductIdAndUnitName(product.getId(), itemUom);
+                    if (packing.isPresent() && packing.get().getConversion() != null) {
+                        baseOrdered = (int) Math.round(rawOrdered * packing.get().getConversion().doubleValue());
+                    }
+                }
+
+                int remaining = Math.max(0, baseOrdered - totalReceived);
 
                 if (remaining <= 0)
                     return null;
@@ -117,6 +137,7 @@ public class StockAvailabilityService {
                 dto.setExpectedDate(item.getLpo().getExpectedDeliveryDate());
                 dto.setQuantity(remaining);
                 dto.setSupplierName(item.getLpo().getVendorName());
+                dto.setUom(finalUom);
                 return dto;
             })
                     .filter(java.util.Objects::nonNull)
@@ -128,8 +149,70 @@ public class StockAvailabilityService {
         return new StockAvailabilityResponse(locationStockDTOS, incomingLpoDTOS);
     }
 
-    @CacheEvict(value = "stockAvailability", allEntries = true)
-    public void clearCache() {
-        // Method for manual cache eviction or trigger from other services
+    private List<LocationStockDTO> buildLocationStock(String itemCode, Product product, String uom, Long warehouseId,
+            Long zoneId, Long locatorId, Long binId) {
+        if (binId != null) {
+            return buildBinStock(product, uom, warehouseId, zoneId, locatorId, binId);
+        }
+
+        List<WarehouseStockResponse> warehouseStocks = warehouseStockService.getStockByProduct(itemCode);
+        return warehouseStocks.stream()
+                .filter(stock -> warehouseId == null || warehouseId.equals(stock.getWarehouseId()))
+                .map(stock -> toWarehouseLocation(stock, uom))
+                .collect(Collectors.toList());
     }
+
+    private List<LocationStockDTO> buildBinStock(Product product, String uom, Long warehouseId, Long zoneId, Long locatorId,
+            Long binId) {
+        Bin bin = binRepository.findByIdEager(binId).orElse(null);
+        BinStockResponse binStock = binStockService.getStockByBin(binId).stream()
+                .filter(stock -> product.getId().equals(stock.getId()))
+                .findFirst()
+                .orElse(null);
+
+        int onHand = binStock != null && binStock.getQuantity() != null ? binStock.getQuantity() : 0;
+        int reserved = binStock != null && binStock.getReservedQuantity() != null ? binStock.getReservedQuantity() : 0;
+        String locationName = buildScopedLocationName(bin, warehouseId, zoneId, locatorId);
+
+        LocationStockDTO dto = new LocationStockDTO();
+        dto.setLocationId(binId);
+        dto.setName(locationName);
+        dto.setType(LocationType.BIN);
+        dto.setOnHand(onHand);
+        dto.setReserved(reserved);
+        dto.setAvailable(onHand - reserved);
+        dto.setUom(uom);
+        dto.setLastUpdated(LocalDateTime.now());
+        return List.of(dto);
+    }
+
+    private LocationStockDTO toWarehouseLocation(WarehouseStockResponse stock, String uom) {
+        LocationStockDTO dto = new LocationStockDTO();
+        dto.setLocationId(stock.getWarehouseId());
+        dto.setName(stock.getWarehouseName());
+        dto.setType(LocationType.WAREHOUSE);
+        dto.setOnHand(stock.getQuantity());
+        dto.setReserved(stock.getReserved());
+        dto.setAvailable(stock.getAvailable());
+        dto.setUom(uom);
+        dto.setLastUpdated(LocalDateTime.now());
+        return dto;
+    }
+
+    private String buildScopedLocationName(Bin bin, Long warehouseId, Long zoneId, Long locatorId) {
+        if (bin != null) {
+            return bin.getCode() != null && !bin.getCode().isBlank() ? bin.getCode() : bin.getName();
+        }
+        if (locatorId != null) {
+            return "Selected Locator";
+        }
+        if (zoneId != null) {
+            return "Selected Zone";
+        }
+        if (warehouseId != null) {
+            return "Selected Warehouse";
+        }
+        return "Selected Bin";
+    }
+
 }

@@ -1,6 +1,7 @@
 package com.billbull.backend.inventory.warehouse;
 
 import com.billbull.backend.common.BaseEntity;
+import com.billbull.backend.settings.branch.Branch;
 
 import jakarta.persistence.*;
 
@@ -28,6 +29,11 @@ public class Warehouse extends BaseEntity {
     private Integer capacity;
 
     private Integer utilization;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "branch_id")
+    @com.fasterxml.jackson.annotation.JsonIgnore
+    private Branch branch;
 
     // ===== Getters & Setters =====
 
@@ -85,5 +91,13 @@ public class Warehouse extends BaseEntity {
 
     public void setUtilization(Integer utilization) {
         this.utilization = utilization;
+    }
+
+    public Branch getBranch() {
+        return branch;
+    }
+
+    public void setBranch(Branch branch) {
+        this.branch = branch;
     }
 }

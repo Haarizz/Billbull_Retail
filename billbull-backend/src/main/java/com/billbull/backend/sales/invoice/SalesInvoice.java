@@ -35,6 +35,9 @@ public class SalesInvoice {
     private String paymentTerms;
     private String salesperson;
     private String branch;
+    private Long branchId;
+    private String branchName;
+    private String branchCode;
 
     private Double subTotal;
     private Double taxTotal;
@@ -42,6 +45,7 @@ public class SalesInvoice {
 
     private Double amountPaid;
     private Double balance;
+    private Double billDiscount;
 
     /**
      * Customer's credit limit (copied from Customer record at invoice creation, or
@@ -65,6 +69,12 @@ public class SalesInvoice {
 
     @Enumerated(EnumType.STRING)
     private DeliveryStatus deliveryStatus = DeliveryStatus.PENDING;
+
+    @Transient
+    private Boolean requirePickingNote = Boolean.TRUE;
+
+    @Transient
+    private String requestedFulfillmentType = "Picking";
 
     @OneToMany(mappedBy = "salesInvoice", cascade = CascadeType.ALL, orphanRemoval = true)
     @JsonManagedReference
@@ -176,6 +186,30 @@ public class SalesInvoice {
         this.branch = branch;
     }
 
+    public Long getBranchId() {
+        return branchId;
+    }
+
+    public void setBranchId(Long branchId) {
+        this.branchId = branchId;
+    }
+
+    public String getBranchName() {
+        return branchName;
+    }
+
+    public void setBranchName(String branchName) {
+        this.branchName = branchName;
+    }
+
+    public String getBranchCode() {
+        return branchCode;
+    }
+
+    public void setBranchCode(String branchCode) {
+        this.branchCode = branchCode;
+    }
+
     public Double getSubTotal() {
         return subTotal;
     }
@@ -214,6 +248,14 @@ public class SalesInvoice {
 
     public void setBalance(Double balance) {
         this.balance = balance;
+    }
+
+    public Double getBillDiscount() {
+        return billDiscount;
+    }
+
+    public void setBillDiscount(Double billDiscount) {
+        this.billDiscount = billDiscount;
     }
 
     public Double getCreditLimit() {
@@ -270,5 +312,21 @@ public class SalesInvoice {
 
     public void setDeliveryStatus(DeliveryStatus deliveryStatus) {
         this.deliveryStatus = deliveryStatus;
+    }
+
+    public Boolean getRequirePickingNote() {
+        return requirePickingNote;
+    }
+
+    public void setRequirePickingNote(Boolean requirePickingNote) {
+        this.requirePickingNote = requirePickingNote;
+    }
+
+    public String getRequestedFulfillmentType() {
+        return requestedFulfillmentType;
+    }
+
+    public void setRequestedFulfillmentType(String requestedFulfillmentType) {
+        this.requestedFulfillmentType = requestedFulfillmentType;
     }
 }

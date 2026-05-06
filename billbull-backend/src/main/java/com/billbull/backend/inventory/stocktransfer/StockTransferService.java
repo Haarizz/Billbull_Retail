@@ -1,9 +1,16 @@
 package com.billbull.backend.inventory.stocktransfer;
 
+import com.billbull.backend.financials.generalledger.postingengine.PostingEngineService;
 import com.billbull.backend.inventory.product.Product;
+import com.billbull.backend.inventory.product.ProductPricing;
+import com.billbull.backend.inventory.product.ProductPricingRepository;
 import com.billbull.backend.inventory.product.ProductRepository;
-import com.billbull.backend.inventory.warehouse.*;
+import com.billbull.backend.inventory.warehouse.BinRepository;
+import com.billbull.backend.inventory.warehouse.LocatorRepository;
+import com.billbull.backend.inventory.warehouse.Warehouse;
+import com.billbull.backend.inventory.warehouse.WarehouseRepository;
 import com.billbull.backend.inventory.warehouse.WarehouseStockService;
+import com.billbull.backend.inventory.warehouse.ZoneRepository;
 import com.billbull.backend.purchase.stockmovement.StockMovement;
 import com.billbull.backend.purchase.stockmovement.StockMovementRepository;
 import com.billbull.backend.purchase.stockmovement.StockSourceType;
@@ -13,38 +20,50 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.time.LocalDate;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Objects;
 
 @Service
 @Transactional
 public class StockTransferService {
 
+    private static final BigDecimal ZERO = BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP);
+
     private final StockTransferRepository repository;
     private final ProductRepository productRepository;
+    private final ProductPricingRepository productPricingRepository;
     private final WarehouseRepository warehouseRepository;
     private final ZoneRepository zoneRepository;
     private final LocatorRepository locatorRepository;
     private final BinRepository binRepository;
     private final StockMovementRepository stockMovementRepository;
-    private final WarehouseStockService stockService;
+    private final WarehouseStockService warehouseStockService;
+    private final PostingEngineService postingEngineService;
 
-    public StockTransferService(StockTransferRepository repository,
+    public StockTransferService(
+            StockTransferRepository repository,
             ProductRepository productRepository,
+            ProductPricingRepository productPricingRepository,
             WarehouseRepository warehouseRepository,
             ZoneRepository zoneRepository,
             LocatorRepository locatorRepository,
             BinRepository binRepository,
             StockMovementRepository stockMovementRepository,
-            WarehouseStockService stockService) {
+            WarehouseStockService warehouseStockService,
+            PostingEngineService postingEngineService) {
         this.repository = repository;
         this.productRepository = productRepository;
+        this.productPricingRepository = productPricingRepository;
         this.warehouseRepository = warehouseRepository;
         this.zoneRepository = zoneRepository;
         this.locatorRepository = locatorRepository;
         this.binRepository = binRepository;
         this.stockMovementRepository = stockMovementRepository;
-        this.stockService = stockService;
+        this.warehouseStockService = warehouseStockService;
+        this.postingEngineService = postingEngineService;
     }
 
     public List<StockTransferResponse> list() {
@@ -53,6 +72,30 @@ public class StockTransferService {
 
     public StockTransferResponse get(Long id) {
         return toResponse(getEntity(id));
+    }
+
+    public StockTransferCostPreviewResponse getCostPreview(Long warehouseId, List<Long> productIds) {
+        if (warehouseId == null) {
+            throw new IllegalArgumentException("Warehouse is required to calculate stock transfer cost.");
+        }
+
+        List<Long> uniqueProductIds = productIds == null
+                ? List.of()
+                : new LinkedHashSet<>(productIds.stream().filter(Objects::nonNull).toList()).stream().toList();
+
+        StockTransferCostPreviewResponse response = new StockTransferCostPreviewResponse();
+        response.warehouseId = warehouseId;
+        response.items = uniqueProductIds.stream().map(productId -> {
+            UnitCostResolution resolution = resolveUnitCost(productId, warehouseId);
+            StockTransferCostPreviewResponse.StockTransferCostItemResponse item =
+                    new StockTransferCostPreviewResponse.StockTransferCostItemResponse();
+            item.productId = productId;
+            item.unitCost = resolution.unitCost;
+            item.costSource = resolution.source;
+            item.costAvailable = resolution.unitCost != null && resolution.unitCost.compareTo(BigDecimal.ZERO) > 0;
+            return item;
+        }).toList();
+        return response;
     }
 
     public StockTransferResponse create(StockTransferRequest req) {
@@ -98,8 +141,8 @@ public class StockTransferService {
     }
 
     @Caching(evict = {
-        @CacheEvict(value = "stockAvailability", allEntries = true),
-        @CacheEvict(value = "productList", allEntries = true)
+            @CacheEvict(value = "stockAvailability", allEntries = true),
+            @CacheEvict(value = "productList", allEntries = true)
     })
     public StockTransferResponse markSent(Long id) {
         StockTransfer st = getEntity(id);
@@ -107,36 +150,39 @@ public class StockTransferService {
             throw new IllegalStateException("Transfer is either already processed or cancelled");
         }
 
-        // Logic: Create negative stock movements for source warehouse/bin
+        freezeItemCostsForSend(st);
+        updateTransferTotals(st);
+
         for (StockTransferItem item : st.getItems()) {
-            // Rule: Server-side validation
-            BigDecimal available = stockService.getAvailableStock(st.getFromWarehouse().getId(),
+            BigDecimal available = warehouseStockService.getAvailableStock(
+                    st.getFromWarehouse().getId(),
                     item.getProduct().getId());
             if (available.compareTo(BigDecimal.valueOf(item.getQuantity())) < 0) {
                 throw new IllegalStateException("Insufficient stock for product " + item.getProduct().getName());
             }
 
-            StockMovement sm = new StockMovement();
-            sm.setSourceType(StockSourceType.STOCK_TRANSFER_OUT);
-            sm.setSourceId(st.getId());
-            sm.setProductId(item.getProduct().getId());
-            sm.setWarehouseId(st.getFromWarehouse().getId());
-            sm.setBinId(st.getFromBin() != null ? st.getFromBin().getId() : null);
-            sm.setQuantity(-item.getQuantity()); // Deduct
-            sm.setMovementDate(LocalDate.now());
-            sm.setReferenceNo(st.getTransferNo());
-            sm.setBatchNumber(item.getBatchNumber());
-            stockMovementRepository.save(sm);
+            stockMovementRepository.save(buildStockMovement(
+                    StockSourceType.STOCK_TRANSFER_OUT,
+                    st,
+                    item,
+                    st.getFromWarehouse(),
+                    st.getFromZone() != null ? st.getFromZone().getId() : null,
+                    st.getFromLocator() != null ? st.getFromLocator().getId() : null,
+                    st.getFromBin() != null ? st.getFromBin().getId() : null,
+                    -item.getQuantity(),
+                    item.getUnitCostAtSend()));
         }
 
         st.setStatus(StockTransferStatus.SENT);
         st.setDispatchDate(LocalDate.now());
-        return toResponse(repository.save(st));
+        StockTransfer saved = repository.save(st);
+        postingEngineService.createJournalFromStockTransferSent(saved);
+        return toResponse(saved);
     }
 
     @Caching(evict = {
-        @CacheEvict(value = "stockAvailability", allEntries = true),
-        @CacheEvict(value = "productList", allEntries = true)
+            @CacheEvict(value = "stockAvailability", allEntries = true),
+            @CacheEvict(value = "productList", allEntries = true)
     })
     public StockTransferResponse markReceived(Long id) {
         StockTransfer st = getEntity(id);
@@ -144,27 +190,37 @@ public class StockTransferService {
             throw new IllegalStateException("Only SENT transfers can be received. Current status: " + st.getStatus());
         }
 
-        // Logic: Create positive stock movements for destination warehouse/bin
-        for (StockTransferItem item : st.getItems()) {
-            StockMovement sm = new StockMovement();
-            sm.setSourceType(StockSourceType.STOCK_TRANSFER_IN);
-            sm.setSourceId(st.getId());
-            sm.setProductId(item.getProduct().getId());
-            sm.setWarehouseId(st.getToWarehouse().getId());
-            sm.setBinId(st.getToBin() != null ? st.getToBin().getId() : null);
-            sm.setQuantity(item.getQuantity()); // Add
-            sm.setMovementDate(LocalDate.now());
-            sm.setReferenceNo(st.getTransferNo());
-            sm.setBatchNumber(item.getBatchNumber());
-            stockMovementRepository.save(sm);
+        if (st.getItems().stream().anyMatch(item -> item.getUnitCostAtSend() == null || item.getLineValue() == null)) {
+            freezeItemCostsForSend(st);
+        }
+        allocateChargesForReceipt(st);
+        updateTransferTotals(st);
 
-            // Set received qty (default to requested qty)
+        for (StockTransferItem item : st.getItems()) {
+            BigDecimal receivedLineValue = nvl(item.getLineValue()).add(nvl(item.getAllocatedCharge()));
+            BigDecimal receivedUnitCost = item.getQuantity() != null && item.getQuantity() > 0
+                    ? receivedLineValue.divide(BigDecimal.valueOf(item.getQuantity()), 4, RoundingMode.HALF_UP)
+                    : item.getUnitCostAtSend();
+
+            stockMovementRepository.save(buildStockMovement(
+                    StockSourceType.STOCK_TRANSFER_IN,
+                    st,
+                    item,
+                    st.getToWarehouse(),
+                    st.getToZone() != null ? st.getToZone().getId() : null,
+                    st.getToLocator() != null ? st.getToLocator().getId() : null,
+                    st.getToBin() != null ? st.getToBin().getId() : null,
+                    item.getQuantity(),
+                    receivedUnitCost));
+
             item.setReceivedQty(item.getQuantity());
         }
 
         st.setStatus(StockTransferStatus.RECEIVED);
         st.setArrivalDate(LocalDate.now());
-        return toResponse(repository.save(st));
+        StockTransfer saved = repository.save(st);
+        postingEngineService.createJournalFromStockTransferReceived(saved);
+        return toResponse(saved);
     }
 
     private StockTransfer getEntity(Long id) {
@@ -181,6 +237,10 @@ public class StockTransferService {
         st.setTransportMode(req.transportMode);
         st.setVehicleNo(req.vehicleNo);
         st.setDriverName(req.driverName);
+        st.setDispatchDate(req.dispatchDate);
+        st.setArrivalDate(req.arrivalDate);
+        st.setTransportCharge(currency(req.transportCharge));
+        st.setAdditionalCharges(currency(req.additionalCharges));
 
         if (req.fromWarehouseId != null) {
             st.setFromWarehouse(warehouseRepository.findById(req.fromWarehouseId).orElse(null));
@@ -218,11 +278,141 @@ public class StockTransferService {
                 item.setProduct(product);
                 item.setBatchNumber(i.batchNumber);
                 item.setQuantity(i.quantity);
-                item.setReceivedQty(0); // Initial
+                item.setReceivedQty(0);
                 item.setUom(i.uom);
+                item.setAllocatedCharge(ZERO);
                 st.getItems().add(item);
             }
         }
+
+        updateTransferTotals(st);
+    }
+
+    private void freezeItemCostsForSend(StockTransfer st) {
+        if (st.getFromWarehouse() == null) {
+            throw new IllegalStateException("Source warehouse is required before sending the transfer.");
+        }
+
+        for (StockTransferItem item : st.getItems()) {
+            if (item.getQuantity() == null || item.getQuantity() <= 0) {
+                throw new IllegalStateException("Transfer quantity must be greater than zero for " + item.getProduct().getName());
+            }
+
+            UnitCostResolution resolution = resolveUnitCost(item.getProduct().getId(), st.getFromWarehouse().getId());
+            if (resolution.unitCost == null || resolution.unitCost.compareTo(BigDecimal.ZERO) <= 0) {
+                throw new IllegalStateException(
+                        "No source cost available for product " + item.getProduct().getCode()
+                                + ". Complete a costed receipt first or set Product Pricing cost.");
+            }
+
+            BigDecimal lineValue = resolution.unitCost.multiply(BigDecimal.valueOf(item.getQuantity() != null ? item.getQuantity() : 0));
+            item.setUnitCostAtSend(resolution.unitCost);
+            item.setLineValue(currency(lineValue));
+            item.setAllocatedCharge(ZERO);
+        }
+    }
+
+    private void allocateChargesForReceipt(StockTransfer st) {
+        BigDecimal totalCharges = calculateTotalCharges(st);
+        BigDecimal totalInventoryValue = calculateInventoryValue(st.getItems());
+
+        if (totalCharges.compareTo(BigDecimal.ZERO) <= 0) {
+            st.getItems().forEach(item -> item.setAllocatedCharge(ZERO));
+            return;
+        }
+
+        int totalQuantity = st.getItems().stream()
+                .map(StockTransferItem::getQuantity)
+                .filter(Objects::nonNull)
+                .mapToInt(Integer::intValue)
+                .sum();
+
+        BigDecimal allocatedSoFar = BigDecimal.ZERO;
+        for (int index = 0; index < st.getItems().size(); index++) {
+            StockTransferItem item = st.getItems().get(index);
+            BigDecimal allocation;
+
+            if (index == st.getItems().size() - 1) {
+                allocation = totalCharges.subtract(allocatedSoFar);
+            } else if (totalInventoryValue.compareTo(BigDecimal.ZERO) > 0 && item.getLineValue() != null) {
+                allocation = totalCharges
+                        .multiply(item.getLineValue())
+                        .divide(totalInventoryValue, 2, RoundingMode.HALF_UP);
+            } else if (totalQuantity > 0 && item.getQuantity() != null && item.getQuantity() > 0) {
+                allocation = totalCharges
+                        .multiply(BigDecimal.valueOf(item.getQuantity()))
+                        .divide(BigDecimal.valueOf(totalQuantity), 2, RoundingMode.HALF_UP);
+            } else {
+                allocation = ZERO;
+            }
+
+            allocation = currency(allocation);
+            item.setAllocatedCharge(allocation);
+            allocatedSoFar = allocatedSoFar.add(allocation);
+        }
+    }
+
+    private void updateTransferTotals(StockTransfer st) {
+        BigDecimal inventoryValue = calculateInventoryValue(st.getItems());
+        BigDecimal totalTransferValue = inventoryValue.add(calculateTotalCharges(st));
+        st.setInventoryValue(currency(inventoryValue));
+        st.setTotalTransferValue(currency(totalTransferValue));
+    }
+
+    private BigDecimal calculateInventoryValue(List<StockTransferItem> items) {
+        return currency(items.stream()
+                .map(StockTransferItem::getLineValue)
+                .filter(Objects::nonNull)
+                .reduce(BigDecimal.ZERO, BigDecimal::add));
+    }
+
+    private BigDecimal calculateTotalCharges(StockTransfer st) {
+        return currency(nvl(st.getTransportCharge()).add(nvl(st.getAdditionalCharges())));
+    }
+
+    private UnitCostResolution resolveUnitCost(Long productId, Long warehouseId) {
+        BigDecimal weightedAverageCost = stockMovementRepository.getWeightedAverageCost(productId, warehouseId);
+        if (weightedAverageCost != null && weightedAverageCost.compareTo(BigDecimal.ZERO) > 0) {
+            return new UnitCostResolution(weightedAverageCost.setScale(4, RoundingMode.HALF_UP), "WEIGHTED_AVG");
+        }
+
+        BigDecimal productCost = productPricingRepository.findByProductId(productId)
+                .map(ProductPricing::getCost)
+                .filter(cost -> cost != null && cost.compareTo(BigDecimal.ZERO) > 0)
+                .map(cost -> cost.setScale(4, RoundingMode.HALF_UP))
+                .orElse(null);
+
+        if (productCost != null) {
+            return new UnitCostResolution(productCost, "PRODUCT_COST");
+        }
+
+        return new UnitCostResolution(null, "MISSING");
+    }
+
+    private StockMovement buildStockMovement(
+            StockSourceType sourceType,
+            StockTransfer transfer,
+            StockTransferItem item,
+            Warehouse warehouse,
+            Long zoneId,
+            Long locatorId,
+            Long binId,
+            Integer quantity,
+            BigDecimal unitCost) {
+        StockMovement movement = new StockMovement();
+        movement.setSourceType(sourceType);
+        movement.setSourceId(transfer.getId());
+        movement.setProductId(item.getProduct().getId());
+        movement.setWarehouseId(warehouse != null ? warehouse.getId() : null);
+        movement.setZoneId(zoneId);
+        movement.setLocatorId(locatorId);
+        movement.setBinId(binId);
+        movement.setQuantity(quantity);
+        movement.setMovementDate(LocalDate.now());
+        movement.setReferenceNo(transfer.getTransferNo());
+        movement.setBatchNumber(item.getBatchNumber());
+        movement.setUnitCost(unitCost != null ? unitCost.setScale(4, RoundingMode.HALF_UP) : null);
+        return movement;
     }
 
     private StockTransferResponse toResponse(StockTransfer st) {
@@ -240,6 +430,10 @@ public class StockTransferService {
         resp.driverName = st.getDriverName();
         resp.dispatchDate = st.getDispatchDate();
         resp.arrivalDate = st.getArrivalDate();
+        resp.transportCharge = currency(st.getTransportCharge());
+        resp.additionalCharges = currency(st.getAdditionalCharges());
+        resp.inventoryValue = currency(st.getInventoryValue());
+        resp.totalTransferValue = currency(st.getTotalTransferValue());
 
         if (st.getFromWarehouse() != null) {
             resp.fromWarehouseId = st.getFromWarehouse().getId();
@@ -285,9 +479,37 @@ public class StockTransferService {
             ir.quantity = i.getQuantity();
             ir.receivedQty = i.getReceivedQty();
             ir.uom = i.getUom();
+            ir.unitCostAtSend = i.getUnitCostAtSend() != null ? i.getUnitCostAtSend().setScale(4, RoundingMode.HALF_UP) : null;
+            ir.lineValue = currencyOrNull(i.getLineValue());
+            ir.allocatedCharge = currencyOrNull(i.getAllocatedCharge());
+            ir.receivedLineValue = i.getLineValue() != null || i.getAllocatedCharge() != null
+                    ? currency(nvl(i.getLineValue()).add(nvl(i.getAllocatedCharge())))
+                    : null;
             return ir;
         }).toList();
 
         return resp;
+    }
+
+    private BigDecimal currency(BigDecimal value) {
+        return (value != null ? value : BigDecimal.ZERO).setScale(2, RoundingMode.HALF_UP);
+    }
+
+    private BigDecimal currencyOrNull(BigDecimal value) {
+        return value != null ? value.setScale(2, RoundingMode.HALF_UP) : null;
+    }
+
+    private BigDecimal nvl(BigDecimal value) {
+        return value != null ? value : BigDecimal.ZERO;
+    }
+
+    private static final class UnitCostResolution {
+        private final BigDecimal unitCost;
+        private final String source;
+
+        private UnitCostResolution(BigDecimal unitCost, String source) {
+            this.unitCost = unitCost;
+            this.source = source;
+        }
     }
 }

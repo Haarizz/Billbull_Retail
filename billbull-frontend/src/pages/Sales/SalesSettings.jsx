@@ -14,7 +14,7 @@ const SalesSettings = () => {
     // Settings state
     const [stockCheckRequired, setStockCheckRequired] = useState(false);
     const [creditLimitPolicy, setCreditLimitPolicy] = useState('NO_IMPACT');
-    const [salesMode, setSalesMode] = useState('WORKFLOW_DRIVEN');
+    const [salesMode, setSalesMode] = useState('FAST_SALE');
 
     // Load settings on mount
     useEffect(() => {
@@ -310,7 +310,7 @@ const SalesSettings = () => {
                                         )}
                                     </div>
                                     <p className="text-xs text-slate-500 leading-relaxed">
-                                        Full pipeline with manual steps. Delivery Notes are created in Draft and must be dispatched then delivered manually. Stock is deducted and revenue is recognised only when the Delivery Note is marked Delivered.
+                                        Full pipeline with manual steps. Sales Invoices auto-generate Draft <strong>Picking Lists</strong>, and warehouse staff complete dispatch manually from the Picking and Delivery Note workflow. Stock is deducted and revenue is recognised only when the Delivery Note is marked Delivered.
                                     </p>
                                 </div>
                             </div>
@@ -334,13 +334,13 @@ const SalesSettings = () => {
                                         )}
                                     </div>
                                     <p className="text-xs text-slate-500 leading-relaxed">
-                                        Instant sale mode. When a Sales Invoice is created and posted, the system automatically creates, dispatches, and delivers the Delivery Note in one atomic step — deducting stock and recognising revenue immediately.
+                                        Instant sale mode. When a Sales Invoice is created and posted, the system automatically creates a <strong>Picking List</strong>, dispatches it, and marks it delivered in one atomic step — deducting stock and recognising revenue immediately.
                                     </p>
                                     {salesMode === 'FAST_SALE' && (
                                         <div className="mt-2 flex items-start gap-2 bg-amber-100 border border-amber-200 rounded-lg px-3 py-2">
                                             <AlertTriangle size={12} className="text-amber-600 mt-0.5 shrink-0" />
                                             <p className="text-[11px] text-amber-700 leading-relaxed">
-                                                <strong>Active:</strong> Every new invoice will auto-complete delivery on posting. Ensure each line item has a warehouse assigned and sufficient stock. Invoices with missing warehouses or insufficient stock will be blocked.
+                                                <strong>Active:</strong> Every new invoice will auto-generate a Picking note and auto-complete delivery on posting. Ensure each line item has a warehouse assigned and sufficient stock. Invoices with missing warehouses or insufficient stock will be blocked.
                                             </p>
                                         </div>
                                     )}

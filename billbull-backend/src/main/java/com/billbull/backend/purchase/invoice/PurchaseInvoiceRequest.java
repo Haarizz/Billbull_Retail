@@ -18,6 +18,9 @@ public class PurchaseInvoiceRequest {
 
 	private String sourceType;
 	private String referenceNo;
+	private Long branchId;
+	private String branchName;
+	private String branchCode;
 	private String warehouseName;
 	private Long warehouseId;
 	private Long zoneId;
@@ -100,6 +103,30 @@ public class PurchaseInvoiceRequest {
 
 	public void setReferenceNo(String referenceNo) {
 		this.referenceNo = referenceNo;
+	}
+
+	public Long getBranchId() {
+		return branchId;
+	}
+
+	public void setBranchId(Long branchId) {
+		this.branchId = branchId;
+	}
+
+	public String getBranchName() {
+		return branchName;
+	}
+
+	public void setBranchName(String branchName) {
+		this.branchName = branchName;
+	}
+
+	public String getBranchCode() {
+		return branchCode;
+	}
+
+	public void setBranchCode(String branchCode) {
+		this.branchCode = branchCode;
 	}
 
 	public String getWarehouseName() {

@@ -8,6 +8,27 @@ import {
   Globe, Phone, Briefcase, FileUp, X, Loader2, Check,
   ArrowRight, ChevronRight, CreditCard, Banknote, RefreshCw
 } from 'lucide-react';
+import StatementPrintPreview from '../../../components/StatementPrintPreview';
+import SearchableDropdown from '../../../components/SearchableDropdown';
+import ExportDropdown from '../../../components/common/ExportDropdown';
+import { exportToExcel, exportToPDF } from '../../../utils/exportUtils';
+import { generateSOAFilename } from '../../../utils/filenameUtils';
+import { usePrintDocument } from '../../../hooks/usePrintDocument';
+import CurrencyAmount from '../../../components/CurrencyAmount';
+
+// ==========================================
+// 1. MOCK DATA & CONFIGURATION
+// ==========================================
+
+const VENDOR_COLUMNS = [
+  { header: 'Code', key: 'code', width: 10 },
+  { header: 'Name', key: 'name', width: 25 },
+  { header: 'Email', key: 'email', width: 20 },
+  { header: 'Phone', key: 'phone', width: 15 },
+  { header: 'Category', key: 'category', width: 15 },
+  { header: 'Status', key: 'status', width: 12 },
+  { header: 'Payable', key: 'balance', width: 15 }
+];
 
 // API IMPORTS
 import {
@@ -18,36 +39,24 @@ import {
   deleteVendor
 } from "../../../api/vendorsApi";
 import { fetchStatementOfAccount } from '../../../api/financialsApi';
-
-// ==========================================
-// MOCK DATA (Kept for non-connected UI parts)
-// ==========================================
-
-// NOTE: initialVendors removed in favor of API data.
-
-const mockPayments = [
-  { id: 1, voucher: 'PV-2024-120', date: '2024-12-10', vendor: 'Al Mansoori Trading LLC', amount: '8,450 AED', method: 'Bank Transfer', ref: 'TRF-2024-1210', invoices: 'INV-2024-001', processedBy: 'Finance Manager' },
-  { id: 2, voucher: 'PV-2024-119', date: '2024-12-09', vendor: 'Dubai Fresh Foods', amount: '15,600 AED', method: 'Cheque', ref: 'CHQ-891234', invoices: 'INV-2024-003', processedBy: 'Accounts Officer' },
-];
-
-const mockStatement = [
-  { date: '2024-01-01', type: 'Opening', ref: 'OB-2024', desc: 'Opening Balance', debit: '-', credit: '-', balance: '5,200 AED' },
-  { date: '2024-11-15', type: 'Purchase', ref: 'INV-2024-001', desc: 'Purchase Invoice', debit: '8,450 AED', credit: '-', balance: '13,650 AED' },
-  { date: '2024-11-18', type: 'Payment', ref: 'PV-2024-045', desc: 'Payment Voucher - Bank Transfer', debit: '-', credit: '5,200 AED', balance: '8,450 AED' },
-  { date: '2024-11-20', type: 'Purchase', ref: 'INV-2024-002', desc: 'Purchase Invoice', debit: '10,000 AED', credit: '-', balance: '18,450 AED' },
-];
-
-
+import { useCompany } from '../../../context/CompanyContext';
+import {
+  formatCurrencyDisplay,
+  getCountryOptions,
+  getCurrencyOptions,
+  normalizeCountryValue,
+  normalizeCurrencyValue,
+  resolveCurrencyDisplayCode,
+  withFallbackOption
+} from '../../../utils/countryCurrencyOptions';
 
 // --- DROPDOWN OPTIONS ---
 const vendorStatusOptions = ["Active", "On Hold", "Blocked"];
 const vendorGroupOptions = ["Local Supplier", "International Supplier", "Service Provider"];
 const vendorTypeOptions = ["Manufacturer", "Distributor", "Wholesaler", "Retailer"];
 const categoryOptions = ["Food & Beverage", "Packaging", "Equipment", "Services"];
-const countryOptions = ["United Arab Emirates", "Saudi Arabia", "United States", "United Kingdom", "India"];
 const communicationOptions = ["Email", "Phone", "WhatsApp"];
 const priorityOptions = ["P1 - Critical", "P2 - High", "P3 - Normal"];
-const currencyOptions = ["AED - UAE Dirham", "USD - US Dollar", "EUR - Euro", "GBP - British Pound"];
 const paymentTermsOptions = ["Cash on Delivery", "Net 7 Days", "Net 15 Days", "Net 30 Days", "Net 60 Days"];
 const balanceTypeOptions = ["Payable (We owe vendor)", "Receivable (Vendor owes us)"];
 const paymentPrefOptions = ["Bank Transfer", "Cheque", "Cash", "Card Payment"];
@@ -162,8 +171,11 @@ const RenderStars = ({ rating }) => (
 // NEW IMPORTS FOR PAYMENT MODULE
 import { getPostedInvoicesForPayment } from '../../../api/purchaseInvoiceApi';
 import { createPaymentVoucher, getPaymentVouchers, updateVoucherStatus } from '../../../api/paymentApi';
+import { getBankAccounts } from '../../../api/ledgerApi';
 
 const PayInvoices = ({ vendors, initialVendor }) => {
+  const { company } = useCompany();
+  const currency = resolveCurrencyDisplayCode(company || {});
   // State
   const [selectedVendor, setSelectedVendor] = useState(null);
   const [paymentDate, setPaymentDate] = useState(new Date().toISOString().split('T')[0]);
@@ -176,6 +188,8 @@ const PayInvoices = ({ vendors, initialVendor }) => {
 
   // Payment Form State
   const [paymentMethod, setPaymentMethod] = useState('Cash');
+  const [bankAccount, setBankAccount] = useState('');
+  const [bankAccounts, setBankAccounts] = useState([]);
   const [reference, setReference] = useState('');
   const [notes, setNotes] = useState('');
   const [chequeDate, setChequeDate] = useState('');
@@ -192,6 +206,11 @@ const PayInvoices = ({ vendors, initialVendor }) => {
       setSelectedVendor(initialVendor);
     }
   }, [initialVendor]);
+
+  // Load bank accounts on mount
+  useEffect(() => {
+    getBankAccounts().then(data => setBankAccounts(Array.isArray(data) ? data : [])).catch(() => {});
+  }, []);
 
   // Load History
   useEffect(() => {
@@ -392,6 +411,7 @@ const PayInvoices = ({ vendors, initialVendor }) => {
           invoiceId: isOpeningBalance ? null : invId,
           notes: isOpeningBalance ? `Opening Balance Payment${notes ? ': ' + notes : ''}` : notes,
           chequeDate: paymentMethod === 'Cheque' ? chequeDate : null,
+          bankAccount: paymentMethod !== 'Cash' ? bankAccount : null,
         };
         const saved = await createPaymentVoucher(payload);
         if (saved && saved.id) {
@@ -408,6 +428,7 @@ const PayInvoices = ({ vendors, initialVendor }) => {
       setSettleAmounts({});
       setReceivedAmount('');
       setChequeDate('');
+      setBankAccount('');
 
       fetchInvoices();
       fetchHistory();
@@ -451,7 +472,7 @@ const PayInvoices = ({ vendors, initialVendor }) => {
               </div>
               <div>
                 <p className="text-sm font-bold text-blue-800">Outstanding Balance</p>
-                <p className="text-2xl font-bold text-blue-600">AED {totalOutstanding.toLocaleString('en-US', { minimumFractionDigits: 2 })}</p>
+                <p className="text-2xl font-bold text-blue-600">{currency} {totalOutstanding.toLocaleString('en-US', { minimumFractionDigits: 2 })}</p>
               </div>
             </div>
           )}
@@ -535,10 +556,10 @@ const PayInvoices = ({ vendors, initialVendor }) => {
                             {isOverdue && <span className="block text-[9px] text-red-400">Overdue</span>}
                           </td>
                           <td className="px-4 py-3 text-right text-slate-600 font-medium">
-                            AED {(inv.grandTotal || 0).toLocaleString()}
+                            {currency} {(inv.grandTotal || 0).toLocaleString()}
                           </td>
                           <td className="px-4 py-3 text-right font-bold text-orange-600">
-                            AED {bal.toLocaleString()}
+                            {currency} {bal.toLocaleString()}
                           </td>
                           <td className="px-4 py-3 text-center">
                             {isOverdue
@@ -608,7 +629,7 @@ const PayInvoices = ({ vendors, initialVendor }) => {
               <div>
                 <label className="block text-xs font-bold text-slate-500 mb-1">Payment Amount (Auto-Allocate) <span className="text-red-500">*</span></label>
                 <div className="relative">
-                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 font-bold text-xs">AED</span>
+                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 font-bold text-xs">{currency}</span>
                   <input
                     type="number"
                     value={receivedAmount}
@@ -634,7 +655,7 @@ const PayInvoices = ({ vendors, initialVendor }) => {
                   <label className="block text-xs font-bold text-slate-500 mb-1">Method</label>
                   <select
                     value={paymentMethod}
-                    onChange={(e) => setPaymentMethod(e.target.value)}
+                    onChange={(e) => { setPaymentMethod(e.target.value); setBankAccount(''); }}
                     className="w-full text-xs border border-slate-200 rounded px-3 py-2 focus:border-yellow-400 outline-none bg-white"
                   >
                     <option>Cash</option>
@@ -644,6 +665,25 @@ const PayInvoices = ({ vendors, initialVendor }) => {
                   </select>
                 </div>
               </div>
+
+              {paymentMethod !== 'Cash' && (
+                <div className="animate-in fade-in slide-in-from-top-2 duration-200">
+                  <label className="block text-xs font-bold text-slate-500 mb-1">Bank Account <span className="text-red-500">*</span></label>
+                  <div className="relative">
+                    <Landmark className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400" />
+                    <select
+                      value={bankAccount}
+                      onChange={(e) => setBankAccount(e.target.value)}
+                      className="w-full pl-8 text-xs border border-slate-200 rounded px-3 py-2 focus:border-yellow-400 outline-none bg-white"
+                    >
+                      <option value="">Select Bank Account...</option>
+                      {bankAccounts.map(acc => (
+                        <option key={acc.id} value={acc.name}>{acc.code} — {acc.name}</option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+              )}
 
               {paymentMethod === 'Cheque' && (
                 <div className="animate-in fade-in slide-in-from-top-2 duration-200">
@@ -682,7 +722,7 @@ const PayInvoices = ({ vendors, initialVendor }) => {
               <div className="pt-4 border-t border-slate-100">
                 <div className="flex justify-between items-center mb-4">
                   <span className="text-sm font-bold text-slate-600">Total Settlement</span>
-                  <span className="text-xl font-bold text-[#F5C742]">AED {totalToSettle.toLocaleString()}</span>
+                  <span className="text-xl font-bold text-[#F5C742]">{currency} {totalToSettle.toLocaleString()}</span>
                 </div>
 
                 <button
@@ -724,7 +764,7 @@ const PayInvoices = ({ vendors, initialVendor }) => {
                   <div className="flex-1 min-w-0">
                     <div className="flex justify-between items-start">
                       <p className="font-bold text-slate-800 text-xs truncate">{payment.vendorName || 'Unknown'}</p>
-                      <span className="text-xs font-bold text-emerald-600 px-1.5 py-0.5 bg-emerald-50 rounded">AED {(payment.amount || 0).toLocaleString()}</span>
+                      <span className="text-xs font-bold text-emerald-600 px-1.5 py-0.5 bg-emerald-50 rounded">{currency} {(payment.amount || 0).toLocaleString()}</span>
                     </div>
                     <div className="flex justify-between items-center mt-1">
                       <p className="text-[10px] text-slate-500">{payment.voucherNumber || `PV-${payment.id}`} • {payment.paymentMode}</p>
@@ -748,6 +788,9 @@ const PayInvoices = ({ vendors, initialVendor }) => {
 };
 
 const VendorSoA = ({ vendors }) => {
+  const { company } = useCompany();
+  const { print } = usePrintDocument();
+  const currency = resolveCurrencyDisplayCode(company || {});
   const defaultStartDate = `${new Date().getFullYear()}-01-01`;
   const defaultEndDate = new Date().toISOString().split('T')[0];
 
@@ -785,7 +828,36 @@ const VendorSoA = ({ vendors }) => {
   }, [selectedVendorName]);
 
   const handlePrint = () => {
-    window.print();
+    const filename = generateSOAFilename(
+      selectedVendorDetails?.name || selectedVendorName,
+      selectedVendorDetails?.code || 'N/A',
+      startDate,
+      endDate,
+      currency
+    );
+    print(filename);
+  };
+
+  const handleExportExcel = () => {
+    if (!statementData) return;
+    const filename = generateSOAFilename(
+      selectedVendorDetails?.name || selectedVendorName,
+      selectedVendorDetails?.code || 'N/A',
+      startDate,
+      endDate,
+      currency
+    );
+
+    const columns = [
+      { header: 'Date', key: 'date', width: 12 },
+      { header: 'Reference', key: 'reference', width: 15 },
+      { header: 'Description', key: 'description', width: 25 },
+      { header: 'Debit', key: 'debit', width: 12 },
+      { header: 'Credit', key: 'credit', width: 12 },
+      { header: 'Balance', key: 'balance', width: 12 }
+    ];
+
+    exportToExcel(statementData.transactions || [], columns, filename);
   };
 
   const selectedVendorDetails = vendors.find(v => v.name === selectedVendorName);
@@ -840,12 +912,15 @@ const VendorSoA = ({ vendors }) => {
           <button onClick={handlePrint} className="px-4 py-2 border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 text-sm font-medium rounded-md shadow-sm flex items-center gap-2">
             <Printer className="h-4 w-4" /> Print
           </button>
+          <button onClick={handleExportExcel} disabled={!statementData} className="px-4 py-2 border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 text-sm font-medium rounded-md shadow-sm flex items-center gap-2 disabled:opacity-50">
+            <Download className="h-4 w-4" /> Export Excel
+          </button>
         </div>
       </div>
 
       {/* STATEMENT UI */}
       {statementData && selectedVendorDetails && (
-        <div className="bg-white rounded-lg border border-slate-200 p-8 shadow-sm">
+        <div className="bg-white rounded-lg border border-slate-200 p-8 shadow-sm print:hidden">
           <div className="flex justify-between items-start mb-6">
             <div>
               <h2 className="text-xl font-bold text-slate-900">STATEMENT OF ACCOUNT</h2>
@@ -867,19 +942,19 @@ const VendorSoA = ({ vendors }) => {
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
             <div className="p-4 bg-blue-50 rounded-lg border border-blue-100">
               <p className="text-xs text-blue-600">Opening Balance</p>
-              <p className="text-lg font-bold text-blue-700">{statementData.openingBalance.toLocaleString(undefined, { minimumFractionDigits: 2 })} AED {statementData.openingBalance >= 0 ? "Cr (We Owe)" : "Dr"}</p>
+              <p className="text-lg font-bold text-blue-700">{statementData.openingBalance.toLocaleString(undefined, { minimumFractionDigits: 2 })} {currency} {statementData.openingBalance >= 0 ? "Cr (We Owe)" : "Dr"}</p>
             </div>
             <div className="p-4 bg-orange-50 rounded-lg border border-orange-100">
               <p className="text-xs text-orange-600">Total Purchases</p>
-              <p className="text-lg font-bold text-orange-700">{statementData.totalCredit.toLocaleString(undefined, { minimumFractionDigits: 2 })} AED</p>
+              <p className="text-lg font-bold text-orange-700">{statementData.totalCredit.toLocaleString(undefined, { minimumFractionDigits: 2 })} {currency}</p>
             </div>
             <div className="p-4 bg-green-50 rounded-lg border border-green-100">
               <p className="text-xs text-green-600">Total Payments</p>
-              <p className="text-lg font-bold text-green-700">{statementData.totalDebit.toLocaleString(undefined, { minimumFractionDigits: 2 })} AED</p>
+              <p className="text-lg font-bold text-green-700">{statementData.totalDebit.toLocaleString(undefined, { minimumFractionDigits: 2 })} {currency}</p>
             </div>
             <div className="p-4 bg-purple-50 rounded-lg border border-purple-100">
               <p className="text-xs text-purple-600">Closing Balance</p>
-              <p className="text-lg font-bold text-purple-700">{Math.abs(statementData.closingBalance).toLocaleString(undefined, { minimumFractionDigits: 2 })} AED {statementData.closingBalance >= 0 ? "Cr (We Owe)" : "Dr (Advance)"}</p>
+              <p className="text-lg font-bold text-purple-700">{Math.abs(statementData.closingBalance).toLocaleString(undefined, { minimumFractionDigits: 2 })} {currency} {statementData.closingBalance >= 0 ? "Cr (We Owe)" : "Dr (Advance)"}</p>
             </div>
           </div>
 
@@ -930,6 +1005,22 @@ const VendorSoA = ({ vendors }) => {
           </div>
         </div>
       )}
+
+      <StatementPrintPreview
+        statementData={statementData}
+        party={selectedVendorDetails}
+        partyLabel="Vendor"
+        statementLabel="Statement of Account"
+        startDate={startDate}
+        endDate={endDate}
+        debitSummaryLabel="Total Payments"
+        creditSummaryLabel="Total Purchases"
+        debitColumnLabel="Debit (Payment)"
+        creditColumnLabel="Credit (Invoice)"
+        positiveBalanceLabel="Cr"
+        negativeBalanceLabel="Dr"
+        emptyMessage="No transactions recorded in this period."
+      />
     </div>
   );
 };
@@ -939,6 +1030,8 @@ const VendorSoA = ({ vendors }) => {
 // ==========================================
 
 const CreateVendorWizard = ({ onBack, onSave, initialData }) => {
+  const { company } = useCompany();
+  const defaultCurrency = normalizeCurrencyValue(company?.currency || 'AED');
   // Strict 6 steps
   const steps = [
     { id: "General", name: "General", icon: Globe },
@@ -952,13 +1045,38 @@ const CreateVendorWizard = ({ onBack, onSave, initialData }) => {
   const [currentStepIndex, setCurrentStepIndex] = useState(0);
   const [loading, setLoading] = useState(false);
 
-  // FIX: Form State correctly mapped from initialData if present
-  const [formData, setFormData] = useState(initialData || {
-    name: '', email: '', contact: '', status: 'Active',
-    vendorGroup: '', vendorType: '', category: '', country: 'United Arab Emirates',
-    prefComm: 'Email', priority: 'P2 - High', currency: 'AED - UAE Dirham',
-    payTerms: '', balType: 'Payable (We owe vendor)', payPref: 'Bank Transfer'
+  const normalizeVendorFormData = (data = {}) => ({
+    ...data,
+    country: normalizeCountryValue(data.country || ''),
+    currency: normalizeCurrencyValue(data.currency || '')
   });
+  const createInitialVendorFormState = () => normalizeVendorFormData({
+    name: '',
+    email: '',
+    contact: '',
+    status: 'Active',
+    vendorGroup: '',
+    vendorType: '',
+    category: '',
+    country: 'United Arab Emirates',
+    prefComm: 'Email',
+    priority: 'P2 - High',
+    currency: defaultCurrency,
+    payTerms: '',
+    balType: 'Payable (We owe vendor)',
+    payPref: 'Bank Transfer',
+    ...(initialData || {})
+  });
+  const [formData, setFormData] = useState(createInitialVendorFormState);
+  const countryOptions = useMemo(() => withFallbackOption(
+    getCountryOptions(),
+    normalizeCountryValue(formData.country)
+  ), [formData.country]);
+  const currencyOptions = useMemo(() => withFallbackOption(
+    getCurrencyOptions(),
+    normalizeCurrencyValue(formData.currency),
+    (value) => ({ value, label: value, displayLabel: value })
+  ), [formData.currency]);
 
   // Files State
   const [documents, setDocuments] = useState([]);
@@ -1004,7 +1122,7 @@ const CreateVendorWizard = ({ onBack, onSave, initialData }) => {
   const executeSave = async (isDraft) => {
     setLoading(true);
     try {
-      await onSave(formData, isDraft);
+      await onSave(normalizeVendorFormData(formData), isDraft);
     } catch (e) {
       console.error(e);
     } finally {
@@ -1110,7 +1228,16 @@ const CreateVendorWizard = ({ onBack, onSave, initialData }) => {
                 <div className="space-y-1.5"><label className="text-xs font-semibold text-slate-700">Vendor Type</label><div className="relative"><Dropdown options={vendorTypeOptions} selected={formData.vendorType} onSelect={(val) => handleInputChange('vendorType', val)} placeholder="Select type" /></div></div>
                 <div className="space-y-1.5"><label className="text-xs font-semibold text-slate-700">Category *</label><div className="relative"><Dropdown options={categoryOptions} selected={formData.category} onSelect={(val) => handleInputChange('category', val)} placeholder="Select category" /></div></div>
                 <div className="space-y-1.5"><label className="text-xs font-semibold text-slate-700">TRN / Tax ID</label><input type="text" placeholder="Enter tax registration number" value={formData.taxId || ''} onChange={(e) => handleInputChange('taxId', e.target.value)} className="w-full h-10 px-3 border border-slate-200 rounded-md text-sm focus:ring-2 focus:ring-[#F5C742]/50 outline-none" /></div>
-                <div className="space-y-1.5"><label className="text-xs font-semibold text-slate-700">Country *</label><div className="relative"><Dropdown options={countryOptions} selected={formData.country} onSelect={(val) => handleInputChange('country', val)} /></div></div>
+                <div className="space-y-1.5">
+                  <label className="text-xs font-semibold text-slate-700">Country *</label>
+                  <SearchableDropdown
+                    options={countryOptions}
+                    value={formData.country}
+                    onChange={(value) => handleInputChange('country', value)}
+                    placeholder="Search country"
+                    className="w-full"
+                  />
+                </div>
                 <div className="space-y-1.5"><label className="text-xs font-semibold text-slate-700">Primary Email</label><input type="email" onChange={(e) => handleInputChange('email', e.target.value)} value={formData.email} placeholder="vendor@example.com" className="w-full h-10 px-3 border border-slate-200 rounded-md text-sm focus:ring-2 focus:ring-[#F5C742]/50 outline-none" /></div>
                 <div className="space-y-1.5"><label className="text-xs font-semibold text-slate-700">Primary Contact Number</label><input type="text" onChange={(e) => handleInputChange('contact', e.target.value)} value={formData.contact} placeholder="+971-50-XXX-XXXX" className="w-full h-10 px-3 border border-slate-200 rounded-md text-sm focus:ring-2 focus:ring-[#F5C742]/50 outline-none" /></div>
                 <div className="space-y-1.5"><label className="text-xs font-semibold text-slate-700">Website</label><input type="text" placeholder="https://www.example.com" value={formData.website || ''} onChange={(e) => handleInputChange('website', e.target.value)} className="w-full h-10 px-3 border border-slate-200 rounded-md text-sm focus:ring-2 focus:ring-[#F5C742]/50 outline-none" /></div>
@@ -1143,7 +1270,16 @@ const CreateVendorWizard = ({ onBack, onSave, initialData }) => {
             <div className="bg-white p-6 rounded-lg shadow-sm border border-slate-200 animate-in fade-in slide-in-from-bottom-2 duration-300">
               <h3 className="text-base font-bold text-slate-800 mb-6">Financial & Credit Settings</h3>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
-                <div className="space-y-1.5"><label className="text-xs font-semibold text-slate-700">Currency</label><div className="relative"><Dropdown options={currencyOptions} selected={formData.currency} onSelect={(val) => handleInputChange('currency', val)} /></div></div>
+                <div className="space-y-1.5">
+                  <label className="text-xs font-semibold text-slate-700">Currency</label>
+                  <SearchableDropdown
+                    options={currencyOptions}
+                    value={formData.currency}
+                    onChange={(value) => handleInputChange('currency', value)}
+                    placeholder="Search currency"
+                    className="w-full"
+                  />
+                </div>
                 <div className="space-y-1.5"><label className="text-xs font-semibold text-slate-700">Credit Limit</label><input type="number" placeholder="0.00" value={formData.creditLimit || ''} onChange={(e) => handleInputChange('creditLimit', e.target.value)} className="w-full h-10 px-3 border border-slate-200 rounded-md text-sm focus:ring-2 focus:ring-[#F5C742]/50 outline-none" /></div>
                 <div className="space-y-1.5"><label className="text-xs font-semibold text-slate-700">Payment Terms</label><div className="relative"><Dropdown options={paymentTermsOptions} selected={formData.payTerms} onSelect={(val) => handleInputChange('payTerms', val)} placeholder="Select terms" /></div></div>
                 <div className="space-y-1.5"><label className="text-xs font-semibold text-slate-700">Credit Days</label><input type="number" placeholder="30" value={formData.creditDays || ''} onChange={(e) => handleInputChange('creditDays', e.target.value)} className="w-full h-10 px-3 border border-slate-200 rounded-md text-sm focus:ring-2 focus:ring-[#F5C742]/50 outline-none" /></div>
@@ -1391,16 +1527,13 @@ const Vendor = () => {
 
 // Sub-Component: ListView with Actions wired
 const VendorListViewWithActions = ({ vendors, loading, onAddNew, onEdit, onDelete }) => {
+  const { company } = useCompany();
+  const currencyLabel = resolveCurrencyDisplayCode(company);
   const [activeTab, setActiveTab] = useState("Vendors List");
   const [payInvoicesVendor, setPayInvoicesVendor] = useState(null);
   const [searchTerm, setSearchTerm] = useState("");
   const [filterStatus, setFilterStatus] = useState("All Status");
   const [filterCategory, setFilterCategory] = useState("All Categories");
-
-  // Format Currency Helper
-  const formatCurrency = (amount) => {
-    return new Intl.NumberFormat('en-AE', { style: 'currency', currency: 'AED', maximumFractionDigits: 0 }).format(amount);
-  };
 
   // Calculate Stats
   const totalVendors = vendors.length;
@@ -1427,7 +1560,7 @@ const VendorListViewWithActions = ({ vendors, loading, onAddNew, onEdit, onDelet
   const stats = [
     { label: "Total Vendors", value: totalVendors.toString(), icon: Users, color: "blue", bg: "from-blue-50 to-blue-100", border: "border-blue-500", iconColor: "text-blue-500" },
     { label: "Active", value: activeVendors.toString(), icon: CheckCircle2, color: "green", bg: "from-green-50 to-green-100", border: "border-green-500", iconColor: "text-green-500" },
-    { label: "Total Payables", value: widthFormattedPayables(totalPayables), icon: DollarSign, color: "orange", bg: "from-orange-50 to-orange-100", border: "border-orange-500", iconColor: "text-orange-500" },
+    { label: "Total Payables", value: `${currencyLabel} ${widthFormattedPayables(totalPayables)}`, icon: DollarSign, color: "orange", bg: "from-orange-50 to-orange-100", border: "border-orange-500", iconColor: "text-orange-500" },
     { label: "Preferred", value: preferredVendors.toString(), icon: Star, color: "purple", bg: "from-purple-50 to-purple-100", border: "border-purple-500", iconColor: "text-purple-500" },
     { label: "On Hold", value: onHoldVendors.toString(), icon: AlertCircle, color: "yellow", bg: "from-yellow-50 to-yellow-100", border: "border-yellow-500", iconColor: "text-yellow-500" },
     { label: "Doc Expiring", value: expiringDocs.toString(), icon: AlertTriangle, color: "red", bg: "from-red-50 to-red-100", border: "border-red-500", iconColor: "text-red-500" },
@@ -1482,6 +1615,20 @@ const VendorListViewWithActions = ({ vendors, loading, onAddNew, onEdit, onDelet
 
 
 
+  const handleExportExcel = () => {
+    exportToExcel(filteredVendors.map((vendor) => ({
+      ...vendor,
+      balance: formatCurrencyDisplay(vendor.balance, currencyLabel)
+    })), VENDOR_COLUMNS, 'Vendor_List');
+  };
+
+  const handleExportPdf = () => {
+    exportToPDF(filteredVendors.map((vendor) => ({
+      ...vendor,
+      balance: formatCurrencyDisplay(vendor.balance, currencyLabel)
+    })), VENDOR_COLUMNS, 'Vendor List', 'Vendor_List');
+  };
+
   const renderStars = (rating) => (
     <div className="flex text-[#F5C742]">
       {[...Array(5)].map((_, i) => (
@@ -1507,7 +1654,7 @@ const VendorListViewWithActions = ({ vendors, loading, onAddNew, onEdit, onDelet
 
   return (
     <>
-      <div className="bg-white border-b border-slate-200 p-6 pb-0">
+      <div className="bg-white border-b border-slate-200 p-6 pb-0 print:hidden">
         <div className="flex flex-col md:flex-row items-start justify-between mb-4 gap-4 md:gap-0">
           <div>
             <div className="text-sm text-gray-500 mb-1">Vendors & Purchases → Vendor Ledger</div>
@@ -1520,7 +1667,10 @@ const VendorListViewWithActions = ({ vendors, loading, onAddNew, onEdit, onDelet
             {activeTab === "Vendors List" ? (
               <>
                 <button className="inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md text-sm font-medium border bg-white hover:bg-slate-50 h-9 px-4 border-slate-200 text-slate-700 shadow-sm"><Upload className="h-4 w-4" /> Import</button>
-                <button className="inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md text-sm font-medium border bg-white hover:bg-slate-50 h-9 px-4 border-slate-200 text-slate-700 shadow-sm"><Download className="h-4 w-4" /> Export</button>
+                <ExportDropdown
+                  onExportExcel={handleExportExcel}
+                  onExportPdf={handleExportPdf}
+                />
                 <button onClick={onAddNew} className="inline-flex items-center justify-center gap-2 rounded-md text-sm font-bold h-9 px-4 bg-[#F5C742] hover:bg-[#E5B732] text-slate-900 shadow-sm">
                   <Plus className="h-4 w-4" /> New Vendor
                 </button>
@@ -1666,7 +1816,7 @@ const VendorListViewWithActions = ({ vendors, loading, onAddNew, onEdit, onDelet
                           <td className="px-6 py-4 text-slate-600">{vendor.contact}</td>
                           <td className="px-6 py-4 text-right"><span className="inline-flex items-center gap-1 text-slate-600"><Clock className="h-3 w-3 text-gray-400" />{vendor.leadTime || '-'}</span></td>
                           <td className="px-6 py-4">{renderStars(vendor.rating)}</td>
-                          <td className="px-6 py-4 text-right font-semibold text-slate-900">{vendor.balance || '0.00 AED'}</td>
+                          <td className="px-6 py-4 text-right font-semibold text-slate-900"><CurrencyAmount value={vendor.balance} currency={currencyLabel} /></td>
                           <td className="px-6 py-4"><span className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium ${getStatusStyle(vendor.status)}`}>{getStatusIcon(vendor.status)}{vendor.status}</span></td>
                           <td className="px-6 py-4 text-center"><div className="flex items-center justify-center gap-1"><button onClick={() => { setPayInvoicesVendor(vendor); setActiveTab("Pay Invoices"); }} className="p-1.5 hover:bg-slate-100 rounded text-slate-500" title="View Payables"><Eye className="h-4 w-4" /></button><button onClick={() => onEdit(vendor)} className="p-1.5 hover:bg-slate-100 rounded text-slate-500" title="Edit Vendor"><SquarePen className="h-4 w-4" /></button><button onClick={() => onDelete(vendor.id)} className="p-1.5 hover:bg-slate-100 rounded text-slate-500 hover:text-red-600"><Trash2 className="h-4 w-4" /></button></div></td>
                         </tr>

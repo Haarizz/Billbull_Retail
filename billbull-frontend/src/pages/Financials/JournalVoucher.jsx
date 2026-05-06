@@ -10,6 +10,7 @@ import * as ledgerApi from '../../api/ledgerApi';
 import { employeesApi } from '../../api/employeesApi';
 import { journalVoucherApi } from '../../api/journalVoucherApi';
 import { getAuditTrail } from '../../api/auditApi';
+import CurrencyAmount, { CurrencySymbol } from '../../components/CurrencyAmount';
 
 
 const JournalVoucher = () => {
@@ -68,24 +69,64 @@ const JournalVoucher = () => {
     const fetchJournalVouchers = async () => {
         setLoading(true);
         try {
-            const data = await journalVoucherApi.getAll();
+            let data = await journalVoucherApi.getAll();
+            
+            // Fallback: If no journal entries from dedicated API, try filtering from global transactions
+            if (!data || data.length === 0) {
+                console.warn("Journal entries API returned empty. Attempting fallback from ledger transactions...");
+                const allTransactions = await ledgerApi.getTransactions();
+                const jvTransactions = allTransactions.filter(t => 
+                    t.type === 'JOURNAL_VOUCHER' || 
+                    t.type === 'JOURNAL_ENTRY' || 
+                    t.type === 'Manual Journal' ||
+                    t.voucherNo?.startsWith('JV-')
+                );
+
+                if (jvTransactions.length > 0) {
+                    // Group by voucher number to reconstruct JV objects
+                    const grouped = jvTransactions.reduce((acc, t) => {
+                        if (!acc[t.voucherNo]) {
+                            acc[t.voucherNo] = {
+                                id: t.id,
+                                entryNumber: t.voucherNo,
+                                date: t.transactionDate,
+                                reference: t.reference || '',
+                                narration: t.description || '',
+                                status: 'Posted',
+                                preparedBy: 'System',
+                                lines: []
+                            };
+                        }
+                        acc[t.voucherNo].lines.push({
+                            account: t.accountName,
+                            accountCode: t.accountCode,
+                            description: t.description,
+                            debit: parseFloat(t.debitAmount || 0),
+                            credit: parseFloat(t.creditAmount || 0),
+                            costCenter: t.costCenterName || ''
+                        });
+                        return acc;
+                    }, {});
+                    data = Object.values(grouped);
+                }
+            }
+
             // Transform backend data to match frontend structure
             const transformed = data.map(jv => ({
                 id: jv.id,
-                jvNumber: jv.entryNumber,
+                jvNumber: jv.entryNumber || jv.voucherId,
                 date: jv.date,
                 reference: jv.reference,
                 narration: jv.narration,
-                status: jv.status,
-                preparedBy: jv.preparedBy,
+                status: jv.status || 'Posted',
+                preparedBy: jv.preparedBy || 'System',
                 postedBy: jv.postedBy,
                 postedAt: jv.postedAt,
                 createdAt: jv.createdAt,
                 updatedAt: jv.updatedAt,
                 lines: jv.lines || [],
-                // Calculate totals from lines
-                debit: jv.lines?.reduce((sum, line) => sum + parseFloat(line.debit || 0), 0) || 0,
-                credit: jv.lines?.reduce((sum, line) => sum + parseFloat(line.credit || 0), 0) || 0
+                debit: jv.lines?.reduce((sum, line) => sum + parseFloat(line.debit || 0), 0) || jv.debit || 0,
+                credit: jv.lines?.reduce((sum, line) => sum + parseFloat(line.credit || 0), 0) || jv.credit || 0
             }));
             setJournalVouchers(transformed);
         } catch (error) {
@@ -505,7 +546,7 @@ const JournalVoucher = () => {
                             <div className="flex justify-between items-start">
                                 <div>
                                     <p className="text-xs text-slate-500 font-semibold">Today's Journals</p>
-                                    <h3 className="text-2xl font-bold text-slate-800 mt-1">AED {stats.todayTotal}</h3>
+                                    <CurrencyAmount value={stats.todayTotal} className="text-2xl font-bold text-slate-800 mt-1" />
                                     <p className="text-[10px] text-slate-400 mt-1">{stats.todayCount} transactions</p>
                                 </div>
                                 <div className="p-2 bg-[#F5C742] rounded text-slate-900">
@@ -518,7 +559,7 @@ const JournalVoucher = () => {
                             <div className="flex justify-between items-start">
                                 <div>
                                     <p className="text-xs text-slate-500 font-semibold">This Month</p>
-                                    <h3 className="text-2xl font-bold text-slate-800 mt-1">AED {stats.monthTotal}</h3>
+                                    <CurrencyAmount value={stats.monthTotal} className="text-2xl font-bold text-slate-800 mt-1" />
                                     <p className="text-[10px] text-slate-400 mt-1">Total Volume</p>
                                 </div>
                                 <div className="p-2 bg-emerald-50 rounded text-emerald-600">
@@ -531,7 +572,7 @@ const JournalVoucher = () => {
                             <div className="flex justify-between items-start">
                                 <div>
                                     <p className="text-xs text-slate-500 font-semibold">Draft Volume</p>
-                                    <h3 className="text-2xl font-bold text-slate-800 mt-1">AED {stats.pendingTotal}</h3>
+                                    <CurrencyAmount value={stats.pendingTotal} className="text-2xl font-bold text-slate-800 mt-1" />
                                     <p className="text-[10px] text-slate-400 mt-1">{stats.pendingCount} drafts pending</p>
                                 </div>
                                 <div className="p-2 bg-orange-50 rounded text-orange-600">
@@ -633,8 +674,8 @@ const JournalVoucher = () => {
                                         <th className="px-4 py-3">Date</th>
                                         <th className="px-4 py-3">Reference</th>
                                         <th className="px-4 py-3">Narration</th>
-                                        <th className="px-4 py-3 text-right">Debit (AED)</th>
-                                        <th className="px-4 py-3 text-right">Credit (AED)</th>
+                                        <th className="px-4 py-3 text-right">Debit (<CurrencySymbol />)</th>
+                                        <th className="px-4 py-3 text-right">Credit (<CurrencySymbol />)</th>
                                         <th className="px-4 py-3">Status</th>
                                         <th className="px-4 py-3 text-center">Actions</th>
                                     </tr>
@@ -646,8 +687,8 @@ const JournalVoucher = () => {
                                             <td className="px-4 py-3 text-slate-500">{row.date}</td>
                                             <td className="px-4 py-3 text-slate-500">{row.reference}</td>
                                             <td className="px-4 py-3 text-slate-600 max-w-xs truncate">{row.narration}</td>
-                                            <td className="px-4 py-3 text-right font-bold text-slate-700">{row.debit.toFixed(2)}</td>
-                                            <td className="px-4 py-3 text-right font-bold text-slate-700">{row.credit.toFixed(2)}</td>
+                                            <td className="px-4 py-3 text-right font-bold text-slate-700"><CurrencyAmount value={row.debit} /></td>
+                                            <td className="px-4 py-3 text-right font-bold text-slate-700"><CurrencyAmount value={row.credit} /></td>
                                             <td className="px-4 py-3">
                                                 <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${getStatusBadge(row.status)}`}>
                                                     {row.status}
@@ -765,8 +806,8 @@ const JournalVoucher = () => {
                                         <div className="grid grid-cols-12 gap-3 mb-2 px-2 text-[10px] uppercase font-bold text-slate-400">
                                             <div className="col-span-3">Account Ledger</div>
                                             <div className="col-span-3">Description</div>
-                                            <div className="col-span-2 text-right">Debit (AED)</div>
-                                            <div className="col-span-2 text-right">Credit (AED)</div>
+                                            <div className="col-span-2 text-right">Debit (<CurrencySymbol />)</div>
+                                            <div className="col-span-2 text-right">Credit (<CurrencySymbol />)</div>
                                             <div className="col-span-2">Cost Centre</div>
                                         </div>
 
@@ -852,11 +893,11 @@ const JournalVoucher = () => {
                                 <div className="space-y-3 mb-6">
                                     <div className="flex justify-between items-center text-xs">
                                         <span className="text-slate-500">Total Debit</span>
-                                        <span className="font-bold text-slate-700">AED {lineTotals.totalDebit.toFixed(2)}</span>
+                                        <CurrencyAmount value={lineTotals.totalDebit} className="font-bold text-slate-700" />
                                     </div>
                                     <div className="flex justify-between items-center text-xs">
                                         <span className="text-slate-500">Total Credit</span>
-                                        <span className="font-bold text-slate-700">AED {lineTotals.totalCredit.toFixed(2)}</span>
+                                        <CurrencyAmount value={lineTotals.totalCredit} className="font-bold text-slate-700" />
                                     </div>
                                 </div>
 
@@ -869,7 +910,7 @@ const JournalVoucher = () => {
                                             </span>
                                         ) : (
                                             <span className="text-xs font-bold text-red-600 flex items-center gap-1">
-                                                <AlertCircle size={14} /> {lineTotals.difference.toFixed(2)}
+                                                <AlertCircle size={14} /> <CurrencyAmount value={lineTotals.difference} />
                                             </span>
                                         )}
                                     </div>
@@ -975,8 +1016,8 @@ const JournalVoucher = () => {
                                         <tr>
                                             <th className="py-3">Account Ledger</th>
                                             <th className="py-3">Description</th>
-                                            <th className="py-3 text-right">Debit (AED)</th>
-                                            <th className="py-3 text-right">Credit (AED)</th>
+                                            <th className="py-3 text-right">Debit (<CurrencySymbol />)</th>
+                                            <th className="py-3 text-right">Credit (<CurrencySymbol />)</th>
                                         </tr>
                                     </thead>
                                     <tbody className="text-xs divide-y divide-slate-50">
@@ -984,14 +1025,14 @@ const JournalVoucher = () => {
                                             <tr key={idx}>
                                                 <td className="py-3 font-medium text-slate-700">{line.account}</td>
                                                 <td className="py-3 text-slate-500">{line.description}</td>
-                                                <td className="py-3 text-right font-bold text-slate-700">{parseFloat(line.debit) > 0 ? parseFloat(line.debit).toFixed(2) : '-'}</td>
-                                                <td className="py-3 text-right font-bold text-slate-700">{parseFloat(line.credit) > 0 ? parseFloat(line.credit).toFixed(2) : '-'}</td>
+                                                <td className="py-3 text-right font-bold text-slate-700">{parseFloat(line.debit) > 0 ? <CurrencyAmount value={line.debit} /> : '-'}</td>
+                                                <td className="py-3 text-right font-bold text-slate-700">{parseFloat(line.credit) > 0 ? <CurrencyAmount value={line.credit} /> : '-'}</td>
                                             </tr>
                                         ))}
                                         <tr className="bg-slate-50 font-bold border-t border-slate-100">
                                             <td className="py-3 pl-2" colSpan={2}>Total</td>
-                                            <td className="py-3 text-right text-emerald-600">{lineTotals.totalDebit.toFixed(2)}</td>
-                                            <td className="py-3 text-right text-emerald-600">{lineTotals.totalCredit.toFixed(2)}</td>
+                                            <td className="py-3 text-right text-emerald-600"><CurrencyAmount value={lineTotals.totalDebit} /></td>
+                                            <td className="py-3 text-right text-emerald-600"><CurrencyAmount value={lineTotals.totalCredit} /></td>
                                         </tr>
                                     </tbody>
                                 </table>

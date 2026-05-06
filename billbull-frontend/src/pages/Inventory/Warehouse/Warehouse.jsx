@@ -1,6 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { Warehouse as WarehouseIcon, ChevronRight, Plus, Search, SquarePen, Trash2, MapPin, X, Package, Layers, Box, Clock, Activity, TrendingUp, Users, FileText, Map, Shield, Printer, AlertTriangle, Lock, Zap, CheckCircle } from 'lucide-react';
+import toast from 'react-hot-toast';
 import { getWarehouses, createWarehouse, updateWarehouse, deleteWarehouse, getWarehouseStockSummary } from '../../../api/warehouseApi';
+import { getBranches } from '../../../api/branchApi';
+import { hasRole } from '../../../api/auth';
+import { useBranch } from '../../../context/BranchContext';
 import { getZones, createZone, updateZone, deleteZone, getLocators, createLocator, updateLocator, deleteLocator, getBins, createBin, updateBin, deleteBin, getBinStock, addBinStock, deleteBinStock } from '../../../api/warehouseLocationApi';
 
 const TreeNode = ({ item, level, type, isSelected, isExpanded, onSelect, onToggle, children }) => {
@@ -55,8 +59,36 @@ const Modal = ({ isOpen, onClose, title, subtitle, children }) => {
   );
 };
 
+const createWarehouseForm = (branchId = '') => ({
+  name: '',
+  type: 'Warehouse',
+  address: '',
+  status: 'Active',
+  capacity: 0,
+  utilization: 0,
+  branchId: branchId ? String(branchId) : ''
+});
+
+const buildWarehousePayload = (form, fallbackBranchId = null) => ({
+  name: (form.name || '').trim(),
+  type: form.type || 'Warehouse',
+  address: (form.address || '').trim(),
+  status: form.status || 'Active',
+  capacity: Number.isFinite(Number(form.capacity)) ? Number(form.capacity) : 0,
+  utilization: Number.isFinite(Number(form.utilization)) ? Number(form.utilization) : 0,
+  branchId: form.branchId ? Number(form.branchId) : fallbackBranchId || null
+});
+
+const extractErrorMessage = (error, fallbackMessage) =>
+  error?.response?.data?.message ||
+  error?.response?.data?.error ||
+  fallbackMessage;
+
 const Warehouse = () => {
+  const { defaultBranch } = useBranch();
+  const isAdmin = hasRole('ADMIN');
   const [warehouses, setWarehouses] = useState([]);
+  const [branches, setBranches] = useState([]);
   const [zones, setZones] = useState({});
   const [locators, setLocators] = useState({});
   const [bins, setBins] = useState({});
@@ -70,6 +102,27 @@ const Warehouse = () => {
   const [form, setForm] = useState({});
 
   useEffect(() => { fetchWarehousesAndExpand(); }, []);
+  useEffect(() => { fetchBranches(); }, []);
+
+  useEffect(() => {
+    if (modal.type === 'warehouse' && !modal.editing && !form.branchId && defaultBranch?.id) {
+      setForm(prev => ({ ...prev, branchId: String(defaultBranch.id) }));
+    }
+  }, [modal.type, modal.editing, form.branchId, defaultBranch?.id]);
+
+  const branchOptions = (() => {
+    if (isAdmin) {
+      return branches;
+    }
+
+    const scopedBranch = branches.find(branch => branch.id === defaultBranch?.id);
+    if (scopedBranch) {
+      return [scopedBranch];
+    }
+
+    return defaultBranch?.id ? [defaultBranch] : [];
+  })();
+  const branchSelectionLocked = !isAdmin && branchOptions.length <= 1;
 
   // Fetch all warehouses and auto-expand the tree
   const fetchWarehousesAndExpand = async () => {
@@ -136,6 +189,15 @@ const Warehouse = () => {
     }
   };
 
+  const fetchBranches = async () => {
+    try {
+      const data = await getBranches();
+      setBranches(Array.isArray(data) ? data : []);
+    } catch (e) {
+      console.error('Failed to fetch branches:', e);
+    }
+  };
+
   const fetchZones = async (warehouseId) => {
     try { const data = await getZones(warehouseId); setZones(p => ({ ...p, [warehouseId]: data || [] })); }
     catch (e) { setZones(p => ({ ...p, [warehouseId]: [] })); }
@@ -162,7 +224,18 @@ const Warehouse = () => {
 
   const openModal = (type, item = null) => {
     setModal({ type, editing: item });
-    if (type === 'warehouse') setForm(item || { name: '', type: 'Warehouse', address: '', status: 'Active', capacity: 0 });
+    if (type === 'warehouse') {
+      if (item) {
+        setForm({
+          ...item,
+          capacity: item.capacity ?? 0,
+          utilization: item.utilization ?? 0,
+          branchId: item.branchId ? String(item.branchId) : (defaultBranch?.id ? String(defaultBranch.id) : '')
+        });
+      } else {
+        setForm(createWarehouseForm(defaultBranch?.id));
+      }
+    }
     if (type === 'zone') setForm(item || { code: '', name: '', description: '', zoneType: 'Storage', status: 'Active' });
     if (type === 'locator') setForm(item || { code: '', name: '', aisleNumber: '', rackNumber: '', status: 'Active' });
     if (type === 'bin') setForm(item || { code: '', name: '', capacity: 100, binType: 'Standard', status: 'Active' });
@@ -173,23 +246,46 @@ const Warehouse = () => {
   const handleSave = async () => {
     try {
       if (modal.type === 'warehouse') {
-        modal.editing ? await updateWarehouse(modal.editing.id, form) : await createWarehouse(form);
-        fetchWarehousesAndExpand();
+        const payload = buildWarehousePayload(form, defaultBranch?.id || null);
+        if (!payload.name) {
+          toast.error('Warehouse name is required');
+          return;
+        }
+        if (!payload.address) {
+          toast.error('Warehouse address is required');
+          return;
+        }
+        if (!payload.branchId) {
+          toast.error('Select a branch before saving the warehouse');
+          return;
+        }
+
+        if (modal.editing) {
+          await updateWarehouse(modal.editing.id, payload);
+          toast.success('Warehouse updated');
+        } else {
+          await createWarehouse(payload);
+          toast.success('Warehouse created');
+        }
+        await fetchWarehousesAndExpand();
       } else if (modal.type === 'zone' && selected.item) {
         const warehouseId = selected.type === 'warehouse' ? selected.item.id : selected.parentId;
         modal.editing ? await updateZone(warehouseId, modal.editing.id, form) : await createZone(warehouseId, form);
-        setZones(p => ({ ...p, [warehouseId]: null })); fetchZones(warehouseId);
+        setZones(p => ({ ...p, [warehouseId]: null })); await fetchZones(warehouseId);
       } else if (modal.type === 'locator' && selected.item) {
         const zoneId = selected.type === 'zone' ? selected.item.id : selected.parentId;
         modal.editing ? await updateLocator(zoneId, modal.editing.id, form) : await createLocator(zoneId, form);
-        setLocators(p => ({ ...p, [zoneId]: null })); fetchLocators(zoneId);
+        setLocators(p => ({ ...p, [zoneId]: null })); await fetchLocators(zoneId);
       } else if (modal.type === 'bin' && selected.item) {
         const locatorId = selected.type === 'locator' ? selected.item.id : selected.parentId;
         modal.editing ? await updateBin(locatorId, modal.editing.id, form) : await createBin(locatorId, form);
-        setBins(p => ({ ...p, [locatorId]: null })); fetchBins(locatorId);
+        setBins(p => ({ ...p, [locatorId]: null })); await fetchBins(locatorId);
       }
       closeModal();
-    } catch (e) { console.error('Failed to save:', e); alert('Failed to save. Please try again.'); }
+    } catch (e) {
+      console.error('Failed to save:', e);
+      toast.error(extractErrorMessage(e, 'Failed to save. Please try again.'));
+    }
   };
 
   const handleDeleteWarehouse = async (id) => {
@@ -312,9 +408,10 @@ const Warehouse = () => {
       {/* Modals */}
       <Modal isOpen={modal.type === 'warehouse'} onClose={closeModal} title={modal.editing ? 'Edit Warehouse' : 'Create New Warehouse'} subtitle="Add a new warehouse location">
         <div className="space-y-4">
+          <div><label className="block text-xs font-semibold text-slate-500 mb-1.5">Branch *</label><select value={form.branchId || ''} onChange={e => setForm({ ...form, branchId: e.target.value })} disabled={branchOptions.length === 0 || branchSelectionLocked} className="w-full px-3 py-2 text-sm border border-slate-200 rounded-md bg-white disabled:bg-slate-100 disabled:text-slate-400 disabled:cursor-not-allowed"><option value="">{branchOptions.length === 0 ? 'No branches available' : 'Select branch'}</option>{branchOptions.map(branch => (<option key={branch.id} value={branch.id}>{branch.name}{branch.code ? ` (${branch.code})` : ''}</option>))}</select>{branchOptions.length === 0 && <p className="mt-1 text-[11px] text-slate-400">Create a branch or assign one to your user before creating warehouses.</p>}</div>
           <div><label className="block text-xs font-semibold text-slate-500 mb-1.5">Warehouse Name *</label><input value={form.name || ''} onChange={e => setForm({ ...form, name: e.target.value })} className="w-full px-3 py-2 text-sm border border-slate-200 rounded-md focus:outline-none focus:ring-2 focus:ring-[#F5C742]/50" placeholder="e.g. Main Distribution Center" /></div>
           <div><label className="block text-xs font-semibold text-slate-500 mb-1.5">Type</label><select value={form.type || 'Warehouse'} onChange={e => setForm({ ...form, type: e.target.value })} className="w-full px-3 py-2 text-sm border border-slate-200 rounded-md bg-white"><option>Warehouse</option><option>Distribution</option><option>Showroom</option><option>Fulfillment Center</option><option>Cold Storage</option></select></div>
-          <div><label className="block text-xs font-semibold text-slate-500 mb-1.5">Address</label><input value={form.address || ''} onChange={e => setForm({ ...form, address: e.target.value })} className="w-full px-3 py-2 text-sm border border-slate-200 rounded-md" placeholder="Industrial Area 1, Dubai" /></div>
+          <div><label className="block text-xs font-semibold text-slate-500 mb-1.5">Address *</label><input value={form.address || ''} onChange={e => setForm({ ...form, address: e.target.value })} className="w-full px-3 py-2 text-sm border border-slate-200 rounded-md" placeholder="Industrial Area 1, Dubai" /></div>
           <div><label className="block text-xs font-semibold text-slate-500 mb-1.5">Capacity (sqft)</label><input type="number" value={form.capacity || ''} onChange={e => setForm({ ...form, capacity: parseInt(e.target.value) || 0 })} className="w-full px-3 py-2 text-sm border border-slate-200 rounded-md" placeholder="5000" /></div>
           <div><label className="block text-xs font-semibold text-slate-500 mb-1.5">Status</label><select value={form.status || 'Active'} onChange={e => setForm({ ...form, status: e.target.value })} className="w-full px-3 py-2 text-sm border border-slate-200 rounded-md bg-white"><option>Active</option><option>Inactive</option></select></div>
           <div className="flex justify-end gap-3 pt-4 border-t border-slate-100"><button onClick={closeModal} className="px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-100 rounded-md">Cancel</button><button onClick={handleSave} className="px-4 py-2 text-sm font-bold text-slate-900 bg-[#F5C742] hover:bg-[#E5B732] rounded-md">{modal.editing ? 'Update' : 'Create Warehouse'}</button></div>
@@ -433,6 +530,7 @@ const WarehouseDetail = ({ warehouse, zones, onEdit, onDelete, onAddZone, onEdit
           <div><p className="text-xs text-[#F5C742] mb-1">Warehouse Name</p><p className="font-semibold text-slate-900">{warehouse.name}</p></div>
           <div><p className="text-xs text-slate-500 mb-1">Type</p><p className="font-semibold text-slate-900 uppercase">{warehouse.type || 'WAREHOUSE'}</p></div>
           <div><p className="text-xs text-slate-500 mb-1">Status</p><StatusBadge status={warehouse.status} /></div>
+          <div><p className="text-xs text-slate-500 mb-1">Branch</p><p className="font-semibold text-slate-900">{warehouse.branchName || '-'}</p></div>
           <div><p className="text-xs text-slate-500 mb-1">Address</p><p className="font-semibold text-slate-900">{warehouse.address || '-'}</p></div>
           <div><p className="text-xs text-slate-500 mb-1">Capacity</p><p className="font-semibold text-slate-900">{warehouse.capacity ? `${warehouse.capacity} sqft` : '-'}</p></div>
         </div>
@@ -651,7 +749,7 @@ const BinDetail = ({ bin, onEdit }) => {
                   const reserved = s.reservedQuantity || 0;
                   const available = onHand - reserved;
                   return (
-                    <tr key={s.id || idx} className="hover:bg-slate-50">
+                    <tr key={s.stockIdentityKey || `${s.id || 'row'}-${idx}`} className="hover:bg-slate-50">
                       <td className="px-6 py-3 font-medium text-slate-900">{s.productCode || '-'}</td>
                       <td className="px-6 py-3 text-slate-600">{s.productName || '-'}</td>
                       <td className="px-6 py-3"><span className="px-2 py-0.5 bg-blue-100 text-blue-700 text-xs rounded font-medium">{s.batchNumber || '-'}</span></td>

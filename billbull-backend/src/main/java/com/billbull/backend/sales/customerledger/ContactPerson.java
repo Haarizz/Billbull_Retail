@@ -1,6 +1,7 @@
 package com.billbull.backend.sales.customerledger;
 
 import com.fasterxml.jackson.annotation.JsonIgnore;
+import com.fasterxml.jackson.annotation.JsonProperty;
 import jakarta.persistence.*;
 
 @Entity
@@ -66,7 +67,9 @@ public class ContactPerson {
     public String getNotes() { return notes; }
     public void setNotes(String notes) { this.notes = notes; }
 
+    @JsonProperty("isAccountContact")
     public boolean isAccountContact() { return accountContact; }
+    @JsonProperty("isAccountContact")
     public void setAccountContact(boolean accountContact) {
         this.accountContact = accountContact;
     }

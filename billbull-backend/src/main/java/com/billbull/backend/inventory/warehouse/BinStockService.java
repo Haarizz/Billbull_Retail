@@ -1,5 +1,12 @@
 package com.billbull.backend.inventory.warehouse;
 
+import java.math.BigDecimal;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.stream.Collectors;
+
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -8,12 +15,6 @@ import com.billbull.backend.inventory.product.ProductRepository;
 import com.billbull.backend.purchase.stockmovement.StockMovement;
 import com.billbull.backend.purchase.stockmovement.StockMovementRepository;
 
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.stream.Collectors;
-
 @Service
 @Transactional
 public class BinStockService {
@@ -21,8 +22,7 @@ public class BinStockService {
     private final StockMovementRepository stockMovementRepository;
     private final BinRepository binRepository;
     private final ProductRepository productRepository;
-    private final com.billbull.backend.sales.quotation.QuotationRepository quotationRepo;
-    private final com.billbull.backend.sales.salesorder.SalesOrderRepository salesOrderRepo;
+    private final WarehouseStockService warehouseStockService;
     private final com.billbull.backend.sales.delivery.DeliveryNoteRepository deliveryNoteRepo;
 
     public BinStockService(StockMovementRepository stockMovementRepository,
@@ -30,175 +30,201 @@ public class BinStockService {
             ProductRepository productRepository,
             com.billbull.backend.sales.quotation.QuotationRepository quotationRepo,
             com.billbull.backend.sales.salesorder.SalesOrderRepository salesOrderRepo,
-            com.billbull.backend.sales.delivery.DeliveryNoteRepository deliveryNoteRepo) {
+            com.billbull.backend.sales.delivery.DeliveryNoteRepository deliveryNoteRepo,
+            WarehouseStockService warehouseStockService) {
         this.stockMovementRepository = stockMovementRepository;
         this.binRepository = binRepository;
         this.productRepository = productRepository;
-        this.quotationRepo = quotationRepo;
-        this.salesOrderRepo = salesOrderRepo;
         this.deliveryNoteRepo = deliveryNoteRepo;
+        this.warehouseStockService = warehouseStockService;
     }
 
-    private Map<Long, Integer> getGlobalOnHandMap(List<Long> productIds) {
-        if (productIds == null || productIds.isEmpty())
-            return new HashMap<>();
-        List<Object[]> rows = stockMovementRepository.getTotalAvailableStockForProducts(productIds);
-        Map<Long, Integer> map = new HashMap<>();
-        for (Object[] row : rows) {
-            map.put((Long) row[0], ((Number) row[1]).intValue());
-        }
-        return map;
+    private int safeInt(BigDecimal value) {
+        return value != null ? value.intValue() : 0;
     }
 
-    private Map<Long, Integer> getGlobalReservedMap(List<Product> products) {
-        if (products == null || products.isEmpty())
-            return new HashMap<>();
-        List<String> productCodes = products.stream().map(Product::getCode).collect(Collectors.toList());
-
-        Map<String, Integer> codeMap = new HashMap<>();
-        // 🚫 SOFT RESERVATION RULE: Quotations should not block physical stock.
-        // We no longer add qReservations to codeMap for hard reservation calculating.
-        // List<Object[]> qReservations =
-        // quotationRepo.sumReservedQuantityForProducts(productCodes);
-        // for (Object[] row : qReservations) {
-        // String code = (String) row[0];
-        // int qty = ((Number) row[1]).intValue();
-        // codeMap.put(code, codeMap.getOrDefault(code, 0) + qty);
-        // }
-
-        List<Object[]> soReservations = salesOrderRepo.sumReservedQuantityForProducts(productCodes);
-        for (Object[] row : soReservations) {
-            String code = (String) row[0];
-            int qty = ((Number) row[1]).intValue();
-            codeMap.put(code, codeMap.getOrDefault(code, 0) + qty);
+    private int allocateReservedToSelectedBin(Long selectedBinId, List<Object[]> warehouseBinRows, int totalReserved) {
+        if (selectedBinId == null || warehouseBinRows == null || warehouseBinRows.isEmpty() || totalReserved <= 0) {
+            return 0;
         }
 
-        Map<Long, Integer> map = new HashMap<>();
-        for (Product p : products) {
-            map.put(p.getId(), codeMap.getOrDefault(p.getCode(), 0));
+        class BinAllocation {
+            Long binId;
+            int onHand;
+            int allocated;
         }
-        return map;
+
+        List<BinAllocation> bins = new ArrayList<>();
+        for (Object[] row : warehouseBinRows) {
+            int onHand = ((Number) row[2]).intValue();
+            if (onHand <= 0) {
+                continue;
+            }
+
+            BinAllocation allocation = new BinAllocation();
+            allocation.binId = (Long) row[1];
+            allocation.onHand = onHand;
+            bins.add(allocation);
+        }
+
+        if (bins.isEmpty()) {
+            return 0;
+        }
+
+        BinAllocation singleBinFit = bins.stream()
+                .filter(bin -> bin.onHand >= totalReserved)
+                .sorted((left, right) -> {
+                    int onHandCompare = Integer.compare(left.onHand, right.onHand);
+                    if (onHandCompare != 0) {
+                        return onHandCompare;
+                    }
+
+                    long leftKey = left.binId != null ? left.binId : Long.MAX_VALUE;
+                    long rightKey = right.binId != null ? right.binId : Long.MAX_VALUE;
+                    return Long.compare(leftKey, rightKey);
+                })
+                .findFirst()
+                .orElse(null);
+
+        if (singleBinFit != null) {
+            singleBinFit.allocated = totalReserved;
+        } else {
+            bins.sort((left, right) -> {
+                int onHandCompare = Integer.compare(right.onHand, left.onHand);
+                if (onHandCompare != 0) {
+                    return onHandCompare;
+                }
+
+                long leftKey = left.binId != null ? left.binId : Long.MAX_VALUE;
+                long rightKey = right.binId != null ? right.binId : Long.MAX_VALUE;
+                return Long.compare(leftKey, rightKey);
+            });
+
+            int remaining = totalReserved;
+            for (BinAllocation bin : bins) {
+                if (remaining <= 0) {
+                    break;
+                }
+                bin.allocated = Math.min(bin.onHand, remaining);
+                remaining -= bin.allocated;
+            }
+        }
+
+        return bins.stream()
+                .filter(bin -> selectedBinId.equals(bin.binId))
+                .mapToInt(bin -> bin.allocated)
+                .findFirst()
+                .orElse(0);
     }
 
-    /**
-     * Get all stock in a specific bin - derived from stock_movements table
-     * Groups by product and aggregates quantities
-     */
     public List<BinStockResponse> getStockByBin(Long binId) {
         Bin bin = binRepository.findByIdEager(binId)
                 .orElseThrow(() -> new RuntimeException("Bin not found: " + binId));
         Long warehouseId = bin.getLocator().getZone().getWarehouse().getId();
 
-        // Get all stock movements for this bin
-        List<StockMovement> movements = stockMovementRepository.findByBinId(binId);
-
-        // Group by productId and aggregate
-        java.util.Map<Long, BinStockResponse> stockMap = new java.util.LinkedHashMap<>();
-
-        for (StockMovement sm : movements) {
-            Long productId = sm.getProductId();
-
-            if (stockMap.containsKey(productId)) {
-                // Add to existing quantity
-                BinStockResponse existing = stockMap.get(productId);
-                existing.setQuantity(existing.getQuantity() + sm.getQuantity());
-            } else {
-                // Create new entry
-                BinStockResponse response = new BinStockResponse();
-                response.setId(productId);
-                response.setQuantity(sm.getQuantity());
-                response.setBatchNumber(sm.getBatchNumber() != null ? sm.getBatchNumber() : "-");
-                response.setExpiryDate(sm.getExpiryDate());
-
-                stockMap.put(productId, response);
-            }
+        List<Object[]> stockRows = stockMovementRepository.findStockIdentitiesByBin(binId);
+        List<Long> productIds = stockRows.stream()
+                .map(row -> ((Number) row[0]).longValue())
+                .distinct()
+                .toList();
+        if (productIds.isEmpty()) {
+            return new ArrayList<>();
         }
 
-        // Cache global counts for encountered products
-        List<Long> productIds = new ArrayList<>(stockMap.keySet());
-        if (productIds.isEmpty())
-            return new ArrayList<>();
-
         List<Product> products = productRepository.findAllById(productIds);
-        Map<Long, Product> productDetails = products.stream().collect(Collectors.toMap(Product::getId, p -> p));
-        Map<Long, Integer> globalOnHandMap = getGlobalOnHandMap(productIds);
-        Map<Long, Integer> globalReservedMap = getGlobalReservedMap(products);
+        Map<Long, Product> productDetails = products.stream().collect(Collectors.toMap(Product::getId, product -> product));
+
+        Map<Long, List<Object[]>> warehouseBinRowsByProduct = stockMovementRepository
+                .findStockByWarehouseAndBins(warehouseId)
+                .stream()
+                .collect(Collectors.groupingBy(row -> (Long) row[0]));
+
+        Map<Long, Integer> remainingReservedByProduct = new HashMap<>();
+        for (Long productId : productIds) {
+            List<Object[]> warehouseBinRows = warehouseBinRowsByProduct.getOrDefault(productId, List.of());
+
+            int warehouseSoReserved = warehouseStockService.getSalesOrderReservedForWarehouse(warehouseId, productId);
+            int allocatedSoReserved = allocateReservedToSelectedBin(binId, warehouseBinRows, warehouseSoReserved);
+
+            int warehouseUnassignedDnReserved = safeInt(
+                    deliveryNoteRepo.sumUnassignedReservedQtyInDispatchedNotes(productId, warehouseId));
+            int allocatedUnassignedDnReserved = allocateReservedToSelectedBin(
+                    binId,
+                    warehouseBinRows,
+                    warehouseUnassignedDnReserved);
+
+            int binDnReserved = safeInt(deliveryNoteRepo.sumReservedQtyInDispatchedNotesByBin(productId, binId));
+
+            remainingReservedByProduct.put(productId,
+                    allocatedSoReserved + allocatedUnassignedDnReserved + binDnReserved);
+        }
 
         List<BinStockResponse> resultList = new ArrayList<>();
+        for (Object[] row : stockRows) {
+            Long productId = ((Number) row[0]).longValue();
+            String batchNumber = row[1] != null ? row[1].toString() : "-";
+            java.time.LocalDate expiryDate = (java.time.LocalDate) row[2];
+            int binOnHand = row[3] != null ? ((Number) row[3]).intValue() : 0;
+            if (binOnHand <= 0) continue;
 
-        for (BinStockResponse res : stockMap.values()) {
-            Long productId = res.getId();
             Product product = productDetails.get(productId);
-
+            BinStockResponse response = new BinStockResponse();
+            response.setId(productId);
+            response.setStockIdentityKey(productId + "|" + batchNumber + "|" + (expiryDate != null ? expiryDate : ""));
+            response.setQuantity(binOnHand);
+            response.setBatchNumber(batchNumber);
+            response.setExpiryDate(expiryDate);
             if (product != null) {
-                res.setProductCode(product.getCode());
-                res.setProductName(product.getName());
+                response.setProductCode(product.getCode());
+                response.setProductName(product.getName());
             }
 
-            int binOnHand = res.getQuantity() != null ? res.getQuantity() : 0;
-
-            // Skip zero-stock bins for fake reservations limitation
-            int globalOnHand = globalOnHandMap.getOrDefault(productId, 0);
-            int globalReserved = globalReservedMap.getOrDefault(productId, 0);
-
-            int binReserved = 0;
-            // Nearest-integer rounding for proportional bin reservation display.
-            // Math.floor causes the sum across bins to fall short of globalReserved
-            // when fractional parts accumulate (e.g. 10/15 + 5/15 of 5 → 3+1=4, not 5).
-            // Math.round gives a closer per-bin estimate so each bin's display is accurate.
-            if (binOnHand > 0 && globalOnHand > 0) {
-                double frac = ((double) binOnHand / globalOnHand) * globalReserved;
-                binReserved = (int) Math.round(frac);
-            }
-
-            int warehouseOnHand = stockMovementRepository.getAvailableStock(warehouseId, productId).intValue();
-            int warehouseDnReserved = deliveryNoteRepo
-                    .sumUnassignedReservedQtyInDispatchedNotes(productId, warehouseId)
-                    .intValue();
-            if (binOnHand > 0 && warehouseOnHand > 0 && warehouseDnReserved > 0) {
-                double frac = ((double) binOnHand / warehouseOnHand) * warehouseDnReserved;
-                binReserved += (int) Math.round(frac);
-            }
-
-            // Add direct specific reservations from Delivery Notes for this bin
-            int binDnReserved = deliveryNoteRepo.sumReservedQtyInDispatchedNotesByBin(productId, binId).intValue();
-            binReserved += binDnReserved;
-
-            // Skip products with zero or negative net quantity — fully dispatched from this bin
-            if (binOnHand <= 0) {
-                continue;
-            }
-
-            res.setReservedQuantity(binReserved);
-            resultList.add(res);
+            int remainingReserved = remainingReservedByProduct.getOrDefault(productId, 0);
+            int rowReserved = Math.min(binOnHand, Math.max(remainingReserved, 0));
+            response.setReservedQuantity(rowReserved);
+            remainingReservedByProduct.put(productId, remainingReserved - rowReserved);
+            resultList.add(response);
         }
 
         return resultList;
     }
 
-    /**
-     * Get detailed stock movements for a bin
-     */
     public List<StockMovement> getMovementsByBin(Long binId) {
         return stockMovementRepository.findByBinId(binId);
     }
 
     public int getTotalQuantityByBin(Long binId) {
-        // Use aggregated query and sum only positive net stock per product
         List<Object[]> rows = stockMovementRepository.findStockByBin(binId);
         return rows.stream()
-                .mapToInt(r -> {
-                    int net = ((Number) r[1]).intValue();
+                .mapToInt(row -> {
+                    int net = ((Number) row[1]).intValue();
                     return net > 0 ? net : 0;
                 })
                 .sum();
     }
 
     public int getSkuCountByBin(Long binId) {
-        // Count only products with positive net stock in this bin
         List<Object[]> rows = stockMovementRepository.findStockByBin(binId);
         return (int) rows.stream()
-                .filter(r -> ((Number) r[1]).intValue() > 0)
+                .filter(row -> ((Number) row[1]).intValue() > 0)
                 .count();
+    }
+
+    public void validateBinCapacity(Long binId, int incomingQty) {
+        Bin bin = binRepository.findById(binId).orElse(null);
+        if (bin == null || bin.getCapacity() == null) {
+            return;
+        }
+
+        int current = getTotalQuantityByBin(binId);
+        int afterPosting = current + incomingQty;
+
+        if (afterPosting > bin.getCapacity()) {
+            throw new IllegalStateException(
+                    "Bin capacity exceeded for bin " + bin.getCode() + ". " +
+                            "Max: " + bin.getCapacity() + ", Current: " + current +
+                            ", Attempted to add: " + incomingQty +
+                            " (would reach " + afterPosting + ")");
+        }
     }
 }

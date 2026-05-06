@@ -3,6 +3,7 @@ package com.billbull.backend.sales.invoice;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
+import com.billbull.backend.security.ModulePermissionService;
 
 import java.time.LocalDate;
 import java.util.List;
@@ -14,32 +15,38 @@ import java.util.Map;
 public class SalesInvoiceController {
 
     private final SalesInvoiceService service;
+    private final ModulePermissionService modulePermissionService;
 
-    public SalesInvoiceController(SalesInvoiceService service) {
+    public SalesInvoiceController(SalesInvoiceService service, ModulePermissionService modulePermissionService) {
         this.service = service;
+        this.modulePermissionService = modulePermissionService;
     }
 
     @GetMapping
-    @PreAuthorize("hasAnyRole('ADMIN','SALES','ACCOUNTANT')")
+    @PreAuthorize("isAuthenticated()")
     public List<SalesInvoice> getAll() {
+        modulePermissionService.requireCanView("sales");
         return service.getAll();
     }
 
     @GetMapping("/{id}")
-    @PreAuthorize("hasAnyRole('ADMIN','SALES','ACCOUNTANT')")
+    @PreAuthorize("isAuthenticated()")
     public SalesInvoice getById(@PathVariable Long id) {
+        modulePermissionService.requireCanView("sales");
         return service.getById(id);
     }
 
     @PostMapping
-    @PreAuthorize("hasAnyRole('ADMIN','SALES')")
+    @PreAuthorize("isAuthenticated()")
     public SalesInvoice save(@RequestBody SalesInvoice invoice) {
+        modulePermissionService.requireCanCreate("sales");
         return service.save(invoice);
     }
 
     @DeleteMapping("/{id}")
-    @PreAuthorize("hasRole('ADMIN')")
+    @PreAuthorize("isAuthenticated()")
     public ResponseEntity<Void> delete(@PathVariable Long id) {
+        modulePermissionService.requireCanEdit("sales");
         service.delete(id);
         return ResponseEntity.noContent().build();
     }

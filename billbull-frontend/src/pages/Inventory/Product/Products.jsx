@@ -20,7 +20,6 @@ import {
   createProduct,
   updateProduct,
   deleteProduct,
-  exportProducts,
   importProducts
 } from "../../../api/productsApi";
 import { getBrands, createBrand } from "../../../api/brandsApi";
@@ -33,6 +32,25 @@ import { getWarehouses } from "../../../api/warehouseApi";
 import ClassificationDropdown from "../../../components/ClassificationDropdown";
 import { getZones, getLocators, getBins } from "../../../api/warehouseLocationApi";
 import { getVendors } from "../../../api/vendorsApi";
+import { getUnitConversionFactor } from "../../../utils/unitPricing";
+import ExportDropdown from '../../../components/common/ExportDropdown';
+import { exportToExcel, exportToPDF } from '../../../utils/exportUtils';
+import CurrencyAmount, { CurrencySymbol } from '../../../components/CurrencyAmount';
+
+// ==========================================
+// 1. CONFIGURATION
+// ==========================================
+
+const PRODUCT_COLUMNS = [
+  { header: 'Product', key: 'name', width: 30 },
+  { header: 'Code', key: 'code', width: 15 },
+  { header: 'SKU', key: 'sku', width: 15 },
+  { header: 'Brand', key: 'brandName', width: 15 },
+  { header: 'Department', key: 'departmentName', width: 20 },
+  { header: 'Cost', key: 'cost', width: 12 },
+  { header: 'Retail Price', key: 'retailPrice', width: 15 },
+  { header: 'Status', key: 'status', width: 12 }
+];
 
 // ==========================================
 // 1. DATA CONSTANTS & INITIAL STATE
@@ -53,7 +71,8 @@ const INITIAL_FORM_STATE = {
   tags: [],
   productType: 'stock',
   isSerial: false,
-  isBatch: false,
+  batchControlled: false,
+  expiryControlled: false,
   isWeighing: false,
   isDiscountAllowed: true,
   maxDiscount: 0,
@@ -140,7 +159,8 @@ const buildProductPayload = (formData) => {
       productType: (formData.productType || 'stock').toUpperCase(),
       category: formData.category,
       isSerial: formData.isSerial,
-      isBatch: formData.isBatch,
+      isBatch: !!formData.batchControlled,
+      expiryEnabled: !!formData.expiryControlled,
       isWeighing: formData.isWeighing,
       isDiscountAllowed: formData.isDiscountAllowed,
       maxDiscount: formData.maxDiscount,
@@ -184,7 +204,11 @@ const buildProductPayload = (formData) => {
       zone: formData.zone ? { id: Number(formData.zone) } : null,
       locator: formData.locator ? { id: Number(formData.locator) } : null,
       bin: formData.bin ? { id: Number(formData.bin) } : null,
-      packings: formData.packings
+      packings: formData.packings.map((pkg, idx) => ({
+        ...pkg,
+        cost: idx === 0 ? parseFloat(formData.cost || 0) : pkg.cost,
+        price: idx === 0 ? parseFloat(formData.retailPrice || 0) : pkg.price,
+      }))
     }
   };
 };
@@ -201,8 +225,7 @@ const AddProductWizard = ({ onCancel, onSave, initialData, brands: initialBrands
   const [brands, setBrandsLocal] = useState(initialBrands || []);
   const [departments, setDeptsLocal] = useState(initialDepts || []);
   const [units, setUnitsLocal] = useState(initialUnits || []);
-  // Quick-add modal state (used for Unit only; Brand/Dept/SubDept/Category use inline create)
-  const [quickAdd, setQuickAdd] = useState({ open: false, type: null, name: '', saving: false });
+
   // Inline-create loading indicator — stores which field type is currently being saved
   const [creatingType, setCreatingType] = useState(null);
   // Local category list — no backend entity, stored per session
@@ -358,43 +381,28 @@ const AddProductWizard = ({ onCancel, onSave, initialData, brands: initialBrands
           newData.retailPrice = newPrice.toFixed(2);
         }
       }
+
+      if (['cost', 'markup', 'retailPrice', 'defaultUnit'].includes(field)) {
+        const baseCost = parseFloat(newData.cost) || 0;
+        const basePrice = parseFloat(newData.retailPrice) || 0;
+
+        newData.packings = (newData.packings || []).map((packing, idx) => {
+          const ratio = parseFloat(packing.conversion) || 1;
+
+          return {
+            ...packing,
+            unit: idx === 0 ? (newData.defaultUnit || packing.unit) : packing.unit,
+            baseQty: ratio,
+            cost: parseFloat((baseCost * ratio).toFixed(4)),
+            price: parseFloat((basePrice * ratio).toFixed(4))
+          };
+        });
+      }
       return newData;
     });
   };
 
-  // BB-002: Quick-add handler for Brand / Department / Sub-Department / Unit
-  const handleQuickAddSave = async () => {
-    const { type, name } = quickAdd;
-    if (!name.trim()) return;
-    setQuickAdd(prev => ({ ...prev, saving: true }));
-    try {
-      if (type === 'brand') {
-        // QA-001: truncate code to 10 chars (DB column limit) and force active=true
-        const rawCode = name.trim().toUpperCase().replace(/[^A-Z0-9]/g, '_');
-        const created = await createBrand({ name: name.trim(), code: rawCode.substring(0, 10), active: true });
-        setBrandsLocal(prev => [...prev, created]);
-        handleInputChange('brand', created.id);
-      } else if (type === 'department') {
-        const created = await createDepartment({ name: name.trim() });
-        setDeptsLocal(prev => [...prev, created]);
-        handleInputChange('department', created.id);
-      } else if (type === 'subdepartment') {
-        if (!formData.department) { alert('Select a department first.'); setQuickAdd(prev => ({ ...prev, saving: false })); return; }
-        const created = await createSubDepartment({ name: name.trim(), departmentId: Number(formData.department) });
-        setSubDepartments(prev => [...prev, created]);
-        handleInputChange('subDepartment', created.id);
-      } else if (type === 'unit') {
-        const created = await createUnit({ name: name.trim(), abbreviation: name.trim().substring(0, 5).toUpperCase() });
-        setUnitsLocal(prev => [...prev, created]);
-        handleInputChange('defaultUnit', created.id);
-      }
-      setQuickAdd({ open: false, type: null, name: '', saving: false });
-    } catch (err) {
-      console.error('Quick-add failed', err);
-      alert('Failed to create. Please try again.');
-      setQuickAdd(prev => ({ ...prev, saving: false }));
-    }
-  };
+
 
   // Inline create handler — used by ClassificationDropdown for Brand/Dept/SubDept/Category
   const handleInlineCreate = async (type, name) => {
@@ -415,12 +423,30 @@ const AddProductWizard = ({ onCancel, onSave, initialData, brands: initialBrands
         const created = await createSubDepartment({ name: name.trim(), departmentId: Number(formData.department) });
         setSubDepartments(prev => [...prev, created]);
         handleInputChange('subDepartment', created.id);
+      } else if (type === 'defaultUnit' || type === 'reorderUnit' || type === 'unit' || type.startsWith('packingUnit-')) {
+        const created = await createUnit({ name: name.trim(), symbol: name.trim().substring(0, 5).toUpperCase() });
+        setUnitsLocal(prev => [...prev, created]);
+        if (type === 'defaultUnit' || type === 'reorderUnit') {
+          handleInputChange(type, created.id);
+        } else if (type.startsWith('packingUnit-')) {
+          const pkgId = type.split('-')[1];
+          const unitName = created.name.toLowerCase();
+          let autoConversion = 1;
+          if (unitName.includes('piece') || unitName.includes('pcs') || unitName.includes('pc')) autoConversion = 1;
+          else if (unitName.includes('outer')) autoConversion = 6;
+          else if (unitName.includes('box')) autoConversion = 12;
+          else if (unitName.includes('carton') || unitName.includes('ctn')) autoConversion = 48;
+
+          setFormData(prev => ({
+            ...prev,
+            packings: prev.packings.map(p =>
+              String(p.id) === String(pkgId) ? { ...p, unit: created.id, conversion: autoConversion } : p
+            )
+          }));
+        }
       } else if (type === 'category') {
-        // No backend entity — persist only in local session state
         const newCat = name.trim();
-        setCategoriesLocal(prev =>
-          prev.includes(newCat) ? prev : [...prev, newCat]
-        );
+        setCategoriesLocal(prev => prev.includes(newCat) ? prev : [...prev, newCat]);
         handleInputChange('category', newCat);
       }
     } catch (err) {
@@ -686,8 +712,12 @@ const AddProductWizard = ({ onCancel, onSave, initialData, brands: initialBrands
                     Serial Number Controlled
                   </label>
                   <label className="flex items-center gap-2 cursor-pointer text-sm text-slate-600 hover:text-slate-900 transition-colors">
-                    <input type="checkbox" className="rounded text-[#F5C742] focus:ring-[#F5C742]" checked={formData.isBatch} onChange={(e) => handleInputChange('isBatch', e.target.checked)} />
-                    Batch / Expiry Controlled
+                    <input type="checkbox" className="rounded text-[#F5C742] focus:ring-[#F5C742]" checked={formData.batchControlled} onChange={(e) => handleInputChange('batchControlled', e.target.checked)} />
+                    Batch Controlled
+                  </label>
+                  <label className="flex items-center gap-2 cursor-pointer text-sm text-slate-600 hover:text-slate-900 transition-colors">
+                    <input type="checkbox" className="rounded text-[#F5C742] focus:ring-[#F5C742]" checked={formData.expiryControlled} onChange={(e) => handleInputChange('expiryControlled', e.target.checked)} />
+                    Expiry Controlled
                   </label>
                   <label className="flex items-center gap-2 cursor-pointer text-sm text-slate-600 hover:text-slate-900 transition-colors">
                     <input type="checkbox" className="rounded text-[#F5C742] focus:ring-[#F5C742]" checked={formData.isWeighing} onChange={(e) => handleInputChange('isWeighing', e.target.checked)} />
@@ -804,7 +834,7 @@ const AddProductWizard = ({ onCancel, onSave, initialData, brands: initialBrands
                 <h3 className="font-semibold text-lg mb-4 flex items-center gap-2"><Calculator className="h-5 w-5 text-slate-400" /> Costing</h3>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-4">
                   <div className="space-y-1.5">
-                    <label className="text-xs font-semibold text-slate-500">Cost (AED) <span className="text-red-500">*</span></label>
+                    <label className="text-xs font-semibold text-slate-500">Cost (<CurrencySymbol />) <span className="text-red-500">*</span></label>
                     <input type="number" value={formData.cost} onChange={(e) => handleInputChange('cost', e.target.value)} className="w-full border border-slate-200 rounded-md px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-[#F5C742]/50 font-medium" />
                   </div>
                   <div className="space-y-1.5">
@@ -853,11 +883,11 @@ const AddProductWizard = ({ onCancel, onSave, initialData, brands: initialBrands
                 </div>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-4">
                   <div className="space-y-1.5">
-                    <label className="text-xs font-semibold text-slate-500">Retail Price (AED) <span className="text-red-500">*</span></label>
+                    <label className="text-xs font-semibold text-slate-500">Retail Price (<CurrencySymbol />) <span className="text-red-500">*</span></label>
                     <input type="number" value={formData.retailPrice} onChange={(e) => handleInputChange('retailPrice', e.target.value)} className="w-full border border-slate-200 rounded-md px-3 py-2 text-sm font-bold text-slate-900 outline-none focus:ring-2 focus:ring-[#F5C742]/50 text-lg" />
                   </div>
                   <div className="space-y-1.5">
-                    <label className="text-xs font-semibold text-slate-500">Wholesale Price (AED)</label>
+                    <label className="text-xs font-semibold text-slate-500">Wholesale Price (<CurrencySymbol />)</label>
                     <input type="number" value={formData.wholesalePrice} onChange={(e) => handleInputChange('wholesalePrice', e.target.value)} className="w-full border border-slate-200 rounded-md px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-[#F5C742]/50" placeholder="0" />
                   </div>
                 </div>
@@ -916,16 +946,16 @@ const AddProductWizard = ({ onCancel, onSave, initialData, brands: initialBrands
                   </div>
                   <div className="flex justify-between items-center p-3 bg-white rounded-lg border border-slate-100 shadow-sm">
                     <span className="text-sm text-slate-500">Price Incl. Tax</span>
-                    <span className="font-mono font-semibold">AED {(formData.retailPrice * (1 + formData.salesTax / 100)).toFixed(2)}</span>
+                    <CurrencyAmount value={formData.retailPrice * (1 + formData.salesTax / 100)} className="font-mono font-semibold" />
                   </div>
                   <div className="flex justify-between items-center p-3 bg-white rounded-lg border border-slate-100 shadow-sm">
                     <span className="text-sm text-slate-500">Price Excl. Tax</span>
-                    <span className="font-mono font-semibold">AED {formData.retailPrice}</span>
+                    <CurrencyAmount value={formData.retailPrice} className="font-mono font-semibold" />
                   </div>
                   <div className="mt-6 pt-4 border-t border-slate-100">
                     <div className="bg-emerald-50 border border-emerald-100 p-4 rounded-lg text-center">
                       <span className="text-xs font-medium text-emerald-700 uppercase tracking-wider">Profit per Unit</span>
-                      <div className="text-3xl font-bold text-emerald-700 mt-2">AED {calculateProfit()}</div>
+                      <CurrencyAmount value={calculateProfit()} className="text-3xl font-bold text-emerald-700 mt-2" />
                     </div>
                   </div>
                 </div>
@@ -941,15 +971,15 @@ const AddProductWizard = ({ onCancel, onSave, initialData, brands: initialBrands
                 <h3 className="font-semibold text-lg mb-4 flex items-center gap-2"><Layers className="h-5 w-5 text-slate-400" /> Stock Controls</h3>
                 <div className="space-y-4">
                   <div className="space-y-1.5">
-                    <div className="flex items-center justify-between">
-                      <label className="text-xs font-semibold text-slate-500">Default Unit <span className="text-red-500">*</span></label>
-                      <button type="button" onClick={() => setQuickAdd({ open: true, type: 'unit', name: '', saving: false })} className="flex items-center gap-0.5 text-xs text-[#F5C742] hover:text-[#E5B732] font-semibold">
-                        <PlusCircle size={13} /> New Unit
-                      </button>
-                    </div>
-                    <select value={formData.defaultUnit} onChange={(e) => handleInputChange('defaultUnit', e.target.value)} className="w-full border border-slate-200 rounded-md px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-[#F5C742]/50">
-                      {units.map(u => <option key={u.id} value={u.id}>{u.name} ({u.symbol || u.name})</option>)}
-                    </select>
+                    <label className="text-xs font-semibold text-slate-500">Default Unit <span className="text-red-500">*</span></label>
+                    <ClassificationDropdown
+                      options={units.map(u => ({ value: u.id, label: `${u.name} (${u.abbreviation || u.name})` }))}
+                      value={formData.defaultUnit}
+                      onChange={(val) => handleInputChange('defaultUnit', val)}
+                      onCreateNew={(name) => handleInlineCreate('defaultUnit', name)}
+                      placeholder="Select Default Unit…"
+                      creating={creatingType === 'defaultUnit'}
+                    />
                   </div>
                   <div className="grid grid-cols-2 gap-6">
                     <div className="space-y-1.5">
@@ -958,9 +988,14 @@ const AddProductWizard = ({ onCancel, onSave, initialData, brands: initialBrands
                     </div>
                     <div className="space-y-1.5">
                       <label className="text-xs font-semibold text-slate-500">Reorder Unit</label>
-                      <select value={formData.reorderUnit} onChange={(e) => handleInputChange('reorderUnit', e.target.value)} className="w-full border border-slate-200 rounded-md px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-[#F5C742]/50">
-                        {units.map(u => <option key={u.id} value={u.id}>{u.name} ({u.symbol})</option>)}
-                      </select>
+                      <ClassificationDropdown
+                        options={units.map(u => ({ value: u.id, label: `${u.name} (${u.abbreviation || u.name})` }))}
+                        value={formData.reorderUnit}
+                        onChange={(val) => handleInputChange('reorderUnit', val)}
+                        onCreateNew={(name) => handleInlineCreate('reorderUnit', name)}
+                        placeholder="Select Reorder Unit…"
+                        creating={creatingType === 'reorderUnit'}
+                      />
                     </div>
                   </div>
                   <div className="space-y-1.5">
@@ -1077,10 +1112,10 @@ const AddProductWizard = ({ onCancel, onSave, initialData, brands: initialBrands
                     <tr key={pkg.id} className="border-b last:border-0 hover:bg-slate-50 transition-colors">
                       <td className="p-3"><span className="px-2 py-1 bg-slate-100 rounded text-xs font-mono">{pkg.level}</span></td>
                       <td className="p-3 font-medium">
-                        <select
+                        <ClassificationDropdown
+                          options={units.map(u => ({ value: u.id, label: u.name }))}
                           value={pkg.unit}
-                          onChange={(e) => {
-                            const selectedUnitId = e.target.value;
+                          onChange={(selectedUnitId) => {
                             const selectedUnit = units.find(u => u.id == selectedUnitId);
 
                             // Auto-fill conversion ratio based on unit name
@@ -1098,15 +1133,25 @@ const AddProductWizard = ({ onCancel, onSave, initialData, brands: initialBrands
                               }
                             }
 
-                            const updatedPackings = formData.packings.map(p =>
-                              p.id === pkg.id ? { ...p, unit: selectedUnitId, conversion: autoConversion } : p
-                            );
+                            const updatedPackings = formData.packings.map(p => {
+                              if (p.id !== pkg.id) return p;
+                              const basePrice = parseFloat(formData.retailPrice || 0);
+                              const baseCost = parseFloat(formData.cost || 0);
+                              return {
+                                ...p,
+                                unit: selectedUnitId,
+                                conversion: autoConversion,
+                                baseQty: autoConversion,
+                                cost: parseFloat((baseCost * autoConversion).toFixed(4)),
+                                price: parseFloat((basePrice * autoConversion).toFixed(4))
+                              };
+                            });
                             setFormData(prev => ({ ...prev, packings: updatedPackings }));
                           }}
-                          className="border border-slate-200 rounded px-2 py-1 bg-white outline-none focus:border-[#F5C742]"
-                        >
-                          {units.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
-                        </select>
+                          onCreateNew={(name) => handleInlineCreate(`packingUnit-${pkg.id}`, name)}
+                          placeholder="Select Unit…"
+                          creating={creatingType === `packingUnit-${pkg.id}`}
+                        />
                       </td>
                       <td className="p-3">
                         <input
@@ -1133,25 +1178,43 @@ const AddProductWizard = ({ onCancel, onSave, initialData, brands: initialBrands
                         />
                       </td>
                       <td className="p-3 font-mono">{pkg.baseQty}</td>
-                      <td className="p-3 text-center"><input type="checkbox" defaultChecked={pkg.isSale} className="accent-[#F5C742]" /></td>
-                      <td className="p-3 text-center"><input type="checkbox" defaultChecked={pkg.isPurchase} className="accent-[#F5C742]" /></td>
+                      <td className="p-3 text-center">
+                        <input
+                          type="checkbox"
+                          checked={!!pkg.isSale}
+                          onChange={(e) => {
+                            const checked = e.target.checked;
+                            setFormData(prev => ({
+                              ...prev,
+                              packings: prev.packings.map(p => p.id === pkg.id ? { ...p, isSale: checked } : p)
+                            }));
+                          }}
+                          className="accent-[#F5C742]"
+                        />
+                      </td>
+                      <td className="p-3 text-center">
+                        <input
+                          type="checkbox"
+                          checked={!!pkg.isPurchase}
+                          onChange={(e) => {
+                            const checked = e.target.checked;
+                            setFormData(prev => ({
+                              ...prev,
+                              packings: prev.packings.map(p => p.id === pkg.id ? { ...p, isPurchase: checked } : p)
+                            }));
+                          }}
+                          className="accent-[#F5C742]"
+                        />
+                      </td>
                       <td className="p-3">
                         {idx === 0 ? (
                           <span className="text-slate-400 text-xs">{parseFloat(formData.cost || 0).toFixed(2)}</span>
                         ) : (
                           <input
                             type="number"
-                            min="0"
-                            step="0.01"
+                            readOnly
                             value={pkg.cost ?? ''}
-                            onChange={(e) => {
-                              const val = parseFloat(e.target.value) || 0;
-                              setFormData(prev => ({
-                                ...prev,
-                                packings: prev.packings.map(p => p.id === pkg.id ? { ...p, cost: val } : p)
-                              }));
-                            }}
-                            className="w-24 border border-slate-200 rounded px-2 py-1 outline-none focus:border-[#F5C742] text-slate-700 text-sm"
+                            className="w-24 bg-slate-50 border border-slate-200 text-slate-500 rounded px-2 py-1 outline-none text-sm cursor-not-allowed"
                             placeholder="0.00"
                           />
                         )}
@@ -1162,17 +1225,9 @@ const AddProductWizard = ({ onCancel, onSave, initialData, brands: initialBrands
                         ) : (
                           <input
                             type="number"
-                            min="0"
-                            step="0.01"
+                            readOnly
                             value={pkg.price ?? ''}
-                            onChange={(e) => {
-                              const val = parseFloat(e.target.value) || 0;
-                              setFormData(prev => ({
-                                ...prev,
-                                packings: prev.packings.map(p => p.id === pkg.id ? { ...p, price: val } : p)
-                              }));
-                            }}
-                            className="w-24 border border-slate-200 rounded px-2 py-1 outline-none focus:border-[#F5C742] font-medium text-slate-800 text-sm"
+                            className="w-24 bg-slate-50 border border-slate-200 text-slate-500 font-medium rounded px-2 py-1 outline-none text-sm cursor-not-allowed"
                             placeholder="0.00"
                           />
                         )}
@@ -1298,44 +1353,7 @@ const AddProductWizard = ({ onCancel, onSave, initialData, brands: initialBrands
           </div>
         </div>
       </div>
-      {/* BB-002: Quick-Add Mini-Modal */}
-      {quickAdd.open && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm">
-          <div className="bg-white rounded-xl shadow-2xl w-full max-w-sm p-6 animate-in zoom-in-95 duration-150">
-            <h3 className="font-bold text-slate-800 mb-1 text-base">
-              {quickAdd.type === 'brand' && 'Add New Brand'}
-              {quickAdd.type === 'department' && 'Add New Department'}
-              {quickAdd.type === 'subdepartment' && 'Add New Sub-Department'}
-              {quickAdd.type === 'unit' && 'Add New Unit'}
-            </h3>
-            <p className="text-xs text-slate-400 mb-4">It will be created and auto-selected.</p>
-            <label className="text-xs font-semibold text-slate-500 mb-1 block">Name *</label>
-            <input
-              autoFocus
-              type="text"
-              value={quickAdd.name}
-              onChange={e => setQuickAdd(prev => ({ ...prev, name: e.target.value }))}
-              onKeyDown={e => { if (e.key === 'Enter') handleQuickAddSave(); if (e.key === 'Escape') setQuickAdd({ open: false, type: null, name: '', saving: false }); }}
-              placeholder={`Enter ${quickAdd.type === 'subdepartment' ? 'sub-department' : quickAdd.type} name`}
-              className="w-full border border-slate-200 rounded-md px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-[#F5C742]/50 mb-4"
-            />
-            <div className="flex gap-2 justify-end">
-              <button onClick={() => setQuickAdd({ open: false, type: null, name: '', saving: false })} className="px-4 py-2 text-sm text-slate-600 border border-slate-200 rounded-md hover:bg-slate-50">
-                Cancel
-              </button>
-              <button
-                onClick={handleQuickAddSave}
-                disabled={!quickAdd.name.trim() || quickAdd.saving}
-                className="flex items-center gap-1.5 px-4 py-2 bg-[#F5C742] hover:bg-[#E5B732] text-slate-900 text-sm font-bold rounded-md disabled:opacity-50"
-              >
-                {quickAdd.saving ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} />}
-                Create
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-    </div >
+    </div>
   );
 };
 
@@ -1457,7 +1475,7 @@ const ScannedDetailsModal = ({ product, onClose, onPrint }) => {
             <div className="p-3 rounded-xl border bg-emerald-50 border-emerald-100 text-center">
               <DollarSign className="h-4 w-4 text-emerald-600 mx-auto mb-1" />
               <p className="text-[10px] font-bold text-slate-400 uppercase">Retail Price</p>
-              <p className="font-bold text-emerald-700 text-lg">AED {product.retailPrice}</p>
+              <CurrencyAmount value={product.retailPrice} className="font-bold text-emerald-700 text-lg" />
             </div>
             <div className="p-3 rounded-xl border bg-white border-slate-100 text-center">
               <Package className="h-4 w-4 text-purple-600 mx-auto mb-1" />
@@ -1516,8 +1534,8 @@ const ViewProductModal = ({ product, onClose }) => {
             </div>
             <div className="text-right space-y-1">
               <span className="block text-xs text-slate-500 uppercase">Retail Price</span>
-              <span className="block text-2xl font-bold text-slate-900">AED {parseFloat(product.retailPrice || 0).toFixed(2)}</span>
-              <span className="block text-xs text-slate-400">Cost: AED {parseFloat(product.cost || 0).toFixed(2)}</span>
+              <CurrencyAmount value={product.retailPrice || 0} className="block text-2xl font-bold text-slate-900" />
+              <span className="block text-xs text-slate-400">Cost: <CurrencyAmount value={product.cost || 0} /></span>
             </div>
           </div>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
@@ -1878,22 +1896,7 @@ const Products = () => {
     }
   };
 
-  const handleExport = async () => {
-    try {
-      const blob = await exportProducts();
-      const url = window.URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = 'products.xlsx'; // Filename from backend header or default
-      document.body.appendChild(a);
-      a.click();
-      window.URL.revokeObjectURL(url);
-      document.body.removeChild(a);
-    } catch (err) {
-      console.error("Export failed", err);
-      alert("Failed to export products. Please try again.");
-    }
-  };
+
 
   const fileInputRef = useRef(null);
 
@@ -1937,7 +1940,8 @@ const Products = () => {
         category: product?.category || '',
         productType: product?.productType ? product.productType.toLowerCase() : 'stock',
         isSerial: product?.isSerial || false,
-        isBatch: product?.isBatch || false,
+        batchControlled: !!product?.isBatch,
+        expiryControlled: !!product?.expiryEnabled,
         isWeighing: product?.isWeighing || false,
         isDiscountAllowed: product?.isDiscountAllowed != null ? product.isDiscountAllowed : true,
         maxDiscount: product?.maxDiscount || 0,
@@ -1979,9 +1983,16 @@ const Products = () => {
         bin: inventory?.bin ? inventory.bin.id : '',
 
         packings: inventory?.packings && inventory.packings.length > 0
-          ? inventory.packings.map(p => ({
+          ? inventory.packings.map((p, index) => ({
+            ...INITIAL_FORM_STATE.packings[0],
             ...p,
-            unit: p.unit ? p.unit.id : ''
+            id: p.id || Date.now() + index,
+            unit: p.unit || '',
+            conversion: p.conversion ?? 1,
+            baseQty: p.baseQty ?? p.conversion ?? 1,
+            cost: p.cost ?? 0,
+            price: p.price ?? 0,
+            barcode: p.barcode || ''
           }))
           : [{ ...INITIAL_FORM_STATE.packings[0] }]
       };
@@ -2110,9 +2121,10 @@ const Products = () => {
             <span className="hidden sm:inline">{importModal.status === 'loading' && importModal.fileName ? 'Importing...' : 'Import'}</span>
           </button>
 
-          <button onClick={handleExport} className="inline-flex items-center justify-center text-sm font-medium border bg-white hover:bg-slate-100 h-9 rounded-md gap-1.5 px-3 border-slate-200 text-slate-700 transition-colors">
-            <Download className="h-4 w-4" /> <span className="hidden sm:inline">Export</span>
-          </button>
+          <ExportDropdown
+            onExportExcel={() => exportToExcel(sortedData, PRODUCT_COLUMNS, 'Products')}
+            onExportPdf={() => exportToPDF(sortedData, PRODUCT_COLUMNS, 'Products List', 'Products')}
+          />
         </div>
       </div>
 
@@ -2243,8 +2255,8 @@ const Products = () => {
                       </td>
                       <td className="p-3"><span className="text-xs font-mono text-slate-600">{product.sku}</span></td>
                       <td className="p-3"><span className="text-sm text-slate-700">{product.departmentName || 'General'}</span></td>
-                      <td className="p-3"><span className="text-sm font-medium text-slate-500">AED {parseFloat(product.cost || 0).toFixed(2)}</span></td>
-                      <td className="p-3"><span className="text-sm font-bold text-slate-900">AED {parseFloat(product.retailPrice || 0).toFixed(2)}</span></td>
+                      <td className="p-3"><CurrencyAmount value={product.cost || 0} className="text-sm font-medium text-slate-500" /></td>
+                      <td className="p-3"><CurrencyAmount value={product.retailPrice || 0} className="text-sm font-bold text-slate-900" /></td>
                       <td className="p-3">
                         {product.status === 'ACTIVE' ? (
                           <span className="inline-flex items-center justify-center rounded-md border px-2 py-0.5 text-xs font-medium bg-slate-50 text-emerald-600 border-slate-200">

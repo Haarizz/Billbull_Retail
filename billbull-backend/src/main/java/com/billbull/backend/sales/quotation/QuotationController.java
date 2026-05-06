@@ -19,19 +19,25 @@ import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.multipart.MultipartFile;
 
 import com.billbull.backend.security.AuditLogService;
+import com.billbull.backend.security.ModulePermissionService;
 
 @RestController
 @RequestMapping("/api/sales/quotations")
 @CrossOrigin(origins = "*")
-@PreAuthorize("hasAnyRole('ADMIN','SALES')")
 public class QuotationController {
+
+    private static final String MODULE = "sales.quotation";
 
     private final QuotationService service;
     private final AuditLogService auditLogService;
+    private final ModulePermissionService permissionService;
 
-    public QuotationController(QuotationService service, AuditLogService auditLogService) {
+    public QuotationController(QuotationService service, 
+                               AuditLogService auditLogService,
+                               ModulePermissionService permissionService) {
         this.service = service;
         this.auditLogService = auditLogService;
+        this.permissionService = permissionService;
     }
 
     // ---------------- PRODUCTS ----------------
@@ -48,6 +54,7 @@ public class QuotationController {
 
     @GetMapping
     public ResponseEntity<List<Quotation>> getAll() {
+        permissionService.requireCan(MODULE, "view");
         return ResponseEntity.ok(service.getAllQuotations());
     }
 
@@ -58,11 +65,17 @@ public class QuotationController {
 
     @PostMapping
     public ResponseEntity<Quotation> save(@RequestBody Quotation quotation) {
+        if (quotation.getId() == null) {
+            permissionService.requireCan(MODULE, "create");
+        } else {
+            permissionService.requireCan(MODULE, "edit");
+        }
         return ResponseEntity.ok(service.createOrUpdateQuotation(quotation));
     }
 
     @DeleteMapping("/{id}")
     public ResponseEntity<Void> delete(@PathVariable Long id) {
+        permissionService.requireCan(MODULE, "edit");
         service.deleteQuotation(id);
         return ResponseEntity.ok().build();
     }
@@ -72,6 +85,8 @@ public class QuotationController {
     public ResponseEntity<?> updateStatus(
             @PathVariable Long id,
             @RequestParam String status) {
+        
+        permissionService.requireCan(MODULE, "approve");
 
         try {
             QuotationStatus enumStatus = QuotationStatus.valueOf(status);

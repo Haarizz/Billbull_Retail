@@ -8,11 +8,9 @@ import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
 import jakarta.persistence.Enumerated;
 import jakarta.persistence.Table;
-import jakarta.persistence.UniqueConstraint;
 
 @Entity
-@Table(name = "stock_movements", uniqueConstraints = @UniqueConstraint(columnNames = { "source_type", "source_id",
-		"product_id" }), indexes = {
+@Table(name = "stock_movements", indexes = {
 				// Speeds up getTotalAvailableStockForProducts and findStockByWarehouse
 				@jakarta.persistence.Index(name = "idx_sm_product_id", columnList = "product_id"),
 				@jakarta.persistence.Index(name = "idx_sm_warehouse_id", columnList = "warehouse_id"),

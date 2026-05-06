@@ -21,6 +21,8 @@ import {
 import { getEmployees } from '../../api/employeeApi';
 import { getProducts, getProductById } from '../../api/productsApi';
 import ProductSelector from '../../components/ProductSelector';
+import CurrencyAmount from '../../components/CurrencyAmount';
+import toast from 'react-hot-toast';
 
 // ==========================================
 // HELPERS
@@ -81,12 +83,12 @@ const AddFollowUpModal = ({ isOpen, onClose, inquiryId, onSaveSuccess }) => {
     try {
       setIsSubmitting(true);
       await addFollowUp(inquiryId, formData);
-      alert('Follow-up saved!');
+      toast.success('Follow-up saved!');
       onSaveSuccess(); // Refresh parent data
       onClose();
     } catch (error) {
       console.error("Failed to add follow-up", error);
-      alert("Failed to save follow-up.");
+      toast.error("Failed to save follow-up.");
     } finally {
       setIsSubmitting(false);
     }
@@ -257,10 +259,7 @@ const InquiryList = ({ data, onAddNew, onView, onDelete, onRefresh, isLoading })
             <ChevronRight className="h-4 w-4" />
             <span className="text-slate-900 font-medium">Inquiries</span>
           </div>
-          <div className="flex items-center gap-2">
-            <Users className="h-6 w-6 text-[#F5C742]" />
-            <h1 className="text-2xl md:text-3xl font-bold tracking-tight text-slate-900 flex items-center gap-2"><Users className="text-[#F5C742]" size={28} /> Customer Inquiries</h1>
-          </div>
+          <h1 className="text-2xl md:text-3xl font-bold tracking-tight text-slate-900 flex items-center gap-2"><Users className="text-[#F5C742]" size={28} /> Customer Inquiries</h1>
           <p className="text-sm md:text-base text-slate-500">Manage walk-in, WhatsApp, phone & online inquiries.</p>
         </div>
 
@@ -524,7 +523,7 @@ const CreateInquiry = ({ onBack, onSave, isSaving }) => {
 
   const handleSaveClick = () => {
     if (!formData.customer || !formData.mobile) {
-      alert("Please fill in at least Customer Name and Mobile Number.");
+      toast.error("Please fill in at least Customer Name and Mobile Number.");
       return;
     }
     onSave(formData);
@@ -814,7 +813,7 @@ const ViewPriceModal = ({ isOpen, onClose, product }) => {
           <p className="text-sm text-slate-500 mb-6">Standard Selling Price</p>
 
           <div className="text-4xl font-extrabold text-[#F5C742] mb-2 drop-shadow-sm">
-            AED {product.standardPrice !== undefined && product.standardPrice !== null ? product.standardPrice.toFixed(2) : (product.price ? product.price.toFixed(2) : '0.00')}
+            <CurrencyAmount value={product.standardPrice !== undefined && product.standardPrice !== null ? product.standardPrice : (product.price || 0)} />
           </div>
           <p className="text-xs text-slate-400 font-medium bg-slate-100 px-2 py-1 rounded-full inline-block">Inclusive of Tax</p>
         </div>
@@ -926,7 +925,7 @@ const ConvertToQuotationModal = ({ isOpen, onClose, inquiry, onSuccess }) => {
       onClose();
     } catch (error) {
       console.error("Error creating quotation data", error);
-      alert("Failed to prepare quotation data. Please try again.");
+      toast.error("Failed to prepare quotation data. Please try again.");
     } finally {
       setLoading(false);
     }
@@ -975,7 +974,7 @@ const ConvertToQuotationModal = ({ isOpen, onClose, inquiry, onSuccess }) => {
                       <td className="px-3 py-2 text-slate-900">{item.productName}</td>
                       <td className="px-3 py-2 text-center text-slate-600">{item.quantity}</td>
                       <td className="px-3 py-2 text-right text-slate-900 font-medium">
-                        AED {item.standardPrice !== undefined && item.standardPrice !== null ? item.standardPrice.toFixed(2) : (item.price ? item.price.toFixed(2) : '0.00')}
+                        <CurrencyAmount value={item.standardPrice !== undefined && item.standardPrice !== null ? item.standardPrice : (item.price || 0)} />
                       </td>
                     </tr>
                   ))}
@@ -1089,7 +1088,7 @@ const ReassignRepModal = ({ isOpen, onClose, inquiry, onSuccess }) => {
 
   const handleReassign = async () => {
     if (!selectedRep) {
-      alert('Please select a representative');
+      toast.error('Please select a representative');
       return;
     }
 
@@ -1102,7 +1101,7 @@ const ReassignRepModal = ({ isOpen, onClose, inquiry, onSuccess }) => {
 
     // Always show success and refresh since backend is working
     setLoading(false);
-    alert('Representative reassigned successfully!');
+    toast.success('Representative reassigned successfully!');
     onSuccess();
     onClose();
   };
@@ -1366,7 +1365,7 @@ const ViewInquiry = ({ data, onBack, onRefresh }) => {
                             )}
                           </td>
                           <td className="px-4 py-3 text-right text-slate-600 font-medium">
-                            AED {item.standardPrice !== undefined && item.standardPrice !== null ? item.standardPrice.toFixed(2) : (item.price ? item.price.toFixed(2) : '0.00')}
+                            <CurrencyAmount value={item.standardPrice !== undefined && item.standardPrice !== null ? item.standardPrice : (item.price || 0)} />
                           </td>
                           <td className="px-4 py-3 text-right">
                             <button
@@ -1567,7 +1566,7 @@ const Customer = () => {
       setView('view');
     } catch (error) {
       console.error("Failed to fetch inquiry details", error);
-      alert("Failed to load inquiry details.");
+      toast.error("Failed to load inquiry details.");
     } finally {
       setLoading(false);
     }
@@ -1580,7 +1579,7 @@ const Customer = () => {
         setInquiries(prev => prev.filter(item => item.id !== id));
       } catch (error) {
         console.error("Failed to delete inquiry", error);
-        alert("Could not delete inquiry");
+        toast.error("Could not delete inquiry");
       }
     }
   };
@@ -1603,7 +1602,7 @@ const Customer = () => {
       setView('list');
     } catch (error) {
       console.error("Failed to create inquiry", error);
-      alert("Failed to save inquiry. Please try again.");
+      toast.error("Failed to save inquiry. Please try again.");
     } finally {
       setSaving(false);
     }
@@ -1709,12 +1708,12 @@ const SendPriceListModal = ({ isOpen, onClose, inquiry, onSuccess }) => {
         nextFollowUpDate: null
       });
 
-      alert(`Price list sent via ${method} to ${contact}!`);
+      toast.success(`Price list sent via ${method} to ${contact}!`);
       if (onSuccess) onSuccess();
       onClose();
     } catch (err) {
       console.error("Failed to log price list activity", err);
-      alert("Price list sent, but failed to log activity.");
+      toast.error("Price list sent, but failed to log activity.");
       onClose();
     } finally {
       setSending(false);
@@ -1753,8 +1752,7 @@ const SendPriceListModal = ({ isOpen, onClose, inquiry, onSuccess }) => {
                     </div>
                     {item.price ? (
                       <div className="text-sm font-bold text-slate-900">
-                        {/* Assuming currency is AED based on screenshot */}
-                        AED {(parseFloat(item.price) * (item.quantity || 1)).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        <CurrencyAmount value={parseFloat(item.price) * (item.quantity || 1)} />
                       </div>
                     ) : (
                       <div className="text-xs italic text-slate-400">Price not set</div>

@@ -40,6 +40,7 @@ import ProductSelector from "../../../components/ProductSelector";
 import SearchableDropdown from "../../../components/SearchableDropdown";
 import VendorSelector from "../../../components/VendorSelector";
 import { getImageUrl } from "../../../utils/urlUtils";
+import { getDefaultProductUnit, resolveUnitAmount } from "../../../utils/unitPricing";
 import { ItemDescriptionCell, ItemDescriptionHeader } from '../../../components/ItemDescriptionCell';
 import ItemAddOnsModal from '../../../components/ItemAddOnsModal'; // BB-026
 import StockAvailabilityModal from '../../../components/StockAvailabilityModal';
@@ -53,8 +54,31 @@ import toast from 'react-hot-toast';
 import {
   buildPurchaseInvoicePrintData,
   findVendorRecord,
-  normalizePurchaseTemplate
+  resolvePurchasePrintTemplate
 } from '../../../utils/purchasePrintUtils';
+import ExportDropdown from '../../../components/common/ExportDropdown';
+import { exportToExcel, exportToPDF } from '../../../utils/exportUtils';
+import { generateReportFilename } from '../../../utils/filenameUtils';
+import CurrencyAmount from '../../../components/CurrencyAmount';
+import { formatCurrencyDisplay } from '../../../utils/countryCurrencyOptions';
+
+// ==========================================
+// 1. MOCK DATA & CONFIGURATION
+// ==========================================
+
+const INVOICE_COLUMNS = [
+  { header: 'Document No', key: 'id', width: 15 },
+  { header: 'Doc Date', key: 'documentDate', width: 12 },
+  { header: 'Inv Date', key: 'vendorInvoiceDate', width: 12 },
+  { header: 'Vendor', key: 'vendor', width: 25 },
+  { header: 'Source', key: 'source', width: 15 },
+  { header: 'Ref No', key: 'refNo', width: 15 },
+  { header: 'Warehouse', key: 'warehouse', width: 20 },
+  { header: 'Total', key: 'total', width: 15 },
+  { header: 'Tax', key: 'tax', width: 12 },
+  { header: 'Status', key: 'status', width: 12 },
+  { header: 'Payment', key: 'payment', width: 12 }
+];
 
 // API IMPORTS
 import {
@@ -105,6 +129,56 @@ const compareInvoiceRows = (left, right) => {
 
   return (right.id || "").localeCompare(left.id || "");
 };
+
+const normalizeInvoiceFilterValue = (value) =>
+  String(value || "")
+    .trim()
+    .toUpperCase()
+    .replace(/\s+/g, "_");
+
+const toDateOnlyString = (value) => {
+  if (!value) return "";
+  if (value instanceof Date) {
+    return `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, "0")}-${String(value.getDate()).padStart(2, "0")}`;
+  }
+
+  const parsed = new Date(value);
+  if (!Number.isNaN(parsed.getTime())) {
+    return `${parsed.getFullYear()}-${String(parsed.getMonth() + 1).padStart(2, "0")}-${String(parsed.getDate()).padStart(2, "0")}`;
+  }
+
+  return String(value).split("T")[0];
+};
+
+const isPendingApprovalInvoice = (invoice) =>
+  normalizeInvoiceFilterValue(invoice?.status) === "PENDING_APPROVAL";
+
+const isDraftInvoice = (invoice) =>
+  normalizeInvoiceFilterValue(invoice?.status) === "DRAFT";
+
+const isOutstandingInvoice = (invoice) =>
+  Number(invoice?.outstanding || 0) > 0 && !isDraftInvoice(invoice);
+
+const isInvoiceToday = (invoice) =>
+  toDateOnlyString(invoice?.documentDate || invoice?.date) === toDateOnlyString(new Date());
+
+const isOverdueInvoice = (invoice) =>
+  Boolean(invoice?.dueDate) &&
+  toDateOnlyString(invoice.dueDate) < toDateOnlyString(new Date()) &&
+  isOutstandingInvoice(invoice);
+
+const PURCHASE_INVOICE_FILTER_TABS = [
+  "All Invoices",
+  "Today",
+  "Draft",
+  "Pending Approval",
+  "Posted",
+  "Outstanding",
+  "Overdue",
+  "Partially Paid",
+  "Paid",
+  "Reversed"
+];
 
 // ==========================================
 // DATA MAPPING HELPER (BACKEND -> UI)
@@ -267,7 +341,7 @@ const ViewInvoiceModal = ({ invoice, onClose }) => {
               </div>
               <div className="flex justify-between pt-2 border-t border-slate-200 font-bold">
                 <span className="text-slate-800">Total</span>
-                <span className="text-[#F5C742] text-lg">{Number(invoice.total).toLocaleString()} AED</span>
+                <CurrencyAmount value={invoice.total} className="text-[#F5C742] text-lg" />
               </div>
             </div>
           </div>
@@ -294,9 +368,9 @@ const ViewInvoiceModal = ({ invoice, onClose }) => {
 
 const PAYMENT_MODES = [
   { value: 'BANK_TRANSFER', label: 'Bank Transfer', icon: '🏦' },
-  { value: 'CASH',          label: 'Cash',          icon: '💵' },
-  { value: 'CHEQUE',        label: 'Cheque',        icon: '📄' },
-  { value: 'CARD',          label: 'Card',          icon: '💳' },
+  { value: 'CASH', label: 'Cash', icon: '💵' },
+  { value: 'CHEQUE', label: 'Cheque', icon: '📄' },
+  { value: 'CARD', label: 'Card', icon: '💳' },
 ];
 
 const BANK_REQUIRED_MODES = ['BANK_TRANSFER', 'CHEQUE', 'CARD'];
@@ -342,7 +416,7 @@ const PaymentModal = ({ invoice, onClose, onConfirm }) => {
           <div className="p-3 bg-slate-50 rounded-lg border border-slate-100">
             <div className="flex justify-between items-center">
               <span className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Outstanding Amount</span>
-              <span className="text-lg font-bold text-slate-800">{invoice.outstanding.toLocaleString()} AED</span>
+              <CurrencyAmount value={invoice.outstanding} className="text-lg font-bold text-slate-800" />
             </div>
           </div>
 
@@ -354,11 +428,10 @@ const PaymentModal = ({ invoice, onClose, onConfirm }) => {
                 <button
                   key={mode.value}
                   onClick={() => { setPaymentMode(mode.value); setBankAccount(''); }}
-                  className={`flex items-center gap-2.5 px-3 py-2.5 rounded-lg border-2 text-sm font-medium transition-all duration-150 ${
-                    paymentMode === mode.value
-                      ? 'border-[#F5C742] bg-[#FFF8E1] text-slate-800'
-                      : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300'
-                  }`}
+                  className={`flex items-center gap-2.5 px-3 py-2.5 rounded-lg border-2 text-sm font-medium transition-all duration-150 ${paymentMode === mode.value
+                    ? 'border-[#F5C742] bg-[#FFF8E1] text-slate-800'
+                    : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300'
+                    }`}
                 >
                   <span className="text-base leading-none">{mode.icon}</span>
                   <span>{mode.label}</span>
@@ -452,40 +525,35 @@ const SchedulePaymentModal = ({ invoice, onClose, onConfirm }) => {
 // SUB-COMPONENTS
 // ==========================================
 
-const InvoiceListView = ({ invoices, activeFilter, setActiveFilter, searchQuery, setSearchQuery, onView, onPrint, onPay, onRefresh, dateRange, setDateRange, vendorFilter, setVendorFilter }) => {
+const InvoiceListView = ({ invoices, filteredInvoices, activeFilter, setActiveFilter, searchQuery, setSearchQuery, onView, onPrint, onPay, onRefresh, dateRange, setDateRange, vendorFilter, setVendorFilter }) => {
   const [showFilters, setShowFilters] = useState(false);
 
-  const filteredInvoices = invoices.filter(inv => {
-    // 1. Search Query
-    const matchesSearch = inv.id.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      inv.vendor.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      (inv.vendorInvoiceNo || "").toLowerCase().includes(searchQuery.toLowerCase());
+  const invoiceStats = useMemo(() => {
+    const todayInvoices = invoices.filter(isInvoiceToday);
+    const pendingApprovalInvoices = invoices.filter(isPendingApprovalInvoice);
+    const outstandingInvoices = invoices.filter(isOutstandingInvoice);
+    const overdueInvoices = invoices.filter(isOverdueInvoice);
 
-    // 2. Status Filter
-    const normalizedStatus = inv.status.toUpperCase().replace(/ /g, "_");
-    const normalizedPayment = inv.payment.toUpperCase().replace(/ /g, "_");
-    const normalizedFilter = activeFilter.toUpperCase().replace(/ /g, "_");
+    return {
+      today: {
+        count: todayInvoices.length,
+        amount: todayInvoices.reduce((sum, invoice) => sum + (Number(invoice.total) || 0), 0)
+      },
+      pendingApproval: {
+        count: pendingApprovalInvoices.length,
+        amount: pendingApprovalInvoices.reduce((sum, invoice) => sum + (Number(invoice.total) || 0), 0)
+      },
+      outstanding: {
+        count: outstandingInvoices.length,
+        amount: outstandingInvoices.reduce((sum, invoice) => sum + (Number(invoice.outstanding) || 0), 0)
+      },
+      overdue: {
+        count: overdueInvoices.length
+      }
+    };
+  }, [invoices]);
 
-    const matchesStatus = activeFilter === "All Invoices" ||
-      normalizedStatus === normalizedFilter ||
-      normalizedPayment === normalizedFilter;
-
-    // 3. Date Range Filter
-    let matchesDate = true;
-    if (dateRange?.start) {
-      matchesDate = matchesDate && new Date(inv.date) >= new Date(dateRange.start);
-    }
-    if (dateRange?.end) {
-      matchesDate = matchesDate && new Date(inv.date) <= new Date(dateRange.end);
-    }
-
-    // 4. Vendor Filter
-    let matchesVendor = true;
-    if (vendorFilter) {
-      matchesVendor = inv.vendor.toLowerCase().includes(vendorFilter.toLowerCase());
-    }
-    return matchesSearch && matchesStatus && matchesDate && matchesVendor;
-  }).sort(compareInvoiceRows);
+  // Filter logic moved to parent component for export functionality
 
   const clearFilters = () => {
     setDateRange({ start: "", end: "" });
@@ -499,73 +567,68 @@ const InvoiceListView = ({ invoices, activeFilter, setActiveFilter, searchQuery,
       {/* Stats Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         {/* Card 1: Today */}
-        <div className="bg-white p-4 rounded-lg border border-slate-200 shadow-sm border-l-4 border-l-blue-500">
+        <button
+          type="button"
+          onClick={() => setActiveFilter("Today")}
+          className={`bg-white p-4 rounded-lg border shadow-sm border-l-4 border-l-blue-500 text-left transition-all hover:-translate-y-0.5 hover:shadow-md ${activeFilter === "Today" ? "border-blue-300 ring-2 ring-blue-100" : "border-slate-200"
+            }`}
+        >
           <div className="text-sm font-medium text-slate-500">Invoices Today</div>
           <div className="mt-2 flex items-baseline gap-2">
-            <span className="text-2xl font-bold text-blue-600">
-              {invoices.filter(i => {
-                const today = new Date();
-                const localToday = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
-                return i.date === localToday;
-              }).length}
-            </span>
+            <span className="text-2xl font-bold text-blue-600">{invoiceStats.today.count}</span>
             <span className="text-xs text-slate-400">
-              AED {invoices
-                .filter(i => {
-                  const today = new Date();
-                  const localToday = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
-                  return i.date === localToday;
-                })
-                .reduce((sum, i) => sum + (Number(i.total) || 0), 0)
-                .toLocaleString()}
+              <CurrencyAmount value={invoiceStats.today.amount} />
             </span>
           </div>
-        </div>
+        </button>
 
         {/* Card 2: Pending Approval */}
-        <div className="bg-white p-4 rounded-lg border border-slate-200 shadow-sm border-l-4 border-l-yellow-500">
+        <button
+          type="button"
+          onClick={() => setActiveFilter("Pending Approval")}
+          className={`bg-white p-4 rounded-lg border shadow-sm border-l-4 border-l-yellow-500 text-left transition-all hover:-translate-y-0.5 hover:shadow-md ${activeFilter === "Pending Approval" ? "border-yellow-300 ring-2 ring-yellow-100" : "border-slate-200"
+            }`}
+        >
           <div className="text-sm font-medium text-slate-500">Pending Approval</div>
           <div className="mt-2 flex items-baseline gap-2">
-            <span className="text-2xl font-bold text-yellow-600">
-              {invoices.filter(i => i.status === 'Pending Approval' || i.status === 'PENDING_APPROVAL').length}
-            </span>
+            <span className="text-2xl font-bold text-yellow-600">{invoiceStats.pendingApproval.count}</span>
             <span className="text-xs text-slate-400">
-              AED {invoices
-                .filter(i => i.status === 'Pending Approval' || i.status === 'PENDING_APPROVAL')
-                .reduce((sum, i) => sum + (Number(i.total) || 0), 0)
-                .toLocaleString()}
+              <CurrencyAmount value={invoiceStats.pendingApproval.amount} />
             </span>
           </div>
-        </div>
+        </button>
 
         {/* Card 3: Total Outstanding */}
-        <div className="bg-white p-4 rounded-lg border border-slate-200 shadow-sm border-l-4 border-l-red-500">
+        <button
+          type="button"
+          onClick={() => setActiveFilter("Outstanding")}
+          className={`bg-white p-4 rounded-lg border shadow-sm border-l-4 border-l-red-500 text-left transition-all hover:-translate-y-0.5 hover:shadow-md ${activeFilter === "Outstanding" ? "border-red-300 ring-2 ring-red-100" : "border-slate-200"
+            }`}
+        >
           <div className="text-sm font-medium text-slate-500">Total Outstanding</div>
           <div className="mt-2 flex items-baseline gap-2">
-            <span className="text-2xl font-bold text-red-600">
-              {invoices.filter(i => i.outstanding > 0 && i.status !== 'Draft' && i.status !== 'DRAFT').length}
-            </span>
+            <span className="text-2xl font-bold text-red-600">{invoiceStats.outstanding.count}</span>
             <span className="text-xs text-slate-400">
-              AED {invoices
-                .filter(i => i.outstanding > 0 && i.status !== 'Draft' && i.status !== 'DRAFT')
-                .reduce((sum, i) => sum + (Number(i.outstanding) || 0), 0)
-                .toLocaleString()}
+              <CurrencyAmount value={invoiceStats.outstanding.amount} />
             </span>
           </div>
-        </div>
+        </button>
 
         {/* Card 4: Overdue (Demo Logic: Due Date < Today) */}
-        <div className="bg-white p-4 rounded-lg border border-slate-200 shadow-sm border-l-4 border-l-orange-500">
+        <button
+          type="button"
+          onClick={() => setActiveFilter("Overdue")}
+          className={`bg-white p-4 rounded-lg border shadow-sm border-l-4 border-l-orange-500 text-left transition-all hover:-translate-y-0.5 hover:shadow-md ${activeFilter === "Overdue" ? "border-orange-300 ring-2 ring-orange-100" : "border-slate-200"
+            }`}
+        >
           <div className="text-sm font-medium text-slate-500">Overdue</div>
           <div className="mt-2 flex items-baseline gap-2">
-            <span className="text-2xl font-bold text-orange-600">
-              {invoices.filter(i => i.dueDate && new Date(i.dueDate) < new Date() && i.outstanding > 0).length}
-            </span>
+            <span className="text-2xl font-bold text-orange-600">{invoiceStats.overdue.count}</span>
             <span className="text-xs text-slate-400">
               Needs Attention
             </span>
           </div>
-        </div>
+        </button>
       </div>
 
       {/* Filter Panel */}
@@ -639,7 +702,7 @@ const InvoiceListView = ({ invoices, activeFilter, setActiveFilter, searchQuery,
                   <td className="px-6 py-4"><span className={`text-[10px] px-2 py-0.5 rounded border font-medium ${row.sourceColor}`}>{row.source}</span></td>
                   <td className="px-6 py-4 text-slate-600 font-mono text-[10px]">{row.refNo}</td>
                   <td className="px-6 py-4 text-slate-600 flex items-center gap-1"><LayoutDashboard className="h-3 w-3 text-slate-400" /> {row.warehouse}</td>
-                  <td className="px-6 py-4 text-right font-bold text-slate-900">{typeof row.total === 'number' ? row.total.toLocaleString() : row.total} AED</td>
+                  <td className="px-6 py-4 text-right font-bold text-slate-900"><CurrencyAmount value={row.total} /></td>
                   <td className="px-6 py-4 text-right text-green-600 font-medium">{typeof row.tax === 'number' ? row.tax.toLocaleString() : row.tax}</td>
                   <td className="px-6 py-4"><div className="flex items-center gap-2"><span className={`text-[10px] font-bold px-2 py-0.5 rounded border ${row.statusColor}`}>{row.status}</span>{row.hasAlert && <AlertTriangle className="h-3 w-3 text-amber-500" />}</div></td>
                   <td className="px-6 py-4"><div className="flex flex-col items-start gap-1"><span className={`text-[10px] font-bold px-2 py-0.5 rounded border ${row.paymentColor}`}>{row.payment}</span></div></td>
@@ -667,6 +730,8 @@ const InvoiceListView = ({ invoices, activeFilter, setActiveFilter, searchQuery,
 // ==========================================
 
 const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreatePayment, onSchedulePayment, editInvoice, onPrint, mode = "edit", onBackToList }) => {
+  const navigate = useNavigate();
+  const { company } = useCompany();
   // LPO Data Logic
   const [lpoList, setLpoList] = useState([]);
   const [selectedLpo, setSelectedLpo] = useState("");
@@ -758,8 +823,8 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
     }
   });
 
-  // Variable to check if Landed Cost is allowed
-  const isLandedCostAllowed = invoiceType !== SOURCE.GRN;
+  // Recommended accounting treatment also allows landed cost capture for GRN invoices.
+  const isLandedCostAllowed = true;
 
   const productBarcodeIndex = useMemo(() => {
     const index = new Map();
@@ -781,6 +846,20 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
     return index;
   }, [productList]);
 
+  const productLookupIndex = useMemo(() => {
+    const index = new Map();
+
+    productList.forEach((product) => {
+      [product?.code, product?.sku, product?.name, product?.description]
+        .filter(Boolean)
+        .forEach((value) => {
+          index.set(String(value).trim().toLowerCase(), product);
+        });
+    });
+
+    return index;
+  }, [productList]);
+
   const resolveBarcode = (item) => {
     const directBarcode = item?.barcode || item?.productBarcode || "";
     if (directBarcode) return directBarcode;
@@ -796,6 +875,42 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
     for (const key of keys) {
       const match = productBarcodeIndex.get(String(key).trim().toLowerCase());
       if (match) return match;
+    }
+
+    return "";
+  };
+
+  const resolveProductImage = (item) => {
+    const directImage =
+      item?.image ||
+      item?.primaryImage ||
+      item?.thumbnailUrl ||
+      item?.imageUrl ||
+      item?.productImage ||
+      "";
+
+    if (directImage) return directImage;
+
+    const keys = [
+      item?.itemCode,
+      item?.code,
+      item?.sku,
+      item?.itemName,
+      item?.name
+    ].filter(Boolean);
+
+    for (const key of keys) {
+      const product = productLookupIndex.get(String(key).trim().toLowerCase());
+      if (!product) continue;
+
+      const productImage =
+        product?.primaryImage ||
+        product?.image ||
+        product?.thumbnailUrl ||
+        product?.imageUrl ||
+        "";
+
+      if (productImage) return productImage;
     }
 
     return "";
@@ -825,26 +940,41 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
       setInvoiceType(type);
 
       // 2. Map Items (Now with FOC and Discount!)
-      const mappedItems = (editInvoice.items || []).map((item, idx) => ({
-        id: idx + 1,
-        code: item.itemCode,
-        barcode: resolveBarcode(item),
-        name: item.itemName,
-        image: item.image,
-        uom: item.uom,
-        qty: Number(item.qty),
-        cost: Number(item.unitCost),
-        tax: Number(item.taxPercent),
-        taxAmt: Number(item.taxAmount || 0),
-        taxAmount: Number(item.taxAmount || 0),
-        disc: Number(item.discountPercent || 0),
-        discount: Number(item.discountPercent || 0),
-        discountAmount: Number(item.discountAmount || 0),
-        foc: Number(item.focQty || 0),
-        focUnit: item.focUnit || item.uom || 'PCS',
-        lineTotal: Number(item.lineTotal),
-        remarks: item.remarks || ""
-      }));
+      const mappedItems = (editInvoice.items || []).map((item, idx) => {
+        const qty = Number(item.qty);
+        const grossUnitCost = Number(item.unitCost);
+        // For GRN invoices, backend may store netCost (post-discount) separately.
+        // Prefer netCost so calculateRow (which assumes cost=netCost for GRN) is correct.
+        const effectiveCost = type === SOURCE.GRN
+          ? Number(item.netCost ?? item.unitCost)
+          : grossUnitCost;
+        // Infer discountAmount from gross vs net difference when not explicitly stored.
+        const storedDiscountAmt = Number(item.discountAmount || 0);
+        const inferredDiscountAmt = type === SOURCE.GRN && item.netCost != null
+          ? Math.max(0, qty * grossUnitCost - qty * Number(item.netCost))
+          : 0;
+        const resolvedDiscountAmt = storedDiscountAmt > 0 ? storedDiscountAmt : inferredDiscountAmt;
+        return {
+          id: idx + 1,
+          code: item.itemCode,
+          barcode: resolveBarcode(item),
+          name: item.itemName,
+          image: item.image,
+          uom: item.uom,
+          qty,
+          cost: effectiveCost,
+          tax: Number(item.taxPercent),
+          taxAmt: Number(item.taxAmount || 0),
+          taxAmount: Number(item.taxAmount || 0),
+          disc: Number(item.discountPercent || 0),
+          discount: Number(item.discountPercent || 0),
+          discountAmount: resolvedDiscountAmt,
+          foc: Number(item.focQty || 0),
+          focUnit: item.focUnit || item.uom || 'PCS',
+          lineTotal: Number(item.lineTotal),
+          remarks: item.remarks || ""
+        };
+      });
 
       // 3. Set Form Data
       setFormData({
@@ -922,10 +1052,11 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
       ...prev,
       items: prev.items.map((item) => ({
         ...item,
-        barcode: item.barcode || resolveBarcode(item)
+        barcode: item.barcode || resolveBarcode(item),
+        image: resolveProductImage(item)
       }))
     }));
-  }, [productList]);
+  }, [productList, productLookupIndex]);
 
   // Load LPOs and DPs on Mount
   useEffect(() => {
@@ -1037,7 +1168,7 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
             uom: item.uom,
             qty: item.quantity,
             cost: item.unitPrice,
-            tax: 5,
+            tax: parseFloat(item.purchaseTax ?? item.taxPercent) || 5,
             taxAmt: Number(item.taxAmount || 0),
             taxAmount: Number(item.taxAmount || 0),
             disc: item.discountPercent || 0,
@@ -1083,19 +1214,41 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
       const grnFromList = grnList.find(g => g.id == grnId) || {};
 
       // 3. Determine True Financials (Header Truth)
-      // Database says: Subtotal 1660, Tax 83, Total 1743. 
-      // API 'value' usually maps to Grand Total.
-      const headerGrandTotal = Number(grnDetail.value || grnDetail.grandTotal || grnFromList.value || 0);
-      const headerTax = Number(grnDetail.taxAmount || grnDetail.tax_amount || 0);
-      let headerSubTotal = Number(grnDetail.subTotal || grnDetail.subtotal || 0);
+      // Prefer explicit GRN detail totals; fall back to older field names or list data.
+      const headerGrandTotal = Number(
+        grnDetail.grandTotal ??
+        grnDetail.value ??
+        grnFromList.grandTotal ??
+        grnFromList.value ??
+        0
+      );
+      const headerTax = Number(
+        grnDetail.taxAmount ??
+        grnDetail.taxTotal ??
+        grnDetail.tax_amount ??
+        grnDetail.tax ??
+        0
+      );
+      let headerSubTotal = Number(
+        grnDetail.subtotal ??
+        grnDetail.subTotal ??
+        grnDetail.taxableAmount ??
+        0
+      );
 
 
       // 4. Calculate Item-Level Totals to check for gaps
       const rawItems = grnDetail.items || [];
       const calculatedGross = rawItems.reduce((sum, item) => {
         const qty = Number(item.accepted ?? item.acceptedQty ?? 0);
-        const cost = Number(item.unitCost ?? item.unit_cost ?? 0); // Handle snake_case too
+        const cost = Number(item.netCost ?? item.unitCost ?? item.unit_cost ?? 0);
         return sum + (qty * cost);
+      }, 0);
+      const calculatedItemTax = rawItems.reduce((sum, item) => {
+        const lineTotal = Number(item.total ?? item.lineTotal ?? 0);
+        const taxPercent = Number(item.purchaseTax ?? item.taxPercent ?? item.tax ?? 5);
+        const lineTax = Number(item.taxAmt ?? item.taxAmount ?? 0) || (lineTotal * taxPercent) / 100;
+        return sum + lineTax;
       }, 0);
 
       // 5. Intelligent Gap Filling
@@ -1104,6 +1257,9 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
 
       // If Tax is missing, derive it (GrandTotal - SubTotal)
       let finalTax = headerTax;
+      if (finalTax === 0 && calculatedItemTax > 0) {
+        finalTax = calculatedItemTax;
+      }
       if (finalTax === 0 && headerGrandTotal > 0) {
         finalTax = headerGrandTotal - headerSubTotal;
       }
@@ -1117,11 +1273,20 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
       // 6. Map Items and Distribute Missing Tax
       const mappedItems = rawItems.map((item, idx) => {
         const qty = Number(item.accepted ?? item.acceptedQty ?? 0);
-        const cost = Number(item.unitCost ?? item.unit_cost ?? 0);
+        // Prefer netCost (post-discount effective price) over gross unitCost.
+        // This is what the invoice should charge — the price actually agreed after discount/FOC.
+        const cost = Number(item.netCost ?? item.unitCost ?? item.unit_cost ?? 0);
+        const originalCost = Number(item.unitCost ?? item.unit_cost ?? cost);
         const lineGross = qty * cost;
+        const originalGross = qty * originalCost;
+        const inferredDiscount = Math.max(0, originalGross - lineGross);
+        const inferredDiscountPercent = originalGross > 0 ? (inferredDiscount / originalGross) * 100 : 0;
 
-        // Distribute tax proportional to line value if specific item tax is missing
-        let itemTaxAmt = Number(item.taxAmount ?? 0);
+        // Preserve the actual per-item tax rate (not a hardcoded 5%).
+        const taxPercent = Number(item.purchaseTax ?? item.taxPercent ?? item.tax ?? 5);
+
+        // Distribute header-level tax proportionally if item-level taxAmt is missing.
+        let itemTaxAmt = Number(item.taxAmt ?? item.taxAmount ?? 0);
         if (itemTaxAmt === 0 && finalTax > 0 && headerSubTotal > 0) {
           itemTaxAmt = (lineGross / headerSubTotal) * finalTax;
         }
@@ -1134,14 +1299,15 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
           image: item.image || item.productImage,
           uom: item.uom,
           qty: qty,
-          cost: cost,
-          // 🔒 BACKEND-TRUTH FIELDS
-          tax: finalTax > 0 ? 5 : 0,
+          cost: cost,                       // netCost — effective per-unit price
+          originalCost: originalCost,
+          tax: taxPercent,                  // actual rate, not hardcoded
           taxAmt: itemTaxAmt,
-          taxAmount: itemTaxAmt,     // ✅ Distributed Tax
-          lineTotal: lineGross + itemTaxAmt,
-          disc: 0,
-          discount: 0,
+          taxAmount: itemTaxAmt,
+          lineTotal: (qty * cost) + itemTaxAmt, // qty × netCost + tax
+          disc: Number(item.discountPercent ?? item.disc ?? inferredDiscountPercent),
+          discount: Number(item.discountPercent ?? item.disc ?? inferredDiscountPercent),
+          discountAmount: inferredDiscount,
           foc: Number(item.focQty || 0),
           focUnit: item.focUnit || item.uom || 'PCS',
           remarks: item.remarks || ""
@@ -1200,7 +1366,13 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
   };
 
   const handleProductSelect = (product) => {
-    const defaultUnit = product.unitName || product.unit || (product.availableUnits && product.availableUnits[0]) || 'PCS';
+    const defaultUnit = getDefaultProductUnit(product);
+    const resolvedCost = resolveUnitAmount({
+      targetUnit: defaultUnit,
+      amountMap: product.unitCosts || product.unitPrices,
+      unitConversions: product.unitConversions,
+      fallbackAmount: product.cost ?? 0
+    });
     const newItem = {
       id: Date.now(),
       code: product.code || "SKU-NEW",
@@ -1210,17 +1382,18 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
       remarks: product.description || '',
       uom: defaultUnit,
       qty: 1,
-      cost: product.cost || 0,
-      tax: product.taxRate || 5, // Default tax
+      cost: resolvedCost,
+      tax: parseFloat(product.purchaseTax) || parseFloat(product.taxRate) || 5, // Default tax
       taxAmt: 0,
       taxAmount: 0,
-      disc: 0,
-      discount: 0,
+      disc: product.maxDiscount || 0,
+      discount: product.maxDiscount || 0,
       foc: 0,
       focUnit: defaultUnit,
       availableUnits: product.availableUnits || [defaultUnit],
       unitConversions: product.unitConversions || {},
       unitPrices: product.unitPrices || {},
+      unitCosts: product.unitCosts || {},
       // Internal Tracking
       productId: product.id
     };
@@ -1228,6 +1401,34 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
     setIsProductSelectorOpen(false);
   };
 
+  const handleFastEntryAdd = (product, qty, price, disc) => {
+    if (isFormLocked) return;
+    const defaultUnit = getDefaultProductUnit(product);
+    const newItem = {
+      id: Date.now(),
+      code: product.code || 'SKU-NEW',
+      barcode: product.barcode || '',
+      name: product.description || product.name || 'New Item',
+      image: product.primaryImage || product.image || null,
+      remarks: product.description || '',
+      uom: defaultUnit,
+      qty,
+      cost: price,
+      tax: parseFloat(product.purchaseTax) || parseFloat(product.taxRate) || 5,
+      taxAmt: 0,
+      taxAmount: 0,
+      disc,
+      discount: disc,
+      foc: 0,
+      focUnit: defaultUnit,
+      availableUnits: product.availableUnits || [defaultUnit],
+      unitConversions: product.unitConversions || {},
+      unitPrices: product.unitPrices || {},
+      unitCosts: product.unitCosts || {},
+      productId: product.id,
+    };
+    setFormData(prev => ({ ...prev, items: [...prev.items, newItem] }));
+  };
 
   // Standardized Locking Logic
   const isAgainstSource =
@@ -1304,18 +1505,22 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
     });
 
     setFormData(prev => ({ ...prev, items: updatedItems }));
-    alert(`Successfully allocated ${landedCost.toFixed(2)} AED across ${formData.items.length} items.`);
+    alert(`Successfully allocated ${formatCurrencyDisplay(landedCost, company)} across ${formData.items.length} items.`);
   };
 
   const calculateRow = (item) => {
-    // 🔒 GRN-based invoices: DO NOT recompute
+    // GRN-based invoices: discount is already baked into item.cost (= netCost).
+    // gross = qty × netCost is already the net line value — no discount to strip.
     if (invoiceType === SOURCE.GRN) {
+      const gross = item.qty * item.cost;
+      const taxAmt = Number(item.taxAmount ?? item.taxAmt ?? 0);
       return {
-        gross: item.qty * item.cost,
+        gross,
         discAmt: 0,
-        taxAmt: item.taxAmount ?? item.taxAmt ?? 0,
-        total: item.lineTotal ?? (item.qty * item.cost),
-        net: item.qty * item.cost
+        taxAmt,
+        // total = net line + tax (consistent with the lineTotal set in handleGrnSelect)
+        total: gross + taxAmt,
+        net: gross
       };
     }
 
@@ -1356,29 +1561,36 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
     const totalsFromItems = formData.items.reduce((acc, item) => {
       const calc = calculateRow(item);
       acc.qty += Number(item.qty);
-      acc.discount += calc.discAmt;
+      acc.discount += invoiceType === SOURCE.GRN
+        ? Number(item.discountAmount ?? 0)
+        : calc.discAmt;
       acc.tax += calc.taxAmt;
       acc.subtotal += calc.total - calc.taxAmt;
       acc.grandTotal += calc.total;
       return acc;
     }, { qty: 0, discount: 0, tax: 0, subtotal: 0, grandTotal: 0 });
 
-    if (invoiceType === SOURCE.GRN || invoiceType === SOURCE.LPO) {
-      return {
-        qty: totalsFromItems.qty,
-        discount: invoiceType === SOURCE.LPO ? totalsFromItems.discount : 0,
-        tax: formData.grnTaxTotal || totalsFromItems.tax,
-        subtotal: formData.grnSubTotal || totalsFromItems.subtotal,
-        grandTotal: formData.grnGrandTotal || totalsFromItems.grandTotal
-      };
-    }
-
+    // Always derive totals from item rows.
+    // For GRN/LPO sources, items already carry the correct netCost, taxAmt and lineTotal
+    // so item-driven sums are reliable even for partial GRN scenarios.
+    // We no longer override with stored header totals, which go stale on partial GRNs.
     return totalsFromItems;
-  }, [formData.items, invoiceType, formData.grnSubTotal, formData.grnTaxTotal, formData.grnGrandTotal]);
-  // ^ Added dependencies ensures update when handleGrnSelect finishes
+  }, [formData.items, invoiceType]);
+
+  const summaryTotals = useMemo(() => {
+    return {
+      subtotal: totals.subtotal,
+      discount: totals.discount,
+      tax: totals.tax,
+      grandTotal: totals.grandTotal
+    };
+  }, [totals.discount, totals.grandTotal, totals.subtotal, totals.tax]);
 
 
-  const grandTotalWithLanded = totals.grandTotal + (isLandedCostAllowed ? landedCost : 0);
+  const grandTotalWithLanded = summaryTotals.grandTotal + (isLandedCostAllowed ? landedCost : 0);
+  const preDiscountSubtotal = summaryTotals.subtotal + summaryTotals.discount;
+  const taxableAmount = summaryTotals.subtotal;
+  const landedCostBreakdown = landedCostItems.filter((item) => Number(item.cost) > 0);
 
   const handleAddItem = () => {
     setIsProductSelectorOpen(true);
@@ -1399,19 +1611,14 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
         // ✅ If unit is being changed, recalculate cost based on conversion
         if (field === 'uom' && i.unitConversions) {
           const newUnit = value;
-          if (i.unitPrices && i.unitPrices[newUnit]) {
-            updated.cost = i.unitPrices[newUnit];
-          } else {
-            const baseUnit = Object.keys(i.unitConversions).find(u => i.unitConversions[u] === 1);
-            if (baseUnit) {
-              let basePrice = i.unitPrices && i.unitPrices[baseUnit] ? i.unitPrices[baseUnit] : null;
-              if (!basePrice) {
-                const currentConv = i.unitConversions[i.uom] || 1;
-                basePrice = i.cost / currentConv;
-              }
-              updated.cost = basePrice * (i.unitConversions[newUnit] || 1);
-            }
-          }
+          updated.cost = resolveUnitAmount({
+            targetUnit: newUnit,
+            amountMap: i.unitCosts || i.unitPrices,
+            unitConversions: i.unitConversions,
+            currentUnit: i.uom,
+            currentAmount: i.cost,
+            fallbackAmount: i.cost
+          });
         }
 
         return updated;
@@ -1451,12 +1658,11 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
     // Financials
 
     // Financials
-    subTotal: totals.subtotal,
-    discountTotal: totals.discount,
-    taxTotal: totals.tax,
+    subTotal: invoiceType === SOURCE.GRN ? summaryTotals.subtotal : totals.subtotal,
+    discountTotal: summaryTotals.discount,
+    taxTotal: invoiceType === SOURCE.GRN ? summaryTotals.tax : totals.tax,
 
-    // Force Landed Cost 0 for GRN
-    landedCost: isLandedCostAllowed ? landedCost : 0,
+    landedCost: landedCost,
     grandTotal: grandTotalWithLanded,
 
     dueDate: formData.dueDate,
@@ -1472,23 +1678,24 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
       focUnit: i.focUnit || i.uom || 'PCS',
       unitCost: i.cost,
 
-      discountPercent: invoiceType === SOURCE.GRN ? 0 : Number(i.discount ?? i.disc ?? 0),
-      discountAmount: invoiceType === SOURCE.GRN ? 0 : calculateRow(i).discAmt,
+      discountPercent: Number(i.discount ?? i.disc ?? 0),
+      discountAmount: invoiceType === SOURCE.GRN ? Number(i.discountAmount || 0) : calculateRow(i).discAmt,
 
-      taxPercent: invoiceType === SOURCE.GRN ? 0 : i.tax,
+      // Preserve actual tax rate — no longer forced to 0 for GRN (backend needs it for audit).
+      taxPercent: i.tax ?? 0,
       taxAmount: invoiceType === SOURCE.GRN ? Number(i.taxAmount ?? i.taxAmt ?? 0) : calculateRow(i).taxAmt,
 
-      lineTotal: invoiceType === SOURCE.GRN ? i.lineTotal : calculateRow(i).total,
+      lineTotal: invoiceType === SOURCE.GRN ? calculateRow(i).total : calculateRow(i).total,
       warehouseName: formData.warehouse,
       remarks: i.remarks || ''
     })),
 
     // Mapped Costs - Empty array for GRN
-    landedCosts: isLandedCostAllowed ? landedCostItems.map(lc => ({
+    landedCosts: landedCostItems.map(lc => ({
       costName: lc.name,
       description: lc.desc,
       amount: lc.cost
-    })) : [],
+    })),
 
     // NLC Fields
     freight: Number(formData.freight || 0),
@@ -1616,7 +1823,7 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
                   <SearchableDropdown
                     options={grnList.map(grn => ({
                       value: grn.id,
-                      label: `${grn.grnNo} - ${grn.vendorName || grn.vendor || "Vendor"}`
+                      label: `${grn.idDisplay || grn.grnNo} - ${grn.vendorName || grn.vendor || "Vendor"}`
                     }))}
                     value={selectedGrn}
                     onChange={(val) => handleGrnSelect(val)}
@@ -1686,11 +1893,10 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
                   value={formData.vendorInvoiceNo}
                   readOnly={isInvoiceLocked}
                   onChange={(e) => setFormData({ ...formData, vendorInvoiceNo: e.target.value })}
-                  className={`w-full text-xs border rounded-md py-2 px-3 focus:ring-1 focus:ring-[#F5C742] outline-none read-only:bg-slate-50 ${
-                    !formData.vendorInvoiceNo?.trim() && !isInvoiceLocked
-                      ? "border-red-300 bg-red-50"
-                      : "border-slate-200"
-                  }`}
+                  className={`w-full text-xs border rounded-md py-2 px-3 focus:ring-1 focus:ring-[#F5C742] outline-none read-only:bg-slate-50 ${!formData.vendorInvoiceNo?.trim() && !isInvoiceLocked
+                    ? "border-red-300 bg-red-50"
+                    : "border-slate-200"
+                    }`}
                 />
                 {!formData.vendorInvoiceNo?.trim() && !isInvoiceLocked && (
                   <p className="text-[10px] text-red-500 mt-0.5">Vendor invoice number is required</p>
@@ -1863,9 +2069,9 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
             </div>
 
             {/* Items Table */}
-            <div className="flex-1 overflow-x-auto">
+            <div className="overflow-auto" style={{ maxHeight: 'calc(4 * 115px + 44px)' }}>
               <table className="w-full text-xs text-left min-w-[800px]">
-                <thead className="bg-slate-50 border-b border-slate-100 text-slate-500">
+                <thead className="bg-slate-50 border-b border-slate-100 text-slate-500 sticky top-0 z-10">
                   <tr>
                     <th className="p-3 font-medium w-10 text-center text-slate-400">#</th>
                     <th className="p-3 font-medium min-w-[280px]">
@@ -1878,10 +2084,6 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
                     <th className="p-3 font-medium text-center w-16">Unit</th>
                     <th className="p-3 font-medium text-center w-16">Qty</th>
                     <th className="p-3 font-medium text-right">Unit Cost</th>
-                    <th className="p-3 font-medium text-center w-10">Disc %</th>
-                    <th className="p-3 font-medium text-right text-green-600">Disc Amt</th>
-                    <th className="p-3 font-medium text-center w-10">Tax %</th>
-                    <th className="p-3 font-medium text-right">Tax Amt</th>
                     <th className="p-3 font-medium text-right">Amount</th>
                     <th className="p-3 font-medium text-center">Actions</th>
                   </tr>
@@ -1955,10 +2157,6 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
                               className={`w-16 text-right border border-slate-200 rounded bg-white ${isFormLocked ? 'bg-slate-50' : ''}`}
                             />
                           </td>
-                          <td className="p-3 text-center">{Number(item.disc ?? item.discount ?? 0)}</td>
-                          <td className="p-3 text-right text-green-600">{calc.discAmt.toFixed(2)}</td>
-                          <td className="p-3 text-center">{item.tax}</td>
-                          <td className="p-3 text-right">{calc.taxAmt.toFixed(2)}</td>
                           <td className="p-3 text-right font-bold text-[#F5C742]">{calc.total.toFixed(2)}</td>
                           <td className="p-3 text-center">
                             <button
@@ -1973,7 +2171,7 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
                         {/* Expanded Description Row */}
                         {expandedRows[item.id] && (
                           <tr className="bg-white">
-                            <td colSpan={11} className="px-0 pb-4 pt-1">
+                            <td colSpan={7} className="px-0 pb-4 pt-1">
                               <div className="ml-0 mr-4 p-3 rounded-r-[10px] border-l-[3px] border-[#FFD700] bg-[#FFFDE7]/60 shadow-[inset_0_1px_4px_rgba(0,0,0,0.02)]">
                                 <div className="flex justify-between items-center mb-1.5">
                                   <div className="flex items-center gap-1.5 text-[9px] font-bold text-[#B8860B] tracking-widest uppercase">
@@ -2006,7 +2204,7 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
                 <div className="flex items-center gap-2">
                   <CreditCard className="h-4 w-4 text-slate-400" />
                   <h3 className="font-semibold text-sm text-slate-700">Landed Costs & NLC</h3>
-                  <span className="bg-blue-50 text-blue-600 text-[10px] px-2 py-0.5 rounded font-bold border border-blue-100">{landedCost.toFixed(2)} AED</span>
+                  <CurrencyAmount value={landedCost} className="bg-blue-50 text-blue-600 text-[10px] px-2 py-0.5 rounded font-bold border border-blue-100" />
                 </div>
                 <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
                   {/* Disable Landed Cost for GRN */}
@@ -2087,7 +2285,7 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
                   </div>
                   <span className={`text-xs ${includeFocInAllocation ? 'text-slate-700 font-medium' : 'text-slate-500'}`}>Include FOC in allocation</span>
                 </div>
-                <div className="text-xs font-bold text-[#F5C742]">Total Landed Cost: {landedCost.toFixed(2)} AED</div>
+                <div className="text-xs font-bold text-[#F5C742]">Total Landed Cost: <CurrencyAmount value={landedCost} /></div>
               </div>
             </div>
 
@@ -2108,23 +2306,33 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
             <div className="space-y-2 text-xs border-t border-slate-100 pt-3">
               <div className="flex justify-between">
                 <span className="text-slate-500 font-medium">Subtotal</span>
-                <span className="font-medium">{totals.subtotal.toFixed(2)}</span>
+                <CurrencyAmount value={preDiscountSubtotal} className="font-medium" />
               </div>
               <div className="flex justify-between text-green-600">
                 <span className="font-medium">Discount</span>
-                <span className="font-medium">{totals.discount.toFixed(2)}</span>
+                <span className="font-medium">- <CurrencyAmount value={summaryTotals.discount} /></span>
               </div>
               <div className="flex justify-between">
-                <span className="text-slate-500">Tax</span>
-                <span className="font-medium">{totals.tax.toFixed(2)}</span>
+                <span className="text-slate-500">Taxable Amount</span>
+                <CurrencyAmount value={taxableAmount} className="font-medium" />
+              </div>
+              <div className="flex justify-between">
+                <span className="text-slate-500">VAT</span>
+                <CurrencyAmount value={summaryTotals.tax} className="font-medium" />
               </div>
               <div className="flex justify-between text-red-500">
-                <span className="font-medium">Landed Cost</span>
-                <span className="font-medium">{isLandedCostAllowed ? landedCost.toFixed(2) : "0.00"}</span>
+                <span className="font-medium">Landed Costs</span>
+                <CurrencyAmount value={landedCost} className="font-medium" />
               </div>
+              {landedCostBreakdown.map((costItem) => (
+                <div key={`summary-${costItem.id}`} className="flex justify-between text-[11px] text-slate-500 pl-3">
+                  <span>{costItem.type || costItem.name}</span>
+                  <CurrencyAmount value={costItem.cost} />
+                </div>
+              ))}
               <div className="flex justify-between text-base pt-2 border-t border-slate-100 mt-2">
                 <span className="font-bold text-slate-800">Grand Total</span>
-                <span className="font-bold text-[#F5C742]">{grandTotalWithLanded.toFixed(2)} AED</span>
+                <CurrencyAmount value={grandTotalWithLanded} className="font-bold text-[#F5C742]" />
               </div>
             </div>
           </div>
@@ -2139,26 +2347,41 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
               <div className="flex justify-between font-bold border-b border-slate-200 pb-1 mb-1 text-slate-800">
                 <span>Posting Preview</span>
               </div>
-              {invoiceType !== SOURCE.GRN && (
+              {invoiceType === SOURCE.GRN ? (
+                <div className="flex justify-between">
+                  <span>Dr. GRN Clearing</span>
+                  <span>{summaryTotals.grandTotal.toFixed(2)}</span>
+                </div>
+              ) : (
                 <div className="flex justify-between">
                   <span>Dr. Inventory</span>
-                  <span>{totals.subtotal.toFixed(2)}</span>
+                  <span>{(taxableAmount + landedCost).toFixed(2)}</span>
                 </div>
               )}
-
-              {totals.tax > 0 && (
+              {invoiceType !== SOURCE.GRN && summaryTotals.tax > 0 && (
                 <div className="flex justify-between">
                   <span>Dr. VAT Recoverable</span>
-                  <span>{totals.tax.toFixed(2)}</span>
+                  <span>{summaryTotals.tax.toFixed(2)}</span>
                 </div>
               )}
-
+              {invoiceType === SOURCE.GRN && landedCost > 0 && (
+                <div className="flex justify-between">
+                  <span>Dr. Inventory</span>
+                  <span>{landedCost.toFixed(2)}</span>
+                </div>
+              )}
 
               <div className="flex justify-between">
                 <span>Cr. Accounts Payable</span>
                 <span>{grandTotalWithLanded.toFixed(2)}</span>
               </div>
             </div>
+            <button
+              onClick={() => navigate('/finance/ledger')}
+              className="w-full mt-2 py-1 border border-slate-200 rounded text-xs font-medium text-slate-500 hover:bg-slate-50 flex items-center justify-center gap-1"
+            >
+              <Eye className="h-3 w-3" /> View Details
+            </button>
           </div>
         </div>
       </div>
@@ -2196,47 +2419,47 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
                   <FileText className="h-3 w-3" /> <span className="hidden sm:inline">Save Draft</span><span className="sm:hidden">Draft</span>
                 </button>
                 <button
-              onClick={() => {
-                // 1. Basic Item Guard
-                if (formData.items.length === 0) {
-                  alert("Invoice must contain at least one item.");
-                  return;
-                }
+                  onClick={() => {
+                    // 1. Basic Item Guard
+                    if (formData.items.length === 0) {
+                      alert("Invoice must contain at least one item.");
+                      return;
+                    }
 
-                // 2. Vendor Guard
-                if (!formData.vendor) {
-                  alert("Vendor name is required.");
-                  return;
-                }
+                    // 2. Vendor Guard
+                    if (!formData.vendor) {
+                      alert("Vendor name is required.");
+                      return;
+                    }
 
-                // 3. Vendor Invoice Number Guard
-                if (!formData.vendorInvoiceNo?.trim()) {
-                  alert("Vendor invoice number is required.");
-                  return;
-                }
+                    // 3. Vendor Invoice Number Guard
+                    if (!formData.vendorInvoiceNo?.trim()) {
+                      alert("Vendor invoice number is required.");
+                      return;
+                    }
 
-                // 4. Direct Invoice Location Guard
-                if (invoiceType === SOURCE.DIRECT && !formData.warehouseId) {
-                  alert("Warehouse is required for Direct Invoices to post stock.");
-                  return;
-                }
+                    // 4. Direct Invoice Location Guard
+                    if (invoiceType === SOURCE.DIRECT && !formData.warehouseId) {
+                      alert("Warehouse is required for Direct Invoices to post stock.");
+                      return;
+                    }
 
-                // 4. NLC Validation
-                const totalNLC = isLandedCostAllowed ? landedCost : 0;
-                if (totalNLC > totals.subtotal) { // Using subtotal as base, usually NLC shouldn't exclude goods value
-                  // User said "Invoice Total", usually implies Goods Value.
-                  // Safe check: NLC > Grand Total is definitely wrong.
-                  // Let's stick to user request "NLC must not exceed invoice total"
-                  if (totalNLC > totals.grandTotal) {
-                    alert("Total Landed Cost cannot exceed the Invoice Grand Total.");
-                    return;
-                  }
-                }
+                    // 4. NLC Validation
+                    const totalNLC = isLandedCostAllowed ? landedCost : 0;
+                    if (totalNLC > summaryTotals.subtotal) { // Using subtotal as base, usually NLC shouldn't exclude goods value
+                      // User said "Invoice Total", usually implies Goods Value.
+                      // Safe check: NLC > Grand Total is definitely wrong.
+                      // Let's stick to user request "NLC must not exceed invoice total"
+                      if (totalNLC > summaryTotals.grandTotal) {
+                        alert("Total Landed Cost cannot exceed the Invoice Grand Total.");
+                        return;
+                      }
+                    }
 
-                onSubmitApproval(getInvoicePayload());
-              }}
-              className="flex-1 xl:flex-none px-4 py-2 bg-white border border-blue-200 text-blue-600 bg-blue-50 rounded hover:bg-blue-100 font-medium flex items-center justify-center gap-2 transition-colors whitespace-nowrap">
-              <Share2 className="h-3 w-3" /> <span className="hidden sm:inline">Submit Approval</span><span className="sm:hidden">Submit</span>
+                    onSubmitApproval(getInvoicePayload());
+                  }}
+                  className="flex-1 xl:flex-none px-4 py-2 bg-[#F5C742] hover:bg-[#E5B732] text-slate-900 rounded font-medium flex items-center justify-center gap-2 transition-colors whitespace-nowrap shadow-sm">
+                  <Share2 className="h-3 w-3" /> <span className="hidden sm:inline">Submit Approval</span><span className="sm:hidden">Submit</span>
                 </button>
               </>
             )}
@@ -2247,8 +2470,11 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
         isOpen={isProductSelectorOpen}
         onClose={() => setIsProductSelectorOpen(false)}
         onSelect={handleProductSelect}
+        onInlineAdd={handleFastEntryAdd}
         actionLabel="Add to Invoice"
+        mode="purchase"
       />
+
       {/* BB-026: Item Add-Ons Modal */}
       <ItemAddOnsModal
         item={selectedAddonItem}
@@ -2332,7 +2558,7 @@ const PendingApprovalView = ({ pendingApprovals, onApprove, onView }) => {
                     </td>
                     <td className="p-3"><span className={`text-[10px] px-2 py-0.5 rounded border font-medium ${item.sourceColor}`}>{item.source}</span></td>
                     <td className="p-3 font-mono text-slate-600">{item.refNo}</td>
-                    <td className="p-3 text-right font-bold text-slate-900">{item.total.toLocaleString()} AED</td>
+                    <td className="p-3 text-right font-bold text-slate-900"><CurrencyAmount value={item.total} /></td>
                     <td className="p-3 text-right text-green-600 font-medium">{item.tax.toLocaleString()}</td>
                     <td className="p-3 text-slate-600 flex items-center gap-1"><Zap className="h-3 w-3 text-slate-400" /> {item.submittedBy}</td>
                     <td className="p-3"><span className="bg-red-50 text-red-600 border border-red-100 px-2 py-0.5 rounded text-[10px] flex items-center w-fit gap-1"><AlertTriangle className="h-3 w-3" /> {item.flag}</span></td>
@@ -2482,7 +2708,7 @@ const DraftInvoicesView = ({ drafts, onEdit, onDelete }) => {
                     </td>
                     <td className="p-3"><span className={`text-[10px] px-2 py-0.5 rounded border font-medium ${item.sourceColor}`}>{item.source}</span></td>
                     <td className="p-3 font-mono text-slate-600">{item.refNo}</td>
-                    <td className="p-3 text-right font-bold text-slate-900">{item.total.toLocaleString()} AED</td>
+                    <td className="p-3 text-right font-bold text-slate-900"><CurrencyAmount value={item.total} /></td>
                     <td className="p-3"><span className={`text-[10px] font-bold px-2 py-0.5 rounded border ${item.statusColor}`}>{item.status}</span></td>
                     <td className="p-3">
                       <div className="flex items-center justify-center gap-2">
@@ -2603,6 +2829,11 @@ const PurchaseInvoices = () => {
   };
 
   const handleSubmitApproval = async (payload) => {
+    if (!payload.warehouseId) { alert("Please select a warehouse before submitting."); return; }
+    if (!payload.zoneId) { alert("Please select a zone before submitting."); return; }
+    if (!payload.locatorId) { alert("Please select a locator before submitting."); return; }
+    if (!payload.binId) { alert("Please select a bin before submitting."); return; }
+
     try {
       const invoiceId = await handleSaveDraft(payload);
       if (!invoiceId) return;
@@ -2645,22 +2876,26 @@ const PurchaseInvoices = () => {
   const handlePrint = async (invoice) => {
     const loadingToast = toast.loading('Preparing print layout...');
     try {
-      const [templates, invoiceDetail] = await Promise.all([
-        getTemplatesByCategory('Purchase Invoice'),
-        getInvoiceById(invoice.dbId)
-      ]);
+      const templatesPromise = getTemplatesByCategory('Purchase Invoice').catch(() => []);
+      let printableInvoice = invoice;
 
-      if (!templates || templates.length === 0) {
-        toast.error('No templates found for Purchase Invoice');
-        return;
+      if (invoice?.dbId) {
+        try {
+          printableInvoice = await getInvoiceById(invoice.dbId);
+        } catch (detailError) {
+          console.warn('Falling back to invoice data already loaded in the UI for printing.', detailError);
+        }
       }
 
-      const defaultTemplate = normalizePurchaseTemplate(
-        templates.find(t => t.isDefault) || templates[0],
-        'Purchase Invoice'
+      const templates = await templatesPromise;
+      const defaultTemplate = resolvePurchasePrintTemplate('Purchase Invoice', templates);
+      const fullVendor = findVendorRecord(
+        [],
+        printableInvoice,
+        printableInvoice?.vendorName,
+        printableInvoice?.vendor
       );
-      const fullVendor = findVendorRecord(vendorList, invoiceDetail, invoiceDetail?.vendorName);
-      const printData = buildPurchaseInvoicePrintData(invoiceDetail, fullVendor, company);
+      const printData = buildPurchaseInvoicePrintData(printableInvoice, fullVendor, company);
 
       const html = generatePrintHtml(defaultTemplate, printData, {
         companyProfile: company,
@@ -2670,7 +2905,8 @@ const PurchaseInvoices = () => {
       printHtml(html);
     } catch (error) {
       console.error("Error printing Invoice:", error);
-      toast.error('Failed to generate print layout');
+      const message = error?.response?.data?.message || error?.message || 'Failed to generate print layout';
+      toast.error(message);
     } finally {
       toast.dismiss(loadingToast);
     }
@@ -2678,6 +2914,51 @@ const PurchaseInvoices = () => {
 
   const handleOpenPayment = (invoice) => {
     setPaymentInvoice(invoice);
+  };
+
+  const filteredInvoices = useMemo(() => {
+    return invoices.filter(inv => {
+      // 1. Search Query
+      const matchesSearch = inv.id.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        inv.vendor.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        (inv.vendorInvoiceNo || "").toLowerCase().includes(searchQuery.toLowerCase());
+
+      // 2. Status Filter
+      const normalizedStatus = normalizeInvoiceFilterValue(inv.status);
+      const normalizedPayment = normalizeInvoiceFilterValue(inv.payment);
+      const normalizedFilter = normalizeInvoiceFilterValue(activeFilter);
+
+      const matchesStatus = normalizedFilter === "ALL_INVOICES" ||
+        (normalizedFilter === "TODAY" && isInvoiceToday(inv)) ||
+        (normalizedFilter === "OUTSTANDING" && isOutstandingInvoice(inv)) ||
+        (normalizedFilter === "OVERDUE" && isOverdueInvoice(inv)) ||
+        normalizedStatus === normalizedFilter ||
+        normalizedPayment === normalizedFilter;
+
+      // 3. Date Range Filter
+      let matchesDate = true;
+      if (dateRange?.start) {
+        matchesDate = matchesDate && new Date(inv.date) >= new Date(dateRange.start);
+      }
+      if (dateRange?.end) {
+        matchesDate = matchesDate && new Date(inv.date) <= new Date(dateRange.end);
+      }
+
+      // 4. Vendor Filter
+      let matchesVendor = true;
+      if (vendorFilter) {
+        matchesVendor = inv.vendor.toLowerCase().includes(vendorFilter.toLowerCase());
+      }
+      return matchesSearch && matchesStatus && matchesDate && matchesVendor;
+    }).sort(compareInvoiceRows);
+  }, [invoices, searchQuery, activeFilter, dateRange, vendorFilter]);
+
+  const handleExportExcel = () => {
+    exportToExcel(filteredInvoices, INVOICE_COLUMNS, 'Purchase_Invoice_List');
+  };
+
+  const handleExportPdf = () => {
+    exportToPDF(filteredInvoices, INVOICE_COLUMNS, 'Purchase Invoices', 'Purchase_Invoice_List');
   };
 
   const handleConfirmPayment = async (invoice, paymentMode, bankAccount, chequeDate) => {
@@ -2733,6 +3014,7 @@ const PurchaseInvoices = () => {
       case "list":
         return <InvoiceListView
           invoices={invoices}
+          filteredInvoices={filteredInvoices}
           activeFilter={activeFilter}
           setActiveFilter={setActiveFilter}
           searchQuery={searchQuery}
@@ -2833,9 +3115,10 @@ const PurchaseInvoices = () => {
             >
               <ArrowLeft className="h-4 w-4" /> <span className="hidden sm:inline">Back</span>
             </button>
-            <button className="flex-1 sm:flex-none h-8 px-3 border border-slate-300 rounded-md bg-white hover:bg-slate-50 text-slate-700 flex items-center justify-center gap-1.5 text-sm font-medium transition-colors whitespace-nowrap">
-              <Download className="h-4 w-4" /> <span className="hidden sm:inline">Export</span>
-            </button>
+            <ExportDropdown
+              onExportExcel={handleExportExcel}
+              onExportPdf={handleExportPdf}
+            />
             <button
               onClick={() => {
                 setEditInvoice(null);
@@ -2880,7 +3163,7 @@ const PurchaseInvoices = () => {
 
         {activeNavTab === 'list' && (
           <div className="flex items-center gap-2 overflow-x-auto pb-1 no-scrollbar mb-4 -mx-4 px-4 md:mx-0 md:px-0">
-            {["All Invoices", "Draft", "Pending Approval", "Posted", "Partially Paid", "Paid", "Reversed"].map((tab, idx) => (
+            {PURCHASE_INVOICE_FILTER_TABS.map((tab) => (
               <button
                 key={tab}
                 onClick={() => setActiveFilter(tab)}

@@ -10,30 +10,74 @@ import java.util.List;
 @Repository
 public interface SalesOrderRepository extends JpaRepository<SalesOrder, Long> {
 
+  // INVOICED is excluded: once an SO is invoiced its DN (DRAFT/DISPATCHED) tracks
+  // the reservation. Counting both would double-reserve the same stock.
+  // Quantity is converted to base units using ProductPacking.conversion so that
+  // the result is directly comparable to the StockMovement ledger (always in base units).
   @Query("""
-          SELECT COALESCE(SUM(si.quantity), 0)
+          SELECT COALESCE(SUM(si.quantity * COALESCE(pp.conversion, 1)), 0)
           FROM SalesOrder so JOIN so.items si
+          JOIN com.billbull.backend.inventory.product.Product p
+              ON p.code = si.itemCode AND p.isActive = true
+          LEFT JOIN com.billbull.backend.inventory.product.ProductPacking pp
+              ON pp.product.id = p.id AND LOWER(pp.unit.name) = LOWER(si.unit) AND pp.isActive = true
           WHERE si.itemCode = :productCode
             AND so.status IN (
               com.billbull.backend.sales.salesorder.SalesOrderStatus.CONFIRMED,
-              com.billbull.backend.sales.salesorder.SalesOrderStatus.PARTIALLY_PAID,
-              com.billbull.backend.sales.salesorder.SalesOrderStatus.INVOICED
+              com.billbull.backend.sales.salesorder.SalesOrderStatus.PARTIALLY_PAID
             )
+            AND NOT EXISTS (
+              SELECT 1 FROM com.billbull.backend.sales.delivery.DeliveryNote dn
+              WHERE dn.salesOrderNo = so.soNumber
+                AND dn.status <> com.billbull.backend.sales.delivery.DeliveryNoteStatus.CANCELLED
+            )
+
       """)
   BigDecimal sumReservedQuantity(@Param("productCode") String productCode);
 
   @Query("""
-          SELECT si.itemCode, COALESCE(SUM(si.quantity), 0)
+          SELECT p.id, COALESCE(SUM(si.quantity * COALESCE(pp.conversion, 1)), 0)
           FROM SalesOrder so JOIN so.items si
+          JOIN com.billbull.backend.inventory.product.Product p
+              ON p.code = si.itemCode AND p.isActive = true
+          LEFT JOIN com.billbull.backend.inventory.product.ProductPacking pp
+              ON pp.product.id = p.id AND LOWER(pp.unit.name) = LOWER(si.unit) AND pp.isActive = true
           WHERE si.itemCode IN :productCodes
             AND so.status IN (
               com.billbull.backend.sales.salesorder.SalesOrderStatus.CONFIRMED,
-              com.billbull.backend.sales.salesorder.SalesOrderStatus.PARTIALLY_PAID,
-              com.billbull.backend.sales.salesorder.SalesOrderStatus.INVOICED
+              com.billbull.backend.sales.salesorder.SalesOrderStatus.PARTIALLY_PAID
             )
-          GROUP BY si.itemCode
+            AND NOT EXISTS (
+              SELECT 1 FROM com.billbull.backend.sales.delivery.DeliveryNote dn
+              WHERE dn.salesOrderNo = so.soNumber
+                AND dn.status <> com.billbull.backend.sales.delivery.DeliveryNoteStatus.CANCELLED
+            )
+
+          GROUP BY p.id
       """)
   List<Object[]> sumReservedQuantityForProducts(@Param("productCodes") List<String> productCodes);
+
+  @Query("""
+          SELECT p.id, so.warehouse.id, COALESCE(SUM(si.quantity * COALESCE(pp.conversion, 1)), 0)
+          FROM SalesOrder so JOIN so.items si
+          JOIN com.billbull.backend.inventory.product.Product p
+              ON p.code = si.itemCode AND p.isActive = true
+          LEFT JOIN com.billbull.backend.inventory.product.ProductPacking pp
+              ON pp.product.id = p.id AND LOWER(pp.unit.name) = LOWER(si.unit) AND pp.isActive = true
+          WHERE si.itemCode IN :productCodes
+            AND so.status IN (
+              com.billbull.backend.sales.salesorder.SalesOrderStatus.CONFIRMED,
+              com.billbull.backend.sales.salesorder.SalesOrderStatus.PARTIALLY_PAID
+            )
+            AND NOT EXISTS (
+              SELECT 1 FROM com.billbull.backend.sales.delivery.DeliveryNote dn
+              WHERE dn.salesOrderNo = so.soNumber
+                AND dn.status <> com.billbull.backend.sales.delivery.DeliveryNoteStatus.CANCELLED
+            )
+
+          GROUP BY p.id, so.warehouse.id
+      """)
+  List<Object[]> sumReservedQuantityForProductsByWarehouse(@Param("productCodes") List<String> productCodes);
 
   java.util.Optional<SalesOrder> findBySoNumber(String soNumber);
 

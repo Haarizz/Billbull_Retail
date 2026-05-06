@@ -1,4 +1,4 @@
-﻿import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
     Truck,
     Package,
@@ -40,6 +40,25 @@ import { getTemplatesByCategory } from '../../api/printTemplateApi';
 import { generatePrintHtml, printHtml } from '../../utils/printGenerator';
 import { getImageUrl } from '../../utils/urlUtils';
 import { useCompany } from '../../context/CompanyContext';
+import { generateDocFilename } from '../../utils/filenameUtils';
+import { usePrintDocument } from '../../hooks/usePrintDocument';
+import ExportDropdown from '../../components/common/ExportDropdown';
+import { exportToExcel, exportToPDF } from '../../utils/exportUtils';
+import CurrencyAmount from '../../components/CurrencyAmount';
+
+// ==========================================
+// 1. CONFIGURATION
+// ==========================================
+
+const DELIVERY_NOTE_COLUMNS = [
+    { header: 'DN Number', key: 'dnNo', width: 15 },
+    { header: 'Date', key: 'date', width: 12 },
+    { header: 'Customer', key: 'customerName', width: 25 },
+    { header: 'SO No', key: 'soNo', width: 15 },
+    { header: 'PI No', key: 'piNo', width: 15 },
+    { header: 'Warehouse', key: 'warehouse', width: 15 },
+    { header: 'Status', key: 'status', width: 12 }
+];
 
 // ==========================================
 // API IMPORTS
@@ -47,6 +66,7 @@ import { useCompany } from '../../context/CompanyContext';
 import { getAllCustomers } from '../../api/customerledgerApi';
 import { getAllSalesOrders } from '../../api/salesorderApi';
 import { getAllSalesInvoices } from '../../api/salesInvoiceApi';
+import { getAllProformas, getProformaById } from '../../api/proformaApi';
 import { getWarehouses, getWarehouseStock, getWarehouseBins } from '../../api/warehouseApi';
 // âœ… IMPORT STOCK API
 import { getStockAvailability } from '../../api/stockAvailabilityApi'; // âœ… NEW API for LIVE STOCK
@@ -66,6 +86,7 @@ import ProductSelector from '../../components/ProductSelector';
 
 // âœ… CUSTOMER SELECTOR
 import CustomerSelector from '../../components/CustomerSelector';
+import CustomerShippingPanel from '../../components/CustomerShippingPanel';
 
 // âœ… STOCK AVAILABILITY MODAL
 import StockAvailabilityModal from '../../components/StockAvailabilityModal';
@@ -79,7 +100,9 @@ import { ItemDescriptionCell, ItemDescriptionHeader } from '../../components/Ite
 import ItemAddOnsModal from '../../components/ItemAddOnsModal';
 
 const DeliveryNote = () => {
+    const { print } = usePrintDocument();
     const { company } = useCompany();
+    const currency = company?.currency || 'AED';
     const [activeTab, setActiveTab] = useState('list');
     const [currentDnId, setCurrentDnId] = useState(null); // Tracks editing vs creating
 
@@ -89,6 +112,37 @@ const DeliveryNote = () => {
     const [searchTerm, setSearchTerm] = useState('');
     const [filterStatus, setFilterStatus] = useState('All');
     const [sortConfig, setSortConfig] = useState({ key: null, direction: 'desc' });
+    const [pickingSearchTerm, setPickingSearchTerm] = useState('');
+    const [selectedPickingId, setSelectedPickingId] = useState(null);
+    const [pickingScanValue, setPickingScanValue] = useState('');
+    const [pickingScanFeedback, setPickingScanFeedback] = useState(null);
+    const [pickedItemsByNote, setPickedItemsByNote] = useState({});
+    const pickingScanInputRef = React.useRef(null);
+
+    const matchesPickingSearch = (dn, lowerSearch) => {
+        if (!lowerSearch) return true;
+
+        const searchableValues = [
+            dn.dnNo,
+            dn.customerName,
+            dn.customerCode,
+            dn.soNo,
+            dn.piNo,
+            dn.siNo,
+            dn.linkedSalesInvoiceNumber,
+            dn.warehouse,
+            ...(dn.items || []).flatMap(item => [
+                item.code,
+                item.barcode,
+                item.desc,
+                item.remarks
+            ])
+        ];
+
+        return searchableValues.some(value =>
+            value && String(value).toLowerCase().includes(lowerSearch)
+        );
+    };
 
     const filteredDeliveryNotes = useMemo(() => {
         let data = [...deliveryNotesList];
@@ -137,6 +191,33 @@ const DeliveryNote = () => {
         return data;
     }, [deliveryNotesList, searchTerm, filterStatus, sortConfig]);
 
+    const pickingNotes = useMemo(
+        () => deliveryNotesList.filter(dn =>
+            dn.type === 'Picking' ||
+            (dn.type === 'Before Sale' && dn.piNo && dn.piNo !== '-')
+        ),
+        [deliveryNotesList]
+    );
+
+    const activePickingNotes = useMemo(() => {
+        const lower = pickingSearchTerm.trim().toLowerCase();
+        return pickingNotes.filter(dn =>
+            dn.status === 'DRAFT' && matchesPickingSearch(dn, lower)
+        );
+    }, [pickingNotes, pickingSearchTerm]);
+
+    const pickingHistoryNotes = useMemo(() => {
+        const lower = pickingSearchTerm.trim().toLowerCase();
+        return pickingNotes.filter(dn =>
+            dn.status !== 'DRAFT' && matchesPickingSearch(dn, lower)
+        );
+    }, [pickingNotes, pickingSearchTerm]);
+
+    const selectedPickingNote = useMemo(
+        () => activePickingNotes.find(dn => dn.id === selectedPickingId) || activePickingNotes[0] || null,
+        [activePickingNotes, selectedPickingId]
+    );
+
     const handleSort = (key) => {
         let direction = 'desc';
         if (sortConfig.key === key && sortConfig.direction === 'desc') {
@@ -145,9 +226,31 @@ const DeliveryNote = () => {
         setSortConfig({ key, direction });
     };
 
+    useEffect(() => {
+        if (activePickingNotes.length === 0) {
+            setSelectedPickingId(null);
+            return;
+        }
+
+        if (!activePickingNotes.some(note => note.id === selectedPickingId)) {
+            setSelectedPickingId(activePickingNotes[0].id);
+        }
+    }, [activePickingNotes, selectedPickingId]);
+
+    useEffect(() => {
+        if (activeTab !== 'picking' || !selectedPickingNote) return;
+
+        const timer = window.setTimeout(() => {
+            pickingScanInputRef.current?.focus();
+        }, 80);
+
+        return () => window.clearTimeout(timer);
+    }, [activeTab, selectedPickingNote]);
+
     const [customersList, setCustomersList] = useState([]);
     const [salesOrdersList, setSalesOrdersList] = useState([]);
     const [salesInvoicesList, setSalesInvoicesList] = useState([]);
+    const [proformasList, setProformasList] = useState([]);
     const [warehousesList, setWarehousesList] = useState([]);
     const [binsList, setBinsList] = useState([]);
 
@@ -161,7 +264,7 @@ const DeliveryNote = () => {
     const [dnNumber, setDnNumber] = useState('');
     const [dnDate, setDnDate] = useState(new Date().toISOString().split('T')[0]);
     const [warehouse, setWarehouse] = useState('');
-    const [status, setStatus] = useState('Draft');
+    const [status, setStatus] = useState('DRAFT');
     const [autoGenerated, setAutoGenerated] = useState(false);
     const [sourceDocumentType, setSourceDocumentType] = useState('');
     const [sourceDocumentId, setSourceDocumentId] = useState('');
@@ -171,10 +274,11 @@ const DeliveryNote = () => {
     const [isCustomerOpen, setIsCustomerOpen] = useState(false);
     const [isCustomerSearchOpen, setIsCustomerSearchOpen] = useState(false);
 
-    const [sourceType, setSourceType] = useState('SO'); // 'SO' | 'SI'
+    const [sourceType, setSourceType] = useState('SO'); // 'SO' | 'PI' | 'SI'
     const [linkedSO, setLinkedSO] = useState('');
     const [isSOOpen, setIsSOOpen] = useState(false);
     const [linkedPI, setLinkedPI] = useState('');
+    const [isPIOpen, setIsPIOpen] = useState(false);
     const [linkedSI, setLinkedSI] = useState('');
     const [isSIOpen, setIsSIOpen] = useState(false);
 
@@ -321,8 +425,7 @@ const DeliveryNote = () => {
                                         </div>
                                     </td>
                                     <td className="px-4 py-2.5 text-right font-black text-slate-700">
-                                        <div className="text-[9px] text-slate-300 font-bold leading-none mb-0.5 uppercase tracking-tighter">AED</div>
-                                        {Number(h.rate).toFixed(2)}
+                                        <CurrencyAmount value={h.rate} currency={currency} />
                                     </td>
                                 </tr>
                             )) : (
@@ -368,11 +471,190 @@ const DeliveryNote = () => {
     };
 
     // Read-Only Logic
-    const isViewOnly = status === 'DELIVERED' || status === 'CANCELLED';
-    const isLockedForEdit = isViewOnly || autoGenerated;
+    const normalizedStatus = (status || '').toUpperCase();
+    const isViewOnly = normalizedStatus === 'DELIVERED' || normalizedStatus === 'CANCELLED';
+    const isLockedForEdit = normalizedStatus !== 'DRAFT';
 
     // Helper
     const capitalize = s => s ? s.charAt(0) + s.slice(1).toLowerCase() : '';
+
+    const getRequiredPickingQty = (item) => Math.max(Number(item?.currentQty) || 0, 0);
+
+    const formatPickingQty = (qty, item) => {
+        if (!item) return String(qty || 0);
+        const sellingUnit = item.unit || 'PCS';
+        const conversions = item.unitConversions || {};
+
+        if (!conversions || typeof conversions !== 'object' || Array.isArray(conversions)) {
+            return `${qty} ${sellingUnit}`;
+        }
+
+        // Find base unit (lowest factor, usually 1)
+        const entries = Object.entries(conversions)
+            .map(([u, f]) => [u, Number(f)])
+            .filter(([, f]) => f > 0)
+            .sort((a, b) => a[1] - b[1]);
+
+        const baseUnitEntry = entries[0];
+        const baseUnit = baseUnitEntry ? baseUnitEntry[0] : null;
+
+        // If no conversions or selling unit is already the base unit
+        if (!baseUnit || baseUnit === sellingUnit || entries.length < 2) {
+            return `${qty} ${sellingUnit}`;
+        }
+
+        const sellingFactor = Number(conversions[sellingUnit]) || 1;
+        const baseFactor = baseUnitEntry[1] || 1;
+        
+        // Calculate qty in base units
+        const baseQty = Number(((Number(qty) * sellingFactor) / baseFactor).toFixed(2));
+
+        return `${qty} ${sellingUnit} (${baseQty} ${baseUnit})`;
+    };
+
+    const getPickedQty = (noteId, itemId) =>
+        Number(pickedItemsByNote[noteId]?.[itemId] || 0);
+
+    const updatePickedQty = (noteId, itemId, nextQty, maxQty) => {
+        const clampedQty = Math.max(0, Math.min(Number(nextQty) || 0, Math.max(0, Number(maxQty) || 0)));
+
+        setPickedItemsByNote(prev => {
+            const updated = { ...prev };
+            const noteProgress = { ...(updated[noteId] || {}) };
+
+            if (clampedQty === 0) {
+                delete noteProgress[itemId];
+            } else {
+                noteProgress[itemId] = clampedQty;
+            }
+
+            if (Object.keys(noteProgress).length === 0) {
+                delete updated[noteId];
+            } else {
+                updated[noteId] = noteProgress;
+            }
+
+            return updated;
+        });
+    };
+
+    const getPickingProgress = (note) => {
+        const itemsForNote = Array.isArray(note?.items) ? note.items : [];
+        const requiredQty = itemsForNote.reduce((sum, item) => sum + getRequiredPickingQty(item), 0);
+        const pickedQty = itemsForNote.reduce((sum, item) => sum + Math.min(getPickedQty(note.id, item.id), getRequiredPickingQty(item)), 0);
+        const totalLines = itemsForNote.length;
+        const completedLines = itemsForNote.filter(item => getPickedQty(note.id, item.id) >= getRequiredPickingQty(item)).length;
+
+        return {
+            requiredQty,
+            pickedQty,
+            remainingQty: Math.max(requiredQty - pickedQty, 0),
+            totalLines,
+            completedLines,
+            percent: requiredQty > 0 ? Math.min(100, Math.round((pickedQty / requiredQty) * 100)) : 0,
+            isComplete: requiredQty > 0 ? pickedQty >= requiredQty : false
+        };
+    };
+
+    const handleManualPickAdjust = (note, item, delta) => {
+        const maxQty = getRequiredPickingQty(item);
+        const currentPicked = getPickedQty(note.id, item.id);
+        const nextQty = Math.max(0, Math.min(maxQty, currentPicked + delta));
+
+        updatePickedQty(note.id, item.id, nextQty, maxQty);
+        setPickingScanFeedback({
+            kind: 'success',
+            message: `${item.code || item.desc || 'Line item'} updated to ${nextQty}/${maxQty} picked for ${note.dnNo}.`
+        });
+    };
+
+    const handlePickingScanSubmit = (event) => {
+        event.preventDefault();
+
+        if (!selectedPickingNote) {
+            setPickingScanFeedback({
+                kind: 'error',
+                message: 'No active Picking note is selected. Choose a draft note first.'
+            });
+            return;
+        }
+
+        const scanValue = pickingScanValue.trim().toLowerCase();
+        if (!scanValue) {
+            setPickingScanFeedback({
+                kind: 'error',
+                message: 'Scan or enter a barcode before submitting.'
+            });
+            return;
+        }
+
+        const matchedItem = (selectedPickingNote.items || []).find(item => {
+            const candidates = [item.barcode, item.code]
+                .filter(Boolean)
+                .map(value => String(value).trim().toLowerCase());
+
+            return candidates.includes(scanValue);
+        });
+
+        if (!matchedItem) {
+            setPickingScanFeedback({
+                kind: 'error',
+                message: `No matching barcode or item code was found in ${selectedPickingNote.dnNo}.`
+            });
+            return;
+        }
+
+        const requiredQty = getRequiredPickingQty(matchedItem);
+        const currentPicked = getPickedQty(selectedPickingNote.id, matchedItem.id);
+
+        if (currentPicked >= requiredQty) {
+            setPickingScanFeedback({
+                kind: 'success',
+                message: `${matchedItem.code || matchedItem.desc || 'Item'} is already fully picked for ${selectedPickingNote.dnNo}.`
+            });
+            setPickingScanValue('');
+            return;
+        }
+
+        const nextQty = currentPicked + 1;
+        updatePickedQty(selectedPickingNote.id, matchedItem.id, nextQty, requiredQty);
+        setPickingScanValue('');
+        setPickingScanFeedback({
+            kind: 'success',
+            message: `${matchedItem.code || matchedItem.desc || 'Item'} picked ${nextQty}/${requiredQty} for ${selectedPickingNote.dnNo}.`
+        });
+        window.setTimeout(() => pickingScanInputRef.current?.focus(), 0);
+    };
+
+    const handleDispatchPickingNote = async (note) => {
+        const progress = getPickingProgress(note);
+
+        if (!progress.isComplete) {
+            alert(`Finish scanning all Picking quantities before dispatching ${note.dnNo}.`);
+            return;
+        }
+
+        if (!window.confirm(`Advance ${note.dnNo} to Dispatched?`)) {
+            return;
+        }
+
+        try {
+            await advanceDeliveryNoteStatus(note.id, '');
+            setPickingScanFeedback({
+                kind: 'success',
+                message: `${note.dnNo} was advanced to Dispatched and moved to Picking history.`
+            });
+            setPickingScanValue('');
+            await loadDeliveryNotes();
+        } catch (error) {
+            console.error('Failed to dispatch Picking note', error);
+            setPickingScanFeedback({
+                kind: 'error',
+                message: `Failed to advance ${note.dnNo} to Dispatched.`
+            });
+            alert('Failed to advance Picking note to Dispatched.');
+        }
+    };
 
     const createBlankDeliveryItem = () => ({
         id: Date.now() + Math.random(),
@@ -422,20 +704,25 @@ const DeliveryNote = () => {
         const disc   = Number(item.disc ?? item.discount ?? item.discountPercent) || 0;
         const tax    = Number(item.tax ?? item.taxPercent ?? item.taxRate) || 0;
         const foc    = Number(item.foc) || 0;
-        const grossAmount    = price * currentQty;
+        const grossAmountFromPayload = Number(item.grossAmount ?? item.gross);
+        const taxAmountFromPayload = Number(item.taxAmt ?? item.taxAmount);
+        const netAmountFromPayload = Number(item.netAmount ?? item.net ?? item.total);
+        const grossAmount    = Number.isFinite(grossAmountFromPayload) ? grossAmountFromPayload : (price * currentQty);
         const discountAmount = grossAmount * (disc / 100);
         const taxableAmount  = grossAmount - discountAmount;
-        const taxAmt         = taxableAmount * (tax / 100);
-        const total          = taxableAmount + taxAmt;
+        const taxAmt         = Number.isFinite(taxAmountFromPayload) ? taxAmountFromPayload : (taxableAmount * (tax / 100));
+        const total          = Number.isFinite(netAmountFromPayload) ? netAmountFromPayload : (taxableAmount + taxAmt);
         const cost           = Number(item.cost ?? item.costPrice ?? item.unitCost) || 0;
+        const inferredMargin = price > 0 ? (((price - cost) / price) * 100) : 0;
 
         return {
             id: item.id || fallbackId,
             code: resolvedCode,
+            name: item.name || item.itemName || item.productName || '',
             barcode: item.barcode || item.itemBarcode || '',
             image: item.primaryImage || item.image || item.thumbnailUrl || item.imageUrl || '',
-            desc: item.desc || item.description || item.name || '',
-            remarks: item.remarks || item.description || item.desc || item.name || '',
+            desc: item.desc || item.description || '',
+            remarks: item.remarks || item.description || item.desc || '',
             unit: resolvedUnit,
             availableUnits: Array.isArray(item.availableUnits) && item.availableUnits.length > 0
                 ? item.availableUnits
@@ -458,11 +745,19 @@ const DeliveryNote = () => {
             total,
             net: total,
             cost,
-            margin: Number(item.margin) || 0,
+            margin: Number(item.margin ?? item.gp) || inferredMargin,
             binId: item.binId ?? null,
             salesOrderItemId: item.salesOrderItemId || null,
             stock: Number(item.stock) || warehouseStockMap[resolvedCode] || 0
         };
+    };
+
+    const getReservationAwareAvailable = (item = {}) => {
+        const available = Number(warehouseStockMap[item.code]) || 0;
+        const ownReservation = Number(item.currentQty ?? item.qty ?? item.orderedQty) || 0;
+        const isSourceReserved = (sourceType === 'SO' && Boolean((linkedSO || '').trim())) || Boolean(currentDnId);
+
+        return isSourceReserved ? available + ownReservation : available;
     };
 
     const handleSaveAddonItem = (updatedItem) => {
@@ -525,16 +820,18 @@ const DeliveryNote = () => {
     useEffect(() => {
         const fetchMasterData = async () => {
             try {
-                const [custData, soData, siData, whData] = await Promise.all([
+                const [custData, soData, siData, whData, piData] = await Promise.all([
                     getAllCustomers(),
                     getAllSalesOrders(),
                     getAllSalesInvoices(),
-                    getWarehouses()
+                    getWarehouses(),
+                    getAllProformas()
                 ]);
 
                 setCustomersList(Array.isArray(custData) ? custData : []);
                 setSalesOrdersList(Array.isArray(soData) ? soData : []);
                 setSalesInvoicesList(Array.isArray(siData) ? siData : []);
+                setProformasList(Array.isArray(piData) ? piData : []);
 
                 const whs = Array.isArray(whData) ? whData : [];
                 setWarehousesList(whs);
@@ -621,7 +918,7 @@ const DeliveryNote = () => {
     const handleCreateNew = () => {
         setCurrentDnId(null);
         setDnNumber(`DN-${Date.now()}`);
-        setStatus('Draft');
+        setStatus('DRAFT');
         setAutoGenerated(false);
         setSourceDocumentType('');
         setSourceDocumentId('');
@@ -656,9 +953,9 @@ const DeliveryNote = () => {
         setTrackingNo(dn.trackingNo || '');
         setShippingAddress(dn.shippingAddress || '');
         setLinkedSO(dn.soNo || '');
-        setLinkedPI(dn.piNo || '');
+        setLinkedPI(dn.piNo && dn.piNo !== '-' ? dn.piNo : '');
         setLinkedSI(dn.siNo || '');
-        setSourceType(dn.siNo ? 'SI' : 'SO');
+        setSourceType(dn.siNo ? 'SI' : (dn.piNo && dn.piNo !== '-') ? 'PI' : 'SO');
 
         const custObj = customersList.find(c => c.code === dn.customerCode) || { code: dn.customerCode, name: dn.customerName };
         setSelectedCustomer(custObj);
@@ -728,7 +1025,11 @@ const DeliveryNote = () => {
         if (isLockedForEdit) return;
         setSelectedCustomer(cust);
         setIsCustomerOpen(false);
-        setShippingAddress(cust.shippingAddress || cust.billingAddress || cust.address || '');
+        const _defaultAddr = (cust.savedAddresses || []).find(a => a.isDefault);
+            const _resolvedAddr = _defaultAddr
+                ? [_defaultAddr.address1, _defaultAddr.address2, _defaultAddr.city, _defaultAddr.country].filter(Boolean).join(', ')
+                : (cust.defaultShippingAddress || cust.shippingAddress || cust.billingAddress || cust.address || '');
+            setShippingAddress(_resolvedAddr);
         setLinkedSO('');
         setLinkedPI('');
         setLinkedSI('');
@@ -739,11 +1040,30 @@ const DeliveryNote = () => {
         if (isLockedForEdit) return;
         setLinkedSO(so.soNumber);
         setLinkedPI(so.linkedProforma || '');
+        setLinkedSI('');
+        setSourceDocumentType('SALES_ORDER');
+        setSourceDocumentId(so.id);
         setIsSOOpen(false);
+        setIsPIOpen(false);
+        setIsSIOpen(false);
 
+        // Resolve shipping: prefer SO's saved address, fall back to customer master
         if (so.shippingAddress) {
             setShippingAddress(so.shippingAddress);
+        } else {
+            const matchedCust = customersList.find(c => c.code === so.customerCode || c.name === so.customerName);
+            if (matchedCust) {
+                const _defaultAddr = (matchedCust.savedAddresses || []).find(a => a.isDefault);
+                const _resolvedAddr = _defaultAddr
+                    ? [_defaultAddr.address1, _defaultAddr.address2, _defaultAddr.city, _defaultAddr.country].filter(Boolean).join(', ')
+                    : (matchedCust.defaultShippingAddress || matchedCust.shippingAddress || matchedCust.billingAddress || matchedCust.address || '');
+                setShippingAddress(_resolvedAddr);
+            }
         }
+
+        // Set customer from master list so savedAddresses are available
+        const matchedCust = customersList.find(c => c.code === so.customerCode || c.name === so.customerName);
+        if (matchedCust) setSelectedCustomer(matchedCust);
 
         if (so.items && so.items.length > 0) {
             const mappedItems = so.items.map((item, index) =>
@@ -760,13 +1080,63 @@ const DeliveryNote = () => {
     const handleSelectSI = (si) => {
         if (isLockedForEdit) return;
         setLinkedSI(si.invoiceNumber || si.invoiceNo || si.id);
+        setLinkedSO('');
+        setLinkedPI('');
+        setSourceDocumentType('SALES_INVOICE');
+        setSourceDocumentId(si.id);
         setIsSIOpen(false);
+        setIsSOOpen(false);
+        setIsPIOpen(false);
 
-        if (si.shippingAddress) setShippingAddress(si.shippingAddress);
+        // Resolve shipping: prefer SI's saved address, fall back to customer master
+        if (si.shippingAddress) {
+            setShippingAddress(si.shippingAddress);
+        } else {
+            const matchedCust = customersList.find(c => c.code === si.customerCode || c.name === si.customerName);
+            if (matchedCust) {
+                const _defaultAddr = (matchedCust.savedAddresses || []).find(a => a.isDefault);
+                const _resolvedAddr = _defaultAddr
+                    ? [_defaultAddr.address1, _defaultAddr.address2, _defaultAddr.city, _defaultAddr.country].filter(Boolean).join(', ')
+                    : (matchedCust.defaultShippingAddress || matchedCust.shippingAddress || matchedCust.billingAddress || matchedCust.address || '');
+                setShippingAddress(_resolvedAddr);
+            }
+        }
 
         const siItems = si.items || si.invoiceItems || [];
         if (siItems.length > 0) {
             const mappedItems = siItems.map((item, index) =>
+                normalizeDeliveryItem({
+                    ...item,
+                    stock: warehouseStockMap[item.itemCode || item.code] || 0
+                }, Date.now() + index + Math.random())
+            );
+            setItems(mappedItems.length > 0 ? mappedItems : [createBlankDeliveryItem()]);
+        }
+    };
+
+    const handleSelectPI = (pi) => {
+        if (isLockedForEdit) return;
+        setLinkedPI(pi.piNumber);
+        setSourceDocumentType('PROFORMA');
+        setSourceDocumentId(pi.id);
+        setIsPIOpen(false);
+
+        // Resolve shipping: prefer PI's saved address, fall back to customer master
+        if (pi.shippingAddress) {
+            setShippingAddress(pi.shippingAddress);
+        } else {
+            const matchedCust = customersList.find(c => c.code === pi.customerCode || c.name === pi.customerName);
+            if (matchedCust) {
+                const _defaultAddr = (matchedCust.savedAddresses || []).find(a => a.isDefault);
+                const _resolvedAddr = _defaultAddr
+                    ? [_defaultAddr.address1, _defaultAddr.address2, _defaultAddr.city, _defaultAddr.country].filter(Boolean).join(', ')
+                    : (matchedCust.defaultShippingAddress || matchedCust.shippingAddress || matchedCust.billingAddress || matchedCust.address || '');
+                setShippingAddress(_resolvedAddr);
+            }
+        }
+
+        if (pi.items && pi.items.length > 0) {
+            const mappedItems = pi.items.map((item, index) =>
                 normalizeDeliveryItem({
                     ...item,
                     stock: warehouseStockMap[item.itemCode || item.code] || 0
@@ -806,6 +1176,36 @@ const DeliveryNote = () => {
         });
         setIsProductSelectorOpen(false); // âœ… Close modal after adding
     };
+    const handleFastEntryAdd = (product, qty, price, disc) => {
+        if (isLockedForEdit) return;
+        const newItem = normalizeDeliveryItem({
+            id: Date.now() + Math.random(),
+            code: product.code || product.itemCode || '',
+            barcode: product.barcode || '',
+            image: product.primaryImage || product.image || product.thumbnailUrl || product.imageUrl || '',
+            desc: product.description || product.name,
+            unit: product.unitName || product.unit || 'PCS',
+            orderedQty: qty,
+            prevDelivered: 0,
+            currentQty: qty,
+            boxes: Math.ceil(qty / 10) || 1,
+            foc: 0,
+            focUnit: product.unitName || product.unit || 'PCS',
+            price,
+            tax: Number(product.taxPercent || product.salesTax) || 5,
+            disc,
+            taxAmt: 0,
+            margin: 0,
+            remarks: product.description || '',
+            stock: warehouseStockMap[product.code] || 0
+        });
+
+        setItems(prev => {
+            const isFirstItemEmpty = prev.length === 1 && !prev[0].code && !prev[0].desc;
+            return isFirstItemEmpty ? [newItem] : [...prev, newItem];
+        });
+    };
+    // 
 
     // âœ… 8. HARD BLOCK INVALID QTY
     const recomputeItemTotals = (item) => {
@@ -828,7 +1228,7 @@ const DeliveryNote = () => {
 
                 if (field === 'currentQty') {
                     const qty = Number(value);
-                    const available = warehouseStockMap[item.code] || 0;
+                    const available = getReservationAwareAvailable(item);
 
                     if (qty > available) {
                         alert(`Insufficient stock for ${item.code}. Available: ${available}`);
@@ -895,7 +1295,7 @@ const DeliveryNote = () => {
 
         // Stock validation
         for (const i of items) {
-            const available = warehouseStockMap[i.code] || 0;
+            const available = getReservationAwareAvailable(i);
             if (i.currentQty > available) {
                 alert(`Insufficient stock for ${i.code}. Available: ${available}`);
                 return null;
@@ -910,6 +1310,8 @@ const DeliveryNote = () => {
             salesOrderNo: sourceType === 'SO' ? linkedSO : '',
             proformaNo: linkedPI,
             linkedSalesInvoiceNumber: sourceType === 'SI' ? linkedSI : '',
+            sourceDocumentType: sourceDocumentType,
+            sourceDocumentId: sourceDocumentId,
 
             warehouseId: selectedWh.id, // âœ… NOW VALID
 
@@ -947,6 +1349,26 @@ const DeliveryNote = () => {
                 result = await createDeliveryNote(payload);
             }
 
+            if (result) {
+                setCurrentDnId(result.id || currentDnId);
+                setStatus(result.status || 'DRAFT');
+                setDnNumber(result.dnNumber || dnNumber);
+                setAutoGenerated(Boolean(result.autoGenerated));
+                setSourceDocumentType(result.sourceDocumentType || '');
+                setSourceDocumentId(result.sourceDocumentId || '');
+
+                const refreshedItems = (result.items || []).map((item, index) =>
+                    normalizeDeliveryItem(
+                        { ...item, stock: warehouseStockMap[item.itemCode || item.code] || 0 },
+                        item.id || Date.now() + index + Math.random()
+                    )
+                );
+
+                if (refreshedItems.length > 0) {
+                    setItems(refreshedItems);
+                }
+            }
+
             alert("Delivery Note saved successfully");
 
             if (shouldRedirect) {
@@ -978,6 +1400,10 @@ const DeliveryNote = () => {
     const { totalQty, totalBoxes } = calculateStats();
     const hasItemData = items.some(item => item.code || item.desc);
     const itemLineCount = items.filter(item => item.code || item.desc).length;
+    const selectedPickingProgress = selectedPickingNote
+        ? getPickingProgress(selectedPickingNote)
+        : { requiredQty: 0, pickedQty: 0, remainingQty: 0, completedLines: 0, totalLines: 0, percent: 0, isComplete: false };
+    const activePickingQty = activePickingNotes.reduce((sum, note) => sum + getPickingProgress(note).requiredQty, 0);
 
     const [isPrinting, setIsPrinting] = useState(false);
 
@@ -999,6 +1425,10 @@ const DeliveryNote = () => {
             if (defaultTemplate) {
                 const fullCustomer = customersList.find(c => c.code === selectedCustomer?.code);
 
+                const subTotal = items.reduce((sum, i) => sum + (Number(i.taxableAmount) || 0), 0);
+                const totalTax = items.reduce((sum, i) => sum + (Number(i.taxAmt) || 0), 0);
+                const grandTotal = items.reduce((sum, i) => sum + (Number(i.total) || 0), 0);
+
                 const printData = {
                     title: 'DELIVERY NOTE',
                     docNo: dnNumber,
@@ -1010,23 +1440,32 @@ const DeliveryNote = () => {
                     },
                     items: items.map(i => ({
                         code: i.code,
-                        name: i.name || '',
-                        desc: (i.desc || '') + (i.boxes ? ` (${i.boxes} Boxes)` : ''),
+                        name: i.name || i.desc || '',
+                        desc: (i.remarks || i.desc || '') + (i.boxes ? ` (${i.boxes} Boxes)` : ''),
                         sku: i.sku || '',
                         localName: i.localName || '',
+                        barcode: i.barcode || '',
+                        location: warehouse || '',
                         unit: i.unit,
                         qty: i.currentQty,
-                        price: 0,
-                        disc: 0,
-                        tax: 0,
-                        taxAmt: 0,
-                        total: 0
+                        price: Number(i.price) || 0,
+                        disc: Number(i.disc) || 0,
+                        tax: Number(i.tax) || 0,
+                        taxAmt: Number(i.taxAmt) || 0,
+                        total: Number(i.total) || 0,
+                        image: i.image ? getImageUrl(i.image) : ''
                     })),
-                    totals: {},
+                    totals: {
+                        subTotal,
+                        tax: totalTax,
+                        grandTotal,
+                        currency: company?.currencySymbol || company?.currency || 'AED'
+                    },
                     meta: {
                         status: status,
-                        reference: `SO: ${linkedSO || '-'} | PI: ${linkedPI || '-'}`,
-                        notes: `Warehouse: ${warehouse} | Driver: ${driverName || '-'} | Vehicle: ${vehicleNo || '-'} | Tracking: ${trackingNo || '-'}`
+                        reference: `SO: ${linkedSO || '-'} | PI: ${linkedPI || '-'} | SI: ${linkedSI || '-'}`,
+                        location: warehouse || '',
+                        notes: `Driver: ${driverName || '-'} | Vehicle: ${vehicleNo || '-'} | Tracking: ${trackingNo || '-'}`
                     }
                 };
 
@@ -1034,26 +1473,29 @@ const DeliveryNote = () => {
                 printHtml(html);
             } else {
                 console.warn("No default print template found. Using browser print.");
-                window.print();
+                const title = generateDocFilename('Delivery Note', dnNo, customerName, dnDate, company?.currency || 'AED');
+                print(title);
             }
         } catch (error) {
             console.error("Print error:", error);
-            window.print();
+            const title = generateDocFilename('Delivery Note', dnNo, customerName, dnDate, company?.currency || 'AED');
+            print(title);
         } finally {
             setIsPrinting(false);
         }
     };
 
     const renderStatusBadge = (s) => {
+        const normalized = (s || 'DRAFT').toUpperCase();
         const styles = {
-            'Draft': 'bg-slate-100 text-slate-600 border-slate-200',
-            'Dispatched': 'bg-indigo-50 text-indigo-600 border-indigo-200',
-            'Delivered': 'bg-emerald-50 text-emerald-600 border-emerald-200',
-            'Cancelled': 'bg-red-50 text-red-600 border-red-200',
+            DRAFT: 'bg-slate-100 text-slate-600 border-slate-200',
+            DISPATCHED: 'bg-indigo-50 text-indigo-600 border-indigo-200',
+            DELIVERED: 'bg-emerald-50 text-emerald-600 border-emerald-200',
+            CANCELLED: 'bg-red-50 text-red-600 border-red-200',
         };
         return (
-            <span className={`px-2 py-0.5 rounded text-[10px] font-bold border ${styles[s] || styles['Draft']}`}>
-                {s}
+            <span className={`px-2 py-0.5 rounded text-[10px] font-bold border ${styles[normalized] || styles.DRAFT}`}>
+                {capitalize(normalized)}
             </span>
         );
     };
@@ -1105,6 +1547,7 @@ const DeliveryNote = () => {
     );
 
     return (
+        <>
         <div className="flex min-h-screen bg-[#F7F7FA] font-sans relative" onClick={() => { setIsCustomerOpen(false); setIsSOOpen(false); setIsSIOpen(false); }}>
 
             {/* âœ… PRODUCT SELECTOR MODAL */}
@@ -1112,8 +1555,10 @@ const DeliveryNote = () => {
                 isOpen={isProductSelectorOpen}
                 onClose={() => setIsProductSelectorOpen(false)}
                 onSelect={handleAddSingleProduct}
+                onInlineAdd={handleFastEntryAdd}
                 title="Select Items from Products / Services"
                 actionLabel="Add to Delivery Note"
+                mode="sales"
             />
 
             {/* âœ… STOCK AVAILABILITY MODAL */}
@@ -1267,6 +1712,10 @@ const DeliveryNote = () => {
                                         <ChevronDown size={14} className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
                                     </div>
                                 </div>
+                                <ExportDropdown
+                                    onExportExcel={() => exportToExcel(filteredDeliveryNotes, DELIVERY_NOTE_COLUMNS, 'Delivery_Notes')}
+                                    onExportPdf={() => exportToPDF(filteredDeliveryNotes, DELIVERY_NOTE_COLUMNS, 'Delivery Notes', 'Delivery_Notes')}
+                                />
                                 <button
                                     onClick={handleCreateNew}
                                     className="flex items-center justify-center gap-2 px-4 py-2 bg-[#F5C742] rounded-md text-xs font-bold text-slate-900 hover:bg-yellow-400 shadow-sm transition-colors w-full md:w-auto"
@@ -1435,58 +1884,42 @@ const DeliveryNote = () => {
                                         </div>
                                     </div>
 
-                                    {/* 2. Customer & Reference */}
-                                    <div className="bg-white rounded-lg border border-slate-200/50 shadow-sm relative z-20">
-                                        <div className="px-5 py-3 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
-                                            <h3 className="text-sm font-bold text-slate-800 flex items-center gap-2">
-                                                <User size={16} className="text-yellow-600" /> Customer Details
-                                            </h3>
+                                    {/* 2. Customer + Shipping unified panel */}
+                                    <CustomerShippingPanel
+                                        selectedCustomer={selectedCustomer}
+                                        onOpenCustomerSearch={() => { if (!isLockedForEdit) setIsCustomerSearchOpen(true); }}
+                                        shippingAddress={shippingAddress}
+                                        onShippingChange={setShippingAddress}
+                                        isReadOnly={isLockedForEdit}
+                                        currency={currency}
+                                    />
+
+                                    {/* CustomerSelector modal */}
+                                    <CustomerSelector
+                                        isOpen={isCustomerSearchOpen}
+                                        onClose={() => setIsCustomerSearchOpen(false)}
+                                        onSelect={handleSelectCustomer}
+                                        customers={customersList}
+                                        selectedCode={selectedCustomer?.code || ''}
+                                        onCustomerCreated={async () => {
+                                            const data = await getAllCustomers();
+                                            setCustomersList(Array.isArray(data) ? data : []);
+                                        }}
+                                    />
+
+                                    {/* Source Document */}
+                                    <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-5 space-y-4">
+                                        <h3 className="text-xs font-bold text-slate-700">Source Document</h3>
+                                        <div>
+                                            <label className="text-xs font-semibold text-slate-500 mb-1 block">Source Document Type</label>
+                                            <div className="flex rounded-md border border-slate-200 overflow-hidden text-xs font-bold">
+                                                <button type="button" disabled={isLockedForEdit} onClick={() => { if (!isLockedForEdit) { setSourceType('SO'); setLinkedSI(''); setLinkedPI(''); setItems([]); } }} className={`flex-1 py-1.5 transition-colors ${sourceType === 'SO' ? 'bg-yellow-400 text-slate-900' : 'bg-white text-slate-500 hover:bg-slate-50'} disabled:opacity-60`}>Sales Order</button>
+                                                <button type="button" disabled={isLockedForEdit} onClick={() => { if (!isLockedForEdit) { setSourceType('PI'); setLinkedSO(''); setLinkedSI(''); setItems([]); } }} className={`flex-1 py-1.5 border-l border-slate-200 transition-colors ${sourceType === 'PI' ? 'bg-yellow-400 text-slate-900' : 'bg-white text-slate-500 hover:bg-slate-50'} disabled:opacity-60`}>Pro-forma</button>
+                                                <button type="button" disabled={isLockedForEdit} onClick={() => { if (!isLockedForEdit) { setSourceType('SI'); setLinkedSO(''); setLinkedPI(''); setItems([]); } }} className={`flex-1 py-1.5 border-l border-slate-200 transition-colors ${sourceType === 'SI' ? 'bg-yellow-400 text-slate-900' : 'bg-white text-slate-500 hover:bg-slate-50'} disabled:opacity-60`}>Sales Invoice</button>
+                                            </div>
                                         </div>
-                                        <div className="p-5">
-                                            <div className="flex flex-col space-y-4">
-
-                                                <div className="relative">
-                                                    <label className="text-xs font-semibold text-slate-500 mb-1">Customer <span className="text-red-500">*</span></label>
-                                                    <div
-                                                        onClick={(e) => {
-                                                            if (!isLockedForEdit) {
-                                                                e.stopPropagation();
-                                                                setIsCustomerSearchOpen(true);
-                                                            }
-                                                        }}
-                                                        className={`w-full text-xs p-2 border border-slate-300/50 rounded flex items-center gap-2 ${isLockedForEdit ? 'cursor-not-allowed bg-slate-50 text-slate-400' : 'cursor-pointer hover:border-yellow-400 bg-white'} transition-colors`}
-                                                    >
-                                                        <Search size={14} className="text-slate-400 shrink-0" />
-                                                        <span className="flex-1 truncate">{selectedCustomer ? `${selectedCustomer.code} - ${selectedCustomer.name}` : 'Search customer...'}</span>
-                                                    </div>
-                                                </div>
-
-
-                                                {/* Source Type Toggle */}
-                                                <div>
-                                                    <label className="text-xs font-semibold text-slate-500 mb-1 block">Source Document Type</label>
-                                                    <div className="flex rounded-md border border-slate-200 overflow-hidden text-xs font-bold">
-                                                        <button
-                                                            type="button"
-                                                            disabled={isLockedForEdit}
-                                                            onClick={() => { if (!isLockedForEdit) { setSourceType('SO'); setLinkedSI(''); setItems([]); } }}
-                                                            className={`flex-1 py-1.5 transition-colors ${sourceType === 'SO' ? 'bg-yellow-400 text-slate-900' : 'bg-white text-slate-500 hover:bg-slate-50'} disabled:opacity-60`}
-                                                        >
-                                                            Sales Order
-                                                        </button>
-                                                        <button
-                                                            type="button"
-                                                            disabled={isLockedForEdit}
-                                                            onClick={() => { if (!isLockedForEdit) { setSourceType('SI'); setLinkedSO(''); setLinkedPI(''); setItems([]); } }}
-                                                            className={`flex-1 py-1.5 border-l border-slate-200 transition-colors ${sourceType === 'SI' ? 'bg-yellow-400 text-slate-900' : 'bg-white text-slate-500 hover:bg-slate-50'} disabled:opacity-60`}
-                                                        >
-                                                            Sales Invoice
-                                                        </button>
-                                                    </div>
-                                                </div>
-
-                                                {/* Conditional Source Dropdown */}
-                                                {sourceType === 'SO' ? (
+                                        {/* Conditional Source Dropdown */}
+                                                {sourceType === 'SO' && (
                                                     <div className="relative">
                                                         <label className="text-xs font-semibold text-slate-500 mb-1 block">Source Sales Order</label>
                                                         <div
@@ -1495,6 +1928,7 @@ const DeliveryNote = () => {
                                                                     e.stopPropagation();
                                                                     setIsSOOpen(!isSOOpen);
                                                                     setIsSIOpen(false);
+                                                                    setIsPIOpen(false);
                                                                 }
                                                             }}
                                                             className={`w-full text-xs p-2 border border-slate-300/50 rounded flex justify-between items-center ${selectedCustomer && !isLockedForEdit ? 'bg-white cursor-pointer hover:border-yellow-400' : 'bg-slate-50 cursor-not-allowed text-slate-400'}`}
@@ -1504,18 +1938,88 @@ const DeliveryNote = () => {
                                                         </div>
                                                         {isSOOpen && !isLockedForEdit && (
                                                             <div className="absolute top-full left-0 w-full bg-white border border-slate-200 rounded shadow-lg z-30 mt-1 max-h-48 overflow-y-auto">
-                                                                {salesOrdersList.filter(so => so.customerCode === selectedCustomer?.code).map(so => (
+                                                                {salesOrdersList.filter(so => {
+                                                                    const isTargetCust = so.customerCode === selectedCustomer?.code;
+                                                                    const hasAlreadyDN = deliveryNotesList.some(dn => 
+                                                                        dn.id !== currentDnId && 
+                                                                        dn.soNo === so.soNumber && 
+                                                                        dn.status !== 'CANCELLED'
+                                                                    );
+                                                                    return isTargetCust && !hasAlreadyDN;
+                                                                }).map(so => (
                                                                     <div key={so.id} onClick={() => handleSelectSO(so)} className="px-3 py-2 text-xs hover:bg-slate-50 cursor-pointer border-b border-slate-50">
                                                                         <span className="font-bold">{so.soNumber}</span> <span className="text-slate-400">({so.orderDate})</span>
                                                                     </div>
                                                                 ))}
-                                                                {salesOrdersList.filter(so => so.customerCode === selectedCustomer?.code).length === 0 && (
+                                                                {salesOrdersList.filter(so => {
+                                                                    const isTargetCust = so.customerCode === selectedCustomer?.code;
+                                                                    const hasAlreadyDN = deliveryNotesList.some(dn => 
+                                                                        dn.id !== currentDnId && 
+                                                                        dn.soNo === so.soNumber && 
+                                                                        dn.status !== 'CANCELLED'
+                                                                    );
+                                                                    return isTargetCust && !hasAlreadyDN;
+                                                                }).length === 0 && (
                                                                     <div className="px-3 py-2 text-xs text-slate-400">No Sales Orders found</div>
                                                                 )}
                                                             </div>
                                                         )}
                                                     </div>
-                                                ) : (
+                                                )}
+
+                                                {sourceType === 'PI' && (
+                                                    <div className="relative">
+                                                        <label className="text-xs font-semibold text-slate-500 mb-1 block">Source Pro-forma Invoice</label>
+                                                        <div
+                                                            onClick={(e) => {
+                                                                if (selectedCustomer && !isLockedForEdit) {
+                                                                    e.stopPropagation();
+                                                                    setIsPIOpen(!isPIOpen);
+                                                                    setIsSOOpen(false);
+                                                                    setIsSIOpen(false);
+                                                                }
+                                                            }}
+                                                            className={`w-full text-xs p-2 border border-slate-300/50 rounded flex justify-between items-center ${selectedCustomer && !isLockedForEdit ? 'bg-white cursor-pointer hover:border-yellow-400' : 'bg-slate-50 cursor-not-allowed text-slate-400'}`}
+                                                        >
+                                                            <span className="truncate">{linkedPI || (selectedCustomer ? 'Select Pro-forma...' : 'Select Customer First')}</span>
+                                                            <ChevronDown size={14} className="text-slate-400 shrink-0" />
+                                                        </div>
+                                                        {isPIOpen && !isLockedForEdit && (
+                                                            <div className="absolute top-full left-0 w-full bg-white border border-slate-200 rounded shadow-lg z-30 mt-1 max-h-48 overflow-y-auto">
+                                                                {proformasList
+                                                                    .filter(pi => {
+                                                                        const isTargetCust = (pi.customerCode === selectedCustomer?.code || pi.customer?.code === selectedCustomer?.code);
+                                                                        const isIssued = pi.status === 'ISSUED';
+                                                                        const hasAlreadyDN = deliveryNotesList.some(dn => 
+                                                                            dn.id !== currentDnId && 
+                                                                            dn.piNo === (pi.piNumber || pi.piNo) && 
+                                                                            dn.status !== 'CANCELLED'
+                                                                        );
+                                                                        return isTargetCust && isIssued && !hasAlreadyDN;
+                                                                    })
+                                                                    .map(pi => (
+                                                                        <div key={pi.id} onClick={() => handleSelectPI(pi)} className="px-3 py-2 text-xs hover:bg-slate-50 cursor-pointer border-b border-slate-50">
+                                                                            <span className="font-bold">{pi.piNo || pi.piNumber}</span> <span className="text-slate-400">({pi.date || pi.piDate})</span>
+                                                                        </div>
+                                                                    ))}
+                                                                {proformasList.filter(pi => {
+                                                                    const isTargetCust = (pi.customerCode === selectedCustomer?.code || pi.customer?.code === selectedCustomer?.code);
+                                                                    const isIssued = pi.status === 'ISSUED';
+                                                                    const hasAlreadyDN = deliveryNotesList.some(dn => 
+                                                                        dn.id !== currentDnId && 
+                                                                        dn.piNo === (pi.piNumber || pi.piNo) && 
+                                                                        dn.status !== 'CANCELLED'
+                                                                    );
+                                                                    return isTargetCust && isIssued && !hasAlreadyDN;
+                                                                }).length === 0 && (
+                                                                    <div className="px-3 py-2 text-xs text-slate-400">No Issued Pro-formas found</div>
+                                                                )}
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                )}
+
+                                                {sourceType === 'SI' && (
                                                     <div className="relative">
                                                         <label className="text-xs font-semibold text-slate-500 mb-1 block">Source Sales Invoice</label>
                                                         <div
@@ -1524,6 +2028,7 @@ const DeliveryNote = () => {
                                                                     e.stopPropagation();
                                                                     setIsSIOpen(!isSIOpen);
                                                                     setIsSOOpen(false);
+                                                                    setIsPIOpen(false);
                                                                 }
                                                             }}
                                                             className={`w-full text-xs p-2 border border-slate-300/50 rounded flex justify-between items-center ${selectedCustomer && !isLockedForEdit ? 'bg-white cursor-pointer hover:border-yellow-400' : 'bg-slate-50 cursor-not-allowed text-slate-400'}`}
@@ -1533,20 +2038,34 @@ const DeliveryNote = () => {
                                                         </div>
                                                         {isSIOpen && !isLockedForEdit && (
                                                             <div className="absolute top-full left-0 w-full bg-white border border-slate-200 rounded shadow-lg z-30 mt-1 max-h-48 overflow-y-auto">
-                                                                {salesInvoicesList.filter(si => si.customerCode === selectedCustomer?.code || si.customer?.code === selectedCustomer?.code).map(si => (
+                                                                {salesInvoicesList.filter(si => {
+                                                                    const isTargetCust = si.customerCode === selectedCustomer?.code || si.customer?.code === selectedCustomer?.code;
+                                                                    const hasAlreadyDN = deliveryNotesList.some(dn => 
+                                                                        dn.id !== currentDnId && 
+                                                                        dn.siNo === (si.invoiceNumber || si.invoiceNo) && 
+                                                                        dn.status !== 'CANCELLED'
+                                                                    );
+                                                                    return isTargetCust && !hasAlreadyDN;
+                                                                }).map(si => (
                                                                     <div key={si.id} onClick={() => handleSelectSI(si)} className="px-3 py-2 text-xs hover:bg-slate-50 cursor-pointer border-b border-slate-50">
                                                                         <span className="font-bold">{si.invoiceNumber || si.invoiceNo}</span> <span className="text-slate-400">({si.invoiceDate || si.date})</span>
                                                                     </div>
                                                                 ))}
-                                                                {salesInvoicesList.filter(si => si.customerCode === selectedCustomer?.code || si.customer?.code === selectedCustomer?.code).length === 0 && (
+                                                                {salesInvoicesList.filter(si => {
+                                                                    const isTargetCust = si.customerCode === selectedCustomer?.code || si.customer?.code === selectedCustomer?.code;
+                                                                    const hasAlreadyDN = deliveryNotesList.some(dn => 
+                                                                        dn.id !== currentDnId && 
+                                                                        dn.siNo === (si.invoiceNumber || si.invoiceNo) && 
+                                                                        dn.status !== 'CANCELLED'
+                                                                    );
+                                                                    return isTargetCust && !hasAlreadyDN;
+                                                                }).length === 0 && (
                                                                     <div className="px-3 py-2 text-xs text-slate-400">No Sales Invoices found</div>
                                                                 )}
                                                             </div>
                                                         )}
                                                     </div>
                                                 )}
-                                            </div>
-                                        </div>
                                     </div>
 
                                     {/* 3. Logistics Info */}
@@ -1598,12 +2117,14 @@ const DeliveryNote = () => {
                                                     <span className="text-xs font-medium text-red-500 bg-red-50 px-2 py-1 rounded">No items found</span>
                                                 )}
                                                 {!isLockedForEdit && (
-                                                    <button
-                                                        onClick={() => setIsProductSelectorOpen(true)}
-                                                        className="flex items-center gap-1 px-3 py-1.5 bg-yellow-400 text-slate-900 text-xs font-medium rounded hover:bg-yellow-500"
-                                                    >
-                                                        <Plus size={14} /> Select from Products
-                                                    </button>
+                                                    <div className="flex items-center gap-2">
+                                                        <button
+                                                            onClick={() => setIsProductSelectorOpen(true)}
+                                                            className="flex items-center gap-1 px-3 py-1.5 bg-yellow-400 text-slate-900 text-xs font-medium rounded hover:bg-yellow-500"
+                                                        >
+                                                            <Plus size={14} /> Select from Products
+                                                        </button>
+                                                    </div>
                                                 )}
                                             </div>
                                         </div>
@@ -1844,17 +2365,477 @@ const DeliveryNote = () => {
 
                     {/* ================= VIEW: PICKING ================= */}
                     {activeTab === 'picking' && (
-                        <div className="bg-white rounded-lg border border-slate-200 shadow-sm p-8 text-center min-h-[400px] flex flex-col items-center justify-center">
-                            <div className="bg-slate-100 p-4 rounded-full mb-4">
-                                <ClipboardList size={32} className="text-slate-400" />
+                        <div className="space-y-6">
+                            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                                <div className="bg-white rounded-lg border border-slate-200 shadow-sm p-4">
+                                    <div className="text-[11px] font-bold uppercase tracking-wider text-slate-400 mb-2">Active Pick Lists</div>
+                                    <div className="text-2xl font-black text-slate-800">{activePickingNotes.length}</div>
+                                    <div className="text-xs text-slate-500 mt-1">Draft Picking notes waiting for warehouse action.</div>
+                                </div>
+                                <div className="bg-white rounded-lg border border-slate-200 shadow-sm p-4">
+                                    <div className="text-[11px] font-bold uppercase tracking-wider text-slate-400 mb-2">Queued Quantity</div>
+                                    <div className="text-2xl font-black text-slate-800">{activePickingQty}</div>
+                                    <div className="text-xs text-slate-500 mt-1">Total units across all active Picking documents.</div>
+                                </div>
+                                <div className="bg-white rounded-lg border border-slate-200 shadow-sm p-4">
+                                    <div className="text-[11px] font-bold uppercase tracking-wider text-slate-400 mb-2">History</div>
+                                    <div className="text-2xl font-black text-slate-800">{pickingHistoryNotes.length}</div>
+                                    <div className="text-xs text-slate-500 mt-1">Delivered and dispatched Picking notes remain visible here.</div>
+                                </div>
                             </div>
-                            <h3 className="text-lg font-bold text-slate-700">Picking List Module</h3>
-                            <p className="text-sm text-slate-500 mt-2 max-w-md">
-                                This module allows warehouse staff to view pending items, scan barcodes, and mark items as "Picked" before generating the final Delivery Note.
-                            </p>
-                            <button className="mt-6 px-4 py-2 bg-white border border-slate-300 rounded text-sm font-medium text-slate-600 hover:bg-slate-50">
-                                View Pending Pick Lists
-                            </button>
+
+                            <div className="bg-white rounded-lg border border-slate-200 shadow-sm p-4 md:p-5 space-y-4">
+                                <div className="flex flex-col xl:flex-row xl:items-center xl:justify-between gap-4">
+                                    <div>
+                                        <h3 className="text-lg font-bold text-slate-800">Warehouse Picking Queue</h3>
+                                        <p className="text-sm text-slate-500 mt-1">
+                                            Sales invoices now generate Picking notes. Fast Sale notes land in history as delivered, while workflow notes stay draft until the warehouse finishes picking and dispatches them.
+                                        </p>
+                                    </div>
+
+                                    <form onSubmit={handlePickingScanSubmit} className="flex flex-col sm:flex-row gap-2 xl:min-w-[440px]">
+                                        <div className="relative flex-1">
+                                            <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={14} />
+                                            <input
+                                                ref={pickingScanInputRef}
+                                                type="text"
+                                                value={pickingScanValue}
+                                                onChange={(e) => setPickingScanValue(e.target.value)}
+                                                placeholder={selectedPickingNote ? `Scan barcode for ${selectedPickingNote.dnNo}` : 'Select a Picking note to start scanning'}
+                                                className="w-full pl-9 pr-3 py-2.5 border border-slate-200 rounded-md text-xs focus:outline-none focus:border-[#F5C742] disabled:bg-slate-50"
+                                                disabled={!selectedPickingNote}
+                                            />
+                                        </div>
+                                        <button
+                                            type="submit"
+                                            disabled={!selectedPickingNote}
+                                            className="px-4 py-2.5 bg-[#F5C742] text-slate-900 rounded-md text-xs font-bold hover:bg-yellow-400 disabled:opacity-50 disabled:cursor-not-allowed"
+                                        >
+                                            Scan Item
+                                        </button>
+                                    </form>
+                                </div>
+
+                                <div className="flex flex-col lg:flex-row gap-3">
+                                    <div className="relative flex-1">
+                                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={14} />
+                                        <input
+                                            type="text"
+                                            value={pickingSearchTerm}
+                                            onChange={(e) => setPickingSearchTerm(e.target.value)}
+                                            placeholder="Filter by DN, customer, invoice, item code, or barcode"
+                                            className="w-full pl-9 pr-3 py-2 border border-slate-200 rounded-md text-xs focus:outline-none focus:border-[#F5C742]"
+                                        />
+                                    </div>
+                                    <button
+                                        onClick={() => {
+                                            setPickingSearchTerm('');
+                                            setPickingScanFeedback(null);
+                                        }}
+                                        className="px-4 py-2 border border-slate-200 rounded-md text-xs font-medium text-slate-600 hover:bg-slate-50"
+                                    >
+                                        Clear Filter
+                                    </button>
+                                </div>
+
+                                {pickingScanFeedback && (
+                                    <div className={`flex items-start gap-2 rounded-lg border px-3 py-2.5 ${
+                                        pickingScanFeedback.kind === 'success'
+                                            ? 'bg-emerald-50 border-emerald-200 text-emerald-700'
+                                            : 'bg-red-50 border-red-200 text-red-700'
+                                    }`}>
+                                        {pickingScanFeedback.kind === 'success' ? (
+                                            <CheckCircle2 size={14} className="shrink-0 mt-0.5" />
+                                        ) : (
+                                            <AlertCircle size={14} className="shrink-0 mt-0.5" />
+                                        )}
+                                        <p className="text-xs font-medium">{pickingScanFeedback.message}</p>
+                                    </div>
+                                )}
+
+                                <div className="hidden md:block overflow-x-auto">
+                                    <table className="w-full text-xs text-left">
+                                        <thead className="bg-[#F7F7FA] text-slate-500 font-semibold border-b border-slate-200">
+                                            <tr>
+                                                <th className="px-4 py-3">Picking Note</th>
+                                                <th className="px-4 py-3">Customer</th>
+                                                <th className="px-4 py-3">Invoice</th>
+                                                <th className="px-4 py-3">Warehouse</th>
+                                                <th className="px-4 py-3 text-center">Qty</th>
+                                                <th className="px-4 py-3 text-center">Progress</th>
+                                                <th className="px-4 py-3 text-right">Actions</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody className="divide-y divide-slate-100">
+                                            {activePickingNotes.length > 0 ? activePickingNotes.map((note) => {
+                                                const progress = getPickingProgress(note);
+                                                const isSelected = selectedPickingNote?.id === note.id;
+
+                                                return (
+                                                    <tr
+                                                        key={note.id}
+                                                        onClick={() => {
+                                                            setSelectedPickingId(note.id);
+                                                            setPickingScanFeedback(null);
+                                                        }}
+                                                        className={`cursor-pointer transition-colors ${isSelected ? 'bg-yellow-50/70' : 'hover:bg-slate-50'}`}
+                                                    >
+                                                        <td className="px-4 py-3">
+                                                            <div className="font-bold text-slate-700 flex items-center gap-2">
+                                                                {note.dnNo}
+                                                                <span className="text-[10px] font-bold text-blue-600 bg-blue-50 px-2 py-0.5 rounded border border-blue-100">Picking</span>
+                                                            </div>
+                                                            <div className="text-[10px] text-slate-400 mt-1">{note.date}</div>
+                                                        </td>
+                                                        <td className="px-4 py-3">
+                                                            <div className="font-medium text-slate-700">{note.customerName}</div>
+                                                            <div className="text-[10px] text-slate-400">{note.customerCode}</div>
+                                                        </td>
+                                                        <td className="px-4 py-3 text-slate-500">{note.siNo || note.linkedSalesInvoiceNumber || '-'}</td>
+                                                        <td className="px-4 py-3 text-slate-500">{note.warehouse || '-'}</td>
+                                                        <td className="px-4 py-3 text-center font-bold text-slate-700">{progress.requiredQty}</td>
+                                                        <td className="px-4 py-3">
+                                                            <div className="flex items-center gap-3">
+                                                                <div className="flex-1 h-2 rounded-full bg-slate-100 overflow-hidden">
+                                                                    <div className="h-full bg-emerald-500 transition-all" style={{ width: `${progress.percent}%` }} />
+                                                                </div>
+                                                                <span className="text-[11px] font-bold text-slate-600 min-w-[60px] text-right">
+                                                                    {`${progress.pickedQty}/${progress.requiredQty}`}
+                                                                </span>
+                                                            </div>
+                                                        </td>
+                                                        <td className="px-4 py-3">
+                                                            <div className="flex justify-end gap-2" onClick={(e) => e.stopPropagation()}>
+                                                                <button
+                                                                    onClick={() => handleRowClick(note)}
+                                                                    className="px-3 py-1.5 border border-slate-200 rounded text-[11px] font-medium text-slate-600 hover:bg-slate-50"
+                                                                >
+                                                                    Open Note
+                                                                </button>
+                                                                <button
+                                                                    onClick={() => handleDispatchPickingNote(note)}
+                                                                    disabled={!progress.isComplete}
+                                                                    className="px-3 py-1.5 bg-slate-900 text-white rounded text-[11px] font-bold hover:bg-slate-800 disabled:opacity-40 disabled:cursor-not-allowed"
+                                                                >
+                                                                    Dispatch
+                                                                </button>
+                                                            </div>
+                                                        </td>
+                                                    </tr>
+                                                );
+                                            }) : (
+                                                <tr>
+                                                    <td colSpan="7" className="px-4 py-10 text-center text-slate-400">
+                                                        No draft Picking notes match the current filter.
+                                                    </td>
+                                                </tr>
+                                            )}
+                                        </tbody>
+                                    </table>
+                                </div>
+
+                                <div className="md:hidden space-y-3">
+                                    {activePickingNotes.length === 0 ? (
+                                        <div className="text-center py-8 text-slate-400 italic">No draft Picking notes match the current filter.</div>
+                                    ) : activePickingNotes.map(note => {
+                                        const progress = getPickingProgress(note);
+                                        const isSelected = selectedPickingNote?.id === note.id;
+
+                                        return (
+                                            <div
+                                                key={note.id}
+                                                onClick={() => {
+                                                    setSelectedPickingId(note.id);
+                                                    setPickingScanFeedback(null);
+                                                }}
+                                                className={`rounded-lg border p-4 shadow-sm ${isSelected ? 'border-yellow-300 bg-yellow-50/70' : 'border-slate-200 bg-white'}`}
+                                            >
+                                                <div className="flex items-start justify-between gap-3">
+                                                    <div>
+                                                        <div className="font-bold text-slate-800">{note.dnNo}</div>
+                                                        <div className="text-[11px] text-slate-500 mt-1">{note.customerName}</div>
+                                                        <div className="text-[10px] text-slate-400 mt-1">{note.siNo || note.linkedSalesInvoiceNumber || 'No invoice link'}</div>
+                                                    </div>
+                                                    <span className="text-[10px] font-bold text-blue-600 bg-blue-50 px-2 py-1 rounded border border-blue-100">Picking</span>
+                                                </div>
+
+                                                <div className="mt-3 flex items-center gap-3">
+                                                    <div className="flex-1 h-2 rounded-full bg-slate-100 overflow-hidden">
+                                                        <div className="h-full bg-emerald-500 transition-all" style={{ width: `${progress.percent}%` }} />
+                                                    </div>
+                                                    <span className="text-[11px] font-bold text-slate-600">{progress.pickedQty}/{progress.requiredQty}</span>
+                                                </div>
+
+                                                <div className="mt-3 flex gap-2">
+                                                    <button
+                                                        onClick={(e) => {
+                                                            e.stopPropagation();
+                                                            handleRowClick(note);
+                                                        }}
+                                                        className="flex-1 px-3 py-2 border border-slate-200 rounded text-[11px] font-medium text-slate-600 hover:bg-slate-50"
+                                                    >
+                                                        Open Note
+                                                    </button>
+                                                    <button
+                                                        onClick={(e) => {
+                                                            e.stopPropagation();
+                                                            handleDispatchPickingNote(note);
+                                                        }}
+                                                        disabled={!progress.isComplete}
+                                                        className="flex-1 px-3 py-2 bg-slate-900 text-white rounded text-[11px] font-bold hover:bg-slate-800 disabled:opacity-40 disabled:cursor-not-allowed"
+                                                    >
+                                                        Dispatch
+                                                    </button>
+                                                </div>
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+                            </div>
+
+                            <div className="grid grid-cols-1 xl:grid-cols-[1.6fr,0.9fr] gap-6">
+                                <div className="bg-white rounded-lg border border-slate-200 shadow-sm p-4 md:p-5">
+                                    <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3 mb-4">
+                                        <div>
+                                            <h3 className="text-base font-bold text-slate-800">Selected Picking Detail</h3>
+                                            <p className="text-sm text-slate-500 mt-1">Scan barcodes or adjust picked counts line by line before dispatch.</p>
+                                        </div>
+                                        {selectedPickingNote && (
+                                            <button
+                                                onClick={() => handleRowClick(selectedPickingNote)}
+                                                className="inline-flex items-center gap-2 px-3 py-2 border border-slate-200 rounded-md text-xs font-medium text-slate-600 hover:bg-slate-50"
+                                            >
+                                                <Eye size={14} />
+                                                Open Full Delivery Note
+                                            </button>
+                                        )}
+                                    </div>
+
+                                    {!selectedPickingNote ? (
+                                        <div className="min-h-[260px] flex flex-col items-center justify-center text-center text-slate-400">
+                                            <div className="bg-slate-100 p-4 rounded-full mb-4">
+                                                <ClipboardList size={28} className="text-slate-400" />
+                                            </div>
+                                            <p className="text-sm font-medium">There is no active draft Picking note to work on right now.</p>
+                                            <p className="text-xs text-slate-400 mt-2">Fast Sale notes skip this queue and appear in Picking history after delivery.</p>
+                                        </div>
+                                    ) : (
+                                        <div className="space-y-4">
+                                            <div className="rounded-xl border border-slate-200 bg-slate-50/70 p-4">
+                                                <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
+                                                    <div>
+                                                        <div className="flex items-center gap-2">
+                                                            <h4 className="text-lg font-bold text-slate-800">{selectedPickingNote.dnNo}</h4>
+                                                            <span className="text-[10px] font-bold text-blue-600 bg-blue-50 px-2 py-1 rounded border border-blue-100">Picking</span>
+                                                        </div>
+                                                        <div className="text-sm text-slate-500 mt-1">
+                                                            {selectedPickingNote.customerName} ({selectedPickingNote.customerCode}){selectedPickingNote.siNo ? ` • ${selectedPickingNote.siNo}` : ''}
+                                                        </div>
+                                                        <div className="text-xs text-slate-400 mt-1">
+                                                            Warehouse: {selectedPickingNote.warehouse || '-'} • Date: {selectedPickingNote.date}
+                                                        </div>
+                                                    </div>
+
+                                                    <div className="min-w-[220px]">
+                                                        <div className="flex justify-between text-xs font-medium text-slate-500 mb-2">
+                                                            <span>Picked Progress</span>
+                                                            <span>{selectedPickingProgress.pickedQty}/{selectedPickingProgress.requiredQty}</span>
+                                                        </div>
+                                                        <div className="h-2.5 rounded-full bg-slate-200 overflow-hidden">
+                                                            <div className="h-full bg-emerald-500 transition-all" style={{ width: `${selectedPickingProgress.percent}%` }} />
+                                                        </div>
+                                                        <div className="text-[11px] text-slate-500 mt-2">
+                                                            {selectedPickingProgress.completedLines}/{selectedPickingProgress.totalLines} lines complete
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            </div>
+
+                                            <div className="overflow-x-auto">
+                                                <table className="w-full text-xs text-left min-w-[760px]">
+                                                    <thead className="bg-[#F7F7FA] text-slate-500 font-semibold border-b border-slate-200">
+                                                        <tr>
+                                                            <th className="px-4 py-3">Item</th>
+                                                            <th className="px-4 py-3">Barcode</th>
+                                                            <th className="px-4 py-3 text-center">Required</th>
+                                                            <th className="px-4 py-3 text-center">Picked</th>
+                                                            <th className="px-4 py-3 text-center">Remaining</th>
+                                                            <th className="px-4 py-3 text-right">Quick Pick</th>
+                                                        </tr>
+                                                    </thead>
+                                                    <tbody className="divide-y divide-slate-100">
+                                                        {(selectedPickingNote.items || []).map(item => {
+                                                            const requiredQty = getRequiredPickingQty(item);
+                                                            const pickedQty = getPickedQty(selectedPickingNote.id, item.id);
+                                                            const remainingQty = Math.max(requiredQty - pickedQty, 0);
+
+                                                            return (
+                                                                <tr key={item.id} className="hover:bg-slate-50/70">
+                                                                    <td className="px-4 py-3">
+                                                                        <div className="font-medium text-slate-700">{item.code || item.desc || '-'}</div>
+                                                                        <div className="text-[10px] text-slate-400 mt-1">{item.desc || item.remarks || 'No description'}</div>
+                                                                    </td>
+                                                                    <td className="px-4 py-3 text-slate-500">
+                                                                        {item.barcode || <span className="text-slate-300">No barcode</span>}
+                                                                    </td>
+                                                                    <td className="px-4 py-3 text-center font-bold text-slate-700 whitespace-nowrap">{formatPickingQty(requiredQty, item)}</td>
+                                                                    <td className="px-4 py-3 text-center">
+                                                                        <span className={`px-2 py-1 rounded text-[11px] font-bold border whitespace-nowrap ${
+                                                                            pickedQty >= requiredQty
+                                                                                ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                                                                                : 'bg-amber-50 text-amber-700 border-amber-200'
+                                                                        }`}>
+                                                                            {formatPickingQty(pickedQty, item)}
+                                                                        </span>
+                                                                    </td>
+                                                                    <td className="px-4 py-3 text-center font-medium text-slate-500 whitespace-nowrap">{formatPickingQty(remainingQty, item)}</td>
+                                                                    <td className="px-4 py-3">
+                                                                        <div className="flex justify-end items-center gap-2">
+                                                                            <button
+                                                                                onClick={() => handleManualPickAdjust(selectedPickingNote, item, -1)}
+                                                                                disabled={pickedQty === 0}
+                                                                                className="w-8 h-8 rounded border border-slate-200 text-slate-600 font-bold hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed"
+                                                                            >
+                                                                                -
+                                                                            </button>
+                                                                            <button
+                                                                                onClick={() => handleManualPickAdjust(selectedPickingNote, item, 1)}
+                                                                                disabled={pickedQty >= requiredQty}
+                                                                                className="w-8 h-8 rounded bg-[#F5C742] text-slate-900 font-bold hover:bg-yellow-400 disabled:opacity-40 disabled:cursor-not-allowed"
+                                                                            >
+                                                                                +
+                                                                            </button>
+                                                                        </div>
+                                                                    </td>
+                                                                </tr>
+                                                            );
+                                                        })}
+                                                    </tbody>
+                                                </table>
+                                            </div>
+                                        </div>
+                                    )}
+                                </div>
+
+                                <div className="space-y-4">
+                                    <div className="bg-white rounded-lg border border-slate-200 shadow-sm p-4">
+                                        <h3 className="text-sm font-bold text-slate-800 mb-3">Warehouse Workflow</h3>
+                                        <div className="space-y-3 text-xs text-slate-500">
+                                            <div className="rounded-lg border border-slate-100 bg-slate-50 p-3">
+                                                Scan each barcode to move Picking quantities forward one unit at a time.
+                                            </div>
+                                            <div className="rounded-lg border border-slate-100 bg-slate-50 p-3">
+                                                The Dispatch action stays manual and only unlocks after all required quantities are marked picked.
+                                            </div>
+                                            <div className="rounded-lg border border-slate-100 bg-slate-50 p-3">
+                                                Fast Sale notes bypass the active queue but remain visible below in Picking history for audit.
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    {selectedPickingNote && (
+                                        <div className="bg-white rounded-lg border border-slate-200 shadow-sm p-4">
+                                            <div className="flex items-center justify-between gap-3 mb-3">
+                                                <h3 className="text-sm font-bold text-slate-800">Ready To Dispatch</h3>
+                                                {selectedPickingProgress.isComplete ? (
+                                                    <span className="text-[10px] font-bold text-emerald-700 bg-emerald-50 px-2 py-1 rounded border border-emerald-200">Complete</span>
+                                                ) : (
+                                                    <span className="text-[10px] font-bold text-amber-700 bg-amber-50 px-2 py-1 rounded border border-amber-200">In Progress</span>
+                                                )}
+                                            </div>
+                                            <p className="text-xs text-slate-500 leading-5">
+                                                {selectedPickingProgress.isComplete
+                                                    ? `${selectedPickingNote.dnNo} is fully picked and ready to move to Dispatched.`
+                                                    : `${selectedPickingProgress.remainingQty} unit(s) are still waiting to be picked on ${selectedPickingNote.dnNo}.`}
+                                            </p>
+                                            <button
+                                                onClick={() => handleDispatchPickingNote(selectedPickingNote)}
+                                                disabled={!selectedPickingProgress.isComplete}
+                                                className="mt-4 w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-slate-900 text-white rounded-md text-xs font-bold hover:bg-slate-800 disabled:opacity-40 disabled:cursor-not-allowed"
+                                            >
+                                                <Truck size={14} />
+                                                Advance To Dispatched
+                                            </button>
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+
+                            <div className="bg-white rounded-lg border border-slate-200 shadow-sm p-4 md:p-5">
+                                <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3 mb-4">
+                                    <div>
+                                        <h3 className="text-base font-bold text-slate-800">Picking History</h3>
+                                        <p className="text-sm text-slate-500 mt-1">Delivered fast-sale notes and dispatched workflow notes remain visible for review.</p>
+                                    </div>
+                                </div>
+
+                                <div className="overflow-x-auto hidden md:block">
+                                    <table className="w-full text-xs text-left">
+                                        <thead className="bg-[#F7F7FA] text-slate-500 font-semibold border-b border-slate-200">
+                                            <tr>
+                                                <th className="px-4 py-3">Picking Note</th>
+                                                <th className="px-4 py-3">Customer</th>
+                                                <th className="px-4 py-3">Invoice</th>
+                                                <th className="px-4 py-3">Status</th>
+                                                <th className="px-4 py-3">Date</th>
+                                                <th className="px-4 py-3 text-right">Action</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody className="divide-y divide-slate-100">
+                                            {pickingHistoryNotes.map(note => (
+                                                <tr key={note.id} className="hover:bg-slate-50">
+                                                    <td className="px-4 py-3 font-bold text-slate-700">{note.dnNo}</td>
+                                                    <td className="px-4 py-3">
+                                                        <div className="font-medium text-slate-700">{note.customerName}</div>
+                                                        <div className="text-[10px] text-slate-400">{note.customerCode}</div>
+                                                    </td>
+                                                    <td className="px-4 py-3 text-slate-500">{note.siNo || note.linkedSalesInvoiceNumber || '-'}</td>
+                                                    <td className="px-4 py-3">{renderStatusBadge(note.status)}</td>
+                                                    <td className="px-4 py-3 text-slate-500">{note.date}</td>
+                                                    <td className="px-4 py-3 text-right">
+                                                        <button
+                                                            onClick={() => handleRowClick(note)}
+                                                            className="px-3 py-1.5 border border-slate-200 rounded text-[11px] font-medium text-slate-600 hover:bg-slate-50"
+                                                        >
+                                                            View Note
+                                                        </button>
+                                                    </td>
+                                                </tr>
+                                            ))}
+                                            {pickingHistoryNotes.length === 0 && (
+                                                <tr>
+                                                    <td colSpan="6" className="px-4 py-10 text-center text-slate-400">
+                                                        No Picking history records match the current filter yet.
+                                                    </td>
+                                                </tr>
+                                            )}
+                                        </tbody>
+                                    </table>
+                                </div>
+
+                                <div className="md:hidden space-y-3">
+                                    {pickingHistoryNotes.length === 0 ? (
+                                        <div className="text-center py-8 text-slate-400 italic">No Picking history records match the current filter yet.</div>
+                                    ) : pickingHistoryNotes.map(note => (
+                                        <div key={note.id} className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
+                                            <div className="flex items-start justify-between gap-3">
+                                                <div>
+                                                    <div className="font-bold text-slate-800">{note.dnNo}</div>
+                                                    <div className="text-[11px] text-slate-500 mt-1">{note.customerName}</div>
+                                                    <div className="text-[10px] text-slate-400 mt-1">{note.siNo || note.linkedSalesInvoiceNumber || 'No invoice link'}</div>
+                                                </div>
+                                                {renderStatusBadge(note.status)}
+                                            </div>
+                                            <button
+                                                onClick={() => handleRowClick(note)}
+                                                className="mt-3 w-full px-3 py-2 border border-slate-200 rounded text-[11px] font-medium text-slate-600 hover:bg-slate-50"
+                                            >
+                                                View Note
+                                            </button>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
                         </div>
                     )}
 
@@ -1880,7 +2861,7 @@ const DeliveryNote = () => {
 
                             <div className="flex gap-2">
                                 {/* Cancel Note Button */}
-                                {!isViewOnly && !autoGenerated && status !== 'Draft' && (
+                                {!isViewOnly && normalizedStatus !== 'DRAFT' && (
                                     <button
                                         onClick={handleCancel}
                                         className="flex items-center justify-center gap-1.5 px-3 py-1.5 bg-white border border-slate-300 text-red-600 rounded text-xs font-bold hover:bg-slate-50 transition-colors shadow-sm"
@@ -1914,7 +2895,7 @@ const DeliveryNote = () => {
                                         className="flex items-center gap-1.5 px-5 py-1.5 bg-yellow-400 text-slate-900 rounded text-xs font-bold hover:bg-yellow-500 transition-all shadow-sm"
                                     >
                                         <ArrowRightCircle size={14} />
-                                        Advance to {status.toUpperCase() === 'DRAFT' ? 'Dispatched' : 'Delivered'}
+                                        Advance to {normalizedStatus === 'DRAFT' ? 'Dispatched' : 'Delivered'}
                                     </button>
                                 )}
                             </div>
@@ -2020,6 +3001,8 @@ const DeliveryNote = () => {
             </div>
 
         </div>
+
+        </>
     );
 };
 

@@ -28,6 +28,9 @@ public class GrnItemEntity extends BaseEntity {
 	private BigDecimal unitCost;
 	private BigDecimal netCost;
 	private BigDecimal lineTotal;
+	private BigDecimal discountPercent;
+	private BigDecimal taxAmount;
+	private BigDecimal purchaseTax;
 	private Integer focQty;
 	private String focUnit;
 	private String remarks;
@@ -132,6 +135,30 @@ public class GrnItemEntity extends BaseEntity {
 
 	public void setLineTotal(BigDecimal lineTotal) {
 		this.lineTotal = lineTotal;
+	}
+
+	public BigDecimal getDiscountPercent() {
+		return discountPercent;
+	}
+
+	public void setDiscountPercent(BigDecimal discountPercent) {
+		this.discountPercent = discountPercent;
+	}
+
+	public BigDecimal getTaxAmount() {
+		return taxAmount;
+	}
+
+	public void setTaxAmount(BigDecimal taxAmount) {
+		this.taxAmount = taxAmount;
+	}
+
+	public BigDecimal getPurchaseTax() {
+		return purchaseTax;
+	}
+
+	public void setPurchaseTax(BigDecimal purchaseTax) {
+		this.purchaseTax = purchaseTax;
 	}
 
 	public boolean isBatchManaged() {
