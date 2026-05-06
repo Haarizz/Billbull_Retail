@@ -684,6 +684,8 @@ const BarcodePrinter = () => {
                     code: item.sku,
                     name: item.productName,
                     sku: item.sku,
+                    brand: item.brand || item.brandName || null,
+                    brandName: item.brandName || item.brand || null,
                     price: item.price,
                     image: item.image,
                     barcode: item.barcode || null,
@@ -821,6 +823,11 @@ const BarcodePrinter = () => {
 
     const getProductBarcodeValue = (item) => item?.productBarcode || item?.barcode || getBarcodeValue(item?.product);
     const getBatchBarcodeValue = (item) => item?.batchBarcode || item?.batchNumber || null;
+    const getProductBrandName = (product) => {
+        if (!product) return null;
+        if (typeof product.brand === 'string') return product.brand;
+        return product.brand?.name || product.brandName || product.product?.brand?.name || product.product?.brandName || null;
+    };
 
     const isBatchTrackingEnabled = (item) => {
         const product = item?.product || {};
@@ -1007,6 +1014,7 @@ const BarcodePrinter = () => {
             const showBatchDetails = isEnabled('batchNumber') && isBatchTrackingEnabled(item) && !!batchBarcodeValue;
             const showBatchBarcode = showLinearBarcode && showBatchDetails && batchBarcodeValue !== productBarcodeValue;
             const showExpiryDate = isEnabled('expiryDate') && isExpiryTrackingEnabled(item) && !!item.expiryDate;
+            const productBrandName = getProductBrandName(item.product);
 
             return (
                 <div
@@ -1034,8 +1042,8 @@ const BarcodePrinter = () => {
                     <div className="label-name" style={{ fontSize: nameFontSize, marginBottom: nameMarginBottom }}>{item.product.name}</div>
                 )}
 
-                {isEnabled('brandName') && (item.product.brand?.name || item.product.brandName) && (
-                    <div className="label-code" style={{ fontSize: codeFontSize, marginBottom: '1px', fontWeight: 'bold' }}>{item.product.brand?.name || item.product.brandName}</div>
+                {isEnabled('brandName') && productBrandName && (
+                    <div className="label-code" style={{ fontSize: codeFontSize, marginBottom: '1px', fontWeight: 'bold' }}>{productBrandName}</div>
                 )}
 
                 {isEnabled('itemCode') && item.product.code && (
