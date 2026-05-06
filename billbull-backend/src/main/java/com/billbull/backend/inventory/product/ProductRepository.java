@@ -130,6 +130,17 @@ public interface ProductRepository extends JpaRepository<Product, Long> {
                         @org.springframework.data.repository.query.Param("search") String search,
                         org.springframework.data.domain.Pageable pageable);
 
+        @Query("SELECT DISTINCT p FROM Product p LEFT JOIN FETCH p.brand LEFT JOIN FETCH p.department " +
+                        "WHERE p.isActive = true " +
+                        "AND p.id IN (SELECT sm.productId FROM StockMovement sm WHERE sm.warehouseId = :warehouseId) " +
+                        "AND (:categoryId IS NULL OR p.department.id = :categoryId) " +
+                        "AND (:brandId IS NULL OR p.brand.id = :brandId) " +
+                        "ORDER BY p.name ASC")
+        List<Product> findForStockTakeSnapshot(
+                        @org.springframework.data.repository.query.Param("warehouseId") Long warehouseId,
+                        @org.springframework.data.repository.query.Param("categoryId") Long categoryId,
+                        @org.springframework.data.repository.query.Param("brandId") Long brandId);
+
         /** projection query replacing N+1 fetching for reports */
         @Query("""
                             SELECT

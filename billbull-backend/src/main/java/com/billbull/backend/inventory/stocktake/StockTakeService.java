@@ -11,6 +11,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Collectors;
 
@@ -53,6 +54,8 @@ public class StockTakeService {
     private final ProductBarcodeRepository barcodeRepo;
     private final BinRepository binRepo;
     private final BinStockService binStockService;
+    private final StockTakeExpectedUnitRepository expectedUnitRepo;
+    private final StockTakeUnitScanRepository unitScanRepo;
 
     public StockTakeService(
             StockTakeSessionRepository sessionRepo,
@@ -64,7 +67,9 @@ public class StockTakeService {
             ProductMediaRepository mediaRepo,
             ProductBarcodeRepository barcodeRepo,
             BinRepository binRepo,
-            BinStockService binStockService) {
+            BinStockService binStockService,
+            StockTakeExpectedUnitRepository expectedUnitRepo,
+            StockTakeUnitScanRepository unitScanRepo) {
         this.sessionRepo = sessionRepo;
         this.itemRepo = itemRepo;
         this.batchRepo = batchRepo;
@@ -75,6 +80,8 @@ public class StockTakeService {
         this.barcodeRepo = barcodeRepo;
         this.binRepo = binRepo;
         this.binStockService = binStockService;
+        this.expectedUnitRepo = expectedUnitRepo;
+        this.unitScanRepo = unitScanRepo;
     }
 
     public StockTakeSession createSession(String warehouseName, Long warehouseId, String type, String countType,
@@ -101,7 +108,11 @@ public class StockTakeService {
 
         // Products are NOT preloaded — session starts empty.
         // Items are added on-demand via product search, barcode scan, or product selector.
-        return sessionRepo.save(session);
+        StockTakeSession saved = sessionRepo.save(session);
+        if (saved.getType() == StockTakeSession.StockTakeType.INVENTORY_COUNTING) {
+            ensureExpectedSnapshot(saved);
+        }
+        return saved;
     }
 
     @org.springframework.transaction.annotation.Transactional(readOnly = true)
@@ -233,6 +244,17 @@ public class StockTakeService {
             throw new RuntimeException("Session not found: " + sessionId);
         }
 
+        if (isInventoryCounting(session)) {
+            if (!hasExpectedSnapshot(session)
+                    && session.getStatus() == StockTakeSession.StockTakeStatus.IN_PROGRESS) {
+                ensureExpectedSnapshot(session);
+            }
+            if (hasExpectedSnapshot(session)) {
+                syncSnapshotItemCounts(session);
+                return session;
+            }
+        }
+
         if (session.getStatus() == StockTakeSession.StockTakeStatus.IN_PROGRESS && session.getItems() != null) {
             boolean updated = false;
             for (StockTakeItem item : session.getItems()) {
@@ -269,6 +291,123 @@ public class StockTakeService {
         }
 
         return session;
+    }
+
+    public StockTakeUnitScanResponse scanUnitBarcode(String sessionId, StockTakeUnitScanRequest request) {
+        StockTakeSession session = getSession(sessionId);
+        if (session.getStatus() != StockTakeSession.StockTakeStatus.IN_PROGRESS) {
+            throw new IllegalStateException("Session is not in progress");
+        }
+        if (!isInventoryCounting(session)) {
+            throw new IllegalStateException("Unit scanning is only available for inventory counting sessions");
+        }
+
+        ensureExpectedSnapshot(session);
+
+        String barcode = normalizeBarcode(request != null ? request.getBarcode() : null);
+        if (barcode == null) {
+            throw new IllegalArgumentException("Barcode is required");
+        }
+
+        Bin scannedBin = requireSessionBin(session, request != null ? request.getBinId() : null);
+
+        Optional<StockTakeExpectedUnit> openMatch =
+                expectedUnitRepo.findFirstBySessionAndUnitBarcodeIgnoreCaseAndScannedFalse(session, barcode);
+        if (openMatch.isPresent()) {
+            StockTakeExpectedUnit unit = openMatch.get();
+            boolean wrongBin = !Objects.equals(unit.getExpectedBinId(), scannedBin.getId());
+
+            unit.setScanned(true);
+            unit.setWrongBin(wrongBin);
+            unit.setActualBinId(scannedBin.getId());
+            unit.setActualBinCode(scannedBin.getCode());
+            unit.setActualLocatorId(scannedBin.getLocator().getId());
+            unit.setActualZoneId(scannedBin.getLocator().getZone().getId());
+            unit.setScannedAt(LocalDateTime.now());
+            expectedUnitRepo.save(unit);
+
+            StockTakeUnitScan scan = new StockTakeUnitScan();
+            scan.setSession(session);
+            scan.setExpectedUnit(unit);
+            scan.setScannedBarcode(barcode);
+            scan.setStatus(wrongBin ? StockTakeUnitScanStatus.WRONG_BIN : StockTakeUnitScanStatus.COUNTED);
+            scan.setResolution(StockTakeUnknownScanResolution.IGNORED);
+            scan.setMessage(wrongBin
+                    ? "Unit counted in a different bin"
+                    : "Unit counted");
+            copyExpectedUnitToScan(unit, scan);
+            applyScannedBin(scan, scannedBin);
+
+            StockTakeUnitScan saved = unitScanRepo.save(scan);
+            syncSnapshotItemCounts(session);
+            return StockTakeUnitScanResponse.from(saved);
+        }
+
+        Optional<StockTakeExpectedUnit> alreadyScanned =
+                expectedUnitRepo.findFirstBySessionAndUnitBarcodeIgnoreCase(session, barcode);
+        if (alreadyScanned.isPresent()) {
+            StockTakeExpectedUnit unit = alreadyScanned.get();
+            StockTakeUnitScan scan = new StockTakeUnitScan();
+            scan.setSession(session);
+            scan.setExpectedUnit(unit);
+            scan.setScannedBarcode(barcode);
+            scan.setStatus(StockTakeUnitScanStatus.DUPLICATE);
+            scan.setResolution(StockTakeUnknownScanResolution.IGNORED);
+            scan.setMessage("This unit was already counted");
+            copyExpectedUnitToScan(unit, scan);
+            applyScannedBin(scan, scannedBin);
+            return StockTakeUnitScanResponse.from(unitScanRepo.save(scan));
+        }
+
+        StockTakeUnitScan unknown = new StockTakeUnitScan();
+        unknown.setSession(session);
+        unknown.setScannedBarcode(barcode);
+        unknown.setStatus(StockTakeUnitScanStatus.UNKNOWN);
+        unknown.setResolution(StockTakeUnknownScanResolution.PENDING);
+        unknown.setMessage("Barcode is not in the expected snapshot");
+        unknown.setBatchNumber(barcode);
+        applyScannedBin(unknown, scannedBin);
+        hydrateUnknownScanProduct(unknown, barcode);
+        return StockTakeUnitScanResponse.from(unitScanRepo.save(unknown));
+    }
+
+    public StockTakeCoverageResponse getCoverage(String sessionId) {
+        StockTakeSession session = getSession(sessionId);
+        return buildCoverageResponse(session);
+    }
+
+    public StockTakeUnitScanResponse resolveUnitScan(Long scanId, StockTakeUnitScanResolveRequest request) {
+        StockTakeUnitScan scan = unitScanRepo.findById(scanId)
+                .orElseThrow(() -> new RuntimeException("Unit scan not found: " + scanId));
+        if (scan.getStatus() != StockTakeUnitScanStatus.UNKNOWN) {
+            throw new IllegalStateException("Only unexpected scans can be resolved");
+        }
+
+        String action = request != null && request.getAction() != null
+                ? request.getAction().trim().toUpperCase()
+                : "";
+        if ("IGNORE".equals(action) || "IGNORED".equals(action)) {
+            scan.setResolution(StockTakeUnknownScanResolution.IGNORED);
+            scan.setMessage("Unexpected unit ignored");
+        } else if ("ACCEPT_AS_FOUND".equals(action) || "ACCEPTED_AS_FOUND".equals(action)) {
+            Long productId = request != null && request.getProductId() != null
+                    ? request.getProductId()
+                    : scan.getProductId();
+            if (productId == null) {
+                throw new IllegalArgumentException("Product is required to accept found stock");
+            }
+            Product product = productRepo.findById(productId)
+                    .orElseThrow(() -> new RuntimeException("Product not found"));
+            scan.setProductId(product.getId());
+            scan.setProductCode(product.getCode());
+            scan.setProductName(product.getName());
+            scan.setResolution(StockTakeUnknownScanResolution.ACCEPTED_AS_FOUND);
+            scan.setMessage("Unexpected unit accepted as found stock");
+        } else {
+            throw new IllegalArgumentException("Unknown resolution action: " + action);
+        }
+
+        return StockTakeUnitScanResponse.from(unitScanRepo.save(scan));
     }
 
     public StockTakeItem updateItemCount(Long itemId, Integer countedQty) {
@@ -351,6 +490,18 @@ public class StockTakeService {
     public StockTakeSession submitForApproval(String sessionId) {
         StockTakeSession session = getSession(sessionId);
 
+        if (hasExpectedSnapshot(session)) {
+            if (unitScanRepo.existsBySessionAndStatusAndResolution(
+                    session,
+                    StockTakeUnitScanStatus.UNKNOWN,
+                    StockTakeUnknownScanResolution.PENDING)) {
+                throw new IllegalStateException("Review unexpected scans before submitting for approval");
+            }
+            syncSnapshotItemCounts(session);
+            session.setStatus(StockTakeSession.StockTakeStatus.PENDING_APPROVAL);
+            return sessionRepo.save(session);
+        }
+
         boolean anyItemMissingBin = session.getItems().stream()
                 .anyMatch(item -> item.getBinId() == null);
         if (anyItemMissingBin) {
@@ -369,6 +520,10 @@ public class StockTakeService {
         StockTakeSession session = getSession(sessionId);
         if (session.getStatus() != StockTakeSession.StockTakeStatus.PENDING_APPROVAL) {
             throw new IllegalStateException("Session is not pending approval");
+        }
+
+        if (hasExpectedSnapshot(session)) {
+            return approveSnapshotSession(session, approvedBy);
         }
 
         // PERFORM ATOMIC RECONCILIATION
@@ -505,6 +660,399 @@ public class StockTakeService {
         }
 
         return itemRepo.save(item);
+    }
+
+    private boolean isInventoryCounting(StockTakeSession session) {
+        return session != null && session.getType() == StockTakeSession.StockTakeType.INVENTORY_COUNTING;
+    }
+
+    private boolean hasExpectedSnapshot(StockTakeSession session) {
+        return session != null && expectedUnitRepo.existsBySession(session);
+    }
+
+    private void ensureExpectedSnapshot(StockTakeSession session) {
+        if (!isInventoryCounting(session) || session.getWarehouseId() == null || hasExpectedSnapshot(session)) {
+            return;
+        }
+
+        List<Product> products = productRepo.findForStockTakeSnapshot(
+                session.getWarehouseId(), session.getCategoryId(), session.getBrandId());
+        if (products == null || products.isEmpty()) {
+            return;
+        }
+
+        Map<Long, Product> productById = products.stream()
+                .collect(Collectors.toMap(Product::getId, p -> p));
+        List<Long> productIds = new ArrayList<>(productById.keySet());
+        if (productIds.isEmpty()) {
+            return;
+        }
+
+        Map<Long, String> primaryBarcodeByProduct = barcodeRepo.findByProductIdIn(productIds).stream()
+                .filter(b -> b.getProduct() != null && b.getBarcode() != null && !b.getBarcode().isBlank())
+                .collect(Collectors.toMap(
+                        b -> b.getProduct().getId(),
+                        ProductBarcode::getBarcode,
+                        (a, b) -> a));
+
+        Map<Long, String> imageByProduct = mediaRepo.findByProductIdInAndIsPrimaryTrue(productIds).stream()
+                .collect(Collectors.toMap(
+                        m -> m.getProduct().getId(),
+                        ProductMedia::getImageUrl,
+                        (a, b) -> a));
+
+        List<Object[]> rows = stockMovementRepo.findStockTakeSnapshotIdentities(session.getWarehouseId(), productIds);
+        if (rows == null || rows.isEmpty()) {
+            return;
+        }
+
+        Set<Long> binIds = rows.stream()
+                .map(row -> row[1])
+                .filter(Objects::nonNull)
+                .map(value -> ((Number) value).longValue())
+                .collect(Collectors.toSet());
+        Map<Long, Bin> binsById = binIds.isEmpty()
+                ? Map.of()
+                : binRepo.findAllById(binIds).stream().collect(Collectors.toMap(Bin::getId, b -> b));
+
+        Map<SnapshotItemKey, StockTakeItem> itemByKey = new LinkedHashMap<>();
+        if (session.getItems() != null) {
+            for (StockTakeItem existing : session.getItems()) {
+                itemByKey.put(new SnapshotItemKey(existing.getProductId(), existing.getBinId()), existing);
+            }
+        }
+
+        List<StockTakeExpectedUnit> expectedUnits = new ArrayList<>();
+        for (Object[] row : rows) {
+            Long productId = row[0] != null ? ((Number) row[0]).longValue() : null;
+            Product product = productId != null ? productById.get(productId) : null;
+            if (product == null) continue;
+
+            String batchNumber = normalizeBarcode(row[4] != null ? row[4].toString() : null);
+            if (batchNumber == null) {
+                continue;
+            }
+
+            int quantity = row[6] != null ? ((Number) row[6]).intValue() : 0;
+            if (quantity <= 0) continue;
+
+            Long binId = row[1] != null ? ((Number) row[1]).longValue() : null;
+            Long zoneId = row[2] != null ? ((Number) row[2]).longValue() : null;
+            Long locatorId = row[3] != null ? ((Number) row[3]).longValue() : null;
+            LocalDate expiryDate = (LocalDate) row[5];
+            BigDecimal unitCost = row[7] instanceof BigDecimal cost ? cost : null;
+            Bin bin = binId != null ? binsById.get(binId) : null;
+
+            SnapshotItemKey key = new SnapshotItemKey(productId, binId);
+            StockTakeItem item = itemByKey.computeIfAbsent(key, ignored ->
+                    createSnapshotItem(session, product, primaryBarcodeByProduct.get(productId), imageByProduct.get(productId), bin, zoneId, locatorId));
+            item.setSystemQty((item.getSystemQty() != null ? item.getSystemQty() : 0) + quantity);
+
+            for (int i = 0; i < quantity; i++) {
+                StockTakeExpectedUnit expected = new StockTakeExpectedUnit();
+                expected.setSession(session);
+                expected.setProductId(product.getId());
+                expected.setProductCode(product.getCode());
+                expected.setSku(product.getSku() != null ? product.getSku() : product.getCode());
+                expected.setProductName(product.getName());
+                expected.setProductBarcode(primaryBarcodeByProduct.get(product.getId()));
+                expected.setBrand(product.getBrand() != null ? product.getBrand().getName() : "Generic");
+                expected.setCategory(resolveProductCategoryName(product));
+                expected.setImage(imageByProduct.get(product.getId()));
+                expected.setWarehouseId(session.getWarehouseId());
+                expected.setExpectedBinId(binId);
+                expected.setExpectedBinCode(bin != null ? bin.getCode() : null);
+                expected.setExpectedZoneId(bin != null ? bin.getLocator().getZone().getId() : zoneId);
+                expected.setExpectedLocatorId(bin != null ? bin.getLocator().getId() : locatorId);
+                expected.setUnitBarcode(batchNumber);
+                expected.setBatchNumber(batchNumber);
+                expected.setExpiryDate(expiryDate);
+                expected.setUnitCost(unitCost);
+                expectedUnits.add(expected);
+            }
+        }
+
+        if (!itemByKey.isEmpty()) {
+            itemRepo.saveAll(itemByKey.values());
+            if (session.getItems() != null) {
+                for (StockTakeItem item : itemByKey.values()) {
+                    if (item.getId() == null || session.getItems().stream().noneMatch(i -> Objects.equals(i.getId(), item.getId()))) {
+                        session.getItems().add(item);
+                    }
+                }
+            }
+        }
+        if (!expectedUnits.isEmpty()) {
+            expectedUnitRepo.saveAll(expectedUnits);
+        }
+        syncSnapshotItemCounts(session);
+    }
+
+    private StockTakeItem createSnapshotItem(
+            StockTakeSession session,
+            Product product,
+            String productBarcode,
+            String image,
+            Bin bin,
+            Long zoneId,
+            Long locatorId) {
+        StockTakeItem item = new StockTakeItem();
+        item.setSession(session);
+        item.setProductId(product.getId());
+        item.setProductName(product.getName());
+        item.setSku(product.getCode());
+        item.setBarcode(productBarcode);
+        item.setBrand(product.getBrand() != null ? product.getBrand().getName() : "Generic");
+        item.setCategory(resolveProductCategoryName(product));
+        item.setDescription(product.getShortDesc() != null ? product.getShortDesc() : product.getName());
+        item.setImage(image);
+        item.setPrice(product.getPricing() != null ? product.getPricing().getRetailPrice() : BigDecimal.ZERO);
+        item.setBatchEnabled(product.isBatch());
+        item.setExpiryEnabled(product.isExpiryEnabled());
+        item.setSystemQty(0);
+        item.setCountedQty(0);
+        item.setVariance(0);
+        item.setVarianceValue(BigDecimal.ZERO);
+        item.setStatus(StockTakeItem.ItemStatus.PENDING);
+        if (bin != null) {
+            item.setBinId(bin.getId());
+            item.setBinCode(bin.getCode());
+            item.setLocatorId(bin.getLocator().getId());
+            item.setZoneId(bin.getLocator().getZone().getId());
+        } else {
+            item.setZoneId(zoneId);
+            item.setLocatorId(locatorId);
+        }
+        return item;
+    }
+
+    private String resolveProductCategoryName(Product product) {
+        if (product == null) return "Uncategorized";
+        if (product.getCategory() != null && !product.getCategory().isBlank()) {
+            return product.getCategory();
+        }
+        return product.getDepartment() != null ? product.getDepartment().getName() : "Uncategorized";
+    }
+
+    private void syncSnapshotItemCounts(StockTakeSession session) {
+        if (session == null || session.getItems() == null || !hasExpectedSnapshot(session)) {
+            return;
+        }
+
+        Map<SnapshotItemKey, int[]> totals = new HashMap<>();
+        for (StockTakeExpectedUnit expected : expectedUnitRepo.findBySession(session)) {
+            SnapshotItemKey key = new SnapshotItemKey(expected.getProductId(), expected.getExpectedBinId());
+            int[] counts = totals.computeIfAbsent(key, ignored -> new int[2]);
+            counts[0]++;
+            if (expected.isScanned()) counts[1]++;
+        }
+
+        boolean changed = false;
+        for (StockTakeItem item : session.getItems()) {
+            int[] counts = totals.get(new SnapshotItemKey(item.getProductId(), item.getBinId()));
+            if (counts == null) continue;
+            int expectedQty = counts[0];
+            int scannedQty = counts[1];
+            item.setSystemQty(expectedQty);
+            item.setCountedQty(scannedQty);
+            item.setVariance(scannedQty - expectedQty);
+            item.setVarianceValue(item.getPrice() != null
+                    ? item.getPrice().multiply(BigDecimal.valueOf(item.getVariance()))
+                    : BigDecimal.ZERO);
+            if (item.getVariance() == 0 && expectedQty > 0) {
+                item.setStatus(StockTakeItem.ItemStatus.MATCHED);
+            } else if (scannedQty == 0) {
+                item.setStatus(StockTakeItem.ItemStatus.PENDING);
+            } else {
+                item.setStatus(StockTakeItem.ItemStatus.VARIANCE);
+            }
+            changed = true;
+        }
+
+        if (changed) {
+            itemRepo.saveAll(session.getItems());
+        }
+    }
+
+    private Bin requireSessionBin(StockTakeSession session, Long binId) {
+        if (binId == null) {
+            throw new IllegalArgumentException("Select a bin before scanning unit barcodes");
+        }
+        Bin bin = binRepo.findByIdEager(binId)
+                .orElseThrow(() -> new RuntimeException("Bin not found: " + binId));
+        Long warehouseId = bin.getLocator().getZone().getWarehouse().getId();
+        if (!Objects.equals(warehouseId, session.getWarehouseId())) {
+            throw new IllegalArgumentException("Selected bin does not belong to this stock-take warehouse");
+        }
+        return bin;
+    }
+
+    private void copyExpectedUnitToScan(StockTakeExpectedUnit unit, StockTakeUnitScan scan) {
+        scan.setProductId(unit.getProductId());
+        scan.setProductCode(unit.getProductCode());
+        scan.setProductName(unit.getProductName());
+        scan.setBatchNumber(unit.getBatchNumber());
+        scan.setExpiryDate(unit.getExpiryDate());
+        scan.setExpectedBinId(unit.getExpectedBinId());
+        scan.setExpectedBinCode(unit.getExpectedBinCode());
+    }
+
+    private void applyScannedBin(StockTakeUnitScan scan, Bin bin) {
+        scan.setScannedBinId(bin.getId());
+        scan.setScannedBinCode(bin.getCode());
+        scan.setScannedLocatorId(bin.getLocator().getId());
+        scan.setScannedZoneId(bin.getLocator().getZone().getId());
+    }
+
+    private void hydrateUnknownScanProduct(StockTakeUnitScan scan, String barcode) {
+        Optional<Product> product = barcodeRepo.findFirstByBarcode(barcode)
+                .map(ProductBarcode::getProduct);
+
+        if (product.isEmpty()) {
+            String lotPrefix = BatchNumberGenerator.stripUnitIndex(barcode);
+            if (lotPrefix != null) {
+                String[] parts = lotPrefix.split("-");
+                if (parts.length >= 4) {
+                    product = productRepo.findByCodeAndIsActiveTrue(parts[3]);
+                }
+            }
+        }
+
+        product.ifPresent(p -> {
+            scan.setProductId(p.getId());
+            scan.setProductCode(p.getCode());
+            scan.setProductName(p.getName());
+        });
+    }
+
+    private StockTakeCoverageResponse buildCoverageResponse(StockTakeSession session) {
+        StockTakeCoverageResponse response = new StockTakeCoverageResponse();
+        if (session == null || !hasExpectedSnapshot(session)) {
+            return response;
+        }
+
+        Map<Long, StockTakeCoverageResponse.ProductCoverage> productCoverage = new LinkedHashMap<>();
+        List<StockTakeExpectedUnit> expectedUnits = expectedUnitRepo.findBySession(session);
+        for (StockTakeExpectedUnit expected : expectedUnits) {
+            StockTakeCoverageResponse.ProductCoverage coverage =
+                    productCoverage.computeIfAbsent(expected.getProductId(), id -> productCoverageFromExpected(expected));
+            coverage.setExpectedQty(coverage.getExpectedQty() + 1);
+            response.setExpectedUnits(response.getExpectedUnits() + 1);
+
+            if (expected.isScanned()) {
+                coverage.setScannedQty(coverage.getScannedQty() + 1);
+                response.setScannedUnits(response.getScannedUnits() + 1);
+                if (expected.isWrongBin()) {
+                    coverage.setWrongBinQty(coverage.getWrongBinQty() + 1);
+                    coverage.getWrongBinScans().add(unitSummaryFromExpected(expected));
+                    response.setWrongBinUnits(response.getWrongBinUnits() + 1);
+                }
+            } else {
+                coverage.setMissingQty(coverage.getMissingQty() + 1);
+                coverage.getMissingBarcodes().add(expected.getUnitBarcode());
+                response.setMissingUnits(response.getMissingUnits() + 1);
+            }
+        }
+
+        List<StockTakeUnitScan> scans = unitScanRepo.findBySessionOrderByCreatedAtDesc(session);
+        for (StockTakeUnitScan scan : scans) {
+            StockTakeCoverageResponse.UnitScanSummary summary = unitSummaryFromScan(scan);
+            if (response.getRecentScans().size() < 10) {
+                response.getRecentScans().add(summary);
+            }
+            if (scan.getStatus() == StockTakeUnitScanStatus.DUPLICATE
+                    || scan.getStatus() == StockTakeUnitScanStatus.ALREADY_COUNTED) {
+                response.setDuplicateScans(response.getDuplicateScans() + 1);
+                if (scan.getProductId() != null) {
+                    StockTakeCoverageResponse.ProductCoverage coverage =
+                            productCoverage.computeIfAbsent(scan.getProductId(), id -> productCoverageFromScan(scan));
+                    coverage.setDuplicateQty(coverage.getDuplicateQty() + 1);
+                    coverage.getDuplicateScans().add(summary);
+                }
+            } else if (scan.getStatus() == StockTakeUnitScanStatus.UNKNOWN
+                    && scan.getResolution() == StockTakeUnknownScanResolution.PENDING) {
+                response.setUnexpectedScans(response.getUnexpectedScans() + 1);
+                response.getUnknownScans().add(summary);
+            }
+        }
+
+        List<StockTakeCoverageResponse.ProductCoverage> products = productCoverage.values().stream()
+                .sorted(Comparator
+                        .comparing((StockTakeCoverageResponse.ProductCoverage p) -> p.getMissingQty() == null ? 0 : p.getMissingQty())
+                        .reversed()
+                        .thenComparing(p -> p.getProductName() == null ? "" : p.getProductName()))
+                .toList();
+        response.setProducts(products);
+        response.setMissedProducts(products.stream()
+                .filter(p -> p.getExpectedQty() != null && p.getExpectedQty() > 0
+                        && (p.getScannedQty() == null || p.getScannedQty() == 0))
+                .toList());
+        return response;
+    }
+
+    private StockTakeCoverageResponse.ProductCoverage productCoverageFromExpected(StockTakeExpectedUnit expected) {
+        StockTakeCoverageResponse.ProductCoverage coverage = new StockTakeCoverageResponse.ProductCoverage();
+        coverage.setProductId(expected.getProductId());
+        coverage.setProductCode(expected.getProductCode());
+        coverage.setSku(expected.getSku());
+        coverage.setProductName(expected.getProductName());
+        coverage.setBrand(expected.getBrand());
+        coverage.setCategory(expected.getCategory());
+        coverage.setImage(expected.getImage());
+        return coverage;
+    }
+
+    private StockTakeCoverageResponse.ProductCoverage productCoverageFromScan(StockTakeUnitScan scan) {
+        StockTakeCoverageResponse.ProductCoverage coverage = new StockTakeCoverageResponse.ProductCoverage();
+        coverage.setProductId(scan.getProductId());
+        coverage.setProductCode(scan.getProductCode());
+        coverage.setSku(scan.getProductCode());
+        coverage.setProductName(scan.getProductName());
+        return coverage;
+    }
+
+    private StockTakeCoverageResponse.UnitScanSummary unitSummaryFromExpected(StockTakeExpectedUnit expected) {
+        StockTakeCoverageResponse.UnitScanSummary summary = new StockTakeCoverageResponse.UnitScanSummary();
+        summary.setBarcode(expected.getUnitBarcode());
+        summary.setStatus(expected.isWrongBin() ? StockTakeUnitScanStatus.WRONG_BIN : StockTakeUnitScanStatus.COUNTED);
+        summary.setProductId(expected.getProductId());
+        summary.setProductCode(expected.getProductCode());
+        summary.setProductName(expected.getProductName());
+        summary.setBatchNumber(expected.getBatchNumber());
+        summary.setExpiryDate(expected.getExpiryDate());
+        summary.setExpectedBinId(expected.getExpectedBinId());
+        summary.setExpectedBinCode(expected.getExpectedBinCode());
+        summary.setScannedBinId(expected.getActualBinId());
+        summary.setScannedBinCode(expected.getActualBinCode());
+        summary.setScannedAt(expected.getScannedAt());
+        summary.setMessage(expected.isWrongBin() ? "Unit counted in a different bin" : "Unit counted");
+        return summary;
+    }
+
+    private StockTakeCoverageResponse.UnitScanSummary unitSummaryFromScan(StockTakeUnitScan scan) {
+        StockTakeCoverageResponse.UnitScanSummary summary = new StockTakeCoverageResponse.UnitScanSummary();
+        summary.setId(scan.getId());
+        summary.setBarcode(scan.getScannedBarcode());
+        summary.setStatus(scan.getStatus());
+        summary.setResolution(scan.getResolution());
+        summary.setProductId(scan.getProductId());
+        summary.setProductCode(scan.getProductCode());
+        summary.setProductName(scan.getProductName());
+        summary.setBatchNumber(scan.getBatchNumber());
+        summary.setExpiryDate(scan.getExpiryDate());
+        summary.setExpectedBinId(scan.getExpectedBinId());
+        summary.setExpectedBinCode(scan.getExpectedBinCode());
+        summary.setScannedBinId(scan.getScannedBinId());
+        summary.setScannedBinCode(scan.getScannedBinCode());
+        summary.setScannedAt(scan.getCreatedAt());
+        summary.setMessage(scan.getMessage());
+        return summary;
+    }
+
+    private String normalizeBarcode(String value) {
+        if (value == null) return null;
+        String trimmed = value.trim();
+        return trimmed.isEmpty() ? null : trimmed;
     }
 
     // === Batch operations ===
@@ -961,6 +1509,168 @@ public class StockTakeService {
     private long stockTakeAdjustmentSourceId(Long itemId, int sequence) {
         long base = itemId != null ? itemId : 0L;
         return (base * 10_000L) + sequence;
+    }
+
+    private StockTakeSession approveSnapshotSession(StockTakeSession session, String approvedBy) {
+        if (unitScanRepo.existsBySessionAndStatusAndResolution(
+                session,
+                StockTakeUnitScanStatus.UNKNOWN,
+                StockTakeUnknownScanResolution.PENDING)) {
+            throw new IllegalStateException("Review unexpected scans before approving this stock take");
+        }
+
+        for (StockTakeExpectedUnit expected : expectedUnitRepo.findBySession(session)) {
+            if (!expected.isScanned()) {
+                postSnapshotAdjustment(
+                        session,
+                        expected.getProductId(),
+                        -1,
+                        expected.getExpectedBinId(),
+                        expected.getExpectedZoneId(),
+                        expected.getExpectedLocatorId(),
+                        expected.getBatchNumber(),
+                        expected.getExpiryDate(),
+                        null,
+                        expectedUnitAdjustmentSourceId(expected.getId(), 1));
+            } else if (expected.isWrongBin()) {
+                postSnapshotAdjustment(
+                        session,
+                        expected.getProductId(),
+                        -1,
+                        expected.getExpectedBinId(),
+                        expected.getExpectedZoneId(),
+                        expected.getExpectedLocatorId(),
+                        expected.getBatchNumber(),
+                        expected.getExpiryDate(),
+                        null,
+                        expectedUnitAdjustmentSourceId(expected.getId(), 2));
+                postSnapshotAdjustment(
+                        session,
+                        expected.getProductId(),
+                        1,
+                        expected.getActualBinId(),
+                        expected.getActualZoneId(),
+                        expected.getActualLocatorId(),
+                        expected.getBatchNumber(),
+                        expected.getExpiryDate(),
+                        expected.getUnitCost(),
+                        expectedUnitAdjustmentSourceId(expected.getId(), 3));
+            }
+        }
+
+        for (StockTakeUnitScan scan : unitScanRepo.findBySessionOrderByCreatedAtDesc(session)) {
+            if (scan.getStatus() != StockTakeUnitScanStatus.UNKNOWN
+                    || scan.getResolution() != StockTakeUnknownScanResolution.ACCEPTED_AS_FOUND) {
+                continue;
+            }
+            if (scan.getProductId() == null) {
+                throw new IllegalStateException("Accepted found stock scan is missing a product: " + scan.getScannedBarcode());
+            }
+            postSnapshotAdjustment(
+                    session,
+                    scan.getProductId(),
+                    1,
+                    scan.getScannedBinId(),
+                    scan.getScannedZoneId(),
+                    scan.getScannedLocatorId(),
+                    scan.getBatchNumber(),
+                    scan.getExpiryDate(),
+                    resolveAdjustmentUnitCost(scan.getProductId()),
+                    unknownScanAdjustmentSourceId(scan.getId()));
+        }
+
+        syncSnapshotItemCounts(session);
+        session.setStatus(StockTakeSession.StockTakeStatus.COMPLETED);
+        session.setReconciledBy(approvedBy);
+        session.setReconciledAt(LocalDateTime.now());
+        return sessionRepo.save(session);
+    }
+
+    private void postSnapshotAdjustment(
+            StockTakeSession session,
+            Long productId,
+            int quantity,
+            Long binId,
+            Long zoneId,
+            Long locatorId,
+            String batchNumber,
+            LocalDate expiryDate,
+            BigDecimal unitCost,
+            Long sourceId) {
+        if (productId == null || quantity == 0 || sourceId == null) {
+            return;
+        }
+        boolean alreadyPosted = stockMovementRepo.existsBySourceTypeAndSourceIdAndProductId(
+                StockSourceType.STOCK_TAKE_ADJUSTMENT,
+                sourceId,
+                productId);
+        if (alreadyPosted) {
+            return;
+        }
+        if (quantity > 0 && binId != null) {
+            binStockService.validateBinCapacity(binId, quantity);
+        }
+
+        StockMovement movement = new StockMovement();
+        movement.setSourceType(StockSourceType.STOCK_TAKE_ADJUSTMENT);
+        movement.setSourceId(sourceId);
+        movement.setProductId(productId);
+        movement.setWarehouseId(session.getWarehouseId());
+        movement.setQuantity(quantity);
+        movement.setReferenceNo(session.getSessionId());
+        movement.setMovementDate(LocalDate.now());
+        movement.setBinId(binId);
+        movement.setZoneId(zoneId);
+        movement.setLocatorId(locatorId);
+        movement.setBatchNumber(batchNumber);
+        movement.setExpiryDate(expiryDate);
+        if (quantity > 0) {
+            movement.setUnitCost(unitCost != null ? unitCost : resolveAdjustmentUnitCost(productId));
+        }
+
+        stockMovementRepo.save(movement);
+    }
+
+    private BigDecimal resolveAdjustmentUnitCost(Long productId) {
+        if (productId == null) return null;
+        return productRepo.findById(productId)
+                .map(Product::getPricing)
+                .map(ProductPricing::getCost)
+                .filter(cost -> cost.compareTo(BigDecimal.ZERO) > 0)
+                .orElse(null);
+    }
+
+    private long expectedUnitAdjustmentSourceId(Long expectedUnitId, int sequence) {
+        long base = expectedUnitId != null ? expectedUnitId : 0L;
+        return 1_000_000_000L + (base * 10L) + sequence;
+    }
+
+    private long unknownScanAdjustmentSourceId(Long scanId) {
+        long base = scanId != null ? scanId : 0L;
+        return 2_000_000_000L + base;
+    }
+
+    private static final class SnapshotItemKey {
+        private final Long productId;
+        private final Long binId;
+
+        private SnapshotItemKey(Long productId, Long binId) {
+            this.productId = productId;
+            this.binId = binId;
+        }
+
+        @Override
+        public boolean equals(Object o) {
+            if (this == o) return true;
+            if (!(o instanceof SnapshotItemKey that)) return false;
+            return Objects.equals(productId, that.productId)
+                    && Objects.equals(binId, that.binId);
+        }
+
+        @Override
+        public int hashCode() {
+            return Objects.hash(productId, binId);
+        }
     }
 
     private static final class BatchIdentity {

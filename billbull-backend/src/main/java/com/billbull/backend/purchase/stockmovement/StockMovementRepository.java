@@ -225,6 +225,26 @@ public interface StockMovementRepository
                         """)
         List<Object[]> findStockByWarehouseAndBins(@Param("warehouseId") Long warehouseId);
 
+        @Query("""
+                            SELECT sm.productId,
+                                   sm.binId,
+                                   sm.zoneId,
+                                   sm.locatorId,
+                                   sm.batchNumber,
+                                   sm.expiryDate,
+                                   COALESCE(SUM(sm.quantity), 0),
+                                   MAX(sm.unitCost)
+                            FROM StockMovement sm
+                            WHERE sm.warehouseId = :warehouseId
+                              AND sm.productId IN :productIds
+                            GROUP BY sm.productId, sm.binId, sm.zoneId, sm.locatorId, sm.batchNumber, sm.expiryDate
+                            HAVING COALESCE(SUM(sm.quantity), 0) > 0
+                            ORDER BY sm.productId, sm.binId, sm.batchNumber
+                        """)
+        List<Object[]> findStockTakeSnapshotIdentities(
+                        @Param("warehouseId") Long warehouseId,
+                        @Param("productIds") List<Long> productIds);
+
         // ✅ Stock for a specific product in a specific bin (for per-bin system qty refresh)
         @Query("""
                             SELECT COALESCE(SUM(sm.quantity), 0)
