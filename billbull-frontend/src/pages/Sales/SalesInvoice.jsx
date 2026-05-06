@@ -90,6 +90,7 @@ import ProductSelector from '../../components/ProductSelector';
 // ✅ CUSTOMER SELECTOR
 import CustomerSelector from '../../components/CustomerSelector';
 import CustomerShippingPanel from '../../components/CustomerShippingPanel';
+import { resolveCustomer, hydrateCustomerFromSource } from '../../utils/customerResolution';
 import { ItemDescriptionCell, ItemDescriptionHeader } from '../../components/ItemDescriptionCell';
 
 // ✅ STOCK AVAILABILITY MODAL
@@ -524,8 +525,13 @@ const SalesInvoice = () => {
 
         fromQuotationHandled.current = true;
 
-        const matched = customersList.find(
-            c => c.name === fromQtn.customer || c.code === fromQtn.customer
+        const matched = resolveCustomer(
+            {
+                customerId: fromQtn.customerId,
+                customerCode: fromQtn.customerCode,
+                customerName: fromQtn.customerName ?? fromQtn.customer,
+            },
+            customersList
         );
 
         const mappedItems = (fromQtn.items || [])
@@ -584,8 +590,13 @@ const SalesInvoice = () => {
 
         fromSOHandled.current = true;
 
-        const matched = customersList.find(
-            c => c.name === fromSO.customer || c.code === fromSO.customerCode
+        const matched = resolveCustomer(
+            {
+                customerId: fromSO.customerId,
+                customerCode: fromSO.customerCode,
+                customerName: fromSO.customerName ?? fromSO.customer,
+            },
+            customersList
         );
 
         const mappedItems = (fromSO.items || [])
@@ -915,11 +926,12 @@ const SalesInvoice = () => {
         const so = salesOrdersList.find(s => s.soNumber === soNumber);
         if (so) {
             setBillDiscount(Number(so.billDiscount) || 0);
-            // Auto-fill customer
-            setSelectedCustomer({
-                code: so.customerCode,
-                name: so.customerName
-            });
+            // Resolve full customer master so the panel renders phone/balance/TRN/savedAddresses.
+            const matched = resolveCustomer(
+                { customerCode: so.customerCode, customerName: so.customerName },
+                customersList
+            );
+            setSelectedCustomer(matched || { code: so.customerCode, name: so.customerName });
 
             // Auto-fill items from SO
             if (so.items && so.items.length > 0) {
@@ -954,11 +966,11 @@ const SalesInvoice = () => {
 
         const dn = deliveryNotesList.find(d => d.dnNumber === dnNumber);
         if (dn) {
-            // Auto-fill customer
-            setSelectedCustomer({
-                code: dn.customerCode,
-                name: dn.customerName
-            });
+            const matched = resolveCustomer(
+                { customerCode: dn.customerCode, customerName: dn.customerName },
+                customersList
+            );
+            setSelectedCustomer(matched || { code: dn.customerCode, name: dn.customerName });
 
             // Auto-fill SO if linked
             if (dn.salesOrderNo) {
@@ -1041,11 +1053,11 @@ const SalesInvoice = () => {
 
         const pi = proformaList.find(p => p.piNumber === piNumber || p.proformaNo === piNumber);
         if (pi) {
-            // Auto-fill customer
-            setSelectedCustomer({
-                code: pi.customerCode,
-                name: pi.customerName
-            });
+            const matched = resolveCustomer(
+                { customerCode: pi.customerCode, customerName: pi.customerName },
+                customersList
+            );
+            setSelectedCustomer(matched || { code: pi.customerCode, name: pi.customerName });
 
             // Auto-fill SO if linked
             if (pi.salesOrderNo) {
@@ -1417,10 +1429,15 @@ const SalesInvoice = () => {
         setInvoiceDate(invoice.invoiceDate);
         setDeliveryDate(invoice.dueDate || '');
 
-        setSelectedCustomer({
-            code: invoice.customerCode,
-            name: invoice.customerName
-        });
+        // Resolve from master so reopening a saved invoice rehydrates the customer
+        // panel (phone, balance, TRN, savedAddresses) — invoice persists only code+name.
+        {
+            const matched = resolveCustomer(
+                { customerCode: invoice.customerCode, customerName: invoice.customerName },
+                customersList
+            );
+            setSelectedCustomer(matched || { code: invoice.customerCode, name: invoice.customerName });
+        }
         setShippingAddress(invoice.shippingAddress || '');
 
         setLinkedSO(invoice.linkedSalesOrder || '');

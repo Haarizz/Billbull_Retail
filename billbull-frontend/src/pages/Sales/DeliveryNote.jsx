@@ -87,6 +87,7 @@ import ProductSelector from '../../components/ProductSelector';
 // âœ… CUSTOMER SELECTOR
 import CustomerSelector from '../../components/CustomerSelector';
 import CustomerShippingPanel from '../../components/CustomerShippingPanel';
+import { resolveCustomer, hydrateCustomerFromSource } from '../../utils/customerResolution';
 
 // âœ… STOCK AVAILABILITY MODAL
 import StockAvailabilityModal from '../../components/StockAvailabilityModal';
@@ -957,7 +958,11 @@ const DeliveryNote = () => {
         setLinkedSI(dn.siNo || '');
         setSourceType(dn.siNo ? 'SI' : (dn.piNo && dn.piNo !== '-') ? 'PI' : 'SO');
 
-        const custObj = customersList.find(c => c.code === dn.customerCode) || { code: dn.customerCode, name: dn.customerName };
+        // Use master record so phone/balance/TRN/savedAddresses populate.
+        const custObj = resolveCustomer(
+            { customerCode: dn.customerCode, customerName: dn.customerName },
+            customersList
+        ) || { code: dn.customerCode, name: dn.customerName };
         setSelectedCustomer(custObj);
 
         // When loading existing items, we map stock from the new cache if available
@@ -1047,23 +1052,17 @@ const DeliveryNote = () => {
         setIsPIOpen(false);
         setIsSIOpen(false);
 
-        // Resolve shipping: prefer SO's saved address, fall back to customer master
-        if (so.shippingAddress) {
-            setShippingAddress(so.shippingAddress);
-        } else {
-            const matchedCust = customersList.find(c => c.code === so.customerCode || c.name === so.customerName);
-            if (matchedCust) {
-                const _defaultAddr = (matchedCust.savedAddresses || []).find(a => a.isDefault);
-                const _resolvedAddr = _defaultAddr
-                    ? [_defaultAddr.address1, _defaultAddr.address2, _defaultAddr.city, _defaultAddr.country].filter(Boolean).join(', ')
-                    : (matchedCust.defaultShippingAddress || matchedCust.shippingAddress || matchedCust.billingAddress || matchedCust.address || '');
-                setShippingAddress(_resolvedAddr);
-            }
-        }
-
-        // Set customer from master list so savedAddresses are available
-        const matchedCust = customersList.find(c => c.code === so.customerCode || c.name === so.customerName);
-        if (matchedCust) setSelectedCustomer(matchedCust);
+        const { customer: cust, shippingAddress: resolvedShipping } = hydrateCustomerFromSource(
+            {
+                customerId: so.customerId,
+                customerCode: so.customerCode,
+                customerName: so.customerName,
+                shippingAddress: so.shippingAddress,
+            },
+            customersList
+        );
+        setSelectedCustomer(cust);
+        setShippingAddress(resolvedShipping);
 
         if (so.items && so.items.length > 0) {
             const mappedItems = so.items.map((item, index) =>
@@ -1088,19 +1087,17 @@ const DeliveryNote = () => {
         setIsSOOpen(false);
         setIsPIOpen(false);
 
-        // Resolve shipping: prefer SI's saved address, fall back to customer master
-        if (si.shippingAddress) {
-            setShippingAddress(si.shippingAddress);
-        } else {
-            const matchedCust = customersList.find(c => c.code === si.customerCode || c.name === si.customerName);
-            if (matchedCust) {
-                const _defaultAddr = (matchedCust.savedAddresses || []).find(a => a.isDefault);
-                const _resolvedAddr = _defaultAddr
-                    ? [_defaultAddr.address1, _defaultAddr.address2, _defaultAddr.city, _defaultAddr.country].filter(Boolean).join(', ')
-                    : (matchedCust.defaultShippingAddress || matchedCust.shippingAddress || matchedCust.billingAddress || matchedCust.address || '');
-                setShippingAddress(_resolvedAddr);
-            }
-        }
+        const { customer: siCust, shippingAddress: siShipping } = hydrateCustomerFromSource(
+            {
+                customerId: si.customerId,
+                customerCode: si.customerCode,
+                customerName: si.customerName,
+                shippingAddress: si.shippingAddress,
+            },
+            customersList
+        );
+        setSelectedCustomer(siCust);
+        setShippingAddress(siShipping);
 
         const siItems = si.items || si.invoiceItems || [];
         if (siItems.length > 0) {
@@ -1121,19 +1118,17 @@ const DeliveryNote = () => {
         setSourceDocumentId(pi.id);
         setIsPIOpen(false);
 
-        // Resolve shipping: prefer PI's saved address, fall back to customer master
-        if (pi.shippingAddress) {
-            setShippingAddress(pi.shippingAddress);
-        } else {
-            const matchedCust = customersList.find(c => c.code === pi.customerCode || c.name === pi.customerName);
-            if (matchedCust) {
-                const _defaultAddr = (matchedCust.savedAddresses || []).find(a => a.isDefault);
-                const _resolvedAddr = _defaultAddr
-                    ? [_defaultAddr.address1, _defaultAddr.address2, _defaultAddr.city, _defaultAddr.country].filter(Boolean).join(', ')
-                    : (matchedCust.defaultShippingAddress || matchedCust.shippingAddress || matchedCust.billingAddress || matchedCust.address || '');
-                setShippingAddress(_resolvedAddr);
-            }
-        }
+        const { customer: piCust, shippingAddress: piShipping } = hydrateCustomerFromSource(
+            {
+                customerId: pi.customerId,
+                customerCode: pi.customerCode,
+                customerName: pi.customerName,
+                shippingAddress: pi.shippingAddress,
+            },
+            customersList
+        );
+        setSelectedCustomer(piCust);
+        setShippingAddress(piShipping);
 
         if (pi.items && pi.items.length > 0) {
             const mappedItems = pi.items.map((item, index) =>

@@ -605,7 +605,7 @@ public class StockTakeService {
         return sessionRepo.save(session);
     }
 
-    public StockTakeItem addItemToSession(String sessionId, Long productId, Integer initialCount) {
+    public StockTakeItem addItemToSession(String sessionId, Long productId, Integer initialCount, Long binId) {
         StockTakeSession session = getSession(sessionId);
         if (session.getStatus() != StockTakeSession.StockTakeStatus.IN_PROGRESS) {
             throw new IllegalStateException("Session is not in progress");
@@ -613,6 +613,17 @@ public class StockTakeService {
 
         Product p = productRepo.findById(productId)
                 .orElseThrow(() -> new RuntimeException("Product not found"));
+
+        // Allow the same product across different bins of the same warehouse, but
+        // reject a duplicate of the exact (product, bin) pair — including (product, no bin).
+        boolean duplicate = session.getItems() != null && session.getItems().stream()
+                .anyMatch(existing -> Objects.equals(existing.getProductId(), productId)
+                        && Objects.equals(existing.getBinId(), binId));
+        if (duplicate) {
+            throw new IllegalStateException(binId != null
+                    ? "This product is already in the session for the selected bin."
+                    : "This product is already in the session. Assign it a bin to add it for another bin.");
+        }
 
         StockTakeItem item = new StockTakeItem();
         item.setSession(session);
@@ -638,10 +649,23 @@ public class StockTakeService {
         // Fetch primary image
         mediaRepo.findByProductIdAndIsPrimaryTrue(p.getId()).ifPresent(m -> item.setImage(m.getImageUrl()));
 
-        // Use raw on-hand (sum of stock movements) for stock take — NOT "available" which subtracts reservations.
-        // A physical stock count should reflect all units present, including reserved ones.
-        BigDecimal available = stockMovementRepo.getAvailableStock(session.getWarehouseId(), p.getId());
-        item.setSystemQty(available != null ? available.intValue() : 0);
+        // Apply the bin assignment up front so systemQty is computed for the right
+        // scope (per-bin if assigned, else warehouse-wide).
+        if (binId != null) {
+            Bin bin = binRepo.findByIdEager(binId)
+                    .orElseThrow(() -> new RuntimeException("Bin not found: " + binId));
+            item.setBinId(bin.getId());
+            item.setBinCode(bin.getCode());
+            item.setLocatorId(bin.getLocator().getId());
+            item.setZoneId(bin.getLocator().getZone().getId());
+            BigDecimal binStock = stockMovementRepo.getStockByBin(session.getWarehouseId(), p.getId(), bin.getId());
+            item.setSystemQty(binStock != null ? binStock.intValue() : 0);
+        } else {
+            // Use raw on-hand (sum of stock movements) for stock take — NOT "available" which subtracts reservations.
+            // A physical stock count should reflect all units present, including reserved ones.
+            BigDecimal available = stockMovementRepo.getAvailableStock(session.getWarehouseId(), p.getId());
+            item.setSystemQty(available != null ? available.intValue() : 0);
+        }
 
         // Tracked items (batch and/or expiry) start without an initial count —
         // their countedQty is the sum of batch-grid entries.
@@ -659,7 +683,14 @@ public class StockTakeService {
             item.setStatus(StockTakeItem.ItemStatus.VARIANCE);
         }
 
-        return itemRepo.save(item);
+        StockTakeItem saved = itemRepo.save(item);
+        if (binId != null && tracked && saved.getBatches().isEmpty()) {
+            // Pre-fill batch rows from existing system stock for the assigned bin so
+            // the count modal opens with seeded rows the user can adjust.
+            seedExistingBatchCounts(saved);
+            itemRepo.save(saved);
+        }
+        return saved;
     }
 
     private boolean isInventoryCounting(StockTakeSession session) {
@@ -1705,7 +1736,13 @@ public class StockTakeService {
         List<StockTakeItem> items = session.getItems();
         for (StockTakeItemUpdateDTO update : updates) {
             items.stream()
-                .filter(i -> i.getSku().equalsIgnoreCase(update.getSku()))
+                // Prefer matching by itemId; otherwise SKU disambiguated by binId when present.
+                // Without binId disambiguation, multiple items with the same SKU (same product
+                // in different bins) would all collapse to whichever match findFirst returned.
+                .filter(i -> update.getItemId() != null
+                        ? Objects.equals(i.getId(), update.getItemId())
+                        : (update.getSku() != null && update.getSku().equalsIgnoreCase(i.getSku())
+                                && (update.getBinId() == null || Objects.equals(i.getBinId(), update.getBinId()))))
                 .filter(i -> !(i.isBatchEnabled() || i.isExpiryEnabled())) // tracked items: countedQty is derived from batches
                 .findFirst()
                 .ifPresent(item -> {

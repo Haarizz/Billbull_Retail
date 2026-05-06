@@ -56,6 +56,7 @@ import ProductSelector from '../../components/ProductSelector';
 // ✅ CUSTOMER SELECTOR
 import CustomerSelector from '../../components/CustomerSelector';
 import CustomerShippingPanel from '../../components/CustomerShippingPanel';
+import { hydrateCustomerFromSource, resolveCustomer, resolveDefaultShippingAddress } from '../../utils/customerResolution';
 
 // ✅ GLOBAL COMPONENTS
 import { ItemDescriptionCell, ItemDescriptionHeader } from '../../components/ItemDescriptionCell';
@@ -373,9 +374,14 @@ const SalesOrders = () => {
   useEffect(() => {
     if (location.state?.quotation) {
       const qtn = location.state.quotation;
+      // Forward identifiers (customerId/customerCode/customerName) so handleSelectQuotation
+      // can resolve the full customer master record without a fragile name match.
       handleSelectQuotation({
         qtnNo: qtn.qtnNo,
         customer: qtn.customer,
+        customerId: qtn.customerId ?? null,
+        customerCode: qtn.customerCode ?? '',
+        customerName: qtn.customerName ?? qtn.customer,
         billDiscount: qtn.billDiscount,
         shippingAddress: qtn.shippingAddress || '',
         items: qtn.items || []
@@ -384,7 +390,7 @@ const SalesOrders = () => {
       // Clear state
       window.history.replaceState({}, document.title);
     }
-  }, [location.state]);
+  }, [location.state, customersList]);
 
   const fetchAllData = async () => {
     try {
@@ -712,7 +718,9 @@ const SalesOrders = () => {
         fromSalesOrder: {
           soNumber,
           customer: selectedCustomer?.name || selectedCustomer?.code || '',
+          customerId: selectedCustomer?.id ?? null,
           customerCode: selectedCustomer?.code || '',
+          customerName: selectedCustomer?.name || '',
           linkedQuotation: linkedQtn || '',
           linkedProforma: linkedPi || '',
           billDiscount: Number(billDiscount) || 0,
@@ -972,22 +980,21 @@ const SalesOrders = () => {
     setLinkedSourceSearch(qtn.qtnNo || '');
     setBillDiscount(Number(qtn.billDiscount) || 0);
 
-    if (qtn.customer) {
-      const matchedCustomer = customersList.find(c =>
-        qtn.customer.includes(c.name) || qtn.customer.includes(c.code)
+    if (qtn.customer || qtn.customerId || qtn.customerCode) {
+      // Centralised resolution: id → code → name → fuzzy. Falls back to a thin
+      // object only when the customer truly isn't in the loaded list.
+      const { customer: cust, shippingAddress: resolvedShipping } = hydrateCustomerFromSource(
+        {
+          customerId: qtn.customerId,
+          customerCode: qtn.customerCode,
+          customerName: qtn.customerName ?? qtn.customer,
+          shippingAddress: qtn.shippingAddress,
+        },
+        customersList,
+        { fallbackName: qtn.customer }
       );
-      const cust = matchedCustomer || buildFallbackCustomer(qtn.customer);
       setSelectedCustomer(cust);
-      // Always resolve shipping: prefer passed-through address, then customer master
-      if (qtn.shippingAddress) {
-        setShippingAddress(qtn.shippingAddress);
-      } else {
-        const _defaultAddr = (cust.savedAddresses || []).find(a => a.isDefault);
-        const _resolvedAddr = _defaultAddr
-          ? [_defaultAddr.address1, _defaultAddr.address2, _defaultAddr.city, _defaultAddr.country].filter(Boolean).join(', ')
-          : (cust.defaultShippingAddress || cust.shippingAddress || cust.billingAddress || cust.address || '');
-        setShippingAddress(_resolvedAddr);
-      }
+      setShippingAddress(resolvedShipping);
     }
 
     applyLinkedDocumentItems(qtn.items || []);
@@ -1006,20 +1013,17 @@ const SalesOrders = () => {
     setLinkedSourceSearch(proforma.piNumber || '');
     setBillDiscount(Number(proforma.billDiscount) || 0);
 
-    const matchedCustomer = customersList.find((customer) =>
-      (proforma.customerCode && customer.code === proforma.customerCode)
-      || (proforma.customerName && customer.name === proforma.customerName)
+    const { customer: cust, shippingAddress: resolvedShipping } = hydrateCustomerFromSource(
+      {
+        customerId: proforma.customerId,
+        customerCode: proforma.customerCode,
+        customerName: proforma.customerName,
+        shippingAddress: proforma.shippingAddress,
+      },
+      customersList
     );
-
-    const cust = matchedCustomer || buildFallbackCustomer(proforma.customerName, proforma.customerCode);
     setSelectedCustomer(cust);
-    if (cust.address || cust.shippingAddress || cust.billingAddress) {
-      const _defaultAddr = (cust.savedAddresses || []).find(a => a.isDefault);
-      const _resolvedAddr = _defaultAddr
-        ? [_defaultAddr.address1, _defaultAddr.address2, _defaultAddr.city, _defaultAddr.country].filter(Boolean).join(', ')
-        : (cust.defaultShippingAddress || cust.shippingAddress || cust.billingAddress || cust.address || '');
-      setShippingAddress(_resolvedAddr);
-    }
+    setShippingAddress(resolvedShipping);
 
     applyLinkedDocumentItems(proforma.items || []);
 
@@ -1033,11 +1037,14 @@ const SalesOrders = () => {
     setSoNumber(order.soNumber);
     setOrderDate(order.orderDate);
 
-    // Map backend flat fields back to UI object
-    setSelectedCustomer({
-      code: order.customerCode,
-      name: order.customerName,
-    });
+    // Resolve the full customer master record so the panel shows phone/balance/TRN/
+    // savedAddresses — the SO entity only persists code+name, so a thin object would
+    // leave the rest blank.
+    const matched = resolveCustomer(
+      { customerCode: order.customerCode, customerName: order.customerName },
+      customersList
+    );
+    setSelectedCustomer(matched || { code: order.customerCode, name: order.customerName });
 
     const hasLinkedQuotation = Boolean(order.linkedQuotation);
     const hasLinkedProforma = Boolean(order.linkedProforma);

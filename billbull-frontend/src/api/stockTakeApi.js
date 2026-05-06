@@ -47,8 +47,10 @@ export const updateItemCount = async (itemId, countedQty) => {
     return response.data;
 };
 
-export const addItemToSession = async (sessionId, productId, initialCount = 1) => {
-    const response = await axiosInstance.post(`/api/inventory/stock-take/sessions/${sessionId}/items?productId=${productId}&initialCount=${initialCount}`);
+export const addItemToSession = async (sessionId, productId, initialCount = 1, binId = null) => {
+    const params = new URLSearchParams({ productId, initialCount });
+    if (binId != null) params.append('binId', binId);
+    const response = await axiosInstance.post(`/api/inventory/stock-take/sessions/${sessionId}/items?${params}`);
     return response.data;
 };
 

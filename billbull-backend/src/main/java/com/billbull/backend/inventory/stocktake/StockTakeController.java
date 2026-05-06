@@ -104,11 +104,16 @@ public class StockTakeController {
     }
 
     @PostMapping("/sessions/{sessionId}/items")
-    public ResponseEntity<StockTakeItem> addItemToSession(
+    public ResponseEntity<?> addItemToSession(
             @PathVariable String sessionId,
             @RequestParam Long productId,
-            @RequestParam(required = false, defaultValue = "1") Integer initialCount) {
-        return ResponseEntity.ok(service.addItemToSession(sessionId, productId, initialCount));
+            @RequestParam(required = false, defaultValue = "1") Integer initialCount,
+            @RequestParam(required = false) Long binId) {
+        try {
+            return ResponseEntity.ok(service.addItemToSession(sessionId, productId, initialCount, binId));
+        } catch (IllegalStateException | IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body(java.util.Map.of("message", e.getMessage()));
+        }
     }
 
     @PostMapping("/sessions/{sessionId}/submit")

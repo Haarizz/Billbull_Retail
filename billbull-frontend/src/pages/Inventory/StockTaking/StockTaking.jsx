@@ -395,12 +395,12 @@ const BatchEditor = ({ item, disabled, onChange }) => {
 const BinSelector = ({ itemId, binId, bins, onBinChange, disabled, size = 'sm' }) => {
     const [open, setOpen] = useState(false);
     const [filter, setFilter] = useState('');
-    // Optimistic local state — shows selection immediately without waiting for API
-    const [localBinId, setLocalBinId] = useState(binId ?? null);
     const ref = useRef(null);
 
-    // Sync when parent updates (server response arrives)
-    useEffect(() => { setLocalBinId(binId ?? null); }, [binId]);
+    // Reflect the prop directly (no local optimistic copy). The parent owns the
+    // optimistic update inside its own setSelectedSession, which keeps the dropdown's
+    // displayed value consistent when the user cancels a multi-bin confirm dialog
+    // (in that case the parent never applied the change, so the old prop wins).
 
     useEffect(() => {
         if (!open) { setFilter(''); return; }
@@ -416,15 +416,14 @@ const BinSelector = ({ itemId, binId, bins, onBinChange, disabled, size = 'sm' }
         ? bins.filter(b => b.code.toLowerCase().includes(filter.toLowerCase()) || b.name?.toLowerCase().includes(filter.toLowerCase()))
         : bins;
 
-    const selected = bins.find(b => String(b.id) === String(localBinId));
+    const selected = bins.find(b => String(b.id) === String(binId));
 
     const handleSelect = (e, bin) => {
         e.stopPropagation();
         e.preventDefault();
         const newBinId = bin ? bin.id : null;
-        setLocalBinId(newBinId);   // immediate optimistic update
         setOpen(false);
-        onBinChange(itemId, newBinId); // background API call
+        onBinChange(itemId, newBinId); // parent applies the optimistic update + persists
     };
 
     if (size === 'sm') {
@@ -480,14 +479,14 @@ const BinSelector = ({ itemId, binId, bins, onBinChange, disabled, size = 'sm' }
                                     onMouseDown={(e) => e.stopPropagation()}
                                     onClick={(e) => handleSelect(e, b)}
                                     className={`w-full text-left px-3 py-2 text-[10px] font-bold flex items-center gap-2 transition-colors
-                                        ${String(b.id) === String(localBinId)
+                                        ${String(b.id) === String(binId)
                                             ? 'bg-amber-50 text-amber-700'
                                             : 'text-slate-700 hover:bg-slate-50'}`}
                                 >
-                                    <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${String(b.id) === String(localBinId) ? 'bg-amber-400' : 'bg-slate-200'}`} />
+                                    <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${String(b.id) === String(binId) ? 'bg-amber-400' : 'bg-slate-200'}`} />
                                     <span className="font-mono">{b.code}</span>
                                     {b.name && <span className="text-slate-400 font-normal truncate ml-1">— {b.name}</span>}
-                                    {String(b.id) === String(localBinId) && <Check className="h-2.5 w-2.5 ml-auto text-amber-500 shrink-0" />}
+                                    {String(b.id) === String(binId) && <Check className="h-2.5 w-2.5 ml-auto text-amber-500 shrink-0" />}
                                 </button>
                             ))}
                             {filtered.length === 0 && (
@@ -554,14 +553,14 @@ const BinSelector = ({ itemId, binId, bins, onBinChange, disabled, size = 'sm' }
                                 onMouseDown={(e) => e.stopPropagation()}
                                 onClick={(e) => handleSelect(e, b)}
                                 className={`w-full text-left px-3 py-2 text-xs font-bold flex items-center gap-2.5 transition-colors
-                                    ${String(b.id) === String(localBinId)
+                                    ${String(b.id) === String(binId)
                                         ? 'bg-amber-50 text-amber-700'
                                         : 'text-slate-700 hover:bg-slate-50'}`}
                             >
-                                <span className={`w-2 h-2 rounded-full shrink-0 ${String(b.id) === String(localBinId) ? 'bg-amber-400' : 'bg-slate-200'}`} />
+                                <span className={`w-2 h-2 rounded-full shrink-0 ${String(b.id) === String(binId) ? 'bg-amber-400' : 'bg-slate-200'}`} />
                                 <span className="font-mono font-bold">{b.code}</span>
                                 {b.name && <span className="text-slate-400 font-normal truncate">— {b.name}</span>}
-                                {String(b.id) === String(localBinId) && (
+                                {String(b.id) === String(binId) && (
                                     <Check className="h-3 w-3 ml-auto text-amber-500 shrink-0" />
                                 )}
                             </button>
@@ -2144,8 +2143,16 @@ const StockTaking = () => {
     // No longer needed as backend provides full enrichment
 
 
-    const handleSelectProduct = async (product, initialCount = null) => {
+    // options:
+    //   binId   — when set, adds (or matches) a row for this product in the given bin.
+    //             The same product can have multiple rows in a session as long as each
+    //             targets a different binId (or one is unbinned). Without binId the row
+    //             is created without a bin and the user assigns one in the count modal.
+    //   forceNew — when true, bypass the duplicate-product short-circuit so the caller
+    //              can explicitly create a second row (e.g. user picked "Add for another bin").
+    const handleSelectProduct = async (product, initialCount = null, options = {}) => {
         if (!selectedSession) return;
+        const { binId = null, forceNew = false } = options;
 
         const normalizedProduct = normalizeSelectorProduct(product);
         const productId = normalizedProduct.id;
@@ -2157,17 +2164,30 @@ const StockTaking = () => {
             return null;
         }
 
-        // Guard: drop concurrent calls for the same SKU (rapid barcode scanner Enter events)
-        if (addingSkusRef.current.has(sku)) return;
-        addingSkusRef.current.add(sku);
+        // Guard: drop concurrent calls for the same product+bin (rapid barcode scanner
+        // Enter events). Different bins are independent rows so they get independent keys.
+        const guardKey = `${sku}|${binId ?? ''}`;
+        if (addingSkusRef.current.has(guardKey)) return;
+        addingSkusRef.current.add(guardKey);
 
         setIsLoading(true);
 
-        const existingItem = selectedSession.items?.find(i =>
+        // Duplicate match is per (product, binId): same product in a different bin
+        // is NOT a duplicate. Unbinned (binId == null) is its own slot.
+        const matchesProduct = (i) =>
             String(i.productId) === String(productId) ||
             (sku && i.sku === sku) ||
-            (normalizedProduct.barcode && i.barcode === normalizedProduct.barcode)
-        );
+            (normalizedProduct.barcode && i.barcode === normalizedProduct.barcode);
+        const matchesBin = (i) =>
+            (i.binId == null && binId == null) ||
+            (i.binId != null && binId != null && String(i.binId) === String(binId));
+
+        const existingItem = !forceNew
+            ? selectedSession.items?.find(i => matchesProduct(i) && matchesBin(i))
+            : null;
+        const otherBinRowExists = forceNew
+            ? false
+            : selectedSession.items?.some(i => matchesProduct(i) && !matchesBin(i));
 
         if (existingItem) {
             if (initialCount !== null && !(existingItem.batchEnabled || existingItem.expiryEnabled)) {
@@ -2175,13 +2195,14 @@ const StockTaking = () => {
                 setLastScannedItem({ ...existingItem, countedQty: (existingItem.countedQty || 0) + initialCount });
                 setLastScannedAt(new Date());
             } else if (initialCount === null) {
-                showNotif('info', 'Already Added', 'This product is already in the session.');
+                showNotif('info', 'Already Added',
+                    'This product is already in the session for this bin. Pick a different bin to add it again.');
             } else {
                 setLastScannedItem(existingItem);
                 setLastScannedAt(new Date());
             }
             setIsLoading(false);
-            addingSkusRef.current.delete(sku);
+            addingSkusRef.current.delete(guardKey);
             return existingItem;
         }
 
@@ -2189,8 +2210,14 @@ const StockTaking = () => {
             const newItem = await addItemToSession(
                 selectedSession.sessionId,
                 productId,
-                initialCount !== null ? initialCount : 0
+                initialCount !== null ? initialCount : 0,
+                binId
             );
+
+            if (otherBinRowExists) {
+                showNotif('info', 'Added for Different Bin',
+                    'This product was already in the session — added a separate row for the new bin.');
+            }
 
             const mappedItem = mapStockTakeItem(newItem);
 
@@ -2219,7 +2246,7 @@ const StockTaking = () => {
             setIsLoading(false);
             return null;
         } finally {
-            addingSkusRef.current.delete(sku);
+            addingSkusRef.current.delete(guardKey);
         }
     };
 
@@ -2389,22 +2416,74 @@ const StockTaking = () => {
             showNotif('info', 'Expected Bin Locked', 'Inventory counting keeps the expected bin from the snapshot. Use the scan-bin selector to record where the unit was found.');
             return;
         }
-        // Capture current item state for rollback
+
         const prevItem = selectedSession.items.find(i => i.id === itemId);
-        // Optimistic update — show change immediately in the table row
-        const bin = warehouseBins.find(b => String(b.id) === String(binId));
+        const newBinIdNum = binId ? Number(binId) : null;
+        const prevBinIdNum = prevItem?.binId ?? null;
+
+        // If the user is reassigning a row that was ALREADY at a real bin to a DIFFERENT
+        // real bin, ask whether they want to move this row or keep it and add a new row
+        // for the new bin (the multi-bin-per-product workflow).
+        if (prevItem && prevBinIdNum != null && newBinIdNum != null && prevBinIdNum !== newBinIdNum) {
+            const newBin = warehouseBins.find(b => String(b.id) === String(newBinIdNum));
+            const oldBinCode = prevItem.binCode || `Bin #${prevBinIdNum}`;
+            const newBinCode = newBin?.code || `Bin #${newBinIdNum}`;
+            setNotifModal({
+                type: 'confirm',
+                title: 'Same product, different bin',
+                message: `This product is currently at ${oldBinCode}. Add a separate row at ${newBinCode}, or move this row to ${newBinCode}?`,
+                confirmLabel: `Add row at ${newBinCode}`,
+                confirmClass: 'bg-amber-500 hover:bg-amber-600 text-white',
+                onConfirm: async () => {
+                    setNotifModal(null);
+                    try {
+                        const newItem = await addItemToSession(
+                            selectedSession.sessionId,
+                            prevItem.productId,
+                            0,
+                            newBinIdNum
+                        );
+                        const mapped = mapStockTakeItem(newItem);
+                        setSelectedSession(prev => ({
+                            ...prev,
+                            items: [mapped, ...(prev.items || [])]
+                        }));
+                        setUndoHistory(prev => [...prev, { type: 'ADD_ITEM', itemId: newItem.id }]);
+                        showNotif('success', 'Row Added',
+                            `Added a separate row for this product at ${newBinCode}.`);
+                    } catch (error) {
+                        showNotif('error', 'Failed to Add',
+                            error?.response?.data?.message || 'Could not add a row for the new bin.');
+                    }
+                },
+                cancelLabel: `Move to ${newBinCode}`,
+                onCancel: () => {
+                    setNotifModal(null);
+                    moveRowToBin(itemId, newBinIdNum, prevItem);
+                },
+            });
+            return;
+        }
+
+        // Direct path: row is unbinned, or user cleared the bin, or picked the same bin.
+        await moveRowToBin(itemId, newBinIdNum, prevItem);
+    };
+
+    // Reassigns an item's bin in place (the original updateItemBin behaviour). Extracted
+    // so handleBinChange can call it from either the direct path or the confirm-dialog path.
+    const moveRowToBin = async (itemId, newBinIdNum, prevItem) => {
+        const bin = warehouseBins.find(b => String(b.id) === String(newBinIdNum));
         setSelectedSession(prev => ({
             ...prev,
             items: prev.items.map(item =>
                 item.id === itemId
-                    ? { ...item, binId: binId ? Number(binId) : null, binCode: bin?.code || null }
+                    ? { ...item, binId: newBinIdNum, binCode: bin?.code || null }
                     : item
             )
         }));
         try {
-            const updated = await updateApiBin(itemId, binId || null);
+            const updated = await updateApiBin(itemId, newBinIdNum);
             const mappedUpdated = mapStockTakeItem(updated);
-            // Sync server response to get zoneId / locatorId
             setSelectedSession(prev => ({
                 ...prev,
                 items: prev.items.map(item =>
@@ -2416,7 +2495,6 @@ const StockTaking = () => {
             setSelectedItemForCount(prev => prev?.id === itemId ? { ...prev, ...mappedUpdated } : prev);
         } catch (error) {
             console.error('Failed to update bin assignment:', error);
-            // Revert optimistic update so the UI doesn't show a bin that wasn't saved
             setSelectedSession(prev => ({
                 ...prev,
                 items: prev.items.map(item =>
@@ -3472,10 +3550,10 @@ const StockTaking = () => {
                             {notifModal.type === 'confirm' ? (
                                 <>
                                     <button
-                                        onClick={() => setNotifModal(null)}
+                                        onClick={notifModal.onCancel || (() => setNotifModal(null))}
                                         className="px-4 py-2 text-xs font-semibold text-slate-600 bg-white border border-slate-200 rounded-lg hover:bg-slate-50 transition-colors"
                                     >
-                                        Cancel
+                                        {notifModal.cancelLabel || 'Cancel'}
                                     </button>
                                     <button
                                         onClick={notifModal.onConfirm}

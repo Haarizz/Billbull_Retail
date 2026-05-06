@@ -273,6 +273,69 @@ class StockTakeServiceTest {
     }
 
     @Test
+    void addItemToSessionAllowsSameProductInDifferentBinsAndRejectsExactDuplicate() {
+        StockTakeSession session = session();
+        session.setStatus(StockTakeSession.StockTakeStatus.IN_PROGRESS);
+        session.setItems(new java.util.ArrayList<>());
+
+        Product p = product(10L);
+        p.setBatch(false);
+        p.setExpiryEnabled(false);
+
+        when(sessionRepo.findBySessionId("STK-1")).thenReturn(Optional.of(session));
+        when(productRepo.findById(10L)).thenReturn(Optional.of(p));
+        when(barcodeRepo.findByProductId(10L)).thenReturn(List.of());
+        when(mediaRepo.findByProductIdAndIsPrimaryTrue(10L)).thenReturn(Optional.empty());
+        when(stockMovementRepo.getAvailableStock(2L, 10L)).thenReturn(BigDecimal.valueOf(50));
+        when(itemRepo.save(any(StockTakeItem.class))).thenAnswer(inv -> {
+            StockTakeItem saved = inv.getArgument(0);
+            // Mimic JPA: assign an id and add to the session collection so subsequent
+            // duplicate checks see the freshly-saved row.
+            if (saved.getId() == null) saved.setId((long) (session.getItems().size() + 100));
+            if (!session.getItems().contains(saved)) session.getItems().add(saved);
+            return saved;
+        });
+
+        // First add — unbinned, succeeds.
+        StockTakeItem first = service.addItemToSession("STK-1", 10L, 0, null);
+        assertEquals(null, first.getBinId());
+
+        // Second add — same product, no bin again — must be rejected.
+        try {
+            service.addItemToSession("STK-1", 10L, 0, null);
+            assertTrue(false, "Expected duplicate (productId, binId=null) to be rejected");
+        } catch (IllegalStateException e) {
+            assertTrue(e.getMessage().toLowerCase().contains("already in the session"),
+                    "Unexpected error message: " + e.getMessage());
+        }
+
+        // Third add — same product, but this time targeting bin 7 — succeeds.
+        com.billbull.backend.inventory.warehouse.Bin bin = new com.billbull.backend.inventory.warehouse.Bin();
+        bin.setId(7L);
+        bin.setCode("BIN-A");
+        com.billbull.backend.inventory.warehouse.Locator loc = new com.billbull.backend.inventory.warehouse.Locator();
+        loc.setId(4L);
+        com.billbull.backend.inventory.warehouse.Zone zone = new com.billbull.backend.inventory.warehouse.Zone();
+        zone.setId(3L);
+        loc.setZone(zone);
+        bin.setLocator(loc);
+        when(binRepo.findByIdEager(7L)).thenReturn(Optional.of(bin));
+        when(stockMovementRepo.getStockByBin(2L, 10L, 7L)).thenReturn(BigDecimal.valueOf(20));
+
+        StockTakeItem second = service.addItemToSession("STK-1", 10L, 0, 7L);
+        assertEquals(7L, second.getBinId());
+        assertEquals(20, second.getSystemQty()); // pulled from per-bin stock, not warehouse total
+
+        // Fourth add — same product, same bin 7 — must be rejected.
+        try {
+            service.addItemToSession("STK-1", 10L, 0, 7L);
+            assertTrue(false, "Expected duplicate (productId, binId=7) to be rejected");
+        } catch (IllegalStateException e) {
+            assertTrue(e.getMessage().toLowerCase().contains("already in the session"));
+        }
+    }
+
+    @Test
     void approvePostsPerUnitMovementsForNewFormatLot() {
         StockTakeSession session = session();
         StockTakeItem item = stockTakeItem(24L, session, 10L, 7L, 0, 3);
