@@ -1,6 +1,7 @@
 package com.billbull.backend.inventory.stocktake;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
@@ -8,6 +9,10 @@ import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+
+import java.time.format.DateTimeFormatter;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
@@ -106,7 +111,7 @@ class StockTakeServiceTest {
         assertEquals(new BigDecimal("12.50"), dto.getCost());
         assertEquals(new BigDecimal("20.00"), dto.getRetailPrice());
         assertTrue(dto.isBatchEnabled());
-        assertTrue(dto.isExpiryEnabled());
+        assertFalse(dto.isExpiryEnabled());
     }
 
     @Test
@@ -164,6 +169,131 @@ class StockTakeServiceTest {
         assertEquals(70, newExpiryCount.getQuantity());
         assertEquals("ST-1", newExpiryCount.getBatchNumber());
         assertEquals(LocalDate.parse("2026-06-06"), newExpiryCount.getExpiryDate());
+    }
+
+    @Test
+    void addBatchSplitsQuantityIntoPerUnitRowsWithSharedLotPrefix() {
+        StockTakeSession session = session();
+        session.setStatus(StockTakeSession.StockTakeStatus.IN_PROGRESS);
+        StockTakeItem item = stockTakeItem(20L, session, 10L, 7L, 0, 0);
+        item.setBatchEnabled(true);
+        item.setExpiryEnabled(false);
+
+        when(itemRepo.findById(20L)).thenReturn(Optional.of(item));
+        when(productRepo.findById(10L)).thenReturn(Optional.of(product(10L)));
+        when(itemRepo.save(any(StockTakeItem.class))).thenAnswer(inv -> inv.getArgument(0));
+        when(batchRepo.save(any(StockTakeItemBatch.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        List<StockTakeItemBatch> saved = service.addBatch(20L, null, null, 5);
+
+        assertEquals(5, saved.size());
+        // Every saved row carries quantity=1 — the per-unit storage model.
+        for (StockTakeItemBatch b : saved) {
+            assertEquals(1, b.getQuantity());
+            assertFalse(b.isSeeded());
+        }
+
+        // All five share the same lot prefix and only differ in the trailing -{unitIndex}.
+        // Format: ST-{ddMMyy}-L{NN}-{itemCode}-{unitIndex}
+        Pattern fmt = Pattern.compile("^ST-(\\d{6})-L(\\d{2})-CODE10-(\\d+)$");
+        String dateSegment = LocalDate.now().format(DateTimeFormatter.ofPattern("ddMMyy"));
+        for (int i = 0; i < saved.size(); i++) {
+            Matcher m = fmt.matcher(saved.get(i).getBatchNumber());
+            assertTrue(m.matches(), "Unexpected batch number format: " + saved.get(i).getBatchNumber());
+            assertEquals(dateSegment, m.group(1));
+            assertEquals("01", m.group(2));            // first lot on the item -> L01
+            assertEquals(String.valueOf(i + 1), m.group(3)); // unit index 1..5
+        }
+
+        // Item's countedQty equals the row count after recompute.
+        assertEquals(5, item.getCountedQty());
+    }
+
+    @Test
+    void addBatchPicksNextLotIndexWhenItemAlreadyHasLots() {
+        StockTakeSession session = session();
+        session.setStatus(StockTakeSession.StockTakeStatus.IN_PROGRESS);
+        StockTakeItem item = stockTakeItem(21L, session, 10L, null, 0, 0);
+        item.setBatchEnabled(true);
+        item.setExpiryEnabled(false);
+        // Pretend a prior addBatch already produced two unit rows under L01 today.
+        String today = LocalDate.now().format(DateTimeFormatter.ofPattern("ddMMyy"));
+        item.getBatches().add(batch(item, 200L, "ST-" + today + "-L01-CODE10-1", null, 1));
+        item.getBatches().add(batch(item, 201L, "ST-" + today + "-L01-CODE10-2", null, 1));
+
+        when(itemRepo.findById(21L)).thenReturn(Optional.of(item));
+        when(productRepo.findById(10L)).thenReturn(Optional.of(product(10L)));
+        when(itemRepo.save(any(StockTakeItem.class))).thenAnswer(inv -> inv.getArgument(0));
+        when(batchRepo.save(any(StockTakeItemBatch.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        List<StockTakeItemBatch> saved = service.addBatch(21L, null, null, 2);
+
+        assertEquals(2, saved.size());
+        assertEquals("ST-" + today + "-L02-CODE10-1", saved.get(0).getBatchNumber());
+        assertEquals("ST-" + today + "-L02-CODE10-2", saved.get(1).getBatchNumber());
+    }
+
+    @Test
+    void addBatchUsesOpeningInventoryPrefixForOsSession() {
+        StockTakeSession session = session();
+        session.setStatus(StockTakeSession.StockTakeStatus.IN_PROGRESS);
+        session.setType(StockTakeSession.StockTakeType.OPENING_INVENTORY);
+        StockTakeItem item = stockTakeItem(22L, session, 10L, null, 0, 0);
+        item.setBatchEnabled(true);
+        item.setExpiryEnabled(false);
+
+        when(itemRepo.findById(22L)).thenReturn(Optional.of(item));
+        when(productRepo.findById(10L)).thenReturn(Optional.of(product(10L)));
+        when(itemRepo.save(any(StockTakeItem.class))).thenAnswer(inv -> inv.getArgument(0));
+        when(batchRepo.save(any(StockTakeItemBatch.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        List<StockTakeItemBatch> saved = service.addBatch(22L, null, null, 1);
+
+        assertTrue(saved.get(0).getBatchNumber().startsWith("OS-"),
+                "Opening Inventory should use OS prefix, got " + saved.get(0).getBatchNumber());
+    }
+
+    @Test
+    void previewNextBatchNumberReturnsLotPrefixWithoutTrailingUnit() {
+        StockTakeSession session = session();
+        StockTakeItem item = stockTakeItem(23L, session, 10L, null, 0, 0);
+        when(itemRepo.findById(23L)).thenReturn(Optional.of(item));
+        when(productRepo.findById(10L)).thenReturn(Optional.of(product(10L)));
+
+        String preview = service.previewNextBatchNumber(23L);
+
+        // Format is the lot prefix only (no -{unitIndex} tail) so the user sees
+        // the upcoming lot identifier rather than just "unit 1".
+        String today = LocalDate.now().format(DateTimeFormatter.ofPattern("ddMMyy"));
+        assertEquals("ST-" + today + "-L01-CODE10", preview);
+    }
+
+    @Test
+    void approvePostsPerUnitMovementsForNewFormatLot() {
+        StockTakeSession session = session();
+        StockTakeItem item = stockTakeItem(24L, session, 10L, 7L, 0, 3);
+        // Three unit rows representing one physical lot (qty=1 each).
+        String today = LocalDate.now().format(DateTimeFormatter.ofPattern("ddMMyy"));
+        item.getBatches().add(batch(item, 240L, "ST-" + today + "-L01-CODE10-1", null, 1));
+        item.getBatches().add(batch(item, 241L, "ST-" + today + "-L01-CODE10-2", null, 1));
+        item.getBatches().add(batch(item, 242L, "ST-" + today + "-L01-CODE10-3", null, 1));
+        session.setItems(List.of(item));
+
+        when(sessionRepo.findBySessionId("STK-1")).thenReturn(Optional.of(session));
+        // No existing system stock — so reconcile should post +1 for each new unit.
+        when(stockMovementRepo.findStockIdentitiesByProductAndBin(2L, 10L, 7L))
+                .thenReturn(List.<Object[]>of());
+        when(productRepo.findById(10L)).thenReturn(Optional.of(product(10L)));
+        when(sessionRepo.save(any(StockTakeSession.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        service.approveSession("STK-1", "Admin");
+
+        ArgumentCaptor<StockMovement> captor = ArgumentCaptor.forClass(StockMovement.class);
+        verify(stockMovementRepo, times(3)).save(captor.capture());
+        for (StockMovement m : captor.getAllValues()) {
+            assertEquals(1, m.getQuantity());
+            assertEquals(StockSourceType.STOCK_TAKE_ADJUSTMENT, m.getSourceType());
+        }
     }
 
     private Product product(Long id) {

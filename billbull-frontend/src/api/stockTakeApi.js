@@ -112,3 +112,24 @@ export const previewNextBatchNumber = async (itemId) => {
     );
     return response.data;
 };
+
+// Lot-level operations: each "lot" is one logical batch backed by N per-unit rows.
+// Use these when the BatchEditor edits or removes a whole lot at once.
+
+export const updateItemLot = async (itemId, payload) => {
+    const response = await axiosInstance.put(
+        `/api/inventory/stock-take/items/${itemId}/lots`,
+        payload
+    );
+    return response.data;
+};
+
+export const deleteItemLot = async (itemId, { lotPrefix, matchExpiry, seeded }) => {
+    const params = new URLSearchParams({ lotPrefix });
+    if (matchExpiry) params.append('matchExpiry', matchExpiry);
+    if (seeded != null) params.append('seeded', String(seeded));
+    const response = await axiosInstance.delete(
+        `/api/inventory/stock-take/items/${itemId}/lots?${params}`
+    );
+    return response.data;
+};

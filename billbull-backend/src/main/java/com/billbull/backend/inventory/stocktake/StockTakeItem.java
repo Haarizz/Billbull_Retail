@@ -16,6 +16,7 @@ import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
 import jakarta.persistence.OneToMany;
 import jakarta.persistence.Table;
+import jakarta.persistence.Transient;
 
 @Entity
 @Table(name = "stock_take_items")
@@ -126,4 +127,11 @@ public class StockTakeItem extends BaseEntity {
 
     public List<StockTakeItemBatch> getBatches() { return batches; }
     public void setBatches(List<StockTakeItemBatch> batches) { this.batches = batches; }
+
+    /** Lot-grouped projection of {@link #batches} for the BatchEditor UI. Computed on
+     *  read; not persisted. Each lot collapses its N per-unit rows into a single entry. */
+    @Transient
+    public List<StockTakeLotGroup> getLotGroups() {
+        return StockTakeLotGroup.from(batches);
+    }
 }
