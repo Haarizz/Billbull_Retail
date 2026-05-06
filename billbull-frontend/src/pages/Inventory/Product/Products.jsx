@@ -71,7 +71,8 @@ const INITIAL_FORM_STATE = {
   tags: [],
   productType: 'stock',
   isSerial: false,
-  batchExpiryControlled: false,
+  batchControlled: false,
+  expiryControlled: false,
   isWeighing: false,
   isDiscountAllowed: true,
   maxDiscount: 0,
@@ -158,8 +159,8 @@ const buildProductPayload = (formData) => {
       productType: (formData.productType || 'stock').toUpperCase(),
       category: formData.category,
       isSerial: formData.isSerial,
-      isBatch: !!formData.batchExpiryControlled,
-      expiryEnabled: !!formData.batchExpiryControlled,
+      isBatch: !!formData.batchControlled,
+      expiryEnabled: !!formData.expiryControlled,
       isWeighing: formData.isWeighing,
       isDiscountAllowed: formData.isDiscountAllowed,
       maxDiscount: formData.maxDiscount,
@@ -711,8 +712,12 @@ const AddProductWizard = ({ onCancel, onSave, initialData, brands: initialBrands
                     Serial Number Controlled
                   </label>
                   <label className="flex items-center gap-2 cursor-pointer text-sm text-slate-600 hover:text-slate-900 transition-colors">
-                    <input type="checkbox" className="rounded text-[#F5C742] focus:ring-[#F5C742]" checked={formData.batchExpiryControlled} onChange={(e) => handleInputChange('batchExpiryControlled', e.target.checked)} />
-                    Batch &amp; Expiry Controlled
+                    <input type="checkbox" className="rounded text-[#F5C742] focus:ring-[#F5C742]" checked={formData.batchControlled} onChange={(e) => handleInputChange('batchControlled', e.target.checked)} />
+                    Batch Controlled
+                  </label>
+                  <label className="flex items-center gap-2 cursor-pointer text-sm text-slate-600 hover:text-slate-900 transition-colors">
+                    <input type="checkbox" className="rounded text-[#F5C742] focus:ring-[#F5C742]" checked={formData.expiryControlled} onChange={(e) => handleInputChange('expiryControlled', e.target.checked)} />
+                    Expiry Controlled
                   </label>
                   <label className="flex items-center gap-2 cursor-pointer text-sm text-slate-600 hover:text-slate-900 transition-colors">
                     <input type="checkbox" className="rounded text-[#F5C742] focus:ring-[#F5C742]" checked={formData.isWeighing} onChange={(e) => handleInputChange('isWeighing', e.target.checked)} />
@@ -1935,8 +1940,8 @@ const Products = () => {
         category: product?.category || '',
         productType: product?.productType ? product.productType.toLowerCase() : 'stock',
         isSerial: product?.isSerial || false,
-        // Single combined flag — true if either underlying column is set.
-        batchExpiryControlled: !!(product?.isBatch || product?.expiryEnabled),
+        batchControlled: !!product?.isBatch,
+        expiryControlled: !!product?.expiryEnabled,
         isWeighing: product?.isWeighing || false,
         isDiscountAllowed: product?.isDiscountAllowed != null ? product.isDiscountAllowed : true,
         maxDiscount: product?.maxDiscount || 0,

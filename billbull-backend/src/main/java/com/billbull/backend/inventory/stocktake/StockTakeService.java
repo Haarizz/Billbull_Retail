@@ -183,8 +183,8 @@ public class StockTakeService {
         response.setCategory(product.getCategory());
         response.setStock(stock != null ? stock : 0);
         response.setImage(image);
-        response.setBatchEnabled(product.isBatch() || product.isExpiryEnabled());
-        response.setExpiryEnabled(product.isBatch() || product.isExpiryEnabled());
+        response.setBatchEnabled(product.isBatch());
+        response.setExpiryEnabled(product.isExpiryEnabled());
 
         if (product.getDepartment() != null) {
             response.setDepartmentId(product.getDepartment().getId());
@@ -468,13 +468,13 @@ public class StockTakeService {
         item.setCategory(p.getCategory());
         item.setDescription(p.getShortDesc() != null ? p.getShortDesc() : p.getName());
         item.setPrice(p.getPricing() != null ? p.getPricing().getRetailPrice() : BigDecimal.ZERO);
-        // Batch and Expiry are now driven by a single product-master toggle, but the
-        // two underlying columns may briefly drift on legacy data. Treat the item as
-        // tracked whenever either flag is set, and force them both true so the rest
-        // of the flow has one consistent source of truth.
-        boolean tracked = p.isBatch() || p.isExpiryEnabled();
-        item.setBatchEnabled(tracked);
-        item.setExpiryEnabled(tracked);
+        // Batch and Expiry are independent product-master toggles. Each item carries
+        // its own copy of the flag so downstream logic can gate batch-number entry and
+        // expiry entry separately. An item is "tracked" (uses the batch grid for its
+        // counted qty) whenever either flag is on.
+        item.setBatchEnabled(p.isBatch());
+        item.setExpiryEnabled(p.isExpiryEnabled());
+        boolean tracked = item.isBatchEnabled() || item.isExpiryEnabled();
 
         // Fetch barcode: use the first barcode entry for this product
         java.util.List<com.billbull.backend.inventory.product.ProductBarcode> barcodes = barcodeRepo.findByProductId(p.getId());
@@ -488,8 +488,9 @@ public class StockTakeService {
         BigDecimal available = stockMovementRepo.getAvailableStock(session.getWarehouseId(), p.getId());
         item.setSystemQty(available != null ? available.intValue() : 0);
 
-        // Batch-enabled items start with countedQty=0 — quantity comes from batch entries.
-        Integer effectiveCount = item.isBatchEnabled() ? null : initialCount;
+        // Tracked items (batch and/or expiry) start without an initial count —
+        // their countedQty is the sum of batch-grid entries.
+        Integer effectiveCount = tracked ? null : initialCount;
         item.setCountedQty(effectiveCount);
         item.setVariance(effectiveCount != null ? effectiveCount - item.getSystemQty() : 0 - item.getSystemQty());
         item.setVarianceValue(item.getPrice() != null ?
@@ -508,7 +509,7 @@ public class StockTakeService {
 
     // === Batch operations ===
 
-    public StockTakeItemBatch addBatch(Long itemId, String batchNumber, java.time.LocalDate expiryDate, Integer quantity) {
+    public List<StockTakeItemBatch> addBatch(Long itemId, String batchNumber, java.time.LocalDate expiryDate, Integer quantity) {
         StockTakeItem item = itemRepo.findById(itemId)
                 .orElseThrow(() -> new RuntimeException("Item not found"));
         StockTakeSession session = item.getSession();
@@ -525,25 +526,26 @@ public class StockTakeService {
             throw new IllegalArgumentException("Expiry date is required for this item");
         }
 
-        Product product = productRepo.findById(item.getProductId()).orElse(null);
-        String itemCode = product != null ? product.getCode() : ("P" + item.getProductId());
-        String warehouseCode = "WH" + session.getWarehouseId();
-
-        String resolvedBatchNumber = batchNumber != null && !batchNumber.trim().isEmpty()
+        // The "lot prefix" is what every unit in this batch shares; the trailing
+        // "-{unitIndex}" is what makes each unit_row's batch_number unique.
+        String lotPrefix = batchNumber != null && !batchNumber.trim().isEmpty()
                 ? batchNumber.trim()
-                : nextAutoBatchNumber(item, warehouseCode, itemCode, session.getSessionId());
+                : nextAutoLotPrefix(item);
 
-        if (batchRepo.existsIdentity(itemId, resolvedBatchNumber, expiryDate, null)) {
-            throw new IllegalStateException("Batch and expiry already exists for this item: " + resolvedBatchNumber);
+        List<StockTakeItemBatch> saved = new ArrayList<>(quantity);
+        for (int unitIndex = 1; unitIndex <= quantity; unitIndex++) {
+            String unitBatchNumber = lotPrefix + "-" + unitIndex;
+            if (batchRepo.existsIdentity(itemId, unitBatchNumber, expiryDate, null)) {
+                throw new IllegalStateException("Batch and expiry already exists for this item: " + unitBatchNumber);
+            }
+            StockTakeItemBatch batch = new StockTakeItemBatch();
+            batch.setItem(item);
+            batch.setBatchNumber(unitBatchNumber);
+            batch.setExpiryDate(expiryDate);
+            batch.setQuantity(1);
+            item.getBatches().add(batch);
+            saved.add(batchRepo.save(batch));
         }
-
-        StockTakeItemBatch batch = new StockTakeItemBatch();
-        batch.setItem(item);
-        batch.setBatchNumber(resolvedBatchNumber);
-        batch.setExpiryDate(expiryDate);
-        batch.setQuantity(quantity);
-        item.getBatches().add(batch);
-        StockTakeItemBatch saved = batchRepo.save(batch);
 
         recomputeFromBatches(item);
         itemRepo.save(item);
@@ -583,6 +585,137 @@ public class StockTakeService {
         return saved;
     }
 
+    /**
+     * Update every per-unit row that belongs to a single lot in one call. Used by the
+     * BatchEditor when the user edits the batch number, expiry, or quantity on a logical
+     * lot whose underlying storage is N unit rows.
+     *
+     * lotPrefix matches StockTakeLotGroup.batchNumber (the trailing "-{unitIndex}" stripped
+     * for new-format rows; the full string for legacy rows).
+     */
+    public List<StockTakeItemBatch> updateLot(Long itemId,
+                                              String lotPrefix,
+                                              java.time.LocalDate matchExpiry,
+                                              boolean seeded,
+                                              String newBatchNumber,
+                                              java.time.LocalDate newExpiryDate,
+                                              Integer newQuantity) {
+        StockTakeItem item = itemRepo.findById(itemId)
+                .orElseThrow(() -> new RuntimeException("Item not found"));
+        if (item.getSession().getStatus() != StockTakeSession.StockTakeStatus.IN_PROGRESS) {
+            throw new IllegalStateException("Session is not in progress");
+        }
+        if (newQuantity != null && newQuantity <= 0) {
+            throw new IllegalArgumentException("Quantity must be positive");
+        }
+        if (item.isExpiryEnabled() && newExpiryDate == null && matchExpiry == null) {
+            throw new IllegalArgumentException("Expiry date is required for this item");
+        }
+
+        List<StockTakeItemBatch> rows = matchLot(item, lotPrefix, matchExpiry, seeded);
+        if (rows.isEmpty()) {
+            throw new IllegalStateException("Lot not found: " + lotPrefix);
+        }
+        // Sort by parsed unit index ascending (legacy rows fall to the end as 0).
+        rows.sort(Comparator.comparingInt(b -> BatchNumberGenerator.parseUnitIndex(b.getBatchNumber()).orElse(0)));
+
+        java.time.LocalDate effectiveExpiry = newExpiryDate != null ? newExpiryDate : matchExpiry;
+        String effectivePrefix = (newBatchNumber != null && !newBatchNumber.trim().isEmpty())
+                ? newBatchNumber.trim()
+                : lotPrefix;
+
+        // Apply the prefix/expiry rename to every existing row first.
+        for (StockTakeItemBatch b : rows) {
+            String renamed;
+            if (effectivePrefix.equals(lotPrefix)) {
+                renamed = b.getBatchNumber();
+            } else {
+                int unitIdx = BatchNumberGenerator.parseUnitIndex(b.getBatchNumber()).orElse(0);
+                // For new-format rows we substitute the prefix; for legacy rows we replace
+                // the whole batch_number with the user-supplied value (single row only).
+                renamed = unitIdx > 0 ? (effectivePrefix + "-" + unitIdx) : effectivePrefix;
+            }
+            if (!Objects.equals(renamed, b.getBatchNumber())
+                    && batchRepo.existsIdentity(item.getId(), renamed, effectiveExpiry, b.getId())) {
+                throw new IllegalStateException("Batch and expiry already exists for this item: " + renamed);
+            }
+            b.setBatchNumber(renamed);
+            if (newExpiryDate != null) b.setExpiryDate(newExpiryDate);
+            batchRepo.save(b);
+        }
+
+        // Sync row count to the requested quantity. Only valid for new-format lots: legacy
+        // single-row lots keep their integer quantity column and skip this branch.
+        boolean newFormat = BatchNumberGenerator.parseUnitIndex(rows.get(0).getBatchNumber()).isPresent();
+        if (newQuantity != null && newFormat) {
+            int current = rows.size();
+            if (newQuantity > current) {
+                int maxUnitIdx = rows.stream()
+                        .mapToInt(b -> BatchNumberGenerator.parseUnitIndex(b.getBatchNumber()).orElse(0))
+                        .max().orElse(0);
+                for (int i = 0; i < newQuantity - current; i++) {
+                    int unitIdx = maxUnitIdx + 1 + i;
+                    String unitBatchNumber = effectivePrefix + "-" + unitIdx;
+                    if (batchRepo.existsIdentity(item.getId(), unitBatchNumber, effectiveExpiry, null)) continue;
+                    StockTakeItemBatch added = new StockTakeItemBatch();
+                    added.setItem(item);
+                    added.setBatchNumber(unitBatchNumber);
+                    added.setExpiryDate(effectiveExpiry);
+                    added.setQuantity(1);
+                    added.setSeeded(seeded);
+                    item.getBatches().add(added);
+                    batchRepo.save(added);
+                }
+            } else if (newQuantity < current) {
+                // Drop rows from the highest unit index downward.
+                List<StockTakeItemBatch> toDrop = rows.subList(newQuantity, current);
+                for (StockTakeItemBatch b : toDrop) {
+                    item.getBatches().removeIf(x -> Objects.equals(x.getId(), b.getId()));
+                }
+            }
+        } else if (newQuantity != null) {
+            // Legacy single-row path: store the new qty directly on the one row.
+            StockTakeItemBatch only = rows.get(0);
+            only.setQuantity(newQuantity);
+            batchRepo.save(only);
+        }
+
+        recomputeFromBatches(item);
+        itemRepo.save(item);
+        return matchLot(item, effectivePrefix, effectiveExpiry, seeded);
+    }
+
+    public void deleteLot(Long itemId, String lotPrefix, java.time.LocalDate matchExpiry, boolean seeded) {
+        StockTakeItem item = itemRepo.findById(itemId)
+                .orElseThrow(() -> new RuntimeException("Item not found"));
+        if (item.getSession().getStatus() != StockTakeSession.StockTakeStatus.IN_PROGRESS) {
+            throw new IllegalStateException("Session is not in progress");
+        }
+        List<StockTakeItemBatch> rows = matchLot(item, lotPrefix, matchExpiry, seeded);
+        for (StockTakeItemBatch b : rows) {
+            item.getBatches().removeIf(x -> Objects.equals(x.getId(), b.getId()));
+        }
+        recomputeFromBatches(item);
+        itemRepo.save(item);
+    }
+
+    private List<StockTakeItemBatch> matchLot(StockTakeItem item,
+                                              String lotPrefix,
+                                              java.time.LocalDate matchExpiry,
+                                              boolean seeded) {
+        List<StockTakeItemBatch> rows = new ArrayList<>();
+        if (lotPrefix == null || item.getBatches() == null) return rows;
+        String normalized = lotPrefix.trim();
+        for (StockTakeItemBatch b : item.getBatches()) {
+            if (b.isSeeded() != seeded) continue;
+            if (!Objects.equals(b.getExpiryDate(), matchExpiry)) continue;
+            String parsedPrefix = BatchNumberGenerator.stripUnitIndex(b.getBatchNumber());
+            String key = parsedPrefix != null ? parsedPrefix : b.getBatchNumber();
+            if (Objects.equals(key, normalized)) rows.add(b);
+        }
+        return rows;
+    }
+
     public void deleteBatch(Long batchId) {
         StockTakeItemBatch batch = batchRepo.findById(batchId)
                 .orElseThrow(() -> new RuntimeException("Batch not found"));
@@ -599,34 +732,54 @@ public class StockTakeService {
     public String previewNextBatchNumber(Long itemId) {
         StockTakeItem item = itemRepo.findById(itemId)
                 .orElseThrow(() -> new RuntimeException("Item not found"));
-        Product product = productRepo.findById(item.getProductId()).orElse(null);
-        String itemCode = product != null ? product.getCode() : ("P" + item.getProductId());
-        String warehouseCode = "WH" + item.getSession().getWarehouseId();
-        return nextAutoBatchNumber(item, warehouseCode, itemCode, item.getSession().getSessionId());
+        return nextAutoLotPrefix(item);
     }
 
-    private String nextAutoBatchNumber(StockTakeItem item, String warehouseCode, String itemCode, String documentCode) {
+    /**
+     * Builds the lot prefix for the next logical batch the user is about to add to this item.
+     * Every unit row created from that batch will share this prefix and only differ in the
+     * trailing "-{unitIndex}" segment.
+     */
+    private String nextAutoLotPrefix(StockTakeItem item) {
         // Opening Inventory sessions emit OS-prefixed batch numbers; regular counts emit ST.
         StockIdentifier identifier =
                 item.getSession().getType() == StockTakeSession.StockTakeType.OPENING_INVENTORY
                         ? StockIdentifier.OS
                         : StockIdentifier.ST;
 
-        // Sequence: per item, per document, starts at 1
-        int existing = item.getBatches() != null ? item.getBatches().size() : 0;
-        int seq = existing + 1;
-        String candidate;
-        do {
-            candidate = BatchNumberGenerator.generate(
-                    identifier,
-                    java.time.LocalDate.now(),
-                    warehouseCode,
-                    documentCode,
-                    itemCode,
-                    seq);
-            seq++;
-        } while (batchRepo.existsByItemIdAndBatchNumber(item.getId(), candidate));
-        return candidate;
+        Product product = productRepo.findById(item.getProductId()).orElse(null);
+        String itemCode = product != null ? product.getCode() : ("P" + item.getProductId());
+
+        int lotIndex = nextLotIndexFor(item);
+        java.time.LocalDate today = java.time.LocalDate.now();
+        String prefix = BatchNumberGenerator.lotPrefix(identifier, today, lotIndex, itemCode);
+
+        // Defensive: ensure no existing row already starts with this prefix (would happen if
+        // a previous attempt aborted mid-write). Bump until clean.
+        while (anyBatchStartsWith(item, prefix + "-")) {
+            lotIndex++;
+            prefix = BatchNumberGenerator.lotPrefix(identifier, today, lotIndex, itemCode);
+        }
+        return prefix;
+    }
+
+    /** Highest lot index already in use on this item + 1; 1 if no new-format rows exist. */
+    private int nextLotIndexFor(StockTakeItem item) {
+        if (item.getBatches() == null || item.getBatches().isEmpty()) return 1;
+        int max = 0;
+        for (StockTakeItemBatch b : item.getBatches()) {
+            int parsed = BatchNumberGenerator.parseLotIndex(b.getBatchNumber()).orElse(0);
+            if (parsed > max) max = parsed;
+        }
+        return max + 1;
+    }
+
+    private boolean anyBatchStartsWith(StockTakeItem item, String prefix) {
+        if (item.getBatches() == null) return false;
+        for (StockTakeItemBatch b : item.getBatches()) {
+            if (b.getBatchNumber() != null && b.getBatchNumber().startsWith(prefix)) return true;
+        }
+        return false;
     }
 
     private void recomputeFromBatches(StockTakeItem item) {
@@ -676,31 +829,50 @@ public class StockTakeService {
             return;
         }
 
-        Product product = productRepo.findById(item.getProductId()).orElse(null);
-        String itemCode = product != null ? product.getCode() : ("P" + item.getProductId());
-        String warehouseCode = "WH" + item.getSession().getWarehouseId();
-
-        int generatedSeq = 1;
         for (Object[] row : rows) {
             int qty = row[2] != null ? ((Number) row[2]).intValue() : 0;
             if (qty <= 0) continue;
 
-            String batchNumber = row[0] != null && !row[0].toString().isBlank()
+            String sourceBatchNumber = row[0] != null && !row[0].toString().isBlank()
                     ? row[0].toString()
-                    : nextAutoBatchNumber(item, warehouseCode, itemCode, item.getSession().getSessionId() + "-FOUND" + generatedSeq++);
+                    : null;
             LocalDate expiryDate = (LocalDate) row[1];
-            if (batchRepo.existsIdentity(item.getId(), batchNumber, expiryDate, null)) {
-                continue;
-            }
 
-            StockTakeItemBatch batch = new StockTakeItemBatch();
-            batch.setItem(item);
-            batch.setBatchNumber(batchNumber);
-            batch.setExpiryDate(expiryDate);
-            batch.setQuantity(qty);
-            batch.setSeeded(true);
-            item.getBatches().add(batch);
-            batchRepo.save(batch);
+            if (sourceBatchNumber != null) {
+                // Existing system stock with a known identifier: seed it as one row whose
+                // quantity matches the on-hand qty. Whether the source string is in legacy
+                // form (W6-BIN01-...) or new per-unit form (...-L01-...-3), each
+                // (batch_number, expiry) row in stock_movements maps to a single
+                // StockTakeItemBatch row — preserving traceability.
+                if (batchRepo.existsIdentity(item.getId(), sourceBatchNumber, expiryDate, null)) {
+                    continue;
+                }
+                StockTakeItemBatch batch = new StockTakeItemBatch();
+                batch.setItem(item);
+                batch.setBatchNumber(sourceBatchNumber);
+                batch.setExpiryDate(expiryDate);
+                batch.setQuantity(qty);
+                batch.setSeeded(true);
+                item.getBatches().add(batch);
+                batchRepo.save(batch);
+            } else {
+                // Stock exists for this product/bin but no batch identifier was recorded.
+                // Mint a fresh lot of qty unit-rows so each on-hand unit becomes individually
+                // identifiable for this stock-take.
+                String lotPrefix = nextAutoLotPrefix(item);
+                for (int unitIndex = 1; unitIndex <= qty; unitIndex++) {
+                    String unitBatchNumber = lotPrefix + "-" + unitIndex;
+                    if (batchRepo.existsIdentity(item.getId(), unitBatchNumber, expiryDate, null)) continue;
+                    StockTakeItemBatch batch = new StockTakeItemBatch();
+                    batch.setItem(item);
+                    batch.setBatchNumber(unitBatchNumber);
+                    batch.setExpiryDate(expiryDate);
+                    batch.setQuantity(1);
+                    batch.setSeeded(true);
+                    item.getBatches().add(batch);
+                    batchRepo.save(batch);
+                }
+            }
         }
 
         recomputeFromBatches(item);

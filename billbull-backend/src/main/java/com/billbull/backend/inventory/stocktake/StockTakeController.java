@@ -123,6 +123,8 @@ public class StockTakeController {
     @PostMapping("/items/{itemId}/batches")
     public ResponseEntity<?> addBatch(@PathVariable Long itemId, @RequestBody BatchRequest req) {
         try {
+            // Returns N unit rows for a lot of qty=N. Each row shares the lot prefix
+            // and differs only in its trailing -{unitIndex}.
             return ResponseEntity.ok(service.addBatch(itemId, req.batchNumber, req.expiryDate, req.quantity));
         } catch (IllegalStateException | IllegalArgumentException e) {
             return ResponseEntity.badRequest().body(java.util.Map.of("message", e.getMessage()));
@@ -153,10 +155,49 @@ public class StockTakeController {
         return ResponseEntity.ok(java.util.Map.of("batchNumber", service.previewNextBatchNumber(itemId)));
     }
 
+    @PutMapping("/items/{itemId}/lots")
+    public ResponseEntity<?> updateLot(@PathVariable Long itemId, @RequestBody LotUpdateRequest req) {
+        try {
+            return ResponseEntity.ok(service.updateLot(
+                    itemId,
+                    req.lotPrefix,
+                    req.matchExpiry,
+                    req.seeded != null && req.seeded,
+                    req.newBatchNumber,
+                    req.newExpiryDate,
+                    req.newQuantity));
+        } catch (IllegalStateException | IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body(java.util.Map.of("message", e.getMessage()));
+        }
+    }
+
+    @org.springframework.web.bind.annotation.DeleteMapping("/items/{itemId}/lots")
+    public ResponseEntity<?> deleteLot(
+            @PathVariable Long itemId,
+            @RequestParam String lotPrefix,
+            @RequestParam(required = false) java.time.LocalDate matchExpiry,
+            @RequestParam(required = false, defaultValue = "false") boolean seeded) {
+        try {
+            service.deleteLot(itemId, lotPrefix, matchExpiry, seeded);
+            return ResponseEntity.ok().build();
+        } catch (IllegalStateException e) {
+            return ResponseEntity.badRequest().body(java.util.Map.of("message", e.getMessage()));
+        }
+    }
+
     public static class BatchRequest {
         public String batchNumber;
         public java.time.LocalDate expiryDate;
         public Integer quantity;
+    }
+
+    public static class LotUpdateRequest {
+        public String lotPrefix;                       // current lot prefix to locate the rows
+        public java.time.LocalDate matchExpiry;        // current expiry date (may be null)
+        public Boolean seeded;                          // current seeded flag (defaults false)
+        public String newBatchNumber;                  // optional rename
+        public java.time.LocalDate newExpiryDate;      // optional new expiry
+        public Integer newQuantity;                    // optional unit-row count to grow/shrink to
     }
 
     public static class StockTakeSessionRequest {

@@ -50,8 +50,8 @@ import {
     deleteStockTakeSession,
     getProductsForStockTake,
     addItemBatch,
-    updateItemBatch,
-    deleteItemBatch,
+    updateItemLot,
+    deleteItemLot,
     previewNextBatchNumber,
 } from '../../../api/stockTakeApi';
 
@@ -69,23 +69,44 @@ const ImpactAmount = ({ value }) => {
     return <>{amount > 0 ? '+' : ''}<CurrencyAmount value={Math.abs(amount)} /></>;
 };
 
-// Batch / expiry editor — rendered inside the count modal for batch-enabled items.
+// Batch / expiry editor — rendered inside the count modal for tracked items
+// (batch-controlled, expiry-controlled, or both — each toggle is independent).
 // countedQty is derived from the sum of batch quantities (server-side); the user enters per-batch rows here.
 //
+// One UI row corresponds to one logical lot. Storage-wise, a lot of qty=N is N
+// per-unit rows in stock_take_item_batches, each with its own batch_number ending
+// in -1, -2, ..., -N. The backend exposes them grouped via item.lotGroups; this
+// editor renders those groups and uses the lot-level update/delete endpoints to
+// apply the user's edits to all underlying unit rows in one call.
+//
 // Three operations are supported:
-//   a. Count existing batch       — edit qty on a seeded row (same identity, qty delta only)
-//   b. Add new physical batch     — use the bottom add form (creates new identity)
-//   c. Correct batch / expiry     — edit batch # or expiry on a seeded row (old identity removed, corrected identity added at same qty)
+//   a. Count existing batch       — edit qty on a seeded lot (adds/removes unit rows)
+//   b. Add new physical batch     — use the bottom add form (creates a new lot of N units)
+//   c. Correct batch / expiry     — edit batch # or expiry on a seeded lot (renames/retags every unit row in the lot)
 const BatchEditor = ({ item, disabled, onChange }) => {
-    const [batches, setBatches] = useState(item?.batches || []);
+    const [lots, setLots] = useState(item?.lotGroups || []);
     const [draft, setDraft] = useState({ batchNumber: '', expiryDate: '', quantity: 1 });
     const [busy, setBusy] = useState(false);
     const [error, setError] = useState('');
 
-    useEffect(() => { setBatches(item?.batches || []); }, [item?.id, item?.batches]);
+    useEffect(() => { setLots(item?.lotGroups || []); }, [item?.id, item?.lotGroups]);
 
-    // With the unified Batch & Expiry toggle, any tracked item requires an expiry.
-    const expiryRequired = !!(item?.expiryEnabled || item?.batchEnabled);
+    const batchEnabled = !!item?.batchEnabled;
+    const expiryEnabled = !!item?.expiryEnabled;
+    // Each tracking dimension is independent: a value is required only when its
+    // corresponding product toggle is on. Batch # falls back to a server-generated
+    // value if left blank, so it isn't strictly required client-side.
+    const expiryRequired = expiryEnabled;
+
+    // The server returns the latest StockTakeItem after every lot mutation. Its
+    // lotGroups array becomes our new state; the parent gets the same object so
+    // it can refresh totals and item status.
+    const applyServerItem = (serverItem) => {
+        if (serverItem && Array.isArray(serverItem.lotGroups)) {
+            setLots(serverItem.lotGroups);
+            onChange?.(serverItem);
+        }
+    };
 
     const handlePrefillBatchNumber = async () => {
         if (!item?.id) return;
@@ -104,15 +125,16 @@ const BatchEditor = ({ item, disabled, onChange }) => {
         if (expiryRequired && !draft.expiryDate) { setError('Expiry date is required'); return; }
         setBusy(true);
         try {
-            const saved = await addItemBatch(item.id, {
+            // Backend creates qty per-unit rows for this lot.
+            await addItemBatch(item.id, {
                 batchNumber: draft.batchNumber?.trim() || null,
                 expiryDate: draft.expiryDate || null,
                 quantity: qty,
             });
-            const next = [...batches, saved];
-            setBatches(next);
+            // Re-fetch the item via the parent (the saved response is the unit-row list,
+            // not the full item). Easiest path: ask the parent to refresh the modal item.
+            onChange?.(null);
             setDraft({ batchNumber: '', expiryDate: '', quantity: 1 });
-            onChange?.(next);
         } catch (e) {
             setError(e?.response?.data?.message || 'Failed to add batch');
         } finally {
@@ -120,13 +142,15 @@ const BatchEditor = ({ item, disabled, onChange }) => {
         }
     };
 
-    const handleDelete = async (id) => {
+    const handleDeleteLot = async (lot) => {
         setBusy(true);
         try {
-            await deleteItemBatch(id);
-            const next = batches.filter(b => b.id !== id);
-            setBatches(next);
-            onChange?.(next);
+            await deleteItemLot(item.id, {
+                lotPrefix: lot.batchNumber,
+                matchExpiry: lot.expiryDate || null,
+                seeded: lot.seeded,
+            });
+            onChange?.(null);
         } catch (e) {
             setError(e?.response?.data?.message || 'Failed to delete batch');
         } finally {
@@ -134,13 +158,22 @@ const BatchEditor = ({ item, disabled, onChange }) => {
         }
     };
 
-    const handleUpdate = async (id, patch) => {
+    const handleUpdateLot = async (lot, patch) => {
         setBusy(true);
         try {
-            const saved = await updateItemBatch(id, patch);
-            const next = batches.map(b => (b.id === id ? saved : b));
-            setBatches(next);
-            onChange?.(next);
+            const saved = await updateItemLot(item.id, {
+                lotPrefix: lot.batchNumber,
+                matchExpiry: lot.expiryDate || null,
+                seeded: lot.seeded,
+                newBatchNumber: patch.batchNumber ?? null,
+                newExpiryDate: patch.expiryDate ?? null,
+                newQuantity: patch.quantity ?? null,
+            });
+            // Server returns the unit rows for the (renamed) lot, but lot mutations may
+            // affect siblings (e.g., recompute). Ask parent to refresh for accuracy.
+            if (saved) {
+                onChange?.(null);
+            }
         } catch (e) {
             setError(e?.response?.data?.message || 'Failed to update batch');
         } finally {
@@ -148,45 +181,50 @@ const BatchEditor = ({ item, disabled, onChange }) => {
         }
     };
 
-    const seededBatches = batches.filter(b => b.seeded);
-    const newBatches = batches.filter(b => !b.seeded);
-    const total = batches.reduce((s, b) => s + (parseInt(b.quantity, 10) || 0), 0);
+    const seededLots = lots.filter(l => l.seeded);
+    const newLots = lots.filter(l => !l.seeded);
+    const total = lots.reduce((s, l) => s + (parseInt(l.quantity, 10) || 0), 0);
 
-    const renderBatchRow = (b, { allowDelete }) => (
-        <tr key={b.id} className="border-t border-slate-100">
-            <td className="px-2 py-1.5">
-                <input
-                    type="text"
-                    disabled={disabled || busy}
-                    defaultValue={b.batchNumber || ''}
-                    onBlur={(e) => {
-                        const v = e.target.value.trim();
-                        if (v && v !== b.batchNumber) {
-                            handleUpdate(b.id, { batchNumber: v });
-                        }
-                    }}
-                    className="w-full min-w-36 border border-slate-200 rounded px-1 py-0.5 font-mono text-[11px]"
-                />
-            </td>
-            <td className="px-2 py-1.5">
-                <input
-                    type="date"
-                    disabled={disabled || busy}
-                    value={b.expiryDate || ''}
-                    onChange={(e) => handleUpdate(b.id, { expiryDate: e.target.value || null })}
-                    className="border border-slate-200 rounded px-1 py-0.5 text-[11px]"
-                />
-            </td>
+    const renderLotRow = (lot, { allowDelete }) => (
+        <tr key={lot.lotKey} className="border-t border-slate-100">
+            {batchEnabled && (
+                <td className="px-2 py-1.5">
+                    <input
+                        type="text"
+                        disabled={disabled || busy}
+                        defaultValue={lot.batchNumber || ''}
+                        onBlur={(e) => {
+                            const v = e.target.value.trim();
+                            if (v && v !== lot.batchNumber) {
+                                handleUpdateLot(lot, { batchNumber: v });
+                            }
+                        }}
+                        className="w-full min-w-36 border border-slate-200 rounded px-1 py-0.5 font-mono text-[11px]"
+                        title={lot.legacy ? 'Legacy single-row batch' : `Lot covers units 1–${lot.quantity}`}
+                    />
+                </td>
+            )}
+            {expiryEnabled && (
+                <td className="px-2 py-1.5">
+                    <input
+                        type="date"
+                        disabled={disabled || busy}
+                        value={lot.expiryDate || ''}
+                        onChange={(e) => handleUpdateLot(lot, { expiryDate: e.target.value || null })}
+                        className="border border-slate-200 rounded px-1 py-0.5 text-[11px]"
+                    />
+                </td>
+            )}
             <td className="px-2 py-1.5 text-right">
                 <input
                     type="number"
                     min={0}
                     disabled={disabled || busy}
-                    defaultValue={b.quantity}
+                    defaultValue={lot.quantity}
                     onBlur={(e) => {
                         const v = parseInt(e.target.value, 10);
-                        if (Number.isFinite(v) && v > 0 && v !== b.quantity) {
-                            handleUpdate(b.id, { quantity: v });
+                        if (Number.isFinite(v) && v > 0 && v !== lot.quantity) {
+                            handleUpdateLot(lot, { quantity: v });
                         }
                     }}
                     className="w-16 border border-slate-200 rounded px-1 py-0.5 text-[11px] text-right"
@@ -197,7 +235,7 @@ const BatchEditor = ({ item, disabled, onChange }) => {
                     <button
                         type="button"
                         disabled={disabled || busy}
-                        onClick={() => handleDelete(b.id)}
+                        onClick={() => handleDeleteLot(lot)}
                         className="text-red-500 hover:text-red-700 disabled:opacity-50"
                         title="Remove this physical batch"
                     >
@@ -213,31 +251,40 @@ const BatchEditor = ({ item, disabled, onChange }) => {
     return (
         <div className="bg-white border border-slate-200 rounded-xl p-3 space-y-4">
             <div>
-                <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wide">Batches</p>
-                <p className="text-[10px] text-slate-400">Counted quantity = sum of batch quantities ({total})</p>
+                <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wide">
+                    {batchEnabled && expiryEnabled ? 'Batches' : batchEnabled ? 'Batch Numbers' : 'Expiry Dates'}
+                </p>
+                <p className="text-[10px] text-slate-400">Counted quantity = sum of row quantities ({total})</p>
             </div>
 
-            {/* Section A — Existing batches (Count existing / Correct batch+expiry) */}
+            {/* Section A — Existing rows (Count existing / Correct identity) */}
             <div>
                 <div className="flex items-center justify-between mb-1.5">
                     <div>
-                        <p className="text-[10px] font-bold text-slate-700 uppercase tracking-wide">Existing Batches</p>
-                        <p className="text-[10px] text-slate-400">Edit Qty to <strong>count existing</strong>. Edit Batch # or Expiry to <strong>correct batch / expiry</strong>.</p>
+                        <p className="text-[10px] font-bold text-slate-700 uppercase tracking-wide">
+                            Existing {batchEnabled && expiryEnabled ? 'Batches' : batchEnabled ? 'Batches' : 'Lots'}
+                        </p>
+                        <p className="text-[10px] text-slate-400">
+                            Edit Qty to <strong>count existing</strong>.
+                            {(batchEnabled || expiryEnabled) && (
+                                <> Edit {batchEnabled && 'Batch #'}{batchEnabled && expiryEnabled && ' or '}{expiryEnabled && 'Expiry'} to <strong>correct</strong> the identity.</>
+                            )}
+                        </p>
                     </div>
                 </div>
-                {seededBatches.length > 0 ? (
+                {seededLots.length > 0 ? (
                     <div className="border border-amber-100 bg-amber-50/30 rounded-lg overflow-hidden">
                         <table className="w-full text-xs">
                             <thead className="bg-amber-50 text-[10px] uppercase tracking-wide text-amber-700">
                                 <tr>
-                                    <th className="px-2 py-1.5 text-left">Batch #</th>
-                                    <th className="px-2 py-1.5 text-left">Expiry</th>
+                                    {batchEnabled && <th className="px-2 py-1.5 text-left">Batch #</th>}
+                                    {expiryEnabled && <th className="px-2 py-1.5 text-left">Expiry</th>}
                                     <th className="px-2 py-1.5 text-right">Qty</th>
                                     <th className="px-2 py-1.5"></th>
                                 </tr>
                             </thead>
                             <tbody>
-                                {seededBatches.map(b => renderBatchRow(b, { allowDelete: false }))}
+                                {seededLots.map(b => renderLotRow(b, { allowDelete: false }))}
                             </tbody>
                         </table>
                     </div>
@@ -254,19 +301,19 @@ const BatchEditor = ({ item, disabled, onChange }) => {
                     <p className="text-[10px] font-bold text-slate-700 uppercase tracking-wide">New Physical Batches</p>
                     <p className="text-[10px] text-slate-400">Use this section to <strong>add new</strong> stock you found that isn't in any existing batch.</p>
                 </div>
-                {newBatches.length > 0 && (
+                {newLots.length > 0 && (
                     <div className="border border-emerald-100 bg-emerald-50/20 rounded-lg overflow-hidden mb-3">
                         <table className="w-full text-xs">
                             <thead className="bg-emerald-50 text-[10px] uppercase tracking-wide text-emerald-700">
                                 <tr>
-                                    <th className="px-2 py-1.5 text-left">Batch #</th>
-                                    <th className="px-2 py-1.5 text-left">Expiry</th>
+                                    {batchEnabled && <th className="px-2 py-1.5 text-left">Batch #</th>}
+                                    {expiryEnabled && <th className="px-2 py-1.5 text-left">Expiry</th>}
                                     <th className="px-2 py-1.5 text-right">Qty</th>
                                     <th className="px-2 py-1.5"></th>
                                 </tr>
                             </thead>
                             <tbody>
-                                {newBatches.map(b => renderBatchRow(b, { allowDelete: true }))}
+                                {newLots.map(b => renderLotRow(b, { allowDelete: true }))}
                             </tbody>
                         </table>
                     </div>
@@ -274,39 +321,43 @@ const BatchEditor = ({ item, disabled, onChange }) => {
 
                 {!disabled && (
                     <div className="border border-dashed border-slate-200 rounded-lg p-2.5">
-                        <div className="grid grid-cols-12 gap-2 items-end">
-                            <div className="col-span-5">
-                                <label className="block text-[10px] font-bold text-slate-500 mb-1">Batch Number</label>
-                                <div className="flex gap-1">
-                                    <input
-                                        type="text"
-                                        placeholder="(auto)"
-                                        value={draft.batchNumber}
-                                        onChange={(e) => setDraft(d => ({ ...d, batchNumber: e.target.value }))}
-                                        className="flex-1 min-w-0 h-8 border border-slate-200 rounded px-2 text-[11px] focus:outline-none focus:ring-1 focus:ring-amber-400"
-                                    />
-                                    <button
-                                        type="button"
-                                        onClick={handlePrefillBatchNumber}
-                                        title="Generate batch number"
-                                        className="h-8 px-2 text-[10px] font-bold border border-slate-200 rounded hover:bg-slate-50 shrink-0"
-                                    >
-                                        Gen
-                                    </button>
+                        <div className="flex flex-wrap gap-2 items-end">
+                            {batchEnabled && (
+                                <div className="flex-1 min-w-[160px]">
+                                    <label className="block text-[10px] font-bold text-slate-500 mb-1">Batch Number</label>
+                                    <div className="flex gap-1">
+                                        <input
+                                            type="text"
+                                            placeholder="(auto)"
+                                            value={draft.batchNumber}
+                                            onChange={(e) => setDraft(d => ({ ...d, batchNumber: e.target.value }))}
+                                            className="flex-1 min-w-0 h-8 border border-slate-200 rounded px-2 text-[11px] focus:outline-none focus:ring-1 focus:ring-amber-400"
+                                        />
+                                        <button
+                                            type="button"
+                                            onClick={handlePrefillBatchNumber}
+                                            title="Generate batch number"
+                                            className="h-8 px-2 text-[10px] font-bold border border-slate-200 rounded hover:bg-slate-50 shrink-0"
+                                        >
+                                            Gen
+                                        </button>
+                                    </div>
                                 </div>
-                            </div>
-                            <div className="col-span-4">
-                                <label className="block text-[10px] font-bold text-slate-500 mb-1">
-                                    Expiry {expiryRequired && <span className="text-red-500">*</span>}
-                                </label>
-                                <input
-                                    type="date"
-                                    value={draft.expiryDate}
-                                    onChange={(e) => setDraft(d => ({ ...d, expiryDate: e.target.value }))}
-                                    className="w-full h-8 border border-slate-200 rounded px-2 text-[11px] focus:outline-none focus:ring-1 focus:ring-amber-400"
-                                />
-                            </div>
-                            <div className="col-span-2">
+                            )}
+                            {expiryEnabled && (
+                                <div className="flex-1 min-w-[140px]">
+                                    <label className="block text-[10px] font-bold text-slate-500 mb-1">
+                                        Expiry {expiryRequired && <span className="text-red-500">*</span>}
+                                    </label>
+                                    <input
+                                        type="date"
+                                        value={draft.expiryDate}
+                                        onChange={(e) => setDraft(d => ({ ...d, expiryDate: e.target.value }))}
+                                        className="w-full h-8 border border-slate-200 rounded px-2 text-[11px] focus:outline-none focus:ring-1 focus:ring-amber-400"
+                                    />
+                                </div>
+                            )}
+                            <div className="w-20 shrink-0">
                                 <label className="block text-[10px] font-bold text-slate-500 mb-1">Qty</label>
                                 <input
                                     type="number"
@@ -316,7 +367,7 @@ const BatchEditor = ({ item, disabled, onChange }) => {
                                     className="w-full h-8 border border-slate-200 rounded px-2 text-[11px] text-right focus:outline-none focus:ring-1 focus:ring-amber-400"
                                 />
                             </div>
-                            <div className="col-span-1">
+                            <div className="w-10 shrink-0">
                                 <button
                                     type="button"
                                     disabled={busy}
@@ -1558,19 +1609,16 @@ const SessionView = ({
                                 </div>
                             </div>
 
-                            {/* Batch / Expiry editor — shown whenever either flag is on (single combined product toggle) */}
+                            {/* Batch / Expiry editor — shown whenever either flag is on (independent product toggles) */}
                             {(selectedItemForCount.batchEnabled || selectedItemForCount.expiryEnabled) && (
                                 <BatchEditor
                                     item={selectedItemForCount}
                                     disabled={selectedSession?.status !== 'In Progress'}
-                                    onChange={(nextBatches) => {
-                                        const sum = nextBatches.reduce((s, b) => s + (parseInt(b.quantity, 10) || 0), 0);
-                                        setSelectedItemForCount(prev => ({
-                                            ...prev,
-                                            batches: nextBatches,
-                                            countedQty: sum,
-                                        }));
-                                        // Re-fetch session so the items table and reopened modals show fresh batches.
+                                    onChange={() => {
+                                        // Lot-level mutations may add/remove unit rows or rename
+                                        // siblings, so we refetch the session rather than patching
+                                        // a single field locally. The editor reads its own state
+                                        // from item.lotGroups, which the refresh repopulates.
                                         if (typeof refreshSelectedSession === 'function') {
                                             refreshSelectedSession();
                                         }
