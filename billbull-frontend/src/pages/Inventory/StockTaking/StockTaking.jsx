@@ -53,6 +53,9 @@ import {
     updateItemLot,
     deleteItemLot,
     previewNextBatchNumber,
+    scanStockTakeUnit,
+    getStockTakeCoverage,
+    resolveStockTakeUnitScan,
 } from '../../../api/stockTakeApi';
 
 const parseImpactAmount = (impact) => {
@@ -392,12 +395,12 @@ const BatchEditor = ({ item, disabled, onChange }) => {
 const BinSelector = ({ itemId, binId, bins, onBinChange, disabled, size = 'sm' }) => {
     const [open, setOpen] = useState(false);
     const [filter, setFilter] = useState('');
-    // Optimistic local state — shows selection immediately without waiting for API
-    const [localBinId, setLocalBinId] = useState(binId ?? null);
     const ref = useRef(null);
 
-    // Sync when parent updates (server response arrives)
-    useEffect(() => { setLocalBinId(binId ?? null); }, [binId]);
+    // Reflect the prop directly (no local optimistic copy). The parent owns the
+    // optimistic update inside its own setSelectedSession, which keeps the dropdown's
+    // displayed value consistent when the user cancels a multi-bin confirm dialog
+    // (in that case the parent never applied the change, so the old prop wins).
 
     useEffect(() => {
         if (!open) { setFilter(''); return; }
@@ -413,15 +416,14 @@ const BinSelector = ({ itemId, binId, bins, onBinChange, disabled, size = 'sm' }
         ? bins.filter(b => b.code.toLowerCase().includes(filter.toLowerCase()) || b.name?.toLowerCase().includes(filter.toLowerCase()))
         : bins;
 
-    const selected = bins.find(b => String(b.id) === String(localBinId));
+    const selected = bins.find(b => String(b.id) === String(binId));
 
     const handleSelect = (e, bin) => {
         e.stopPropagation();
         e.preventDefault();
         const newBinId = bin ? bin.id : null;
-        setLocalBinId(newBinId);   // immediate optimistic update
         setOpen(false);
-        onBinChange(itemId, newBinId); // background API call
+        onBinChange(itemId, newBinId); // parent applies the optimistic update + persists
     };
 
     if (size === 'sm') {
@@ -477,14 +479,14 @@ const BinSelector = ({ itemId, binId, bins, onBinChange, disabled, size = 'sm' }
                                     onMouseDown={(e) => e.stopPropagation()}
                                     onClick={(e) => handleSelect(e, b)}
                                     className={`w-full text-left px-3 py-2 text-[10px] font-bold flex items-center gap-2 transition-colors
-                                        ${String(b.id) === String(localBinId)
+                                        ${String(b.id) === String(binId)
                                             ? 'bg-amber-50 text-amber-700'
                                             : 'text-slate-700 hover:bg-slate-50'}`}
                                 >
-                                    <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${String(b.id) === String(localBinId) ? 'bg-amber-400' : 'bg-slate-200'}`} />
+                                    <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${String(b.id) === String(binId) ? 'bg-amber-400' : 'bg-slate-200'}`} />
                                     <span className="font-mono">{b.code}</span>
                                     {b.name && <span className="text-slate-400 font-normal truncate ml-1">— {b.name}</span>}
-                                    {String(b.id) === String(localBinId) && <Check className="h-2.5 w-2.5 ml-auto text-amber-500 shrink-0" />}
+                                    {String(b.id) === String(binId) && <Check className="h-2.5 w-2.5 ml-auto text-amber-500 shrink-0" />}
                                 </button>
                             ))}
                             {filtered.length === 0 && (
@@ -551,14 +553,14 @@ const BinSelector = ({ itemId, binId, bins, onBinChange, disabled, size = 'sm' }
                                 onMouseDown={(e) => e.stopPropagation()}
                                 onClick={(e) => handleSelect(e, b)}
                                 className={`w-full text-left px-3 py-2 text-xs font-bold flex items-center gap-2.5 transition-colors
-                                    ${String(b.id) === String(localBinId)
+                                    ${String(b.id) === String(binId)
                                         ? 'bg-amber-50 text-amber-700'
                                         : 'text-slate-700 hover:bg-slate-50'}`}
                             >
-                                <span className={`w-2 h-2 rounded-full shrink-0 ${String(b.id) === String(localBinId) ? 'bg-amber-400' : 'bg-slate-200'}`} />
+                                <span className={`w-2 h-2 rounded-full shrink-0 ${String(b.id) === String(binId) ? 'bg-amber-400' : 'bg-slate-200'}`} />
                                 <span className="font-mono font-bold">{b.code}</span>
                                 {b.name && <span className="text-slate-400 font-normal truncate">— {b.name}</span>}
-                                {String(b.id) === String(localBinId) && (
+                                {String(b.id) === String(binId) && (
                                     <Check className="h-3 w-3 ml-auto text-amber-500 shrink-0" />
                                 )}
                             </button>
@@ -748,6 +750,22 @@ const mapStockTakeItem = (item) => ({
     impact: item?.varianceValue ? `${item.varianceValue > 0 ? '+' : ''}AED ${Math.abs(item.varianceValue).toFixed(2)}` : null,
     status: item?.status ? item.status.charAt(0) + item.status.slice(1).toLowerCase() : 'Pending',
 });
+
+const isInventoryCountingSession = (session) => (
+    session?.type === 'INVENTORY_COUNTING' ||
+    session?.type === 'Inventory Counting'
+);
+
+const mapScanStatusMessage = (status) => {
+    switch (status) {
+        case 'COUNTED': return { type: 'success', title: 'Unit Counted', message: 'The unit barcode was counted.' };
+        case 'WRONG_BIN': return { type: 'warning', title: 'Wrong Location', message: 'The unit was counted in a different bin than expected.' };
+        case 'DUPLICATE':
+        case 'ALREADY_COUNTED': return { type: 'warning', title: 'Duplicate Scan', message: 'This unit was already counted.' };
+        case 'UNKNOWN': return { type: 'warning', title: 'Unexpected Barcode', message: 'This barcode is not in the expected stock snapshot.' };
+        default: return { type: 'info', title: 'Scan Recorded', message: 'The scan was recorded.' };
+    }
+};
 
 const ListView = ({
     activeTab,
@@ -1003,6 +1021,11 @@ const SessionView = ({
     lastScannedAt,
     warehouseBins,
     handleBinChange,
+    stockTakeCoverage,
+    selectedScanBinId,
+    setSelectedScanBinId,
+    setCoverageProduct,
+    handleResolveUnknownScan,
     // Count modal state lifted to parent
     isCountModalOpen, setIsCountModalOpen,
     selectedItemForCount, setSelectedItemForCount,
@@ -1023,9 +1046,16 @@ const SessionView = ({
     );
 
     const [entryMode, setEntryMode] = useState('scan'); // 'scan' or 'manual'
+    const isInventoryCounting = isInventoryCountingSession(selectedSession);
+    const coverageProducts = stockTakeCoverage?.products || [];
 
     const openCountModal = (item) => {
         if (selectedSession?.status !== 'In Progress') return;
+        if (isInventoryCounting) {
+            const coverage = coverageProducts.find(p => String(p.productId) === String(item.productId));
+            setCoverageProduct?.(coverage ? { ...coverage, item } : { item, productName: item.productName, productId: item.productId });
+            return;
+        }
         // Allow row-click in either scan or manual mode — useful for batched items
         // where the user needs to manage batches without flipping the entry-mode toggle.
         setSelectedItemForCount(item);
@@ -1230,6 +1260,18 @@ const SessionView = ({
 
                         {entryMode === 'scan' && (
                             <>
+                                {isInventoryCounting && (
+                                    <select
+                                        value={selectedScanBinId || ''}
+                                        onChange={(e) => setSelectedScanBinId?.(e.target.value ? Number(e.target.value) : '')}
+                                        className="h-9 min-w-[160px] px-3 bg-white border border-slate-200 rounded-lg text-[11px] font-bold text-slate-700 outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-400"
+                                    >
+                                        <option value="">Select scan bin</option>
+                                        {warehouseBins.map(bin => (
+                                            <option key={bin.id} value={bin.id}>{bin.code || bin.name}</option>
+                                        ))}
+                                    </select>
+                                )}
                                 <div className="relative flex-grow min-w-[200px]">
                                     <input
                                         ref={barcodeInputRef}
@@ -1323,7 +1365,7 @@ const SessionView = ({
                                                         binCode={item.binCode}
                                                         bins={warehouseBins}
                                                         onBinChange={handleBinChange}
-                                                        disabled={selectedSession?.status !== 'In Progress'}
+                                                        disabled={selectedSession?.status !== 'In Progress' || isInventoryCounting}
                                                         size="sm"
                                                     />
                                                 ) : (
@@ -1337,7 +1379,7 @@ const SessionView = ({
                                                         type="number"
                                                         value={item.countedQty === null ? '' : item.countedQty}
                                                         onChange={(e) => handleCountChange(item.id, e.target.value)}
-                                                        disabled={selectedSession?.status !== 'In Progress' || entryMode !== 'manual' || item.batchEnabled || item.expiryEnabled}
+                                                        disabled={selectedSession?.status !== 'In Progress' || isInventoryCounting || entryMode !== 'manual' || item.batchEnabled || item.expiryEnabled}
                                                         title={(item.batchEnabled || item.expiryEnabled) ? 'Open the item to manage batches' : undefined}
                                                         placeholder="0"
                                                         className={`w-16 px-1.5 py-0.5 rounded text-[10px] font-bold text-slate-900 text-center focus:ring-1 outline-none transition-all disabled:opacity-50 disabled:bg-slate-100 ${
@@ -1379,7 +1421,7 @@ const SessionView = ({
                                             <td className="px-4 py-2.5 text-right" onClick={(e) => e.stopPropagation()}>
                                                 <button
                                                     onClick={() => handleDeleteItem(item.id)}
-                                                    disabled={selectedSession?.status !== 'In Progress'}
+                                                    disabled={selectedSession?.status !== 'In Progress' || isInventoryCounting}
                                                     className="p-1 text-slate-400 hover:text-red-500 rounded transition-colors disabled:opacity-50"
                                                     title="Delete Item"
                                                 >
@@ -1414,6 +1456,34 @@ const SessionView = ({
                         </div>
 
                         <div className="space-y-2.5">
+                            {isInventoryCounting && stockTakeCoverage && (
+                                <>
+                                    <div className="flex justify-between items-center text-slate-900 pt-1">
+                                        <span className="text-[11px] font-bold opacity-80">Expected Units</span>
+                                        <span className="text-base font-black tracking-tight">{stockTakeCoverage.expectedUnits || 0}</span>
+                                    </div>
+                                    <div className="flex justify-between items-center text-slate-900 pt-1">
+                                        <span className="text-[11px] font-bold opacity-80">Scanned Units</span>
+                                        <span className="text-base font-black tracking-tight">{stockTakeCoverage.scannedUnits || 0}</span>
+                                    </div>
+                                    <div className="flex justify-between items-center text-slate-900 pt-1">
+                                        <span className="text-[11px] font-bold opacity-80">Missing Units</span>
+                                        <span className="text-base font-black tracking-tight">{stockTakeCoverage.missingUnits || 0}</span>
+                                    </div>
+                                    <div className="flex justify-between items-center text-slate-900 pt-1">
+                                        <span className="text-[11px] font-bold opacity-80">Wrong Location</span>
+                                        <span className="text-base font-black tracking-tight">{stockTakeCoverage.wrongBinUnits || 0}</span>
+                                    </div>
+                                    <div className="flex justify-between items-center text-slate-900 pt-1">
+                                        <span className="text-[11px] font-bold opacity-80">Duplicates</span>
+                                        <span className="text-base font-black tracking-tight">{stockTakeCoverage.duplicateScans || 0}</span>
+                                    </div>
+                                    <div className="flex justify-between items-center text-slate-900 pb-2 border-b border-black/10">
+                                        <span className="text-[11px] font-bold opacity-80">Unexpected</span>
+                                        <span className="text-base font-black tracking-tight">{stockTakeCoverage.unexpectedScans || 0}</span>
+                                    </div>
+                                </>
+                            )}
                             <div className="flex justify-between items-center text-slate-900 pt-1">
                                 <span className="text-[11px] font-bold opacity-80">Total Items</span>
                                 <span className="text-base font-black tracking-tight">{items.length}</span>
@@ -1466,6 +1536,60 @@ const SessionView = ({
                             </div>
                         )}
                     </div>
+
+                    {isInventoryCounting && stockTakeCoverage?.unknownScans?.length > 0 && (
+                        <div className="bg-white border border-amber-200 rounded-xl p-4 shadow-sm space-y-3">
+                            <div className="flex items-center gap-2 text-amber-700">
+                                <AlertTriangle className="h-4 w-4" />
+                                <h3 className="font-bold text-sm">Unexpected</h3>
+                            </div>
+                            <div className="space-y-2 max-h-48 overflow-y-auto">
+                                {stockTakeCoverage.unknownScans.map(scan => (
+                                    <div key={scan.id || scan.barcode} className="rounded-lg border border-slate-200 bg-slate-50 p-2">
+                                        <p className="text-[10px] font-black font-mono text-slate-800 break-all">{scan.barcode}</p>
+                                        <p className="text-[10px] text-slate-500 font-semibold mt-0.5">{scan.scannedBinCode || 'No bin'} {scan.productName ? `| ${scan.productName}` : ''}</p>
+                                        <div className="flex gap-1.5 mt-2">
+                                            {scan.productId && (
+                                                <button
+                                                    onClick={() => handleResolveUnknownScan?.(scan.id, 'ACCEPT_AS_FOUND', scan.productId)}
+                                                    className="px-2 py-1 text-[9px] font-bold rounded bg-emerald-600 text-white hover:bg-emerald-700"
+                                                >
+                                                    Accept
+                                                </button>
+                                            )}
+                                            <button
+                                                onClick={() => handleResolveUnknownScan?.(scan.id, 'IGNORE')}
+                                                className="px-2 py-1 text-[9px] font-bold rounded bg-white border border-slate-200 text-slate-600 hover:bg-slate-100"
+                                            >
+                                                Ignore
+                                            </button>
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    )}
+
+                    {isInventoryCounting && stockTakeCoverage?.missedProducts?.length > 0 && (
+                        <div className="bg-white border border-red-200 rounded-xl p-4 shadow-sm space-y-3">
+                            <div className="flex items-center gap-2 text-red-600">
+                                <PackageSearch className="h-4 w-4" />
+                                <h3 className="font-bold text-sm">Missed Products</h3>
+                            </div>
+                            <div className="space-y-2 max-h-48 overflow-y-auto">
+                                {stockTakeCoverage.missedProducts.map(product => (
+                                    <button
+                                        key={product.productId}
+                                        onClick={() => setCoverageProduct?.(product)}
+                                        className="w-full text-left rounded-lg border border-slate-200 bg-slate-50 p-2 hover:bg-slate-100 transition-colors"
+                                    >
+                                        <p className="text-[11px] font-bold text-slate-800 leading-tight">{product.productName}</p>
+                                        <p className="text-[10px] font-semibold text-red-500">{product.missingQty || 0} missing units</p>
+                                    </button>
+                                ))}
+                            </div>
+                        </div>
+                    )}
 
                     {/* Sidebar Primary Actions */}
                     {selectedSession?.status === 'In Progress' && (
@@ -1796,6 +1920,9 @@ const StockTaking = () => {
 
     const [allSessions, setAllSessions] = useState([]);
     const [warehouseBins, setWarehouseBins] = useState([]);
+    const [stockTakeCoverage, setStockTakeCoverage] = useState(null);
+    const [selectedScanBinId, setSelectedScanBinId] = useState('');
+    const [coverageProduct, setCoverageProduct] = useState(null);
     // Count modal state (shared between SessionView and ProductSelector flow)
     const [isCountModalOpen, setIsCountModalOpen] = useState(false);
     const [selectedItemForCount, setSelectedItemForCount] = useState(null);
@@ -1842,9 +1969,30 @@ const StockTaking = () => {
 
     const showNotif = React.useCallback((type, title, message) => setNotifModal({ type, title, message }), []);
 
+    const refreshCoverage = React.useCallback(async (session = selectedSession) => {
+        if (!session?.sessionId || !isInventoryCountingSession(session)) {
+            setStockTakeCoverage(null);
+            return null;
+        }
+        try {
+            const coverage = await getStockTakeCoverage(session.sessionId);
+            setStockTakeCoverage(coverage);
+            return coverage;
+        } catch (error) {
+            console.error('Failed to load stock take coverage', error);
+            return null;
+        }
+    }, [selectedSession]);
+
     React.useEffect(() => {
         fetchSessions();
     }, []);
+
+    React.useEffect(() => {
+        if (isInventoryCountingSession(selectedSession) && !selectedScanBinId && warehouseBins.length > 0) {
+            setSelectedScanBinId(warehouseBins[0].id);
+        }
+    }, [selectedSession, selectedScanBinId, warehouseBins]);
 
     const fetchSessions = async () => {
         setIsLoading(true);
@@ -1960,12 +2108,12 @@ const StockTaking = () => {
                 dbId: newSessionRes.id,
                 warehouse: newSessionRes.warehouseName || newSessionRes.warehouse || '',
                 ...sessionTimestamps,
-                progress: 0,
-                total: 0,
+                progress: newSessionRes.items?.length || 0,
+                total: newSessionRes.items?.length || 0,
                 status: 'In Progress',
                 action: 'Continue',
                 // Session starts empty — products are added on-demand via search/scan
-                items: [],
+                items: (newSessionRes.items || []).map(mapStockTakeItem),
                 categoryId: newSessionRes.categoryId || null,
                 brandId: newSessionRes.brandId || null,
             };
@@ -1974,8 +2122,13 @@ const StockTaking = () => {
             setSelectedSession(mappedSession);
             setLastScannedItem(null);
             setLastScannedAt(null);
+            refreshCoverage(mappedSession);
             // Fetch bins for the selected warehouse so the session view has them ready
-            getWarehouseBins(wh.id).then(bins => setWarehouseBins(Array.isArray(bins) ? bins : [])).catch(() => {});
+            getWarehouseBins(wh.id).then(bins => {
+                const list = Array.isArray(bins) ? bins : [];
+                setWarehouseBins(list);
+                if (!selectedScanBinId && list.length > 0) setSelectedScanBinId(list[0].id);
+            }).catch(() => {});
             setViewMode('session');
             setIsCreateModalOpen(false);
         } catch (error) {
@@ -1990,8 +2143,16 @@ const StockTaking = () => {
     // No longer needed as backend provides full enrichment
 
 
-    const handleSelectProduct = async (product, initialCount = null) => {
+    // options:
+    //   binId   — when set, adds (or matches) a row for this product in the given bin.
+    //             The same product can have multiple rows in a session as long as each
+    //             targets a different binId (or one is unbinned). Without binId the row
+    //             is created without a bin and the user assigns one in the count modal.
+    //   forceNew — when true, bypass the duplicate-product short-circuit so the caller
+    //              can explicitly create a second row (e.g. user picked "Add for another bin").
+    const handleSelectProduct = async (product, initialCount = null, options = {}) => {
         if (!selectedSession) return;
+        const { binId = null, forceNew = false } = options;
 
         const normalizedProduct = normalizeSelectorProduct(product);
         const productId = normalizedProduct.id;
@@ -2003,17 +2164,30 @@ const StockTaking = () => {
             return null;
         }
 
-        // Guard: drop concurrent calls for the same SKU (rapid barcode scanner Enter events)
-        if (addingSkusRef.current.has(sku)) return;
-        addingSkusRef.current.add(sku);
+        // Guard: drop concurrent calls for the same product+bin (rapid barcode scanner
+        // Enter events). Different bins are independent rows so they get independent keys.
+        const guardKey = `${sku}|${binId ?? ''}`;
+        if (addingSkusRef.current.has(guardKey)) return;
+        addingSkusRef.current.add(guardKey);
 
         setIsLoading(true);
 
-        const existingItem = selectedSession.items?.find(i =>
+        // Duplicate match is per (product, binId): same product in a different bin
+        // is NOT a duplicate. Unbinned (binId == null) is its own slot.
+        const matchesProduct = (i) =>
             String(i.productId) === String(productId) ||
             (sku && i.sku === sku) ||
-            (normalizedProduct.barcode && i.barcode === normalizedProduct.barcode)
-        );
+            (normalizedProduct.barcode && i.barcode === normalizedProduct.barcode);
+        const matchesBin = (i) =>
+            (i.binId == null && binId == null) ||
+            (i.binId != null && binId != null && String(i.binId) === String(binId));
+
+        const existingItem = !forceNew
+            ? selectedSession.items?.find(i => matchesProduct(i) && matchesBin(i))
+            : null;
+        const otherBinRowExists = forceNew
+            ? false
+            : selectedSession.items?.some(i => matchesProduct(i) && !matchesBin(i));
 
         if (existingItem) {
             if (initialCount !== null && !(existingItem.batchEnabled || existingItem.expiryEnabled)) {
@@ -2021,13 +2195,14 @@ const StockTaking = () => {
                 setLastScannedItem({ ...existingItem, countedQty: (existingItem.countedQty || 0) + initialCount });
                 setLastScannedAt(new Date());
             } else if (initialCount === null) {
-                showNotif('info', 'Already Added', 'This product is already in the session.');
+                showNotif('info', 'Already Added',
+                    'This product is already in the session for this bin. Pick a different bin to add it again.');
             } else {
                 setLastScannedItem(existingItem);
                 setLastScannedAt(new Date());
             }
             setIsLoading(false);
-            addingSkusRef.current.delete(sku);
+            addingSkusRef.current.delete(guardKey);
             return existingItem;
         }
 
@@ -2035,8 +2210,14 @@ const StockTaking = () => {
             const newItem = await addItemToSession(
                 selectedSession.sessionId,
                 productId,
-                initialCount !== null ? initialCount : 0
+                initialCount !== null ? initialCount : 0,
+                binId
             );
+
+            if (otherBinRowExists) {
+                showNotif('info', 'Added for Different Bin',
+                    'This product was already in the session — added a separate row for the new bin.');
+            }
 
             const mappedItem = mapStockTakeItem(newItem);
 
@@ -2065,7 +2246,7 @@ const StockTaking = () => {
             setIsLoading(false);
             return null;
         } finally {
-            addingSkusRef.current.delete(sku);
+            addingSkusRef.current.delete(guardKey);
         }
     };
 
@@ -2111,6 +2292,12 @@ const StockTaking = () => {
     const handleProductSelectorSelect = async (product) => {
         setIsProductSelectorOpen(false);
         const normalizedProduct = normalizeSelectorProduct(product);
+        if (isInventoryCountingSession(selectedSession)) {
+            const existingItem = selectedSession?.items?.find(i => String(i.productId) === String(normalizedProduct.id));
+            const coverage = stockTakeCoverage?.products?.find(p => String(p.productId) === String(normalizedProduct.id));
+            setCoverageProduct(coverage ? { ...coverage, item: existingItem } : { item: existingItem, productName: normalizedProduct.name, productId: normalizedProduct.id });
+            return;
+        }
         const isTracked = !!(normalizedProduct.batchEnabled || normalizedProduct.expiryEnabled);
 
         if (isTracked) {
@@ -2157,6 +2344,10 @@ const StockTaking = () => {
 
     const handleCountChange = (itemId, value) => {
         if (!selectedSession) return;
+        if (isInventoryCountingSession(selectedSession)) {
+            showNotif('info', 'Unit Scan Required', 'Inventory counting uses unit barcodes, so counted quantity is updated by scans.');
+            return;
+        }
 
         const counted = value === '' ? null : parseInt(value);
         if (counted !== null && isNaN(counted)) return;
@@ -2221,22 +2412,78 @@ const StockTaking = () => {
 
     const handleBinChange = async (itemId, binId) => {
         if (!selectedSession) return;
-        // Capture current item state for rollback
+        if (isInventoryCountingSession(selectedSession)) {
+            showNotif('info', 'Expected Bin Locked', 'Inventory counting keeps the expected bin from the snapshot. Use the scan-bin selector to record where the unit was found.');
+            return;
+        }
+
         const prevItem = selectedSession.items.find(i => i.id === itemId);
-        // Optimistic update — show change immediately in the table row
-        const bin = warehouseBins.find(b => String(b.id) === String(binId));
+        const newBinIdNum = binId ? Number(binId) : null;
+        const prevBinIdNum = prevItem?.binId ?? null;
+
+        // If the user is reassigning a row that was ALREADY at a real bin to a DIFFERENT
+        // real bin, ask whether they want to move this row or keep it and add a new row
+        // for the new bin (the multi-bin-per-product workflow).
+        if (prevItem && prevBinIdNum != null && newBinIdNum != null && prevBinIdNum !== newBinIdNum) {
+            const newBin = warehouseBins.find(b => String(b.id) === String(newBinIdNum));
+            const oldBinCode = prevItem.binCode || `Bin #${prevBinIdNum}`;
+            const newBinCode = newBin?.code || `Bin #${newBinIdNum}`;
+            setNotifModal({
+                type: 'confirm',
+                title: 'Same product, different bin',
+                message: `This product is currently at ${oldBinCode}. Add a separate row at ${newBinCode}, or move this row to ${newBinCode}?`,
+                confirmLabel: `Add row at ${newBinCode}`,
+                confirmClass: 'bg-amber-500 hover:bg-amber-600 text-white',
+                onConfirm: async () => {
+                    setNotifModal(null);
+                    try {
+                        const newItem = await addItemToSession(
+                            selectedSession.sessionId,
+                            prevItem.productId,
+                            0,
+                            newBinIdNum
+                        );
+                        const mapped = mapStockTakeItem(newItem);
+                        setSelectedSession(prev => ({
+                            ...prev,
+                            items: [mapped, ...(prev.items || [])]
+                        }));
+                        setUndoHistory(prev => [...prev, { type: 'ADD_ITEM', itemId: newItem.id }]);
+                        showNotif('success', 'Row Added',
+                            `Added a separate row for this product at ${newBinCode}.`);
+                    } catch (error) {
+                        showNotif('error', 'Failed to Add',
+                            error?.response?.data?.message || 'Could not add a row for the new bin.');
+                    }
+                },
+                cancelLabel: `Move to ${newBinCode}`,
+                onCancel: () => {
+                    setNotifModal(null);
+                    moveRowToBin(itemId, newBinIdNum, prevItem);
+                },
+            });
+            return;
+        }
+
+        // Direct path: row is unbinned, or user cleared the bin, or picked the same bin.
+        await moveRowToBin(itemId, newBinIdNum, prevItem);
+    };
+
+    // Reassigns an item's bin in place (the original updateItemBin behaviour). Extracted
+    // so handleBinChange can call it from either the direct path or the confirm-dialog path.
+    const moveRowToBin = async (itemId, newBinIdNum, prevItem) => {
+        const bin = warehouseBins.find(b => String(b.id) === String(newBinIdNum));
         setSelectedSession(prev => ({
             ...prev,
             items: prev.items.map(item =>
                 item.id === itemId
-                    ? { ...item, binId: binId ? Number(binId) : null, binCode: bin?.code || null }
+                    ? { ...item, binId: newBinIdNum, binCode: bin?.code || null }
                     : item
             )
         }));
         try {
-            const updated = await updateApiBin(itemId, binId || null);
+            const updated = await updateApiBin(itemId, newBinIdNum);
             const mappedUpdated = mapStockTakeItem(updated);
-            // Sync server response to get zoneId / locatorId
             setSelectedSession(prev => ({
                 ...prev,
                 items: prev.items.map(item =>
@@ -2248,7 +2495,6 @@ const StockTaking = () => {
             setSelectedItemForCount(prev => prev?.id === itemId ? { ...prev, ...mappedUpdated } : prev);
         } catch (error) {
             console.error('Failed to update bin assignment:', error);
-            // Revert optimistic update so the UI doesn't show a bin that wasn't saved
             setSelectedSession(prev => ({
                 ...prev,
                 items: prev.items.map(item =>
@@ -2323,6 +2569,7 @@ const StockTaking = () => {
                 const fresh = (detail.items || []).find(it => it.id === prev.id);
                 return fresh ? { ...prev, ...fresh } : prev;
             });
+            refreshCoverage({ ...selectedSession, ...detail, sessionId: detail.sessionId || selectedSession.sessionId });
         } catch (e) {
             console.error('Failed to refresh session', e);
         }
@@ -2331,10 +2578,18 @@ const StockTaking = () => {
     const handleSubmitApproval = async () => {
         if (!selectedSession) return;
 
-        const itemsWithoutBin = (selectedSession.items || []).filter(item => !item.binId);
-        if (itemsWithoutBin.length > 0) {
-            showNotif('warning', 'Bin Required', `${itemsWithoutBin.length} item(s) are missing a bin assignment. Please assign a bin to all items before submitting.`);
-            return;
+        if (isInventoryCountingSession(selectedSession)) {
+            const latestCoverage = await refreshCoverage(selectedSession);
+            if ((latestCoverage?.unexpectedScans || 0) > 0) {
+                showNotif('warning', 'Review Unexpected Scans', 'Unexpected unit scans must be accepted as found stock or ignored before submitting.');
+                return;
+            }
+        } else {
+            const itemsWithoutBin = (selectedSession.items || []).filter(item => !item.binId);
+            if (itemsWithoutBin.length > 0) {
+                showNotif('warning', 'Bin Required', `${itemsWithoutBin.length} item(s) are missing a bin assignment. Please assign a bin to all items before submitting.`);
+                return;
+            }
         }
 
         try {
@@ -2343,7 +2598,19 @@ const StockTaking = () => {
             setViewMode('list');
         } catch (error) {
             console.error("Error submitting for approval:", error);
-            showNotif('error', 'Error', 'Failed to submit session.');
+            showNotif('error', 'Error', error?.response?.data?.message || 'Failed to submit session.');
+        }
+    };
+
+    const handleResolveUnknownScan = async (scanId, action, productId = null) => {
+        if (!scanId) return;
+        try {
+            await resolveStockTakeUnitScan(scanId, { action, productId });
+            await refreshCoverage(selectedSession);
+            showNotif('success', 'Unexpected Scan Updated', action === 'IGNORE' ? 'The scan was ignored.' : 'The unit was accepted as found stock.');
+        } catch (error) {
+            console.error("Failed to resolve unexpected scan:", error);
+            showNotif('error', 'Error', error?.response?.data?.message || 'Failed to resolve unexpected scan.');
         }
     };
 
@@ -2432,6 +2699,53 @@ const StockTaking = () => {
         if (e.key === 'Enter' && barcodeInput.trim()) {
             const scanned = barcodeInput.trim();
 
+            if (isInventoryCountingSession(selectedSession)) {
+                const existingItem = selectedSession?.items?.find(
+                    i => i.sku === scanned || i.barcode === scanned
+                );
+                if (existingItem) {
+                    const coverage = stockTakeCoverage?.products?.find(p => String(p.productId) === String(existingItem.productId));
+                    setCoverageProduct(coverage ? { ...coverage, item: existingItem } : { item: existingItem, productName: existingItem.productName, productId: existingItem.productId });
+                    setBarcodeInput('');
+                    barcodeInputRef.current?.focus();
+                    return;
+                }
+
+                if (!selectedScanBinId) {
+                    showNotif('warning', 'Select Bin', 'Please select the bin/location before scanning unit barcodes.');
+                    return;
+                }
+
+                setIsLoading(true);
+                try {
+                    const scan = await scanStockTakeUnit(selectedSession.sessionId, {
+                        barcode: scanned,
+                        binId: selectedScanBinId,
+                    });
+                    const statusMessage = mapScanStatusMessage(scan?.status);
+                    if (scan?.status !== 'COUNTED') {
+                        showNotif(statusMessage.type, statusMessage.title, scan?.message || statusMessage.message);
+                    }
+                    setLastScannedItem({
+                        productName: scan?.productName || scanned,
+                        name: scan?.productName || scanned,
+                    });
+                    setLastScannedAt(new Date());
+                    setBarcodeInput('');
+                    setScanFlash(true);
+                    setTimeout(() => setScanFlash(false), 300);
+                    await refreshSelectedSession();
+                    await refreshCoverage(selectedSession);
+                } catch (error) {
+                    console.error("Unit barcode scan failed:", error);
+                    showNotif('error', 'Scan Error', error?.response?.data?.message || 'Failed to scan unit barcode.');
+                } finally {
+                    setIsLoading(false);
+                    barcodeInputRef.current?.focus();
+                }
+                return;
+            }
+
             // BB-011: If item already exists in session, open count modal to adjust count
             const existingItem = selectedSession?.items?.find(
                 i => i.sku === scanned || i.barcode === scanned
@@ -2508,7 +2822,9 @@ const StockTaking = () => {
                 getStockTakeSession(session.sessionId),
                 getWarehouseBins(session.warehouseId).catch(() => [])
             ]);
-            setWarehouseBins(Array.isArray(bins) ? bins : []);
+            const binList = Array.isArray(bins) ? bins : [];
+            setWarehouseBins(binList);
+            if (!selectedScanBinId && binList.length > 0) setSelectedScanBinId(binList[0].id);
             const sessionTimestamps = mapSessionTimestamps(detail);
             const mapped = {
                 ...detail,
@@ -2529,6 +2845,7 @@ const StockTaking = () => {
                 }))
             };
             setSelectedSession(mapped);
+            refreshCoverage(mapped);
             setLastScannedItem(null);
             setLastScannedAt(null);
             if (mapped.status === 'Pending Approval') {
@@ -2645,6 +2962,11 @@ const StockTaking = () => {
                     lastScannedAt={lastScannedAt}
                     warehouseBins={warehouseBins}
                     handleBinChange={handleBinChange}
+                    stockTakeCoverage={stockTakeCoverage}
+                    selectedScanBinId={selectedScanBinId}
+                    setSelectedScanBinId={setSelectedScanBinId}
+                    setCoverageProduct={setCoverageProduct}
+                    handleResolveUnknownScan={handleResolveUnknownScan}
                     isCountModalOpen={isCountModalOpen}
                     setIsCountModalOpen={setIsCountModalOpen}
                     selectedItemForCount={selectedItemForCount}
@@ -2683,6 +3005,85 @@ const StockTaking = () => {
                 actionLabel="Add to Session"
                 customFetchFn={stockTakeProductsFn}
             />
+
+            {coverageProduct && (
+                <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm animate-in fade-in duration-200">
+                    <div className="bg-white rounded-2xl shadow-xl w-full max-w-2xl overflow-hidden border border-slate-200">
+                        <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100">
+                            <div>
+                                <h2 className="text-base font-bold text-slate-800">Product Coverage</h2>
+                                <p className="text-xs text-slate-500">{coverageProduct.productName || coverageProduct.item?.productName}</p>
+                            </div>
+                            <button
+                                onClick={() => setCoverageProduct(null)}
+                                className="p-2 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-full transition-colors"
+                            >
+                                <X className="h-4 w-4" />
+                            </button>
+                        </div>
+                        <div className="p-5 space-y-4 max-h-[72vh] overflow-y-auto">
+                            <div className="grid grid-cols-3 gap-3">
+                                <div className="rounded-xl border border-slate-200 p-3">
+                                    <p className="text-[10px] font-bold text-slate-400 uppercase">Expected Qty</p>
+                                    <p className="text-xl font-black text-slate-900">{coverageProduct.expectedQty || 0}</p>
+                                </div>
+                                <div className="rounded-xl border border-emerald-200 p-3">
+                                    <p className="text-[10px] font-bold text-emerald-600 uppercase">Scanned Qty</p>
+                                    <p className="text-xl font-black text-emerald-700">{coverageProduct.scannedQty || 0}</p>
+                                </div>
+                                <div className="rounded-xl border border-red-200 p-3">
+                                    <p className="text-[10px] font-bold text-red-500 uppercase">Missing Qty</p>
+                                    <p className="text-xl font-black text-red-600">{coverageProduct.missingQty || 0}</p>
+                                </div>
+                            </div>
+
+                            <div>
+                                <p className="text-[11px] font-bold text-slate-500 uppercase tracking-wide mb-2">Missing OS Barcodes</p>
+                                <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 max-h-48 overflow-y-auto">
+                                    {(coverageProduct.missingBarcodes || []).length > 0 ? (
+                                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+                                            {coverageProduct.missingBarcodes.map(code => (
+                                                <span key={code} className="text-[10px] font-mono font-bold text-slate-700 bg-white border border-slate-200 rounded px-2 py-1 break-all">{code}</span>
+                                            ))}
+                                        </div>
+                                    ) : (
+                                        <p className="text-xs font-semibold text-slate-400">No missing unit barcodes.</p>
+                                    )}
+                                </div>
+                            </div>
+
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                <div>
+                                    <p className="text-[11px] font-bold text-slate-500 uppercase tracking-wide mb-2">Wrong-Bin Scans</p>
+                                    <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 min-h-24">
+                                        {(coverageProduct.wrongBinScans || []).length > 0 ? coverageProduct.wrongBinScans.map(scan => (
+                                            <p key={`${scan.barcode}-${scan.scannedAt}`} className="text-[10px] font-mono font-bold text-slate-700 mb-1">
+                                                {scan.barcode} | {scan.expectedBinCode || '-'} to {scan.scannedBinCode || '-'}
+                                            </p>
+                                        )) : <p className="text-xs font-semibold text-slate-400">None</p>}
+                                    </div>
+                                </div>
+                                <div>
+                                    <p className="text-[11px] font-bold text-slate-500 uppercase tracking-wide mb-2">Duplicate Scans</p>
+                                    <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 min-h-24">
+                                        {(coverageProduct.duplicateScans || []).length > 0 ? coverageProduct.duplicateScans.map(scan => (
+                                            <p key={`${scan.id}-${scan.barcode}`} className="text-[10px] font-mono font-bold text-slate-700 mb-1">{scan.barcode}</p>
+                                        )) : <p className="text-xs font-semibold text-slate-400">None</p>}
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        <div className="px-5 py-4 border-t border-slate-100 flex justify-end bg-slate-50">
+                            <button
+                                onClick={() => setCoverageProduct(null)}
+                                className="px-5 py-2 text-xs font-bold text-slate-700 bg-white border border-slate-200 rounded-lg hover:bg-slate-50 transition-colors shadow-sm"
+                            >
+                                Close
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
 
             {/* Delete Session Confirmation Modal */}
             {isDeleteModalOpen && sessionToDelete && (
@@ -3149,10 +3550,10 @@ const StockTaking = () => {
                             {notifModal.type === 'confirm' ? (
                                 <>
                                     <button
-                                        onClick={() => setNotifModal(null)}
+                                        onClick={notifModal.onCancel || (() => setNotifModal(null))}
                                         className="px-4 py-2 text-xs font-semibold text-slate-600 bg-white border border-slate-200 rounded-lg hover:bg-slate-50 transition-colors"
                                     >
-                                        Cancel
+                                        {notifModal.cancelLabel || 'Cancel'}
                                     </button>
                                     <button
                                         onClick={notifModal.onConfirm}

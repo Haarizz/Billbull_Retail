@@ -88,6 +88,60 @@ public class StockMovementService {
         repository.save(sm);
     }
 
+    /** Full hierarchy inbound post with exact batch/expiry identity. */
+    public void postInboundStock(
+            StockSourceType sourceType,
+            Long sourceId,
+            Long productId,
+            Long warehouseId,
+            Long zoneId,
+            Long locatorId,
+            Long binId,
+            String batchNumber,
+            LocalDate expiryDate,
+            java.math.BigDecimal unitCost,
+            Integer qty,
+            String ref) {
+
+        if (productId == null)
+            throw new IllegalArgumentException("Product ID is required for stock posting");
+
+        if (warehouseId == null)
+            throw new IllegalArgumentException("Warehouse ID is required for stock posting");
+
+        if (qty == null || qty <= 0)
+            throw new IllegalArgumentException("Quantity must be positive; got: " + qty);
+
+        String normalizedBatchNumber = normalizeBatchNumber(batchNumber);
+        if (normalizedBatchNumber == null)
+            throw new IllegalArgumentException("Batch number is required for batch-aware inbound stock posting");
+
+        boolean alreadyPosted = repository.existsInboundIdentity(
+                sourceType.name(), sourceId, productId, warehouseId, binId, normalizedBatchNumber, expiryDate);
+
+        if (alreadyPosted)
+            throw new IllegalStateException(
+                    "Inbound stock already posted for " + sourceType + " #" + sourceId
+                            + " product #" + productId + " in the same stock identity. Duplicate posting blocked.");
+
+        StockMovement sm = new StockMovement();
+        sm.setSourceType(sourceType);
+        sm.setSourceId(sourceId);
+        sm.setProductId(productId);
+        sm.setWarehouseId(warehouseId);
+        sm.setZoneId(zoneId);
+        sm.setLocatorId(locatorId);
+        sm.setBinId(binId);
+        sm.setQuantity(qty);
+        sm.setReferenceNo(ref);
+        sm.setMovementDate(LocalDate.now());
+        sm.setBatchNumber(normalizedBatchNumber);
+        sm.setExpiryDate(expiryDate);
+        sm.setUnitCost(unitCost);
+
+        repository.save(sm);
+    }
+
     // =========================================================
     // BACKWARD-COMPATIBLE OVERLOADS (delegates to postInboundStock)
     // =========================================================

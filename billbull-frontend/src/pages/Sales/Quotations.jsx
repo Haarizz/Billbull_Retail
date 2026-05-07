@@ -68,6 +68,7 @@ import ProductSelector from '../../components/ProductSelector';
 import CustomerSelector from '../../components/CustomerSelector';
 import CustomerShippingPanel from '../../components/CustomerShippingPanel';
 import CurrencyAmount from '../../components/CurrencyAmount';
+import { resolveCustomer } from '../../utils/customerResolution';
 
 // ✅ SHARED Item Add-Ons modal (BB-026)
 import ItemAddOnsModal from '../../components/ItemAddOnsModal';
@@ -1442,12 +1443,18 @@ const Quotations = () => {
         closeActionMenu();
         try {
             await updateQuotationStatus(qtn.id, 'CONVERTED');
+            // Resolve full customer from the master list so the destination form
+            // gets phone/balance/TRN/savedAddresses without relying on a name match.
+            const matched = resolveCustomer({ customerName: qtn.customer }, customersList);
             navigate('/sales/invoice', {
                 state: {
                     fromQuotation: {
                         id: qtn.id,
                         qtnNo: qtn.qtnNo,
                         customer: qtn.customer,
+                        customerId: matched?.id ?? null,
+                        customerCode: matched?.code ?? '',
+                        customerName: matched?.name ?? qtn.customer,
                         billDiscount: qtn.billDiscount,
                         shippingAddress: qtn.shippingAddress || '',
                         items: qtn.items
@@ -1463,12 +1470,16 @@ const Quotations = () => {
     const handleListingConvertToOrder = (qtn, e) => {
         e.stopPropagation();
         closeActionMenu();
+        const matched = resolveCustomer({ customerName: qtn.customer }, customersList);
         navigate('/sales/order', {
             state: {
                 quotation: {
                     id: qtn.id,
                     qtnNo: qtn.qtnNo,
                     customer: qtn.customer,
+                    customerId: matched?.id ?? null,
+                    customerCode: matched?.code ?? '',
+                    customerName: matched?.name ?? qtn.customer,
                     billDiscount: qtn.billDiscount,
                     shippingAddress: qtn.shippingAddress || '',
                     items: qtn.items
@@ -1601,6 +1612,13 @@ const Quotations = () => {
                         id: editingId,
                         qtnNo: getQuotationNo(),
                         customer: customer,
+                        // selectedCustomerData has the full master record — pass identifiers
+                        // so the destination resolves the same row regardless of how its
+                        // own customersList was loaded.
+                        customerId: selectedCustomerData?.id ?? null,
+                        customerCode: selectedCustomerData?.code ?? '',
+                        customerName: selectedCustomerData?.name ?? customer,
+                        shippingAddress: shippingAddress || '',
                         billDiscount,
                         items: items
                     }

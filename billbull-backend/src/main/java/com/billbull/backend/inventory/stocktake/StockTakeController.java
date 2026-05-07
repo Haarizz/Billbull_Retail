@@ -62,6 +62,33 @@ public class StockTakeController {
         return ResponseEntity.ok(service.getSession(sessionId));
     }
 
+    @PostMapping("/sessions/{sessionId}/unit-scans")
+    public ResponseEntity<?> scanUnitBarcode(
+            @PathVariable String sessionId,
+            @RequestBody StockTakeUnitScanRequest req) {
+        try {
+            return ResponseEntity.ok(service.scanUnitBarcode(sessionId, req));
+        } catch (IllegalStateException | IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body(java.util.Map.of("message", e.getMessage()));
+        }
+    }
+
+    @GetMapping("/sessions/{sessionId}/coverage")
+    public ResponseEntity<StockTakeCoverageResponse> getCoverage(@PathVariable String sessionId) {
+        return ResponseEntity.ok(service.getCoverage(sessionId));
+    }
+
+    @PatchMapping("/unit-scans/{scanId}/resolve")
+    public ResponseEntity<?> resolveUnitScan(
+            @PathVariable Long scanId,
+            @RequestBody StockTakeUnitScanResolveRequest req) {
+        try {
+            return ResponseEntity.ok(service.resolveUnitScan(scanId, req));
+        } catch (IllegalStateException | IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body(java.util.Map.of("message", e.getMessage()));
+        }
+    }
+
     @PutMapping("/items/{itemId}/count")
     public ResponseEntity<StockTakeItem> updateItemCount(
             @PathVariable Long itemId,
@@ -77,11 +104,16 @@ public class StockTakeController {
     }
 
     @PostMapping("/sessions/{sessionId}/items")
-    public ResponseEntity<StockTakeItem> addItemToSession(
+    public ResponseEntity<?> addItemToSession(
             @PathVariable String sessionId,
             @RequestParam Long productId,
-            @RequestParam(required = false, defaultValue = "1") Integer initialCount) {
-        return ResponseEntity.ok(service.addItemToSession(sessionId, productId, initialCount));
+            @RequestParam(required = false, defaultValue = "1") Integer initialCount,
+            @RequestParam(required = false) Long binId) {
+        try {
+            return ResponseEntity.ok(service.addItemToSession(sessionId, productId, initialCount, binId));
+        } catch (IllegalStateException | IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body(java.util.Map.of("message", e.getMessage()));
+        }
     }
 
     @PostMapping("/sessions/{sessionId}/submit")
