@@ -103,6 +103,18 @@ export const PermissionProvider = ({ children }) => {
      */
     const hasPermission = (permission) => {
         if (!permission) return false;
+        const exactKey = permission.toLowerCase();
+        const exactPermission = granularPermissions[exactKey];
+        if (exactPermission) {
+            return Boolean(
+                exactPermission.view ||
+                exactPermission.create ||
+                exactPermission.edit ||
+                exactPermission.approve ||
+                exactPermission.export
+            );
+        }
+
         // Legacy: check if any module grants the derived action
         const [modulePart] = permission.split('_');
         const mod = modulePart?.toLowerCase();

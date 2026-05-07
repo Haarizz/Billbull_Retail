@@ -71,6 +71,12 @@ public class Product extends BaseEntity {
 
     private boolean expiryEnabled;
 
+    @Column(nullable = false)
+    private boolean fefoEnabled = true;
+
+    @Column(nullable = false)
+    private Integer minExpiryDaysForSale = 0;
+
     @JsonProperty("isWeighing")
     private boolean isWeighing;
 
@@ -144,6 +150,14 @@ public class Product extends BaseEntity {
     public void setBatch(boolean isBatch) { this.isBatch = isBatch; }
     public boolean isExpiryEnabled() { return expiryEnabled; }
     public void setExpiryEnabled(boolean expiryEnabled) { this.expiryEnabled = expiryEnabled; }
+    public boolean isFefoEnabled() { return fefoEnabled; }
+    public void setFefoEnabled(boolean fefoEnabled) { this.fefoEnabled = fefoEnabled; }
+    public Integer getMinExpiryDaysForSale() { return minExpiryDaysForSale; }
+    public void setMinExpiryDaysForSale(Integer minExpiryDaysForSale) {
+        this.minExpiryDaysForSale = minExpiryDaysForSale != null && minExpiryDaysForSale > 0
+                ? minExpiryDaysForSale
+                : 0;
+    }
     public boolean isWeighing() { return isWeighing; }
     public void setWeighing(boolean isWeighing) { this.isWeighing = isWeighing; }
     public boolean isDiscountAllowed() { return isDiscountAllowed; }

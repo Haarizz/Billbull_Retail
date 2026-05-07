@@ -10,6 +10,10 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 
 import com.billbull.backend.financials.generalledger.postingengine.PostingEngineService;
+import com.billbull.backend.inventory.batch.BatchAllocation;
+import com.billbull.backend.inventory.batch.BatchAllocationStatus;
+import com.billbull.backend.inventory.batch.BatchSelectionRequest;
+import com.billbull.backend.inventory.batch.BatchSelectionService;
 import com.billbull.backend.inventory.product.Product;
 import com.billbull.backend.inventory.product.ProductBarcode;
 import com.billbull.backend.inventory.product.ProductBarcodeRepository;
@@ -62,6 +66,7 @@ public class DeliveryNoteService {
     private final ProductMediaRepository productMediaRepository;
     private final BranchAccessService branchAccessService;
     private final ProductPackingRepository packingRepo;
+    private final BatchSelectionService batchSelectionService;
 
     public DeliveryNoteService(
             DeliveryNoteRepository repo,
@@ -78,7 +83,8 @@ public class DeliveryNoteService {
             ProductBarcodeRepository barcodeRepo,
             ProductMediaRepository productMediaRepository,
             BranchAccessService branchAccessService,
-            ProductPackingRepository packingRepo) {
+            ProductPackingRepository packingRepo,
+            BatchSelectionService batchSelectionService) {
         this.repo = repo;
         this.warehouseStockService = warehouseStockService;
         this.productRepo = productRepo;
@@ -94,6 +100,7 @@ public class DeliveryNoteService {
         this.productMediaRepository = productMediaRepository;
         this.branchAccessService = branchAccessService;
         this.packingRepo = packingRepo;
+        this.batchSelectionService = batchSelectionService;
     }
 
     private DeliveryNoteResponse toResponse(DeliveryNote dn) {
@@ -148,6 +155,9 @@ public class DeliveryNoteService {
 
         r.status = dn.getStatus();
 
+        Map<Long, List<DeliveryBatchSelectionResponse>> batchSelectionsByLine =
+                dn.getId() != null ? batchSelectionService.getDeliverySelections(dn.getId()) : Map.of();
+
         r.items = dn.getItems().stream().map(item -> {
             DeliveryNoteItemResponse ir = new DeliveryNoteItemResponse();
             ir.id = item.getId();
@@ -169,6 +179,25 @@ public class DeliveryNoteService {
             ir.disc = item.getDisc();
             ir.tax = item.getTax();
             ir.cost = item.getCost();
+
+            Product product = item.getProduct();
+            boolean batchControlled = product != null && product.isBatch();
+            ir.batchControlled = batchControlled;
+            ir.fefoEnabled = product == null || product.isFefoEnabled();
+            ir.minExpiryDaysForSale = product != null ? product.getMinExpiryDaysForSale() : 0;
+            ir.baseRequiredQuantity = calculateLineBaseQty(item);
+            ir.binCode = resolveBinCode(item.getBinId());
+            ir.batchSelections = batchSelectionsByLine.getOrDefault(item.getId(), List.of());
+            ir.batchSelectedQuantity = ir.batchSelections.stream()
+                    .filter(selection -> selection.status == BatchAllocationStatus.RESERVED
+                            || selection.status == BatchAllocationStatus.CONSUMED)
+                    .mapToInt(selection -> selection.quantity != null ? selection.quantity : 0)
+                    .sum();
+            ir.batchSelectionMode = ir.batchSelections.stream()
+                    .map(selection -> selection.allocationMethod != null ? selection.allocationMethod.name() : null)
+                    .filter(mode -> mode != null && !mode.isBlank())
+                    .findFirst()
+                    .orElse(ir.fefoEnabled ? "AUTO_FEFO" : "MANUAL");
             return ir;
         }).toList();
 
@@ -204,6 +233,7 @@ public class DeliveryNoteService {
             throw new IllegalStateException("Only Draft notes can be edited");
         }
 
+        batchSelectionService.releaseDeliveryNote(dn.getId());
         dn.getItems().clear();
         mapToEntity(req, dn);
         return toResponse(repo.save(dn));
@@ -246,7 +276,9 @@ public class DeliveryNoteService {
     }
 
     public void delete(Long id) {
-        repo.delete(getEntity(id));
+        DeliveryNote dn = getEntity(id);
+        batchSelectionService.releaseDeliveryNote(id);
+        repo.delete(dn);
     }
 
     /* ================= STATUS FLOW ================= */
@@ -280,6 +312,16 @@ public class DeliveryNoteService {
                             "Insufficient stock for " + item.getProduct().getCode() +
                                     " | Available: " + available +
                                     " | Requested: " + requested);
+                }
+
+                if (isBatchControlled(item)) {
+                    ensureBatchSelectionExact(dn, item, baseQty + baseFoc);
+                }
+            }
+        } else {
+            for (DeliveryNoteItem item : dn.getItems()) {
+                if (isBatchControlled(item)) {
+                    ensureBatchSelectionExact(dn, item, calculateLineBaseQty(item));
                 }
             }
         }
@@ -336,21 +378,42 @@ public class DeliveryNoteService {
                 int baseFoc = resolveBaseQty(item.getProduct().getId(), effectiveFocUnit, foc);
                 BigDecimal requested = BigDecimal.valueOf((long) baseQty + baseFoc);
 
-                // HARD VALIDATION WITH RECORD LOCK: check exact physical stock before deducting
-                BigDecimal physicalAvailable = stockMovementService.getAvailableStockForUpdate(
-                        dn.getWarehouse().getId(),
-                        item.getProduct().getId());
+                if (isBatchControlled(item)) {
+                    postAllocatedBatchDeliveryDeduction(dn, item, baseQty + baseFoc);
+                } else {
+                    // HARD VALIDATION WITH RECORD LOCK: check exact physical stock before deducting
+                    BigDecimal physicalAvailable = stockMovementService.getAvailableStockForUpdate(
+                            dn.getWarehouse().getId(),
+                            item.getProduct().getId());
 
-                if (physicalAvailable.compareTo(requested) < 0) {
-                    throw new IllegalStateException(
-                            "Concurrency/Stock Error: Insufficient physical stock for " + item.getProduct().getCode() +
-                                    " | Available: " + physicalAvailable +
-                                    " | Requested: " + requested);
+                    if (physicalAvailable.compareTo(requested) < 0) {
+                        throw new IllegalStateException(
+                                "Concurrency/Stock Error: Insufficient physical stock for " + item.getProduct().getCode() +
+                                        " | Available: " + physicalAvailable +
+                                        " | Requested: " + requested);
+                    }
+
+                    // Deduct exact batch/bin identities so visible stock is reduced.
+                    postBatchAwareDeliveryDeduction(dn, item, baseQty + baseFoc);
                 }
 
-                // Deduct exact batch/bin identities so visible batch stock is reduced.
-                postBatchAwareDeliveryDeduction(dn, item, baseQty + baseFoc);
-
+            }
+        } else {
+            for (DeliveryNoteItem item : dn.getItems()) {
+                if (!isBatchControlled(item)) {
+                    continue;
+                }
+                List<BatchAllocation> allocations = batchSelectionService.getReservedForDeliveryLine(dn.getId(), item.getId());
+                int selectedQty = allocations.stream()
+                        .mapToInt(allocation -> allocation.getQuantity() != null ? allocation.getQuantity() : 0)
+                        .sum();
+                int requiredQty = calculateLineBaseQty(item);
+                if (selectedQty != requiredQty) {
+                    throw new IllegalStateException(
+                            "Batch selection must exactly match delivery quantity for " + item.getItemCode()
+                                    + ". Selected: " + selectedQty + " | Required: " + requiredQty);
+                }
+                batchSelectionService.markConsumed(allocations);
             }
         }
 
@@ -424,6 +487,41 @@ public class DeliveryNoteService {
                     "Insufficient batch/bin stock for " + item.getProduct().getCode()
                             + ". Short by: " + remaining);
         }
+    }
+
+    private void postAllocatedBatchDeliveryDeduction(DeliveryNote dn, DeliveryNoteItem item, int totalToDeduct) {
+        if (totalToDeduct <= 0) {
+            return;
+        }
+
+        List<BatchAllocation> allocations = batchSelectionService.getReservedForDeliveryLine(dn.getId(), item.getId());
+        int selectedQty = allocations.stream()
+                .mapToInt(allocation -> allocation.getQuantity() != null ? allocation.getQuantity() : 0)
+                .sum();
+        if (selectedQty != totalToDeduct) {
+            throw new IllegalStateException(
+                    "Batch selection must exactly match delivery quantity for " + item.getItemCode()
+                            + ". Selected: " + selectedQty + " | Required: " + totalToDeduct);
+        }
+
+        for (BatchAllocation allocation : allocations) {
+            Long binId = allocation.getBinId();
+            BinLocation location = resolveBinLocation(binId);
+            stockMovementService.postOutboundStock(
+                    StockSourceType.DELIVERY_NOTE,
+                    dn.getId(),
+                    item.getProduct().getId(),
+                    dn.getWarehouse().getId(),
+                    binId,
+                    location.zoneId,
+                    location.locatorId,
+                    allocation.getBatchNumber(),
+                    allocation.getExpiryDate(),
+                    allocation.getQuantity(),
+                    dn.getDnNumber());
+        }
+
+        batchSelectionService.markConsumed(allocations);
     }
 
     private int postDeductionFromBinIdentities(
@@ -563,6 +661,7 @@ public class DeliveryNoteService {
                         reverseDeliveryDeduction(dn, item);
                     }
                 }
+                batchSelectionService.restoreConsumedDeliveryNote(dn.getId());
             }
 
             // FIX 3 + FIX 4 — Only reverse accounting if it was actually posted.
@@ -595,6 +694,8 @@ public class DeliveryNoteService {
                 dn.setRecognizedRevenue(BigDecimal.ZERO);
                 dn.setRecognizedCogs(BigDecimal.ZERO);
             }
+        } else {
+            batchSelectionService.releaseDeliveryNote(dn.getId());
         }
 
         dn.setStatus(DeliveryNoteStatus.CANCELLED);
@@ -911,6 +1012,33 @@ public class DeliveryNoteService {
         return note;
     }
 
+    public DeliveryNoteResponse saveBatchSelection(Long dnId, Long itemId, BatchSelectionRequest request) {
+        DeliveryNote dn = getEntity(dnId);
+        if (dn.getStatus() != DeliveryNoteStatus.DRAFT) {
+            throw new IllegalStateException("Batch selection can only be changed while the delivery note is Draft");
+        }
+        DeliveryNoteItem item = findItem(dn, itemId);
+        batchSelectionService.saveDeliveryLineSelection(dn, item, request, calculateLineBaseQty(item));
+        return toResponse(dn);
+    }
+
+    public DeliveryNoteResponse deleteBatchSelection(Long dnId, Long itemId) {
+        DeliveryNote dn = getEntity(dnId);
+        if (dn.getStatus() != DeliveryNoteStatus.DRAFT) {
+            throw new IllegalStateException("Batch selection can only be cleared while the delivery note is Draft");
+        }
+        findItem(dn, itemId);
+        batchSelectionService.releaseDeliveryLine(dnId, itemId);
+        return toResponse(dn);
+    }
+
+    private DeliveryNoteItem findItem(DeliveryNote dn, Long itemId) {
+        return dn.getItems().stream()
+                .filter(item -> item.getId() != null && item.getId().equals(itemId))
+                .findFirst()
+                .orElseThrow(() -> new RuntimeException("Delivery Note item not found: " + itemId));
+    }
+
     private void mapToEntity(DeliveryNoteRequest req, DeliveryNote dn) {
 
         Warehouse warehouse = warehouseRepo.findById(req.warehouseId)
@@ -1064,6 +1192,44 @@ public class DeliveryNoteService {
 
     private int calculateRequestedQty(Integer currentQty, Integer foc) {
         return (currentQty != null ? currentQty : 0) + (foc != null ? foc : 0);
+    }
+
+    private boolean isBatchControlled(DeliveryNoteItem item) {
+        return item != null && item.getProduct() != null && item.getProduct().isBatch();
+    }
+
+    private int calculateLineBaseQty(DeliveryNoteItem item) {
+        if (item == null || item.getProduct() == null) {
+            return 0;
+        }
+        int qty = item.getCurrentQty() != null ? item.getCurrentQty() : 0;
+        int foc = item.getFoc() != null ? item.getFoc() : 0;
+        int baseQty = resolveBaseQty(item.getProduct().getId(), item.getUnit(), qty);
+        String effectiveFocUnit = (item.getFocUnit() != null && !item.getFocUnit().isBlank())
+                ? item.getFocUnit()
+                : item.getUnit();
+        int baseFoc = resolveBaseQty(item.getProduct().getId(), effectiveFocUnit, foc);
+        return baseQty + baseFoc;
+    }
+
+    private void ensureBatchSelectionExact(DeliveryNote dn, DeliveryNoteItem item, int requiredQty) {
+        int selectedQty = batchSelectionService.getReservedForDeliveryLine(dn.getId(), item.getId()).stream()
+                .mapToInt(allocation -> allocation.getQuantity() != null ? allocation.getQuantity() : 0)
+                .sum();
+        if (selectedQty != requiredQty) {
+            throw new IllegalStateException(
+                    "Batch selection must exactly match delivery quantity for " + item.getItemCode()
+                            + ". Selected: " + selectedQty + " | Required: " + requiredQty);
+        }
+    }
+
+    private String resolveBinCode(Long binId) {
+        if (binId == null) {
+            return null;
+        }
+        return binRepo.findById(binId)
+                .map(Bin::getCode)
+                .orElse(null);
     }
 
     private SalesInvoice resolveSourceInvoice(DeliveryNoteRequest req) {

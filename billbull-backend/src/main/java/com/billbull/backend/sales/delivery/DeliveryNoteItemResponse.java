@@ -1,5 +1,8 @@
 package com.billbull.backend.sales.delivery;
 
+import java.util.ArrayList;
+import java.util.List;
+
 public class DeliveryNoteItemResponse {
 
     public Long id;
@@ -22,4 +25,12 @@ public class DeliveryNoteItemResponse {
     public Double disc;
     public Double tax;
     public Double cost;
+    public String binCode;
+    public Boolean batchControlled;
+    public Boolean fefoEnabled;
+    public Integer minExpiryDaysForSale;
+    public Integer baseRequiredQuantity;
+    public Integer batchSelectedQuantity;
+    public String batchSelectionMode;
+    public List<DeliveryBatchSelectionResponse> batchSelections = new ArrayList<>();
 }

@@ -73,6 +73,8 @@ const INITIAL_FORM_STATE = {
   isSerial: false,
   batchControlled: false,
   expiryControlled: false,
+  fefoEnabled: true,
+  minExpiryDaysForSale: 0,
   isWeighing: false,
   isDiscountAllowed: true,
   maxDiscount: 0,
@@ -161,6 +163,8 @@ const buildProductPayload = (formData) => {
       isSerial: formData.isSerial,
       isBatch: !!formData.batchControlled,
       expiryEnabled: !!formData.expiryControlled,
+      fefoEnabled: !!formData.fefoEnabled,
+      minExpiryDaysForSale: Math.max(0, Number(formData.minExpiryDaysForSale) || 0),
       isWeighing: formData.isWeighing,
       isDiscountAllowed: formData.isDiscountAllowed,
       maxDiscount: formData.maxDiscount,
@@ -348,6 +352,14 @@ const AddProductWizard = ({ onCancel, onSave, initialData, brands: initialBrands
       }
       if (field === "locator") {
         newData.bin = "";
+      }
+      if (field === "batchControlled") {
+        if (value) {
+          newData.fefoEnabled = prev.fefoEnabled !== false;
+        } else {
+          newData.fefoEnabled = false;
+          newData.minExpiryDaysForSale = 0;
+        }
       }
       if (field === "defaultUnit") {
         // Sync the first packing level's unit to match the selected default unit
@@ -719,6 +731,10 @@ const AddProductWizard = ({ onCancel, onSave, initialData, brands: initialBrands
                     <input type="checkbox" className="rounded text-[#F5C742] focus:ring-[#F5C742]" checked={formData.expiryControlled} onChange={(e) => handleInputChange('expiryControlled', e.target.checked)} />
                     Expiry Controlled
                   </label>
+                  <label className={`flex items-center gap-2 text-sm transition-colors ${formData.batchControlled ? 'cursor-pointer text-slate-600 hover:text-slate-900' : 'cursor-not-allowed text-slate-400'}`}>
+                    <input type="checkbox" className="rounded text-[#F5C742] focus:ring-[#F5C742]" checked={formData.batchControlled && formData.fefoEnabled} disabled={!formData.batchControlled} onChange={(e) => handleInputChange('fefoEnabled', e.target.checked)} />
+                    FEFO Enabled
+                  </label>
                   <label className="flex items-center gap-2 cursor-pointer text-sm text-slate-600 hover:text-slate-900 transition-colors">
                     <input type="checkbox" className="rounded text-[#F5C742] focus:ring-[#F5C742]" checked={formData.isWeighing} onChange={(e) => handleInputChange('isWeighing', e.target.checked)} />
                     Weighing Product (Barcode Scale)
@@ -728,6 +744,17 @@ const AddProductWizard = ({ onCancel, onSave, initialData, brands: initialBrands
                     Discount Allowed
                   </label>
                 </div>
+                {formData.batchControlled && (
+                  <div className="mt-4 bg-slate-50 p-4 rounded-lg border border-slate-100 grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div>
+                      <label className="text-xs font-semibold text-slate-500">Min Expiry Days For Sale</label>
+                      <input type="number" min="0" value={formData.minExpiryDaysForSale} onChange={(e) => handleInputChange('minExpiryDaysForSale', e.target.value)} className="mt-1 w-full border border-slate-200 rounded-md px-3 py-2 text-sm bg-white focus:ring-2 focus:ring-[#F5C742]/50 outline-none" placeholder="0" />
+                    </div>
+                    <div className="flex items-center text-xs font-semibold text-slate-500">
+                      {formData.fefoEnabled ? 'Auto FEFO' : 'Manual only'}
+                    </div>
+                  </div>
+                )}
                 {formData.isDiscountAllowed && (
                   <div className="mt-4 bg-amber-50/50 p-4 rounded-lg border border-amber-100 flex items-center gap-4 animate-in fade-in">
                     <div className="w-full md:w-1/3">
@@ -1942,6 +1969,8 @@ const Products = () => {
         isSerial: product?.isSerial || false,
         batchControlled: !!product?.isBatch,
         expiryControlled: !!product?.expiryEnabled,
+        fefoEnabled: product?.fefoEnabled != null ? !!product.fefoEnabled : true,
+        minExpiryDaysForSale: product?.minExpiryDaysForSale || 0,
         isWeighing: product?.isWeighing || false,
         isDiscountAllowed: product?.isDiscountAllowed != null ? product.isDiscountAllowed : true,
         maxDiscount: product?.maxDiscount || 0,

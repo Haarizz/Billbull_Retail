@@ -6,6 +6,8 @@ import com.billbull.backend.user.User;
 import com.billbull.backend.user.UserRepository;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
 
 import java.util.HashMap;
 import java.util.List;
@@ -126,6 +128,32 @@ public class RolePermissionService {
         }
 
         return new HashMap<>(merged);
+    }
+
+    @Transactional(readOnly = true)
+    public boolean currentUserCanEdit(String module) {
+        if (module == null || module.isBlank()) {
+            return false;
+        }
+
+        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
+        if (authentication == null || !authentication.isAuthenticated()) {
+            return false;
+        }
+
+        boolean hasAdminRole = authentication.getAuthorities().stream()
+                .anyMatch(authority -> "ROLE_ADMIN".equals(authority.getAuthority()));
+        if (hasAdminRole) {
+            return true;
+        }
+
+        Object permission = getMergedPermissionsForUser(authentication.getName())
+                .get(module.toLowerCase());
+        if (!(permission instanceof Map<?, ?> permissions)) {
+            return false;
+        }
+
+        return Boolean.TRUE.equals(permissions.get("edit"));
     }
 
     private Map<String, Object> createPermissionMap() {
