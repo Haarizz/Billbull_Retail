@@ -11,6 +11,8 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.cache.annotation.CacheEvict;
 import org.springframework.cache.annotation.Caching;
 
+import com.billbull.backend.inventory.batch.BatchMaster;
+import com.billbull.backend.inventory.batch.PurchaseBatchCreationService;
 import com.billbull.backend.inventory.product.Product;
 import com.billbull.backend.inventory.product.ProductBarcodeRepository;
 import com.billbull.backend.inventory.product.ProductPackingRepository;
@@ -50,6 +52,7 @@ public class GrnService {
     private final ProductBarcodeRepository productBarcodeRepo;
     private final BranchAccessService branchAccessService;
     private final ProductPackingRepository packingRepository;
+    private final PurchaseBatchCreationService purchaseBatchCreationService;
 
     public GrnService(
             StockMovementService stockMovementService,
@@ -65,7 +68,8 @@ public class GrnService {
             ProductMediaRepository productMediaRepo,
             ProductBarcodeRepository productBarcodeRepo,
             BranchAccessService branchAccessService,
-            ProductPackingRepository packingRepository) {
+            ProductPackingRepository packingRepository,
+            PurchaseBatchCreationService purchaseBatchCreationService) {
         this.stockMovementService = stockMovementService;
         this.grnRepo = grnRepo;
         this.warehouseRepo = warehouseRepo;
@@ -81,6 +85,7 @@ public class GrnService {
         this.productBarcodeRepo = productBarcodeRepo;
         this.branchAccessService = branchAccessService;
         this.packingRepository = packingRepository;
+        this.purchaseBatchCreationService = purchaseBatchCreationService;
     }
 
     /* ================= UOM CONVERSION HELPERS ================= */
@@ -433,6 +438,8 @@ public class GrnService {
             }
         }
 
+        purchaseBatchCreationService.createForGrnPost(grn, productBinMap);
+
         for (GrnItemEntity item : grn.getItems()) {
 
             Integer accepted = item.getAcceptedQty() != null ? item.getAcceptedQty() : 0;
@@ -449,7 +456,31 @@ public class GrnService {
             // Use per-item bin override if provided, otherwise fall back to GRN header bin
             Long effectiveBinId = productBinMap.getOrDefault(productId, grnBinId);
 
-            stockMovementService.postInboundStock(
+            if (item.getProduct().isBatch()) {
+                int baseQty = baseAccepted + baseFoc;
+                List<BatchMaster> batches = purchaseBatchCreationService.findForGrnLine(grn.getId(), item.getId());
+                if (batches.size() != baseQty) {
+                    throw new IllegalStateException(
+                            "Expected " + baseQty + " purchase batches for GRN " + grn.getGrnNo()
+                                    + " line #" + item.getId() + " but found " + batches.size());
+                }
+                for (BatchMaster batch : batches) {
+                    stockMovementService.postInboundStock(
+                            StockSourceType.GRN,
+                            grn.getId(),
+                            productId,
+                            grn.getWarehouse().getId(),
+                            grnZoneId,
+                            grnLocatorId,
+                            effectiveBinId,
+                            batch.getBatchNumber(),
+                            batch.getExpiryDate(),
+                            batch.getUnitCost(),
+                            1,
+                            grn.getGrnNo());
+                }
+            } else {
+                stockMovementService.postInboundStock(
                     StockSourceType.GRN,
                     grn.getId(),
                     productId,
@@ -459,6 +490,7 @@ public class GrnService {
                     effectiveBinId, // Per-item override or GRN-level bin
                     baseAccepted + baseFoc,
                     grn.getGrnNo());
+            }
         }
 
         grn.setStockPosted(true);

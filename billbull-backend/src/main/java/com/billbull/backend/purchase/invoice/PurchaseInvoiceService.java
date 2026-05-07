@@ -12,6 +12,9 @@ import org.springframework.cache.annotation.Caching;
 import org.springframework.stereotype.Service;
 
 import com.billbull.backend.financials.generalledger.postingengine.PostingEngineService;
+import com.billbull.backend.inventory.batch.BatchMaster;
+import com.billbull.backend.inventory.batch.PurchaseBatchCreationService;
+import com.billbull.backend.inventory.product.Product;
 import com.billbull.backend.inventory.product.ProductMediaRepository;
 import com.billbull.backend.inventory.product.ProductBarcodeRepository;
 import com.billbull.backend.inventory.product.ProductPackingRepository;
@@ -59,6 +62,7 @@ public class PurchaseInvoiceService {
     private final ProductBarcodeRepository productBarcodeRepository;
     private final BranchAccessService branchAccessService;
     private final ProductPackingRepository packingRepository;
+    private final PurchaseBatchCreationService purchaseBatchCreationService;
 
     public PurchaseInvoiceService(PurchaseInvoiceRepository repository, GrnRepository grnRepo,
             PostingEngineService postingEngineService, StockMovementService stockService,
@@ -69,7 +73,8 @@ public class PurchaseInvoiceService {
             ProductMediaRepository productMediaRepository,
             ProductBarcodeRepository productBarcodeRepository,
             BranchAccessService branchAccessService,
-            ProductPackingRepository packingRepository) {
+            ProductPackingRepository packingRepository,
+            PurchaseBatchCreationService purchaseBatchCreationService) {
         super();
         this.repository = repository;
         this.grnRepo = grnRepo;
@@ -88,6 +93,7 @@ public class PurchaseInvoiceService {
         this.productBarcodeRepository = productBarcodeRepository;
         this.branchAccessService = branchAccessService;
         this.packingRepository = packingRepository;
+        this.purchaseBatchCreationService = purchaseBatchCreationService;
     }
 
     /* ================= UOM CONVERSION HELPERS ================= */
@@ -181,7 +187,9 @@ public class PurchaseInvoiceService {
         PurchaseInvoice invoice = mapToEntity(req);
         invoice.setStatus(InvoiceStatus.DRAFT);
         invoice.setPaymentStatus(PaymentStatus.UNPAID);
-        return repository.save(invoice);
+        PurchaseInvoice saved = repository.saveAndFlush(invoice);
+        purchaseBatchCreationService.replaceForPurchaseInvoice(saved);
+        return saved;
     }
 
     public PurchaseInvoiceResponse createDraftFromLpo(Long lpoId) {
@@ -393,7 +401,9 @@ public class PurchaseInvoiceService {
         syncItems(invoice, req);
         syncLandedCosts(invoice, req);
 
-        return invoice;
+        PurchaseInvoice saved = repository.saveAndFlush(invoice);
+        purchaseBatchCreationService.replaceForPurchaseInvoice(saved);
+        return saved;
     }
 
     /* ================= SUBMIT ================= */
@@ -451,10 +461,6 @@ public class PurchaseInvoiceService {
             throw new IllegalStateException("Stock already posted for this invoice");
         }
 
-        invoice.setStatus(InvoiceStatus.POSTED);
-        invoice.setApprovedBy(approver);
-        invoice.setApprovedAt(LocalDateTime.now());
-
         // ── ROUTING RULE ──────────────────────────────────────────────────────────
         // AGAINST_GRN → Stock was already posted at GRN approval. Do NOT post again.
         // AGAINST_LPO → No GRN involved. Post stock now at invoice approval.
@@ -474,6 +480,14 @@ public class PurchaseInvoiceService {
                     "Warehouse is required before stock can be posted. " +
                             "Please update the invoice with a valid warehouse.");
         }
+
+        if (!isAgainstGrn) {
+            purchaseBatchCreationService.ensureForPurchaseInvoice(invoice);
+        }
+
+        invoice.setStatus(InvoiceStatus.POSTED);
+        invoice.setApprovedBy(approver);
+        invoice.setApprovedAt(LocalDateTime.now());
 
         Long warehouseId = invoice.getWarehouse() != null ? invoice.getWarehouse().getId() : null;
         Long zoneId = invoice.getZone() != null ? invoice.getZone().getId() : null;
@@ -495,7 +509,8 @@ public class PurchaseInvoiceService {
                 continue;
             }
 
-            Long productId = productOpt.get().getId();
+            Product product = productOpt.get();
+            Long productId = product.getId();
             int baseQty = resolveBaseQty(productId, item.getUom(), qty);
             if (baseQty <= 0) {
                 continue;
@@ -506,7 +521,30 @@ public class PurchaseInvoiceService {
                     .mapToInt(bs -> bs.getQuantity() != null ? bs.getQuantity() : 0)
                     .sum();
 
-            if (!isAgainstGrn) {
+            if (!isAgainstGrn && product.isBatch()) {
+                List<BatchMaster> batches = purchaseBatchCreationService
+                        .findForPurchaseInvoiceLine(invoice.getId(), item.getId());
+                if (batches.size() != baseQty) {
+                    throw new IllegalStateException(
+                            "Expected " + baseQty + " purchase batches for invoice " + invoice.getInvoiceNumber()
+                                    + " line #" + item.getId() + " but found " + batches.size());
+                }
+                for (BatchMaster batch : batches) {
+                    stockService.postInboundStock(
+                            StockSourceType.DIRECT_PURCHASE,
+                            invoice.getId(),
+                            productId,
+                            warehouseId,
+                            zoneId,
+                            locatorId,
+                            binId,
+                            batch.getBatchNumber(),
+                            batch.getExpiryDate(),
+                            batch.getUnitCost(),
+                            1,
+                            invoice.getInvoiceNumber());
+                }
+            } else if (!isAgainstGrn) {
                 stockService.postInboundStock(
                         StockSourceType.DIRECT_PURCHASE,
                         invoice.getId(),
@@ -639,6 +677,7 @@ public class PurchaseInvoiceService {
             throw new IllegalStateException("Only DRAFT invoices can be deleted");
         }
 
+        purchaseBatchCreationService.deleteUnprintedPurchaseInvoiceBatches(invoice.getId());
         repository.delete(invoice);
     }
 
