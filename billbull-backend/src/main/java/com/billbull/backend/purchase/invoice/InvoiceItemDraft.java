@@ -1,9 +1,11 @@
 package com.billbull.backend.purchase.invoice;
 
 import java.math.BigDecimal;
+import java.util.List;
 
 public class InvoiceItemDraft {
 
+    private Long id;
     private String itemCode;
     private String itemName;
     private String barcode;
@@ -21,12 +23,22 @@ public class InvoiceItemDraft {
     private BigDecimal taxAmount;
     private BigDecimal lineTotal;
     private String remarks;
+    private Boolean batchEnabled;
+    private List<InvoiceItemBatchDraft> batches;
 
     // ✅ REQUIRED: default constructor
     public InvoiceItemDraft() {
     }
 
     // --- getters & setters ---
+
+    public Long getId() {
+        return id;
+    }
+
+    public void setId(Long id) {
+        this.id = id;
+    }
 
     public String getItemCode() {
         return itemCode;
@@ -154,5 +166,21 @@ public class InvoiceItemDraft {
 
     public void setRemarks(String remarks) {
         this.remarks = remarks;
+    }
+
+    public Boolean getBatchEnabled() {
+        return batchEnabled;
+    }
+
+    public void setBatchEnabled(Boolean batchEnabled) {
+        this.batchEnabled = batchEnabled;
+    }
+
+    public List<InvoiceItemBatchDraft> getBatches() {
+        return batches;
+    }
+
+    public void setBatches(List<InvoiceItemBatchDraft> batches) {
+        this.batches = batches;
     }
 }

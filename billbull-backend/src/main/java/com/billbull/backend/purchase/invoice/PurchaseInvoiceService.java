@@ -918,6 +918,7 @@ public class PurchaseInvoiceService {
 
             dto.setItems(invoice.getItems().stream().map(i -> {
                 InvoiceItemDraft d = new InvoiceItemDraft();
+                d.setId(i.getId());
                 d.setItemCode(i.getItemCode());
                 d.setItemName(i.getItemName());
                 d.setBarcode(i.getBarcode());
@@ -944,10 +945,49 @@ public class PurchaseInvoiceService {
                         d.setBarcode(barcode);
                     });
                 }
+                List<BatchMaster> batches = findBatchesForResponse(invoice, i);
+                d.setBatches(batches.stream().map(this::toBatchDraft).toList());
+                d.setBatchEnabled(!batches.isEmpty());
                 return d;
             }).toList());
         }
 
+        return dto;
+    }
+
+    private List<BatchMaster> findBatchesForResponse(PurchaseInvoice invoice, PurchaseInvoiceItem item) {
+        if (invoice == null || item == null || invoice.getId() == null || item.getId() == null) {
+            return List.of();
+        }
+
+        List<BatchMaster> invoiceBatches = purchaseBatchCreationService
+                .findForPurchaseInvoiceLine(invoice.getId(), item.getId());
+        if (!invoiceBatches.isEmpty() || invoice.getGrnId() == null) {
+            return invoiceBatches;
+        }
+
+        return grnRepo.findById(invoice.getGrnId())
+                .map(grn -> grn.getItems().stream()
+                        .filter(grnItem -> java.util.Objects.equals(grnItem.getProductCode(), item.getItemCode()))
+                        .flatMap(grnItem -> purchaseBatchCreationService
+                                .findForGrnLine(grn.getId(), grnItem.getId())
+                                .stream())
+                        .sorted(java.util.Comparator.comparing(
+                                BatchMaster::getUnitIndex,
+                                java.util.Comparator.nullsLast(Integer::compareTo)))
+                        .toList())
+                .orElse(List.of());
+    }
+
+    private InvoiceItemBatchDraft toBatchDraft(BatchMaster batch) {
+        InvoiceItemBatchDraft dto = new InvoiceItemBatchDraft();
+        dto.setId(batch.getId());
+        dto.setBatchNumber(batch.getBatchNumber());
+        dto.setBatchBarcode(batch.getBatchNumber());
+        dto.setExpiryDate(batch.getExpiryDate());
+        dto.setUnitIndex(batch.getUnitIndex());
+        dto.setQuantity(batch.getQuantity());
+        dto.setUnitCost(batch.getUnitCost());
         return dto;
     }
 
