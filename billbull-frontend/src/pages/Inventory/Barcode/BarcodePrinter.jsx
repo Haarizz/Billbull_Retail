@@ -604,14 +604,39 @@ const BarcodePrinter = () => {
         .map(p => p.invoiceNumber)
         .filter(Boolean))].sort();
 
+    const getPurchaseItemBatches = (item) => (
+        Array.isArray(item?.batches)
+            ? item.batches.filter(batch => batch?.batchNumber || batch?.batchBarcode)
+            : []
+    );
+
+    const getPurchaseItemBatchSummary = (item) => {
+        const batches = getPurchaseItemBatches(item);
+        if (batches.length === 0) return null;
+        const firstBatch = batches[0]?.batchNumber || batches[0]?.batchBarcode;
+        return {
+            firstBatch,
+            count: batches.length
+        };
+    };
+
     const addToCart = (product, qty = 1, options = {}) => {
-        // If product has no barcode (and no override provided), skip
-        if (!options.barcode && !getBarcodeValue(product)) return;
+        const batchBarcode = options.batchBarcode || options.batchNumber || null;
+        const targetBarcode = options.barcode || getBarcodeValue(product) || null;
+
+        if (!targetBarcode && !batchBarcode) return false;
 
         setCart(prev => {
-            // Check if exact product AND barcode combo exists
-            const targetBarcode = options.barcode || getBarcodeValue(product);
-            const existing = prev.find(item => item.product.id === product.id && item.barcode === targetBarcode);
+            const cartKey = options.cartKey || [
+                product?.id || product?.code || product?.name || 'item',
+                targetBarcode || 'no-product-barcode',
+                batchBarcode || 'no-batch-barcode'
+            ].join(':');
+            const existing = prev.find(item => (item.cartKey || [
+                item.product?.id || item.product?.code || item.product?.name || 'item',
+                item.barcode || 'no-product-barcode',
+                item.batchBarcode || item.batchNumber || 'no-batch-barcode'
+            ].join(':')) === cartKey);
 
             if (existing) return prev; // already added
 
@@ -619,13 +644,14 @@ const BarcodePrinter = () => {
             const resolvedUnit = options.unit || matchedPacking?.unit?.name || matchedPacking?.unitName || null;
 
             return [...prev, {
+                cartKey,
                 product,
                 qty,
                 barcode: targetBarcode,
                 productBarcode: targetBarcode,
                 unit: resolvedUnit, // Store unit name for display
                 batchNumber: options.batchNumber || null,
-                batchBarcode: options.batchBarcode || options.batchNumber || null,
+                batchBarcode,
                 expiryDate: options.expiryDate || null,
                 batchEnabled: options.batchEnabled ?? product.isBatch ?? product.batchEnabled ?? product.batchExpiryControlled ?? false,
                 expiryEnabled: options.expiryEnabled ?? product.expiryEnabled ?? product.batchExpiryControlled ?? product.isBatch ?? false
@@ -633,6 +659,7 @@ const BarcodePrinter = () => {
         });
         setSearchTerm('');
         setIsSearchFocused(false);
+        return true;
     };
 
     const openStockTakeModal = async () => {
@@ -695,6 +722,7 @@ const BarcodePrinter = () => {
                     expiryEnabled: !!item.expiryEnabled,
                 };
                 setCart(prev => [...prev, {
+                    cartKey: `stocktake-${openedStockTakeSession.id}-${item.id}-${b.id || b.batchNumber}`,
                     product,
                     qty: labels,
                     barcode: item.barcode || null,
@@ -723,83 +751,116 @@ const BarcodePrinter = () => {
         setPoLoading(true);
 
         try {
-            // First fetch the products related to the PO items
-            const itemCodesToFetch = [...new Set(po.items.map(i => i.itemCode))];
-
-            // To be efficient, we'll fetch them all by item codes since we might need full data
-            // Alternatively, we could fetch them one by one if there are few.
+            const itemCodesToFetch = [...new Set(po.items.map(i => i.itemCode).filter(Boolean))];
             const fetchedProducts = [];
+
             for (const code of itemCodesToFetch) {
                 try {
-                    // Search exact match for the item code
                     const data = await searchExactProducts(code);
-                    if (data && data.length > 0) {
-                        // find EXACT code match
-                        const exactMatch = data.find(d => d.product && d.product.code === code);
-                        if (exactMatch) {
-                            fetchedProducts.push({
-                                ...exactMatch.product,
-                                ...exactMatch.pricing,
-                                price: exactMatch.pricing?.retailPrice || 0,
-                                ...exactMatch.inventory,
-                                packings: exactMatch.inventory?.packings || [],
-                                image: exactMatch.primaryImage
-                            });
-                        }
+                    const exactMatch = (data || []).find(d => d.product && d.product.code === code);
+
+                    if (exactMatch) {
+                        fetchedProducts.push({
+                            ...exactMatch.product,
+                            ...exactMatch.pricing,
+                            price: exactMatch.pricing?.retailPrice || 0,
+                            ...exactMatch.inventory,
+                            packings: exactMatch.inventory?.packings || [],
+                            image: exactMatch.primaryImage
+                        });
                     }
-                } catch (e) { console.error("Could not fetch product for PO item code: " + code, e); }
+                } catch (e) {
+                    console.error("Could not fetch product for PO item code: " + code, e);
+                }
             }
 
-            po.items.forEach(poItem => {
-                const product = fetchedProducts.find(p => p.code === poItem.itemCode);
-                if (product) {
-                    // Try to find matching barcode for the PO Item's UOM
-                    let selectedBarcode = null;
-                    let selectedUnit = poItem.uom || null;
+            po.items.forEach((poItem, itemIndex) => {
+                const batches = getPurchaseItemBatches(poItem);
+                const fetchedProduct = fetchedProducts.find(p => p.code === poItem.itemCode);
+                const fallbackProduct = {
+                    id: `purchase-${po.id || po.invoiceNumber || 'invoice'}-${poItem.id || poItem.itemCode || itemIndex}`,
+                    code: poItem.itemCode,
+                    name: poItem.itemName || poItem.productName || poItem.itemCode || 'Purchase Item',
+                    sku: poItem.itemCode,
+                    price: poItem.unitCost || 0,
+                    retailPrice: poItem.unitCost || 0,
+                    image: poItem.image,
+                    barcode: poItem.barcode || null,
+                    packings: poItem.barcode ? [{ isSale: true, barcode: poItem.barcode, unitName: poItem.uom }] : [],
+                    isBatch: Boolean(poItem.batchEnabled || batches.length > 0),
+                    batchEnabled: Boolean(poItem.batchEnabled || batches.length > 0),
+                    expiryEnabled: Boolean(batches.some(batch => batch.expiryDate))
+                };
+                const product = fetchedProduct || fallbackProduct;
+                let selectedBarcode = poItem.barcode || getBarcodeValue(product) || null;
+                let selectedUnit = poItem.uom || null;
 
-                    if (product.packings && poItem.uom) {
-                        const targetUom = poItem.uom.toLowerCase();
-                        const matchingPacking = product.packings.find(p =>
-                            (p.unit?.name?.toLowerCase() === targetUom) ||
-                            (p.unitName?.toLowerCase() === targetUom)
-                        );
-                        if (matchingPacking && matchingPacking.barcode) {
-                            selectedBarcode = matchingPacking.barcode;
-                        }
+                if (product.packings && poItem.uom) {
+                    const targetUom = poItem.uom.toLowerCase();
+                    const matchingPacking = product.packings.find(p =>
+                        (p.unit?.name?.toLowerCase() === targetUom) ||
+                        (p.unitName?.toLowerCase() === targetUom)
+                    );
+
+                    if (matchingPacking?.barcode) {
+                        selectedBarcode = matchingPacking.barcode;
+                        selectedUnit = matchingPacking.unit?.name || matchingPacking.unitName || selectedUnit;
                     }
-
-                    // Create a copy to avoid mutating state and ensure we have a price
-                    const productWithPrice = {
-                        ...product,
-                        price: product.price || poItem.unitCost || 0,
-                        sku: product.sku
-                    };
-
-                    addToCart(productWithPrice, poItem.qty || 1, {
-                        barcode: selectedBarcode,
-                        unit: selectedUnit,
-                        batchNumber: poItem.batchNumber || poItem.batchNo || null,
-                        expiryDate: poItem.expiryDate || poItem.exp || null,
-                        batchEnabled: productWithPrice.isBatch || productWithPrice.batchEnabled || productWithPrice.expiryEnabled,
-                        expiryEnabled: productWithPrice.expiryEnabled || productWithPrice.isBatch
-                    });
-                    loadedCount++;
                 }
+
+                const productWithPrice = {
+                    ...product,
+                    price: product.price || poItem.unitCost || 0,
+                    retailPrice: product.retailPrice || product.price || poItem.unitCost || 0,
+                    sku: product.sku || poItem.itemCode,
+                    isBatch: product.isBatch || product.batchEnabled || poItem.batchEnabled || batches.length > 0,
+                    batchEnabled: product.batchEnabled || product.isBatch || poItem.batchEnabled || batches.length > 0,
+                    expiryEnabled: product.expiryEnabled || batches.some(batch => batch.expiryDate)
+                };
+
+                if (batches.length > 0) {
+                    batches.forEach((batch, batchIndex) => {
+                        const batchNumber = batch.batchNumber || batch.batchBarcode;
+                        const added = addToCart(productWithPrice, batch.quantity || 1, {
+                            barcode: selectedBarcode,
+                            unit: selectedUnit,
+                            batchNumber,
+                            batchBarcode: batch.batchBarcode || batchNumber,
+                            expiryDate: batch.expiryDate || null,
+                            batchEnabled: true,
+                            expiryEnabled: Boolean(batch.expiryDate) || productWithPrice.expiryEnabled || productWithPrice.isBatch,
+                            cartKey: `purchase-${po.id || po.invoiceNumber || 'invoice'}-${poItem.id || poItem.itemCode || itemIndex}-${batch.id || batchNumber || batchIndex}`
+                        });
+                        if (added) loadedCount++;
+                    });
+                    return;
+                }
+
+                const added = addToCart(productWithPrice, poItem.qty || 1, {
+                    barcode: selectedBarcode,
+                    unit: selectedUnit,
+                    batchNumber: poItem.batchNumber || poItem.batchNo || null,
+                    expiryDate: poItem.expiryDate || poItem.exp || null,
+                    batchEnabled: productWithPrice.isBatch || productWithPrice.batchEnabled || productWithPrice.expiryEnabled,
+                    expiryEnabled: productWithPrice.expiryEnabled || productWithPrice.isBatch,
+                    cartKey: `purchase-${po.id || po.invoiceNumber || 'invoice'}-${poItem.id || poItem.itemCode || itemIndex}-aggregate`
+                });
+                if (added) loadedCount++;
             });
 
             if (loadedCount > 0) {
                 setShowSearchModal(false);
             } else {
-                alert("No matching products found in stock for this PO (or items missing barcodes).");
+                alert("No purchase item barcodes or batch barcodes were available to load.");
             }
         } finally {
             setPoLoading(false);
         }
     };
 
-    const updateQty = (productId, delta) => {
+    const updateQty = (cartKey, delta) => {
         setCart(prev => prev.map(item => {
-            if (item.product.id === productId) {
+            if ((item.cartKey || item.product.id) === cartKey) {
                 const newQty = Math.max(1, item.qty + delta);
                 return { ...item, qty: newQty };
             }
@@ -807,8 +868,8 @@ const BarcodePrinter = () => {
         }));
     };
 
-    const removeFromCart = (productId) => {
-        setCart(prev => prev.filter(item => item.product.id !== productId));
+    const removeFromCart = (cartKey) => {
+        setCart(prev => prev.filter(item => (item.cartKey || item.product.id) !== cartKey));
     };
 
     const getBarcodeValue = (product) => {
@@ -1396,8 +1457,12 @@ const BarcodePrinter = () => {
                                     </div>
                                 ) : (
                                     <div className="grid grid-cols-1 gap-2">
-                                        {cart.map(item => (
-                                            <div key={item.product.id} className="bg-white p-3 rounded-md border border-slate-200 flex items-center justify-between shadow-sm">
+                                        {cart.map(item => {
+                                            const rowKey = item.cartKey || `${item.product.id}-${item.barcode || ''}-${item.batchBarcode || item.batchNumber || ''}`;
+                                            const batchBarcodeValue = getBatchBarcodeValue(item);
+
+                                            return (
+                                            <div key={rowKey} className="bg-white p-3 rounded-md border border-slate-200 flex items-center justify-between shadow-sm">
                                                 <div className="flex items-center gap-3">
                                                     <div className="h-10 w-10 bg-slate-100 rounded border border-slate-200 flex items-center justify-center overflow-hidden">
                                                         {item.product.image ? (
@@ -1429,6 +1494,11 @@ const BarcodePrinter = () => {
                                                                     currencyLabel={currencyLabel}
                                                                 />
                                                             </div>
+                                                            {batchBarcodeValue && (
+                                                                <div className="text-[10px] font-mono text-amber-900 bg-amber-50 border border-amber-100 rounded px-1.5 py-0.5 w-fit max-w-[240px] truncate" title={batchBarcodeValue}>
+                                                                    Batch: {batchBarcodeValue}
+                                                                </div>
+                                                            )}
                                                         </div>
 
                                                         {/* Unit Selector */}
@@ -1475,24 +1545,25 @@ const BarcodePrinter = () => {
 
                                                 <div className="flex items-center gap-4">
                                                     <div className="flex items-center border border-slate-200 rounded-md bg-white">
-                                                        <button className="px-2 py-1 hover:bg-slate-50 text-slate-500" onClick={() => updateQty(item.product.id, -1)}><Minus size={14} /></button>
+                                                        <button className="px-2 py-1 hover:bg-slate-50 text-slate-500" onClick={() => updateQty(rowKey, -1)}><Minus size={14} /></button>
                                                         <input
                                                             type="text"
                                                             className="w-10 text-center text-sm font-bold text-slate-700 outline-none"
                                                             value={item.qty}
                                                             readOnly
                                                         />
-                                                        <button className="px-2 py-1 hover:bg-slate-50 text-slate-500" onClick={() => updateQty(item.product.id, 1)}><Plus size={14} /></button>
+                                                        <button className="px-2 py-1 hover:bg-slate-50 text-slate-500" onClick={() => updateQty(rowKey, 1)}><Plus size={14} /></button>
                                                     </div>
                                                     <button
-                                                        onClick={() => removeFromCart(item.product.id)}
+                                                        onClick={() => removeFromCart(rowKey)}
                                                         className="text-slate-400 hover:text-red-500 transition-colors"
                                                     >
                                                         <Trash2 size={16} />
                                                     </button>
                                                 </div>
                                             </div>
-                                        ))}
+                                        );
+                                        })}
                                     </div>
                                 )}
                             </div>
@@ -1913,11 +1984,12 @@ const BarcodePrinter = () => {
                                                     <div className="border-x border-b border-slate-200 rounded-b-lg overflow-hidden">
                                                         {po.items.map((item, idx) => {
                                                             const prod = products.find(p => p.code === item.itemCode);
+                                                            const batchSummary = getPurchaseItemBatchSummary(item);
 
                                                             // Fallback: Show item even if product not found
                                                             const displayName = prod?.name || item.itemName || 'Unknown Item';
                                                             const displaySku = prod?.sku || item.itemCode || '-';
-                                                            const displayBarcode = prod ? getBarcodeValue(prod) : '-';
+                                                            const displayBarcode = batchSummary?.firstBatch || item.barcode || (prod ? getBarcodeValue(prod) : null) || '-';
 
                                                             return (
                                                                 <div
@@ -1952,9 +2024,19 @@ const BarcodePrinter = () => {
 
                                                                     {/* Barcode */}
                                                                     <div className="col-span-3 text-center">
-                                                                        <span className="font-mono text-[10px] text-slate-600 bg-slate-100 px-2 py-0.5 rounded">
-                                                                            {displayBarcode}
-                                                                        </span>
+                                                                        <div className="flex flex-col items-center gap-1 min-w-0">
+                                                                            <span
+                                                                                className={`font-mono text-[10px] px-2 py-0.5 rounded max-w-full truncate ${batchSummary ? 'text-amber-900 bg-amber-50 border border-amber-100' : 'text-slate-600 bg-slate-100'}`}
+                                                                                title={displayBarcode}
+                                                                            >
+                                                                                {displayBarcode}
+                                                                            </span>
+                                                                            {batchSummary?.count > 1 && (
+                                                                                <span className="text-[9px] text-slate-400">
+                                                                                    +{batchSummary.count - 1} batch labels
+                                                                                </span>
+                                                                            )}
+                                                                        </div>
                                                                     </div>
 
                                                                     {/* Unit Cost */}
