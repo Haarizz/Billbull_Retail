@@ -39,6 +39,27 @@ public interface StockMovementRepository
                         @Param("batchNumber") String batchNumber,
                         @Param("expiryDate") LocalDate expiryDate);
 
+        @Query(value = """
+                            SELECT COUNT(sm.id) > 0
+                            FROM stock_movements sm
+                            WHERE sm.source_type = :sourceType
+                              AND sm.source_id = :sourceId
+                              AND sm.product_id = :productId
+                              AND sm.warehouse_id = :warehouseId
+                              AND ((CAST(:binId AS bigint) IS NULL AND sm.bin_id IS NULL) OR sm.bin_id = CAST(:binId AS bigint))
+                              AND ((CAST(:batchNumber AS varchar) IS NULL AND sm.batch_number IS NULL) OR sm.batch_number = CAST(:batchNumber AS varchar))
+                              AND ((CAST(:expiryDate AS date) IS NULL AND sm.expiry_date IS NULL) OR sm.expiry_date = CAST(:expiryDate AS date))
+                              AND sm.quantity > 0
+                        """, nativeQuery = true)
+        boolean existsInboundIdentity(
+                        @Param("sourceType") String sourceType,
+                        @Param("sourceId") Long sourceId,
+                        @Param("productId") Long productId,
+                        @Param("warehouseId") Long warehouseId,
+                        @Param("binId") Long binId,
+                        @Param("batchNumber") String batchNumber,
+                        @Param("expiryDate") LocalDate expiryDate);
+
         List<StockMovement> findBySourceTypeAndSourceIdAndProductIdAndQuantityLessThan(
                         StockSourceType sourceType,
                         Long sourceId,
