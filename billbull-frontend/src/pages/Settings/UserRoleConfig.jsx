@@ -48,6 +48,7 @@ const MODULES = [
       { key: 'inventory.warehouse', label: 'Warehouses' },
       { key: 'inventory.stock',     label: 'Stock Levels / Transfers' },
       { key: 'inventory.category',  label: 'Categories & Brands' },
+      { key: 'batch_manual_select', label: 'Batch Manual Select' },
     ]
   },
   {

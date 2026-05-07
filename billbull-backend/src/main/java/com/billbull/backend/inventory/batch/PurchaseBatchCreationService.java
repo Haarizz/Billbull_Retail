@@ -300,10 +300,13 @@ public class PurchaseBatchCreationService {
         batch.setLocatorId(locatorId);
         batch.setBinId(binId);
         batch.setUnitIndex(unitIndex);
+        batch.setQtyUnitNo(unitIndex);
         batch.setQuantity(1);
         batch.setGeneratedDate(generatedDate);
+        batch.setEntryDate(generatedDate);
         batch.setExpiryDate(expiryDate);
         batch.setUnitCost(unitCost);
+        batch.setStatus(BatchStatus.AVAILABLE);
         return batch;
     }
 

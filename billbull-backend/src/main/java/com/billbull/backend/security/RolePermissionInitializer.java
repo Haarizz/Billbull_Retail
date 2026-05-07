@@ -33,7 +33,8 @@ public class RolePermissionInitializer implements ApplicationRunner {
         // the UI toggles to restrict access between restarts.
         roleRepository.findByName("ADMIN").ifPresent(role -> {
             String[] allModules = {"sales", "inventory", "purchases", "finance",
-                                   "hr", "customer", "dashboard", "userManagement"};
+                                   "hr", "customer", "dashboard", "userManagement",
+                                   "batch_manual_select"};
             for (String module : allModules) {
                 seedOrUpdate(role, module, true, true, true, true, true);
             }

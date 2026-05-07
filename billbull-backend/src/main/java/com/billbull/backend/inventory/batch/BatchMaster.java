@@ -7,7 +7,11 @@ import com.billbull.backend.common.BaseEntity;
 
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
+import jakarta.persistence.EnumType;
+import jakarta.persistence.Enumerated;
 import jakarta.persistence.Index;
+import jakarta.persistence.PrePersist;
+import jakarta.persistence.PreUpdate;
 import jakarta.persistence.Table;
 import jakarta.persistence.UniqueConstraint;
 
@@ -24,7 +28,8 @@ import jakarta.persistence.UniqueConstraint;
                 @Index(name = "idx_batch_master_source", columnList = "source_type, source_ref_no"),
                 @Index(name = "idx_batch_master_doc", columnList = "source_document_type, source_document_id"),
                 @Index(name = "idx_batch_master_product", columnList = "product_id"),
-                @Index(name = "idx_batch_master_location", columnList = "warehouse_id, bin_id")
+                @Index(name = "idx_batch_master_location", columnList = "warehouse_id, bin_id"),
+                @Index(name = "idx_batch_master_selection", columnList = "product_code, bin_id, status, expiry_date")
         })
 public class BatchMaster extends BaseEntity {
 
@@ -70,11 +75,20 @@ public class BatchMaster extends BaseEntity {
     @Column(name = "unit_index", nullable = false)
     private Integer unitIndex;
 
+    @Column(name = "qty_unit_no")
+    private Integer qtyUnitNo;
+
     @Column(nullable = false)
     private Integer quantity = 1;
 
     @Column(name = "generated_date", nullable = false)
     private LocalDate generatedDate;
+
+    @Column(name = "manufacturing_date")
+    private LocalDate manufacturingDate;
+
+    @Column(name = "entry_date")
+    private LocalDate entryDate;
 
     @Column(name = "expiry_date")
     private LocalDate expiryDate;
@@ -82,8 +96,32 @@ public class BatchMaster extends BaseEntity {
     @Column(name = "unit_cost", precision = 19, scale = 4)
     private BigDecimal unitCost;
 
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false, length = 20)
+    private BatchStatus status = BatchStatus.AVAILABLE;
+
     @Column(nullable = false)
     private boolean printed = false;
+
+    @PrePersist
+    @PreUpdate
+    private void applyDefaults() {
+        if (status == null) {
+            status = BatchStatus.AVAILABLE;
+        }
+        if (quantity == null) {
+            quantity = 1;
+        }
+        if (qtyUnitNo == null) {
+            qtyUnitNo = unitIndex;
+        }
+        if (unitIndex == null) {
+            unitIndex = qtyUnitNo;
+        }
+        if (entryDate == null) {
+            entryDate = generatedDate != null ? generatedDate : LocalDate.now();
+        }
+    }
 
     public String getBatchNumber() {
         return batchNumber;
@@ -195,6 +233,20 @@ public class BatchMaster extends BaseEntity {
 
     public void setUnitIndex(Integer unitIndex) {
         this.unitIndex = unitIndex;
+        if (this.qtyUnitNo == null) {
+            this.qtyUnitNo = unitIndex;
+        }
+    }
+
+    public Integer getQtyUnitNo() {
+        return qtyUnitNo;
+    }
+
+    public void setQtyUnitNo(Integer qtyUnitNo) {
+        this.qtyUnitNo = qtyUnitNo;
+        if (this.unitIndex == null) {
+            this.unitIndex = qtyUnitNo;
+        }
     }
 
     public Integer getQuantity() {
@@ -211,6 +263,25 @@ public class BatchMaster extends BaseEntity {
 
     public void setGeneratedDate(LocalDate generatedDate) {
         this.generatedDate = generatedDate;
+        if (this.entryDate == null) {
+            this.entryDate = generatedDate;
+        }
+    }
+
+    public LocalDate getManufacturingDate() {
+        return manufacturingDate;
+    }
+
+    public void setManufacturingDate(LocalDate manufacturingDate) {
+        this.manufacturingDate = manufacturingDate;
+    }
+
+    public LocalDate getEntryDate() {
+        return entryDate;
+    }
+
+    public void setEntryDate(LocalDate entryDate) {
+        this.entryDate = entryDate;
     }
 
     public LocalDate getExpiryDate() {
@@ -227,6 +298,14 @@ public class BatchMaster extends BaseEntity {
 
     public void setUnitCost(BigDecimal unitCost) {
         this.unitCost = unitCost;
+    }
+
+    public BatchStatus getStatus() {
+        return status;
+    }
+
+    public void setStatus(BatchStatus status) {
+        this.status = status;
     }
 
     public boolean isPrinted() {
