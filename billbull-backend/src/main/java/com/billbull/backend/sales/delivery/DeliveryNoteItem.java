@@ -28,6 +28,7 @@ public class DeliveryNoteItem {
 	private String image;
 	private Long binId;
 	private Long salesOrderItemId;
+	private Long sourceLineId;
 
 	private Double price;
 	private Double disc;
@@ -176,6 +177,14 @@ public class DeliveryNoteItem {
 
 	public void setSalesOrderItemId(Long salesOrderItemId) {
 		this.salesOrderItemId = salesOrderItemId;
+	}
+
+	public Long getSourceLineId() {
+		return sourceLineId;
+	}
+
+	public void setSourceLineId(Long sourceLineId) {
+		this.sourceLineId = sourceLineId;
 	}
 
 	public Double getPrice() {

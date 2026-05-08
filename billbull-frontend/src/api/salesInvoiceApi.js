@@ -53,6 +53,16 @@ export const updateInvoiceStatus = async (id, status) => {
     return res.data;
 };
 
+export const saveSalesInvoiceBatchSelection = async (invoiceId, itemId, payload) => {
+    const res = await api.post(`${BASE_URL}/${invoiceId}/items/${itemId}/batch-selection`, payload);
+    return res.data;
+};
+
+export const clearSalesInvoiceBatchSelection = async (invoiceId, itemId) => {
+    const res = await api.delete(`${BASE_URL}/${invoiceId}/items/${itemId}/batch-selection`);
+    return res.data;
+};
+
 // --------------------
 // RECORD PAYMENT
 // --------------------

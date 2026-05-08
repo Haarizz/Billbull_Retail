@@ -2,6 +2,10 @@ package com.billbull.backend.sales.salesorder;
 
 import com.fasterxml.jackson.annotation.JsonBackReference;
 import jakarta.persistence.*;
+import java.util.ArrayList;
+import java.util.List;
+
+import com.billbull.backend.sales.delivery.DeliveryBatchSelectionResponse;
 
 @Entity
 @Table(name = "sales_order_items")
@@ -27,9 +31,34 @@ public class SalesOrderItem {
     private Integer foc;
     private String focUnit;
     private String image;
+    private Long binId;
 
     @Column(length = 500)
     private String remarks;
+
+    @Transient
+    private String binCode;
+
+    @Transient
+    private Boolean batchControlled;
+
+    @Transient
+    private Boolean fefoEnabled;
+
+    @Transient
+    private Integer minExpiryDaysForSale;
+
+    @Transient
+    private Integer baseRequiredQuantity;
+
+    @Transient
+    private Integer batchSelectedQuantity;
+
+    @Transient
+    private String batchSelectionMode;
+
+    @Transient
+    private List<DeliveryBatchSelectionResponse> batchSelections = new ArrayList<>();
 
     // ✅ LAZY + BACK REFERENCE
     @ManyToOne(fetch = FetchType.LAZY)
@@ -179,6 +208,78 @@ public class SalesOrderItem {
 
     public void setImage(String image) {
         this.image = image;
+    }
+
+    public Long getBinId() {
+        return binId;
+    }
+
+    public void setBinId(Long binId) {
+        this.binId = binId;
+    }
+
+    public String getBinCode() {
+        return binCode;
+    }
+
+    public void setBinCode(String binCode) {
+        this.binCode = binCode;
+    }
+
+    public Boolean getBatchControlled() {
+        return batchControlled;
+    }
+
+    public void setBatchControlled(Boolean batchControlled) {
+        this.batchControlled = batchControlled;
+    }
+
+    public Boolean getFefoEnabled() {
+        return fefoEnabled;
+    }
+
+    public void setFefoEnabled(Boolean fefoEnabled) {
+        this.fefoEnabled = fefoEnabled;
+    }
+
+    public Integer getMinExpiryDaysForSale() {
+        return minExpiryDaysForSale;
+    }
+
+    public void setMinExpiryDaysForSale(Integer minExpiryDaysForSale) {
+        this.minExpiryDaysForSale = minExpiryDaysForSale;
+    }
+
+    public Integer getBaseRequiredQuantity() {
+        return baseRequiredQuantity;
+    }
+
+    public void setBaseRequiredQuantity(Integer baseRequiredQuantity) {
+        this.baseRequiredQuantity = baseRequiredQuantity;
+    }
+
+    public Integer getBatchSelectedQuantity() {
+        return batchSelectedQuantity;
+    }
+
+    public void setBatchSelectedQuantity(Integer batchSelectedQuantity) {
+        this.batchSelectedQuantity = batchSelectedQuantity;
+    }
+
+    public String getBatchSelectionMode() {
+        return batchSelectionMode;
+    }
+
+    public void setBatchSelectionMode(String batchSelectionMode) {
+        this.batchSelectionMode = batchSelectionMode;
+    }
+
+    public List<DeliveryBatchSelectionResponse> getBatchSelections() {
+        return batchSelections;
+    }
+
+    public void setBatchSelections(List<DeliveryBatchSelectionResponse> batchSelections) {
+        this.batchSelections = batchSelections;
     }
 
     public String getRemarks() {

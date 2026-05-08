@@ -3,6 +3,10 @@ package com.billbull.backend.sales.invoice;
 import com.fasterxml.jackson.annotation.JsonBackReference;
 import jakarta.persistence.*;
 import java.math.BigDecimal;
+import java.util.ArrayList;
+import java.util.List;
+
+import com.billbull.backend.sales.delivery.DeliveryBatchSelectionResponse;
 
 @Entity
 @Table(name = "sales_invoice_items")
@@ -30,8 +34,34 @@ public class SalesInvoiceItem {
     private Integer foc;
     private String image;
     private Long warehouseId;
+    private Long binId;
+    private Long salesOrderItemId;
     @Transient
     private String barcode;
+
+    @Transient
+    private String binCode;
+
+    @Transient
+    private Boolean batchControlled;
+
+    @Transient
+    private Boolean fefoEnabled;
+
+    @Transient
+    private Integer minExpiryDaysForSale;
+
+    @Transient
+    private Integer baseRequiredQuantity;
+
+    @Transient
+    private Integer batchSelectedQuantity;
+
+    @Transient
+    private String batchSelectionMode;
+
+    @Transient
+    private List<DeliveryBatchSelectionResponse> batchSelections = new ArrayList<>();
 
     // Cumulative revenue and COGS recognized via Delivery Notes for this item.
     // Used to track partial delivery recognition and prevent over-posting.
@@ -189,6 +219,22 @@ public class SalesInvoiceItem {
         this.warehouseId = warehouseId;
     }
 
+    public Long getBinId() {
+        return binId;
+    }
+
+    public void setBinId(Long binId) {
+        this.binId = binId;
+    }
+
+    public Long getSalesOrderItemId() {
+        return salesOrderItemId;
+    }
+
+    public void setSalesOrderItemId(Long salesOrderItemId) {
+        this.salesOrderItemId = salesOrderItemId;
+    }
+
     public String getBarcode() {
         return barcode;
     }
@@ -203,6 +249,70 @@ public class SalesInvoiceItem {
 
     public void setImage(String image) {
         this.image = image;
+    }
+
+    public String getBinCode() {
+        return binCode;
+    }
+
+    public void setBinCode(String binCode) {
+        this.binCode = binCode;
+    }
+
+    public Boolean getBatchControlled() {
+        return batchControlled;
+    }
+
+    public void setBatchControlled(Boolean batchControlled) {
+        this.batchControlled = batchControlled;
+    }
+
+    public Boolean getFefoEnabled() {
+        return fefoEnabled;
+    }
+
+    public void setFefoEnabled(Boolean fefoEnabled) {
+        this.fefoEnabled = fefoEnabled;
+    }
+
+    public Integer getMinExpiryDaysForSale() {
+        return minExpiryDaysForSale;
+    }
+
+    public void setMinExpiryDaysForSale(Integer minExpiryDaysForSale) {
+        this.minExpiryDaysForSale = minExpiryDaysForSale;
+    }
+
+    public Integer getBaseRequiredQuantity() {
+        return baseRequiredQuantity;
+    }
+
+    public void setBaseRequiredQuantity(Integer baseRequiredQuantity) {
+        this.baseRequiredQuantity = baseRequiredQuantity;
+    }
+
+    public Integer getBatchSelectedQuantity() {
+        return batchSelectedQuantity;
+    }
+
+    public void setBatchSelectedQuantity(Integer batchSelectedQuantity) {
+        this.batchSelectedQuantity = batchSelectedQuantity;
+    }
+
+    public String getBatchSelectionMode() {
+        return batchSelectionMode;
+    }
+
+    public void setBatchSelectionMode(String batchSelectionMode) {
+        this.batchSelectionMode = batchSelectionMode;
+    }
+
+    public List<DeliveryBatchSelectionResponse> getBatchSelections() {
+        return batchSelections;
+    }
+
+    public void setBatchSelections(List<DeliveryBatchSelectionResponse> batchSelections) {
+        this.batchSelections = batchSelections;
     }
 
     public BigDecimal getRecognizedRevenue() {

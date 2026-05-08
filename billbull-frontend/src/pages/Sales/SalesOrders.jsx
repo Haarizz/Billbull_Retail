@@ -64,6 +64,7 @@ import ItemAddOnsModal from '../../components/ItemAddOnsModal';
 
 // ✅ STOCK AVAILABILITY MODAL
 import StockAvailabilityModal from '../../components/StockAvailabilityModal';
+import BatchSelectionModal from '../../components/BatchSelectionModal';
 
 // ✅ SHORTCUTS HOOK
 import useShortcuts from '../../hooks/useShortcuts';
@@ -160,7 +161,8 @@ const SalesOrders = () => {
   const { company } = useCompany();
   const currencyLabel = resolveCurrencyLabel(company);
   const orderCurrency = company?.currency || currencyLabel || 'AED';
-  const { canCreate, canEdit, canApprove, canExport } = usePermissions();
+  const { canCreate, canEdit, canApprove, canExport, canAction } = usePermissions();
+  const canManualBatchSelect = canAction('batch_manual_select', 'edit');
   const [activeTab, setActiveTab] = useState('list');
 
   // ✅ FIX 1: ADD ORDER ID STATE
@@ -190,6 +192,7 @@ const SalesOrders = () => {
 
   // ✅ NEW STATE: Track the currently focused item for the sidebar
   const [focusedItem, setFocusedItem] = useState(null);
+  const [batchSelectionTarget, setBatchSelectionTarget] = useState(null);
 
   // Sales settings (stock check, credit limit policy)
   const [salesSettings, setSalesSettings] = useState(null);
@@ -546,7 +549,16 @@ const SalesOrders = () => {
       disc: Number(item.disc ?? item.discount) || 0,
       tax: Number(item.tax ?? item.taxRate ?? item.taxPercent) || 5,
       taxAmt: Number(item.taxAmt ?? item.taxAmount) || 0,
-      total: Number(item.total ?? item.lineTotal) || 0
+      total: Number(item.total ?? item.lineTotal) || 0,
+      binId: item.binId ?? null,
+      binCode: item.binCode || '',
+      batchControlled: Boolean(item.batchControlled ?? item.isBatch ?? item.product?.isBatch),
+      fefoEnabled: item.fefoEnabled != null ? Boolean(item.fefoEnabled) : true,
+      minExpiryDaysForSale: Number(item.minExpiryDaysForSale) || 0,
+      baseRequiredQuantity: Number(item.baseRequiredQuantity) || 0,
+      batchSelectedQuantity: Number(item.batchSelectedQuantity) || 0,
+      batchSelectionMode: item.batchSelectionMode || 'AUTO_FEFO',
+      batchSelections: Array.isArray(item.batchSelections) ? item.batchSelections : []
     };
 
     return calculateRow(normalized);
@@ -585,7 +597,12 @@ const SalesOrders = () => {
       disc: disc,
       tax: tax,
       taxAmt: 0,
-      total: 0
+      total: 0,
+      batchControlled: Boolean(product.batchControlled ?? product.isBatch ?? product.batch),
+      fefoEnabled: product.fefoEnabled != null ? Boolean(product.fefoEnabled) : true,
+      minExpiryDaysForSale: Number(product.minExpiryDaysForSale) || 0,
+      batchSelectedQuantity: 0,
+      batchSelections: []
     };
 
     const newItem = calculateRow(rawItem);
@@ -627,6 +644,11 @@ const SalesOrders = () => {
       total: 0,
       remarks: product.description || '',
       isProductSelected: true,
+      batchControlled: Boolean(product.batchControlled ?? product.isBatch ?? product.batch),
+      fefoEnabled: product.fefoEnabled != null ? Boolean(product.fefoEnabled) : true,
+      minExpiryDaysForSale: Number(product.minExpiryDaysForSale) || 0,
+      batchSelectedQuantity: 0,
+      batchSelections: []
     };
     const newItem = calculateRow(rawItem);
     setItems(prev => {
@@ -694,7 +716,7 @@ const SalesOrders = () => {
       return;
     }
     setShowItemError(false);
-    saveOrUpdateOrder();
+    saveOrUpdateOrder('CONFIRMED');
   };
 
   const handleMarkAsInvoiced = async () => {
@@ -838,7 +860,7 @@ const SalesOrders = () => {
   };
 
   // ✅ FIX 4: INCLUDE ID IN PAYLOAD
-  const saveOrUpdateOrder = async () => {
+  const saveOrUpdateOrder = async (targetStatus = 'DRAFT') => {
     const sanitizedLinkedQuotation = linkedSourceType === 'quotation' ? linkedQtn.trim() : '';
     const sanitizedLinkedProforma = linkedSourceType === 'proforma' ? linkedPi.trim() : '';
 
@@ -865,6 +887,7 @@ const SalesOrders = () => {
       // Notes
       customerNotes,
       internalNotes,
+      status: targetStatus,
 
       // Map Items
       items: items.map(i => ({
@@ -883,7 +906,8 @@ const SalesOrders = () => {
         taxAmount: Number(i.taxAmt),
         lineTotal: Number(i.total),
         foc: Number(i.foc) || 0,
-        focUnit: i.focUnit || i.unit || 'PCS'
+        focUnit: i.focUnit || i.unit || 'PCS',
+        binId: i.binId || null
       }))
     };
 
@@ -931,8 +955,22 @@ const SalesOrders = () => {
       // Update local state to match saved record
       setOrderId(savedOrder.id); // Ensure subsequent saves are updates
       setStatus(savedOrder.status);
+      if (Array.isArray(savedOrder.items)) {
+        const mappedItems = savedOrder.items.map((item, index) =>
+          normalizeOrderItem({ ...item, soItemId: item.id }, Date.now() + index)
+        );
+        setItems(mappedItems.length > 0 ? mappedItems : [createBlankOrderItem()]);
+        setFocusedItem(mappedItems[0] || null);
+      }
 
-      setActiveTab('list');
+      const hasBatchLines = Array.isArray(savedOrder.items)
+        && savedOrder.items.some(item => item.batchControlled);
+      if (targetStatus === 'DRAFT' && hasBatchLines) {
+        setActiveTab('create');
+        alert('Draft saved. Select exact batches for each batch-controlled line, then confirm the Sales Order.');
+      } else {
+        setActiveTab('list');
+      }
       setAttachmentFile(null);
     } catch (e) {
       console.error("Save failed", e);
@@ -949,6 +987,19 @@ const SalesOrders = () => {
       : (cust.defaultShippingAddress || cust.shippingAddress || cust.billingAddress || cust.address || '');
     setShippingAddress(_resolvedAddr);
     setIsCustomerSearchOpen(false);
+  };
+
+  const handleBatchSelectionSaved = async (updatedOrder) => {
+    if (updatedOrder?.id) {
+      setOrderId(updatedOrder.id);
+      setStatus(updatedOrder.status || status);
+      const mappedItems = (updatedOrder.items || []).map((item, index) =>
+        normalizeOrderItem({ ...item, soItemId: item.id }, Date.now() + index)
+      );
+      setItems(mappedItems.length > 0 ? mappedItems : [createBlankOrderItem()]);
+      setFocusedItem(mappedItems[0] || null);
+      await fetchSalesOrders();
+    }
   };
 
   const handleFileUpload = (e) => {
@@ -1219,6 +1270,25 @@ const SalesOrders = () => {
         isOpen={isItemStockModalOpen}
         onClose={() => setIsItemStockModalOpen(false)}
         selectedStockItem={selectedStockItem}
+      />
+
+      <BatchSelectionModal
+        isOpen={Boolean(batchSelectionTarget)}
+        onClose={() => setBatchSelectionTarget(null)}
+        onSaved={handleBatchSelectionSaved}
+        sourceType="SALES_ORDER"
+        sourceDocumentId={orderId}
+        salesOrderId={orderId}
+        itemId={batchSelectionTarget?.item?.soItemId || batchSelectionTarget?.item?.id}
+        itemCode={batchSelectionTarget?.item?.code}
+        itemName={batchSelectionTarget?.item?.desc}
+        locationCode={batchSelectionTarget?.item?.binCode}
+        binId={batchSelectionTarget?.item?.binId}
+        requiredQuantity={batchSelectionTarget?.item?.baseRequiredQuantity || batchSelectionTarget?.item?.qty}
+        fefoEnabled={batchSelectionTarget?.item?.fefoEnabled}
+        minExpiryDaysForSale={batchSelectionTarget?.item?.minExpiryDaysForSale}
+        currentSelections={batchSelectionTarget?.item?.batchSelections || []}
+        canManualSelect={canManualBatchSelect}
       />
 
       <ItemAddOnsModal
@@ -1626,6 +1696,26 @@ const SalesOrders = () => {
                               onOpenSettings={(item) => setSelectedAddonItem({ ...item })}
                               page="sales_orders"
                             />
+                            {item.batchControlled && (
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  if (!orderId || !item.soItemId) {
+                                    alert('Save this Sales Order as Draft before selecting batches.');
+                                    return;
+                                  }
+                                  setBatchSelectionTarget({ item });
+                                }}
+                                className={`mt-2 inline-flex items-center gap-1 rounded border px-2 py-1 text-[10px] font-bold ${
+                                  Number(item.batchSelectedQuantity || 0) >= Number(item.baseRequiredQuantity || item.qty || 0)
+                                    ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+                                    : 'border-amber-200 bg-amber-50 text-amber-700'
+                                }`}
+                              >
+                                Batches {Number(item.batchSelectedQuantity || 0)}/{Number(item.baseRequiredQuantity || item.qty || 0)}
+                              </button>
+                            )}
                           </td>
 
                           {/* Unit */}

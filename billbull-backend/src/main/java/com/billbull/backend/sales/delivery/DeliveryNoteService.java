@@ -155,9 +155,6 @@ public class DeliveryNoteService {
 
         r.status = dn.getStatus();
 
-        Map<Long, List<DeliveryBatchSelectionResponse>> batchSelectionsByLine =
-                dn.getId() != null ? batchSelectionService.getDeliverySelections(dn.getId()) : Map.of();
-
         r.items = dn.getItems().stream().map(item -> {
             DeliveryNoteItemResponse ir = new DeliveryNoteItemResponse();
             ir.id = item.getId();
@@ -175,6 +172,7 @@ public class DeliveryNoteService {
             ir.boxes = item.getBoxes();
             ir.binId = item.getBinId();
             ir.salesOrderItemId = item.getSalesOrderItemId();
+            ir.sourceLineId = item.getSourceLineId();
             ir.price = item.getPrice();
             ir.disc = item.getDisc();
             ir.tax = item.getTax();
@@ -187,7 +185,7 @@ public class DeliveryNoteService {
             ir.minExpiryDaysForSale = product != null ? product.getMinExpiryDaysForSale() : 0;
             ir.baseRequiredQuantity = calculateLineBaseQty(item);
             ir.binCode = resolveBinCode(item.getBinId());
-            ir.batchSelections = batchSelectionsByLine.getOrDefault(item.getId(), List.of());
+            ir.batchSelections = batchSelectionService.getSelectionsForDeliveryLine(dn, item);
             ir.batchSelectedQuantity = ir.batchSelections.stream()
                     .filter(selection -> selection.status == BatchAllocationStatus.RESERVED
                             || selection.status == BatchAllocationStatus.CONSUMED)
@@ -403,7 +401,7 @@ public class DeliveryNoteService {
                 if (!isBatchControlled(item)) {
                     continue;
                 }
-                List<BatchAllocation> allocations = batchSelectionService.getReservedForDeliveryLine(dn.getId(), item.getId());
+                List<BatchAllocation> allocations = batchSelectionService.getReservedForDeliverySource(dn, item);
                 int selectedQty = allocations.stream()
                         .mapToInt(allocation -> allocation.getQuantity() != null ? allocation.getQuantity() : 0)
                         .sum();
@@ -413,7 +411,7 @@ public class DeliveryNoteService {
                             "Batch selection must exactly match delivery quantity for " + item.getItemCode()
                                     + ". Selected: " + selectedQty + " | Required: " + requiredQty);
                 }
-                batchSelectionService.markConsumed(allocations);
+                batchSelectionService.markConsumedForDelivery(dn, item, allocations);
             }
         }
 
@@ -494,7 +492,7 @@ public class DeliveryNoteService {
             return;
         }
 
-        List<BatchAllocation> allocations = batchSelectionService.getReservedForDeliveryLine(dn.getId(), item.getId());
+        List<BatchAllocation> allocations = batchSelectionService.getReservedForDeliverySource(dn, item);
         int selectedQty = allocations.stream()
                 .mapToInt(allocation -> allocation.getQuantity() != null ? allocation.getQuantity() : 0)
                 .sum();
@@ -521,7 +519,7 @@ public class DeliveryNoteService {
                     dn.getDnNumber());
         }
 
-        batchSelectionService.markConsumed(allocations);
+        batchSelectionService.markConsumedForDelivery(dn, item, allocations);
     }
 
     private int postDeductionFromBinIdentities(
@@ -661,8 +659,8 @@ public class DeliveryNoteService {
                         reverseDeliveryDeduction(dn, item);
                     }
                 }
-                batchSelectionService.restoreConsumedDeliveryNote(dn.getId());
             }
+            batchSelectionService.restoreConsumedDeliveryNote(dn.getId());
 
             // FIX 3 + FIX 4 — Only reverse accounting if it was actually posted.
             // Use stored DN amounts directly (not recalculated) to prevent rounding mismatch.
@@ -1018,6 +1016,10 @@ public class DeliveryNoteService {
             throw new IllegalStateException("Batch selection can only be changed while the delivery note is Draft");
         }
         DeliveryNoteItem item = findItem(dn, itemId);
+        if (item.getSalesOrderItemId() != null || item.getSourceLineId() != null) {
+            throw new IllegalStateException(
+                    "This Delivery Note inherits batch selection from its source document. Change batches on the source document before delivery.");
+        }
         batchSelectionService.saveDeliveryLineSelection(dn, item, request, calculateLineBaseQty(item));
         return toResponse(dn);
     }
@@ -1106,6 +1108,7 @@ public class DeliveryNoteService {
             item.setImage(i.image);
             item.setBinId(resolveDraftBinId(warehouse.getId(), product, i));
             item.setSalesOrderItemId(i.salesOrderItemId);
+            item.setSourceLineId(i.sourceLineId);
             item.setPrice(i.price);
             item.setDisc(i.disc);
             item.setTax(i.tax);
@@ -1213,7 +1216,7 @@ public class DeliveryNoteService {
     }
 
     private void ensureBatchSelectionExact(DeliveryNote dn, DeliveryNoteItem item, int requiredQty) {
-        int selectedQty = batchSelectionService.getReservedForDeliveryLine(dn.getId(), item.getId()).stream()
+        int selectedQty = batchSelectionService.getReservedForDeliverySource(dn, item).stream()
                 .mapToInt(allocation -> allocation.getQuantity() != null ? allocation.getQuantity() : 0)
                 .sum();
         if (selectedQty != requiredQty) {
