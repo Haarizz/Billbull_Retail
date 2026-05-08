@@ -57,9 +57,18 @@ public class BatchSelectionService {
             String itemCode,
             String locationCode,
             Integer requiredQuantity) {
+        return getSelectionOptions(itemCode, locationCode, null, requiredQuantity);
+    }
+
+    @Transactional(readOnly = true)
+    public BatchSelectionOptionsResponse getSelectionOptions(
+            String itemCode,
+            String locationCode,
+            Long binId,
+            Integer requiredQuantity) {
 
         Product product = requireProduct(itemCode);
-        Bin bin = resolveUniqueBin(locationCode);
+        Bin bin = resolveBin(binId, locationCode);
         int required = normalizeRequiredQuantity(requiredQuantity);
 
         List<BatchMaster> available = batchRepository.findAvailableForSelection(product.getCode(), bin.getId());
@@ -448,6 +457,14 @@ public class BatchSelectionService {
         return productRepository.findByCodeAndIsActiveTrue(itemCode.trim())
                 .orElseThrow(() -> new ResponseStatusException(
                         HttpStatus.NOT_FOUND, "Product not found: " + itemCode));
+    }
+
+    private Bin resolveBin(Long binId, String locationCode) {
+        if (binId != null) {
+            return binRepository.findByIdEager(binId)
+                    .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Bin not found: " + binId));
+        }
+        return resolveUniqueBin(locationCode);
     }
 
     private Bin resolveUniqueBin(String locationCode) {

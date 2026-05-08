@@ -56,6 +56,7 @@ const BatchSelectionModal = ({
   itemCode,
   itemName,
   locationCode,
+  binId,
   requiredQuantity,
   fefoEnabled = true,
   minExpiryDaysForSale = 0,
@@ -85,7 +86,7 @@ const BatchSelectionModal = ({
     setLoading(true);
     setError('');
 
-    getBatchSelectionOptions({ itemCode, locationCode, requiredQuantity: required })
+    getBatchSelectionOptions({ itemCode, locationCode, binId, requiredQuantity: required })
       .then(data => {
         if (!cancelled) setOptions(data);
       })
@@ -102,7 +103,7 @@ const BatchSelectionModal = ({
     return () => {
       cancelled = true;
     };
-  }, [isOpen, itemCode, locationCode, required]);
+  }, [isOpen, itemCode, locationCode, binId, required]);
 
   const currentRows = useMemo(
     () => (currentSelections || []).map(asRow),

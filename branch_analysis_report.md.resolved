@@ -1,0 +1,170 @@
+# BillBull Branch Module — Analysis & Suggestion Report
+
+**Date:** 2026-05-06 | **Project:** BillBull Retail ERP | **Scope:** Branch Setup Module
+
+---
+
+## Summary
+
+This report answers four specific questions about the current Branch Setup module, then gives architectural recommendations on how to evolve it cleanly.
+
+---
+
+## Q1 — Does the Branch Setup Module Handle Multiple Branches?
+
+### ✅ Yes — Multiple Branches Are Fully Supported
+
+The current implementation is built to be **multi-branch by design**:
+
+| Layer | Evidence |
+|---|---|
+| **Database** | `branches` table — no uniqueness constraint on count, each row is independent |
+| **Backend** | `BranchService.listAll()` returns all branches; `BranchRepository.findAll()` is unbounded |
+| **API** | `GET /api/branches` returns full list; `POST /api/branches` creates new ones without restriction |
+| **Frontend** | `BranchSetup.jsx` renders all branches in a table, supports Add / Edit / Delete for each |
+| **UI (screenshot)** | Confirmed: "QA Lab" and "DXB" both exist as separate, functional rows |
+
+### ⚠️ Gaps Identified
+
+| Gap | Impact |
+|---|---|
+| No **branch count limit** or **single-branch mode toggle** | The system assumes unlimited branches always, even for businesses with 1 location |
+| No **branch selector at login or header** | When a user has a branch assigned, it is silently auto-resolved via `BranchContext` — there is no explicit branch switcher for ADMIN users |
+| **`BranchAccessService`** only filters by the *user's assigned branch*, not by a session choice | ADMIN users always see all branches across all documents |
+| **Warehouse → Branch scoping** is enforced but `branchId` on sales documents (Quotation, SalesInvoice, DeliveryNote) is **a plain `Long`, not a FK reference** to the `branches` table | Referential integrity can drift |
+
+---
+
+## Q2 — How to Set the Default Branch? (Current Mechanism + Missing Piece)
+
+### Current: Default Warehouse ✅ (Already Works)
+
+The form in `BranchSetup.jsx` has a "Default Warehouse" dropdown that is filtered to warehouses belonging to that branch (`w.branchId === editId`). The backend enforces that the selected warehouse actually belongs to the branch before saving.
+
+**Flow:** Edit Branch → Select a warehouse from this branch's list → Save → `Branch.defaultWarehouse` is persisted.
+
+### Missing: Default Branch ⚠️
+
+Setting the **default branch** itself is done via the ⭐ **star icon** in the table's DEFAULT column (calls `PUT /api/branches/{id}/default`). However:
+
+1. **There is no explicit "Set Default" button or label** — new users won't know the `StarOff` icon is clickable.
+2. The **first branch created auto-becomes the default** (in `BranchService.create()`) — this is an implicit rule that is not communicated in the UI.
+3. **The "Default" badge** is rendered using `b.isDefault` which comes from `@JsonProperty("isDefault")` — this is correct and works, but it was a known bug in a past session (conversation `e39c1f47`).
+4. For **ADMIN users with no branch assigned**, `BranchContext` falls back to the system-level default branch — which is fine, but the logic is spread across `BranchContext.jsx` in a multi-step resolution chain (profile → list → API call), making it fragile.
+
+### Suggested UX Fix (No code change required, just a label)
+- Replace the `StarOff` icon with a small "Set as Default" text button or tooltip so the action is self-discoverable.
+
+---
+
+## Q3 — What is the Best Way to Handle the Branch Ideology?
+
+### Current Architecture Pattern: **Implicit Multi-Branch with User-Scoped Isolation**
+
+```
+Company
+  └── Branch (1..N)
+        ├── Warehouse (1..N per branch)
+        └── User (N..M via User.branch FK)
+
+Transaction (Invoice, Order, Quotation, DeliveryNote)
+  └── branchId: Long  (resolved from user session at creation time)
+```
+
+This is a **"silent scoping"** model: the branch is auto-assigned from the logged-in user's profile, and documents are filtered by branch. It works for operational staff, but breaks for ADMIN users who need cross-branch visibility.
+
+### Recommendation: Choose One Clear Ideology
+
+There are three standard patterns for retail ERP branch handling. Here's a comparison:
+
+| Model | How it Works | Best For | Risk |
+|---|---|---|---|
+| **A. Single-Branch** | Company = 1 branch. No selector, no scoping. | Micro-businesses | Cannot scale |
+| **B. User-Scoped Multi-Branch** *(current)* | Each user is permanently assigned to one branch. Transactions auto-stamped. | Operational staff per location | ADMIN has no visibility override |
+| **C. Session-Scoped Branch Switcher** | ADMIN can switch "active branch" in a header dropdown. Documents scoped to selected branch. | HQ + multi-branch operations | Requires session state |
+| **D. Tenant-Isolated (SaaS)** | Each branch = separate DB schema/tenant | Full isolation per location | Too heavy for this stage |
+
+### ✅ Recommended: **Hybrid B + C**
+
+Keep the current User-Scoped model for operational users, but add a **branch switcher in the top navigation bar for ADMIN users**. This gives:
+- Staff → No branch confusion, their branch is locked.
+- Admin → Can see and act on any branch's data.
+
+The `BranchContext` already holds `branches[]` and `defaultBranch`, so the infrastructure for a switcher already exists. Only a `activeBranch` state + a `<select>` in the header is needed.
+
+---
+
+## Q4 — Should Branch Setup Concept Move Into the Company Page?
+
+### Current State
+
+- **Company Profile** (`CompanySettings.jsx`) — Organization-level fields: name, logo, TRN, currency, address, contact. **No branch awareness at all.**
+- **Branch Setup** (`BranchSetup.jsx`) — Separate page under Settings for creating and managing branches.
+
+### Analysis
+
+| Question | Answer |
+|---|---|
+| Is merging them appropriate? | **Partially, not fully** |
+| Why partially? | Company data ≠ Branch data. Company is global config; Branch is operational unit. |
+| What should move? | The **"primary branch" or "single branch mode" toggle** could live on the Company page |
+| What should NOT move? | Branch CRUD (create/edit/delete multi-branch) must stay in its own page |
+
+### Recommendation: Two-Level Settings Approach
+
+```
+Settings
+├── Company Profile (existing)
+│     ├── Name, Logo, TRN, Currency, Address  ← existing
+│     └── [NEW] Business Mode: ○ Single Location  ● Multi-Branch  ← add this toggle
+│
+└── Branch Setup (existing, keep separate)
+      ├── Manage branches (CRUD)
+      └── Assign default warehouse per branch
+```
+
+#### If "Single Location" mode is selected:
+- Hide the Branch Setup page from navigation
+- Auto-set the single branch = Company Profile values (name, address, phone)
+- No branch column in any transaction (simplifies UI for solo shops)
+- `isDefault` is always the one branch — no star toggle needed
+
+#### If "Multi-Branch" mode is selected:
+- Show Branch Setup page as now
+- Branch column visible in all transaction modules
+- Header branch switcher for ADMIN
+
+---
+
+## Priority Action Plan
+
+| Priority | Action | Effort | Impact |
+|---|---|---|---|
+| 🔴 **P1** | Add "Single vs Multi-Branch" toggle to Company Profile | Low | Simplifies UX for single-location clients |
+| 🔴 **P1** | Replace `StarOff` icon with explicit "Set Default" label/button | Very Low | Eliminates discoverability issue |
+| 🟡 **P2** | Add ADMIN branch switcher in top navigation bar | Medium | Unlocks cross-branch visibility |
+| 🟡 **P2** | Enforce `branchId` as a proper FK on all transaction entities (not raw `Long`) | Medium | Data integrity across modules |
+| 🟢 **P3** | Auto-populate branch fields from Company Profile when in single-branch mode | Medium | Reduces setup friction for new deployments |
+| 🟢 **P3** | Branch-specific logo/stamp on print templates (partially done per conversation `e39c1f47`) | Medium | Premium branding for multi-branch |
+
+---
+
+## Technical Debt Notes
+
+1. **`BranchMigrationRunner.java`** — This startup migration infers branch ownership from sales invoice history and user creation trails. This is a one-time migration artifact and should be removed or made conditional (run-once flag in DB) to avoid re-processing on every startup.
+
+2. **`Branch` stored as `String branch` in legacy sales entities vs `Long branchId`** — The migration runner bridges this gap, but after migration completes, the old `branch: String` column should be deprecated and dropped.
+
+3. **`BranchContext.jsx` resolution chain** — The 3-step fallback (profile → list → API) adds 3 serial API calls on every app load. After branch scoping is stable, this should be collapsed into 1 consolidated endpoint: `GET /api/me/context` that returns user profile + resolved branch in a single call.
+
+---
+
+## Decision Required from You
+
+> **Before any implementation begins, please clarify:**
+>
+> 1. Is BillBull being sold to **single-location clients** (shops, small retailers) or always to **multi-branch businesses**?
+> 2. For single-location clients, do they still need a "Branch Setup" page, or should it be completely hidden?
+> 3. Should ADMIN users be able to **create documents on behalf of any branch**, or only view cross-branch reports?
+
+The answers will determine whether we implement the **Business Mode toggle** on the Company page or simply improve the existing Branch Setup page.
