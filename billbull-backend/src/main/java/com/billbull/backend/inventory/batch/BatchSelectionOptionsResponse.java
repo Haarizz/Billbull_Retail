@@ -16,4 +16,22 @@ public class BatchSelectionOptionsResponse {
     public String message;
     public List<BatchSelectionRow> fefoSelection = new ArrayList<>();
     public List<BatchSelectionRow> availableBatches = new ArrayList<>();
+    public List<BinOption> availableBins = new ArrayList<>();
+    public Long binId;
+    public Long warehouseId;
+
+    public static class BinOption {
+        public Long id;
+        public String code;
+        public String name;
+
+        public BinOption() {
+        }
+
+        public BinOption(Long id, String code, String name) {
+            this.id = id;
+            this.code = code;
+            this.name = name;
+        }
+    }
 }
