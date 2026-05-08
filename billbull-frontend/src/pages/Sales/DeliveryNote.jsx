@@ -45,6 +45,8 @@ import { usePrintDocument } from '../../hooks/usePrintDocument';
 import ExportDropdown from '../../components/common/ExportDropdown';
 import { exportToExcel, exportToPDF } from '../../utils/exportUtils';
 import CurrencyAmount from '../../components/CurrencyAmount';
+import BatchSelectionModal from '../../components/BatchSelectionModal';
+import { usePermissions } from '../../context/PermissionContext';
 
 // ==========================================
 // 1. CONFIGURATION
@@ -103,7 +105,9 @@ import ItemAddOnsModal from '../../components/ItemAddOnsModal';
 const DeliveryNote = () => {
     const { print } = usePrintDocument();
     const { company } = useCompany();
+    const { canAction } = usePermissions();
     const currency = company?.currency || 'AED';
+    const canManualBatchSelect = canAction('batch_manual_select', 'edit');
     const [activeTab, setActiveTab] = useState('list');
     const [currentDnId, setCurrentDnId] = useState(null); // Tracks editing vs creating
 
@@ -118,6 +122,7 @@ const DeliveryNote = () => {
     const [pickingScanValue, setPickingScanValue] = useState('');
     const [pickingScanFeedback, setPickingScanFeedback] = useState(null);
     const [pickedItemsByNote, setPickedItemsByNote] = useState({});
+    const [batchSelectionTarget, setBatchSelectionTarget] = useState(null);
     const pickingScanInputRef = React.useRef(null);
 
     const matchesPickingSearch = (dn, lowerSearch) => {
@@ -192,13 +197,7 @@ const DeliveryNote = () => {
         return data;
     }, [deliveryNotesList, searchTerm, filterStatus, sortConfig]);
 
-    const pickingNotes = useMemo(
-        () => deliveryNotesList.filter(dn =>
-            dn.type === 'Picking' ||
-            (dn.type === 'Before Sale' && dn.piNo && dn.piNo !== '-')
-        ),
-        [deliveryNotesList]
-    );
+    const pickingNotes = deliveryNotesList;
 
     const activePickingNotes = useMemo(() => {
         const lower = pickingSearchTerm.trim().toLowerCase();
@@ -479,7 +478,14 @@ const DeliveryNote = () => {
     // Helper
     const capitalize = s => s ? s.charAt(0) + s.slice(1).toLowerCase() : '';
 
-    const getRequiredPickingQty = (item) => Math.max(Number(item?.currentQty) || 0, 0);
+    const isBatchPickingLine = (item) => Boolean(item?.batchControlled);
+
+    const getRequiredPickingQty = (item) => {
+        if (isBatchPickingLine(item) && Number(item?.baseRequiredQuantity) > 0) {
+            return Math.max(Number(item.baseRequiredQuantity) || 0, 0);
+        }
+        return Math.max(Number(item?.currentQty) || 0, 0);
+    };
 
     const formatPickingQty = (qty, item) => {
         if (!item) return String(qty || 0);
@@ -513,8 +519,12 @@ const DeliveryNote = () => {
         return `${qty} ${sellingUnit} (${baseQty} ${baseUnit})`;
     };
 
-    const getPickedQty = (noteId, itemId) =>
-        Number(pickedItemsByNote[noteId]?.[itemId] || 0);
+    const getPickedQty = (noteId, itemId, item = null) => {
+        if (isBatchPickingLine(item)) {
+            return Number(item?.batchSelectedQuantity || 0);
+        }
+        return Number(pickedItemsByNote[noteId]?.[itemId] || 0);
+    };
 
     const updatePickedQty = (noteId, itemId, nextQty, maxQty) => {
         const clampedQty = Math.max(0, Math.min(Number(nextQty) || 0, Math.max(0, Number(maxQty) || 0)));
@@ -542,9 +552,9 @@ const DeliveryNote = () => {
     const getPickingProgress = (note) => {
         const itemsForNote = Array.isArray(note?.items) ? note.items : [];
         const requiredQty = itemsForNote.reduce((sum, item) => sum + getRequiredPickingQty(item), 0);
-        const pickedQty = itemsForNote.reduce((sum, item) => sum + Math.min(getPickedQty(note.id, item.id), getRequiredPickingQty(item)), 0);
+        const pickedQty = itemsForNote.reduce((sum, item) => sum + Math.min(getPickedQty(note.id, item.id, item), getRequiredPickingQty(item)), 0);
         const totalLines = itemsForNote.length;
-        const completedLines = itemsForNote.filter(item => getPickedQty(note.id, item.id) >= getRequiredPickingQty(item)).length;
+        const completedLines = itemsForNote.filter(item => getPickedQty(note.id, item.id, item) >= getRequiredPickingQty(item)).length;
 
         return {
             requiredQty,
@@ -558,8 +568,13 @@ const DeliveryNote = () => {
     };
 
     const handleManualPickAdjust = (note, item, delta) => {
+        if (isBatchPickingLine(item)) {
+            setBatchSelectionTarget({ note, item });
+            return;
+        }
+
         const maxQty = getRequiredPickingQty(item);
-        const currentPicked = getPickedQty(note.id, item.id);
+        const currentPicked = getPickedQty(note.id, item.id, item);
         const nextQty = Math.max(0, Math.min(maxQty, currentPicked + delta));
 
         updatePickedQty(note.id, item.id, nextQty, maxQty);
@@ -605,8 +620,18 @@ const DeliveryNote = () => {
             return;
         }
 
+        if (isBatchPickingLine(matchedItem)) {
+            setBatchSelectionTarget({ note: selectedPickingNote, item: matchedItem });
+            setPickingScanValue('');
+            setPickingScanFeedback({
+                kind: 'error',
+                message: `${matchedItem.code || matchedItem.desc || 'Item'} is batch-controlled. Select exact batches before dispatch.`
+            });
+            return;
+        }
+
         const requiredQty = getRequiredPickingQty(matchedItem);
-        const currentPicked = getPickedQty(selectedPickingNote.id, matchedItem.id);
+        const currentPicked = getPickedQty(selectedPickingNote.id, matchedItem.id, matchedItem);
 
         if (currentPicked >= requiredQty) {
             setPickingScanFeedback({
@@ -657,6 +682,14 @@ const DeliveryNote = () => {
         }
     };
 
+    const handleBatchSelectionSaved = async () => {
+        await loadDeliveryNotes();
+        setPickingScanFeedback({
+            kind: 'success',
+            message: 'Batch selection saved.'
+        });
+    };
+
     const createBlankDeliveryItem = () => ({
         id: Date.now() + Math.random(),
         code: '',
@@ -687,7 +720,15 @@ const DeliveryNote = () => {
         margin: 0,
         binId: null,
         salesOrderItemId: null,
-        stock: 0
+        stock: 0,
+        binCode: '',
+        batchControlled: false,
+        fefoEnabled: true,
+        minExpiryDaysForSale: 0,
+        baseRequiredQuantity: 0,
+        batchSelectedQuantity: 0,
+        batchSelectionMode: 'AUTO_FEFO',
+        batchSelections: []
     });
 
     const normalizeDeliveryItem = (item = {}, fallbackId = Date.now() + Math.random()) => {
@@ -748,8 +789,16 @@ const DeliveryNote = () => {
             cost,
             margin: Number(item.margin ?? item.gp) || inferredMargin,
             binId: item.binId ?? null,
+            binCode: item.binCode || '',
             salesOrderItemId: item.salesOrderItemId || null,
-            stock: Number(item.stock) || warehouseStockMap[resolvedCode] || 0
+            stock: Number(item.stock) || warehouseStockMap[resolvedCode] || 0,
+            batchControlled: Boolean(item.batchControlled ?? item.isBatch ?? item.product?.isBatch),
+            fefoEnabled: item.fefoEnabled != null ? Boolean(item.fefoEnabled) : true,
+            minExpiryDaysForSale: Number(item.minExpiryDaysForSale) || 0,
+            baseRequiredQuantity: Number(item.baseRequiredQuantity) || 0,
+            batchSelectedQuantity: Number(item.batchSelectedQuantity) || 0,
+            batchSelectionMode: item.batchSelectionMode || 'AUTO_FEFO',
+            batchSelections: Array.isArray(item.batchSelections) ? item.batchSelections : []
         };
     };
 
@@ -1561,6 +1610,23 @@ const DeliveryNote = () => {
                 isOpen={isItemStockModalOpen}
                 onClose={() => setIsItemStockModalOpen(false)}
                 selectedStockItem={selectedStockItem}
+            />
+
+            <BatchSelectionModal
+                isOpen={Boolean(batchSelectionTarget)}
+                onClose={() => setBatchSelectionTarget(null)}
+                onSaved={handleBatchSelectionSaved}
+                deliveryNoteId={batchSelectionTarget?.note?.id}
+                itemId={batchSelectionTarget?.item?.id}
+                itemCode={batchSelectionTarget?.item?.code}
+                itemName={batchSelectionTarget?.item?.desc}
+                locationCode={batchSelectionTarget?.item?.binCode}
+                binId={batchSelectionTarget?.item?.binId}
+                requiredQuantity={getRequiredPickingQty(batchSelectionTarget?.item)}
+                fefoEnabled={batchSelectionTarget?.item?.fefoEnabled}
+                minExpiryDaysForSale={batchSelectionTarget?.item?.minExpiryDaysForSale}
+                currentSelections={batchSelectionTarget?.item?.batchSelections || []}
+                canManualSelect={canManualBatchSelect}
             />
 
             {/* ✅ ITEM ADD-ONS & DETAILS MODAL */}
@@ -2655,19 +2721,25 @@ const DeliveryNote = () => {
                                                             <th className="px-4 py-3 text-center">Required</th>
                                                             <th className="px-4 py-3 text-center">Picked</th>
                                                             <th className="px-4 py-3 text-center">Remaining</th>
-                                                            <th className="px-4 py-3 text-right">Quick Pick</th>
+                                                            <th className="px-4 py-3 text-right">Action</th>
                                                         </tr>
                                                     </thead>
                                                     <tbody className="divide-y divide-slate-100">
                                                         {(selectedPickingNote.items || []).map(item => {
                                                             const requiredQty = getRequiredPickingQty(item);
-                                                            const pickedQty = getPickedQty(selectedPickingNote.id, item.id);
+                                                            const pickedQty = getPickedQty(selectedPickingNote.id, item.id, item);
                                                             const remainingQty = Math.max(requiredQty - pickedQty, 0);
+                                                            const isBatchLine = isBatchPickingLine(item);
 
                                                             return (
                                                                 <tr key={item.id} className="hover:bg-slate-50/70">
                                                                     <td className="px-4 py-3">
-                                                                        <div className="font-medium text-slate-700">{item.code || item.desc || '-'}</div>
+                                                                        <div className="font-medium text-slate-700 flex items-center gap-2">
+                                                                            {item.code || item.desc || '-'}
+                                                                            {isBatchLine && (
+                                                                                <span className="text-[10px] font-bold text-purple-700 bg-purple-50 border border-purple-100 px-2 py-0.5 rounded">Batch</span>
+                                                                            )}
+                                                                        </div>
                                                                         <div className="text-[10px] text-slate-400 mt-1">{item.desc || item.remarks || 'No description'}</div>
                                                                     </td>
                                                                     <td className="px-4 py-3 text-slate-500">
@@ -2685,22 +2757,34 @@ const DeliveryNote = () => {
                                                                     </td>
                                                                     <td className="px-4 py-3 text-center font-medium text-slate-500 whitespace-nowrap">{formatPickingQty(remainingQty, item)}</td>
                                                                     <td className="px-4 py-3">
-                                                                        <div className="flex justify-end items-center gap-2">
-                                                                            <button
-                                                                                onClick={() => handleManualPickAdjust(selectedPickingNote, item, -1)}
-                                                                                disabled={pickedQty === 0}
-                                                                                className="w-8 h-8 rounded border border-slate-200 text-slate-600 font-bold hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed"
-                                                                            >
-                                                                                -
-                                                                            </button>
-                                                                            <button
-                                                                                onClick={() => handleManualPickAdjust(selectedPickingNote, item, 1)}
-                                                                                disabled={pickedQty >= requiredQty}
-                                                                                className="w-8 h-8 rounded bg-[#F5C742] text-slate-900 font-bold hover:bg-yellow-400 disabled:opacity-40 disabled:cursor-not-allowed"
-                                                                            >
-                                                                                +
-                                                                            </button>
-                                                                        </div>
+                                                                        {isBatchLine ? (
+                                                                            <div className="flex justify-end">
+                                                                                <button
+                                                                                    onClick={() => setBatchSelectionTarget({ note: selectedPickingNote, item })}
+                                                                                    disabled={!item.binCode || requiredQty <= 0}
+                                                                                    className="px-3 py-2 rounded-md bg-[#F5C742] text-slate-900 text-[11px] font-bold hover:bg-yellow-400 disabled:opacity-40 disabled:cursor-not-allowed"
+                                                                                >
+                                                                                    Select Batch
+                                                                                </button>
+                                                                            </div>
+                                                                        ) : (
+                                                                            <div className="flex justify-end items-center gap-2">
+                                                                                <button
+                                                                                    onClick={() => handleManualPickAdjust(selectedPickingNote, item, -1)}
+                                                                                    disabled={pickedQty === 0}
+                                                                                    className="w-8 h-8 rounded border border-slate-200 text-slate-600 font-bold hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed"
+                                                                                >
+                                                                                    -
+                                                                                </button>
+                                                                                <button
+                                                                                    onClick={() => handleManualPickAdjust(selectedPickingNote, item, 1)}
+                                                                                    disabled={pickedQty >= requiredQty}
+                                                                                    className="w-8 h-8 rounded bg-[#F5C742] text-slate-900 font-bold hover:bg-yellow-400 disabled:opacity-40 disabled:cursor-not-allowed"
+                                                                                >
+                                                                                    +
+                                                                                </button>
+                                                                            </div>
+                                                                        )}
                                                                     </td>
                                                                 </tr>
                                                             );

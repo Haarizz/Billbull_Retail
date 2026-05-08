@@ -651,6 +651,10 @@ public class ProductService {
             item.put("defaultUnitId", inv != null && inv.getDefaultUnit() != null ? inv.getDefaultUnit().getId() : null);
 
             item.put("maxDiscount", p.getMaxDiscount());
+            item.put("isBatch", p.isBatch());
+            item.put("expiryEnabled", p.isExpiryEnabled());
+            item.put("fefoEnabled", p.isFefoEnabled());
+            item.put("minExpiryDaysForSale", p.getMinExpiryDaysForSale());
 
             String imgUrl = imageMap.get(p.getId());
             item.put("image", imgUrl);

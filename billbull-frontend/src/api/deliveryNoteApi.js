@@ -40,6 +40,12 @@ export const deleteDeliveryNote = (id) =>
 export const cancelDeliveryNote = (id) =>
   api.post(`/api/delivery-notes/${id}/cancel`).then(res => res.data);
 
+export const saveDeliveryNoteBatchSelection = (dnId, itemId, payload) =>
+  api.post(`/api/delivery-notes/${dnId}/items/${itemId}/batch-selection`, payload).then(res => res.data);
+
+export const clearDeliveryNoteBatchSelection = (dnId, itemId) =>
+  api.delete(`/api/delivery-notes/${dnId}/items/${itemId}/batch-selection`).then(res => res.data);
+
 // GET UN-INVOICED DNs FOR CUSTOMER (Before Sale modal)
 export const getUninvoicedDNsForCustomer = (customerCode) =>
   api.get(`/api/delivery-notes/uninvoiced/${customerCode}`).then(res => res.data);

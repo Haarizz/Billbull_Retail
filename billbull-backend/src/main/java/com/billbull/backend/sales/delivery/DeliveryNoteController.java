@@ -3,6 +3,8 @@ package com.billbull.backend.sales.delivery;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
+import com.billbull.backend.inventory.batch.BatchSelectionRequest;
+
 import java.util.List;
 
 @RestController
@@ -75,5 +77,22 @@ public class DeliveryNoteController {
     @PreAuthorize("hasAnyRole('ADMIN','SALES','INVENTORY_MANAGER')")
     public DeliveryNoteResponse cancel(@PathVariable Long id) {
         return service.cancel(id);
+    }
+
+    @PostMapping("/{dnId}/items/{itemId}/batch-selection")
+    @PreAuthorize("hasAnyRole('ADMIN','SALES','INVENTORY_MANAGER')")
+    public DeliveryNoteResponse saveBatchSelection(
+            @PathVariable Long dnId,
+            @PathVariable Long itemId,
+            @RequestBody BatchSelectionRequest request) {
+        return service.saveBatchSelection(dnId, itemId, request);
+    }
+
+    @DeleteMapping("/{dnId}/items/{itemId}/batch-selection")
+    @PreAuthorize("hasAnyRole('ADMIN','SALES','INVENTORY_MANAGER')")
+    public DeliveryNoteResponse deleteBatchSelection(
+            @PathVariable Long dnId,
+            @PathVariable Long itemId) {
+        return service.deleteBatchSelection(dnId, itemId);
     }
 }

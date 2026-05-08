@@ -18,6 +18,7 @@ public class DatabaseFixConfig {
                 System.out.println("Checking and updating database check constraints for enums...");
 
                 ensureProductSchemaColumns(jdbcTemplate);
+                ensureBatchMasterSchemaColumns(jdbcTemplate);
 
                 // 1. Fix delivery_notes_status_check
                 updateStatusConstraint(jdbcTemplate, "delivery_notes", "delivery_notes_status_check",
@@ -54,8 +55,40 @@ public class DatabaseFixConfig {
             jdbcTemplate.execute("UPDATE products SET expiry_enabled = FALSE WHERE expiry_enabled IS NULL");
             jdbcTemplate.execute("ALTER TABLE products ALTER COLUMN expiry_enabled SET DEFAULT FALSE");
             jdbcTemplate.execute("ALTER TABLE products ALTER COLUMN expiry_enabled SET NOT NULL");
+
+            jdbcTemplate.execute(
+                    "ALTER TABLE products ADD COLUMN IF NOT EXISTS fefo_enabled BOOLEAN DEFAULT TRUE");
+            jdbcTemplate.execute("UPDATE products SET fefo_enabled = TRUE WHERE fefo_enabled IS NULL");
+            jdbcTemplate.execute("ALTER TABLE products ALTER COLUMN fefo_enabled SET DEFAULT TRUE");
+            jdbcTemplate.execute("ALTER TABLE products ALTER COLUMN fefo_enabled SET NOT NULL");
+
+            jdbcTemplate.execute(
+                    "ALTER TABLE products ADD COLUMN IF NOT EXISTS min_expiry_days_for_sale INTEGER DEFAULT 0");
+            jdbcTemplate.execute("UPDATE products SET min_expiry_days_for_sale = 0 WHERE min_expiry_days_for_sale IS NULL");
+            jdbcTemplate.execute("ALTER TABLE products ALTER COLUMN min_expiry_days_for_sale SET DEFAULT 0");
+            jdbcTemplate.execute("ALTER TABLE products ALTER COLUMN min_expiry_days_for_sale SET NOT NULL");
         } catch (Exception e) {
             System.err.println("Error ensuring product schema columns: " + e.getMessage());
+        }
+    }
+
+    private void ensureBatchMasterSchemaColumns(JdbcTemplate jdbcTemplate) {
+        try {
+            jdbcTemplate.execute(
+                    "ALTER TABLE batch_master ADD COLUMN IF NOT EXISTS status VARCHAR(20) DEFAULT 'AVAILABLE'");
+            jdbcTemplate.execute("UPDATE batch_master SET status = 'AVAILABLE' WHERE status IS NULL");
+            jdbcTemplate.execute("ALTER TABLE batch_master ALTER COLUMN status SET DEFAULT 'AVAILABLE'");
+            jdbcTemplate.execute("ALTER TABLE batch_master ALTER COLUMN status SET NOT NULL");
+
+            jdbcTemplate.execute("ALTER TABLE batch_master ADD COLUMN IF NOT EXISTS manufacturing_date DATE");
+
+            jdbcTemplate.execute("ALTER TABLE batch_master ADD COLUMN IF NOT EXISTS entry_date DATE");
+            jdbcTemplate.execute("UPDATE batch_master SET entry_date = generated_date WHERE entry_date IS NULL");
+
+            jdbcTemplate.execute("ALTER TABLE batch_master ADD COLUMN IF NOT EXISTS qty_unit_no INTEGER");
+            jdbcTemplate.execute("UPDATE batch_master SET qty_unit_no = unit_index WHERE qty_unit_no IS NULL");
+        } catch (Exception e) {
+            System.err.println("Error ensuring batch_master phase-3 columns: " + e.getMessage());
         }
     }
 

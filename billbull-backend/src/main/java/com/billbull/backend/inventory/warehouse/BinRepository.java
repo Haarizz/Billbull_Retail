@@ -31,4 +31,6 @@ public interface BinRepository extends JpaRepository<Bin, Long> {
     Long countByZoneId(Long zoneId);
 
     java.util.Optional<Bin> findByCode(String code);
+
+    List<Bin> findAllByCode(String code);
 }
