@@ -21,7 +21,8 @@ public class BatchSelectionController {
     public BatchSelectionOptionsResponse getSelectionOptions(
             @RequestParam String itemCode,
             @RequestParam String locationCode,
+            @RequestParam(required = false) Long binId,
             @RequestParam Integer requiredQuantity) {
-        return service.getSelectionOptions(itemCode, locationCode, requiredQuantity);
+        return service.getSelectionOptions(itemCode, locationCode, binId, requiredQuantity);
     }
 }

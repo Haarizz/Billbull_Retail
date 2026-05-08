@@ -197,13 +197,7 @@ const DeliveryNote = () => {
         return data;
     }, [deliveryNotesList, searchTerm, filterStatus, sortConfig]);
 
-    const pickingNotes = useMemo(
-        () => deliveryNotesList.filter(dn =>
-            dn.type === 'Picking' ||
-            (dn.type === 'Before Sale' && dn.piNo && dn.piNo !== '-')
-        ),
-        [deliveryNotesList]
-    );
+    const pickingNotes = deliveryNotesList;
 
     const activePickingNotes = useMemo(() => {
         const lower = pickingSearchTerm.trim().toLowerCase();
@@ -1627,6 +1621,7 @@ const DeliveryNote = () => {
                 itemCode={batchSelectionTarget?.item?.code}
                 itemName={batchSelectionTarget?.item?.desc}
                 locationCode={batchSelectionTarget?.item?.binCode}
+                binId={batchSelectionTarget?.item?.binId}
                 requiredQuantity={getRequiredPickingQty(batchSelectionTarget?.item)}
                 fefoEnabled={batchSelectionTarget?.item?.fefoEnabled}
                 minExpiryDaysForSale={batchSelectionTarget?.item?.minExpiryDaysForSale}
