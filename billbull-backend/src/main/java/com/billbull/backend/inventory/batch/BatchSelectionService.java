@@ -109,6 +109,19 @@ public class BatchSelectionService {
         response.fefoSelection = selected.stream()
                 .map(batch -> toSelectionRow(product, batch, true, today))
                 .toList();
+        response.binId = bin.getId();
+
+        Long warehouseId = bin.getLocator() != null
+                && bin.getLocator().getZone() != null
+                && bin.getLocator().getZone().getWarehouse() != null
+                ? bin.getLocator().getZone().getWarehouse().getId()
+                : null;
+        response.warehouseId = warehouseId;
+        if (warehouseId != null) {
+            response.availableBins = binRepository.findByWarehouseId(warehouseId).stream()
+                    .map(b -> new BatchSelectionOptionsResponse.BinOption(b.getId(), b.getCode(), b.getName()))
+                    .toList();
+        }
         return response;
     }
 

@@ -196,6 +196,18 @@ public interface StockMovementRepository
         // Current on-hand by exact stock identity inside one bin.
         // Identity = product + warehouse + bin + batch + expiry.
         @Query("""
+                            SELECT COALESCE(SUM(sm.quantity), 0)
+                            FROM StockMovement sm
+                            WHERE sm.productId = :productId
+                              AND ((:binId IS NULL AND sm.binId IS NULL) OR sm.binId = :binId)
+                              AND sm.batchNumber = :batchNumber
+                        """)
+        BigDecimal getOnHandForBatchNumber(
+                        @Param("productId") Long productId,
+                        @Param("binId") Long binId,
+                        @Param("batchNumber") String batchNumber);
+
+        @Query("""
                             SELECT sm.batchNumber, sm.expiryDate, COALESCE(SUM(sm.quantity), 0)
                             FROM StockMovement sm
                             WHERE sm.warehouseId = :warehouseId

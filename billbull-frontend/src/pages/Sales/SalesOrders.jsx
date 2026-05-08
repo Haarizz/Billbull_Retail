@@ -1993,7 +1993,7 @@ const SalesOrders = () => {
                 <>
                   {/* ── VERTICAL: canEdit('sales') for Save Draft ── */}
                   {canEdit('sales') && (
-                    <button onClick={saveOrUpdateOrder} className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-slate-300 text-slate-700 rounded text-xs font-bold hover:bg-slate-50 transition-colors shadow-sm">
+                    <button onClick={() => saveOrUpdateOrder('DRAFT')} className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-slate-300 text-slate-700 rounded text-xs font-bold hover:bg-slate-50 transition-colors shadow-sm">
                       <Save size={14} /> Save Draft
                     </button>
                   )}
@@ -2031,7 +2031,7 @@ const SalesOrders = () => {
             status={status}
             onConfirm={handleConfirmOrder}
             onMarkInvoiced={handleMarkAsInvoiced}
-            onSave={saveOrUpdateOrder}
+            onSave={() => saveOrUpdateOrder('DRAFT')}
             onPrint={handlePrintClick}
           />
         </div>

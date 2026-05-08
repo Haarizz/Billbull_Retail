@@ -103,6 +103,8 @@ const BatchSelectionModal = ({
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+  const [activeBinId, setActiveBinId] = useState(binId ?? null);
+  const [activeBinCode, setActiveBinCode] = useState(locationCode || '');
 
   const required = Math.max(0, Number(requiredQuantity) || 0);
 
@@ -110,17 +112,19 @@ const BatchSelectionModal = ({
     if (!isOpen) return;
     setMode(fefoEnabled ? 'AUTO_FEFO' : 'MANUAL');
     setSelectedIds((currentSelections || []).map(row => row.batchMasterId).filter(Boolean));
+    setActiveBinId(binId ?? null);
+    setActiveBinCode(locationCode || '');
     setError('');
-  }, [isOpen, fefoEnabled, currentSelections]);
+  }, [isOpen, fefoEnabled, currentSelections, binId, locationCode]);
 
   useEffect(() => {
-    if (!isOpen || readOnly || !itemCode || !locationCode || required <= 0) return;
+    if (!isOpen || readOnly || !itemCode || !activeBinCode || required <= 0) return;
 
     let cancelled = false;
     setLoading(true);
     setError('');
 
-    getBatchSelectionOptions({ itemCode, locationCode, binId, requiredQuantity: required })
+    getBatchSelectionOptions({ itemCode, locationCode: activeBinCode, binId: activeBinId, requiredQuantity: required })
       .then(data => {
         if (!cancelled) setOptions(data);
       })
@@ -137,7 +141,17 @@ const BatchSelectionModal = ({
     return () => {
       cancelled = true;
     };
-  }, [isOpen, readOnly, itemCode, locationCode, binId, required]);
+  }, [isOpen, readOnly, itemCode, activeBinCode, activeBinId, required]);
+
+  const handleBinChange = (nextBinId) => {
+    if (readOnly) return;
+    const id = Number(nextBinId);
+    const next = (options?.availableBins || []).find(b => b.id === id);
+    if (!next) return;
+    setActiveBinId(next.id);
+    setActiveBinCode(next.code);
+    setSelectedIds([]);
+  };
 
   const currentRows = useMemo(
     () => (currentSelections || []).map(asRow),
@@ -196,8 +210,8 @@ const BatchSelectionModal = ({
     try {
       const payload = {
         mode,
-        locationCode,
-        binId,
+        locationCode: activeBinCode,
+        binId: activeBinId,
         requiredQuantity: required,
         batchMasterIds: mode === 'MANUAL' ? selectedIds : []
       };
@@ -254,7 +268,7 @@ const BatchSelectionModal = ({
             </div>
             <h3 className="text-lg font-bold text-slate-900 mt-1">{itemCode} {itemName ? `- ${itemName}` : ''}</h3>
             <div className="text-xs text-slate-500 mt-1">
-              Location: <span className="font-semibold text-slate-700">{locationCode || '-'}</span>
+              Location: <span className="font-semibold text-slate-700">{activeBinCode || '-'}</span>
               <span className="mx-2">|</span>
               Required: <span className="font-semibold text-slate-700">{required}</span>
             </div>
@@ -265,23 +279,41 @@ const BatchSelectionModal = ({
         </div>
 
         <div className="px-5 py-3 border-b border-slate-100 flex flex-wrap items-center justify-between gap-3">
-          <div className="inline-flex rounded-md border border-slate-200 overflow-hidden text-xs font-bold">
-            <button
-              type="button"
-              disabled={!fefoEnabled || readOnly}
-              onClick={() => setMode('AUTO_FEFO')}
-              className={`px-4 py-2 ${mode === 'AUTO_FEFO' ? 'bg-slate-900 text-white' : 'bg-white text-slate-600 hover:bg-slate-50'} disabled:opacity-40 disabled:cursor-not-allowed`}
-            >
-              FEFO Auto
-            </button>
-            {canManualSelect && !readOnly && (
+          <div className="flex flex-wrap items-center gap-3">
+            <div className="inline-flex rounded-md border border-slate-200 overflow-hidden text-xs font-bold">
               <button
                 type="button"
-                onClick={() => setMode('MANUAL')}
-                className={`px-4 py-2 border-l border-slate-200 ${mode === 'MANUAL' ? 'bg-[#F5C742] text-slate-900' : 'bg-white text-slate-600 hover:bg-slate-50'}`}
+                disabled={!fefoEnabled || readOnly}
+                onClick={() => setMode('AUTO_FEFO')}
+                className={`px-4 py-2 ${mode === 'AUTO_FEFO' ? 'bg-slate-900 text-white' : 'bg-white text-slate-600 hover:bg-slate-50'} disabled:opacity-40 disabled:cursor-not-allowed`}
               >
-                Switch to Manual Override
+                FEFO Auto
               </button>
+              {canManualSelect && !readOnly && (
+                <button
+                  type="button"
+                  onClick={() => setMode('MANUAL')}
+                  className={`px-4 py-2 border-l border-slate-200 ${mode === 'MANUAL' ? 'bg-[#F5C742] text-slate-900' : 'bg-white text-slate-600 hover:bg-slate-50'}`}
+                >
+                  Switch to Manual Override
+                </button>
+              )}
+            </div>
+            {!readOnly && (options?.availableBins?.length || 0) > 1 && (
+              <label className="inline-flex items-center gap-2 text-xs font-semibold text-slate-600">
+                Bin
+                <select
+                  value={activeBinId ?? ''}
+                  onChange={(e) => handleBinChange(e.target.value)}
+                  className="px-2 py-1.5 border border-slate-200 rounded text-xs font-bold text-slate-700 bg-white focus:outline-none focus:border-[#F5C742]"
+                >
+                  {options.availableBins.map(b => (
+                    <option key={b.id} value={b.id}>
+                      {b.code}{b.name ? ` — ${b.name}` : ''}
+                    </option>
+                  ))}
+                </select>
+              </label>
             )}
           </div>
 
