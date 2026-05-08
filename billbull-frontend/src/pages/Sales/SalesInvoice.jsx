@@ -95,18 +95,22 @@ import { ItemDescriptionCell, ItemDescriptionHeader } from '../../components/Ite
 
 // ✅ STOCK AVAILABILITY MODAL
 import StockAvailabilityModal from '../../components/StockAvailabilityModal';
+import BatchSelectionModal from '../../components/BatchSelectionModal';
 
 // ✅ ITEM ADD-ONS MODAL (BB-026)
 import ItemAddOnsModal from '../../components/ItemAddOnsModal';
 
 // ✅ SHORTCUTS HOOK
 import useShortcuts from '../../hooks/useShortcuts';
+import { usePermissions } from '../../context/PermissionContext';
 
 // ==========================================
 // COMPONENT
 // ==========================================
 
 const SalesInvoice = () => {
+    const { canAction } = usePermissions();
+    const canManualBatchSelect = canAction('batch_manual_select', 'edit');
     const { print } = usePrintDocument();
     const { company } = useCompany();
     const { defaultBranch } = useBranch();
@@ -240,7 +244,51 @@ const SalesInvoice = () => {
         net: 0,
         cost: 0,
         gp: 0,
-        warehouseId: defaultBranch?.defaultWarehouseId || (warehousesList.length > 0 ? warehousesList[0].id : '')
+        warehouseId: defaultBranch?.defaultWarehouseId || (warehousesList.length > 0 ? warehousesList[0].id : ''),
+        binId: null,
+        binCode: '',
+        batchControlled: false,
+        fefoEnabled: true,
+        minExpiryDaysForSale: 0,
+        baseRequiredQuantity: 0,
+        batchSelectedQuantity: 0,
+        batchSelectionMode: 'AUTO_FEFO',
+        batchSelections: []
+    });
+
+    const mapServerInvoiceItem = (i, fallbackId = Date.now() + Math.random()) => ({
+        id: fallbackId,
+        invoiceItemId: i.id || i.invoiceItemId || null,
+        salesOrderItemId: i.salesOrderItemId || null,
+        code: i.itemCode || i.code || '',
+        image: i.image || '',
+        name: i.itemName || i.name || '',
+        desc: i.description || i.desc || '',
+        sku: i.sku || '',
+        localName: i.localName || '',
+        unit: i.unit || 'PCS',
+        qty: i.quantity ?? i.qty ?? 0,
+        price: i.price || 0,
+        disc: i.discount || i.disc || 0,
+        tax: i.taxRate || i.tax || 5,
+        taxAmt: i.taxAmount || i.taxAmt || 0,
+        gross: i.grossAmount || i.gross || 0,
+        net: i.netAmount || i.net || 0,
+        cost: i.cost || 0,
+        gp: 0,
+        foc: i.foc || 0,
+        warehouseId: i.warehouseId || defaultBranch?.defaultWarehouseId || '',
+        binId: i.binId || null,
+        binCode: i.binCode || '',
+        barcode: i.barcode || '',
+        availableUnits: i.availableUnits || ['PCS'],
+        batchControlled: Boolean(i.batchControlled ?? i.isBatch ?? i.product?.isBatch),
+        fefoEnabled: i.fefoEnabled != null ? Boolean(i.fefoEnabled) : true,
+        minExpiryDaysForSale: Number(i.minExpiryDaysForSale) || 0,
+        baseRequiredQuantity: Number(i.baseRequiredQuantity) || 0,
+        batchSelectedQuantity: Number(i.batchSelectedQuantity) || 0,
+        batchSelectionMode: i.batchSelectionMode || 'AUTO_FEFO',
+        batchSelections: Array.isArray(i.batchSelections) ? i.batchSelections : []
     });
 
     // Items
@@ -252,6 +300,7 @@ const SalesInvoice = () => {
     // ✅ PRODUCT SELECTOR STATE
     const [isProductSelectorOpen, setIsProductSelectorOpen] = useState(false);
     const [selectedAddonItem, setSelectedAddonItem] = useState(null); // BB-026
+    const [batchSelectionTarget, setBatchSelectionTarget] = useState(null);
 
     // Payment Calculation State
     const [amountCollected, setAmountCollected] = useState(0);
@@ -1217,7 +1266,12 @@ const SalesInvoice = () => {
             cost: cost,
             gp: 0,
             remarks: product.description || '',
-            warehouseId: defaultBranch?.defaultWarehouseId || (warehousesList.length > 0 ? warehousesList[0].id : '')
+            warehouseId: defaultBranch?.defaultWarehouseId || (warehousesList.length > 0 ? warehousesList[0].id : ''),
+            batchControlled: Boolean(product.batchControlled ?? product.isBatch ?? product.batch),
+            fefoEnabled: product.fefoEnabled != null ? Boolean(product.fefoEnabled) : true,
+            minExpiryDaysForSale: Number(product.minExpiryDaysForSale) || 0,
+            batchSelectedQuantity: 0,
+            batchSelections: []
         };
 
         const newItem = calculateRow(rawItem);
@@ -1266,6 +1320,11 @@ const SalesInvoice = () => {
             gp: 0,
             remarks: product.description || '',
             warehouseId: defaultBranch?.defaultWarehouseId || (warehousesList.length > 0 ? warehousesList[0].id : ''),
+            batchControlled: Boolean(product.batchControlled ?? product.isBatch ?? product.batch),
+            fefoEnabled: product.fefoEnabled != null ? Boolean(product.fefoEnabled) : true,
+            minExpiryDaysForSale: Number(product.minExpiryDaysForSale) || 0,
+            batchSelectedQuantity: 0,
+            batchSelections: []
         };
         const newItem = calculateRow(rawItem);
         if (newItem.code) fetchItemContext(newItem.code);
@@ -1277,7 +1336,7 @@ const SalesInvoice = () => {
 
     const handleAddItem = () => {
         if (isReadOnlyInvoice) return;
-        setItems([...items, { id: Date.now(), code: '', name: '', unit: 'PCS', qty: 0, price: 0, disc: 0, tax: 5, taxAmt: 0, gross: 0, net: 0, cost: 0, warehouseId: defaultBranch?.defaultWarehouseId || (warehousesList.length > 0 ? warehousesList[0].id : '') }]);
+        setItems([...items, createBlankInvoiceItem()]);
     };
 
     const handleDeleteItem = (id) => {
@@ -1339,7 +1398,7 @@ const SalesInvoice = () => {
                 const qty = Number(i.qty) || 1;
 
                 return {
-                    id: (i.id > 1000000000000) ? null : i.id,
+                    id: i.invoiceItemId || ((i.id > 1000000000000) ? null : i.id),
                     salesOrderItemId: i.salesOrderItemId || null,
                     itemCode: i.code,
                     barcode: i.barcode || '',
@@ -1358,6 +1417,7 @@ const SalesInvoice = () => {
                     grossAmount: finalTaxable,
                     netAmount: finalNet,
                     foc: Number(i.foc) || 0,
+                    binId: i.binId || null,
                     warehouseId: (i.warehouseId && i.warehouseId !== '')
                         ? Number(i.warehouseId)
                         : (invoiceLevelWarehouseId ? Number(invoiceLevelWarehouseId) : null)
@@ -1403,6 +1463,9 @@ const SalesInvoice = () => {
             const savedInvoice = await saveSalesInvoice(payload);
             setInvoiceId(savedInvoice.id);
             setStatus(savedInvoice.status);
+            if (Array.isArray(savedInvoice.items)) {
+                setItems(savedInvoice.items.map((i, index) => mapServerInvoiceItem(i, Date.now() + index)));
+            }
 
             // 🔵 AUTO-POST: If invoice is fully paid, update status to POSTED
             // This triggers the backend journal generation (JournalEntryGeneratorService)
@@ -1414,7 +1477,14 @@ const SalesInvoice = () => {
             await verifyPickingNoteAfterSave(savedInvoice);
 
             await fetchInvoices();
-            setActiveTab('list');
+            const hasBatchLines = Array.isArray(savedInvoice.items)
+                && savedInvoice.items.some(item => item.batchControlled);
+            if (newStatus === 'Draft' && salesType === 'DIRECT_SALE' && hasBatchLines) {
+                setActiveTab('create');
+                alert('Draft saved. Select exact batches for each batch-controlled line, then confirm the invoice.');
+            } else {
+                setActiveTab('list');
+            }
         } catch (e) {
             console.error("Save failed", e);
             alert(e.response?.data?.message || "Failed to save Invoice. Please check inputs.");
@@ -1422,6 +1492,15 @@ const SalesInvoice = () => {
     };
 
     // ✅ Load existing invoice for editing
+    const handleBatchSelectionSaved = async (updatedInvoice) => {
+        if (updatedInvoice?.id) {
+            setInvoiceId(updatedInvoice.id);
+            setStatus(updatedInvoice.status || status);
+            setItems((updatedInvoice.items || []).map((i, index) => mapServerInvoiceItem(i, Date.now() + index)));
+            await fetchInvoices();
+        }
+    };
+
     const handleLoadInvoice = (invoice) => {
         setPickingNoteVerification(null);
         setInvoiceId(invoice.id);
@@ -1465,33 +1544,9 @@ const SalesInvoice = () => {
 
         // Map items back
         if (invoice.items && invoice.items.length > 0) {
-            setItems(invoice.items.map(i => ({
-                id: i.id || Date.now() + Math.random(),
-                salesOrderItemId: i.salesOrderItemId || null,
-                code: i.itemCode,
-                barcode: i.barcode || i.itemBarcode || '',
-                image: i.image || '',
-                name: i.itemName || '',
-                desc: i.description || '',
-                sku: i.sku || '',
-                localName: i.localName || '',
-                unit: i.unit,
-                availableUnits: i.availableUnits || [i.unit || 'PCS'],
-                qty: i.quantity,
-                price: i.price,
-                cost: i.cost || 0,
-                disc: i.discount || 0,
-                tax: i.taxRate || 5,
-                taxAmt: i.taxAmount || 0,
-                gross: i.grossAmount || 0,
-                net: i.netAmount || 0,
-                foc: i.foc || 0,
-                focUnit: i.focUnit || i.unit || 'PCS',
-                gp: 0,
-                warehouseId: i.warehouseId || ''
-            })));
+            setItems(invoice.items.map((i, index) => mapServerInvoiceItem(i, Date.now() + index)));
         } else {
-            setItems([{ id: Date.now(), code: '', name: '', unit: 'PCS', qty: 0, price: 0, disc: 0, tax: 5, taxAmt: 0, gross: 0, net: 0, cost: 0, warehouseId: defaultBranch?.defaultWarehouseId || (warehousesList.length > 0 ? warehousesList[0].id : '') }]);
+            setItems([createBlankInvoiceItem()]);
         }
 
         setActiveTab('create');
@@ -1632,7 +1687,11 @@ const SalesInvoice = () => {
                         tax: Number(i.taxRate || i.tax),
                         taxAmt: Number(i.taxAmount || i.taxAmt || 0),
                         total: Number(i.netAmount || i.net),
-                        image: i.image || i.imageUrl ? getImageUrl(i.image || i.imageUrl) : ''
+                        image: i.image || i.imageUrl ? getImageUrl(i.image || i.imageUrl) : '',
+                        batchSelections: Array.isArray(i.batchSelections) ? i.batchSelections : [],
+                        batchNumbers: Array.isArray(i.batchSelections)
+                            ? i.batchSelections.map(batch => batch.batchNumber).filter(Boolean).join(', ')
+                            : ''
                     })),
                     totals: {
                         subTotal: resolvedSummary.subTotal,
@@ -1756,6 +1815,25 @@ const SalesInvoice = () => {
                 isOpen={isItemStockModalOpen}
                 onClose={() => setIsItemStockModalOpen(false)}
                 selectedStockItem={selectedStockItem}
+            />
+
+            <BatchSelectionModal
+                isOpen={Boolean(batchSelectionTarget)}
+                onClose={() => setBatchSelectionTarget(null)}
+                onSaved={handleBatchSelectionSaved}
+                sourceType="SALES_INVOICE"
+                sourceDocumentId={invoiceId}
+                salesInvoiceId={invoiceId}
+                itemId={batchSelectionTarget?.item?.invoiceItemId || batchSelectionTarget?.item?.id}
+                itemCode={batchSelectionTarget?.item?.code}
+                itemName={batchSelectionTarget?.item?.name || batchSelectionTarget?.item?.desc}
+                locationCode={batchSelectionTarget?.item?.binCode}
+                binId={batchSelectionTarget?.item?.binId}
+                requiredQuantity={batchSelectionTarget?.item?.baseRequiredQuantity || batchSelectionTarget?.item?.qty}
+                fefoEnabled={batchSelectionTarget?.item?.fefoEnabled}
+                minExpiryDaysForSale={batchSelectionTarget?.item?.minExpiryDaysForSale}
+                currentSelections={batchSelectionTarget?.item?.batchSelections || []}
+                canManualSelect={canManualBatchSelect}
             />
 
             {/* ✅ ITEM ADD-ONS MODAL (BB-026) */}
@@ -2388,6 +2466,45 @@ const SalesInvoice = () => {
                                                                             isReadOnly={isReadOnlyInvoice}
                                                                             page="salesInvoice"
                                                                         />
+                                                                        {item.batchControlled && (
+                                                                            <button
+                                                                                type="button"
+                                                                                onClick={(e) => {
+                                                                                    e.stopPropagation();
+                                                                                    if (salesType !== 'DIRECT_SALE' || isReadOnlyInvoice) {
+                                                                                        return;
+                                                                                    }
+                                                                                    if (!invoiceId || !item.invoiceItemId) {
+                                                                                        alert('Save this invoice as Draft before selecting batches.');
+                                                                                        return;
+                                                                                    }
+                                                                                    setBatchSelectionTarget({ item });
+                                                                                }}
+                                                                                disabled={salesType !== 'DIRECT_SALE' || isReadOnlyInvoice}
+                                                                                className={`mt-2 inline-flex items-center gap-1 rounded border px-2 py-1 text-[10px] font-bold disabled:cursor-not-allowed disabled:opacity-70 ${
+                                                                                    Number(item.batchSelectedQuantity || 0) >= Number(item.baseRequiredQuantity || item.qty || 0)
+                                                                                        ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+                                                                                        : 'border-amber-200 bg-amber-50 text-amber-700'
+                                                                                }`}
+                                                                                title={salesType === 'DIRECT_SALE'
+                                                                                    ? 'Select batches for this direct invoice line'
+                                                                                    : 'Batch details are inherited from the source Delivery Note'}
+                                                                            >
+                                                                                Batches {Number(item.batchSelectedQuantity || 0)}/{Number(item.baseRequiredQuantity || item.qty || 0)}
+                                                                            </button>
+                                                                        )}
+                                                                        {Array.isArray(item.batchSelections) && item.batchSelections.length > 0 && (
+                                                                            <div className="mt-1 flex flex-wrap gap-1">
+                                                                                {item.batchSelections.map((batch, batchIndex) => (
+                                                                                    <span
+                                                                                        key={batch.allocationId || batch.batchMasterId || `${batch.batchNumber}-${batchIndex}`}
+                                                                                        className="inline-flex rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-semibold text-slate-600"
+                                                                                    >
+                                                                                        {batch.batchNumber}
+                                                                                    </span>
+                                                                                ))}
+                                                                            </div>
+                                                                        )}
 
                                                                     </td>
 

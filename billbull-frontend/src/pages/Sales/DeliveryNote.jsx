@@ -479,6 +479,7 @@ const DeliveryNote = () => {
     const capitalize = s => s ? s.charAt(0) + s.slice(1).toLowerCase() : '';
 
     const isBatchPickingLine = (item) => Boolean(item?.batchControlled);
+    const hasInheritedBatchSelection = (item) => Boolean(item?.salesOrderItemId || item?.sourceLineId);
 
     const getRequiredPickingQty = (item) => {
         if (isBatchPickingLine(item) && Number(item?.baseRequiredQuantity) > 0) {
@@ -624,8 +625,10 @@ const DeliveryNote = () => {
             setBatchSelectionTarget({ note: selectedPickingNote, item: matchedItem });
             setPickingScanValue('');
             setPickingScanFeedback({
-                kind: 'error',
-                message: `${matchedItem.code || matchedItem.desc || 'Item'} is batch-controlled. Select exact batches before dispatch.`
+                kind: hasInheritedBatchSelection(matchedItem) ? 'success' : 'error',
+                message: hasInheritedBatchSelection(matchedItem)
+                    ? `${matchedItem.code || matchedItem.desc || 'Item'} is batch-controlled. Batch details are inherited from the source document.`
+                    : `${matchedItem.code || matchedItem.desc || 'Item'} is batch-controlled. Select exact batches before dispatch.`
             });
             return;
         }
@@ -1627,6 +1630,7 @@ const DeliveryNote = () => {
                 minExpiryDaysForSale={batchSelectionTarget?.item?.minExpiryDaysForSale}
                 currentSelections={batchSelectionTarget?.item?.batchSelections || []}
                 canManualSelect={canManualBatchSelect}
+                readOnly={hasInheritedBatchSelection(batchSelectionTarget?.item)}
             />
 
             {/* ✅ ITEM ADD-ONS & DETAILS MODAL */}
@@ -2764,7 +2768,7 @@ const DeliveryNote = () => {
                                                                                     disabled={!item.binCode || requiredQty <= 0}
                                                                                     className="px-3 py-2 rounded-md bg-[#F5C742] text-slate-900 text-[11px] font-bold hover:bg-yellow-400 disabled:opacity-40 disabled:cursor-not-allowed"
                                                                                 >
-                                                                                    Select Batch
+                                                                                    {hasInheritedBatchSelection(item) ? 'View Batches' : 'Select Batch'}
                                                                                 </button>
                                                                             </div>
                                                                         ) : (

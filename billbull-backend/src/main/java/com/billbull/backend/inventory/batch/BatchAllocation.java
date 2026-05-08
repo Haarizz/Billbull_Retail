@@ -73,6 +73,18 @@ public class BatchAllocation extends BaseEntity {
     @Column(name = "selected_at", nullable = false)
     private LocalDateTime selectedAt;
 
+    @Column(name = "depleted_by_document_type", length = 40)
+    private String depletedByDocumentType;
+
+    @Column(name = "depleted_by_document_id")
+    private Long depletedByDocumentId;
+
+    @Column(name = "depleted_by_line_id")
+    private Long depletedByLineId;
+
+    @Column(name = "depleted_at")
+    private LocalDateTime depletedAt;
+
     public String getSourceDocumentType() {
         return sourceDocumentType;
     }
@@ -191,5 +203,37 @@ public class BatchAllocation extends BaseEntity {
 
     public void setSelectedAt(LocalDateTime selectedAt) {
         this.selectedAt = selectedAt;
+    }
+
+    public String getDepletedByDocumentType() {
+        return depletedByDocumentType;
+    }
+
+    public void setDepletedByDocumentType(String depletedByDocumentType) {
+        this.depletedByDocumentType = depletedByDocumentType;
+    }
+
+    public Long getDepletedByDocumentId() {
+        return depletedByDocumentId;
+    }
+
+    public void setDepletedByDocumentId(Long depletedByDocumentId) {
+        this.depletedByDocumentId = depletedByDocumentId;
+    }
+
+    public Long getDepletedByLineId() {
+        return depletedByLineId;
+    }
+
+    public void setDepletedByLineId(Long depletedByLineId) {
+        this.depletedByLineId = depletedByLineId;
+    }
+
+    public LocalDateTime getDepletedAt() {
+        return depletedAt;
+    }
+
+    public void setDepletedAt(LocalDateTime depletedAt) {
+        this.depletedAt = depletedAt;
     }
 }

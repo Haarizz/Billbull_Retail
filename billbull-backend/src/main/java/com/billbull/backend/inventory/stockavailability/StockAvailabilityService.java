@@ -1,6 +1,7 @@
 package com.billbull.backend.inventory.stockavailability;
 
 import com.billbull.backend.inventory.product.Product;
+import com.billbull.backend.inventory.batch.BatchAllocationRepository;
 import com.billbull.backend.inventory.product.ProductPacking;
 import com.billbull.backend.inventory.product.ProductPackingRepository;
 import com.billbull.backend.inventory.product.ProductRepository;
@@ -34,6 +35,7 @@ public class StockAvailabilityService {
     private final BinRepository binRepository;
     private final LpoItemRepository lpoItemRepository;
     private final GrnRepository grnRepository;
+    private final BatchAllocationRepository batchAllocationRepository;
 
     public StockAvailabilityService(
             ProductRepository productRepository,
@@ -42,7 +44,8 @@ public class StockAvailabilityService {
             BinStockService binStockService,
             BinRepository binRepository,
             LpoItemRepository lpoItemRepository,
-            GrnRepository grnRepository) {
+            GrnRepository grnRepository,
+            BatchAllocationRepository batchAllocationRepository) {
         this.productRepository = productRepository;
         this.productPackingRepository = productPackingRepository;
         this.warehouseStockService = warehouseStockService;
@@ -50,6 +53,7 @@ public class StockAvailabilityService {
         this.binRepository = binRepository;
         this.lpoItemRepository = lpoItemRepository;
         this.grnRepository = grnRepository;
+        this.batchAllocationRepository = batchAllocationRepository;
     }
 
 
@@ -171,7 +175,9 @@ public class StockAvailabilityService {
                 .orElse(null);
 
         int onHand = binStock != null && binStock.getQuantity() != null ? binStock.getQuantity() : 0;
-        int reserved = binStock != null && binStock.getReservedQuantity() != null ? binStock.getReservedQuantity() : 0;
+        int reserved = product.isBatch()
+                ? batchAllocationRepository.sumReservedByProductAndBin(product.getId(), binId).intValue()
+                : (binStock != null && binStock.getReservedQuantity() != null ? binStock.getReservedQuantity() : 0);
         String locationName = buildScopedLocationName(bin, warehouseId, zoneId, locatorId);
 
         LocationStockDTO dto = new LocationStockDTO();

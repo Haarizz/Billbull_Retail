@@ -1,6 +1,7 @@
 package com.billbull.backend.sales.salesorder;
 
 import com.billbull.backend.security.AuditLogService;
+import com.billbull.backend.inventory.batch.BatchSelectionRequest;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.http.ResponseEntity;
@@ -54,6 +55,29 @@ public class SalesOrderController {
     @PutMapping("/{id}/status")
     public void updateStatus(@PathVariable Long id, @RequestParam String status) {
         service.updateStatusById(id, SalesOrderStatus.valueOf(status));
+    }
+
+    @PostMapping("/{orderId}/items/{itemId}/batch-selection")
+    public ResponseEntity<?> saveBatchSelection(
+            @PathVariable Long orderId,
+            @PathVariable Long itemId,
+            @RequestBody BatchSelectionRequest request) {
+        try {
+            return ResponseEntity.ok(service.saveBatchSelection(orderId, itemId, request));
+        } catch (IllegalStateException e) {
+            return ResponseEntity.badRequest().body(Map.of("message", e.getMessage()));
+        }
+    }
+
+    @DeleteMapping("/{orderId}/items/{itemId}/batch-selection")
+    public ResponseEntity<?> deleteBatchSelection(
+            @PathVariable Long orderId,
+            @PathVariable Long itemId) {
+        try {
+            return ResponseEntity.ok(service.deleteBatchSelection(orderId, itemId));
+        } catch (IllegalStateException e) {
+            return ResponseEntity.badRequest().body(Map.of("message", e.getMessage()));
+        }
     }
 
     @PostMapping("/{id}/attachments")
