@@ -47,7 +47,8 @@ import {
    getNextSalesReturnNumber,
    getSalesReturnStats,
    deleteSalesReturn,
-   updateSalesReturnStatus
+   updateSalesReturnStatus,
+   getReturnableBatches
 } from '../../api/salesReturnApi';
 import { getAllSalesInvoices } from '../../api/salesInvoiceApi';
 
@@ -101,6 +102,11 @@ const SalesReturn = () => {
 
    // Items
    const [items, setItems] = useState([]);
+
+   // Returnable batches indexed by itemCode
+   const [returnableByItem, setReturnableByItem] = useState({});
+   const [batchModalIdx, setBatchModalIdx] = useState(null); // index into items
+   const [batchModalDraft, setBatchModalDraft] = useState([]);
 
    // Drawer State
    const [isDrawerOpen, setIsDrawerOpen] = useState(false);
@@ -173,10 +179,11 @@ const SalesReturn = () => {
       setReturnAction('Credit Note');
       setInternalNotes('');
       setItems([]);
+      setReturnableByItem({});
       setActiveTab('create');
    };
 
-   const handleSelectInvoice = (inv) => {
+   const handleSelectInvoice = async (inv) => {
       setLinkedInvoice(inv.invoiceNumber);
       setCustomerCode(inv.customerCode);
       setCustomerName(inv.customerName);
@@ -195,9 +202,24 @@ const SalesReturn = () => {
             taxRate: i.taxRate,
             taxAmount: 0,
             total: 0,
-            itemStatus: 'Good'
+            itemStatus: 'Good',
+            batches: []
          }));
          setItems(mapped);
+      }
+
+      try {
+         const list = await getReturnableBatches(inv.invoiceNumber);
+         const grouped = (list || []).reduce((acc, r) => {
+            const code = r.itemCode || '';
+            if (!acc[code]) acc[code] = [];
+            acc[code].push(r);
+            return acc;
+         }, {});
+         setReturnableByItem(grouped);
+      } catch (err) {
+         console.warn('Could not load returnable batches:', err);
+         setReturnableByItem({});
       }
    };
 
@@ -256,8 +278,82 @@ const SalesReturn = () => {
       setReason(ret.reason);
       setReturnAction(ret.returnAction);
       setInternalNotes(ret.internalNotes);
-      setItems(ret.items.map(i => ({ ...i })));
+      setItems(ret.items.map(i => ({ ...i, batches: Array.isArray(i.batches) ? i.batches : [] })));
       setActiveTab('create');
+
+      // Refresh returnable batches view (so partial returns reflect already-returned qty)
+      if (ret.linkedInvoice) {
+         getReturnableBatches(ret.linkedInvoice).then(list => {
+            const grouped = (list || []).reduce((acc, r) => {
+               const code = r.itemCode || '';
+               if (!acc[code]) acc[code] = [];
+               acc[code].push(r);
+               return acc;
+            }, {});
+            setReturnableByItem(grouped);
+         }).catch(() => setReturnableByItem({}));
+      }
+   };
+
+   // ---------- BATCH MODAL ----------
+   const openBatchModal = (idx) => {
+      const item = items[idx];
+      if (!item) return;
+      const options = returnableByItem[item.itemCode] || [];
+      // Pre-fill draft from current item.batches, ensuring all options appear
+      const draft = options.map(opt => {
+         const existing = (item.batches || []).find(b => b.originalAllocationId === opt.allocationId);
+         return {
+            ...opt,
+            qtyToReturn: existing ? Number(existing.quantity) || 0 : 0
+         };
+      });
+      setBatchModalDraft(draft);
+      setBatchModalIdx(idx);
+   };
+
+   const closeBatchModal = () => {
+      setBatchModalIdx(null);
+      setBatchModalDraft([]);
+   };
+
+   const saveBatchModal = () => {
+      if (batchModalIdx === null) return;
+      const selected = batchModalDraft
+         .filter(d => Number(d.qtyToReturn) > 0)
+         .map(d => ({
+            originalAllocationId: d.allocationId,
+            batchMasterId: d.batchMasterId,
+            batchNumber: d.batchNumber,
+            binCode: d.binCode,
+            expiryDate: d.expiryDate,
+            quantity: Number(d.qtyToReturn)
+         }));
+      const totalSel = selected.reduce((s, b) => s + (b.quantity || 0), 0);
+      const updated = [...items];
+      updated[batchModalIdx] = {
+         ...updated[batchModalIdx],
+         batches: selected,
+         returnQty: totalSel
+      };
+      // Recalculate totals for this line
+      const it = updated[batchModalIdx];
+      const price = Number(it.price) || 0;
+      const taxR = Number(it.taxRate) || 0;
+      const base = totalSel * price;
+      const taxA = base * (taxR / 100);
+      it.total = base + taxA;
+      it.taxAmount = taxA;
+      setItems(updated);
+      closeBatchModal();
+   };
+
+   const handleBatchDraftChange = (allocId, value) => {
+      setBatchModalDraft(prev => prev.map(d => {
+         if (d.allocationId !== allocId) return d;
+         let v = Math.max(0, Math.min(Number(value) || 0, d.returnableQty || 0));
+         return { ...d, qtyToReturn: v };
+      }));
    };
 
    const handleSave = async (statusOverride = null) => {
@@ -268,6 +364,25 @@ const SalesReturn = () => {
       if (items.filter(i => i.returnQty > 0).length === 0) {
          alert('Please specify return quantity for at least one item');
          return;
+      }
+
+      // Batch validation: any line that has returnable batch options must have batches selected
+      // and sum(batches.quantity) must equal returnQty.
+      for (const it of items) {
+         const qty = Number(it.returnQty) || 0;
+         if (qty <= 0) continue;
+         const hasBatchOptions = (returnableByItem[it.itemCode] || []).length > 0;
+         if (!hasBatchOptions) continue; // non-batch product
+         const sel = it.batches || [];
+         const selSum = sel.reduce((s, b) => s + (Number(b.quantity) || 0), 0);
+         if (sel.length === 0) {
+            alert(`Select returning batches for ${it.itemCode || it.itemName} (qty ${qty}).`);
+            return;
+         }
+         if (selSum !== qty) {
+            alert(`Batch quantities (${selSum}) must equal return quantity (${qty}) for ${it.itemCode || it.itemName}.`);
+            return;
+         }
       }
 
       const payload = {
@@ -766,7 +881,19 @@ const SalesReturn = () => {
                                                       value={item.returnQty}
                                                       onChange={e => handleItemChange(idx, 'returnQty', e.target.value)}
                                                       className="w-full text-center p-1 border border-slate-200 rounded focus:border-red-400 outline-none font-bold text-red-600"
+                                                      disabled={(returnableByItem[item.itemCode] || []).length > 0}
                                                    />
+                                                   {(returnableByItem[item.itemCode] || []).length > 0 && (
+                                                      <button
+                                                         type="button"
+                                                         onClick={() => openBatchModal(idx)}
+                                                         className="mt-1 w-full text-[10px] px-2 py-0.5 rounded bg-amber-50 border border-amber-200 text-amber-700 hover:bg-amber-100"
+                                                      >
+                                                         {(item.batches && item.batches.length > 0)
+                                                            ? `${item.batches.length} batch${item.batches.length > 1 ? 'es' : ''}`
+                                                            : 'Select batches'}
+                                                      </button>
+                                                   )}
                                                 </td>
                                              
 </td>
@@ -980,6 +1107,90 @@ const SalesReturn = () => {
                </div>
             )}
          </div>
+
+         {/* BATCH SELECTION MODAL */}
+         {batchModalIdx !== null && (
+            <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
+               <div className="bg-white rounded-lg shadow-xl w-full max-w-3xl max-h-[85vh] flex flex-col">
+                  <div className="px-5 py-3 border-b border-slate-200 flex items-center justify-between">
+                     <div>
+                        <h3 className="text-sm font-bold text-slate-800">Select Return Batches</h3>
+                        <p className="text-[11px] text-slate-500 mt-0.5">
+                           {items[batchModalIdx]?.itemCode} — {items[batchModalIdx]?.itemName}
+                        </p>
+                     </div>
+                     <button onClick={closeBatchModal} className="text-slate-400 hover:text-slate-700">
+                        <X size={18} />
+                     </button>
+                  </div>
+                  <div className="p-4 overflow-y-auto flex-1">
+                     {batchModalDraft.length === 0 ? (
+                        <div className="text-center py-8 text-slate-400 text-sm">
+                           No returnable batches found for this item. All units may have been returned already.
+                        </div>
+                     ) : (
+                        <table className="w-full text-xs">
+                           <thead className="bg-slate-50 text-slate-500">
+                              <tr>
+                                 <th className="p-2 text-left">Batch #</th>
+                                 <th className="p-2 text-left">Location</th>
+                                 <th className="p-2 text-center">Expiry</th>
+                                 <th className="p-2 text-right">Original</th>
+                                 <th className="p-2 text-right">Already Returned</th>
+                                 <th className="p-2 text-right">Returnable</th>
+                                 <th className="p-2 text-center">Qty to Return</th>
+                              </tr>
+                           </thead>
+                           <tbody className="divide-y divide-slate-100">
+                              {batchModalDraft.map((d) => (
+                                 <tr key={d.allocationId} className="hover:bg-slate-50">
+                                    <td className="p-2 font-medium text-slate-700">{d.batchNumber}</td>
+                                    <td className="p-2 text-slate-600">{d.binCode || '-'}</td>
+                                    <td className="p-2 text-center text-slate-500">{d.expiryDate || '-'}</td>
+                                    <td className="p-2 text-right text-slate-500">{d.originalQty}</td>
+                                    <td className="p-2 text-right text-slate-500">{d.alreadyReturnedQty}</td>
+                                    <td className="p-2 text-right text-slate-700 font-semibold">{d.returnableQty}</td>
+                                    <td className="p-2 text-center">
+                                       <input
+                                          type="number"
+                                          min="0"
+                                          max={d.returnableQty}
+                                          value={d.qtyToReturn}
+                                          onChange={(e) => handleBatchDraftChange(d.allocationId, e.target.value)}
+                                          className="w-20 text-center p-1 border border-slate-200 rounded focus:border-amber-400 outline-none"
+                                       />
+                                    </td>
+                                 </tr>
+                              ))}
+                           </tbody>
+                           <tfoot>
+                              <tr className="bg-amber-50 border-t border-amber-200 font-bold">
+                                 <td className="p-2" colSpan="6">Total selected</td>
+                                 <td className="p-2 text-center">
+                                    {batchModalDraft.reduce((s, d) => s + (Number(d.qtyToReturn) || 0), 0)}
+                                 </td>
+                              </tr>
+                           </tfoot>
+                        </table>
+                     )}
+                  </div>
+                  <div className="px-5 py-3 border-t border-slate-200 flex justify-end gap-2">
+                     <button
+                        onClick={closeBatchModal}
+                        className="px-3 py-1.5 text-xs font-medium border border-slate-200 rounded hover:bg-slate-50"
+                     >
+                        Cancel
+                     </button>
+                     <button
+                        onClick={saveBatchModal}
+                        className="px-3 py-1.5 text-xs font-bold rounded bg-[#F5C742] text-slate-900 hover:bg-yellow-400"
+                     >
+                        Save Batches
+                     </button>
+                  </div>
+               </div>
+            </div>
+         )}
 
       </div>
    );

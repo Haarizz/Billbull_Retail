@@ -23,7 +23,8 @@ import {
     FaTrash,
     FaArrowLeft,
     FaExclamationTriangle,
-    FaCheckCircle
+    FaCheckCircle,
+    FaBarcode
 } from 'react-icons/fa';
 import { getCompanyProfile } from '../../api/companyProfileApi';
 import { getPrintTemplates, createPrintTemplate, updatePrintTemplate, deletePrintTemplate, setDefaultTemplate } from '../../api/printTemplateApi';
@@ -90,18 +91,22 @@ const getSalesDefaultDisplayOptions = (overrides = {}) =>
     sanitizeTemplateDisplayOptions(overrides, DEFAULT_TEMPLATE_DISPLAY_OPTIONS);
 
 const getSalesDefaultColumns = (category, overrides = {}) => {
+    const isPickList = category === 'Pick List';
     const categoryDefaults = {
         ...DEFAULT_TEMPLATE_COLUMNS,
-        discount: !['Sales Invoice', 'Delivery Note (DO/DN)'].includes(category),
-        tax: category !== 'Sales Order (SO)' && category !== 'Delivery Note (DO/DN)',
-        total: category !== 'Delivery Note (DO/DN)',
-        unitPrice: category !== 'Delivery Note (DO/DN)',
-        taxableAmount: category !== 'Delivery Note (DO/DN)',
+        discount: !['Sales Invoice', 'Delivery Note (DO/DN)', 'Pick List'].includes(category),
+        tax: category !== 'Sales Order (SO)' && category !== 'Delivery Note (DO/DN)' && !isPickList,
+        total: category !== 'Delivery Note (DO/DN)' && !isPickList,
+        unitPrice: category !== 'Delivery Note (DO/DN)' && !isPickList,
+        taxableAmount: category !== 'Delivery Note (DO/DN)' && !isPickList,
         barcode: false,
         discountPercent: false,
         taxPercent: false,
         salesPerson: false,
-        location: false
+        location: isPickList,
+        batchNumber: isPickList,
+        batchBarcode: isPickList,
+        expiry: isPickList
     };
 
     return sanitizeTemplateColumns(overrides, categoryDefaults);
@@ -269,6 +274,18 @@ Late payments may be subject to finance charges as per the agreed customer terms
         footerContent: "",
         displayOptions: JSON.stringify(getSalesDefaultDisplayOptions()),
         columns: JSON.stringify(getSalesDefaultColumns("Delivery Note (DO/DN)"))
+    },
+    {
+        category: "Pick List",
+        name: "Standard Pick List",
+        isDefault: true,
+        paperSize: "A4",
+        orientation: "Portrait",
+        headerContent: "",
+        termsContent: `Pick the items from the indicated bin/location. Scan each batch barcode to confirm.`,
+        footerContent: "",
+        displayOptions: JSON.stringify(getSalesDefaultDisplayOptions()),
+        columns: JSON.stringify(getSalesDefaultColumns("Pick List"))
     },
     {
         category: "Proforma Invoice (PI)",
@@ -663,6 +680,20 @@ const TemplateDesigner = ({ category, onCancel, onSave, initialData, previewComp
                                     <input type="checkbox" checked={columns.location} onChange={() => handleColumnChange('location')} className="w-4 h-4 text-yellow-500 rounded border-gray-300 focus:ring-yellow-400" />
                                     <span className="text-sm text-gray-700 font-medium">Location / Branch</span>
                                 </label>
+
+                                <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider pt-2">Batch & Expiry</p>
+                                <label className="flex items-center gap-2 cursor-pointer">
+                                    <input type="checkbox" checked={Boolean(columns.batchNumber)} onChange={() => handleColumnChange('batchNumber')} className="w-4 h-4 text-yellow-500 rounded border-gray-300 focus:ring-yellow-400" />
+                                    <span className="text-sm text-gray-700 font-medium">Batch Number</span>
+                                </label>
+                                <label className="flex items-center gap-2 cursor-pointer">
+                                    <input type="checkbox" checked={Boolean(columns.batchBarcode)} onChange={() => handleColumnChange('batchBarcode')} className="w-4 h-4 text-yellow-500 rounded border-gray-300 focus:ring-yellow-400" />
+                                    <span className="text-sm text-gray-700 font-medium">Batch Barcode (Code 128)</span>
+                                </label>
+                                <label className="flex items-center gap-2 cursor-pointer">
+                                    <input type="checkbox" checked={Boolean(columns.expiry)} onChange={() => handleColumnChange('expiry')} className="w-4 h-4 text-yellow-500 rounded border-gray-300 focus:ring-yellow-400" />
+                                    <span className="text-sm text-gray-700 font-medium">Expiry Date</span>
+                                </label>
                             </div>
                         </div>
 
@@ -897,6 +928,22 @@ const PrintEmailTemplates = () => {
                 return;
             }
 
+            // Top-up seed: ensure newly added default categories (e.g. Pick List) exist
+            const existingCategories = new Set(data.map((t) => t.category));
+            const missing = defaultTemplates.filter((t) => !existingCategories.has(t.category));
+            if (missing.length > 0) {
+                for (const template of missing) {
+                    try {
+                        await createPrintTemplate(template);
+                    } catch (e) {
+                        console.warn(`Top-up seed failed for ${template.category}:`, e);
+                    }
+                }
+                const refreshed = await getPrintTemplates();
+                setAllTemplates(refreshed.map((template) => normalizeSalesTemplate(template, template.category)));
+                return;
+            }
+
             const parsedData = data.map((template) => normalizeSalesTemplate(template, template.category));
             setAllTemplates(parsedData);
         } catch (error) {
@@ -922,6 +969,7 @@ const PrintEmailTemplates = () => {
         { title: "Quotation", description: "Customer quotation template", icon: FaFileAlt },
         { title: "Sales Order (SO)", description: "Sales order confirmation template", icon: FaClipboardList },
         { title: "Delivery Note (DO/DN)", description: "Delivery/dispatch note template", icon: FaTruck },
+        { title: "Pick List", description: "Warehouse pick list grouped by location, with batch barcodes", icon: FaBarcode },
         { title: "Proforma Invoice (PI)", description: "Proforma invoice template", icon: FaFileAlt },
         { title: "Sales Invoice", description: "Final sales invoice template", icon: FaFileInvoiceDollar },
         { title: "Credit Note", description: "Credit note template", icon: FaUndo, disabled: true },

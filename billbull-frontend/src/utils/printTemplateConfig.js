@@ -32,6 +32,9 @@ export const DEFAULT_TEMPLATE_COLUMNS = Object.freeze({
     taxPercent: false,
     salesPerson: false,
     location: false,
+    batchNumber: false,
+    batchBarcode: false,
+    expiry: false,
     total: true
 });
 
@@ -84,6 +87,9 @@ export const sanitizeTemplateColumns = (
         taxPercent: columns.taxPercent !== undefined ? Boolean(columns.taxPercent) : Boolean(defaults.taxPercent ?? false),
         salesPerson: columns.salesPerson !== undefined ? Boolean(columns.salesPerson) : Boolean(defaults.salesPerson ?? false),
         location: columns.location !== undefined ? Boolean(columns.location) : Boolean(defaults.location ?? false),
+        batchNumber: columns.batchNumber !== undefined ? Boolean(columns.batchNumber) : Boolean(defaults.batchNumber ?? false),
+        batchBarcode: columns.batchBarcode !== undefined ? Boolean(columns.batchBarcode) : Boolean(defaults.batchBarcode ?? false),
+        expiry: columns.expiry !== undefined ? Boolean(columns.expiry) : Boolean(defaults.expiry ?? false),
         total: columns.total !== undefined ? columns.total !== false : defaults.total !== false
     };
 };

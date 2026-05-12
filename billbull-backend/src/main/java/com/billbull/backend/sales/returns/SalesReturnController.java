@@ -62,4 +62,9 @@ public class SalesReturnController {
     public SalesReturn updateStatus(@PathVariable Long id, @RequestParam SalesReturnStatus status) {
         return salesReturnService.updateStatus(id, status);
     }
+
+    @GetMapping("/returnable-batches")
+    public List<ReturnableBatchResponse> getReturnableBatches(@RequestParam String invoiceNumber) {
+        return salesReturnService.getReturnableBatchesForInvoice(invoiceNumber);
+    }
 }

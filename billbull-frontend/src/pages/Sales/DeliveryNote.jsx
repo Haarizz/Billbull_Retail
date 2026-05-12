@@ -1532,6 +1532,65 @@ const DeliveryNote = () => {
         }
     };
 
+    const handlePrintPickList = async () => {
+        if (items.length === 0) {
+            alert("Nothing to print. Add items first.");
+            return;
+        }
+
+        setIsPrinting(true);
+        try {
+            const templates = await getTemplatesByCategory('Pick List');
+            const defaultTemplate = templates.find(t => t.isDefault) || templates[0];
+
+            if (!defaultTemplate) {
+                alert("No Pick List template found. Please create one under Settings → Print Templates (category: 'Pick List').");
+                return;
+            }
+
+            const fullCustomer = customersList.find(c => c.code === selectedCustomer?.code);
+
+            const printData = {
+                title: 'PICK LIST',
+                docNo: dnNumber,
+                date: dnDate,
+                customer: {
+                    name: selectedCustomer?.name || '',
+                    address: shippingAddress || fullCustomer?.address || '',
+                    trn: selectedCustomer?.trn || fullCustomer?.trn
+                },
+                items: items.map(i => ({
+                    code: i.code,
+                    name: i.name || i.desc || '',
+                    desc: (i.remarks || i.desc || '') + (i.boxes ? ` (${i.boxes} Boxes)` : ''),
+                    sku: i.sku || '',
+                    localName: i.localName || '',
+                    barcode: i.barcode || '',
+                    location: warehouse || '',
+                    unit: i.unit,
+                    qty: i.currentQty,
+                    batchSelections: Array.isArray(i.batchSelections) ? i.batchSelections : []
+                })),
+                totals: {},
+                meta: {
+                    status: status,
+                    reference: `SO: ${linkedSO || '-'} | PI: ${linkedPI || '-'} | SI: ${linkedSI || '-'}`,
+                    location: warehouse || '',
+                    warehouse: warehouse || '',
+                    notes: `Driver: ${driverName || '-'} | Vehicle: ${vehicleNo || '-'} | Tracking: ${trackingNo || '-'}`
+                }
+            };
+
+            const html = generatePrintHtml(defaultTemplate, printData, { companyProfile: company, billBullLogo });
+            printHtml(html);
+        } catch (error) {
+            console.error("Pick List print error:", error);
+            alert("Failed to print Pick List.");
+        } finally {
+            setIsPrinting(false);
+        }
+    };
+
     const renderStatusBadge = (s) => {
         const normalized = (s || 'DRAFT').toUpperCase();
         const styles = {
@@ -1729,6 +1788,14 @@ const DeliveryNote = () => {
                                         {label === 'Print' && isPrinting ? 'Printing...' : label}
                                     </button>
                                 ))}
+                                <button
+                                    onClick={handlePrintPickList}
+                                    disabled={isPrinting}
+                                    className="flex items-center gap-1 px-3 py-1.5 bg-white border border-slate-200 rounded text-xs font-medium text-slate-600 hover:bg-slate-50 shadow-sm disabled:opacity-50"
+                                >
+                                    <Printer size={14} />
+                                    {isPrinting ? 'Printing...' : 'Print Pick List'}
+                                </button>
                             </div>
                         )}
                     </div>

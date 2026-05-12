@@ -38,6 +38,7 @@ public class BatchSelectionService {
     public static final String DOC_TYPE_DELIVERY_NOTE = "DELIVERY_NOTE";
     public static final String DOC_TYPE_SALES_ORDER = "SALES_ORDER";
     public static final String DOC_TYPE_SALES_INVOICE = "SALES_INVOICE";
+    public static final String DOC_TYPE_SALES_RETURN = "SALES_RETURN";
     public static final String MANUAL_PERMISSION = "batch_manual_select";
 
     private static final List<BatchAllocationStatus> ACTIVE_STATUSES =
@@ -449,6 +450,33 @@ public class BatchSelectionService {
         return getSelections(DOC_TYPE_DELIVERY_NOTE, deliveryNoteId);
     }
 
+    @Transactional(readOnly = true)
+    public List<BatchAllocation> findReturnableAllocations(String sourceDocumentType, Long sourceDocumentId) {
+        if (sourceDocumentType == null || sourceDocumentId == null) {
+            return List.of();
+        }
+        return allocationRepository.findBySourceDocumentTypeAndSourceDocumentIdAndStatusIn(
+                sourceDocumentType, sourceDocumentId, ACTIVE_STATUSES);
+    }
+
+    @Transactional(readOnly = true)
+    public int sumAlreadyReturned(Long parentAllocationId) {
+        if (parentAllocationId == null) return 0;
+        return allocationRepository
+                .findByParentAllocationIdAndStatus(parentAllocationId, BatchAllocationStatus.RETURNED)
+                .stream()
+                .mapToInt(a -> a.getQuantity() != null ? a.getQuantity() : 0)
+                .sum();
+    }
+
+    public BatchAllocationRepository getAllocationRepository() {
+        return allocationRepository;
+    }
+
+    public BatchMasterRepository getBatchRepository() {
+        return batchRepository;
+    }
+
     public DeliveryBatchSelectionResponse toDeliveryResponse(BatchAllocation allocation) {
         DeliveryBatchSelectionResponse response = new DeliveryBatchSelectionResponse();
         response.allocationId = allocation.getId();
@@ -458,6 +486,8 @@ public class BatchSelectionService {
         response.quantity = allocation.getQuantity();
         response.allocationMethod = allocation.getAllocationMethod();
         response.status = allocation.getStatus();
+        response.binId = allocation.getBinId();
+        response.binCode = allocation.getBinCode();
 
         BatchMaster batch = allocation.getBatchMaster();
         response.manufacturingDate = batch.getManufacturingDate();

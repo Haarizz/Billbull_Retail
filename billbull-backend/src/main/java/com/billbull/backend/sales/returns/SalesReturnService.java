@@ -1,11 +1,23 @@
 package com.billbull.backend.sales.returns;
 
 import com.billbull.backend.financials.generalledger.postingengine.PostingEngineService;
+import com.billbull.backend.inventory.batch.BatchAllocation;
+import com.billbull.backend.inventory.batch.BatchAllocationRepository;
+import com.billbull.backend.inventory.batch.BatchAllocationStatus;
+import com.billbull.backend.inventory.batch.BatchMaster;
+import com.billbull.backend.inventory.batch.BatchMasterRepository;
+import com.billbull.backend.inventory.batch.BatchSelectionService;
+import com.billbull.backend.inventory.batch.BatchStatus;
 import com.billbull.backend.inventory.product.Product;
 import com.billbull.backend.inventory.product.ProductPricingRepository;
 import com.billbull.backend.inventory.product.ProductRepository;
+import com.billbull.backend.purchase.stockmovement.StockMovementService;
+import com.billbull.backend.purchase.stockmovement.StockSourceType;
+import com.billbull.backend.sales.delivery.DeliveryNote;
+import com.billbull.backend.sales.delivery.DeliveryNoteRepository;
 import com.billbull.backend.sales.invoice.DeliveryStatus;
 import com.billbull.backend.sales.invoice.SalesInvoice;
+import com.billbull.backend.sales.invoice.SalesInvoiceItem;
 import com.billbull.backend.sales.invoice.SalesInvoiceRepository;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -14,9 +26,12 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.time.YearMonth;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -40,6 +55,21 @@ public class SalesReturnService {
 
     @Autowired
     private ProductPricingRepository productPricingRepository;
+
+    @Autowired
+    private BatchSelectionService batchSelectionService;
+
+    @Autowired
+    private BatchAllocationRepository batchAllocationRepository;
+
+    @Autowired
+    private BatchMasterRepository batchMasterRepository;
+
+    @Autowired
+    private DeliveryNoteRepository deliveryNoteRepository;
+
+    @Autowired
+    private StockMovementService stockMovementService;
 
     @Transactional(readOnly = true)
     public List<SalesReturn> getAllReturns() {
@@ -157,9 +187,188 @@ public class SalesReturnService {
         SalesReturn saved = salesReturnRepository.save(salesReturn);
 
         if (status == SalesReturnStatus.APPROVED) {
+            applyBatchReturns(saved);
             postJournalForApprovedReturn(saved);
         }
         return saved;
+    }
+
+    // ---------------------------------------------------------------
+    // Returnable batches lookup
+    // ---------------------------------------------------------------
+
+    @Transactional(readOnly = true)
+    public List<ReturnableBatchResponse> getReturnableBatchesForInvoice(String invoiceNumber) {
+        if (invoiceNumber == null || invoiceNumber.isBlank()) {
+            return List.of();
+        }
+        Optional<SalesInvoice> invoiceOpt = salesInvoiceRepository.findByInvoiceNumber(invoiceNumber);
+        if (invoiceOpt.isEmpty()) {
+            return List.of();
+        }
+        SalesInvoice invoice = invoiceOpt.get();
+
+        List<BatchAllocation> allocations = batchSelectionService.findReturnableAllocations(
+                BatchSelectionService.DOC_TYPE_SALES_INVOICE, invoice.getId());
+
+        if (allocations.isEmpty() && invoice.getLinkedDeliveryNote() != null && !invoice.getLinkedDeliveryNote().isBlank()) {
+            List<String> dnNumbers = Arrays.stream(invoice.getLinkedDeliveryNote().split(","))
+                    .map(String::trim)
+                    .filter(s -> !s.isBlank())
+                    .toList();
+            if (!dnNumbers.isEmpty()) {
+                List<DeliveryNote> notes = deliveryNoteRepository.findByDnNumberIn(dnNumbers);
+                allocations = new ArrayList<>();
+                for (DeliveryNote note : notes) {
+                    allocations.addAll(batchSelectionService.findReturnableAllocations(
+                            BatchSelectionService.DOC_TYPE_DELIVERY_NOTE, note.getId()));
+                }
+            }
+        }
+
+        Map<String, SalesInvoiceItem> itemByCode = new HashMap<>();
+        if (invoice.getItems() != null) {
+            for (SalesInvoiceItem ii : invoice.getItems()) {
+                if (ii.getItemCode() != null) {
+                    itemByCode.putIfAbsent(ii.getItemCode(), ii);
+                }
+            }
+        }
+
+        List<ReturnableBatchResponse> out = new ArrayList<>();
+        for (BatchAllocation a : allocations) {
+            int already = batchSelectionService.sumAlreadyReturned(a.getId());
+            int qty = a.getQuantity() != null ? a.getQuantity() : 0;
+            int returnable = Math.max(0, qty - already);
+            if (returnable <= 0) continue;
+
+            ReturnableBatchResponse r = new ReturnableBatchResponse();
+            r.allocationId = a.getId();
+            r.batchMasterId = a.getBatchMaster() != null ? a.getBatchMaster().getId() : null;
+            r.batchNumber = a.getBatchNumber();
+            r.binId = a.getBinId();
+            r.binCode = a.getBinCode();
+            r.expiryDate = a.getExpiryDate();
+            r.originalQty = qty;
+            r.alreadyReturnedQty = already;
+            r.returnableQty = returnable;
+            r.sourceLineId = a.getSourceLineId();
+            r.itemCode = a.getProductCode();
+            SalesInvoiceItem ii = itemByCode.get(a.getProductCode());
+            if (ii != null) {
+                r.itemName = ii.getDescription() != null ? ii.getDescription() : ii.getItemCode();
+                r.unit = ii.getUnit();
+            }
+            out.add(r);
+        }
+        return out;
+    }
+
+    // ---------------------------------------------------------------
+    // applyBatchReturns — split allocations, flip BatchMaster status,
+    // post positive StockMovement on APPROVED.
+    // ---------------------------------------------------------------
+
+    private void applyBatchReturns(SalesReturn salesReturn) {
+        if (salesReturn.getItems() == null) return;
+
+        for (SalesReturnItem item : salesReturn.getItems()) {
+            if (item.getBatches() == null || item.getBatches().isEmpty()) {
+                continue; // non-batch line or no batches selected — skip
+            }
+
+            // Validate sum matches returnQty
+            int batchSum = item.getBatches().stream()
+                    .mapToInt(b -> b.getQuantity() != null ? b.getQuantity() : 0)
+                    .sum();
+            int returnQty = item.getReturnQty() != null ? item.getReturnQty() : 0;
+            if (batchSum != returnQty) {
+                throw new org.springframework.web.server.ResponseStatusException(
+                        org.springframework.http.HttpStatus.BAD_REQUEST,
+                        "Batch quantities (" + batchSum + ") must equal return quantity ("
+                                + returnQty + ") for item " + item.getItemCode());
+            }
+
+            boolean quarantine = !"Good".equalsIgnoreCase(item.getItemStatus());
+            BatchStatus targetBatchStatus = quarantine ? BatchStatus.QUARANTINE : BatchStatus.AVAILABLE;
+
+            for (SalesReturnItemBatch sel : item.getBatches()) {
+                Long parentId = sel.getOriginalAllocationId();
+                int retQty = sel.getQuantity() != null ? sel.getQuantity() : 0;
+                if (parentId == null || retQty <= 0) continue;
+
+                BatchAllocation parent = batchAllocationRepository.findById(parentId)
+                        .orElseThrow(() -> new org.springframework.web.server.ResponseStatusException(
+                                org.springframework.http.HttpStatus.BAD_REQUEST,
+                                "Allocation not found: " + parentId));
+
+                int parentQty = parent.getQuantity() != null ? parent.getQuantity() : 0;
+                int alreadyReturned = batchSelectionService.sumAlreadyReturned(parent.getId());
+                int returnable = parentQty - alreadyReturned;
+                if (retQty > returnable) {
+                    throw new org.springframework.web.server.ResponseStatusException(
+                            org.springframework.http.HttpStatus.BAD_REQUEST,
+                            "Return quantity " + retQty + " exceeds returnable " + returnable
+                                    + " for allocation " + parentId);
+                }
+
+                if (retQty == parentQty && alreadyReturned == 0) {
+                    // Flip whole row
+                    parent.setStatus(BatchAllocationStatus.RETURNED);
+                    batchAllocationRepository.save(parent);
+                } else {
+                    // Split: decrement parent, insert sibling RETURNED row
+                    parent.setQuantity(parentQty - retQty);
+                    batchAllocationRepository.save(parent);
+
+                    BatchAllocation ret = new BatchAllocation();
+                    ret.setSourceDocumentType(BatchSelectionService.DOC_TYPE_SALES_RETURN);
+                    ret.setSourceDocumentId(salesReturn.getId());
+                    ret.setSourceLineId(item.getId());
+                    ret.setProductId(parent.getProductId());
+                    ret.setProductCode(parent.getProductCode());
+                    ret.setBinId(parent.getBinId());
+                    ret.setBinCode(parent.getBinCode());
+                    ret.setBatchMaster(parent.getBatchMaster());
+                    ret.setBatchNumber(parent.getBatchNumber());
+                    ret.setExpiryDate(parent.getExpiryDate());
+                    ret.setQuantity(retQty);
+                    ret.setAllocationMethod(parent.getAllocationMethod());
+                    ret.setStatus(BatchAllocationStatus.RETURNED);
+                    ret.setSelectedBy(parent.getSelectedBy());
+                    ret.setSelectedAt(LocalDateTime.now());
+                    ret.setParentAllocationId(parent.getId());
+                    batchAllocationRepository.save(ret);
+                }
+
+                // Flip BatchMaster status
+                BatchMaster bm = parent.getBatchMaster();
+                if (bm != null) {
+                    bm.setStatus(targetBatchStatus);
+                    batchMasterRepository.save(bm);
+                }
+
+                // Post positive stock movement back into the bin/warehouse
+                Long warehouseId = bm != null ? bm.getWarehouseId() : null;
+                if (warehouseId != null) {
+                    stockMovementService.reverseOutboundStock(
+                            StockSourceType.SALES_RETURN,
+                            salesReturn.getId(),
+                            parent.getProductId(),
+                            warehouseId,
+                            parent.getBinId(),
+                            null,
+                            null,
+                            parent.getBatchNumber(),
+                            parent.getExpiryDate(),
+                            retQty,
+                            salesReturn.getReturnNumber());
+                } else {
+                    log.warn("[SalesReturn] {} — batch {} has no warehouseId; skipping stock movement post.",
+                            salesReturn.getReturnNumber(), parent.getBatchNumber());
+                }
+            }
+        }
     }
 
     // ---------------------------------------------------------------
