@@ -16,4 +16,6 @@ public class DeliveryBatchSelectionResponse {
     public Integer quantity;
     public BatchAllocationMethod allocationMethod;
     public BatchAllocationStatus status;
+    public Long binId;
+    public String binCode;
 }

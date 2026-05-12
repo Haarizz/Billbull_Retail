@@ -38,6 +38,8 @@ public interface BatchAllocationRepository extends JpaRepository<BatchAllocation
 
     List<BatchAllocation> findByBatchMaster_IdAndStatus(Long batchMasterId, BatchAllocationStatus status);
 
+    List<BatchAllocation> findByParentAllocationIdAndStatus(Long parentAllocationId, BatchAllocationStatus status);
+
     List<BatchAllocation> findBySourceDocumentTypeAndSourceLineIdAndStatus(
             String sourceDocumentType,
             Long sourceLineId,

@@ -85,6 +85,9 @@ public class BatchAllocation extends BaseEntity {
     @Column(name = "depleted_at")
     private LocalDateTime depletedAt;
 
+    @Column(name = "parent_allocation_id")
+    private Long parentAllocationId;
+
     public String getSourceDocumentType() {
         return sourceDocumentType;
     }
@@ -235,5 +238,13 @@ public class BatchAllocation extends BaseEntity {
 
     public void setDepletedAt(LocalDateTime depletedAt) {
         this.depletedAt = depletedAt;
+    }
+
+    public Long getParentAllocationId() {
+        return parentAllocationId;
+    }
+
+    public void setParentAllocationId(Long parentAllocationId) {
+        this.parentAllocationId = parentAllocationId;
     }
 }

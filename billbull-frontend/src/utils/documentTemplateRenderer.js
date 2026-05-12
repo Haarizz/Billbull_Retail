@@ -1,3 +1,4 @@
+import JsBarcode from 'jsbarcode';
 import { getImageUrl } from './urlUtils';
 import {
     DEFAULT_TEMPLATE_COLUMNS,
@@ -31,7 +32,8 @@ const DOC_NO_LABELS = {
     'Local Purchase Order': 'LPO Number',
     'Goods Receipt Note': 'GRN Number',
     'Purchase Invoice': 'Invoice Number',
-    'Payment Voucher': 'Voucher Number'
+    'Payment Voucher': 'Voucher Number',
+    'Pick List': 'Pick List Number'
 };
 
 const PAPER_DIMENSIONS_MM = {
@@ -88,6 +90,42 @@ const formatNumber = (value, decimals = 2) =>
     });
 
 const joinAddress = (...parts) => compactValues(parts).join(', ');
+
+const formatDocDate = (value) => {
+    if (!value) return '';
+    if (value instanceof Date) {
+        if (Number.isNaN(value.getTime())) return '';
+        const yyyy = value.getFullYear();
+        const mm = String(value.getMonth() + 1).padStart(2, '0');
+        const dd = String(value.getDate()).padStart(2, '0');
+        return `${yyyy}-${mm}-${dd}`;
+    }
+    const text = asText(value).trim();
+    if (!text) return '';
+    if (/^\d{4}-\d{2}-\d{2}/.test(text)) return text.slice(0, 10);
+    const parsed = new Date(text);
+    return Number.isNaN(parsed.getTime()) ? text : formatDocDate(parsed);
+};
+
+const renderBatchBarcodeSvg = (batchNumber, options = {}) => {
+    const value = asText(batchNumber).trim();
+    if (!value) return '';
+    try {
+        const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+        JsBarcode(svg, value, {
+            format: 'CODE128',
+            displayValue: false,
+            height: options.height ?? 28,
+            margin: 0,
+            width: options.width ?? 1.1
+        });
+        svg.setAttribute('preserveAspectRatio', 'none');
+        svg.setAttribute('style', 'width:100%;height:28px;display:block;');
+        return svg.outerHTML;
+    } catch (_e) {
+        return `<span class="batch-barcode-fallback">${escapeHtml(value)}</span>`;
+    }
+};
 
 const resolveDocumentImageUrl = (value) => {
     const imagePath = firstNonEmpty(value);
@@ -216,6 +254,9 @@ const normaliseItem = (item = {}) => {
         discountPercent: asNumber(item.disc ?? item.discount ?? item.discountPercent ?? 0),
         salesPerson: item.salesPerson || item.salesperson || item.salesPersonName || '',
         location: item.location || item.branch || item.branchName || item.locationName || '',
+        batchSelections: Array.isArray(item.batchSelections) ? item.batchSelections : [],
+        batchNumber: item.batchNumber || '',
+        expiry: item.expiry || item.expiryDate || '',
         total
     };
 };
@@ -235,8 +276,12 @@ const createColumnModel = (rawColumns = {}) => {
     const c = rawColumns;
     return [
         { key: 'index',         label: '#',                               align: 'center', width: '3%',  enabled: true },
-        { key: 'description',   label: 'Product/Services',                align: 'left',   width: '22%', enabled: true },
-        { key: 'details',       label: 'Description of Product/Services', align: 'left',   width: '30%', enabled: c.description !== false },
+        { key: 'location',      label: 'Location',                        align: 'left',   width: '8%',  enabled: Boolean(c.location) },
+        { key: 'description',   label: 'Product/Services',                align: 'left',   width: c.batchBarcode ? '16%' : '22%', enabled: true },
+        { key: 'details',       label: 'Description of Product/Services', align: 'left',   width: c.batchBarcode ? '14%' : '20%', enabled: c.description !== false },
+        { key: 'batchNumber',   label: 'Batch #',                         align: 'left',   width: '12%', enabled: Boolean(c.batchNumber) },
+        { key: 'batchBarcode',  label: 'Batch Barcode',                   align: 'center', width: '22%', enabled: Boolean(c.batchBarcode) },
+        { key: 'expiry',        label: 'Expiry',                          align: 'center', width: '8%',  enabled: Boolean(c.expiry) },
         { key: 'qty',           label: 'Qty',                             align: 'right',  width: '6%',  enabled: c.qty !== false },
         { key: 'unitPrice',     label: 'Unit Price',                      align: 'right',  width: '9%',  enabled: c.unitPrice !== false },
         { key: 'taxableAmount', label: 'Taxable Amount',                  align: 'right',  width: '12%', enabled: Boolean(c.taxableAmount) },
@@ -299,6 +344,43 @@ const renderTableCell = (column, item, index, displayOptions = {}, columnOptions
             return `<td class="table-cell">${escapeHtml(item.salesPerson || '-')}</td>`;
         case 'location':
             return `<td class="table-cell">${escapeHtml(item.location || '-')}</td>`;
+        case 'batchNumber': {
+            if (item.batchNumber) {
+                return `<td class="table-cell">${escapeHtml(item.batchNumber)}</td>`;
+            }
+            const selections = Array.isArray(item.batchSelections) ? item.batchSelections : [];
+            if (selections.length === 0) return '<td class="table-cell">-</td>';
+            const inner = selections
+                .map((s) => escapeHtml(s.batchNumber || ''))
+                .filter(Boolean)
+                .join('<br/>');
+            return `<td class="table-cell">${inner || '-'}</td>`;
+        }
+        case 'batchBarcode': {
+            const wrap = (svg) => `<div style="width:100%;max-width:100%;overflow:hidden;">${svg}</div>`;
+            if (item.batchNumber) {
+                return `<td class="table-cell cell-center">${wrap(renderBatchBarcodeSvg(item.batchNumber))}</td>`;
+            }
+            const selections = Array.isArray(item.batchSelections) ? item.batchSelections : [];
+            if (selections.length === 0) return '<td class="table-cell cell-center">-</td>';
+            const inner = selections
+                .map((s) => wrap(renderBatchBarcodeSvg(s.batchNumber, { height: 22 })))
+                .filter(Boolean)
+                .join('<div style="height:4px;"></div>');
+            return `<td class="table-cell cell-center">${inner || '-'}</td>`;
+        }
+        case 'expiry': {
+            if (item.expiry) {
+                return `<td class="table-cell cell-center">${escapeHtml(formatDocDate(item.expiry))}</td>`;
+            }
+            const selections = Array.isArray(item.batchSelections) ? item.batchSelections : [];
+            if (selections.length === 0) return '<td class="table-cell cell-center">-</td>';
+            const inner = selections
+                .map((s) => escapeHtml(formatDocDate(s.expiryDate)))
+                .filter(Boolean)
+                .join('<br/>');
+            return `<td class="table-cell cell-center">${inner || '-'}</td>`;
+        }
         case 'qty':
             return `
                 <td class="table-cell cell-right">
@@ -340,11 +422,39 @@ const renderTableCell = (column, item, index, displayOptions = {}, columnOptions
 const buildItemsTable = (layout) => {
     if (!layout.showItemTable) return '';
 
-    const rows = layout.items.map((item, index) => `
-        <tr>
-            ${layout.columnModel.map((column) => renderTableCell(column, item, index, layout.displayOptions, layout.columnOptions)).join('')}
-        </tr>
-    `).join('');
+    const colSpan = layout.columnModel.length;
+    const isPickList = layout.category === 'Pick List';
+
+    let rows;
+    if (isPickList) {
+        let currentLocation = null;
+        const buffer = [];
+        layout.items.forEach((item, index) => {
+            const loc = asText(item.location) || '-';
+            if (loc !== currentLocation) {
+                buffer.push(`
+                    <tr class="group-header">
+                        <td colspan="${colSpan}" style="background:#F5F5F5;font-weight:600;padding:6px 8px;">
+                            Location: ${escapeHtml(loc)}
+                        </td>
+                    </tr>
+                `);
+                currentLocation = loc;
+            }
+            buffer.push(`
+                <tr>
+                    ${layout.columnModel.map((column) => renderTableCell(column, item, index, layout.displayOptions, layout.columnOptions)).join('')}
+                </tr>
+            `);
+        });
+        rows = buffer.join('');
+    } else {
+        rows = layout.items.map((item, index) => `
+            <tr>
+                ${layout.columnModel.map((column) => renderTableCell(column, item, index, layout.displayOptions, layout.columnOptions)).join('')}
+            </tr>
+        `).join('');
+    }
 
     return `
         <section class="table-section">
@@ -1237,12 +1347,46 @@ const buildEmailStyles = () => `
     }
 `;
 
-const enrichItems = (items, documentSalesPerson = '', documentLocation = '') =>
-    items.map((item) => ({
+const enrichItems = (items, documentSalesPerson = '', documentLocation = '', category = '') => {
+    const enriched = items.map((item) => ({
         ...item,
         salesPerson: firstNonEmpty(item.salesPerson, documentSalesPerson),
         location: firstNonEmpty(item.location, documentLocation)
     }));
+
+    if (category !== 'Pick List') return enriched;
+
+    const flattened = [];
+    for (const item of enriched) {
+        const selections = Array.isArray(item.batchSelections) ? item.batchSelections : [];
+        if (selections.length === 0) {
+            flattened.push({
+                ...item,
+                location: item.location || documentLocation || '-',
+                batchNumber: '',
+                expiry: ''
+            });
+        } else {
+            for (const sel of selections) {
+                flattened.push({
+                    ...item,
+                    location: sel.binCode || item.location || documentLocation || '-',
+                    batchNumber: sel.batchNumber || '',
+                    expiry: sel.expiryDate || '',
+                    qty: sel.quantity != null ? asNumber(sel.quantity) : item.qty
+                });
+            }
+        }
+    }
+
+    flattened.sort((a, b) => {
+        const locCmp = asText(a.location).localeCompare(asText(b.location));
+        if (locCmp !== 0) return locCmp;
+        return asText(a.batchNumber).localeCompare(asText(b.batchNumber));
+    });
+
+    return flattened;
+};
 
 const normalisePurchaseLayout = (template, data, companyProfile, renderTarget) => {
     const company = normalizeDocumentCompanyProfile(companyProfile);
@@ -1286,7 +1430,8 @@ const normalisePurchaseLayout = (template, data, companyProfile, renderTarget) =
     const items = enrichItems(
         Array.isArray(data.items) ? data.items.map(normaliseItem) : [],
         documentSalesPerson,
-        documentLocation
+        documentLocation,
+        template.category
     );
     const summaryLabel = data.summaryAmount?.label || (asNumber(data.totals?.balanceDue) > 0 ? 'Balance Due' : 'Grand Total');
     const summaryValue = data.summaryAmount?.value ?? (
@@ -1306,6 +1451,7 @@ const normalisePurchaseLayout = (template, data, companyProfile, renderTarget) =
 
     return {
         title: asText(data.title || template.category || 'PURCHASE DOCUMENT'),
+        category: template.category || '',
         docNo: asText(data.docNo || ''),
         docNoLabel: DOC_NO_LABELS[template.category] || 'Document Number',
         status: asText(data.status || ''),
@@ -1346,11 +1492,12 @@ const normaliseGenericLayout = (template, data, companyProfile, renderTarget) =>
     const currency = resolveCurrency(company, data.totals || {}, {});
     const customer = data.customer || {};
     const documentSalesPerson = firstNonEmpty(data.meta?.salesPerson, data.meta?.salesperson, data.meta?.accountExecutive);
-    const documentLocation = firstNonEmpty(data.meta?.location, data.meta?.branch, data.meta?.branchName);
+    const documentLocation = firstNonEmpty(data.meta?.location, data.meta?.branch, data.meta?.branchName, data.meta?.warehouse);
     const items = enrichItems(
         Array.isArray(data.items) ? data.items.map(normaliseItem) : [],
         documentSalesPerson,
-        documentLocation
+        documentLocation,
+        template.category
     );
     const totals = {
         subTotal: asNumber(data.totals?.subTotal),
@@ -1371,6 +1518,7 @@ const normaliseGenericLayout = (template, data, companyProfile, renderTarget) =>
 
     return {
         title: asText(data.title || template.category || 'DOCUMENT'),
+        category: template.category || '',
         docNo: asText(data.docNo || ''),
         docNoLabel: DOC_NO_LABELS[template.category] || 'Document Number',
         status: asText(data.meta?.status || ''),

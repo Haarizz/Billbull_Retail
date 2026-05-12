@@ -6,5 +6,6 @@ public enum BatchStatus {
     CONSUMED,
     // Legacy value kept so existing rows can still be read after the lifecycle
     // vocabulary moves to CONSUMED.
-    SOLD
+    SOLD,
+    QUARANTINE
 }
