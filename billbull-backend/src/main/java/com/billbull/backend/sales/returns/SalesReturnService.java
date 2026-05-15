@@ -289,15 +289,16 @@ public class SalesReturnService {
                                 + returnQty + ") for item " + item.getItemCode());
             }
 
-            boolean quarantine = !"Good".equalsIgnoreCase(item.getItemStatus());
-            BatchStatus targetBatchStatus = quarantine ? BatchStatus.QUARANTINE : BatchStatus.AVAILABLE;
+            boolean isScrap = !"Good".equalsIgnoreCase(item.getItemStatus());
 
             for (SalesReturnItemBatch sel : item.getBatches()) {
                 Long parentId = sel.getOriginalAllocationId();
                 int retQty = sel.getQuantity() != null ? sel.getQuantity() : 0;
                 if (parentId == null || retQty <= 0) continue;
 
-                BatchAllocation parent = batchAllocationRepository.findById(parentId)
+                // Pessimistic lock — prevents two concurrent returns from over-allocating
+                // the same parent allocation.
+                BatchAllocation parent = batchAllocationRepository.findByIdForUpdate(parentId)
                         .orElseThrow(() -> new org.springframework.web.server.ResponseStatusException(
                                 org.springframework.http.HttpStatus.BAD_REQUEST,
                                 "Allocation not found: " + parentId));
@@ -341,31 +342,35 @@ public class SalesReturnService {
                     batchAllocationRepository.save(ret);
                 }
 
-                // Flip BatchMaster status
-                BatchMaster bm = parent.getBatchMaster();
-                if (bm != null) {
-                    bm.setStatus(targetBatchStatus);
-                    batchMasterRepository.save(bm);
-                }
-
-                // Post positive stock movement back into the bin/warehouse
-                Long warehouseId = bm != null ? bm.getWarehouseId() : null;
-                if (warehouseId != null) {
-                    stockMovementService.reverseOutboundStock(
-                            StockSourceType.SALES_RETURN,
-                            salesReturn.getId(),
-                            parent.getProductId(),
-                            warehouseId,
-                            parent.getBinId(),
-                            null,
-                            null,
-                            parent.getBatchNumber(),
-                            parent.getExpiryDate(),
-                            retQty,
-                            salesReturn.getReturnNumber());
+                // Restock only "Good" returns. "Damaged" = scrap — allocation flip is kept
+                // for traceability, but no stock physically returns to the bin and the
+                // BatchMaster status is left untouched (manual quarantine remains an
+                // admin action, not a per-line side-effect).
+                if (!isScrap) {
+                    BatchMaster bm = parent.getBatchMaster();
+                    Long warehouseId = bm != null ? bm.getWarehouseId() : null;
+                    if (warehouseId != null) {
+                        stockMovementService.reverseOutboundStock(
+                                StockSourceType.SALES_RETURN,
+                                salesReturn.getId(),
+                                parent.getProductId(),
+                                warehouseId,
+                                parent.getBinId(),
+                                null,
+                                null,
+                                parent.getBatchNumber(),
+                                parent.getExpiryDate(),
+                                retQty,
+                                salesReturn.getReturnNumber());
+                    } else {
+                        log.warn("[SalesReturn] {} — batch {} has no warehouseId on BatchMaster; "
+                                + "skipping restock stock movement.",
+                                salesReturn.getReturnNumber(), parent.getBatchNumber());
+                    }
                 } else {
-                    log.warn("[SalesReturn] {} — batch {} has no warehouseId; skipping stock movement post.",
-                            salesReturn.getReturnNumber(), parent.getBatchNumber());
+                    log.info("[SalesReturn] {} — line {} marked Damaged (scrap); allocation {} "
+                            + "split/flipped to RETURNED, no stock movement posted.",
+                            salesReturn.getReturnNumber(), item.getItemCode(), parent.getId());
                 }
             }
         }
