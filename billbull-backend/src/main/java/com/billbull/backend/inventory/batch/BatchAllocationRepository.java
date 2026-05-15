@@ -40,6 +40,10 @@ public interface BatchAllocationRepository extends JpaRepository<BatchAllocation
 
     List<BatchAllocation> findByParentAllocationIdAndStatus(Long parentAllocationId, BatchAllocationStatus status);
 
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("SELECT a FROM BatchAllocation a JOIN FETCH a.batchMaster WHERE a.id = :id")
+    java.util.Optional<BatchAllocation> findByIdForUpdate(@Param("id") Long id);
+
     List<BatchAllocation> findBySourceDocumentTypeAndSourceLineIdAndStatus(
             String sourceDocumentType,
             Long sourceLineId,
