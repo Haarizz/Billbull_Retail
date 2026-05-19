@@ -24,7 +24,9 @@ public class CorsConfig {
 				"https://client3.billbull.app",
                                 "https://client4.billbull.app",
                                 "https://client5.billbull.app",
-                                "https://client6.billbull.app"));
+                                "https://client6.billbull.app",
+                                "https://qa.billbull.app",
+                                "https://geebu.billbull.app"));
                 config.setAllowedMethods(List.of(
                                 "GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"));
                 config.setAllowedHeaders(List.of("*"));
