@@ -269,7 +269,7 @@ const MobileFloatingActions = ({ status, onSaveDraft, onConfirm, onApprove, onRe
 
 const Quotations = () => {
     const { company } = useCompany();
-    const { defaultBranch, defaultBranchName, formatBranchLocationLabel } = useBranch();
+    const { defaultBranch, defaultBranchName, formatBranchLocationLabel, isLoading: isBranchLoading } = useBranch();
     const navigate = useNavigate();
     const [activeTab, setActiveTab] = useState('list');
     const [editorMode, setEditorMode] = useState('edit');
@@ -361,12 +361,14 @@ const Quotations = () => {
 
     const [deliveryType, setDeliveryType] = useState('Delivery');
     const [isDeliveryTypeOpen, setIsDeliveryTypeOpen] = useState(false);
-    const branchLocationDisplay = formatBranchLocationLabel({
+    const resolvedBranchLabel = formatBranchLocationLabel({
         name: quotationBranch.name || defaultBranch?.name,
         code: quotationBranch.code || defaultBranch?.code,
         defaultWarehouseName: quotationBranch.location || defaultBranch?.defaultWarehouseName,
         address: quotationBranch.location || defaultBranch?.address,
-    }) || quotationBranch.name || defaultBranchName || 'No branch assigned';
+    }) || quotationBranch.name || defaultBranchName;
+    const branchLocationDisplay = resolvedBranchLabel
+        || (isBranchLoading ? 'Loading branch…' : 'No branch assigned');
 
     // Form Dates
     const [qtnDate, setQtnDate] = useState(new Date().toISOString().split('T')[0]);
