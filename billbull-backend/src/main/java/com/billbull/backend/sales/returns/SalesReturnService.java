@@ -69,6 +69,9 @@ public class SalesReturnService {
     private DeliveryNoteRepository deliveryNoteRepository;
 
     @Autowired
+    private com.billbull.backend.sales.salesorder.SalesOrderRepository salesOrderRepository;
+
+    @Autowired
     private StockMovementService stockMovementService;
 
     @Transactional(readOnly = true)
@@ -188,9 +191,92 @@ public class SalesReturnService {
 
         if (status == SalesReturnStatus.APPROVED) {
             applyBatchReturns(saved);
+            applyNonBatchStockReturns(saved);
             postJournalForApprovedReturn(saved);
         }
         return saved;
+    }
+
+    // ---------------------------------------------------------------
+    // applyNonBatchStockReturns — for return lines without batch selections
+    // (non-batch-controlled products), post a positive StockMovement on
+    // "Good" condition so on-hand quantity reflects the return. Damaged
+    // lines are scrapped: no stock movement, and their cost is excluded
+    // from the COGS reversal in resolveActualCogs.
+    // ---------------------------------------------------------------
+    private void applyNonBatchStockReturns(SalesReturn salesReturn) {
+        if (salesReturn.getItems() == null || salesReturn.getItems().isEmpty()) return;
+
+        Long resolvedWarehouseId = resolveReturnWarehouseId(salesReturn);
+
+        for (SalesReturnItem item : salesReturn.getItems()) {
+            if (item.getBatches() != null && !item.getBatches().isEmpty()) {
+                continue; // batch-controlled line handled by applyBatchReturns
+            }
+            int returnQty = item.getReturnQty() != null ? item.getReturnQty() : 0;
+            if (returnQty <= 0) continue;
+
+            boolean isScrap = !"Good".equalsIgnoreCase(item.getItemStatus());
+            if (isScrap) {
+                log.info("[SalesReturn] {} — non-batch line '{}' marked Damaged (scrap); no stock movement posted.",
+                        salesReturn.getReturnNumber(), item.getItemCode());
+                continue;
+            }
+
+            Optional<Product> productOpt = productRepository.findByCodeAndIsActiveTrue(item.getItemCode());
+            if (productOpt.isEmpty()) {
+                log.warn("[SalesReturn] {} — item '{}' not found in product master; cannot post return stock movement.",
+                        salesReturn.getReturnNumber(), item.getItemCode());
+                continue;
+            }
+
+            if (resolvedWarehouseId == null) {
+                log.warn("[SalesReturn] {} — could not resolve a source warehouse for non-batch return of '{}'; stock movement NOT posted. Inventory and GL will mismatch until a manual adjustment is made.",
+                        salesReturn.getReturnNumber(), item.getItemCode());
+                continue;
+            }
+
+            stockMovementService.reverseOutboundStock(
+                    StockSourceType.SALES_RETURN,
+                    salesReturn.getId(),
+                    productOpt.get().getId(),
+                    resolvedWarehouseId,
+                    returnQty,
+                    salesReturn.getReturnNumber());
+
+            log.info("[SalesReturn] {} — non-batch line '{}' restocked qty={} to warehouseId={}.",
+                    salesReturn.getReturnNumber(), item.getItemCode(), returnQty, resolvedWarehouseId);
+        }
+    }
+
+    /**
+     * Resolves the warehouse where returned goods physically arrive.
+     * Order: linked invoice's first DN → first DN of any linked invoice match → null.
+     * Returning null forces the caller to log+skip rather than guess.
+     */
+    private Long resolveReturnWarehouseId(SalesReturn salesReturn) {
+        String linkedInvoice = salesReturn.getLinkedInvoice();
+        if (linkedInvoice == null || linkedInvoice.isBlank()) return null;
+
+        Optional<SalesInvoice> invoiceOpt = salesInvoiceRepository.findByInvoiceNumber(linkedInvoice);
+        if (invoiceOpt.isEmpty()) return null;
+
+        SalesInvoice invoice = invoiceOpt.get();
+        if (invoice.getLinkedDeliveryNote() == null || invoice.getLinkedDeliveryNote().isBlank()) return null;
+
+        List<String> dnNumbers = Arrays.stream(invoice.getLinkedDeliveryNote().split(","))
+                .map(String::trim)
+                .filter(s -> !s.isBlank())
+                .toList();
+        if (dnNumbers.isEmpty()) return null;
+
+        List<DeliveryNote> notes = deliveryNoteRepository.findByDnNumberIn(dnNumbers);
+        for (DeliveryNote note : notes) {
+            if (note.getWarehouse() != null && note.getWarehouse().getId() != null) {
+                return note.getWarehouse().getId();
+            }
+        }
+        return null;
     }
 
     // ---------------------------------------------------------------
@@ -223,6 +309,29 @@ public class SalesReturnService {
                     allocations.addAll(batchSelectionService.findReturnableAllocations(
                             BatchSelectionService.DOC_TYPE_DELIVERY_NOTE, note.getId()));
                 }
+            }
+        }
+
+        // Final fallback: allocations may still live against the originating Sales Order
+        // (e.g. direct SO→Invoice flow that bypassed a Delivery Note).
+        if (allocations.isEmpty() && invoice.getLinkedSalesOrder() != null && !invoice.getLinkedSalesOrder().isBlank()) {
+            Optional<com.billbull.backend.sales.salesorder.SalesOrder> soOpt =
+                    salesOrderRepository.findBySoNumber(invoice.getLinkedSalesOrder());
+            if (soOpt.isPresent()) {
+                allocations = new ArrayList<>(batchSelectionService.findReturnableAllocations(
+                        BatchSelectionService.DOC_TYPE_SALES_ORDER, soOpt.get().getId()));
+            }
+        }
+
+        if (allocations.isEmpty()) {
+            boolean hasBatchControlled = invoice.getItems() != null && invoice.getItems().stream()
+                    .map(SalesInvoiceItem::getItemCode)
+                    .filter(code -> code != null && !code.isBlank())
+                    .anyMatch(code -> productRepository.findByCodeAndIsActiveTrue(code)
+                            .map(Product::isBatch).orElse(false));
+            if (hasBatchControlled) {
+                log.warn("[SalesReturn] Invoice '{}' has batch-controlled items but no returnable BatchAllocation rows were found via SALES_INVOICE, DELIVERY_NOTE (linked='{}'), or SALES_ORDER (linked='{}'). Returning empty — UI will not show batch selection.",
+                        invoiceNumber, invoice.getLinkedDeliveryNote(), invoice.getLinkedSalesOrder());
             }
         }
 
@@ -449,6 +558,16 @@ public class SalesReturnService {
             int    returnQty = item.getReturnQty() != null ? item.getReturnQty() : 0;
 
             if (itemCode == null || returnQty <= 0) continue;
+
+            // Damaged returns are scrapped — no stock movement, no inventory restoration.
+            // Excluding them from COGS keeps the GL Inventory account in sync with the
+            // physical stock-movement ledger. The damage loss is absorbed by COGS that
+            // remains on the books from the original sale.
+            if (!"Good".equalsIgnoreCase(item.getItemStatus())) {
+                log.info("[SalesReturn] {} — item '{}' itemStatus='{}' (scrap); excluded from COGS reversal.",
+                        salesReturn.getReturnNumber(), itemCode, item.getItemStatus());
+                continue;
+            }
 
             Optional<Product> productOpt = productRepository.findByCodeAndIsActiveTrue(itemCode);
             if (productOpt.isEmpty()) {

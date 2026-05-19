@@ -32,7 +32,7 @@ public class SalesReturnItem {
     @JsonBackReference
     private SalesReturn salesReturn;
 
-    @OneToMany(mappedBy = "salesReturnItem", cascade = CascadeType.ALL, orphanRemoval = true, fetch = FetchType.LAZY)
+    @OneToMany(mappedBy = "salesReturnItem", cascade = CascadeType.ALL, orphanRemoval = true, fetch = FetchType.EAGER)
     @JsonManagedReference
     private List<SalesReturnItemBatch> batches = new ArrayList<>();
 

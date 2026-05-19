@@ -19,7 +19,6 @@ import {
   Box,
   X,
   Search,
-  CheckCircle2,
   Menu,
   ChevronUp,
   Trash2,
@@ -37,8 +36,7 @@ import { getAllProformas } from '../../api/proformaApi';
 import {
   getAllSalesOrders,
   saveSalesOrder,
-  uploadSalesOrderAttachment,
-  updateSalesOrderStatus
+  uploadSalesOrderAttachment
 } from '../../api/salesorderApi';
 import { getTemplatesByCategory } from '../../api/printTemplateApi';
 import { generatePrintHtml, printHtml } from '../../utils/printGenerator';
@@ -130,7 +128,7 @@ const MobileCard = ({ order, onClick, getStatusBadge, currency }) => (
 );
 
 // ✅ MOBILE FLOATING ACTIONS COMPONENT
-const MobileFloatingActions = ({ status, onConfirm, onMarkInvoiced, onSave, onPrint }) => {
+const MobileFloatingActions = ({ status, onConfirm, onConvertToDO, onSave, onPrint }) => {
   return (
     <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-slate-200 p-3 flex gap-2 items-center justify-between z-50 md:hidden shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.1)]">
       <div className="flex gap-2 w-full">
@@ -144,8 +142,8 @@ const MobileFloatingActions = ({ status, onConfirm, onMarkInvoiced, onSave, onPr
             </button>
           </>
         ) : (status === 'CONFIRMED' || status === 'PARTIALLY_PAID') ? (
-          <button onClick={onMarkInvoiced} className="flex-1 py-3 bg-blue-600 text-white font-bold rounded-lg text-xs flex items-center justify-center gap-2 active:bg-blue-700">
-            <CheckCircle2 size={16} /> Mark Invoiced
+          <button onClick={onConvertToDO} className="flex-1 py-3 bg-indigo-600 text-white font-bold rounded-lg text-xs flex items-center justify-center gap-2 active:bg-indigo-700">
+            <Truck size={16} /> Convert to Delivery Note
           </button>
         ) : (
           <button onClick={onPrint} className="flex-1 py-3 bg-white border border-slate-300 text-slate-700 font-bold rounded-lg text-xs flex items-center justify-center gap-2 active:bg-slate-50">
@@ -719,19 +717,19 @@ const SalesOrders = () => {
     saveOrUpdateOrder('CONFIRMED');
   };
 
-  const handleMarkAsInvoiced = async () => {
+  const handleConvertToDeliveryNote = () => {
     if (!orderId) {
-      alert('Save the order first before marking as invoiced.');
+      alert('Save and confirm the order first before converting to a Delivery Note.');
       return;
     }
-    try {
-      await updateSalesOrderStatus(orderId, 'INVOICED');
-      setStatus('INVOICED');
-      await fetchSalesOrders();
-    } catch (e) {
-      const msg = e?.response?.data?.message || e?.message || 'Failed to mark as invoiced.';
-      alert(`Error: ${msg}`);
-    }
+    navigate('/sales/deliverynote', {
+      state: {
+        fromSalesOrder: {
+          id: orderId,
+          soNumber,
+        }
+      }
+    });
   };
 
   const handleProceedToInvoice = () => {
@@ -2006,14 +2004,14 @@ const SalesOrders = () => {
                 </>
               )}
 
-              {/* ── Proceed to Invoice / Mark Invoiced for CONFIRMED / PARTIALLY_PAID ── */}
+              {/* ── Convert to Delivery Note / Proceed to Invoice for CONFIRMED / PARTIALLY_PAID ── */}
               {(status === 'CONFIRMED' || status === 'PARTIALLY_PAID') && canApprove('sales') && (
                 <>
+                  <button onClick={handleConvertToDeliveryNote} className="flex items-center gap-1.5 px-5 py-1.5 bg-gradient-to-r from-indigo-600 to-indigo-500 text-white rounded text-xs font-bold hover:from-indigo-700 hover:to-indigo-600 transition-all shadow-md transform hover:-translate-y-0.5">
+                    <Truck size={14} /> Convert to Delivery Note
+                  </button>
                   <button onClick={handleProceedToInvoice} className="flex items-center gap-1.5 px-4 py-1.5 bg-gradient-to-r from-amber-500 to-amber-400 text-white rounded text-xs font-bold hover:from-amber-600 hover:to-amber-500 transition-all shadow-md transform hover:-translate-y-0.5">
                     <FileText size={14} /> Proceed to Invoice
-                  </button>
-                  <button onClick={handleMarkAsInvoiced} className="flex items-center gap-1.5 px-5 py-1.5 bg-blue-600 text-white rounded text-xs font-bold hover:bg-blue-700 transition-all shadow-md transform hover:-translate-y-0.5">
-                    <CheckCircle2 size={14} /> Mark Invoiced
                   </button>
                 </>
               )}
@@ -2030,7 +2028,7 @@ const SalesOrders = () => {
           <MobileFloatingActions
             status={status}
             onConfirm={handleConfirmOrder}
-            onMarkInvoiced={handleMarkAsInvoiced}
+            onConvertToDO={handleConvertToDeliveryNote}
             onSave={() => saveOrUpdateOrder('DRAFT')}
             onPrint={handlePrintClick}
           />

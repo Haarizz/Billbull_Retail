@@ -118,6 +118,7 @@ const SalesInvoice = () => {
     const location = useLocation();
     const fromQuotationHandled = useRef(false);
     const fromSOHandled = useRef(false);
+    const fromDNHandled = useRef(false);
     const [activeTab, setActiveTab] = useState('list');
     const [isLoading, setIsLoading] = useState(false);
 
@@ -698,6 +699,36 @@ const SalesInvoice = () => {
 
         window.history.replaceState({}, document.title);
     }, [customersList, location.state]);
+
+    // Pre-fill form from Delivery Note navigation state (Convert to Invoice flow)
+    useEffect(() => {
+        const fromDN = location.state?.fromDeliveryNote;
+        if (!fromDN || fromDNHandled.current) return;
+        if (deliveryNotesList.length === 0 || customersList.length === 0) return;
+
+        const dn = deliveryNotesList.find(d =>
+            (fromDN.id && d.id === fromDN.id) || (fromDN.dnNumber && d.dnNumber === fromDN.dnNumber)
+        );
+        if (!dn) return;
+
+        fromDNHandled.current = true;
+
+        getNextInvoiceNumber()
+            .then(nextNo => setInvoiceNo(nextNo))
+            .catch(() => { });
+
+        setInvoiceTypeUI('Against Delivery Note');
+        setSalesType('STANDARD_FLOW');
+        setInvoiceDate(new Date().toISOString().split('T')[0]);
+        setStatus('Draft');
+        setReference(dn.dnNumber);
+        setActiveTab('create');
+
+        // Reuse the existing DN-to-invoice mapper (pulls SO pricing, sets items, customer, etc.)
+        handleDNChange(dn.dnNumber);
+
+        window.history.replaceState({}, document.title);
+    }, [customersList, deliveryNotesList, location.state]);
 
     // Fetch invoices separately for refresh
     const fetchInvoices = async () => {
