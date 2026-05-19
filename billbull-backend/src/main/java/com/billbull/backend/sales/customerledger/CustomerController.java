@@ -20,9 +20,6 @@ public class CustomerController {
     @Autowired
     private AuditLogService auditLogService;
 
-    @Autowired
-    private OpeningInvoiceRepository openingInvoiceRepository;
-
     // =========================
     // GET ALL CUSTOMERS
     // =========================
@@ -63,7 +60,7 @@ public class CustomerController {
     @PreAuthorize("hasAnyRole('ADMIN','SALES','ACCOUNTANT')")
     public ResponseEntity<List<OpeningInvoice>> getOpeningInvoicesByCode(
             @PathVariable String customerCode) {
-        return ResponseEntity.ok(openingInvoiceRepository.findByCustomer_Code(customerCode));
+        return ResponseEntity.ok(service.getOpeningInvoicesByCustomerCode(customerCode));
     }
 
     // =========================

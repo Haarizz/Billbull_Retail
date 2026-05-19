@@ -3,7 +3,12 @@ package com.billbull.backend.customer.inquiries;
 public class InquiryItemResponse {
     private Long id;
     private Long productId;
+    private String productCode;
+    private String itemCode;
     private String productName;
+    private String barcode;
+    private String primaryImage;
+    private String image;
     private Double quantity;
     private Double price;
     private Double standardPrice;
@@ -26,12 +31,52 @@ public class InquiryItemResponse {
         this.productId = productId;
     }
 
+    public String getProductCode() {
+        return productCode;
+    }
+
+    public void setProductCode(String productCode) {
+        this.productCode = productCode;
+    }
+
+    public String getItemCode() {
+        return itemCode;
+    }
+
+    public void setItemCode(String itemCode) {
+        this.itemCode = itemCode;
+    }
+
     public String getProductName() {
         return productName;
     }
 
     public void setProductName(String productName) {
         this.productName = productName;
+    }
+
+    public String getBarcode() {
+        return barcode;
+    }
+
+    public void setBarcode(String barcode) {
+        this.barcode = barcode;
+    }
+
+    public String getPrimaryImage() {
+        return primaryImage;
+    }
+
+    public void setPrimaryImage(String primaryImage) {
+        this.primaryImage = primaryImage;
+    }
+
+    public String getImage() {
+        return image;
+    }
+
+    public void setImage(String image) {
+        this.image = image;
     }
 
     public Double getQuantity() {

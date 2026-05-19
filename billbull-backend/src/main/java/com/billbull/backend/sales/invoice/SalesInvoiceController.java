@@ -76,6 +76,16 @@ public class SalesInvoiceController {
         return Map.of("invoiceNumber", service.generateInvoiceNumber());
     }
 
+    /**
+     * Returns the total outstanding balance for a customer (unpaid invoices + opening balance).
+     * Used by the sales invoice screen to show "Previous Outstanding" before a new invoice is created.
+     */
+    @GetMapping("/outstanding")
+    @PreAuthorize("isAuthenticated()")
+    public Map<String, Object> getCustomerOutstanding(@RequestParam String customerCode) {
+        return service.getCustomerOutstanding(customerCode);
+    }
+
     @PutMapping("/{id}/status")
     @PreAuthorize("hasAnyRole('ADMIN','SALES')")
     public ResponseEntity<Void> updateStatus(

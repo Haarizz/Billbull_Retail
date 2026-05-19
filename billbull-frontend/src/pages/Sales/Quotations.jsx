@@ -142,6 +142,57 @@ const escapeHtml = (value) =>
         .replace(/"/g, '&quot;')
         .replace(/'/g, '&#39;');
 
+const asNumber = (value) => {
+    const parsed = Number(value ?? 0);
+    return Number.isFinite(parsed) ? parsed : 0;
+};
+
+const hasText = (value) => String(value ?? '').trim().length > 0;
+
+const isBlankQuotationItem = (item = {}) =>
+    !hasText(item.code || item.itemCode)
+    && !hasText(item.desc || item.description || item.name)
+    && asNumber(item.qty ?? item.quantity) <= 0
+    && asNumber(item.price) <= 0
+    && asNumber(item.total ?? item.lineTotal) <= 0
+    && asNumber(item.foc) <= 0;
+
+const getSubmittableQuotationItems = (items = []) =>
+    items.filter(item => !isBlankQuotationItem(item));
+
+const getQuotationValidationMessage = (items = []) => {
+    const activeItems = getSubmittableQuotationItems(items);
+
+    if (activeItems.length === 0) {
+        return 'Add at least one item before saving or approving the quotation.';
+    }
+
+    const issues = [];
+    activeItems.forEach((item, index) => {
+        const lineNo = index + 1;
+        if (!hasText(item.code || item.itemCode) && !hasText(item.desc || item.description || item.name)) {
+            issues.push(`Line ${lineNo}: select an item or enter a description.`);
+        }
+        if (asNumber(item.qty ?? item.quantity) <= 0) {
+            issues.push(`Line ${lineNo}: quantity must be greater than 0.00.`);
+        }
+        if (asNumber(item.price) <= 0) {
+            issues.push(`Line ${lineNo}: price must be greater than 0.00.`);
+        }
+    });
+
+    return issues.join(' ');
+};
+
+const resolveApiErrorMessage = (error, fallback) => {
+    const data = error?.response?.data;
+    if (typeof data === 'string' && data.trim()) return data;
+    if (data?.message) return data.message;
+    if (data?.error) return data.error;
+    if (error?.message) return error.message;
+    return fallback;
+};
+
 const renderCurrencyDisplayHtml = (currencyProps = {}) => {
     const currencyConfig = resolveCurrencyDisplayConfig(currencyProps);
     const currencyLabel = currencyConfig.label;
@@ -326,6 +377,7 @@ const Quotations = () => {
 
     const [editingId, setEditingId] = useState(null);
     const [nextQtnNo, setNextQtnNo] = useState("QTN-NEW");
+    const [sourceInquiry, setSourceInquiry] = useState(null);
 
     const createBranchSnapshot = () => ({
         id: defaultBranch?.id ?? null,
@@ -556,6 +608,8 @@ const Quotations = () => {
             branchName: data.branchName || '',
             branchCode: data.branchCode || '',
             branchLocation: data.branchLocation || '',
+            sourceInquiryId: data.sourceInquiryId || null,
+            sourceInquiryNumber: data.sourceInquiryNumber || '',
             total: data.totalAmount,
             billDiscount: data.billDiscount || 0,
             status: data.status === 'PENDING_APPROVAL' ? 'Pending Approval' :
@@ -581,26 +635,25 @@ const Quotations = () => {
                 items: r.itemsSnapshotJson ? JSON.parse(r.itemsSnapshotJson) : [],
                 total: r.totalAmountSnapshot
             })) : [],
-            items: data.items.map(i => ({
+            items: data.items.map(i => calculateRow({
                 id: i.id || Math.random(),
                 code: i.itemCode,
                 name: i.itemName || i.name || '',
                 barcode: i.barcode || '',
-                // ✅ FIX: Check both primaryImage (from backend) and image
                 image: i.primaryImage || i.image || '',
                 desc: i.description,
-                unit: i.unit,
+                unit: i.unit || 'PCS',
                 qty: i.quantity,
                 price: i.price,
                 foc: i.foc || 0,
-                focUnit: i.focUnit || 'PCS',
+                focUnit: i.focUnit || i.unit || 'PCS',
                 availableUnits: i.availableUnits || ['PCS', 'Dozen', 'Box', 'Carton'],
                 disc: i.discount,
                 tax: i.taxRate,
                 taxAmt: i.taxAmount,
                 total: i.lineTotal,
                 remarks: i.remarks,
-                isProductSelected: !!i.itemCode // If has code, it was selected from catalog
+                isProductSelected: !!i.itemCode
             }))
         };
     };
@@ -627,45 +680,86 @@ const Quotations = () => {
     useEffect(() => {
         if (location.state?.inquiry) {
             const inquiry = location.state.inquiry;
+            // Enriched items (with prices, codes, units) pre-built by ConvertToQuotationModal
+            const enrichedItems = location.state.items;
+            const incomingDiscount = location.state.discount ?? 0;
+            const incomingTax = location.state.tax ?? 5;
 
             // Switch to Create Tab
             setActiveTab('create');
             setEditingId(null);
             setStatus('Draft');
+            setSourceInquiry({
+                id: inquiry.id || null,
+                inquiryNumber: inquiry.inquiryNumber || ''
+            });
 
-            // Pre-fill Customer (Try to match exact string or just name)
-            // Ideally we match by a unique code if available, else best effort string match
+            // Resolve customer using the shared utility (id → code → name → fuzzy),
+            // same approach used by Quotation→Invoice and Quotation→SO conversions.
+            // Also try phone matching as a final fallback for newly added customers
+            // whose name may differ slightly between inquiry and customer master.
             if (inquiry.customer) {
-                // Find in loaded list
-                const matched = customersList.find(c => c.name === inquiry.customer);
+                const customerMobile = location.state.customerMobile || inquiry.mobile || '';
+                let matched = resolveCustomer({ customerName: inquiry.customer }, customersList);
+                if (!matched && customerMobile) {
+                    const digits = customerMobile.replace(/\D/g, '');
+                    matched = customersList.find(c =>
+                        c.mobile && c.mobile.replace(/\D/g, '').endsWith(digits.slice(-8))
+                    ) || null;
+                }
                 if (matched) {
                     setCustomer(`${matched.name} - ${matched.code}`);
                 } else {
-                    // If not found in master list, just set raw name (might need manual fix by user)
-                    // But dropdown expects "Name - Code" format usually
+                    // Customer not yet in master list (new/prospect): store raw name.
+                    // The effect re-runs when customersList loads, so the match is retried.
                     setCustomer(inquiry.customer);
                 }
             }
 
-            // Fill Items
-            if (inquiry.items && inquiry.items.length > 0) {
+            // Prefer enriched items passed from ConvertToQuotationModal (have prices, codes,
+            // units already resolved). Fall back to raw inquiry items if not available.
+            if (enrichedItems && enrichedItems.length > 0) {
+                const mappedItems = enrichedItems.map((item, idx) => ({
+                    id: item.id ?? Date.now() + idx,
+                    code: item.itemCode || item.productCode || item.code || '',
+                    name: item.itemName || item.name || item.productName || '',
+                    barcode: item.barcode || item.itemBarcode || '',
+                    image: item.primaryImage || item.image || item.imageUrl || '',
+                    desc: item.description || '',
+                    unit: item.unit || 'PCS',
+                    qty: Number(item.quantity) || 1,
+                    price: Number(item.price) || 0,
+                    foc: 0,
+                    focUnit: item.unit || 'PCS',
+                    availableUnits: [item.unit || 'PCS'],
+                    disc: Number(item.discount) ?? incomingDiscount,
+                    tax: Number(item.taxRate) ?? incomingTax,
+                    taxAmt: Number(item.taxAmount) || 0,
+                    total: Number(item.lineTotal) || 0,
+                    remarks: '',
+                    isProductSelected: !!(item.itemId || item.itemCode || item.productCode || item.code)
+                }));
+                setItems(mappedItems);
+            } else if (inquiry.items && inquiry.items.length > 0) {
                 const mappedItems = inquiry.items.map((item, idx) => ({
                     id: Date.now() + idx,
-                    code: '', // Inquiry items might not have codes if free text
-                    image: '',
+                    code: item.itemCode || item.productCode || item.code || '',
+                    name: item.itemName || item.name || item.productName || '',
+                    barcode: item.barcode || item.itemBarcode || '',
+                    image: item.primaryImage || item.image || item.imageUrl || '',
                     desc: item.productName || item.description || '',
-                    unit: 'PCS',
+                    unit: item.unit || 'PCS',
                     qty: Number(item.quantity) || 1,
-                    price: 0, // Inquiries usually don't have price, user enters it in Quote
+                    price: Number(item.standardPrice ?? item.price) || 0,
                     foc: 0,
-                    focUnit: 'PCS',
-                    availableUnits: ['PCS'],
-                    disc: 0,
-                    tax: 5,
+                    focUnit: item.unit || 'PCS',
+                    availableUnits: [item.unit || 'PCS'],
+                    disc: incomingDiscount,
+                    tax: incomingTax,
                     taxAmt: 0,
                     total: 0,
                     remarks: '',
-                    isProductSelected: false // Inquiry items are free text
+                    isProductSelected: !!(item.itemCode || item.productCode || item.code || item.productId)
                 }));
                 setItems(mappedItems);
             }
@@ -1054,6 +1148,7 @@ const Quotations = () => {
     // ------------------------------------------------------------------
 
     const constructPayload = (targetStatus) => {
+        const activeItems = getSubmittableQuotationItems(items).map(calculateRow);
         return {
             id: editingId,
             qtnNo: editingId ? getQuotationNo() : null,
@@ -1065,6 +1160,8 @@ const Quotations = () => {
             branchName: quotationBranch.name || defaultBranch?.name || '',
             branchCode: quotationBranch.code || defaultBranch?.code || '',
             branchLocation: quotationBranch.location || defaultBranch?.defaultWarehouseName || defaultBranch?.address || '',
+            sourceInquiryId: sourceInquiry?.id || null,
+            sourceInquiryNumber: sourceInquiry?.inquiryNumber || '',
             paymentTerms: paymentTerm,
             deliveryType: deliveryType,
             expectedDispatch: expectedDispatch,
@@ -1078,7 +1175,7 @@ const Quotations = () => {
             status: targetStatus === 'Pending Approval' ? 'PENDING_APPROVAL' :
                 targetStatus === 'Approved' ? 'APPROVED' :
                     targetStatus === 'Rejected' ? 'REJECTED' : 'DRAFT',
-            items: items.map(i => ({
+            items: activeItems.map(i => ({
                 id: typeof i.id === 'string' ? null : i.id,
                 itemCode: i.code,
                 barcode: i.barcode, // Pass barcode to backend
@@ -1100,6 +1197,14 @@ const Quotations = () => {
 
     const handleSaveDraft = async () => {
         if (isViewMode) return;
+        const validationMessage = getQuotationValidationMessage(items);
+        if (validationMessage) {
+            setToastMessage(validationMessage);
+            setToastType('info');
+            setShowToast(true);
+            return;
+        }
+
         try {
             const payload = constructPayload('Draft');
             const savedQtn = await saveQuotation(payload);
@@ -1116,7 +1221,7 @@ const Quotations = () => {
 
         } catch (error) {
             console.error("Save failed", error);
-            setToastMessage('Failed to save draft.');
+            setToastMessage(resolveApiErrorMessage(error, 'Failed to save draft.'));
             setToastType('info');
             setShowToast(true);
         }
@@ -1124,6 +1229,13 @@ const Quotations = () => {
 
     const handleConfirm = async () => {
         if (isViewMode) return;
+        const validationMessage = getQuotationValidationMessage(items);
+        if (validationMessage) {
+            setToastMessage(validationMessage);
+            setToastType('info');
+            setShowToast(true);
+            return;
+        }
 
         // Stock check enforcement
         if (salesSettings?.stockCheckRequired) {
@@ -1190,7 +1302,7 @@ const Quotations = () => {
 
         } catch (error) {
             console.error("Confirm failed", error);
-            setToastMessage('Failed to confirm quotation.');
+            setToastMessage(resolveApiErrorMessage(error, 'Failed to confirm quotation.'));
             setToastType('info');
             setShowToast(true);
         }
@@ -1199,6 +1311,13 @@ const Quotations = () => {
 
     const handleApprove = async () => {
         if (!editingId) return;
+        const validationMessage = getQuotationValidationMessage(items);
+        if (validationMessage) {
+            setToastMessage(validationMessage);
+            setToastType("info");
+            setShowToast(true);
+            return;
+        }
 
         try {
             const stock = await checkQuotationStock(editingId);
@@ -1354,6 +1473,10 @@ const Quotations = () => {
         setShippingAddress(qtn.shippingAddress || '');
         setAttachments(qtn.attachments || []);
         setBillDiscount(qtn.billDiscount || 0);
+        setSourceInquiry(qtn.sourceInquiryId ? {
+            id: qtn.sourceInquiryId,
+            inquiryNumber: qtn.sourceInquiryNumber || ''
+        } : null);
         setEditorMode(allowEdit ? 'edit' : 'view');
         setCurrencySearch('');
         setIsCustomerSearchOpen(false);
@@ -1387,14 +1510,24 @@ const Quotations = () => {
     const handleListingApprove = async (qtn, e) => {
         e.stopPropagation();
         closeActionMenu();
+        const validationMessage = getQuotationValidationMessage(qtn.items || []);
+        if (validationMessage) {
+            setToastMessage(validationMessage);
+            setToastType('info');
+            setShowToast(true);
+            return;
+        }
+
         try {
             await updateQuotationStatus(qtn.id, 'APPROVED');
             setToastMessage('Quotation approved.');
             setToastType('success');
+            setShowToast(true);
             await refreshData();
-        } catch {
-            setToastMessage('Failed to approve quotation.');
+        } catch (error) {
+            setToastMessage(resolveApiErrorMessage(error, 'Failed to approve quotation.'));
             setToastType('error');
+            setShowToast(true);
         }
     };
 
@@ -1415,14 +1548,24 @@ const Quotations = () => {
     const handleListingConfirm = async (qtn, e) => {
         e.stopPropagation();
         closeActionMenu();
+        const validationMessage = getQuotationValidationMessage(qtn.items || []);
+        if (validationMessage) {
+            setToastMessage(validationMessage);
+            setToastType('info');
+            setShowToast(true);
+            return;
+        }
+
         try {
             await updateQuotationStatus(qtn.id, 'PENDING_APPROVAL');
             setToastMessage('Quotation confirmed and sent for approval.');
             setToastType('success');
+            setShowToast(true);
             await refreshData();
-        } catch {
-            setToastMessage('Failed to confirm quotation.');
+        } catch (error) {
+            setToastMessage(resolveApiErrorMessage(error, 'Failed to confirm quotation.'));
             setToastType('error');
+            setShowToast(true);
         }
     };
 
@@ -1443,6 +1586,14 @@ const Quotations = () => {
     const handleListingProceedToInvoice = async (qtn, e) => {
         e.stopPropagation();
         closeActionMenu();
+        const validationMessage = getQuotationValidationMessage(qtn.items || []);
+        if (validationMessage) {
+            setToastMessage(validationMessage);
+            setToastType('info');
+            setShowToast(true);
+            return;
+        }
+
         try {
             await updateQuotationStatus(qtn.id, 'CONVERTED');
             // Resolve full customer from the master list so the destination form
@@ -1463,15 +1614,56 @@ const Quotations = () => {
                     }
                 }
             });
-        } catch {
-            setToastMessage('Failed to proceed to invoice.');
+        } catch (error) {
+            setToastMessage(resolveApiErrorMessage(error, 'Failed to proceed to invoice.'));
             setToastType('error');
+            setShowToast(true);
         }
+    };
+
+    const isWalkInCustomer = (customerStr) => {
+        const name = (customerStr || '').toLowerCase();
+        return name.includes('walk-in') || name.includes('walkin');
+    };
+
+    const handleConvertToOrder = () => {
+        if (isWalkInCustomer(customer)) {
+            setToastMessage('Walk-In Customer cannot be converted to a Sales Order. Please assign a named customer.');
+            setToastType('info');
+            setShowToast(true);
+            return;
+        }
+        navigate('/sales/order', {
+            state: {
+                quotation: {
+                    id: editingId,
+                    qtnNo: getQuotationNo(),
+                    customer: customer,
+                    billDiscount,
+                    items: items
+                }
+            }
+        });
     };
 
     const handleListingConvertToOrder = (qtn, e) => {
         e.stopPropagation();
         closeActionMenu();
+        const validationMessage = getQuotationValidationMessage(qtn.items || []);
+        if (validationMessage) {
+            setToastMessage(validationMessage);
+            setToastType('info');
+            setShowToast(true);
+            return;
+        }
+
+        if (isWalkInCustomer(qtn.customer)) {
+            setToastMessage('Walk-In Customer cannot be converted to a Sales Order. Please assign a named customer.');
+            setToastType('info');
+            setShowToast(true);
+            return;
+        }
+
         const matched = resolveCustomer({ customerName: qtn.customer }, customersList);
         navigate('/sales/order', {
             state: {
@@ -1656,6 +1848,7 @@ const Quotations = () => {
         setNotesToCustomer('');
         setInternalNotes('');
         setBillDiscount(0);
+        setSourceInquiry(null);
         setActiveTab('create');
 
         // Fetch a fresh number just in case others were made while we were idle
@@ -2398,6 +2591,12 @@ const Quotations = () => {
                                             <label className="text-xs font-semibold text-slate-500 mb-1">Revision</label>
                                             <input type="text" value={editingId ? `0${currentRevisions.length + 1}` : '00'} readOnly className="text-sm p-1.5 bg-slate-50 border border-slate-200/50 rounded text-center text-slate-700" />
                                         </div>
+                                        {sourceInquiry?.inquiryNumber && (
+                                            <div className="flex flex-col col-span-2">
+                                                <label className="text-xs font-semibold text-slate-500 mb-1">Source Inquiry</label>
+                                                <input type="text" value={sourceInquiry.inquiryNumber} readOnly className="text-sm p-1.5 bg-slate-50 border border-slate-200/50 rounded text-slate-700" />
+                                            </div>
+                                        )}
                                         <div className="flex flex-col col-span-2 sm:col-span-1">
                                             <label className="text-xs font-semibold text-slate-500 mb-1">Date</label>
                                             <input type="date" value={qtnDate} onChange={(e) => setQtnDate(e.target.value)} disabled={isViewMode} className="w-full text-sm p-1.5 border border-slate-300/50 rounded text-slate-700 disabled:bg-slate-50 disabled:text-slate-500 disabled:cursor-not-allowed" />
@@ -3017,17 +3216,7 @@ const Quotations = () => {
                                 {status === 'Approved' && (
                                     <>
                                         <button
-                                            onClick={() => navigate('/sales/order', {
-                                                state: {
-                                                    quotation: {
-                                                        id: editingId,
-                                                        qtnNo: getQuotationNo(),
-                                                        customer: customer,
-                                                        billDiscount,
-                                                        items: items
-                                                    }
-                                                }
-                                            })}
+                                            onClick={handleConvertToOrder}
                                             className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 text-white rounded text-xs font-bold hover:bg-blue-700 transition-colors shadow-sm"
                                         >
                                             <Box size={14} /> Convert to Order

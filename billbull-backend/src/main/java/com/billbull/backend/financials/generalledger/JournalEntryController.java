@@ -84,6 +84,14 @@ public class JournalEntryController {
         return ResponseEntity.ok(journalEntryService.rejectJournalVoucher(id, rejectedBy, reason));
     }
 
+    @PostMapping("/{id}/void")
+    public ResponseEntity<JournalVoucher> voidEntry(
+            @PathVariable Long id,
+            @RequestBody(required = false) Map<String, String> payload) {
+        String voidedBy = payload != null ? payload.getOrDefault("voidedBy", "System") : "System";
+        return ResponseEntity.ok(journalEntryService.voidJournalVoucher(id, voidedBy));
+    }
+
     @DeleteMapping("/{id}")
     public ResponseEntity<Void> deleteEntry(@PathVariable Long id) {
         journalEntryService.deleteJournalVoucher(id);

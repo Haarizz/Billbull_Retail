@@ -135,6 +135,8 @@ const ReceiptVoucher = () => {
         notes: '',
         status: 'Completed',
         purpose: 'ADVANCE_RECEIVED',
+        salesInvoiceId: null,
+        openingInvoiceId: null,
         attachment: null
     });
 
@@ -201,6 +203,12 @@ const ReceiptVoucher = () => {
                 branch: r.branch || '',
                 status: r.status,
                 purpose: r.purpose,
+                notes: r.notes || '',
+                salesInvoiceId: r.salesInvoiceId || null,
+                openingInvoiceId: r.openingInvoiceId || null,
+                createdBy: r.createdBy || null,
+                createdAt: r.createdAt || null,
+                updatedBy: r.updatedBy || null,
                 icon: getIconForCategory(r.category),
                 color: getColorForCategory(r.category),
                 bg: getBgForCategory(r.category),
@@ -405,17 +413,19 @@ const ReceiptVoucher = () => {
     const handleEdit = (receipt) => {
         setEditingReceipt(receipt);
         setFormData({
-            date: new Date(receipt.date).toISOString().split('T')[0], // approx conversion for demo
+            date: new Date(receipt.date).toISOString().split('T')[0],
             branch: receipt.branch || defaultBranchName,
             member: receipt.member,
             category: receipt.source,
             amount: receipt.amount.replace(/,/g, ''),
             mode: receipt.mode,
             reference: receipt.sourceSub,
-            notes: '',
+            notes: receipt.notes || '',
             status: receipt.status || 'Completed',
             purpose: receipt.purpose || 'AGAINST_INVOICE',
-            attachment: null // In a real app we would load the existing attachment info here
+            salesInvoiceId: receipt.salesInvoiceId || null,
+            openingInvoiceId: receipt.openingInvoiceId || null,
+            attachment: null
         });
         setIsAddModalOpen(true);
         setOpenActionId(null);
@@ -451,7 +461,9 @@ const ReceiptVoucher = () => {
             reference: formData.reference,
             notes: formData.notes,
             status: formData.status,
-            purpose: formData.purpose
+            purpose: formData.purpose,
+            salesInvoiceId: formData.salesInvoiceId || null,
+            openingInvoiceId: formData.openingInvoiceId || null
         };
 
         const submitData = new FormData();
@@ -1324,7 +1336,7 @@ const ReceiptVoucher = () => {
                             <div className="mb-6">
                                 <h4 className="text-xs font-bold text-slate-700 mb-2 border-b border-slate-100 pb-2">Notes</h4>
                                 <p className="text-xs text-slate-600 bg-slate-50 p-3 rounded border border-slate-100">
-                                    Received amount for software license renewal - Q1 2024
+                                    {selectedReceipt.notes || '—'}
                                 </p>
                             </div>
 
@@ -1334,19 +1346,19 @@ const ReceiptVoucher = () => {
                                 <div className="grid grid-cols-2 gap-y-3">
                                     <div>
                                         <p className="text-[10px] text-slate-400">Created By</p>
-                                        <p className="text-xs font-medium text-slate-700">Lisa Wang</p>
+                                        <p className="text-xs font-medium text-slate-700">{selectedReceipt.createdBy || '—'}</p>
                                     </div>
                                     <div>
                                         <p className="text-[10px] text-slate-400">Created At</p>
-                                        <p className="text-xs font-medium text-slate-700">1/21/2024, 9:15:00 AM</p>
+                                        <p className="text-xs font-medium text-slate-700">{selectedReceipt.createdAt ? new Date(selectedReceipt.createdAt).toLocaleString() : '—'}</p>
                                     </div>
                                     <div>
-                                        <p className="text-[10px] text-slate-400">Approved By</p>
-                                        <p className="text-xs font-medium text-slate-700">Sarah Ahmed</p>
+                                        <p className="text-[10px] text-slate-400">Last Updated By</p>
+                                        <p className="text-xs font-medium text-slate-700">{selectedReceipt.updatedBy || '—'}</p>
                                     </div>
                                     <div>
                                         <p className="text-[10px] text-slate-400">Transaction ID</p>
-                                        <p className="text-xs font-medium text-slate-700">TXN-001-2024</p>
+                                        <p className="text-xs font-medium text-slate-700">{selectedReceipt.id || '—'}</p>
                                     </div>
                                 </div>
                             </div>
@@ -1371,11 +1383,15 @@ const ReceiptVoucher = () => {
 
                         {/* Drawer Footer */}
                         <div className="px-6 py-4 bg-slate-50 border-t border-slate-100 flex justify-between gap-3 sticky bottom-0">
-                            <button className="flex-1 px-4 py-2 bg-[#F5C742] rounded-md text-xs font-bold text-slate-900 hover:bg-yellow-400 shadow-sm flex items-center justify-center gap-2 transition-colors">
+                            <button
+                                onClick={() => { handleCloseDrawer(); handleEdit(selectedReceipt); }}
+                                className="flex-1 px-4 py-2 bg-[#F5C742] rounded-md text-xs font-bold text-slate-900 hover:bg-yellow-400 shadow-sm flex items-center justify-center gap-2 transition-colors">
                                 <Edit size={14} /> Edit Receipt
                             </button>
                             <div className="flex gap-2">
-                                <button className="px-4 py-2 bg-white border border-slate-200 rounded-md text-xs font-bold text-slate-600 hover:bg-slate-100 flex items-center gap-2 transition-colors">
+                                <button
+                                    onClick={() => handlePrint(selectedReceipt)}
+                                    className="px-4 py-2 bg-white border border-slate-200 rounded-md text-xs font-bold text-slate-600 hover:bg-slate-100 flex items-center gap-2 transition-colors">
                                     <Printer size={14} /> Print
                                 </button>
                                 <button className="px-4 py-2 bg-white border border-slate-200 rounded-md text-xs font-bold text-slate-600 hover:bg-slate-100 flex items-center gap-2 transition-colors">

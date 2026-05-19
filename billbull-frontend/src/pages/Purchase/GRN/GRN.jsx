@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   ArrowLeft,
@@ -59,7 +59,7 @@ import {
   getZoneLocators,
   getLocatorBins
 } from '../../../api/warehouseApi';
-import { getProducts } from '../../../api/productsApi'; // Import getProducts
+import { getProducts, searchProductByBarcode } from '../../../api/productsApi'; // Import getProducts
 import ProductSelector from '../../../components/ProductSelector';
 import SearchableDropdown from '../../../components/SearchableDropdown';
 import VendorSelector from '../../../components/VendorSelector';
@@ -608,6 +608,13 @@ const EditorView = ({ initialData, onSaveDraft, onSubmitQC, onPost, onPrint, grn
   const [products, setProducts] = useState([]); // State for products
   const [isProductSelectionOpen, setIsProductSelectionOpen] = useState(false); // State for Product Selector
 
+  // Scan bar state
+  const [isScanOpen, setIsScanOpen] = useState(false);
+  const [scanInput, setScanInput] = useState('');
+  const [isScanLoading, setIsScanLoading] = useState(false);
+  const [scanMessage, setScanMessage] = useState(null); // { text, type: 'success'|'error' }
+  const scanInputRef = useRef(null);
+
   // Add state for expandable rows
   const [expandedRows, setExpandedRows] = useState({});
 
@@ -1039,6 +1046,53 @@ const EditorView = ({ initialData, onSaveDraft, onSubmitQC, onPost, onPrint, grn
     setItems(prev => [...prev, recalculateItemTotals(newItem)]);
     setIsProductSelectionOpen(false);
   };
+
+  const handleBarcodeScan = async () => {
+    const query = scanInput.trim();
+    if (!query) return;
+    setIsScanLoading(true);
+    setScanMessage(null);
+    try {
+      const results = await searchProductByBarcode(query);
+      if (results && results.length > 0) {
+        handleAddSingleProduct(results[0]);
+        setScanMessage({ text: `Added: ${results[0].description || results[0].name || results[0].code}`, type: 'success' });
+      } else {
+        setScanMessage({ text: `No product found for "${query}". Check the barcode and try again.`, type: 'error' });
+      }
+    } catch {
+      setScanMessage({ text: 'Scan failed. Please try again.', type: 'error' });
+    } finally {
+      setIsScanLoading(false);
+      setScanInput('');
+      setTimeout(() => {
+        scanInputRef.current?.focus();
+        setScanMessage(null);
+      }, 2000);
+    }
+  };
+
+  const handleScanKeyDown = (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      handleBarcodeScan();
+    }
+  };
+
+  const handleToggleScan = () => {
+    if (isLocked) return;
+    setIsScanOpen(prev => {
+      const next = !prev;
+      if (next) {
+        setIsProductSelectionOpen(false);
+        setTimeout(() => scanInputRef.current?.focus(), 100);
+      }
+      return next;
+    });
+    setScanInput('');
+    setScanMessage(null);
+  };
+
   const handleFastEntryAdd = (product, qty, price, disc) => {
     if (isLocked) return;
     const defaultUnit = getDefaultProductUnit(product);
@@ -1636,23 +1690,61 @@ const EditorView = ({ initialData, onSaveDraft, onSubmitQC, onPost, onPrint, grn
                 >
                   <ArrowRightLeft className="h-3 w-3" /> Compare LPO
                 </button>
-                <button className="px-3 py-1.5 border border-slate-200 rounded text-xs font-medium text-slate-600 hover:bg-slate-50 flex items-center gap-1"><ScanLine className="h-3 w-3" /> Scan Items</button>
+                {!isLocked && (
+                  <button
+                    onClick={handleToggleScan}
+                    className={`px-3 py-1.5 border rounded text-xs font-medium flex items-center gap-1 transition-colors ${isScanOpen ? 'border-yellow-400 bg-yellow-50 text-yellow-700' : 'border-slate-200 text-slate-600 hover:bg-slate-50'}`}
+                  >
+                    <ScanLine className="h-3 w-3" /> {isScanOpen ? 'Close Scanner' : 'Scan Items'}
+                  </button>
+                )}
                 {!isLocked && (
                   <>
                     <button
                   onClick={() => {
                         setIsProductSelectionOpen(true);
-                        setCompareModalOpen(false); // Ensure conflict prevention
+                        setCompareModalOpen(false);
                       }}
                       className="px-3 py-1.5 bg-yellow-400 text-slate-900 text-xs font-medium rounded hover:bg-yellow-500 flex items-center gap-1"
                     >
                       <Plus className="h-3 w-3" /> Select from Products
                     </button>
-                    {/* Add Row Button Removed */}
                   </>
                 )}
               </div>
             </div>
+
+            {/* Scan Bar */}
+            {isScanOpen && !isLocked && (
+              <div className="px-4 py-3 bg-slate-50 border-b border-slate-100">
+                <div className="flex items-center gap-2">
+                  <ScanLine className="h-4 w-4 text-slate-400 shrink-0" />
+                  <input
+                    ref={scanInputRef}
+                    type="text"
+                    value={scanInput}
+                    onChange={e => setScanInput(e.target.value)}
+                    onKeyDown={handleScanKeyDown}
+                    placeholder="Scan or type barcode / item code, then press Enter…"
+                    disabled={isScanLoading}
+                    className="flex-1 text-xs border border-slate-200 rounded px-3 py-1.5 focus:outline-none focus:border-yellow-400 focus:ring-1 focus:ring-yellow-300 disabled:opacity-50"
+                  />
+                  <button
+                    onClick={handleBarcodeScan}
+                    disabled={isScanLoading || !scanInput.trim()}
+                    className="px-4 py-1.5 bg-yellow-400 text-slate-900 text-xs font-bold rounded hover:bg-yellow-500 disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1"
+                  >
+                    {isScanLoading ? <RefreshCw className="h-3 w-3 animate-spin" /> : <Search className="h-3 w-3" />}
+                    {isScanLoading ? 'Scanning…' : 'Scan'}
+                  </button>
+                </div>
+                {scanMessage && (
+                  <p className={`mt-1.5 text-xs font-medium ${scanMessage.type === 'success' ? 'text-emerald-600' : 'text-red-500'}`}>
+                    {scanMessage.text}
+                  </p>
+                )}
+              </div>
+            )}
 
             {/* Table */}
             <div className="overflow-auto" style={{ maxHeight: 'calc(4 * 115px + 44px)' }}>

@@ -49,7 +49,8 @@ import {
     getNextInvoiceNumber,
     recordInvoicePayment,
     getItemPriceHistory,
-    updateInvoiceStatus
+    updateInvoiceStatus,
+    getCustomerOutstanding
 } from '../../api/salesInvoiceApi';
 import { getSalesSettings } from '../../api/salesSettingsApi';
 import { getStockAvailability } from '../../api/stockAvailabilityApi';
@@ -306,6 +307,7 @@ const SalesInvoice = () => {
     // Payment Calculation State
     const [amountCollected, setAmountCollected] = useState(0);
     const [invoiceBalance, setInvoiceBalance] = useState(null); // server-side remaining balance
+    const [customerOutstanding, setCustomerOutstanding] = useState(0); // total outstanding before this invoice
     const [pickingNoteVerification, setPickingNoteVerification] = useState(null);
 
     // ✅ MODAL STATES
@@ -817,7 +819,7 @@ const SalesInvoice = () => {
     const marginPercent = taxableSubTotal > 0 ? (totalProfit / taxableSubTotal) * 100 : 0;
 
     // Calculate Outstanding
-    const previousOutstanding = 0.00; // Mocked for now
+    const previousOutstanding = customerOutstanding;
     const newTotalOutstanding = (previousOutstanding + netTotal) - amountCollected;
 
     // ==========================================
@@ -854,6 +856,7 @@ const SalesInvoice = () => {
         setBillDiscount(0);
         setAmountCollected(0);
         setInvoiceBalance(null);
+        setCustomerOutstanding(0);
         setActiveTab('create');
     };
 
@@ -869,6 +872,18 @@ const SalesInvoice = () => {
         setShippingAddress(_resolvedAddr);
         setIsCustomerOpen(false);
         setIsCustomerSearchOpen(false);
+
+        // Fetch real outstanding balance for this customer (QA-035)
+        if (cust.code) {
+            try {
+                const outstandingData = await getCustomerOutstanding(cust.code);
+                setCustomerOutstanding(outstandingData.outstanding || 0);
+            } catch (e) {
+                setCustomerOutstanding(0);
+            }
+        } else {
+            setCustomerOutstanding(0);
+        }
 
         // Fetch Uninvoiced DNs via axios (not raw fetch)
         try {
@@ -1485,8 +1500,8 @@ const SalesInvoice = () => {
         // Credit limit BLOCK enforcement
         if (salesSettings?.creditLimitPolicy === 'BLOCK' &&
             selectedCustomer.creditLimitAmount > 0 &&
-            (Number(selectedCustomer.balance || 0) + netTotal) > selectedCustomer.creditLimitAmount) {
-            alert(`Credit Limit Exceeded: The projected outstanding balance (${formatCurrencyDisplay(Number(selectedCustomer.balance || 0) + netTotal, company)}) exceeds this customer's credit limit of ${formatCurrencyDisplay(selectedCustomer.creditLimitAmount, company)}.\n\nThis invoice cannot be saved. Please collect payment first or adjust the credit limit in the customer profile.`);
+            (customerOutstanding + netTotal) > selectedCustomer.creditLimitAmount) {
+            alert(`Credit Limit Exceeded: The projected outstanding balance (${formatCurrencyDisplay(customerOutstanding + netTotal, company)}) exceeds this customer's credit limit of ${formatCurrencyDisplay(selectedCustomer.creditLimitAmount, company)}.\n\nThis invoice cannot be saved. Please collect payment first or adjust the credit limit in the customer profile.`);
             return;
         }
 
@@ -1548,6 +1563,18 @@ const SalesInvoice = () => {
             );
             setSelectedCustomer(matched || { code: invoice.customerCode, name: invoice.customerName });
         }
+
+        // Fetch outstanding for this customer excluding the current invoice's own balance,
+        // so "Previous Outstanding" reflects what was owed before this invoice. (QA-035)
+        if (invoice.customerCode) {
+            const thisInvoiceBalance = invoice.balance != null ? invoice.balance : 0;
+            getCustomerOutstanding(invoice.customerCode)
+                .then(data => setCustomerOutstanding(Math.max(0, (data.outstanding || 0) - thisInvoiceBalance)))
+                .catch(() => setCustomerOutstanding(0));
+        } else {
+            setCustomerOutstanding(0);
+        }
+
         setShippingAddress(invoice.shippingAddress || '');
 
         setLinkedSO(invoice.linkedSalesOrder || '');
@@ -2390,24 +2417,24 @@ const SalesInvoice = () => {
                                     {/* Credit warning (kept outside panel so it's always visible) */}
                                     {selectedCustomer && salesSettings?.creditLimitPolicy === 'WARNING' &&
                                         selectedCustomer.creditLimitAmount > 0 &&
-                                        (Number(selectedCustomer.balance || 0) + netTotal) > selectedCustomer.creditLimitAmount && (
+                                        (customerOutstanding + netTotal) > selectedCustomer.creditLimitAmount && (
                                             <div className="p-2.5 bg-yellow-50 shadow-sm border border-yellow-200 rounded-md text-yellow-800 text-[11px] leading-relaxed flex items-start gap-2">
                                                 <AlertCircle size={14} className="mt-0.5 shrink-0 text-yellow-600" />
                                                 <p>
                                                     <strong>Credit Warning:</strong> The projected outstanding balance
-                                                    (<CurrencyAmount value={Number(selectedCustomer.balance || 0) + netTotal} currency={invoiceCurrency} />) exceeds this customer's
+                                                    (<CurrencyAmount value={customerOutstanding + netTotal} currency={invoiceCurrency} />) exceeds this customer's
                                                     credit limit of <CurrencyAmount value={selectedCustomer.creditLimitAmount} currency={invoiceCurrency} />.
                                                 </p>
                                             </div>
                                         )}
                                     {selectedCustomer && salesSettings?.creditLimitPolicy === 'BLOCK' &&
                                         selectedCustomer.creditLimitAmount > 0 &&
-                                        (Number(selectedCustomer.balance || 0) + netTotal) > selectedCustomer.creditLimitAmount && (
+                                        (customerOutstanding + netTotal) > selectedCustomer.creditLimitAmount && (
                                             <div className="p-2.5 bg-red-50 shadow-sm border border-red-300 rounded-md text-red-800 text-[11px] leading-relaxed flex items-start gap-2">
                                                 <AlertCircle size={14} className="mt-0.5 shrink-0 text-red-600" />
                                                 <p>
                                                     <strong>Credit Limit Blocked:</strong> The projected outstanding balance
-                                                    (<CurrencyAmount value={Number(selectedCustomer.balance || 0) + netTotal} currency={invoiceCurrency} />) exceeds this customer's
+                                                    (<CurrencyAmount value={customerOutstanding + netTotal} currency={invoiceCurrency} />) exceeds this customer's
                                                     credit limit of <CurrencyAmount value={selectedCustomer.creditLimitAmount} currency={invoiceCurrency} />.
                                                     Saving this invoice is blocked until the balance is within limit.
                                                 </p>

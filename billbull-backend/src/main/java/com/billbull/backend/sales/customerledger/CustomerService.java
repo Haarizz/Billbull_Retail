@@ -42,9 +42,10 @@ public class CustomerService {
     }
 
     // BB-005: @Transactional ensures lazy collections load without LazyInitializationException
-    @Transactional(readOnly = true)
+    @Transactional
     public CustomerDTO getCustomerDtoById(Long id) {
         Customer customer = getCustomerById(id);
+        ensureOpeningInvoiceForBalance(customer);
         CustomerDTO dto = new CustomerDTO();
         BeanUtils.copyProperties(customer, dto);
         dto.setGroup(customer.getGroupType());
@@ -56,6 +57,16 @@ public class CustomerService {
         dto.setContactPersons(new ArrayList<>(customer.getContactPersons()));
         dto.setDocuments(new ArrayList<>(customer.getDocuments()));
         return dto;
+    }
+
+    @Transactional
+    public List<OpeningInvoice> getOpeningInvoicesByCustomerCode(String customerCode) {
+        Customer customer = repository.findByCode(customerCode)
+                .orElseThrow(() -> new RuntimeException("Customer not found with code " + customerCode));
+
+        ensureOpeningInvoiceForBalance(customer);
+
+        return new ArrayList<>(customer.getOpeningInvoices());
     }
 
     // =========================
@@ -115,24 +126,22 @@ public class CustomerService {
         if (customer.getTotalSales() == null)
             customer.setTotalSales(BigDecimal.ZERO);
 
+        boolean hadOpeningInvoices = !customer.getOpeningInvoices().isEmpty();
+        boolean hasSubmittedOpeningInvoices = dto.getOpeningInvoices() != null && !dto.getOpeningInvoices().isEmpty();
+
         // -------------------------
         // OPENING BALANCE
-        // QA-002 fix: use outstanding (the actual unpaid portion entered at migration)
-        // and fall back to amount only when outstanding is null or zero.
+        // QA-002/QA-011: use current outstanding, and preserve direct migrated
+        // customer balances by materializing them as opening invoices.
         // -------------------------
         BigDecimal openingBalance = BigDecimal.ZERO;
 
-        if (dto.getOpeningInvoices() != null) {
+        if (hasSubmittedOpeningInvoices) {
             openingBalance = dto.getOpeningInvoices().stream()
-                    .map(inv -> {
-                        BigDecimal outstanding = inv.getOutstanding();
-                        BigDecimal amount = inv.getAmount();
-                        if (outstanding != null && outstanding.compareTo(BigDecimal.ZERO) > 0) {
-                            return outstanding;
-                        }
-                        return amount != null ? amount : BigDecimal.ZERO;
-                    })
+                    .map(this::resolveCurrentOpeningOutstanding)
                     .reduce(BigDecimal.ZERO, BigDecimal::add);
+        } else if (!hadOpeningInvoices && dto.getBalance() != null && dto.getBalance().compareTo(BigDecimal.ZERO) > 0) {
+            openingBalance = dto.getBalance();
         }
 
         customer.setBalance(openingBalance);
@@ -169,9 +178,14 @@ public class CustomerService {
         // Opening Invoices
         if (dto.getOpeningInvoices() != null) {
             customer.getOpeningInvoices().clear();
-            for (OpeningInvoice inv : dto.getOpeningInvoices()) {
-                inv.setCustomer(customer);
-                customer.getOpeningInvoices().add(inv);
+            if (hasSubmittedOpeningInvoices) {
+                for (OpeningInvoice inv : dto.getOpeningInvoices()) {
+                    initializeOpeningBalanceAmount(inv);
+                    inv.setCustomer(customer);
+                    customer.getOpeningInvoices().add(inv);
+                }
+            } else if (!hadOpeningInvoices && openingBalance.compareTo(BigDecimal.ZERO) > 0) {
+                customer.getOpeningInvoices().add(createOpeningInvoiceFromBalance(customer, openingBalance));
             }
         }
 
@@ -219,5 +233,56 @@ public class CustomerService {
         }
 
         repository.deleteById(id);
+    }
+
+    private void initializeOpeningBalanceAmount(OpeningInvoice invoice) {
+        if (invoice.getOpeningBalanceAmount() != null
+                && invoice.getOpeningBalanceAmount().compareTo(BigDecimal.ZERO) > 0) {
+            return;
+        }
+
+        invoice.setOpeningBalanceAmount(resolveOpeningBalanceSeed(invoice));
+    }
+
+    private BigDecimal resolveCurrentOpeningOutstanding(OpeningInvoice invoice) {
+        BigDecimal outstanding = invoice.getOutstanding();
+        if (outstanding != null) {
+            return outstanding.compareTo(BigDecimal.ZERO) > 0 ? outstanding : BigDecimal.ZERO;
+        }
+
+        BigDecimal amount = invoice.getAmount();
+        return amount != null ? amount : BigDecimal.ZERO;
+    }
+
+    private BigDecimal resolveOpeningBalanceSeed(OpeningInvoice invoice) {
+        BigDecimal outstanding = invoice.getOutstanding();
+        if (outstanding != null && outstanding.compareTo(BigDecimal.ZERO) > 0) {
+            return outstanding;
+        }
+
+        BigDecimal amount = invoice.getAmount();
+        return amount != null ? amount : BigDecimal.ZERO;
+    }
+
+    private OpeningInvoice createOpeningInvoiceFromBalance(Customer customer, BigDecimal balance) {
+        OpeningInvoice invoice = new OpeningInvoice();
+        invoice.setCustomer(customer);
+        invoice.setNumber("OB-" + customer.getCode());
+        invoice.setAmount(balance);
+        invoice.setOutstanding(balance);
+        invoice.setOpeningBalanceAmount(balance);
+        invoice.setRemarks("Opening balance");
+        return invoice;
+    }
+
+    private void ensureOpeningInvoiceForBalance(Customer customer) {
+        if (!customer.getOpeningInvoices().isEmpty()
+                || customer.getBalance() == null
+                || customer.getBalance().compareTo(BigDecimal.ZERO) <= 0) {
+            return;
+        }
+
+        customer.getOpeningInvoices().add(createOpeningInvoiceFromBalance(customer, customer.getBalance()));
+        repository.save(customer);
     }
 }

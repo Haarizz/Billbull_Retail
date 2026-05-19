@@ -82,3 +82,12 @@ export const getItemPriceHistory = async (itemCode) => {
     const res = await api.get(`${BASE_URL}/price-history/${itemCode}`);
     return res.data;
 };
+
+// --------------------
+// GET CUSTOMER OUTSTANDING BALANCE
+// Returns { outstanding, invoiceOutstanding, openingBalance }
+// --------------------
+export const getCustomerOutstanding = async (customerCode) => {
+    const res = await api.get(`${BASE_URL}/outstanding`, { params: { customerCode } });
+    return res.data;
+};

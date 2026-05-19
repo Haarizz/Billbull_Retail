@@ -17,6 +17,9 @@ public class CustomerInquiryResponse {
     private String status;
     private String assignedTo;
     private String inquiryNumber;
+    private Long convertedQuotationId;
+    private String convertedQuotationNo;
+    private LocalDate convertedDate;
     private LocalDate createdDate;
     private LocalDate followUpDate;
     private LocalTime followUpTime;
@@ -135,6 +138,30 @@ public class CustomerInquiryResponse {
 
     public void setInquiryNumber(String inquiryNumber) {
         this.inquiryNumber = inquiryNumber;
+    }
+
+    public Long getConvertedQuotationId() {
+        return convertedQuotationId;
+    }
+
+    public void setConvertedQuotationId(Long convertedQuotationId) {
+        this.convertedQuotationId = convertedQuotationId;
+    }
+
+    public String getConvertedQuotationNo() {
+        return convertedQuotationNo;
+    }
+
+    public void setConvertedQuotationNo(String convertedQuotationNo) {
+        this.convertedQuotationNo = convertedQuotationNo;
+    }
+
+    public LocalDate getConvertedDate() {
+        return convertedDate;
+    }
+
+    public void setConvertedDate(LocalDate convertedDate) {
+        this.convertedDate = convertedDate;
     }
 
     public LocalDate getCreatedDate() {

@@ -21,6 +21,7 @@ import {
     resolveCurrencyDisplayCode,
     UAE_DIRHAM_SYMBOL_IMAGE
 } from "../../../utils/countryCurrencyOptions";
+import { printZplBatch, isBrowserPrintReachable } from "../../../utils/zebraZpl";
 
 const TEMPLATES = [
     {
@@ -61,6 +62,14 @@ const TEMPLATES = [
         desc: 'Two-column sheet friendly',
         width: 90, height: 50, type: 'Sheet', perPage: 2, barcodeFormat: 'CODE128', contentScale: 0.88,
         fields: { barcode: true, name: true, price: true, sku: true, unit: false, company: false, qr: false, itemCode: false, brandName: true, batchNumber: true, expiryDate: true },
+        isSystem: true
+    },
+    {
+        id: 'roll_zebra_100x75',
+        name: 'Zebra Roll 100x75mm',
+        desc: 'Thermal roll, single label/page (Zebra ZD220t)',
+        width: 100, height: 75, type: 'Roll', perPage: 1, barcodeFormat: 'CODE128', contentScale: 1,
+        fields: { barcode: true, name: true, price: true, sku: true, unit: false, company: true, qr: false, itemCode: true, brandName: true, batchNumber: true, expiryDate: true },
         isSystem: true
     },
     {
@@ -189,6 +198,25 @@ const PRINT_LABEL_GAP_MM = 2;
 const getTemplateMetrics = (template) => {
     const labelWidthMm = Math.max(1, Number(template?.width) || 40);
     const labelHeightMm = Math.max(1, Number(template?.height) || 25);
+    const isRoll = (template?.type || 'Roll') === 'Roll';
+
+    if (isRoll) {
+        return {
+            cols: 1,
+            rows: 1,
+            labelWidthMm,
+            labelHeightMm,
+            gapMm: 0,
+            rowGapMm: 0,
+            pageWidthMm: labelWidthMm,
+            pageHeightMm: labelHeightMm,
+            pageInnerWidthMm: labelWidthMm,
+            pageInnerHeightMm: labelHeightMm,
+            paddingMm: 0,
+            labelsPerPage: 1
+        };
+    }
+
     const usableWidthMm = PRINT_PAGE_WIDTH_MM - (PRINT_PAGE_MARGIN_MM * 2);
     const usableHeightMm = PRINT_PAGE_HEIGHT_MM - (PRINT_PAGE_MARGIN_MM * 2);
     const cols = Math.max(1, Math.floor((usableWidthMm + PRINT_LABEL_GAP_MM) / (labelWidthMm + PRINT_LABEL_GAP_MM)));
@@ -235,20 +263,48 @@ const getBarcodeRenderOptions = (template) => {
     const isSmallHeight = height <= 25;
     const format = template?.barcodeFormat || "CODE128";
     const contentScale = getTemplateContentScale(template);
-    const baseWidth = width < 50 ? 1.4 : 1.8;
-    const baseHeight = isSmallHeight ? 32 : (height < 30 ? 40 : 55);
+    // Tuned for 203 DPI thermal printers (Zebra ZD220t): bigger module width
+    // so the rendered SVG keeps crisp bar edges when scaled to the physical label.
+    const baseWidth = width < 50 ? 2 : (width < 80 ? 2.4 : 3);
+    const baseHeight = isSmallHeight ? 32 : (height < 30 ? 40 : (height < 60 ? 55 : 90));
 
     return {
         format,
-        width: Math.max(1, Number((baseWidth * contentScale).toFixed(2))),
-        height: Math.max(20, Math.round(baseHeight * contentScale)),
+        width: Math.max(2, Number((baseWidth * contentScale).toFixed(2))),
+        height: Math.max(24, Math.round(baseHeight * contentScale)),
         displayValue: false,
         fontSize: Math.max(8, Math.round((isSmallHeight ? 10 : 12) * contentScale)),
         margin: 0
     };
 };
 
-const renderBarcodesInRoot = (root, options) => {
+// 1mm = 3.7795 CSS pixels (96 DPI). Snapping the SVG width to an integer-pixel-per-module
+// value stops the browser from anti-aliasing adjacent bars into a single black smear.
+const CSS_PX_PER_MM = 3.7795275591;
+
+const snapSvgToIntegerModules = (svg, labelWidthMm, paddingMm = 6) => {
+    if (!svg?.viewBox?.baseVal) return;
+    const totalModules = svg.viewBox.baseVal.width;
+    if (!totalModules || totalModules <= 0) return;
+
+    const availableMm = Math.max(1, labelWidthMm - paddingMm);
+    const availablePx = availableMm * CSS_PX_PER_MM;
+    const integerPxPerModule = Math.max(1, Math.floor(availablePx / totalModules));
+    const targetMm = (integerPxPerModule * totalModules) / CSS_PX_PER_MM;
+
+    svg.setAttribute('width', `${targetMm}mm`);
+    svg.removeAttribute('height');
+    svg.style.width = `${targetMm}mm`;
+    svg.style.height = 'auto';
+    svg.style.maxWidth = '100%';
+    svg.style.display = 'block';
+    svg.style.marginLeft = 'auto';
+    svg.style.marginRight = 'auto';
+    svg.setAttribute('preserveAspectRatio', 'none');
+    svg.style.shapeRendering = 'crispEdges';
+};
+
+const renderBarcodesInRoot = (root, options, labelWidthMm) => {
     if (!root?.querySelectorAll) return;
 
     root.querySelectorAll('svg[data-barcode]').forEach((svg) => {
@@ -257,6 +313,7 @@ const renderBarcodesInRoot = (root, options) => {
 
         try {
             JsBarcode(svg, barcodeValue, options);
+            if (labelWidthMm) snapSvgToIntegerModules(svg, labelWidthMm);
         } catch (error) {
             console.error("Barcode generation failed:", barcodeValue, error);
         }
@@ -534,7 +591,7 @@ const BarcodePrinter = () => {
         if (t.name.toLowerCase().includes('qr')) return;
 
         const timeoutId = setTimeout(() => {
-            renderBarcodesInRoot(document, getBarcodeRenderOptions(t));
+            renderBarcodesInRoot(document, getBarcodeRenderOptions(t), Number(t.width) || 40);
         }, 0);
 
         return () => clearTimeout(timeoutId);
@@ -914,6 +971,96 @@ const BarcodePrinter = () => {
         );
     };
 
+    const handlePrintZebra = async () => {
+        const t = templates.find(temp => temp.id === selectedTemplate) || editingTemplate;
+        if (!t || cart.length === 0) return;
+
+        const reachable = await isBrowserPrintReachable();
+        if (!reachable) {
+            const host = window.location.host; // e.g. "77.37.49.42" or "app.billbull.io"
+            alert(
+                'Could not reach Zebra Browser Print.\n\n' +
+                'Check each of these on the workstation connected to the Zebra:\n\n' +
+                '1) Browser Print is installed and running (look for its icon in the system tray).\n' +
+                '   Install: https://www.zebra.com/us/en/support-downloads/printer-software/printer-setup-utilities.html\n\n' +
+                '2) This site is in Browser Print\'s "Accepted Hosts" list.\n' +
+                '   Open the Browser Print Settings window and add:\n' +
+                `       ${host}\n` +
+                '   (then close/save the dialog)\n\n' +
+                '3) Visit https://localhost:9101/available once in this browser and accept the certificate prompt if shown.\n\n' +
+                'Then click "Print to Zebra" again.'
+            );
+            return;
+        }
+
+        const companyName = company?.companyName || '';
+        const isEnabled = (field) => !t.fields || typeof t.fields !== 'object' || t.fields[field];
+
+        // Per-unit batch model: each cart entry whose batchBarcode already
+        // ends in a -N suffix represents exactly one physical unit. Emitting
+        // it qty times duplicates the same -N label and hides the other unit
+        // suffixes the user expects (-1, -2, -3, ...). Collapse those to a
+        // single label and sort the whole batch in ascending unit-index
+        // order so the print matches the preview's 1, 2, 3, ... ordering.
+        const UNIT_SUFFIX_RE = /^(.*)-(\d+)$/;
+        const expanded = [];
+        const seenUnitKeys = new Set();
+        cart.forEach(item => {
+            const batchKey = item.batchBarcode || item.batchNumber || '';
+            if (UNIT_SUFFIX_RE.test(batchKey)) {
+                if (seenUnitKeys.has(batchKey)) return;
+                seenUnitKeys.add(batchKey);
+                expanded.push(item);
+                return;
+            }
+            for (let i = 0; i < (item.qty || 1); i++) expanded.push(item);
+        });
+        expanded.sort((a, b) => {
+            const ka = a.batchBarcode || a.batchNumber || '';
+            const kb = b.batchBarcode || b.batchNumber || '';
+            const ma = ka.match(UNIT_SUFFIX_RE);
+            const mb = kb.match(UNIT_SUFFIX_RE);
+            // Group by full prefix (lot/product) first, then by unit index
+            // ascending. Same-product L01 prints fully before L02, and each
+            // lot's units come out 1, 2, 3, ... regardless of cart order.
+            if (ma && mb) {
+                if (ma[1] !== mb[1]) return ma[1].localeCompare(mb[1]);
+                return Number(ma[2]) - Number(mb[2]);
+            }
+            return 0;
+        });
+
+        const labels = expanded.map(item => {
+            const productBarcode = isEnabled('barcode') ? (getProductBarcodeValue(item) || '') : '';
+            const batchBarcode = (isEnabled('batchNumber') && isBatchTrackingEnabled(item))
+                ? (getBatchBarcodeValue(item) || '')
+                : '';
+            const priceVal = isEnabled('price') && item?.product?.price != null
+                ? `${resolveCurrencyDisplayCode(company || {})} ${formatCurrencyAmount(item.product.price, 2)}`
+                : '';
+            return {
+                labelWidthMm: Number(t.width) || 100,
+                labelHeightMm: Number(t.height) || 75,
+                company: isEnabled('company') ? (item?.product?.company || companyName) : '',
+                productName: isEnabled('name') ? (item?.product?.name || '') : '',
+                brand: isEnabled('brandName') ? (getProductBrandName(item.product) || '') : '',
+                code: isEnabled('itemCode') ? (item?.product?.code || '') : '',
+                productBarcode,
+                batchBarcode: batchBarcode !== productBarcode ? batchBarcode : '',
+                expiry: (isEnabled('expiryDate') && isExpiryTrackingEnabled(item) && item.expiryDate) ? item.expiryDate : '',
+                price: priceVal
+            };
+        });
+
+        try {
+            const device = await printZplBatch(labels);
+            console.info('Sent ZPL to Zebra device:', device?.name);
+        } catch (err) {
+            console.error(err);
+            alert(`Could not send to Zebra.\n\n${err.message}`);
+        }
+    };
+
     const handlePrint = () => {
         const printContent = document.getElementById('print-area');
         const t = templates.find(temp => temp.id === selectedTemplate) || editingTemplate;
@@ -965,17 +1112,32 @@ const BarcodePrinter = () => {
                     height: ${metrics.labelHeightMm}mm !important;
                     display: flex;
                     flex-direction: column;
-                    align-items: stretch;
-                    justify-content: flex-start;
-                    text-align: left;
-                    padding: 1mm;
-                    border: 1px dashed #ddd;
+                    align-items: center;
+                    justify-content: center;
+                    text-align: center;
+                    padding: 3mm;
+                    border: 0;
                     page-break-inside: avoid;
                     break-inside: avoid;
                     overflow: hidden;
                     background: white;
                 }
-                svg { width: 100%; max-width: 100%; max-height: 50%; display: block; margin: 0; }
+                /* Barcodes share the leftover height after text rows take their natural height,
+                   so layouts with 1 or 2 barcodes both fill the label cleanly without overflow. */
+                svg {
+                    flex: 1 1 0;
+                    min-height: 0;
+                    max-width: 100%;
+                    width: auto;
+                    height: auto;
+                    display: block;
+                    margin: 0 auto;
+                    align-self: center;
+                    image-rendering: pixelated;
+                    shape-rendering: crispEdges;
+                    object-fit: contain;
+                }
+                .label-name, .label-code, .label-price, .label-unit { flex: 0 0 auto; }
                 .label-name { font-size: 8px; font-weight: bold; width: 100%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding: 0; margin-bottom: 0px; line-height: 1.1; text-align: center; }
                 .label-code { font-size: 7px; font-family: monospace; line-height: 1; width: 100%; text-align: center; }
                 .label-price { font-size: 10px; font-weight: bold; margin-top: 1px; line-height: 1; width: 100%; text-align: center; }
@@ -992,13 +1154,13 @@ const BarcodePrinter = () => {
         `;
 
         doc.open();
-        doc.write('<html><head><title>Print Barcodes</title>' + styles + '</head><body>');
+        doc.write('<html><head><title> </title>' + styles + '</head><body>');
         doc.write(printContent.innerHTML);
         doc.write('</body></html>');
         doc.close();
 
         setTimeout(() => {
-            renderBarcodesInRoot(doc, getBarcodeRenderOptions(t));
+            renderBarcodesInRoot(doc, getBarcodeRenderOptions(t), Number(t.width) || 40);
         }, 50);
 
         iframe.contentWindow.focus();
@@ -1269,6 +1431,14 @@ const BarcodePrinter = () => {
                         className="px-4 py-2 bg-[#F5C742]/20 text-amber-900 border border-amber-200 rounded-lg text-sm font-medium hover:bg-amber-200 flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
                     >
                         Preview ({cart.reduce((a, c) => a + c.qty, 0)} Labels)
+                    </button>
+                    <button
+                        onClick={handlePrintZebra}
+                        disabled={cart.length === 0}
+                        title="Send ZPL directly to the Zebra printer via Browser Print"
+                        className="px-4 py-2 bg-slate-900 text-white rounded-lg text-sm font-medium hover:bg-slate-800 flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                        <Printer size={16} /> Print to Zebra
                     </button>
                 </div>
             </div>

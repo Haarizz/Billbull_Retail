@@ -28,6 +28,7 @@ public class Expense {
     private String category;
     private String costCenter;
     private String location;
+    private String glAccountId;
     private Double amount;
     private Double taxRate;
     private Double taxAmount;

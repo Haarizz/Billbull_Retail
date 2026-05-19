@@ -11,7 +11,7 @@ import org.springframework.stereotype.Repository;
 public interface StockTakeSessionRepository extends JpaRepository<StockTakeSession, Long> {
     List<StockTakeSession> findAllByIsActiveTrueOrderByCreatedAtDesc();
     Optional<StockTakeSession> findBySessionId(String sessionId);
-    boolean existsByWarehouseIdAndType(Long warehouseId, StockTakeSession.StockTakeType type);
+    boolean existsByWarehouseIdAndTypeAndIsActiveTrue(Long warehouseId, StockTakeSession.StockTakeType type);
 
     @Modifying
     @Query(value = "ALTER TABLE stock_movements DROP CONSTRAINT IF EXISTS stock_movements_source_type_check", nativeQuery = true)
