@@ -94,7 +94,7 @@ public class StockTakeService {
             String createdBy, Long categoryId, Long brandId) {
         // Validation for Opening Inventory
         if ("Opening Inventory".equalsIgnoreCase(type)) {
-            boolean exists = sessionRepo.existsByWarehouseIdAndType(warehouseId, StockTakeSession.StockTakeType.OPENING_INVENTORY);
+            boolean exists = sessionRepo.existsByWarehouseIdAndTypeAndIsActiveTrue(warehouseId, StockTakeSession.StockTakeType.OPENING_INVENTORY);
             if (exists) {
                 throw new IllegalStateException("Opening Inventory already performed for this warehouse.");
             }

@@ -31,6 +31,8 @@ import com.billbull.backend.purchase.stockmovement.StockSourceType;
 import com.billbull.backend.sales.invoice.SalesInvoice;
 import com.billbull.backend.sales.invoice.SalesInvoiceItem;
 import com.billbull.backend.sales.invoice.SalesInvoiceRepository;
+import com.billbull.backend.sales.settings.SalesSettings;
+import com.billbull.backend.sales.settings.SalesSettingsService;
 import com.billbull.backend.sales.stockstrategy.StockDeductionStrategyService;
 import com.billbull.backend.settings.branch.Branch;
 import com.billbull.backend.settings.branch.BranchAccessService;
@@ -67,6 +69,7 @@ public class DeliveryNoteService {
     private final BranchAccessService branchAccessService;
     private final ProductPackingRepository packingRepo;
     private final BatchSelectionService batchSelectionService;
+    private final SalesSettingsService salesSettingsService;
 
     public DeliveryNoteService(
             DeliveryNoteRepository repo,
@@ -84,7 +87,8 @@ public class DeliveryNoteService {
             ProductMediaRepository productMediaRepository,
             BranchAccessService branchAccessService,
             ProductPackingRepository packingRepo,
-            BatchSelectionService batchSelectionService) {
+            BatchSelectionService batchSelectionService,
+            SalesSettingsService salesSettingsService) {
         this.repo = repo;
         this.warehouseStockService = warehouseStockService;
         this.productRepo = productRepo;
@@ -101,6 +105,7 @@ public class DeliveryNoteService {
         this.branchAccessService = branchAccessService;
         this.packingRepo = packingRepo;
         this.batchSelectionService = batchSelectionService;
+        this.salesSettingsService = salesSettingsService;
     }
 
     private DeliveryNoteResponse toResponse(DeliveryNote dn) {
@@ -289,6 +294,7 @@ public class DeliveryNoteService {
             throw new IllegalStateException("Only Draft notes can be dispatched");
         }
 
+        boolean stockCheckRequired = salesSettingsService.getSettings().isStockCheckRequired();
         if (stockStrategy.canDeliveryNoteDeductStock()) {
             for (DeliveryNoteItem item : dn.getItems()) {
                 ensureDispatchBinAssignment(dn, item);
@@ -305,7 +311,8 @@ public class DeliveryNoteService {
                         item.getProduct().getId())
                         .add(BigDecimal.valueOf(baseQty));
 
-                if (available.compareTo(requested) < 0) {
+                // Only enforce when stock check is enabled in Sales Settings
+                if (stockCheckRequired && available.compareTo(requested) < 0) {
                     throw new IllegalStateException(
                             "Insufficient stock for " + item.getProduct().getCode() +
                                     " | Available: " + available +
@@ -365,6 +372,7 @@ public class DeliveryNoteService {
             return toResponse(repo.save(dn));
         }
 
+        boolean stockCheckRequired = salesSettingsService.getSettings().isStockCheckRequired();
         if (stockStrategy.canDeliveryNoteDeductStock()) {
             for (DeliveryNoteItem item : dn.getItems()) {
 
@@ -379,12 +387,13 @@ public class DeliveryNoteService {
                 if (isBatchControlled(item)) {
                     postAllocatedBatchDeliveryDeduction(dn, item, baseQty + baseFoc);
                 } else {
-                    // HARD VALIDATION WITH RECORD LOCK: check exact physical stock before deducting
+                    // Pre-check physical stock with record lock only when stock check is enabled.
+                    // When disabled, allow deduction to proceed into negative (zero-stock sales).
                     BigDecimal physicalAvailable = stockMovementService.getAvailableStockForUpdate(
                             dn.getWarehouse().getId(),
                             item.getProduct().getId());
 
-                    if (physicalAvailable.compareTo(requested) < 0) {
+                    if (stockCheckRequired && physicalAvailable.compareTo(requested) < 0) {
                         throw new IllegalStateException(
                                 "Concurrency/Stock Error: Insufficient physical stock for " + item.getProduct().getCode() +
                                         " | Available: " + physicalAvailable +
@@ -480,7 +489,7 @@ public class DeliveryNoteService {
             remaining = postDeductionFromBinIdentities(dn, productId, warehouseId, null, remaining);
         }
 
-        if (remaining > 0) {
+        if (remaining > 0 && salesSettingsService.getSettings().isStockCheckRequired()) {
             throw new IllegalStateException(
                     "Insufficient batch/bin stock for " + item.getProduct().getCode()
                             + ". Short by: " + remaining);

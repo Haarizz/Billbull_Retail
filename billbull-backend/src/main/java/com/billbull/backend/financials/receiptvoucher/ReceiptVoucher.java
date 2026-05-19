@@ -3,20 +3,14 @@ package com.billbull.backend.financials.receiptvoucher;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 
+import com.billbull.backend.common.BaseEntity;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
-import jakarta.persistence.GeneratedValue;
-import jakarta.persistence.GenerationType;
-import jakarta.persistence.Id;
 import jakarta.persistence.Table;
 
 @Entity
 @Table(name = "sales_receipt_vouchers")
-public class ReceiptVoucher {
-
-    @Id
-    @GeneratedValue(strategy = GenerationType.IDENTITY)
-    private Long id;
+public class ReceiptVoucher extends BaseEntity {
 
     @Column(unique = true)
     private String voucherId; // e.g., RV-2026-001
@@ -41,24 +35,24 @@ public class ReceiptVoucher {
     // Settlement link — set when this receipt is created against a specific Sales Invoice
     private Long salesInvoiceId;
 
+    // Settlement link for customer opening-balance bills migrated outside SalesInvoice
+    private Long openingInvoiceId;
+
     @Column(name = "bank_account")
     private String bankAccount;
 
     @Column(name = "cheque_date")
     private LocalDate chequeDate;
 
+    // Denormalised customer code so the SoA can query receipts without joining to SalesInvoice.
+    // Populated at creation time from the linked salesInvoice / openingInvoice / payment.
+    @Column(name = "customer_code")
+    private String customerCode;
+
     public ReceiptVoucher() {
     }
 
     // Getters and Setters
-    public Long getId() {
-        return id;
-    }
-
-    public void setId(Long id) {
-        this.id = id;
-    }
-
     public String getVoucherId() {
         return voucherId;
     }
@@ -171,6 +165,14 @@ public class ReceiptVoucher {
         this.salesInvoiceId = salesInvoiceId;
     }
 
+    public Long getOpeningInvoiceId() {
+        return openingInvoiceId;
+    }
+
+    public void setOpeningInvoiceId(Long openingInvoiceId) {
+        this.openingInvoiceId = openingInvoiceId;
+    }
+
     public String getBankAccount() {
         return bankAccount;
     }
@@ -185,5 +187,13 @@ public class ReceiptVoucher {
 
     public void setChequeDate(LocalDate chequeDate) {
         this.chequeDate = chequeDate;
+    }
+
+    public String getCustomerCode() {
+        return customerCode;
+    }
+
+    public void setCustomerCode(String customerCode) {
+        this.customerCode = customerCode;
     }
 }

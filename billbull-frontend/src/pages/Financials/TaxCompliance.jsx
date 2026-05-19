@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import {
     FileText, Settings, PieChart, FileCheck, // Tab Icons
     Plus, History, DollarSign, AlertCircle, Bell, CheckCircle, // KPI & Action Icons
-    Edit, Trash2, Search, Download, Upload, ExternalLink, ChevronDown, File, X, CloudUpload, Eye
+    Edit, Trash2, Search, Download, Upload, ChevronDown, File, X, CloudUpload, Eye, RefreshCw, FileSpreadsheet
 } from 'lucide-react';
 import {
     getTaxConfigs,
@@ -15,8 +15,28 @@ import {
     deleteTaxDocument,
     downloadTaxDocument
 } from '../../api/taxApi';
+import { getTaxDashboard, getTaxReconciliation } from '../../api/financialReportsBackendApi';
+import { exportToExcel, exportToPDF } from '../../utils/exportUtils';
 import toast from 'react-hot-toast'; // Assuming toast is available, otherwise alert fallback
 import CurrencyAmount, { CurrencySymbol } from '../../components/CurrencyAmount';
+
+const getTodayInputDate = () => new Date().toISOString().split('T')[0];
+
+const getMonthStartInputDate = () => {
+    const now = new Date();
+    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-01`;
+};
+
+const extractApiError = (error, fallback) => {
+    const data = error?.response?.data;
+    if (typeof data === 'string') return data;
+    return data?.message || data?.error || error?.message || fallback;
+};
+
+const parseNumericInput = (value) => {
+    if (value === null || value === undefined) return NaN;
+    return Number(String(value).replace(/[,%\s]/g, ''));
+};
 
 export default function TaxCompliance() {
     // --- 1. State Management ---
@@ -39,20 +59,29 @@ export default function TaxCompliance() {
     const [taxConfigs, setTaxConfigs] = useState([]);
     const [filingsData, setFilingsData] = useState([]);
     const [loading, setLoading] = useState(true);
+    const [actionLoading, setActionLoading] = useState(false);
     const [fetchError, setFetchError] = useState(null);
+    const [reportStartDate, setReportStartDate] = useState(getMonthStartInputDate());
+    const [reportEndDate, setReportEndDate] = useState(getTodayInputDate());
+    const [reportTaxTypeFilter, setReportTaxTypeFilter] = useState('All Tax Types');
+    const [reportStatusFilter, setReportStatusFilter] = useState('All Statuses');
+    const [taxDashboardData, setTaxDashboardData] = useState(null);
+    const [taxReconciliationData, setTaxReconciliationData] = useState(null);
+    const [reportLoading, setReportLoading] = useState(false);
+    const [reportError, setReportError] = useState('');
 
     // --- 3. API Fetching ---
 
-    const fetchDashboardData = async () => {
+    const fetchDashboardData = async (showPageLoader = true) => {
         try {
-            setLoading(true);
+            if (showPageLoader) setLoading(true);
             setFetchError(null);
             const [configs, filings] = await Promise.all([
                 getTaxConfigs(),
                 getTaxFilings()
             ]);
-            setTaxConfigs(configs);
-            setFilingsData(filings);
+            setTaxConfigs(Array.isArray(configs) ? configs : []);
+            setFilingsData(Array.isArray(filings) ? filings : []);
         } catch (error) {
             console.error("Failed to fetch tax data:", error);
             const msg = error?.response?.status === 403
@@ -61,7 +90,7 @@ export default function TaxCompliance() {
             setFetchError(msg);
             toast.error(msg);
         } finally {
-            setLoading(false);
+            if (showPageLoader) setLoading(false);
         }
     };
 
@@ -151,6 +180,91 @@ export default function TaxCompliance() {
         }
     };
 
+    const validateConfigForm = () => {
+        if (!configForm.type) return 'Select a tax type.';
+        if (!configForm.frequency) return 'Select a filing frequency.';
+        const rate = parseNumericInput(configForm.rate);
+        if (!Number.isFinite(rate) || rate < 0 || rate > 100) {
+            return 'Enter a tax rate between 0 and 100.';
+        }
+        if (!['Active', 'Inactive'].includes(configForm.status)) {
+            return 'Select a valid configuration status.';
+        }
+        return '';
+    };
+
+    const validateFilingForm = () => {
+        if (!filingForm.id) return 'Select a tax filing to update.';
+        const amount = Number(filingForm.amount);
+        if (!Number.isFinite(amount) || amount < 0) {
+            return 'Enter a valid non-negative amount payable.';
+        }
+        if (!['Pending', 'Filed', 'Overdue'].includes(filingForm.status)) {
+            return 'Select a valid filing status.';
+        }
+        if (filingForm.dueDate && !/^\d{4}-\d{2}-\d{2}$/.test(filingForm.dueDate)) {
+            return 'Select a valid due date.';
+        }
+        return '';
+    };
+
+    const validateReportRange = () => {
+        if (!reportStartDate || !reportEndDate) return 'Select both report start and end dates.';
+        if (reportStartDate > reportEndDate) return 'Report start date cannot be after end date.';
+        return '';
+    };
+
+    const validateUploadFile = (file) => {
+        if (!file) return 'Select a document to upload.';
+        const allowedExtensions = ['pdf', 'png', 'jpg', 'jpeg', 'doc', 'docx', 'xls', 'xlsx', 'xml'];
+        const extension = file.name.split('.').pop()?.toLowerCase();
+        if (!allowedExtensions.includes(extension)) {
+            return 'Upload a PDF, image, Word, Excel, or XML document.';
+        }
+        if (file.size > 10 * 1024 * 1024) {
+            return 'Document size must be 10 MB or less.';
+        }
+        return '';
+    };
+
+    const buildFilingExportRows = (rows) => rows.map(f => ({
+        taxType: f.taxConfiguration?.type || f.type || '',
+        period: f.period || '',
+        dueDate: f.dueDate || '',
+        filedDate: f.filedDate || '',
+        amount: Number(f.amount || 0),
+        status: effectiveStatus(f),
+        documents: Number(f.documents || 0),
+        notes: f.notes || ''
+    }));
+
+    const buildReconciliationExportRows = () => (taxReconciliationData?.lines || []).map(line => ({
+        documentNumber: line.documentNumber || '',
+        type: line.type || '',
+        accountName: line.accountName || '',
+        baseAmount: Number(line.baseAmount || 0),
+        taxAmount: Number(line.taxAmount || 0)
+    }));
+
+    const filingExportColumns = [
+        { header: 'Tax Type', key: 'taxType', width: 28 },
+        { header: 'Period', key: 'period', width: 18 },
+        { header: 'Due Date', key: 'dueDate', width: 16 },
+        { header: 'Filed Date', key: 'filedDate', width: 16 },
+        { header: 'Amount', key: 'amount', width: 14 },
+        { header: 'Status', key: 'status', width: 14 },
+        { header: 'Documents', key: 'documents', width: 12 },
+        { header: 'Notes', key: 'notes', width: 32 }
+    ];
+
+    const reconciliationExportColumns = [
+        { header: 'Document Number', key: 'documentNumber', width: 24 },
+        { header: 'Type', key: 'type', width: 14 },
+        { header: 'Account Name', key: 'accountName', width: 28 },
+        { header: 'Base Amount', key: 'baseAmount', width: 16 },
+        { header: 'Tax Amount', key: 'taxAmount', width: 16 }
+    ];
+
     // --- 7. Handlers ---
 
     // Configuration Handlers
@@ -176,22 +290,27 @@ export default function TaxCompliance() {
     const handleDeleteConfig = async (id) => {
         if (window.confirm("Are you sure you want to delete this tax configuration? This will also delete all associated filings.")) {
             try {
-                setLoading(true);
+                setActionLoading(true);
                 await deleteTaxConfig(id);
-                // Refresh data
-                await fetchDashboardData();
+                toast.success('Tax configuration deleted');
+                await fetchDashboardData(false);
             } catch (error) {
                 console.error("Error deleting config:", error);
-                alert("Failed to delete configuration");
+                toast.error(extractApiError(error, 'Failed to delete configuration'));
             } finally {
-                setLoading(false);
+                setActionLoading(false);
             }
         }
     };
 
     const handleSaveConfig = async (e) => {
         e.preventDefault();
-        setLoading(true);
+
+        const validationMessage = validateConfigForm();
+        if (validationMessage) {
+            toast.error(validationMessage);
+            return;
+        }
 
         // Convert comma-separated string to array for backend
         const accountList = configForm.accounts.split(',').map(s => s.trim()).filter(s => s);
@@ -199,24 +318,26 @@ export default function TaxCompliance() {
         const payload = {
             type: configForm.type,
             frequency: configForm.frequency,
-            rate: configForm.rate,
+            rate: `${parseNumericInput(configForm.rate)}%`,
             accounts: accountList,
             status: configForm.status
         };
 
         try {
+            setActionLoading(true);
             if (isEditConfigMode) {
                 await updateTaxConfig(configForm.id, payload);
             } else {
                 await createTaxConfig(payload);
             }
             setIsAddTaxModalOpen(false);
-            await fetchDashboardData();
+            toast.success(isEditConfigMode ? 'Tax type updated' : 'Tax type added');
+            await fetchDashboardData(false);
         } catch (error) {
             console.error("Error saving config:", error);
-            alert("Failed to save configuration");
+            toast.error(extractApiError(error, 'Failed to save configuration'));
         } finally {
-            setLoading(false);
+            setActionLoading(false);
         }
     };
 
@@ -263,24 +384,31 @@ export default function TaxCompliance() {
 
     const handleSaveFiling = async (e) => {
         e.preventDefault();
-        setLoading(true);
+
+        const validationMessage = validateFilingForm();
+        if (validationMessage) {
+            toast.error(validationMessage);
+            return;
+        }
 
         const payload = {
-            amount: parseFloat(filingForm.amount) || 0,
+            amount: Number(filingForm.amount),
             dueDate: filingForm.dueDate ? fromInputDate(filingForm.dueDate) : null,
             status: filingForm.status,
             notes: filingForm.notes
         };
 
         try {
+            setActionLoading(true);
             await updateTaxFiling(filingForm.id, payload);
             setIsFilingModalOpen(false);
-            await fetchDashboardData();
+            toast.success('Tax filing updated');
+            await fetchDashboardData(false);
         } catch (error) {
             console.error("Error updating filing:", error);
-            alert("Failed to update filing status");
+            toast.error(extractApiError(error, 'Failed to update filing status'));
         } finally {
-            setLoading(false);
+            setActionLoading(false);
         }
     };
 
@@ -292,7 +420,7 @@ export default function TaxCompliance() {
 
         if (!filingId) {
             console.error("No filing ID provided for upload");
-            alert("Error: No filing selected for upload."); // Explicit feedback
+            toast.error("Select a filing before uploading a document.");
             return;
         }
         setSelectedFilingId(filingId);
@@ -310,21 +438,31 @@ export default function TaxCompliance() {
 
         if (!file || !selectedFilingId) {
             console.error("Missing file or filing ID");
+            toast.error("Select a filing and document before uploading.");
+            e.target.value = null;
+            return;
+        }
+
+        const validationMessage = validateUploadFile(file);
+        if (validationMessage) {
+            toast.error(validationMessage);
+            e.target.value = null;
+            setSelectedFilingId(null);
             return;
         }
 
         const toastId = toast.loading("Uploading document...");
         try {
-            const response = await uploadTaxDocument(selectedFilingId, file);
+            await uploadTaxDocument(selectedFilingId, file);
 
             toast.success("Document uploaded successfully", { id: toastId });
-            await fetchDashboardData();
+            await fetchDashboardData(false);
         } catch (error) {
             console.error("Error uploading document:", error);
             console.error("Error details:", error.response?.data);
             console.error("Error status:", error.response?.status);
 
-            const errorMessage = error.response?.data?.message || "Failed to upload document";
+            const errorMessage = extractApiError(error, "Failed to upload document");
             toast.error(errorMessage, { id: toastId });
         } finally {
             e.target.value = null; // Reset input
@@ -333,6 +471,10 @@ export default function TaxCompliance() {
     };
 
     const handleRemoveDocument = async () => {
+        if (!filingForm.id) {
+            toast.error("Select a filing before removing a document.");
+            return;
+        }
         if (!window.confirm("Are you sure you want to remove the attached document?")) return;
 
         const toastId = toast.loading("Removing document...");
@@ -346,10 +488,32 @@ export default function TaxCompliance() {
                 documents: Math.max(0, prev.documents - 1),
                 attachmentName: null
             }));
-            await fetchDashboardData();
+            await fetchDashboardData(false);
         } catch (error) {
             console.error("Error removing document:", error);
-            toast.error("Failed to remove document", { id: toastId });
+            toast.error(extractApiError(error, "Failed to remove document"), { id: toastId });
+        }
+    };
+
+    const handleDownloadDocument = async (filingId, fileName = 'tax-document') => {
+        if (!filingId) {
+            toast.error('No document selected for download.');
+            return;
+        }
+
+        try {
+            const blob = await downloadTaxDocument(filingId);
+            const url = window.URL.createObjectURL(new Blob([blob]));
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = fileName || 'tax-document';
+            document.body.appendChild(a);
+            a.click();
+            window.URL.revokeObjectURL(url);
+            document.body.removeChild(a);
+        } catch (error) {
+            console.error("Download error:", error);
+            toast.error(extractApiError(error, "Failed to download document"));
         }
     };
 
@@ -364,6 +528,126 @@ export default function TaxCompliance() {
         }
         return filing.status;
     };
+
+    const getFilteredReportFilings = () => filingsData.filter(f => {
+        const taxType = f.taxConfiguration?.type || f.type || '';
+        const status = effectiveStatus(f);
+        const matchesTaxType = reportTaxTypeFilter === 'All Tax Types' || taxType === reportTaxTypeFilter;
+        const matchesStatus = reportStatusFilter === 'All Statuses' || status === reportStatusFilter;
+        return matchesTaxType && matchesStatus;
+    });
+
+    const handleGenerateTaxReport = async (successMessage = 'Tax dashboard refreshed') => {
+        const validationMessage = validateReportRange();
+        if (validationMessage) {
+            toast.error(validationMessage);
+            return false;
+        }
+
+        try {
+            setReportLoading(true);
+            setReportError('');
+            const [dashboard, reconciliation] = await Promise.all([
+                getTaxDashboard(reportStartDate, reportEndDate),
+                getTaxReconciliation(reportStartDate, reportEndDate)
+            ]);
+            setTaxDashboardData(dashboard);
+            setTaxReconciliationData(reconciliation);
+
+            const hasLedgerData = [
+                dashboard?.outputTax,
+                dashboard?.inputTax,
+                dashboard?.taxableSalesBase,
+                dashboard?.taxablePurchaseBase,
+                dashboard?.netTaxPayable
+            ].some(value => Number(value || 0) !== 0) || (reconciliation?.lines || []).length > 0;
+
+            if (hasLedgerData) {
+                toast.success(successMessage);
+            } else {
+                toast('No ledger tax activity found for the selected period.');
+            }
+            return true;
+        } catch (error) {
+            console.error("Error generating tax report:", error);
+            const message = extractApiError(error, 'Failed to generate tax dashboard');
+            setReportError(message);
+            toast.error(message);
+            return false;
+        } finally {
+            setReportLoading(false);
+        }
+    };
+
+    const handleAuditLogClick = async () => {
+        setActiveTab('reports');
+        await handleGenerateTaxReport('Tax audit report refreshed');
+    };
+
+    const handleExportConfigReport = async (config, format) => {
+        const rows = filingsData.filter(f => Number(f.configId) === Number(config.id));
+        if (rows.length === 0) {
+            toast.error(`No filing rows found for ${config.type}.`);
+            return;
+        }
+
+        const exportRows = buildFilingExportRows(rows);
+        const fileName = `${config.type.replace(/[^a-z0-9]+/gi, '_')}_Tax_Report`;
+
+        try {
+            if (format === 'pdf') {
+                exportToPDF(exportRows, filingExportColumns, `${config.type} Tax Report`, fileName);
+            } else {
+                await exportToExcel(exportRows, filingExportColumns, fileName);
+            }
+            toast.success(`${config.type} report exported`);
+        } catch (error) {
+            console.error("Error exporting config report:", error);
+            toast.error('Failed to export tax report');
+        }
+    };
+
+    const handleExportFilteredFilings = async () => {
+        const rows = getFilteredReportFilings();
+        if (rows.length === 0) {
+            toast.error('No filing rows match the selected report filters.');
+            return;
+        }
+
+        try {
+            await exportToExcel(buildFilingExportRows(rows), filingExportColumns, 'Tax_Filing_Report');
+            toast.success('Tax filing report exported');
+        } catch (error) {
+            console.error("Error exporting filing report:", error);
+            toast.error('Failed to export filing report');
+        }
+    };
+
+    const handleExportReconciliation = async () => {
+        const rows = buildReconciliationExportRows();
+        if (rows.length === 0) {
+            toast.error('Generate a report with tax ledger activity before exporting reconciliation.');
+            return;
+        }
+
+        try {
+            await exportToExcel(rows, reconciliationExportColumns, 'Tax_Reconciliation');
+            toast.success('Tax reconciliation exported');
+        } catch (error) {
+            console.error("Error exporting tax reconciliation:", error);
+            toast.error('Failed to export tax reconciliation');
+        }
+    };
+
+    const filteredReportFilings = getFilteredReportFilings();
+    const reconciliationLines = taxReconciliationData?.lines || [];
+    const taxSummaryCards = taxDashboardData ? [
+        { label: 'Output Tax', value: taxDashboardData.outputTax, note: 'Collected on sales', stripe: 'bg-blue-500' },
+        { label: 'Input Tax', value: taxDashboardData.inputTax, note: 'Paid on purchases', stripe: 'bg-emerald-500' },
+        { label: 'Taxable Sales', value: taxDashboardData.taxableSalesBase, note: 'Ledger sales base', stripe: 'bg-violet-500' },
+        { label: 'Taxable Purchases', value: taxDashboardData.taxablePurchaseBase, note: 'Ledger purchase base', stripe: 'bg-cyan-500' },
+        { label: 'Net Tax Payable', value: taxDashboardData.netTaxPayable, note: taxDashboardData.period, stripe: 'bg-yellow-500' }
+    ] : [];
 
     // Search Logic
     const filteredFilings = filingsData.filter(f =>
@@ -400,7 +684,11 @@ export default function TaxCompliance() {
                     <p className="text-xs text-slate-500">Manage Corporate Tax, VAT, and Excise Tax compliance</p>
                 </div>
                 <div className="flex gap-3">
-                    <button className="flex items-center gap-2 bg-white border border-slate-200 text-slate-700 px-3 py-1.5 rounded-lg text-xs font-medium hover:bg-slate-50 shadow-sm transition">
+                    <button
+                        onClick={handleAuditLogClick}
+                        disabled={reportLoading}
+                        className="flex items-center gap-2 bg-white border border-slate-200 text-slate-700 px-3 py-1.5 rounded-lg text-xs font-medium hover:bg-slate-50 shadow-sm transition disabled:opacity-60 disabled:cursor-not-allowed"
+                    >
                         <History size={14} /> Audit Log
                     </button>
                     <button
@@ -613,6 +901,56 @@ export default function TaxCompliance() {
                         <p className="text-xs text-slate-500">Generate and download detailed tax reports</p>
                     </div>
 
+                    <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-4">
+                        <div className="grid grid-cols-1 md:grid-cols-[1fr_1fr_auto] gap-3 items-end">
+                            <div>
+                                <label className="block text-[10px] text-slate-500 font-bold uppercase mb-1">Start Date</label>
+                                <input
+                                    type="date"
+                                    value={reportStartDate}
+                                    onChange={(e) => setReportStartDate(e.target.value)}
+                                    className="w-full border border-slate-200 rounded-lg px-3 py-2 text-xs text-slate-700 focus:outline-none focus:ring-2 focus:ring-yellow-500/20 focus:border-yellow-500"
+                                />
+                            </div>
+                            <div>
+                                <label className="block text-[10px] text-slate-500 font-bold uppercase mb-1">End Date</label>
+                                <input
+                                    type="date"
+                                    value={reportEndDate}
+                                    onChange={(e) => setReportEndDate(e.target.value)}
+                                    className="w-full border border-slate-200 rounded-lg px-3 py-2 text-xs text-slate-700 focus:outline-none focus:ring-2 focus:ring-yellow-500/20 focus:border-yellow-500"
+                                />
+                            </div>
+                            <button
+                                onClick={() => handleGenerateTaxReport()}
+                                disabled={reportLoading}
+                                className="h-9 px-4 bg-[#F5C742] text-slate-900 rounded-lg text-xs font-semibold hover:bg-yellow-400 transition flex items-center justify-center gap-2 disabled:opacity-60 disabled:cursor-not-allowed"
+                            >
+                                <RefreshCw size={14} className={reportLoading ? 'animate-spin' : ''} />
+                                {reportLoading ? 'Generating...' : 'Generate Report'}
+                            </button>
+                        </div>
+                        {reportError && (
+                            <div className="mt-3 flex items-center gap-2 text-xs text-red-600 bg-red-50 border border-red-100 rounded-lg px-3 py-2">
+                                <AlertCircle size={14} />
+                                {reportError}
+                            </div>
+                        )}
+                    </div>
+
+                    {taxSummaryCards.length > 0 && (
+                        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-5 gap-3">
+                            {taxSummaryCards.map((card) => (
+                                <div key={card.label} className="bg-white rounded-xl shadow-sm border border-slate-200 p-4 relative overflow-hidden">
+                                    <div className={`absolute top-0 left-0 w-1 h-full ${card.stripe}`}></div>
+                                    <div className="text-[10px] uppercase font-bold text-slate-500 mb-2">{card.label}</div>
+                                    <CurrencyAmount value={card.value || 0} className="text-lg font-bold text-slate-800" />
+                                    <div className="text-[10px] text-slate-400 mt-1 truncate">{card.note}</div>
+                                </div>
+                            ))}
+                        </div>
+                    )}
+
                     {taxConfigs.length === 0 ? (
                         <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-8 text-center text-slate-400">
                             <p>No tax data available for reports. Please configure tax types.</p>
@@ -646,10 +984,18 @@ export default function TaxCompliance() {
                                             </div>
 
                                             <div className="flex gap-2">
-                                                <button className="flex-1 border border-slate-200 py-2 rounded-lg text-xs text-slate-600 hover:bg-slate-50 flex items-center justify-center gap-2 transition font-medium">
-                                                    <Download size={14} /> Excel
+                                                <button
+                                                    onClick={() => handleExportConfigReport(config, 'excel')}
+                                                    disabled={actionLoading}
+                                                    className="flex-1 border border-slate-200 py-2 rounded-lg text-xs text-slate-600 hover:bg-slate-50 flex items-center justify-center gap-2 transition font-medium disabled:opacity-60 disabled:cursor-not-allowed"
+                                                >
+                                                    <FileSpreadsheet size={14} /> Excel
                                                 </button>
-                                                <button className="flex-1 border border-slate-200 py-2 rounded-lg text-xs text-slate-600 hover:bg-slate-50 flex items-center justify-center gap-2 transition font-medium">
+                                                <button
+                                                    onClick={() => handleExportConfigReport(config, 'pdf')}
+                                                    disabled={actionLoading}
+                                                    className="flex-1 border border-slate-200 py-2 rounded-lg text-xs text-slate-600 hover:bg-slate-50 flex items-center justify-center gap-2 transition font-medium disabled:opacity-60 disabled:cursor-not-allowed"
+                                                >
                                                     <FileText size={14} /> PDF
                                                 </button>
                                             </div>
@@ -666,18 +1012,29 @@ export default function TaxCompliance() {
                                         <p className="text-xs text-slate-500 mt-0.5">Log of all submitted returns and payment statuses</p>
                                     </div>
 
-                                    <div className="flex gap-3">
-                                        <select className="border border-slate-200 rounded-lg px-3 py-1.5 text-xs text-slate-600 focus:outline-none focus:border-yellow-500">
-                                            <option>All Tax Types</option>
-                                            {taxConfigs.map(t => <option key={t.id}>{t.type}</option>)}
+                                    <div className="flex flex-wrap gap-3">
+                                        <select
+                                            value={reportTaxTypeFilter}
+                                            onChange={(e) => setReportTaxTypeFilter(e.target.value)}
+                                            className="border border-slate-200 rounded-lg px-3 py-1.5 text-xs text-slate-600 focus:outline-none focus:border-yellow-500"
+                                        >
+                                            <option value="All Tax Types">All Tax Types</option>
+                                            {taxConfigs.map(t => <option key={t.id} value={t.type}>{t.type}</option>)}
                                         </select>
-                                        <select className="border border-slate-200 rounded-lg px-3 py-1.5 text-xs text-slate-600 focus:outline-none focus:border-yellow-500">
-                                            <option>All Statuses</option>
-                                            <option>Filed</option>
-                                            <option>Pending</option>
-                                            <option>Overdue</option>
+                                        <select
+                                            value={reportStatusFilter}
+                                            onChange={(e) => setReportStatusFilter(e.target.value)}
+                                            className="border border-slate-200 rounded-lg px-3 py-1.5 text-xs text-slate-600 focus:outline-none focus:border-yellow-500"
+                                        >
+                                            <option value="All Statuses">All Statuses</option>
+                                            <option value="Filed">Filed</option>
+                                            <option value="Pending">Pending</option>
+                                            <option value="Overdue">Overdue</option>
                                         </select>
-                                        <button className="flex items-center gap-2 border border-slate-200 px-3 py-1.5 rounded-lg text-xs font-medium text-slate-600 hover:bg-slate-50">
+                                        <button
+                                            onClick={handleExportFilteredFilings}
+                                            className="flex items-center gap-2 border border-slate-200 px-3 py-1.5 rounded-lg text-xs font-medium text-slate-600 hover:bg-slate-50"
+                                        >
                                             <Download size={14} /> Export Report
                                         </button>
                                     </div>
@@ -697,29 +1054,87 @@ export default function TaxCompliance() {
                                             </tr>
                                         </thead>
                                         <tbody className="divide-y divide-slate-100">
-                                            {filingsData.map((f) => (
-                                                <tr key={f.id} className="hover:bg-slate-50">
-                                                    <td className="py-3 pl-4 font-medium text-slate-800">{f.taxConfiguration?.type || f.type}</td>
-                                                    <td className="py-3 text-slate-600">{f.period}</td>
-                                                    <td className="py-3 text-slate-500">{f.dueDate}</td>
-                                                    <td className="py-3 text-slate-600 font-medium">{f.filedDate || '-'}</td>
-                                                    <td className="py-3 font-mono font-bold text-right text-slate-800"><CurrencyAmount value={f.amount} /></td>
-                                                    <td className="py-3 text-center flex justify-center">{getStatusBadge(f.status)}</td>
-                                                    <td className="py-3 text-center">
-                                                        <button
-                                                            onClick={() => handleOpenFilingModal(f.id, true)}
-                                                            className="p-1.5 hover:bg-slate-100 rounded-full text-slate-400 hover:text-blue-600 transition"
-                                                            title="View Details"
-                                                        >
-                                                            <Eye size={16} />
-                                                        </button>
+                                            {filteredReportFilings.length === 0 ? (
+                                                <tr>
+                                                    <td colSpan="7" className="py-6 text-center text-slate-400">
+                                                        No filing rows match the selected filters.
                                                     </td>
                                                 </tr>
-                                            ))}
+                                            ) : (
+                                                filteredReportFilings.map((f) => (
+                                                    <tr key={f.id} className="hover:bg-slate-50">
+                                                        <td className="py-3 pl-4 font-medium text-slate-800">{f.taxConfiguration?.type || f.type}</td>
+                                                        <td className="py-3 text-slate-600">{f.period}</td>
+                                                        <td className="py-3 text-slate-500">{f.dueDate}</td>
+                                                        <td className="py-3 text-slate-600 font-medium">{f.filedDate || '-'}</td>
+                                                        <td className="py-3 font-mono font-bold text-right text-slate-800"><CurrencyAmount value={f.amount} /></td>
+                                                        <td className="py-3 text-center flex justify-center">{getStatusBadge(effectiveStatus(f))}</td>
+                                                        <td className="py-3 text-center">
+                                                            <button
+                                                                onClick={() => handleOpenFilingModal(f.id, true)}
+                                                                className="p-1.5 hover:bg-slate-100 rounded-full text-slate-400 hover:text-blue-600 transition"
+                                                                title="View Details"
+                                                            >
+                                                                <Eye size={16} />
+                                                            </button>
+                                                        </td>
+                                                    </tr>
+                                                ))
+                                            )}
                                         </tbody>
                                     </table>
                                 </div>
                             </div>
+
+                            {taxReconciliationData && (
+                                <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-4">
+                                    <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-3 mb-4">
+                                        <div>
+                                            <h3 className="font-bold text-slate-800 text-base">Tax Reconciliation</h3>
+                                            <p className="text-xs text-slate-500 mt-0.5">{taxReconciliationData.period}</p>
+                                        </div>
+                                        <button
+                                            onClick={handleExportReconciliation}
+                                            className="flex items-center gap-2 border border-slate-200 px-3 py-1.5 rounded-lg text-xs font-medium text-slate-600 hover:bg-slate-50"
+                                        >
+                                            <FileSpreadsheet size={14} /> Export Reconciliation
+                                        </button>
+                                    </div>
+
+                                    <div className="overflow-x-auto">
+                                        <table className="w-full text-xs text-left">
+                                            <thead className="text-[10px] text-slate-500 font-semibold border-b border-slate-200 bg-slate-50 uppercase">
+                                                <tr>
+                                                    <th className="py-2 pl-4">Document</th>
+                                                    <th className="py-2">Type</th>
+                                                    <th className="py-2">Account</th>
+                                                    <th className="py-2 text-right">Base Amount</th>
+                                                    <th className="py-2 text-right">Tax Amount</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody className="divide-y divide-slate-100">
+                                                {reconciliationLines.length === 0 ? (
+                                                    <tr>
+                                                        <td colSpan="5" className="py-6 text-center text-slate-400">
+                                                            No tax ledger activity found for this period.
+                                                        </td>
+                                                    </tr>
+                                                ) : (
+                                                    reconciliationLines.map((line, index) => (
+                                                        <tr key={`${line.documentNumber || 'tax'}-${index}`} className="hover:bg-slate-50">
+                                                            <td className="py-3 pl-4 font-medium text-slate-800">{line.documentNumber || '-'}</td>
+                                                            <td className="py-3 text-slate-600">{line.type || '-'}</td>
+                                                            <td className="py-3 text-slate-600">{line.accountName || '-'}</td>
+                                                            <td className="py-3 font-mono font-bold text-right text-slate-800"><CurrencyAmount value={line.baseAmount || 0} /></td>
+                                                            <td className="py-3 font-mono font-bold text-right text-yellow-700"><CurrencyAmount value={line.taxAmount || 0} /></td>
+                                                        </tr>
+                                                    ))
+                                                )}
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                </div>
+                            )}
                         </>
                     )}
                 </div>
@@ -809,24 +1224,7 @@ export default function TaxCompliance() {
                                                         onClick={async (e) => {
                                                             e.preventDefault();
                                                             e.stopPropagation(); // Stop row click
-                                                            try {
-                                                                const blob = await downloadTaxDocument(filing.id);
-
-                                                                // Create hidden link to force download
-                                                                const url = window.URL.createObjectURL(new Blob([blob]));
-                                                                const a = document.createElement('a');
-                                                                a.href = url;
-                                                                a.download = filing.attachmentName;
-                                                                document.body.appendChild(a);
-                                                                a.click();
-
-                                                                // Cleanup
-                                                                window.URL.revokeObjectURL(url);
-                                                                document.body.removeChild(a);
-                                                            } catch (err) {
-                                                                console.error("Download error:", err);
-                                                                toast.error("Failed to download document");
-                                                            }
+                                                            await handleDownloadDocument(filing.id, filing.attachmentName);
                                                         }}
                                                         className="flex items-center gap-2 px-3 py-1.5 bg-white border border-slate-200 rounded-full shadow-sm text-xs font-medium text-slate-700 hover:bg-slate-50 hover:border-slate-300 transition group hover:shadow-md"
                                                         title="Click to download"
@@ -893,8 +1291,8 @@ export default function TaxCompliance() {
                                             </td>
                                             <td className="py-3 text-center">
                                                 <div className="flex justify-center gap-1">
-                                                    <button onClick={() => handleOpenEditConfig(tax)} className="p-1.5 border border-slate-200 rounded-lg hover:bg-slate-50 text-slate-400 hover:text-yellow-600 transition-colors"><Edit size={14} /></button>
-                                                    <button onClick={() => handleDeleteConfig(tax.id)} className="p-1.5 border border-slate-200 rounded-lg hover:bg-slate-50 text-slate-400 hover:text-red-600 transition-colors"><Trash2 size={14} /></button>
+                                                    <button onClick={() => handleOpenEditConfig(tax)} disabled={actionLoading} className="p-1.5 border border-slate-200 rounded-lg hover:bg-slate-50 text-slate-400 hover:text-yellow-600 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"><Edit size={14} /></button>
+                                                    <button onClick={() => handleDeleteConfig(tax.id)} disabled={actionLoading} className="p-1.5 border border-slate-200 rounded-lg hover:bg-slate-50 text-slate-400 hover:text-red-600 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"><Trash2 size={14} /></button>
                                                 </div>
                                             </td>
                                         </tr>
@@ -955,7 +1353,7 @@ export default function TaxCompliance() {
 
                             <div className="space-y-1.5">
                                 <label className="block text-sm font-bold text-slate-700">Tax Rate <span className="text-red-500">*</span></label>
-                                <input type="text" value={configForm.rate} onChange={e => setConfigForm({ ...configForm, rate: e.target.value })} placeholder="e.g., 5%, 9%, 50%" className="w-full border border-slate-300 rounded-lg px-3 py-2.5 text-sm text-slate-700 focus:outline-none focus:ring-2 focus:ring-yellow-500/20 focus:border-yellow-500" required />
+                                <input type="text" inputMode="decimal" value={configForm.rate} onChange={e => setConfigForm({ ...configForm, rate: e.target.value })} placeholder="e.g., 5%, 9%, 50%" className="w-full border border-slate-300 rounded-lg px-3 py-2.5 text-sm text-slate-700 focus:outline-none focus:ring-2 focus:ring-yellow-500/20 focus:border-yellow-500" required />
                             </div>
 
                             <div className="space-y-1.5">
@@ -975,9 +1373,9 @@ export default function TaxCompliance() {
                             </div>
 
                             <div className="pt-4 flex justify-end gap-3 border-t border-slate-100 mt-2">
-                                <button type="button" onClick={() => setIsAddTaxModalOpen(false)} className="px-4 py-2 border border-slate-300 text-slate-700 font-medium rounded-lg text-sm hover:bg-slate-50 transition">Cancel</button>
-                                <button type="submit" className="px-6 py-2 bg-[#F5C742] text-slate-900 font-medium rounded-lg text-sm hover:bg-yellow-400 shadow-md transition flex items-center gap-2">
-                                    {loading ? 'Saving...' : (isEditConfigMode ? 'Save Changes' : 'Add Tax Type')}
+                                <button type="button" onClick={() => setIsAddTaxModalOpen(false)} disabled={actionLoading} className="px-4 py-2 border border-slate-300 text-slate-700 font-medium rounded-lg text-sm hover:bg-slate-50 transition disabled:opacity-60 disabled:cursor-not-allowed">Cancel</button>
+                                <button type="submit" disabled={actionLoading} className="px-6 py-2 bg-[#F5C742] text-slate-900 font-medium rounded-lg text-sm hover:bg-yellow-400 shadow-md transition flex items-center gap-2 disabled:opacity-60 disabled:cursor-not-allowed">
+                                    {actionLoading ? 'Saving...' : (isEditConfigMode ? 'Save Changes' : 'Add Tax Type')}
                                 </button>
                             </div>
                         </form>
@@ -1023,6 +1421,8 @@ export default function TaxCompliance() {
                                     type="number"
                                     value={filingForm.amount}
                                     onChange={e => setFilingForm({ ...filingForm, amount: e.target.value })}
+                                    min="0"
+                                    step="0.01"
                                     className={`w-full border border-slate-300 rounded-lg px-3 py-2.5 text-sm text-slate-700 focus:outline-none focus:ring-2 focus:ring-yellow-500/20 focus:border-yellow-500 font-mono ${filingForm.isViewOnly ? 'bg-slate-50 text-slate-500' : ''}`}
                                     required
                                     disabled={filingForm.isViewOnly}
@@ -1076,19 +1476,7 @@ export default function TaxCompliance() {
                                                         {/* Download button for View Mode */}
                                                         <button
                                                             type="button"
-                                                            onClick={async () => {
-                                                                try {
-                                                                    const blob = await downloadTaxDocument(filingForm.id);
-                                                                    const url = window.URL.createObjectURL(new Blob([blob]));
-                                                                    const a = document.createElement('a');
-                                                                    a.href = url;
-                                                                    a.download = filingForm.attachmentName;
-                                                                    document.body.appendChild(a);
-                                                                    a.click();
-                                                                    window.URL.revokeObjectURL(url);
-                                                                    document.body.removeChild(a);
-                                                                } catch (err) { toast.error("Download failed"); }
-                                                            }}
+                                                            onClick={() => handleDownloadDocument(filingForm.id, filingForm.attachmentName)}
                                                             className="p-1.5 text-slate-500 hover:text-blue-600 bg-white border border-slate-200 rounded-full hover:shadow-sm"
                                                             title="Download"
                                                         >
@@ -1126,12 +1514,12 @@ export default function TaxCompliance() {
 
                             {/* Footer */}
                             <div className="pt-4 flex justify-end gap-3 border-t border-slate-100 mt-2">
-                                <button type="button" onClick={() => setIsFilingModalOpen(false)} className="px-4 py-2 border border-slate-300 text-slate-700 font-medium rounded-lg text-sm hover:bg-slate-50 transition">
+                                <button type="button" onClick={() => setIsFilingModalOpen(false)} disabled={actionLoading} className="px-4 py-2 border border-slate-300 text-slate-700 font-medium rounded-lg text-sm hover:bg-slate-50 transition disabled:opacity-60 disabled:cursor-not-allowed">
                                     {filingForm.isViewOnly ? 'Close' : 'Cancel'}
                                 </button>
                                 {!filingForm.isViewOnly && (
-                                    <button type="submit" className="px-6 py-2 bg-[#F5C742] text-slate-900 font-medium rounded-lg text-sm hover:bg-yellow-400 shadow-md transition flex items-center gap-2">
-                                        {loading ? 'Saving...' : 'Update Filing'}
+                                    <button type="submit" disabled={actionLoading} className="px-6 py-2 bg-[#F5C742] text-slate-900 font-medium rounded-lg text-sm hover:bg-yellow-400 shadow-md transition flex items-center gap-2 disabled:opacity-60 disabled:cursor-not-allowed">
+                                        {actionLoading ? 'Saving...' : 'Update Filing'}
                                     </button>
                                 )}
                             </div>
@@ -1145,7 +1533,7 @@ export default function TaxCompliance() {
                 ref={fileInputRef}
                 onChange={handleFileChange}
                 className="hidden"
-                accept=".pdf,.png,.jpg,.jpeg,.doc,.docx"
+                accept=".pdf,.png,.jpg,.jpeg,.doc,.docx,.xls,.xlsx,.xml"
             />
         </div>
     );

@@ -15,6 +15,7 @@ import { exportToExcel, exportToPDF } from '../../../utils/exportUtils';
 import { generateSOAFilename } from '../../../utils/filenameUtils';
 import { usePrintDocument } from '../../../hooks/usePrintDocument';
 import CurrencyAmount from '../../../components/CurrencyAmount';
+import { STATEMENT_EXPORT_COLUMNS, formatStatementEntryType, mapStatementEntriesForExport } from '../../../utils/statementUtils';
 
 // ==========================================
 // 1. MOCK DATA & CONFIGURATION
@@ -848,16 +849,7 @@ const VendorSoA = ({ vendors }) => {
       currency
     );
 
-    const columns = [
-      { header: 'Date', key: 'date', width: 12 },
-      { header: 'Reference', key: 'reference', width: 15 },
-      { header: 'Description', key: 'description', width: 25 },
-      { header: 'Debit', key: 'debit', width: 12 },
-      { header: 'Credit', key: 'credit', width: 12 },
-      { header: 'Balance', key: 'balance', width: 12 }
-    ];
-
-    exportToExcel(statementData.transactions || [], columns, filename);
+    exportToExcel(mapStatementEntriesForExport(statementData), STATEMENT_EXPORT_COLUMNS, filename);
   };
 
   const selectedVendorDetails = vendors.find(v => v.name === selectedVendorName);
@@ -978,10 +970,10 @@ const VendorSoA = ({ vendors }) => {
                     <tr key={i}>
                       <td className="px-4 py-3 text-slate-600">{row.transactionDate}</td>
                       <td className="px-4 py-3">
-                        <span className={`px-2 py-0.5 rounded text-[10px] ${row.type === 'OPENING' ? 'bg-gray-100 text-gray-600' :
+                        <span className={`px-2 py-0.5 rounded text-[10px] ${row.type === 'OPENING' || row.type === 'OPENING_BALANCE' ? 'bg-gray-100 text-gray-600' :
                           row.type === 'INVOICE' ? 'bg-orange-100 text-orange-700' :
                             'bg-green-100 text-green-700'
-                          }`}>{row.type}</span>
+                          }`}>{formatStatementEntryType(row.type)}</span>
                       </td>
                       <td className="px-4 py-3 text-slate-600">{row.documentNo || '-'}</td>
                       <td className="px-4 py-3 text-right font-medium text-green-600">{row.debit > 0 ? row.debit.toLocaleString(undefined, { minimumFractionDigits: 2 }) : '-'}</td>

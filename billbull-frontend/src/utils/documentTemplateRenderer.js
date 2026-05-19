@@ -277,6 +277,10 @@ const createColumnModel = (rawColumns = {}) => {
     return [
         { key: 'index',         label: '#',                               align: 'center', width: '3%',  enabled: true },
         { key: 'location',      label: 'Location',                        align: 'left',   width: '8%',  enabled: Boolean(c.location) },
+        { key: 'productId',     label: 'Item Code',                       align: 'left',   width: '8%',  enabled: Boolean(c.productId) },
+        { key: 'sku',           label: 'SKU',                             align: 'left',   width: '8%',  enabled: Boolean(c.sku) },
+        { key: 'barcode',       label: 'Barcode',                         align: 'left',   width: '10%', enabled: Boolean(c.barcode) },
+        { key: 'arabicName',    label: 'Arabic Name',                     align: 'left',   width: '10%', enabled: Boolean(c.arabicName) },
         { key: 'description',   label: 'Product/Services',                align: 'left',   width: c.batchBarcode ? '16%' : '22%', enabled: true },
         { key: 'details',       label: 'Description of Product/Services', align: 'left',   width: c.batchBarcode ? '14%' : '20%', enabled: c.description !== false },
         { key: 'batchNumber',   label: 'Batch #',                         align: 'left',   width: '12%', enabled: Boolean(c.batchNumber) },
@@ -305,13 +309,13 @@ const buildItemDetailLines = (item, columnOptions = {}) =>
         return true;
     });
 
-const buildDescriptionCell = (item, displayOptions = {}) => {
+const buildDescriptionCell = (item, displayOptions = {}, columnOptions = {}) => {
     const showImage = displayOptions.showItemImage && item.image;
     const metadataLines = [
-        item.code     ? item.code      : '',
-        item.sku      ? item.sku       : '',
-        item.barcode  ? item.barcode   : '',
-        item.localName ? item.localName : ''
+        !columnOptions.productId && item.code ? item.code : '',
+        !columnOptions.sku && item.sku ? item.sku : '',
+        !columnOptions.barcode && item.barcode ? item.barcode : '',
+        !columnOptions.arabicName && item.localName ? item.localName : ''
     ].filter(Boolean);
 
     return `
@@ -337,9 +341,17 @@ const renderTableCell = (column, item, index, displayOptions = {}, columnOptions
         case 'index':
             return `<td class="table-cell cell-center cell-index">${index + 1}</td>`;
         case 'description':
-            return `<td class="table-cell cell-description">${buildDescriptionCell(item, displayOptions)}</td>`;
+            return `<td class="table-cell cell-description">${buildDescriptionCell(item, displayOptions, columnOptions)}</td>`;
         case 'details':
             return `<td class="table-cell cell-details">${buildDetailsCell(item)}</td>`;
+        case 'productId':
+            return `<td class="table-cell">${escapeHtml(item.code || '-')}</td>`;
+        case 'sku':
+            return `<td class="table-cell">${escapeHtml(item.sku || '-')}</td>`;
+        case 'barcode':
+            return `<td class="table-cell">${escapeHtml(item.barcode || '-')}</td>`;
+        case 'arabicName':
+            return `<td class="table-cell">${escapeHtml(item.localName || '-')}</td>`;
         case 'salesPerson':
             return `<td class="table-cell">${escapeHtml(item.salesPerson || '-')}</td>`;
         case 'location':

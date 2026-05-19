@@ -1,5 +1,6 @@
 package com.billbull.backend.customer.inquiries;
 
+import java.time.LocalDate;
 import java.util.List;
 
 public class CustomerInquiryRequestDto {
@@ -14,6 +15,9 @@ public class CustomerInquiryRequestDto {
     private String notes;
     private String assignedTo;
     private String status;
+    private Long convertedQuotationId;
+    private String convertedQuotationNo;
+    private LocalDate convertedDate;
     private List<InquiryItemRequest> items;
 
     // Getters & Setters
@@ -95,6 +99,30 @@ public class CustomerInquiryRequestDto {
 
     public void setStatus(String status) {
         this.status = status;
+    }
+
+    public Long getConvertedQuotationId() {
+        return convertedQuotationId;
+    }
+
+    public void setConvertedQuotationId(Long convertedQuotationId) {
+        this.convertedQuotationId = convertedQuotationId;
+    }
+
+    public String getConvertedQuotationNo() {
+        return convertedQuotationNo;
+    }
+
+    public void setConvertedQuotationNo(String convertedQuotationNo) {
+        this.convertedQuotationNo = convertedQuotationNo;
+    }
+
+    public LocalDate getConvertedDate() {
+        return convertedDate;
+    }
+
+    public void setConvertedDate(LocalDate convertedDate) {
+        this.convertedDate = convertedDate;
     }
 
     public List<InquiryItemRequest> getItems() {

@@ -25,6 +25,7 @@ public class OpeningInvoice {
     private LocalDate date;
     private BigDecimal amount;
     private BigDecimal outstanding;
+    private BigDecimal openingBalanceAmount;
     private String remarks;
 
     // --- ADD GETTER & SETTER FOR CUSTOMER ---
@@ -43,6 +44,8 @@ public class OpeningInvoice {
     public void setAmount(BigDecimal amount) { this.amount = amount; }
     public BigDecimal getOutstanding() { return outstanding; }
     public void setOutstanding(BigDecimal outstanding) { this.outstanding = outstanding; }
+    public BigDecimal getOpeningBalanceAmount() { return openingBalanceAmount; }
+    public void setOpeningBalanceAmount(BigDecimal openingBalanceAmount) { this.openingBalanceAmount = openingBalanceAmount; }
     public String getRemarks() { return remarks; }
     public void setRemarks(String remarks) { this.remarks = remarks; }
 }

@@ -51,8 +51,11 @@ export const summarizeSalesItems = (items = [], billDiscountPercent = 0) => {
             : preDiscountAmount * (discountPercent / 100);
         let taxableAmount = explicitTaxableAmount;
 
-        if (!hasValue(taxableAmount) && hasValue(explicitLineTotal) && hasValue(explicitTaxAmount)) {
-            taxableAmount = Math.max(0, explicitLineTotal - explicitTaxAmount);
+        // Only trust stored lineTotal when it is genuinely non-zero.
+        // A stored value of 0 means the item was either blank or saved before
+        // calculation ran; fall through to recompute from qty/price in that case.
+        if (!hasValue(taxableAmount) && explicitLineTotal > 0) {
+            taxableAmount = Math.max(0, explicitLineTotal - (explicitTaxAmount || 0));
         }
 
         if (!hasValue(taxableAmount)) {
@@ -63,10 +66,10 @@ export const summarizeSalesItems = (items = [], billDiscountPercent = 0) => {
             discountAmount = Math.max(0, preDiscountAmount - taxableAmount);
         }
 
-        const taxAmount = hasValue(explicitTaxAmount)
+        const taxAmount = (explicitLineTotal > 0 && explicitTaxAmount != null)
             ? explicitTaxAmount
-            : (hasValue(explicitLineTotal) ? Math.max(0, explicitLineTotal - taxableAmount) : taxableAmount * (taxPercent / 100));
-        const lineTotal = hasValue(explicitLineTotal)
+            : (explicitLineTotal > 0 ? Math.max(0, explicitLineTotal - taxableAmount) : taxableAmount * (taxPercent / 100));
+        const lineTotal = explicitLineTotal > 0
             ? explicitLineTotal
             : taxableAmount + taxAmount;
 

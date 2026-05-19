@@ -111,6 +111,33 @@ public class SalesInvoiceService {
     }
 
     // ----------------------------
+    // CUSTOMER OUTSTANDING BALANCE
+    // ----------------------------
+    /**
+     * Returns the total outstanding balance for a customer:
+     * - sum of unpaid/non-cancelled SalesInvoice.balance records
+     * - plus any remaining opening balance from migrated AR (Customer.balance)
+     *
+     * Used by the sales screen to show "Previous Outstanding" before a new invoice.
+     */
+    public Map<String, Object> getCustomerOutstanding(String customerCode) {
+        Double invoiceOutstanding = invoiceRepo.findOutstandingBalanceByCustomerCode(customerCode);
+        double invoiceAmt = invoiceOutstanding != null ? invoiceOutstanding : 0.0;
+
+        double openingBalance = customerRepository.findByCode(customerCode)
+                .map(c -> c.getBalance() != null ? c.getBalance().doubleValue() : 0.0)
+                .orElse(0.0);
+
+        double total = BigDecimal.valueOf(invoiceAmt + openingBalance)
+                .setScale(2, RoundingMode.HALF_UP).doubleValue();
+
+        return Map.of(
+                "outstanding", total,
+                "invoiceOutstanding", BigDecimal.valueOf(invoiceAmt).setScale(2, RoundingMode.HALF_UP).doubleValue(),
+                "openingBalance", BigDecimal.valueOf(openingBalance).setScale(2, RoundingMode.HALF_UP).doubleValue());
+    }
+
+    // ----------------------------
     // GENERATE INVOICE NUMBER
     // ----------------------------
     public String generateInvoiceNumber() {

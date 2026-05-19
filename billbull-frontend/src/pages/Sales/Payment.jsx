@@ -29,7 +29,7 @@ import {
 // API Imports
 import { getAllSalesPayments, saveSalesPayment, getNextSalesPaymentNumber, getSalesPaymentStats, deleteSalesPayment } from '../../api/salesPaymentApi';
 import { getAllSalesInvoices } from '../../api/salesInvoiceApi';
-import { getAllCustomers } from '../../api/customerledgerApi';
+import { getAllCustomers, getOpeningInvoicesByCustomerCode } from '../../api/customerledgerApi';
 import { getBankAccounts } from '../../api/ledgerApi';
 import { getTemplatesByCategory } from '../../api/printTemplateApi';
 import { generatePrintHtml, printHtml } from '../../utils/printGenerator';
@@ -53,6 +53,22 @@ const PAYMENT_COLUMNS = [
     { header: 'Status', key: 'status', width: 12 }
 ];
 
+const getOpeningInvoiceOutstanding = (invoice = {}) => {
+    const source = invoice.outstanding !== undefined && invoice.outstanding !== null && invoice.outstanding !== ''
+        ? invoice.outstanding
+        : invoice.amount;
+    const value = Number(source || 0);
+    return Number.isFinite(value) && value > 0 ? value : 0;
+};
+
+const getOpeningInvoiceOriginalAmount = (invoice = {}) => {
+    const source = invoice.openingBalanceAmount !== undefined && invoice.openingBalanceAmount !== null && invoice.openingBalanceAmount !== ''
+        ? invoice.openingBalanceAmount
+        : invoice.amount;
+    const value = Number(source || 0);
+    return Number.isFinite(value) && value > 0 ? value : 0;
+};
+
 // ==========================================
 // PAYMENT MODULE COMPONENT
 // ==========================================
@@ -67,6 +83,7 @@ const Payment = () => {
     const [paymentsList, setPaymentsList] = useState([]);
     const [customersList, setCustomersList] = useState([]);
     const [invoicesList, setInvoicesList] = useState([]);
+    const [openingInvoices, setOpeningInvoices] = useState([]);
     const [searchQuery, setSearchQuery] = useState('');
     const [statusFilter, setStatusFilter] = useState('All Status');
 
@@ -179,6 +196,24 @@ const Payment = () => {
         }
     };
 
+    const fetchOpeningInvoicesForCustomer = async (customerCode) => {
+        if (!customerCode) {
+            setOpeningInvoices([]);
+            return [];
+        }
+
+        try {
+            const data = await getOpeningInvoicesByCustomerCode(customerCode);
+            const nextOpeningInvoices = Array.isArray(data) ? data : [];
+            setOpeningInvoices(nextOpeningInvoices);
+            return nextOpeningInvoices;
+        } catch (err) {
+            console.error('Failed to load opening invoices:', err);
+            setOpeningInvoices([]);
+            return [];
+        }
+    };
+
     const fetchStats = async () => {
         try {
             const data = await getSalesPaymentStats();
@@ -275,6 +310,7 @@ const Payment = () => {
         setPaymentMode('Cash');
         setPaymentStatus('Completed');
         setSelectedCustomer(null);
+        setOpeningInvoices([]);
         setSelectedInvoices({});
         setSettleAmounts({});
         setReceivedAmount('');
@@ -285,12 +321,16 @@ const Payment = () => {
         setActiveTab('create');
     };
 
-    const handleSelectCustomer = (cust) => {
+    const handleSelectCustomer = async (cust) => {
         setSelectedCustomer(cust);
         setIsCustomerOpen(false);
+        setOpeningInvoices([]);
         setSelectedInvoices({});
         setSettleAmounts({});
         setReceivedAmount('');
+        if (cust?.code) {
+            await fetchOpeningInvoicesForCustomer(cust.code);
+        }
     };
 
     const handleInvoiceSelection = (inv, isSelected) => {
@@ -315,7 +355,6 @@ const Payment = () => {
 
     const handleSelectAllInvoices = (e) => {
         const isChecked = e.target.checked;
-        const customerInvoices = invoicesList.filter(inv => inv.customerCode === selectedCustomer?.code && inv.balance > 0);
         const newSelected = {};
         const newAmounts = {};
         if (isChecked) {
@@ -338,13 +377,14 @@ const Payment = () => {
             return;
         }
 
-        const customerInvoices = invoicesList.filter(inv => inv.customerCode === selectedCustomer?.code && inv.balance > 0);
-        // Sort by closest due date first, nulls last
+        // Sort by closest due date first, then invoice/opening date.
         const sorted = [...customerInvoices].sort((a, b) => {
-            if (!a.dueDate && !b.dueDate) return 0;
-            if (!a.dueDate) return 1;
-            if (!b.dueDate) return -1;
-            return new Date(a.dueDate) - new Date(b.dueDate);
+            const aDate = a.dueDate || a.invoiceDate || null;
+            const bDate = b.dueDate || b.invoiceDate || null;
+            if (!aDate && !bDate) return 0;
+            if (!aDate) return 1;
+            if (!bDate) return -1;
+            return new Date(aDate) - new Date(bDate);
         });
 
         let remaining = totalReceived;
@@ -373,7 +413,7 @@ const Payment = () => {
         setTimeout(() => setSelectedPayment(null), 300);
     };
 
-    const handleLoadPayment = (payment) => {
+    const handleLoadPayment = async (payment) => {
         setPaymentId(payment.id);
         setPaymentNo(payment.paymentNo);
         setPaymentDate(payment.date);
@@ -381,6 +421,10 @@ const Payment = () => {
         setPaymentMode(payment.mode);
         setPaymentStatus(payment.status);
         setSelectedCustomer({ code: payment.customerCode, name: payment.customerName });
+        setOpeningInvoices([]);
+        if (payment.customerCode) {
+            await fetchOpeningInvoicesForCustomer(payment.customerCode);
+        }
         setSelectedInvoices({ [payment.invoiceNo]: true });
         setSettleAmounts({ [payment.invoiceNo]: payment.amount });
         setReferenceNo(payment.reference);
@@ -401,7 +445,7 @@ const Payment = () => {
                 const amountToSettle = settleAmounts[invNo] || 0;
                 if (amountToSettle <= 0) continue;
 
-                const inv = invoicesList.find(i => i.invoiceNo === invNo);
+                const inv = customerInvoices.find(i => i.invoiceNo === invNo);
                 const invBalance = inv ? inv.balance : 0;
                 const invTotal = inv ? inv.total : 0;
                 const status = amountToSettle < invBalance ? 'PARTIAL' : 'COMPLETED';
@@ -435,6 +479,9 @@ const Payment = () => {
             await fetchPayments();
             await fetchStats();
             await fetchInvoices();
+            if (selectedCustomer?.code) {
+                await fetchOpeningInvoicesForCustomer(selectedCustomer.code);
+            }
             setSelectedInvoices({});
             setSettleAmounts({});
             setReceivedAmount('');
@@ -457,8 +504,32 @@ const Payment = () => {
     // ==========================================
     const customerInvoices = useMemo(() => {
         if (!selectedCustomer) return [];
-        return invoicesList.filter(inv => inv.customerCode === selectedCustomer.code && inv.balance > 0);
-    }, [selectedCustomer, invoicesList]);
+        const openingBalanceInvoices = openingInvoices
+            .filter(oi => getOpeningInvoiceOutstanding(oi) > 0)
+            .map((oi, index) => {
+                const total = getOpeningInvoiceOriginalAmount(oi);
+                const balance = getOpeningInvoiceOutstanding(oi);
+                return {
+                    id: `opening-${oi.id ?? oi.number ?? index}`,
+                    invoiceNo: oi.number,
+                    customerCode: selectedCustomer.code,
+                    invoiceDate: oi.date || null,
+                    dueDate: null,
+                    total,
+                    paid: Math.max(total - balance, 0),
+                    balance,
+                    status: 'OPENING',
+                    _isOpening: true
+                };
+            })
+            .filter(inv => inv.invoiceNo);
+
+        const salesInvoices = invoicesList
+            .filter(inv => inv.customerCode === selectedCustomer.code && inv.balance > 0)
+            .map(inv => ({ ...inv, _isOpening: false }));
+
+        return [...openingBalanceInvoices, ...salesInvoices];
+    }, [selectedCustomer, invoicesList, openingInvoices]);
 
     const customerBalance = useMemo(() =>
         customerInvoices.reduce((sum, inv) => sum + inv.balance, 0),
@@ -824,7 +895,9 @@ const Payment = () => {
                                                                 <td className="px-4 py-3 text-right text-slate-600 font-medium"><CurrencyAmount value={inv.total} currency={currency} /></td>
                                                                 <td className="px-4 py-3 text-right font-bold text-orange-600"><CurrencyAmount value={inv.balance} currency={currency} /></td>
                                                                 <td className="px-4 py-3 text-center">
-                                                                    {isOverdue
+                                                                    {inv._isOpening
+                                                                        ? <span className="px-2 py-0.5 rounded bg-blue-100 text-blue-700 text-[10px] font-bold">Opening</span>
+                                                                        : isOverdue
                                                                         ? <span className="px-2 py-0.5 rounded bg-orange-100 text-orange-700 text-[10px] font-bold">Overdue</span>
                                                                         : <span className="px-2 py-0.5 rounded bg-green-100 text-green-700 text-[10px] font-bold">Current</span>}
                                                                 </td>

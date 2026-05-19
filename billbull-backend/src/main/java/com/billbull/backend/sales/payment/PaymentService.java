@@ -11,12 +11,17 @@ import java.util.Objects;
 import java.util.Optional;
 
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.server.ResponseStatusException;
 
 import com.billbull.backend.financials.receiptvoucher.ReceiptPurpose;
 import com.billbull.backend.financials.receiptvoucher.ReceiptVoucher;
 import com.billbull.backend.financials.receiptvoucher.ReceiptVoucherService;
+import com.billbull.backend.sales.customerledger.CustomerRepository;
+import com.billbull.backend.sales.customerledger.OpeningInvoice;
+import com.billbull.backend.sales.customerledger.OpeningInvoiceRepository;
 import com.billbull.backend.sales.invoice.SalesInvoice;
 import com.billbull.backend.sales.invoice.SalesInvoiceRepository;
 import com.billbull.backend.util.DocumentOrderingUtil;
@@ -29,6 +34,12 @@ public class PaymentService {
 
     @Autowired
     private SalesInvoiceRepository salesInvoiceRepository;
+
+    @Autowired
+    private OpeningInvoiceRepository openingInvoiceRepository;
+
+    @Autowired
+    private CustomerRepository customerRepository;
 
     @Autowired
     private ReceiptVoucherService receiptVoucherService;
@@ -174,9 +185,19 @@ public class PaymentService {
         }
 
         SalesInvoice linkedInvoice = null;
+        OpeningInvoice linkedOpeningInvoice = null;
         if (payment.getLinkedInvoice() != null && !payment.getLinkedInvoice().isBlank()) {
-            linkedInvoice = salesInvoiceRepository.findByInvoiceNumber(payment.getLinkedInvoice())
-                    .orElseThrow(() -> new RuntimeException("Sales invoice not found: " + payment.getLinkedInvoice()));
+            String linkedInvoiceNumber = payment.getLinkedInvoice().trim();
+            linkedInvoice = salesInvoiceRepository.findByInvoiceNumber(linkedInvoiceNumber)
+                    .filter(invoice -> payment.getCustomerCode() == null
+                            || payment.getCustomerCode().isBlank()
+                            || Objects.equals(invoice.getCustomerCode(), payment.getCustomerCode()))
+                    .orElse(null);
+            if (linkedInvoice == null) {
+                linkedOpeningInvoice = findOpeningInvoice(payment)
+                        .orElseThrow(() -> new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                                "Customer invoice/opening balance bill not found: " + linkedInvoiceNumber));
+            }
         }
 
         ReceiptVoucher receiptVoucher = new ReceiptVoucher();
@@ -189,15 +210,52 @@ public class PaymentService {
                 payment.getCustomerName() != null && !payment.getCustomerName().isBlank()
                         ? payment.getCustomerName()
                         : payment.getCustomerCode());
+        receiptVoucher.setCustomerCode(payment.getCustomerCode());
         receiptVoucher.setStatus(mapReceiptStatus(payment.getStatus()));
-        receiptVoucher.setPurpose(linkedInvoice != null ? ReceiptPurpose.AGAINST_INVOICE : ReceiptPurpose.ADVANCE_RECEIVED);
+        receiptVoucher.setPurpose(
+                linkedInvoice != null || linkedOpeningInvoice != null
+                        ? ReceiptPurpose.AGAINST_INVOICE
+                        : ReceiptPurpose.ADVANCE_RECEIVED);
         receiptVoucher.setSalesInvoiceId(linkedInvoice != null ? linkedInvoice.getId() : null);
+        receiptVoucher.setOpeningInvoiceId(linkedOpeningInvoice != null ? linkedOpeningInvoice.getId() : null);
 
         if (payment.getReceiptVoucherRecordId() != null) {
             return receiptVoucherService.updateReceipt(payment.getReceiptVoucherRecordId(), receiptVoucher, null);
         }
 
         return receiptVoucherService.createReceipt(receiptVoucher, null);
+    }
+
+    private Optional<OpeningInvoice> findOpeningInvoice(Payment payment) {
+        String customerCode = payment.getCustomerCode();
+        String invoiceNumber = payment.getLinkedInvoice();
+        if (customerCode == null || customerCode.isBlank() || invoiceNumber == null || invoiceNumber.isBlank()) {
+            return Optional.empty();
+        }
+
+        String normalizedInvoiceNumber = invoiceNumber.trim();
+        List<OpeningInvoice> openingInvoices = openingInvoiceRepository.findByCustomer_Code(customerCode);
+        Optional<OpeningInvoice> matchedInvoice = openingInvoices.stream()
+                .filter(invoice -> invoice.getNumber() != null
+                        && invoice.getNumber().trim().equalsIgnoreCase(normalizedInvoiceNumber))
+                .findFirst();
+        if (matchedInvoice.isPresent() || !openingInvoices.isEmpty()) {
+            return matchedInvoice;
+        }
+
+        return customerRepository.findByCode(customerCode)
+                .filter(customer -> customer.getBalance() != null
+                        && customer.getBalance().compareTo(BigDecimal.ZERO) > 0)
+                .map(customer -> {
+                    OpeningInvoice invoice = new OpeningInvoice();
+                    invoice.setCustomer(customer);
+                    invoice.setNumber(normalizedInvoiceNumber);
+                    invoice.setAmount(customer.getBalance());
+                    invoice.setOutstanding(customer.getBalance());
+                    invoice.setOpeningBalanceAmount(customer.getBalance());
+                    invoice.setRemarks("Opening balance");
+                    return openingInvoiceRepository.save(invoice);
+                });
     }
 
     private String mapReceiptStatus(PaymentStatus paymentStatus) {

@@ -47,6 +47,11 @@ export const journalVoucherApi = {
     reject: async (id, rejectedBy, reason) => {
         const response = await api.post(`${BASE_PATH}/${id}/reject`, { rejectedBy, reason });
         return response.data;
+    },
+
+    void: async (id, voidedBy) => {
+        const response = await api.post(`${BASE_PATH}/${id}/void`, { voidedBy });
+        return response.data;
     }
 };
 

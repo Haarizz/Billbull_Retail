@@ -276,6 +276,52 @@ public class JournalEntryService {
         return candidate;
     }
 
+    @Transactional
+    public JournalVoucher voidJournalVoucher(Long id, String voidedBy) {
+        JournalVoucher jv = (JournalVoucher) getEntryById(id);
+        if ("Voided".equalsIgnoreCase(jv.getStatus())) {
+            throw new RuntimeException("Journal voucher is already voided.");
+        }
+
+        boolean wasPosted = "Posted".equalsIgnoreCase(jv.getStatus());
+        jv.setStatus("Voided");
+        JournalVoucher voided = journalVoucherRepository.save(jv);
+        auditService.logEvent("JOURNAL_VOUCHER", jv.getEntryNumber(), "VOIDED",
+                voidedBy != null ? voidedBy : "System", "JV voided.");
+
+        if (wasPosted) {
+            // Create a reversal JV: same lines with debit and credit swapped
+            JournalVoucher reversal = new JournalVoucher();
+            reversal.setEntryType(EntryType.MANUAL);
+            reversal.setEntryNumber(generateEntryNumber());
+            reversal.setDate(java.time.LocalDate.now());
+            reversal.setReference("VOID-" + jv.getEntryNumber());
+            reversal.setNarration("Reversal of " + jv.getEntryNumber() + ": " + (jv.getNarration() != null ? jv.getNarration() : ""));
+            reversal.setPreparedBy(voidedBy != null ? voidedBy : "System");
+            reversal.setStatus("Draft");
+
+            for (JournalLine original : jv.getLines()) {
+                JournalLine rev = new JournalLine();
+                rev.setJournalEntry(reversal);
+                rev.setAccount(original.getAccount());
+                rev.setAccountCode(original.getAccountCode());
+                rev.setDescription(original.getDescription());
+                rev.setCostCenter(original.getCostCenter());
+                rev.setCfBucket(original.getCfBucket());
+                // Swap debit ↔ credit
+                rev.setDebit(original.getCredit() != null ? original.getCredit() : BigDecimal.ZERO);
+                rev.setCredit(original.getDebit() != null ? original.getDebit() : BigDecimal.ZERO);
+                reversal.getLines().add(rev);
+            }
+
+            JournalVoucher savedReversal = journalVoucherRepository.save(reversal);
+            // Auto-post the reversal so it takes effect in the ledger immediately
+            postEntry(savedReversal.getId(), voidedBy != null ? voidedBy : "System");
+        }
+
+        return voided;
+    }
+
     // Support for approval workflow if needed (re-implement if required by
     // JournalVoucher)
 }
