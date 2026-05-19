@@ -19,7 +19,6 @@ import {
   Box,
   X,
   Search,
-  CheckCircle2,
   Menu,
   ChevronUp,
   Trash2,
@@ -37,8 +36,7 @@ import { getAllProformas } from '../../api/proformaApi';
 import {
   getAllSalesOrders,
   saveSalesOrder,
-  uploadSalesOrderAttachment,
-  updateSalesOrderStatus
+  uploadSalesOrderAttachment
 } from '../../api/salesorderApi';
 import { getTemplatesByCategory } from '../../api/printTemplateApi';
 import { generatePrintHtml, printHtml } from '../../utils/printGenerator';
@@ -64,6 +62,7 @@ import ItemAddOnsModal from '../../components/ItemAddOnsModal';
 
 // ✅ STOCK AVAILABILITY MODAL
 import StockAvailabilityModal from '../../components/StockAvailabilityModal';
+import BatchSelectionModal from '../../components/BatchSelectionModal';
 
 // ✅ SHORTCUTS HOOK
 import useShortcuts from '../../hooks/useShortcuts';
@@ -129,7 +128,7 @@ const MobileCard = ({ order, onClick, getStatusBadge, currency }) => (
 );
 
 // ✅ MOBILE FLOATING ACTIONS COMPONENT
-const MobileFloatingActions = ({ status, onConfirm, onMarkInvoiced, onSave, onPrint }) => {
+const MobileFloatingActions = ({ status, onConfirm, onConvertToDO, onSave, onPrint }) => {
   return (
     <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-slate-200 p-3 flex gap-2 items-center justify-between z-50 md:hidden shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.1)]">
       <div className="flex gap-2 w-full">
@@ -143,8 +142,8 @@ const MobileFloatingActions = ({ status, onConfirm, onMarkInvoiced, onSave, onPr
             </button>
           </>
         ) : (status === 'CONFIRMED' || status === 'PARTIALLY_PAID') ? (
-          <button onClick={onMarkInvoiced} className="flex-1 py-3 bg-blue-600 text-white font-bold rounded-lg text-xs flex items-center justify-center gap-2 active:bg-blue-700">
-            <CheckCircle2 size={16} /> Mark Invoiced
+          <button onClick={onConvertToDO} className="flex-1 py-3 bg-indigo-600 text-white font-bold rounded-lg text-xs flex items-center justify-center gap-2 active:bg-indigo-700">
+            <Truck size={16} /> Convert to Delivery Note
           </button>
         ) : (
           <button onClick={onPrint} className="flex-1 py-3 bg-white border border-slate-300 text-slate-700 font-bold rounded-lg text-xs flex items-center justify-center gap-2 active:bg-slate-50">
@@ -160,7 +159,8 @@ const SalesOrders = () => {
   const { company } = useCompany();
   const currencyLabel = resolveCurrencyLabel(company);
   const orderCurrency = company?.currency || currencyLabel || 'AED';
-  const { canCreate, canEdit, canApprove, canExport } = usePermissions();
+  const { canCreate, canEdit, canApprove, canExport, canAction } = usePermissions();
+  const canManualBatchSelect = canAction('batch_manual_select', 'edit');
   const [activeTab, setActiveTab] = useState('list');
 
   // ✅ FIX 1: ADD ORDER ID STATE
@@ -190,6 +190,7 @@ const SalesOrders = () => {
 
   // ✅ NEW STATE: Track the currently focused item for the sidebar
   const [focusedItem, setFocusedItem] = useState(null);
+  const [batchSelectionTarget, setBatchSelectionTarget] = useState(null);
 
   // Sales settings (stock check, credit limit policy)
   const [salesSettings, setSalesSettings] = useState(null);
@@ -546,7 +547,16 @@ const SalesOrders = () => {
       disc: Number(item.disc ?? item.discount) || 0,
       tax: Number(item.tax ?? item.taxRate ?? item.taxPercent) || 5,
       taxAmt: Number(item.taxAmt ?? item.taxAmount) || 0,
-      total: Number(item.total ?? item.lineTotal) || 0
+      total: Number(item.total ?? item.lineTotal) || 0,
+      binId: item.binId ?? null,
+      binCode: item.binCode || '',
+      batchControlled: Boolean(item.batchControlled ?? item.isBatch ?? item.product?.isBatch),
+      fefoEnabled: item.fefoEnabled != null ? Boolean(item.fefoEnabled) : true,
+      minExpiryDaysForSale: Number(item.minExpiryDaysForSale) || 0,
+      baseRequiredQuantity: Number(item.baseRequiredQuantity) || 0,
+      batchSelectedQuantity: Number(item.batchSelectedQuantity) || 0,
+      batchSelectionMode: item.batchSelectionMode || 'AUTO_FEFO',
+      batchSelections: Array.isArray(item.batchSelections) ? item.batchSelections : []
     };
 
     return calculateRow(normalized);
@@ -585,7 +595,12 @@ const SalesOrders = () => {
       disc: disc,
       tax: tax,
       taxAmt: 0,
-      total: 0
+      total: 0,
+      batchControlled: Boolean(product.batchControlled ?? product.isBatch ?? product.batch),
+      fefoEnabled: product.fefoEnabled != null ? Boolean(product.fefoEnabled) : true,
+      minExpiryDaysForSale: Number(product.minExpiryDaysForSale) || 0,
+      batchSelectedQuantity: 0,
+      batchSelections: []
     };
 
     const newItem = calculateRow(rawItem);
@@ -627,6 +642,11 @@ const SalesOrders = () => {
       total: 0,
       remarks: product.description || '',
       isProductSelected: true,
+      batchControlled: Boolean(product.batchControlled ?? product.isBatch ?? product.batch),
+      fefoEnabled: product.fefoEnabled != null ? Boolean(product.fefoEnabled) : true,
+      minExpiryDaysForSale: Number(product.minExpiryDaysForSale) || 0,
+      batchSelectedQuantity: 0,
+      batchSelections: []
     };
     const newItem = calculateRow(rawItem);
     setItems(prev => {
@@ -694,22 +714,22 @@ const SalesOrders = () => {
       return;
     }
     setShowItemError(false);
-    saveOrUpdateOrder();
+    saveOrUpdateOrder('CONFIRMED');
   };
 
-  const handleMarkAsInvoiced = async () => {
+  const handleConvertToDeliveryNote = () => {
     if (!orderId) {
-      alert('Save the order first before marking as invoiced.');
+      alert('Save and confirm the order first before converting to a Delivery Note.');
       return;
     }
-    try {
-      await updateSalesOrderStatus(orderId, 'INVOICED');
-      setStatus('INVOICED');
-      await fetchSalesOrders();
-    } catch (e) {
-      const msg = e?.response?.data?.message || e?.message || 'Failed to mark as invoiced.';
-      alert(`Error: ${msg}`);
-    }
+    navigate('/sales/deliverynote', {
+      state: {
+        fromSalesOrder: {
+          id: orderId,
+          soNumber,
+        }
+      }
+    });
   };
 
   const handleProceedToInvoice = () => {
@@ -838,7 +858,7 @@ const SalesOrders = () => {
   };
 
   // ✅ FIX 4: INCLUDE ID IN PAYLOAD
-  const saveOrUpdateOrder = async () => {
+  const saveOrUpdateOrder = async (targetStatus = 'DRAFT') => {
     const sanitizedLinkedQuotation = linkedSourceType === 'quotation' ? linkedQtn.trim() : '';
     const sanitizedLinkedProforma = linkedSourceType === 'proforma' ? linkedPi.trim() : '';
 
@@ -865,6 +885,7 @@ const SalesOrders = () => {
       // Notes
       customerNotes,
       internalNotes,
+      status: targetStatus,
 
       // Map Items
       items: items.map(i => ({
@@ -883,7 +904,8 @@ const SalesOrders = () => {
         taxAmount: Number(i.taxAmt),
         lineTotal: Number(i.total),
         foc: Number(i.foc) || 0,
-        focUnit: i.focUnit || i.unit || 'PCS'
+        focUnit: i.focUnit || i.unit || 'PCS',
+        binId: i.binId || null
       }))
     };
 
@@ -931,8 +953,22 @@ const SalesOrders = () => {
       // Update local state to match saved record
       setOrderId(savedOrder.id); // Ensure subsequent saves are updates
       setStatus(savedOrder.status);
+      if (Array.isArray(savedOrder.items)) {
+        const mappedItems = savedOrder.items.map((item, index) =>
+          normalizeOrderItem({ ...item, soItemId: item.id }, Date.now() + index)
+        );
+        setItems(mappedItems.length > 0 ? mappedItems : [createBlankOrderItem()]);
+        setFocusedItem(mappedItems[0] || null);
+      }
 
-      setActiveTab('list');
+      const hasBatchLines = Array.isArray(savedOrder.items)
+        && savedOrder.items.some(item => item.batchControlled);
+      if (targetStatus === 'DRAFT' && hasBatchLines) {
+        setActiveTab('create');
+        alert('Draft saved. Select exact batches for each batch-controlled line, then confirm the Sales Order.');
+      } else {
+        setActiveTab('list');
+      }
       setAttachmentFile(null);
     } catch (e) {
       console.error("Save failed", e);
@@ -949,6 +985,19 @@ const SalesOrders = () => {
       : (cust.defaultShippingAddress || cust.shippingAddress || cust.billingAddress || cust.address || '');
     setShippingAddress(_resolvedAddr);
     setIsCustomerSearchOpen(false);
+  };
+
+  const handleBatchSelectionSaved = async (updatedOrder) => {
+    if (updatedOrder?.id) {
+      setOrderId(updatedOrder.id);
+      setStatus(updatedOrder.status || status);
+      const mappedItems = (updatedOrder.items || []).map((item, index) =>
+        normalizeOrderItem({ ...item, soItemId: item.id }, Date.now() + index)
+      );
+      setItems(mappedItems.length > 0 ? mappedItems : [createBlankOrderItem()]);
+      setFocusedItem(mappedItems[0] || null);
+      await fetchSalesOrders();
+    }
   };
 
   const handleFileUpload = (e) => {
@@ -1219,6 +1268,25 @@ const SalesOrders = () => {
         isOpen={isItemStockModalOpen}
         onClose={() => setIsItemStockModalOpen(false)}
         selectedStockItem={selectedStockItem}
+      />
+
+      <BatchSelectionModal
+        isOpen={Boolean(batchSelectionTarget)}
+        onClose={() => setBatchSelectionTarget(null)}
+        onSaved={handleBatchSelectionSaved}
+        sourceType="SALES_ORDER"
+        sourceDocumentId={orderId}
+        salesOrderId={orderId}
+        itemId={batchSelectionTarget?.item?.soItemId || batchSelectionTarget?.item?.id}
+        itemCode={batchSelectionTarget?.item?.code}
+        itemName={batchSelectionTarget?.item?.desc}
+        locationCode={batchSelectionTarget?.item?.binCode}
+        binId={batchSelectionTarget?.item?.binId}
+        requiredQuantity={batchSelectionTarget?.item?.baseRequiredQuantity || batchSelectionTarget?.item?.qty}
+        fefoEnabled={batchSelectionTarget?.item?.fefoEnabled}
+        minExpiryDaysForSale={batchSelectionTarget?.item?.minExpiryDaysForSale}
+        currentSelections={batchSelectionTarget?.item?.batchSelections || []}
+        canManualSelect={canManualBatchSelect}
       />
 
       <ItemAddOnsModal
@@ -1626,6 +1694,26 @@ const SalesOrders = () => {
                               onOpenSettings={(item) => setSelectedAddonItem({ ...item })}
                               page="sales_orders"
                             />
+                            {item.batchControlled && (
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  if (!orderId || !item.soItemId) {
+                                    alert('Save this Sales Order as Draft before selecting batches.');
+                                    return;
+                                  }
+                                  setBatchSelectionTarget({ item });
+                                }}
+                                className={`mt-2 inline-flex items-center gap-1 rounded border px-2 py-1 text-[10px] font-bold ${
+                                  Number(item.batchSelectedQuantity || 0) >= Number(item.baseRequiredQuantity || item.qty || 0)
+                                    ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+                                    : 'border-amber-200 bg-amber-50 text-amber-700'
+                                }`}
+                              >
+                                Batches {Number(item.batchSelectedQuantity || 0)}/{Number(item.baseRequiredQuantity || item.qty || 0)}
+                              </button>
+                            )}
                           </td>
 
                           {/* Unit */}
@@ -1903,7 +1991,7 @@ const SalesOrders = () => {
                 <>
                   {/* ── VERTICAL: canEdit('sales') for Save Draft ── */}
                   {canEdit('sales') && (
-                    <button onClick={saveOrUpdateOrder} className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-slate-300 text-slate-700 rounded text-xs font-bold hover:bg-slate-50 transition-colors shadow-sm">
+                    <button onClick={() => saveOrUpdateOrder('DRAFT')} className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-slate-300 text-slate-700 rounded text-xs font-bold hover:bg-slate-50 transition-colors shadow-sm">
                       <Save size={14} /> Save Draft
                     </button>
                   )}
@@ -1916,14 +2004,14 @@ const SalesOrders = () => {
                 </>
               )}
 
-              {/* ── Proceed to Invoice / Mark Invoiced for CONFIRMED / PARTIALLY_PAID ── */}
+              {/* ── Convert to Delivery Note / Proceed to Invoice for CONFIRMED / PARTIALLY_PAID ── */}
               {(status === 'CONFIRMED' || status === 'PARTIALLY_PAID') && canApprove('sales') && (
                 <>
+                  <button onClick={handleConvertToDeliveryNote} className="flex items-center gap-1.5 px-5 py-1.5 bg-gradient-to-r from-indigo-600 to-indigo-500 text-white rounded text-xs font-bold hover:from-indigo-700 hover:to-indigo-600 transition-all shadow-md transform hover:-translate-y-0.5">
+                    <Truck size={14} /> Convert to Delivery Note
+                  </button>
                   <button onClick={handleProceedToInvoice} className="flex items-center gap-1.5 px-4 py-1.5 bg-gradient-to-r from-amber-500 to-amber-400 text-white rounded text-xs font-bold hover:from-amber-600 hover:to-amber-500 transition-all shadow-md transform hover:-translate-y-0.5">
                     <FileText size={14} /> Proceed to Invoice
-                  </button>
-                  <button onClick={handleMarkAsInvoiced} className="flex items-center gap-1.5 px-5 py-1.5 bg-blue-600 text-white rounded text-xs font-bold hover:bg-blue-700 transition-all shadow-md transform hover:-translate-y-0.5">
-                    <CheckCircle2 size={14} /> Mark Invoiced
                   </button>
                 </>
               )}
@@ -1940,8 +2028,8 @@ const SalesOrders = () => {
           <MobileFloatingActions
             status={status}
             onConfirm={handleConfirmOrder}
-            onMarkInvoiced={handleMarkAsInvoiced}
-            onSave={saveOrUpdateOrder}
+            onConvertToDO={handleConvertToDeliveryNote}
+            onSave={() => saveOrUpdateOrder('DRAFT')}
             onPrint={handlePrintClick}
           />
         </div>

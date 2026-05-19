@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
+import { useLocation, useNavigate } from 'react-router-dom';
 import {
     Truck,
     Package,
@@ -40,6 +41,7 @@ import { getTemplatesByCategory } from '../../api/printTemplateApi';
 import { generatePrintHtml, printHtml } from '../../utils/printGenerator';
 import { getImageUrl } from '../../utils/urlUtils';
 import { useCompany } from '../../context/CompanyContext';
+import { useBranch } from '../../context/BranchContext';
 import { generateDocFilename } from '../../utils/filenameUtils';
 import { usePrintDocument } from '../../hooks/usePrintDocument';
 import ExportDropdown from '../../components/common/ExportDropdown';
@@ -103,8 +105,11 @@ import { ItemDescriptionCell, ItemDescriptionHeader } from '../../components/Ite
 import ItemAddOnsModal from '../../components/ItemAddOnsModal';
 
 const DeliveryNote = () => {
+    const location = useLocation();
+    const navigate = useNavigate();
     const { print } = usePrintDocument();
     const { company } = useCompany();
+    const { defaultBranch } = useBranch();
     const { canAction } = usePermissions();
     const currency = company?.currency || 'AED';
     const canManualBatchSelect = canAction('batch_manual_select', 'edit');
@@ -479,6 +484,7 @@ const DeliveryNote = () => {
     const capitalize = s => s ? s.charAt(0) + s.slice(1).toLowerCase() : '';
 
     const isBatchPickingLine = (item) => Boolean(item?.batchControlled);
+    const hasInheritedBatchSelection = (item) => Boolean(item?.salesOrderItemId || item?.sourceLineId);
 
     const getRequiredPickingQty = (item) => {
         if (isBatchPickingLine(item) && Number(item?.baseRequiredQuantity) > 0) {
@@ -624,8 +630,10 @@ const DeliveryNote = () => {
             setBatchSelectionTarget({ note: selectedPickingNote, item: matchedItem });
             setPickingScanValue('');
             setPickingScanFeedback({
-                kind: 'error',
-                message: `${matchedItem.code || matchedItem.desc || 'Item'} is batch-controlled. Select exact batches before dispatch.`
+                kind: hasInheritedBatchSelection(matchedItem) ? 'success' : 'error',
+                message: hasInheritedBatchSelection(matchedItem)
+                    ? `${matchedItem.code || matchedItem.desc || 'Item'} is batch-controlled. Batch details are inherited from the source document.`
+                    : `${matchedItem.code || matchedItem.desc || 'Item'} is batch-controlled. Select exact batches before dispatch.`
             });
             return;
         }
@@ -885,7 +893,6 @@ const DeliveryNote = () => {
 
                 const whs = Array.isArray(whData) ? whData : [];
                 setWarehousesList(whs);
-                if (whs.length > 0 && !warehouse) setWarehouse(whs[0].name);
 
             } catch (err) {
                 console.error("Failed to load master data", err);
@@ -893,6 +900,17 @@ const DeliveryNote = () => {
         };
         fetchMasterData();
     }, []);
+
+    // Default warehouse from the active branch (fallback to first warehouse)
+    useEffect(() => {
+        if (warehouse || warehousesList.length === 0) return;
+        const branchDefault =
+            (defaultBranch?.defaultWarehouseId &&
+                warehousesList.find(w => w.id === defaultBranch.defaultWarehouseId)) ||
+            (defaultBranch?.defaultWarehouseName &&
+                warehousesList.find(w => w.name === defaultBranch.defaultWarehouseName));
+        setWarehouse((branchDefault || warehousesList[0]).name);
+    }, [defaultBranch, warehousesList, warehouse]);
 
     // âœ… 5. FETCH STOCK WHEN WAREHOUSE CHANGES
     useEffect(() => {
@@ -1035,6 +1053,33 @@ const DeliveryNote = () => {
         setIsStatusModalOpen(true);
     };
 
+    const handleConvertToInvoice = () => {
+        if (!currentDnId || !dnNumber) {
+            alert('Save the Delivery Note first before converting to an Invoice.');
+            return;
+        }
+        navigate('/sales/invoice', {
+            state: {
+                fromDeliveryNote: {
+                    id: currentDnId,
+                    dnNumber,
+                }
+            }
+        });
+    };
+
+    const handleStartPicking = async () => {
+        let targetId = currentDnId;
+        if (!targetId) {
+            const saved = await handleSave(false);
+            if (!saved) return;
+            targetId = saved.id;
+        }
+        setSelectedPickingId(targetId);
+        await loadDeliveryNotes();
+        setActiveTab('picking');
+    };
+
     const confirmStatusChange = async () => {
         try {
             let targetId = currentDnId;
@@ -1124,6 +1169,33 @@ const DeliveryNote = () => {
             setItems(mappedItems.length > 0 ? mappedItems : [createBlankDeliveryItem()]);
         }
     };
+
+    // Prefill from Sales Order navigation (Convert to DO flow)
+    useEffect(() => {
+        const fromSO = location.state?.fromSalesOrder;
+        if (!fromSO || salesOrdersList.length === 0) return;
+
+        const match = salesOrdersList.find(s =>
+            (fromSO.id && s.id === fromSO.id) || (fromSO.soNumber && s.soNumber === fromSO.soNumber)
+        );
+        if (!match) return;
+
+        setCurrentDnId(null);
+        setDnNumber(`DN-${Date.now()}`);
+        setStatus('DRAFT');
+        setAutoGenerated(false);
+        setDnDate(new Date().toISOString().split('T')[0]);
+        setSourceType('SO');
+        setLinkedPI('');
+        setLinkedSI('');
+        setDriverName('');
+        setVehicleNo('');
+        setTrackingNo('');
+        handleSelectSO(match);
+        setActiveTab('create');
+
+        navigate(location.pathname, { replace: true, state: {} });
+    }, [location.state, salesOrdersList]);
 
     const handleSelectSI = (si) => {
         if (isLockedForEdit) return;
@@ -1529,6 +1601,65 @@ const DeliveryNote = () => {
         }
     };
 
+    const handlePrintPickList = async () => {
+        if (items.length === 0) {
+            alert("Nothing to print. Add items first.");
+            return;
+        }
+
+        setIsPrinting(true);
+        try {
+            const templates = await getTemplatesByCategory('Pick List');
+            const defaultTemplate = templates.find(t => t.isDefault) || templates[0];
+
+            if (!defaultTemplate) {
+                alert("No Pick List template found. Please create one under Settings → Print Templates (category: 'Pick List').");
+                return;
+            }
+
+            const fullCustomer = customersList.find(c => c.code === selectedCustomer?.code);
+
+            const printData = {
+                title: 'PICK LIST',
+                docNo: dnNumber,
+                date: dnDate,
+                customer: {
+                    name: selectedCustomer?.name || '',
+                    address: shippingAddress || fullCustomer?.address || '',
+                    trn: selectedCustomer?.trn || fullCustomer?.trn
+                },
+                items: items.map(i => ({
+                    code: i.code,
+                    name: i.name || i.desc || '',
+                    desc: (i.remarks || i.desc || '') + (i.boxes ? ` (${i.boxes} Boxes)` : ''),
+                    sku: i.sku || '',
+                    localName: i.localName || '',
+                    barcode: i.barcode || '',
+                    location: warehouse || '',
+                    unit: i.unit,
+                    qty: i.currentQty,
+                    batchSelections: Array.isArray(i.batchSelections) ? i.batchSelections : []
+                })),
+                totals: {},
+                meta: {
+                    status: status,
+                    reference: `SO: ${linkedSO || '-'} | PI: ${linkedPI || '-'} | SI: ${linkedSI || '-'}`,
+                    location: warehouse || '',
+                    warehouse: warehouse || '',
+                    notes: `Driver: ${driverName || '-'} | Vehicle: ${vehicleNo || '-'} | Tracking: ${trackingNo || '-'}`
+                }
+            };
+
+            const html = generatePrintHtml(defaultTemplate, printData, { companyProfile: company, billBullLogo });
+            printHtml(html);
+        } catch (error) {
+            console.error("Pick List print error:", error);
+            alert("Failed to print Pick List.");
+        } finally {
+            setIsPrinting(false);
+        }
+    };
+
     const renderStatusBadge = (s) => {
         const normalized = (s || 'DRAFT').toUpperCase();
         const styles = {
@@ -1627,6 +1758,7 @@ const DeliveryNote = () => {
                 minExpiryDaysForSale={batchSelectionTarget?.item?.minExpiryDaysForSale}
                 currentSelections={batchSelectionTarget?.item?.batchSelections || []}
                 canManualSelect={canManualBatchSelect}
+                readOnly={hasInheritedBatchSelection(batchSelectionTarget?.item)}
             />
 
             {/* ✅ ITEM ADD-ONS & DETAILS MODAL */}
@@ -1725,6 +1857,14 @@ const DeliveryNote = () => {
                                         {label === 'Print' && isPrinting ? 'Printing...' : label}
                                     </button>
                                 ))}
+                                <button
+                                    onClick={handlePrintPickList}
+                                    disabled={isPrinting}
+                                    className="flex items-center gap-1 px-3 py-1.5 bg-white border border-slate-200 rounded text-xs font-medium text-slate-600 hover:bg-slate-50 shadow-sm disabled:opacity-50"
+                                >
+                                    <Printer size={14} />
+                                    {isPrinting ? 'Printing...' : 'Print Pick List'}
+                                </button>
                             </div>
                         )}
                     </div>
@@ -2764,7 +2904,7 @@ const DeliveryNote = () => {
                                                                                     disabled={!item.binCode || requiredQty <= 0}
                                                                                     className="px-3 py-2 rounded-md bg-[#F5C742] text-slate-900 text-[11px] font-bold hover:bg-yellow-400 disabled:opacity-40 disabled:cursor-not-allowed"
                                                                                 >
-                                                                                    Select Batch
+                                                                                    {hasInheritedBatchSelection(item) ? 'View Batches' : 'Select Batch'}
                                                                                 </button>
                                                                             </div>
                                                                         ) : (
@@ -2926,6 +3066,24 @@ const DeliveryNote = () => {
                                     Status: {renderStatusBadge(status)}
                                 </div>
                                 <span className="text-[11px] font-medium text-slate-500 hidden lg:inline">DN No: <span className="text-slate-700 font-bold">{dnNumber}</span></span>
+                                {currentDnId && normalizedStatus === 'DRAFT' && (() => {
+                                    const noteForProgress = deliveryNotesList.find(n => n.id === currentDnId);
+                                    if (!noteForProgress) return null;
+                                    const prog = getPickingProgress(noteForProgress);
+                                    if (prog.requiredQty === 0) return null;
+                                    const tone = prog.isComplete
+                                        ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                                        : prog.pickedQty > 0
+                                            ? 'bg-amber-50 text-amber-700 border-amber-200'
+                                            : 'bg-slate-50 text-slate-600 border-slate-200';
+                                    return (
+                                        <div className={`flex items-center gap-1.5 text-[10px] font-bold border px-2.5 py-1 rounded shadow-sm ${tone}`}>
+                                            <ClipboardList size={12} />
+                                            Picked {prog.pickedQty}/{prog.requiredQty}
+                                            {prog.isComplete && <span className="ml-1">✓</span>}
+                                        </div>
+                                    );
+                                })()}
                                 {autoGenerated && (
                                     <div className="flex items-center gap-1.5 text-[10px] text-blue-700 font-bold bg-blue-50 border border-blue-200 px-2.5 py-1 rounded shadow-sm">
                                         <Box size={12} /> SYSTEM-GENERATED
@@ -2967,14 +3125,33 @@ const DeliveryNote = () => {
                                     </button>
                                 )}
 
-                                {/* Advance Status Button */}
-                                {!isViewOnly && (
+                                {/* Convert to Invoice — only when DELIVERED and not yet invoiced */}
+                                {normalizedStatus === 'DELIVERED' && !linkedSI && currentDnId && (
+                                    <button
+                                        onClick={handleConvertToInvoice}
+                                        className="flex items-center gap-1.5 px-5 py-1.5 bg-gradient-to-r from-amber-500 to-amber-400 text-white rounded text-xs font-bold hover:from-amber-600 hover:to-amber-500 transition-all shadow-md"
+                                    >
+                                        <ClipboardList size={14} /> Convert to Invoice
+                                    </button>
+                                )}
+
+                                {/* Advance Status Button — Start Picking (DRAFT) or Advance to Delivered (DISPATCHED) */}
+                                {!isViewOnly && normalizedStatus === 'DRAFT' && (
+                                    <button
+                                        onClick={handleStartPicking}
+                                        className="flex items-center gap-1.5 px-5 py-1.5 bg-yellow-400 text-slate-900 rounded text-xs font-bold hover:bg-yellow-500 transition-all shadow-sm"
+                                    >
+                                        <ClipboardList size={14} />
+                                        Start Picking
+                                    </button>
+                                )}
+                                {!isViewOnly && normalizedStatus === 'DISPATCHED' && (
                                     <button
                                         onClick={handleStatusAdvance}
                                         className="flex items-center gap-1.5 px-5 py-1.5 bg-yellow-400 text-slate-900 rounded text-xs font-bold hover:bg-yellow-500 transition-all shadow-sm"
                                     >
                                         <ArrowRightCircle size={14} />
-                                        Advance to {normalizedStatus === 'DRAFT' ? 'Dispatched' : 'Delivered'}
+                                        Advance to Delivered
                                     </button>
                                 )}
                             </div>

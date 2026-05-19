@@ -1,6 +1,10 @@
 package com.billbull.backend.sales.returns;
 
+import java.util.ArrayList;
+import java.util.List;
+
 import com.fasterxml.jackson.annotation.JsonBackReference;
+import com.fasterxml.jackson.annotation.JsonManagedReference;
 import jakarta.persistence.*;
 
 @Entity
@@ -27,6 +31,10 @@ public class SalesReturnItem {
     @JoinColumn(name = "sales_return_id")
     @JsonBackReference
     private SalesReturn salesReturn;
+
+    @OneToMany(mappedBy = "salesReturnItem", cascade = CascadeType.ALL, orphanRemoval = true, fetch = FetchType.EAGER)
+    @JsonManagedReference
+    private List<SalesReturnItemBatch> batches = new ArrayList<>();
 
     /* ===== GETTERS & SETTERS ===== */
 
@@ -124,5 +132,19 @@ public class SalesReturnItem {
 
     public void setSalesReturn(SalesReturn salesReturn) {
         this.salesReturn = salesReturn;
+    }
+
+    public List<SalesReturnItemBatch> getBatches() {
+        return batches;
+    }
+
+    public void setBatches(List<SalesReturnItemBatch> batches) {
+        this.batches.clear();
+        if (batches != null) {
+            for (SalesReturnItemBatch b : batches) {
+                b.setSalesReturnItem(this);
+                this.batches.add(b);
+            }
+        }
     }
 }

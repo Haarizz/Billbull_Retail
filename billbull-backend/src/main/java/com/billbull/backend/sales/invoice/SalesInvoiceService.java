@@ -4,6 +4,7 @@ import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.LocalDate;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -25,13 +26,22 @@ import com.billbull.backend.financials.receiptvoucher.ReceiptVoucherService;
 import com.billbull.backend.inventory.product.ProductBarcodeRepository;
 import com.billbull.backend.sales.customerledger.CustomerRepository;
 import com.billbull.backend.inventory.product.ProductMediaRepository;
+import com.billbull.backend.inventory.batch.BatchAllocationStatus;
+import com.billbull.backend.inventory.batch.BatchSelectionRequest;
+import com.billbull.backend.inventory.batch.BatchSelectionService;
 import com.billbull.backend.inventory.product.Product;
 import com.billbull.backend.inventory.product.ProductPackingRepository;
 import com.billbull.backend.inventory.product.ProductRepository;
 import com.billbull.backend.inventory.stockavailability.StockAvailabilityResponse;
 import com.billbull.backend.inventory.stockavailability.StockAvailabilityService;
+import com.billbull.backend.inventory.warehouse.Bin;
+import com.billbull.backend.inventory.warehouse.BinRepository;
 import com.billbull.backend.inventory.warehouse.Warehouse;
 import com.billbull.backend.inventory.warehouse.WarehouseRepository;
+import com.billbull.backend.purchase.stockmovement.StockMovementRepository;
+import com.billbull.backend.sales.delivery.DeliveryBatchSelectionResponse;
+import com.billbull.backend.sales.delivery.DeliveryNote;
+import com.billbull.backend.sales.delivery.DeliveryNoteItem;
 import com.billbull.backend.sales.delivery.DeliveryNoteRepository;
 import com.billbull.backend.sales.delivery.DeliveryNoteItemRequest;
 import com.billbull.backend.sales.delivery.DeliveryNoteRequest;
@@ -58,6 +68,9 @@ public class SalesInvoiceService {
     private final CustomerRepository customerRepository;
     private final WarehouseRepository warehouseRepository;
     private final BranchAccessService branchAccessService;
+    private final StockMovementRepository stockMovementRepo;
+    private final BinRepository binRepo;
+    private final BatchSelectionService batchSelectionService;
 
     public SalesInvoiceService(SalesInvoiceRepository invoiceRepo,
             PostingEngineService postingEngineService,
@@ -73,7 +86,10 @@ public class SalesInvoiceService {
             DeliveryNoteRepository deliveryNoteRepository,
             CustomerRepository customerRepository,
             WarehouseRepository warehouseRepository,
-            BranchAccessService branchAccessService) {
+            BranchAccessService branchAccessService,
+            StockMovementRepository stockMovementRepo,
+            BinRepository binRepo,
+            BatchSelectionService batchSelectionService) {
         this.invoiceRepo = invoiceRepo;
         this.postingEngineService = postingEngineService;
         this.deliveryNoteService = deliveryNoteService;
@@ -89,6 +105,9 @@ public class SalesInvoiceService {
         this.customerRepository = customerRepository;
         this.warehouseRepository = warehouseRepository;
         this.branchAccessService = branchAccessService;
+        this.stockMovementRepo = stockMovementRepo;
+        this.binRepo = binRepo;
+        this.batchSelectionService = batchSelectionService;
     }
 
     // ----------------------------
@@ -143,6 +162,16 @@ public class SalesInvoiceService {
         if (invoice.getItems() != null) {
             for (SalesInvoiceItem item : invoice.getItems()) {
                 item.setSalesInvoice(invoice);
+
+                Product product = item.getItemCode() != null
+                        ? productRepo.findByCodeAndIsActiveTrue(item.getItemCode()).orElse(null)
+                        : null;
+                if (product != null && product.isBatch()) {
+                    int requiredQty = resolveBaseQty(product.getId(), item.getUnit(),
+                            item.getQuantity() != null ? item.getQuantity() : 0)
+                            + resolveBaseQty(product.getId(), item.getUnit(), item.getFoc() != null ? item.getFoc() : 0);
+                    assignBatchBinIfNeeded(item, product, requiredQty);
+                }
 
                 double netAmount = item.getNetAmount() != null ? item.getNetAmount() : 0;
                 double taxAmount = item.getTaxAmount() != null ? item.getTaxAmount() : 0;
@@ -275,6 +304,7 @@ public class SalesInvoiceService {
 
         Hibernate.initialize(invoice.getItems());
         enrichItems(invoice.getItems());
+        applyBatchSelectionSummary(invoice);
         return invoice;
     }
 
@@ -294,6 +324,7 @@ public class SalesInvoiceService {
         invoices.forEach(inv -> {
             Hibernate.initialize(inv.getItems());
             enrichItems(inv.getItems());
+            applyBatchSelectionSummary(inv);
         });
 
         return invoices;
@@ -308,6 +339,13 @@ public class SalesInvoiceService {
         for (SalesInvoiceItem item : items) {
             if (item.getItemCode() == null || item.getItemCode().isBlank()) continue;
             productRepo.findByCodeAndIsActiveTrue(item.getItemCode()).ifPresent(p -> {
+                item.setBatchControlled(p.isBatch());
+                item.setFefoEnabled(p.isFefoEnabled());
+                item.setMinExpiryDaysForSale(p.getMinExpiryDaysForSale() != null ? p.getMinExpiryDaysForSale() : 0);
+                item.setBaseRequiredQuantity(
+                        resolveBaseQty(p.getId(), item.getUnit(), item.getQuantity() != null ? item.getQuantity() : 0)
+                                + resolveBaseQty(p.getId(), item.getUnit(), item.getFoc() != null ? item.getFoc() : 0));
+                item.setBinCode(resolveBinCode(item.getBinId()));
                 if (item.getSku() == null || item.getSku().isBlank()) item.setSku(p.getSku());
                 if (item.getLocalName() == null || item.getLocalName().isBlank()) item.setLocalName(p.getLocalName());
                 if (item.getDescription() == null || item.getDescription().isBlank()) item.setDescription(p.getShortDesc());
@@ -344,6 +382,31 @@ public class SalesInvoiceService {
         }
     }
 
+    @Transactional
+    public SalesInvoice saveBatchSelection(Long invoiceId, Long itemId, BatchSelectionRequest request) {
+        SalesInvoice invoice = getEditableDirectInvoice(invoiceId);
+        SalesInvoiceItem item = findItem(invoice, itemId);
+        Product product = productRepo.findByCodeAndIsActiveTrue(item.getItemCode())
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND,
+                        "Product not found: " + item.getItemCode()));
+        int requiredQty = resolveBaseQty(product.getId(), item.getUnit(), item.getQuantity() != null ? item.getQuantity() : 0)
+                + resolveBaseQty(product.getId(), item.getUnit(), item.getFoc() != null ? item.getFoc() : 0);
+        batchSelectionService.saveSalesInvoiceLineSelection(invoice, item, request, requiredQty);
+        invoiceRepo.save(invoice);
+        return getById(invoiceId);
+    }
+
+    @Transactional
+    public SalesInvoice deleteBatchSelection(Long invoiceId, Long itemId) {
+        SalesInvoice invoice = getEditableDirectInvoice(invoiceId);
+        SalesInvoiceItem item = findItem(invoice, itemId);
+        batchSelectionService.releaseSourceLine(
+                BatchSelectionService.DOC_TYPE_SALES_INVOICE,
+                invoice.getId(),
+                item.getId());
+        return getById(invoiceId);
+    }
+
     // ----------------------------
     // DELETE
     // ----------------------------
@@ -354,6 +417,7 @@ public class SalesInvoiceService {
             throw new org.springframework.web.server.ResponseStatusException(
                     org.springframework.http.HttpStatus.BAD_REQUEST, "Posted invoices cannot be deleted.");
         }
+        batchSelectionService.releaseSalesInvoice(id);
         invoiceRepo.deleteById(id);
     }
 
@@ -402,8 +466,9 @@ public class SalesInvoiceService {
             boolean isNewlyPosted = ((status == SalesInvoiceStatus.POSTED || status == SalesInvoiceStatus.CONFIRMED
                     || status == SalesInvoiceStatus.PAID || status == SalesInvoiceStatus.PARTIALLY_PAID)
                     && (previousStatus == SalesInvoiceStatus.DRAFT || previousStatus == null));
-            boolean isNewlyCancelled = (status == SalesInvoiceStatus.CANCELLED
-                    && previousStatus != SalesInvoiceStatus.CANCELLED && previousStatus != SalesInvoiceStatus.DRAFT);
+            boolean isCancelledTransition = status == SalesInvoiceStatus.CANCELLED
+                    && previousStatus != SalesInvoiceStatus.CANCELLED;
+            boolean isNewlyCancelled = isCancelledTransition && previousStatus != SalesInvoiceStatus.DRAFT;
 
             if (isNewlyPosted) {
                 // FIX: Force-initialize the lazy items collection here so that ALL downstream
@@ -421,6 +486,7 @@ public class SalesInvoiceService {
 
                 // 2. CREDIT LIMIT CHECK
                 enforceCreditLimit(invoice, settings);
+                ensureDirectInvoiceBatchSelections(invoice);
                 // -------------------------------------------------------
 
                 boolean isLinkedToDn = invoice.getLinkedDeliveryNote() != null
@@ -439,6 +505,10 @@ public class SalesInvoiceService {
                 // Cancel any auto-generated delivery notes to reverse their
                 // reservations/deductions
                 deliveryNoteService.cancelBySourceDocument("SALES_INVOICE", invoice.getId());
+                batchSelectionService.releaseSalesInvoice(invoice.getId());
+                invoice.setDeliveryStatus(DeliveryStatus.CANCELLED);
+            } else if (isCancelledTransition) {
+                batchSelectionService.releaseSalesInvoice(invoice.getId());
                 invoice.setDeliveryStatus(DeliveryStatus.CANCELLED);
             }
 
@@ -590,6 +660,165 @@ public class SalesInvoiceService {
         }
     }
 
+    private void applyBatchSelectionSummary(SalesInvoice invoice) {
+        if (invoice == null || invoice.getItems() == null) {
+            return;
+        }
+        Map<Long, List<DeliveryBatchSelectionResponse>> directSelections =
+                invoice.getId() != null
+                        ? batchSelectionService.getSelections(BatchSelectionService.DOC_TYPE_SALES_INVOICE, invoice.getId())
+                        : Map.of();
+        Map<Long, List<DeliveryBatchSelectionResponse>> salesOrderSelections = Map.of();
+        if (invoice.getLinkedSalesOrder() != null && !invoice.getLinkedSalesOrder().isBlank()) {
+            salesOrderSelections = salesOrderRepository.findBySoNumber(invoice.getLinkedSalesOrder())
+                    .map(so -> batchSelectionService.getSelections(BatchSelectionService.DOC_TYPE_SALES_ORDER, so.getId()))
+                    .orElse(Map.of());
+        }
+        List<DeliveryNote> linkedDeliveryNotes = resolveLinkedDeliveryNotes(invoice);
+
+        for (SalesInvoiceItem item : invoice.getItems()) {
+            List<DeliveryBatchSelectionResponse> selections = List.of();
+            if (invoice.getSalesType() == SalesType.DIRECT_SALE && item.getId() != null) {
+                selections = directSelections.getOrDefault(item.getId(), List.of());
+            } else if (item.getSalesOrderItemId() != null) {
+                selections = salesOrderSelections.getOrDefault(item.getSalesOrderItemId(), List.of());
+            }
+            if (selections.isEmpty()) {
+                selections = getLinkedDeliverySelections(item, linkedDeliveryNotes);
+            }
+            item.setBatchSelections(selections);
+            item.setBatchSelectedQuantity(selections.stream()
+                    .filter(selection -> selection.status == BatchAllocationStatus.RESERVED
+                            || selection.status == BatchAllocationStatus.CONSUMED)
+                    .mapToInt(selection -> selection.quantity != null ? selection.quantity : 0)
+                    .sum());
+            item.setBatchSelectionMode(selections.stream()
+                    .findFirst()
+                    .map(selection -> selection.allocationMethod != null ? selection.allocationMethod.name() : null)
+                    .orElse("AUTO_FEFO"));
+        }
+    }
+
+    private List<DeliveryNote> resolveLinkedDeliveryNotes(SalesInvoice invoice) {
+        if (invoice == null || invoice.getLinkedDeliveryNote() == null || invoice.getLinkedDeliveryNote().isBlank()) {
+            return List.of();
+        }
+        List<String> dnNumbers = Arrays.stream(invoice.getLinkedDeliveryNote().split(","))
+                .map(String::trim)
+                .filter(value -> !value.isBlank())
+                .toList();
+        if (dnNumbers.isEmpty()) {
+            return List.of();
+        }
+        List<DeliveryNote> notes = deliveryNoteRepository.findByDnNumberIn(dnNumbers);
+        notes.forEach(note -> Hibernate.initialize(note.getItems()));
+        return notes;
+    }
+
+    private List<DeliveryBatchSelectionResponse> getLinkedDeliverySelections(
+            SalesInvoiceItem invoiceItem,
+            List<DeliveryNote> notes) {
+        if (invoiceItem == null || notes == null || notes.isEmpty()) {
+            return List.of();
+        }
+        for (DeliveryNote note : notes) {
+            for (DeliveryNoteItem dnItem : note.getItems()) {
+                boolean sameSalesOrderLine = invoiceItem.getSalesOrderItemId() != null
+                        && invoiceItem.getSalesOrderItemId().equals(dnItem.getSalesOrderItemId());
+                boolean sameItemCode = invoiceItem.getItemCode() != null
+                        && invoiceItem.getItemCode().equals(dnItem.getItemCode());
+                if (sameSalesOrderLine || sameItemCode) {
+                    List<DeliveryBatchSelectionResponse> selections =
+                            batchSelectionService.getSelectionsForDeliveryLine(note, dnItem);
+                    if (!selections.isEmpty()) {
+                        return selections;
+                    }
+                }
+            }
+        }
+        return List.of();
+    }
+
+    private SalesInvoice getEditableDirectInvoice(Long invoiceId) {
+        SalesInvoice invoice = getById(invoiceId);
+        if (invoice.getSalesType() != SalesType.DIRECT_SALE) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "Batch selection on Sales Invoice is only allowed for Direct Sale invoices.");
+        }
+        if (invoice.getStatus() != SalesInvoiceStatus.DRAFT) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "Direct invoice batch selection can only be changed while the invoice is Draft.");
+        }
+        return invoice;
+    }
+
+    private SalesInvoiceItem findItem(SalesInvoice invoice, Long itemId) {
+        return invoice.getItems().stream()
+                .filter(item -> item.getId() != null && item.getId().equals(itemId))
+                .findFirst()
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND,
+                        "Sales Invoice item not found: " + itemId));
+    }
+
+    private void ensureDirectInvoiceBatchSelections(SalesInvoice invoice) {
+        if (invoice.getSalesType() != SalesType.DIRECT_SALE || invoice.getItems() == null) {
+            return;
+        }
+        Map<Long, List<DeliveryBatchSelectionResponse>> selectionsByLine =
+                batchSelectionService.getSelections(BatchSelectionService.DOC_TYPE_SALES_INVOICE, invoice.getId());
+        for (SalesInvoiceItem item : invoice.getItems()) {
+            if (item.getItemCode() == null || item.getItemCode().isBlank()) {
+                continue;
+            }
+            Product product = productRepo.findByCodeAndIsActiveTrue(item.getItemCode()).orElse(null);
+            if (product == null || !product.isBatch()) {
+                continue;
+            }
+            int requiredQty = resolveBaseQty(product.getId(), item.getUnit(), item.getQuantity() != null ? item.getQuantity() : 0)
+                    + resolveBaseQty(product.getId(), item.getUnit(), item.getFoc() != null ? item.getFoc() : 0);
+            int selectedQty = selectionsByLine.getOrDefault(item.getId(), List.of()).stream()
+                    .filter(selection -> selection.status == BatchAllocationStatus.RESERVED)
+                    .mapToInt(selection -> selection.quantity != null ? selection.quantity : 0)
+                    .sum();
+            if (selectedQty != requiredQty) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                        "Batch selection must exactly match Direct Invoice quantity for " + item.getItemCode()
+                                + ". Selected: " + selectedQty + " | Required: " + requiredQty);
+            }
+        }
+    }
+
+    private void assignBatchBinIfNeeded(SalesInvoiceItem item, Product product, int requiredQty) {
+        if (item == null || product == null || !product.isBatch() || item.getBinId() != null) {
+            return;
+        }
+        Long binId = findPreferredBinId(item.getWarehouseId(), product.getId(), requiredQty);
+        if (binId != null) {
+            item.setBinId(binId);
+            item.setBinCode(resolveBinCode(binId));
+        }
+    }
+
+    private Long findPreferredBinId(Long warehouseId, Long productId, int requiredQty) {
+        if (warehouseId == null || productId == null || requiredQty <= 0) {
+            return null;
+        }
+        return stockMovementRepo.findActiveBinsByWarehouseAndProduct(warehouseId, productId).stream()
+                .filter(row -> ((Number) row[1]).doubleValue() >= requiredQty)
+                .map(row -> (Long) row[0])
+                .findFirst()
+                .orElse(null);
+    }
+
+    private String resolveBinCode(Long binId) {
+        if (binId == null) {
+            return null;
+        }
+        return binRepo.findById(binId)
+                .map(Bin::getCode)
+                .orElse(null);
+    }
+
     private int resolveSourceReservationCredit(SalesInvoice invoice, SalesInvoiceItem item, Product product,
             Long warehouseId) {
         int deliveryNoteCredit = 0;
@@ -603,6 +832,15 @@ public class SalesInvoiceService {
 
         if (deliveryNoteCredit > 0) {
             return deliveryNoteCredit;
+        }
+
+        if (product.isBatch()
+                && invoice.getSalesType() == SalesType.DIRECT_SALE
+                && invoice.getId() != null
+                && item.getId() != null) {
+            return sumActiveBatchSelections(batchSelectionService
+                    .getSelections(BatchSelectionService.DOC_TYPE_SALES_INVOICE, invoice.getId())
+                    .getOrDefault(item.getId(), List.of()));
         }
 
         if (invoice.getLinkedSalesOrder() == null || invoice.getLinkedSalesOrder().isBlank()) {
@@ -632,6 +870,17 @@ public class SalesInvoiceService {
                             .sum();
                 })
                 .orElse(0);
+    }
+
+    private int sumActiveBatchSelections(List<DeliveryBatchSelectionResponse> selections) {
+        if (selections == null || selections.isEmpty()) {
+            return 0;
+        }
+        return selections.stream()
+                .filter(selection -> selection.status == BatchAllocationStatus.RESERVED
+                        || selection.status == BatchAllocationStatus.CONSUMED)
+                .mapToInt(selection -> selection.quantity != null ? selection.quantity : 0)
+                .sum();
     }
 
     private BigDecimal safeDecimal(BigDecimal value) {
@@ -776,6 +1025,9 @@ public class SalesInvoiceService {
                 iReq.foc = item.getFoc();
                 iReq.focUnit = item.getUnit();
                 iReq.image = item.getImage();
+                iReq.binId = item.getBinId();
+                iReq.salesOrderItemId = item.getSalesOrderItemId();
+                iReq.sourceLineId = item.getId();
                 iReq.price = item.getPrice();
                 iReq.disc = item.getDiscount();
                 iReq.tax = item.getTaxRate();

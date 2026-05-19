@@ -24,6 +24,11 @@ import com.billbull.backend.inventory.warehouse.BinRepository;
 import com.billbull.backend.sales.delivery.DeliveryBatchSelectionResponse;
 import com.billbull.backend.sales.delivery.DeliveryNote;
 import com.billbull.backend.sales.delivery.DeliveryNoteItem;
+import com.billbull.backend.sales.invoice.SalesInvoice;
+import com.billbull.backend.sales.invoice.SalesInvoiceItem;
+import com.billbull.backend.sales.invoice.SalesType;
+import com.billbull.backend.sales.salesorder.SalesOrder;
+import com.billbull.backend.sales.salesorder.SalesOrderItem;
 import com.billbull.backend.security.RolePermissionService;
 
 @Service
@@ -31,7 +36,13 @@ import com.billbull.backend.security.RolePermissionService;
 public class BatchSelectionService {
 
     public static final String DOC_TYPE_DELIVERY_NOTE = "DELIVERY_NOTE";
+    public static final String DOC_TYPE_SALES_ORDER = "SALES_ORDER";
+    public static final String DOC_TYPE_SALES_INVOICE = "SALES_INVOICE";
+    public static final String DOC_TYPE_SALES_RETURN = "SALES_RETURN";
     public static final String MANUAL_PERMISSION = "batch_manual_select";
+
+    private static final List<BatchAllocationStatus> ACTIVE_STATUSES =
+            List.of(BatchAllocationStatus.RESERVED, BatchAllocationStatus.CONSUMED);
 
     private final BatchMasterRepository batchRepository;
     private final BatchAllocationRepository allocationRepository;
@@ -99,7 +110,66 @@ public class BatchSelectionService {
         response.fefoSelection = selected.stream()
                 .map(batch -> toSelectionRow(product, batch, true, today))
                 .toList();
+        response.binId = bin.getId();
+
+        Long warehouseId = bin.getLocator() != null
+                && bin.getLocator().getZone() != null
+                && bin.getLocator().getZone().getWarehouse() != null
+                ? bin.getLocator().getZone().getWarehouse().getId()
+                : null;
+        response.warehouseId = warehouseId;
+        if (warehouseId != null) {
+            response.availableBins = binRepository.findByWarehouseId(warehouseId).stream()
+                    .map(b -> new BatchSelectionOptionsResponse.BinOption(b.getId(), b.getCode(), b.getName()))
+                    .toList();
+        }
         return response;
+    }
+
+    public List<BatchAllocation> saveSalesOrderLineSelection(
+            SalesOrder order,
+            SalesOrderItem item,
+            BatchSelectionRequest request,
+            int requiredQuantity) {
+        if (order == null || order.getId() == null || item == null || item.getId() == null) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Saved sales order and item are required");
+        }
+        Product product = requireBatchProduct(item.getItemCode());
+        Bin bin = resolveSourceBin(request, item.getBinId());
+        item.setBinId(bin.getId());
+        return saveSourceLineSelection(
+                DOC_TYPE_SALES_ORDER,
+                order.getId(),
+                item.getId(),
+                product,
+                bin,
+                request,
+                requiredQuantity);
+    }
+
+    public List<BatchAllocation> saveSalesInvoiceLineSelection(
+            SalesInvoice invoice,
+            SalesInvoiceItem item,
+            BatchSelectionRequest request,
+            int requiredQuantity) {
+        if (invoice == null || invoice.getId() == null || item == null || item.getId() == null) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Saved sales invoice and item are required");
+        }
+        if (invoice.getSalesType() != SalesType.DIRECT_SALE) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "Invoice batch selection is only available for Direct Sale invoices. Use the Sales Order or Delivery Note batch selection for linked flows.");
+        }
+        Product product = requireBatchProduct(item.getItemCode());
+        Bin bin = resolveSourceBin(request, item.getBinId());
+        item.setBinId(bin.getId());
+        return saveSourceLineSelection(
+                DOC_TYPE_SALES_INVOICE,
+                invoice.getId(),
+                item.getId(),
+                product,
+                bin,
+                request,
+                requiredQuantity);
     }
 
     public List<BatchAllocation> saveDeliveryLineSelection(
@@ -116,14 +186,33 @@ public class BatchSelectionService {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Batch selection is only valid for batch-controlled items");
         }
 
+        Bin bin = resolveItemBin(item);
+        return saveSourceLineSelection(
+                DOC_TYPE_DELIVERY_NOTE,
+                dn.getId(),
+                item.getId(),
+                product,
+                bin,
+                request,
+                requiredQuantity);
+    }
+
+    private List<BatchAllocation> saveSourceLineSelection(
+            String sourceDocumentType,
+            Long sourceDocumentId,
+            Long sourceLineId,
+            Product product,
+            Bin bin,
+            BatchSelectionRequest request,
+            int requiredQuantity) {
+
         int required = normalizeRequiredQuantity(
                 request != null && request.requiredQuantity != null ? request.requiredQuantity : requiredQuantity);
         if (required != requiredQuantity) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
-                    "Required quantity does not match the delivery line base quantity");
+                    "Required quantity does not match the document line base quantity");
         }
 
-        Bin bin = resolveItemBin(item);
         validateRequestedLocation(request, bin);
         BatchAllocationMethod method = request != null && request.mode != null
                 ? request.mode
@@ -137,11 +226,13 @@ public class BatchSelectionService {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Manual batch selection permission is required");
         }
 
-        releaseDeliveryLine(dn.getId(), item.getId());
+        releaseSourceLine(sourceDocumentType, sourceDocumentId, sourceLineId);
 
         List<BatchMaster> selected = method == BatchAllocationMethod.AUTO_FEFO
                 ? selectAndLockFefo(product, bin, required)
                 : selectAndLockManual(product, bin, required, request != null ? request.batchMasterIds : List.of());
+
+        assertNoActiveAllocations(selected);
 
         List<BatchAllocation> allocations = new ArrayList<>(selected.size());
         LocalDateTime selectedAt = LocalDateTime.now();
@@ -149,7 +240,16 @@ public class BatchSelectionService {
 
         for (BatchMaster batch : selected) {
             batch.setStatus(BatchStatus.RESERVED);
-            allocations.add(newDeliveryAllocation(dn, item, product, bin, batch, method, selectedBy, selectedAt));
+            allocations.add(newAllocation(
+                    sourceDocumentType,
+                    sourceDocumentId,
+                    sourceLineId,
+                    product,
+                    bin,
+                    batch,
+                    method,
+                    selectedBy,
+                    selectedAt));
         }
 
         batchRepository.saveAll(selected);
@@ -160,50 +260,94 @@ public class BatchSelectionService {
     }
 
     public void releaseDeliveryLine(Long deliveryNoteId, Long itemId) {
-        if (deliveryNoteId == null || itemId == null) {
+        releaseSourceLine(DOC_TYPE_DELIVERY_NOTE, deliveryNoteId, itemId);
+    }
+
+    public void releaseDeliveryNote(Long deliveryNoteId) {
+        releaseSourceDocument(DOC_TYPE_DELIVERY_NOTE, deliveryNoteId);
+    }
+
+    public void releaseSalesOrder(Long salesOrderId) {
+        releaseSourceDocument(DOC_TYPE_SALES_ORDER, salesOrderId);
+    }
+
+    public void releaseSalesInvoice(Long salesInvoiceId) {
+        releaseSourceDocument(DOC_TYPE_SALES_INVOICE, salesInvoiceId);
+    }
+
+    public void releaseSourceLine(String sourceDocumentType, Long sourceDocumentId, Long sourceLineId) {
+        if (sourceDocumentType == null || sourceDocumentId == null || sourceLineId == null) {
             return;
         }
         releaseAllocations(allocationRepository
                 .findBySourceDocumentTypeAndSourceDocumentIdAndSourceLineIdAndStatus(
-                        DOC_TYPE_DELIVERY_NOTE, deliveryNoteId, itemId, BatchAllocationStatus.RESERVED));
+                        sourceDocumentType, sourceDocumentId, sourceLineId, BatchAllocationStatus.RESERVED));
     }
 
-    public void releaseDeliveryNote(Long deliveryNoteId) {
-        if (deliveryNoteId == null) {
+    public void releaseSourceDocument(String sourceDocumentType, Long sourceDocumentId) {
+        if (sourceDocumentType == null || sourceDocumentId == null) {
             return;
         }
         releaseAllocations(allocationRepository
                 .findBySourceDocumentTypeAndSourceDocumentIdAndStatus(
-                        DOC_TYPE_DELIVERY_NOTE, deliveryNoteId, BatchAllocationStatus.RESERVED));
+                        sourceDocumentType, sourceDocumentId, BatchAllocationStatus.RESERVED));
     }
 
     public void restoreConsumedDeliveryNote(Long deliveryNoteId) {
         if (deliveryNoteId == null) {
             return;
         }
-        List<BatchAllocation> allocations = allocationRepository
-                .findBySourceDocumentTypeAndSourceDocumentIdAndStatus(
-                        DOC_TYPE_DELIVERY_NOTE, deliveryNoteId, BatchAllocationStatus.CONSUMED);
+        List<BatchAllocation> allocations = new ArrayList<>(allocationRepository
+                .findByDepletedByDocumentTypeAndDepletedByDocumentIdAndStatus(
+                        DOC_TYPE_DELIVERY_NOTE, deliveryNoteId, BatchAllocationStatus.CONSUMED));
+        allocations.addAll(allocationRepository.findBySourceDocumentTypeAndSourceDocumentIdAndStatus(
+                DOC_TYPE_DELIVERY_NOTE, deliveryNoteId, BatchAllocationStatus.CONSUMED));
+
         for (BatchAllocation allocation : allocations) {
             BatchMaster batch = allocation.getBatchMaster();
-            batch.setStatus(BatchStatus.AVAILABLE);
-            allocation.setStatus(BatchAllocationStatus.RELEASED);
+            if (DOC_TYPE_DELIVERY_NOTE.equals(allocation.getSourceDocumentType())) {
+                batch.setStatus(BatchStatus.AVAILABLE);
+                allocation.setStatus(BatchAllocationStatus.RELEASED);
+            } else {
+                batch.setStatus(BatchStatus.RESERVED);
+                allocation.setStatus(BatchAllocationStatus.RESERVED);
+            }
+            allocation.setDepletedByDocumentType(null);
+            allocation.setDepletedByDocumentId(null);
+            allocation.setDepletedByLineId(null);
+            allocation.setDepletedAt(null);
         }
         allocationRepository.saveAll(allocations);
     }
 
     public void markConsumed(Collection<BatchAllocation> allocations) {
+        markConsumedForDelivery(null, null, allocations);
+    }
+
+    public void markConsumedForDelivery(
+            DeliveryNote dn,
+            DeliveryNoteItem item,
+            Collection<BatchAllocation> allocations) {
         if (allocations == null || allocations.isEmpty()) {
             return;
         }
+        LocalDateTime depletedAt = LocalDateTime.now();
         for (BatchAllocation allocation : allocations) {
             BatchMaster batch = allocation.getBatchMaster();
             if (batch.getStatus() != BatchStatus.RESERVED) {
                 throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
                         "Batch " + batch.getBatchNumber() + " is not reserved and cannot be consumed");
             }
-            batch.setStatus(BatchStatus.SOLD);
+            batch.setStatus(BatchStatus.CONSUMED);
             allocation.setStatus(BatchAllocationStatus.CONSUMED);
+            if (dn != null) {
+                allocation.setDepletedByDocumentType(DOC_TYPE_DELIVERY_NOTE);
+                allocation.setDepletedByDocumentId(dn.getId());
+            }
+            if (item != null) {
+                allocation.setDepletedByLineId(item.getId());
+            }
+            allocation.setDepletedAt(depletedAt);
         }
         allocationRepository.saveAll(allocations);
     }
@@ -218,6 +362,28 @@ public class BatchSelectionService {
     }
 
     @Transactional(readOnly = true)
+    public List<BatchAllocation> getReservedForDeliverySource(DeliveryNote dn, DeliveryNoteItem item) {
+        if (dn == null || item == null) {
+            return List.of();
+        }
+        if (item.getSalesOrderItemId() != null) {
+            List<BatchAllocation> allocations = allocationRepository.findBySourceDocumentTypeAndSourceLineIdAndStatus(
+                    DOC_TYPE_SALES_ORDER, item.getSalesOrderItemId(), BatchAllocationStatus.RESERVED);
+            if (!allocations.isEmpty()) {
+                return allocations;
+            }
+        }
+        if (item.getSourceLineId() != null && dn.getSourceDocumentType() != null) {
+            List<BatchAllocation> allocations = allocationRepository.findBySourceDocumentTypeAndSourceLineIdAndStatus(
+                    dn.getSourceDocumentType(), item.getSourceLineId(), BatchAllocationStatus.RESERVED);
+            if (!allocations.isEmpty()) {
+                return allocations;
+            }
+        }
+        return getReservedForDeliveryLine(dn.getId(), item.getId());
+    }
+
+    @Transactional(readOnly = true)
     public List<BatchAllocation> getAllocationsForDeliveryLine(Long deliveryNoteId, Long itemId) {
         if (deliveryNoteId == null || itemId == null) {
             return List.of();
@@ -227,21 +393,88 @@ public class BatchSelectionService {
     }
 
     @Transactional(readOnly = true)
-    public Map<Long, List<DeliveryBatchSelectionResponse>> getDeliverySelections(Long deliveryNoteId) {
-        if (deliveryNoteId == null) {
+    public List<DeliveryBatchSelectionResponse> getSelectionsForDeliveryLine(DeliveryNote dn, DeliveryNoteItem item) {
+        if (dn == null || item == null) {
+            return List.of();
+        }
+
+        List<BatchAllocation> allocations = new ArrayList<>();
+        allocations.addAll(allocationRepository
+                .findByDepletedByDocumentTypeAndDepletedByDocumentIdAndDepletedByLineIdAndStatus(
+                        DOC_TYPE_DELIVERY_NOTE,
+                        dn.getId(),
+                        item.getId(),
+                        BatchAllocationStatus.CONSUMED));
+
+        if (allocations.isEmpty()) {
+            if (item.getSalesOrderItemId() != null) {
+                allocations.addAll(allocationRepository.findBySourceDocumentTypeAndSourceLineIdAndStatusIn(
+                        DOC_TYPE_SALES_ORDER, item.getSalesOrderItemId(), ACTIVE_STATUSES));
+            }
+            if (allocations.isEmpty() && item.getSourceLineId() != null && dn.getSourceDocumentType() != null) {
+                allocations.addAll(allocationRepository.findBySourceDocumentTypeAndSourceLineIdAndStatusIn(
+                        dn.getSourceDocumentType(), item.getSourceLineId(), ACTIVE_STATUSES));
+            }
+            if (allocations.isEmpty()) {
+                allocations.addAll(allocationRepository.findBySourceDocumentTypeAndSourceDocumentIdAndSourceLineId(
+                                DOC_TYPE_DELIVERY_NOTE, dn.getId(), item.getId())
+                        .stream()
+                        .filter(allocation -> ACTIVE_STATUSES.contains(allocation.getStatus()))
+                        .toList());
+            }
+        }
+
+        return allocations.stream().map(this::toDeliveryResponse).toList();
+    }
+
+    @Transactional(readOnly = true)
+    public Map<Long, List<DeliveryBatchSelectionResponse>> getSelections(String sourceDocumentType, Long sourceDocumentId) {
+        if (sourceDocumentType == null || sourceDocumentId == null) {
             return Map.of();
         }
         List<BatchAllocation> allocations = allocationRepository
                 .findBySourceDocumentTypeAndSourceDocumentIdAndStatusIn(
-                        DOC_TYPE_DELIVERY_NOTE,
-                        deliveryNoteId,
-                        List.of(BatchAllocationStatus.RESERVED, BatchAllocationStatus.CONSUMED));
+                        sourceDocumentType,
+                        sourceDocumentId,
+                        ACTIVE_STATUSES);
         Map<Long, List<DeliveryBatchSelectionResponse>> byLine = new LinkedHashMap<>();
         for (BatchAllocation allocation : allocations) {
             byLine.computeIfAbsent(allocation.getSourceLineId(), key -> new ArrayList<>())
                     .add(toDeliveryResponse(allocation));
         }
         return byLine;
+    }
+
+    @Transactional(readOnly = true)
+    public Map<Long, List<DeliveryBatchSelectionResponse>> getDeliverySelections(Long deliveryNoteId) {
+        return getSelections(DOC_TYPE_DELIVERY_NOTE, deliveryNoteId);
+    }
+
+    @Transactional(readOnly = true)
+    public List<BatchAllocation> findReturnableAllocations(String sourceDocumentType, Long sourceDocumentId) {
+        if (sourceDocumentType == null || sourceDocumentId == null) {
+            return List.of();
+        }
+        return allocationRepository.findBySourceDocumentTypeAndSourceDocumentIdAndStatusIn(
+                sourceDocumentType, sourceDocumentId, ACTIVE_STATUSES);
+    }
+
+    @Transactional(readOnly = true)
+    public int sumAlreadyReturned(Long parentAllocationId) {
+        if (parentAllocationId == null) return 0;
+        return allocationRepository
+                .findByParentAllocationIdAndStatus(parentAllocationId, BatchAllocationStatus.RETURNED)
+                .stream()
+                .mapToInt(a -> a.getQuantity() != null ? a.getQuantity() : 0)
+                .sum();
+    }
+
+    public BatchAllocationRepository getAllocationRepository() {
+        return allocationRepository;
+    }
+
+    public BatchMasterRepository getBatchRepository() {
+        return batchRepository;
     }
 
     public DeliveryBatchSelectionResponse toDeliveryResponse(BatchAllocation allocation) {
@@ -253,6 +486,8 @@ public class BatchSelectionService {
         response.quantity = allocation.getQuantity();
         response.allocationMethod = allocation.getAllocationMethod();
         response.status = allocation.getStatus();
+        response.binId = allocation.getBinId();
+        response.binCode = allocation.getBinCode();
 
         BatchMaster batch = allocation.getBatchMaster();
         response.manufacturingDate = batch.getManufacturingDate();
@@ -349,9 +584,25 @@ public class BatchSelectionService {
         }
     }
 
-    private BatchAllocation newDeliveryAllocation(
-            DeliveryNote dn,
-            DeliveryNoteItem item,
+    private void assertNoActiveAllocations(List<BatchMaster> selected) {
+        if (selected == null || selected.isEmpty()) {
+            return;
+        }
+        List<Long> batchIds = selected.stream().map(BatchMaster::getId).toList();
+        List<BatchAllocation> conflicts = allocationRepository.findActiveByBatchIdsForUpdate(batchIds, ACTIVE_STATUSES);
+        if (conflicts != null && !conflicts.isEmpty()) {
+            BatchAllocation conflict = conflicts.get(0);
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                    "Batch " + conflict.getBatchNumber() + " already has an active allocation on "
+                            + conflict.getSourceDocumentType() + " #" + conflict.getSourceDocumentId()
+                            + ". Release that allocation before selecting this batch again.");
+        }
+    }
+
+    private BatchAllocation newAllocation(
+            String sourceDocumentType,
+            Long sourceDocumentId,
+            Long sourceLineId,
             Product product,
             Bin bin,
             BatchMaster batch,
@@ -360,9 +611,9 @@ public class BatchSelectionService {
             LocalDateTime selectedAt) {
 
         BatchAllocation allocation = new BatchAllocation();
-        allocation.setSourceDocumentType(DOC_TYPE_DELIVERY_NOTE);
-        allocation.setSourceDocumentId(dn.getId());
-        allocation.setSourceLineId(item.getId());
+        allocation.setSourceDocumentType(sourceDocumentType);
+        allocation.setSourceDocumentId(sourceDocumentId);
+        allocation.setSourceLineId(sourceLineId);
         allocation.setProductId(product.getId());
         allocation.setProductCode(product.getCode());
         allocation.setBinId(bin.getId());
@@ -459,6 +710,25 @@ public class BatchSelectionService {
                         HttpStatus.NOT_FOUND, "Product not found: " + itemCode));
     }
 
+    private Product requireBatchProduct(String itemCode) {
+        Product product = requireProduct(itemCode);
+        if (!product.isBatch()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "Batch selection is only valid for batch-controlled items");
+        }
+        return product;
+    }
+
+    private Bin resolveSourceBin(BatchSelectionRequest request, Long existingBinId) {
+        if (request != null && request.binId != null) {
+            return resolveBin(request.binId, request.locationCode);
+        }
+        if (existingBinId != null) {
+            return resolveBin(existingBinId, request != null ? request.locationCode : null);
+        }
+        return resolveBin(null, request != null ? request.locationCode : null);
+    }
+
     private Bin resolveBin(Long binId, String locationCode) {
         if (binId != null) {
             return binRepository.findByIdEager(binId)
@@ -492,12 +762,19 @@ public class BatchSelectionService {
     }
 
     private void validateRequestedLocation(BatchSelectionRequest request, Bin bin) {
-        if (request == null || request.locationCode == null || request.locationCode.isBlank()) {
+        if (request == null) {
+            return;
+        }
+        if (request.binId != null && !request.binId.equals(bin.getId())) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "Batch selection bin does not match the document line bin");
+        }
+        if (request.locationCode == null || request.locationCode.isBlank()) {
             return;
         }
         if (!bin.getCode().equalsIgnoreCase(request.locationCode.trim())) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
-                    "Batch selection location does not match the delivery line bin");
+                    "Batch selection location does not match the document line bin");
         }
     }
 

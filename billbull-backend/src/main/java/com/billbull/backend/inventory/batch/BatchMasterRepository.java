@@ -3,6 +3,7 @@ package com.billbull.backend.inventory.batch;
 import java.time.LocalDate;
 import java.util.Collection;
 import java.util.List;
+import java.util.Optional;
 
 import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.JpaRepository;
@@ -42,6 +43,22 @@ public interface BatchMasterRepository extends JpaRepository<BatchMaster, Long> 
             LocalDate generatedDate);
 
     List<BatchMaster> findByIdIn(Collection<Long> ids);
+
+    Optional<BatchMaster> findByBatchNumber(String batchNumber);
+
+    @Query("""
+            SELECT b
+            FROM BatchMaster b
+            WHERE b.productId = :productId
+              AND b.binId = :binId
+              AND b.batchNumber = :batchNumber
+              AND b.status = com.billbull.backend.inventory.batch.BatchStatus.AVAILABLE
+            ORDER BY b.entryDate ASC, b.id ASC
+            """)
+    List<BatchMaster> findAvailableMatching(
+            @Param("productId") Long productId,
+            @Param("binId") Long binId,
+            @Param("batchNumber") String batchNumber);
 
     @Query("""
             SELECT b

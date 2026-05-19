@@ -23,7 +23,10 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import com.billbull.backend.inventory.batch.BatchMaster;
+import com.billbull.backend.inventory.batch.BatchMasterRepository;
 import com.billbull.backend.inventory.batch.BatchNumberGenerator;
+import com.billbull.backend.inventory.batch.BatchStatus;
 import com.billbull.backend.inventory.batch.StockIdentifier;
 import com.billbull.backend.inventory.product.Product;
 import com.billbull.backend.inventory.product.ProductBarcode;
@@ -56,6 +59,7 @@ public class StockTakeService {
     private final BinStockService binStockService;
     private final StockTakeExpectedUnitRepository expectedUnitRepo;
     private final StockTakeUnitScanRepository unitScanRepo;
+    private final BatchMasterRepository batchMasterRepo;
 
     public StockTakeService(
             StockTakeSessionRepository sessionRepo,
@@ -69,7 +73,8 @@ public class StockTakeService {
             BinRepository binRepo,
             BinStockService binStockService,
             StockTakeExpectedUnitRepository expectedUnitRepo,
-            StockTakeUnitScanRepository unitScanRepo) {
+            StockTakeUnitScanRepository unitScanRepo,
+            BatchMasterRepository batchMasterRepo) {
         this.sessionRepo = sessionRepo;
         this.itemRepo = itemRepo;
         this.batchRepo = batchRepo;
@@ -82,6 +87,7 @@ public class StockTakeService {
         this.binStockService = binStockService;
         this.expectedUnitRepo = expectedUnitRepo;
         this.unitScanRepo = unitScanRepo;
+        this.batchMasterRepo = batchMasterRepo;
     }
 
     public StockTakeSession createSession(String warehouseName, Long warehouseId, String type, String countType,
@@ -1500,7 +1506,70 @@ public class StockTakeService {
             }
 
             stockMovementRepo.save(movement);
+
+            syncBatchMasterForIdentity(session, item, binId, zoneId, locatorId, identity, delta);
         }
+    }
+
+    private void syncBatchMasterForIdentity(
+            StockTakeSession session,
+            StockTakeItem item,
+            Long binId,
+            Long zoneId,
+            Long locatorId,
+            BatchIdentity identity,
+            int delta) {
+
+        if (delta > 0) {
+            LocalDate generatedDate = LocalDate.now();
+            for (int i = 0; i < delta; i++) {
+                String batchNumber = identity.batchNumber;
+                if (batchNumber == null) continue;
+                int unitIndex = BatchNumberGenerator.parseUnitIndex(batchNumber).orElse(i + 1);
+                if (batchMasterRepo.existsBySourceDocumentTypeAndSourceDocumentIdAndSourceLineIdAndUnitIndex(
+                        "STOCK_TAKE", session.getId(), item.getId(), unitIndex)) {
+                    continue;
+                }
+
+                BatchMaster master = new BatchMaster();
+                master.setBatchNumber(batchNumber);
+                master.setSourceType(stockTakeSourceType(session));
+                master.setSourceRefNo(session.getSessionId() != null ? session.getSessionId() : String.valueOf(session.getId()));
+                master.setSourceDocumentType("STOCK_TAKE");
+                master.setSourceDocumentId(session.getId());
+                master.setSourceLineId(item.getId());
+                master.setProductId(item.getProductId());
+                master.setProductCode(item.getSku());
+                master.setProductName(item.getProductName());
+                master.setWarehouseId(session.getWarehouseId());
+                master.setZoneId(zoneId);
+                master.setLocatorId(locatorId);
+                master.setBinId(binId);
+                master.setUnitIndex(unitIndex);
+                master.setQuantity(1);
+                master.setGeneratedDate(generatedDate);
+                master.setEntryDate(generatedDate);
+                master.setExpiryDate(identity.expiryDate);
+                master.setStatus(BatchStatus.AVAILABLE);
+                batchMasterRepo.save(master);
+            }
+        } else if (delta < 0) {
+            int toConsume = -delta;
+            List<BatchMaster> available = batchMasterRepo.findAvailableMatching(
+                    item.getProductId(), binId, identity.batchNumber);
+            for (BatchMaster master : available) {
+                if (toConsume <= 0) break;
+                master.setStatus(BatchStatus.CONSUMED);
+                batchMasterRepo.save(master);
+                toConsume--;
+            }
+        }
+    }
+
+    private String stockTakeSourceType(StockTakeSession session) {
+        return session != null && session.getType() == StockTakeSession.StockTakeType.OPENING_INVENTORY
+                ? "OS"
+                : "ST";
     }
 
     private Map<BatchIdentity, Integer> loadSystemBatchIdentityQty(Long warehouseId, Long productId, Long binId) {

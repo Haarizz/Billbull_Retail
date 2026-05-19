@@ -19,7 +19,6 @@ import jakarta.persistence.UniqueConstraint;
 @Table(
         name = "batch_master",
         uniqueConstraints = {
-                @UniqueConstraint(name = "uk_batch_master_batch_number", columnNames = "batch_number"),
                 @UniqueConstraint(
                         name = "uk_batch_master_source_line_unit",
                         columnNames = { "source_document_type", "source_document_id", "source_line_id", "unit_index" })

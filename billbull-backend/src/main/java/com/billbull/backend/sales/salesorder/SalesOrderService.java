@@ -15,7 +15,14 @@ import java.math.BigDecimal;
 import java.math.RoundingMode;
 
 import com.billbull.backend.inventory.product.ProductMediaRepository;
+import com.billbull.backend.inventory.batch.BatchSelectionRequest;
+import com.billbull.backend.inventory.batch.BatchSelectionService;
+import com.billbull.backend.inventory.batch.BatchAllocationStatus;
 import com.billbull.backend.inventory.warehouse.Warehouse;
+import com.billbull.backend.inventory.warehouse.Bin;
+import com.billbull.backend.inventory.warehouse.BinRepository;
+import com.billbull.backend.purchase.stockmovement.StockMovementRepository;
+import com.billbull.backend.sales.delivery.DeliveryBatchSelectionResponse;
 import com.billbull.backend.settings.branch.Branch;
 import com.billbull.backend.settings.branch.BranchAccessService;
 import com.billbull.backend.util.DocumentOrderingUtil;
@@ -31,6 +38,9 @@ public class SalesOrderService {
     private final ProductMediaRepository productMediaRepository;
     private final com.billbull.backend.inventory.product.ProductPackingRepository packingRepo;
     private final BranchAccessService branchAccessService;
+    private final StockMovementRepository stockMovementRepo;
+    private final BinRepository binRepo;
+    private final BatchSelectionService batchSelectionService;
 
     public SalesOrderService(
             SalesOrderRepository orderRepo,
@@ -40,7 +50,10 @@ public class SalesOrderService {
             com.billbull.backend.inventory.product.ProductBarcodeRepository barcodeRepo,
             ProductMediaRepository productMediaRepository,
             com.billbull.backend.inventory.product.ProductPackingRepository packingRepo,
-            BranchAccessService branchAccessService) {
+            BranchAccessService branchAccessService,
+            StockMovementRepository stockMovementRepo,
+            BinRepository binRepo,
+            BatchSelectionService batchSelectionService) {
         this.orderRepo = orderRepo;
         this.quotationRepo = quotationRepo;
         this.warehouseStockService = warehouseStockService;
@@ -49,6 +62,9 @@ public class SalesOrderService {
         this.productMediaRepository = productMediaRepository;
         this.packingRepo = packingRepo;
         this.branchAccessService = branchAccessService;
+        this.stockMovementRepo = stockMovementRepo;
+        this.binRepo = binRepo;
+        this.batchSelectionService = batchSelectionService;
     }
 
     // ----------------------------
@@ -74,6 +90,12 @@ public class SalesOrderService {
 
         double subTotal = 0;
         double tax = 0;
+        SalesOrderStatus requestedStatus = order.getStatus();
+        boolean confirmingOrder = requestedStatus != SalesOrderStatus.DRAFT;
+        Map<Long, List<DeliveryBatchSelectionResponse>> existingBatchSelections =
+                order.getId() != null
+                        ? batchSelectionService.getSelections(BatchSelectionService.DOC_TYPE_SALES_ORDER, order.getId())
+                        : Map.of();
 
         if (order.getItems() != null) {
             for (SalesOrderItem item : order.getItems()) {
@@ -95,11 +117,24 @@ public class SalesOrderService {
 
                         // Convert requested quantity to base units so the comparison is against
                         // the StockMovement ledger (which always stores base units).
-                        int baseRequired = resolvePackingBaseQty(product.getId(), item.getUnit(), item.getQuantity());
+                        int baseRequired = calculateLineBaseQty(
+                                product.getId(),
+                                item.getUnit(),
+                                item.getQuantity(),
+                                item.getFocUnit(),
+                                item.getFoc());
+                        assignBatchBinIfNeeded(order, item, product, baseRequired);
+                        if (product.isBatch() && item.getId() != null) {
+                            available = available.add(BigDecimal.valueOf(sumActiveBatchSelections(
+                                    existingBatchSelections.getOrDefault(item.getId(), List.of()))));
+                        }
                         if (available.compareTo(java.math.BigDecimal.valueOf(baseRequired)) < 0) {
                             throw new IllegalStateException(
                                     "Insufficient available stock for item " + item.getItemCode() +
                                             ". Available: " + available + ", Required (base units): " + baseRequired);
+                        }
+                        if (confirmingOrder && product.isBatch()) {
+                            ensureSalesOrderBatchSelectionExact(order, item, baseRequired);
                         }
                     }
                 }
@@ -132,11 +167,17 @@ public class SalesOrderService {
                 : null;
 
         if (order.getId() == null) {
-            order.setStatus(SalesOrderStatus.CONFIRMED);
+            order.setStatus(requestedStatus == SalesOrderStatus.DRAFT
+                    ? SalesOrderStatus.DRAFT
+                    : SalesOrderStatus.CONFIRMED);
         } else if (currentStatus == SalesOrderStatus.INVOICED
                 || currentStatus == SalesOrderStatus.DELIVERED
                 || currentStatus == SalesOrderStatus.PARTIALLY_DELIVERED) {
             order.setStatus(currentStatus); // Never downgrade finalized statuses
+        } else if (requestedStatus == SalesOrderStatus.DRAFT) {
+            order.setStatus(SalesOrderStatus.DRAFT);
+        } else if (requestedStatus == SalesOrderStatus.CONFIRMED && advance <= 0) {
+            order.setStatus(SalesOrderStatus.CONFIRMED);
         } else if (advance > 0 && advance < total) {
             order.setStatus(SalesOrderStatus.PARTIALLY_PAID);
         } else if (advance >= total) {
@@ -232,6 +273,37 @@ public class SalesOrderService {
     }
 
     @Transactional
+    public SalesOrder saveBatchSelection(Long orderId, Long itemId, BatchSelectionRequest request) {
+        SalesOrder order = getEditableBatchOrder(orderId);
+        SalesOrderItem item = findItem(order, itemId);
+        com.billbull.backend.inventory.product.Product product = productRepo
+                .findByCodeAndIsActiveTrue(item.getItemCode())
+                .orElseThrow(() -> new IllegalStateException("Product not found: " + item.getItemCode()));
+        int requiredQty = calculateLineBaseQty(
+                product.getId(),
+                item.getUnit(),
+                item.getQuantity(),
+                item.getFocUnit(),
+                item.getFoc());
+        batchSelectionService.saveSalesOrderLineSelection(order, item, request, requiredQty);
+        orderRepo.save(order);
+        hydrateOrderItemDisplayData(order);
+        return order;
+    }
+
+    @Transactional
+    public SalesOrder deleteBatchSelection(Long orderId, Long itemId) {
+        SalesOrder order = getEditableBatchOrder(orderId);
+        SalesOrderItem item = findItem(order, itemId);
+        batchSelectionService.releaseSourceLine(
+                BatchSelectionService.DOC_TYPE_SALES_ORDER,
+                order.getId(),
+                item.getId());
+        hydrateOrderItemDisplayData(order);
+        return order;
+    }
+
+    @Transactional
     public void updateStatus(String soNumber, SalesOrderStatus status) {
         orderRepo.findBySoNumber(soNumber).ifPresent(order -> {
             order.setStatus(status);
@@ -305,6 +377,7 @@ public class SalesOrderService {
         }
 
         order.getItems().forEach(this::hydrateOrderItemDisplayData);
+        applyBatchSelectionSummary(order);
 
         List<String> codesNeedingImage = order.getItems().stream()
                 .filter(i -> (i.getImage() == null || i.getImage().isBlank()) && i.getItemCode() != null && !i.getItemCode().isBlank())
@@ -338,6 +411,19 @@ public class SalesOrderService {
             return;
         }
 
+        item.setBatchControlled(product.isBatch());
+        item.setFefoEnabled(product.isFefoEnabled());
+        item.setMinExpiryDaysForSale(product.getMinExpiryDaysForSale() != null
+                ? product.getMinExpiryDaysForSale()
+                : 0);
+        item.setBaseRequiredQuantity(calculateLineBaseQty(
+                product.getId(),
+                item.getUnit(),
+                item.getQuantity(),
+                item.getFocUnit(),
+                item.getFoc()));
+        item.setBinCode(resolveBinCode(item.getBinId()));
+
         if (item.getBarcode() == null || item.getBarcode().isBlank()) {
             String barcode = barcodeRepo.findByProductId(product.getId()).stream()
                     .map(com.billbull.backend.inventory.product.ProductBarcode::getBarcode)
@@ -369,6 +455,122 @@ public class SalesOrderService {
                 item.setCost(product.getPricing().getCost().doubleValue());
             }
         }
+    }
+
+    private void applyBatchSelectionSummary(SalesOrder order) {
+        if (order == null || order.getId() == null || order.getItems() == null) {
+            return;
+        }
+        Map<Long, List<DeliveryBatchSelectionResponse>> selectionsByLine =
+                batchSelectionService.getSelections(BatchSelectionService.DOC_TYPE_SALES_ORDER, order.getId());
+        for (SalesOrderItem item : order.getItems()) {
+            if (item.getId() == null) {
+                continue;
+            }
+            List<DeliveryBatchSelectionResponse> selections =
+                    selectionsByLine.getOrDefault(item.getId(), List.of());
+            item.setBatchSelections(selections);
+            item.setBatchSelectedQuantity(selections.stream()
+                    .filter(selection -> selection.status == BatchAllocationStatus.RESERVED
+                            || selection.status == BatchAllocationStatus.CONSUMED)
+                    .mapToInt(selection -> selection.quantity != null ? selection.quantity : 0)
+                    .sum());
+            item.setBatchSelectionMode(selections.stream()
+                    .findFirst()
+                    .map(selection -> selection.allocationMethod != null ? selection.allocationMethod.name() : null)
+                    .orElse("AUTO_FEFO"));
+        }
+    }
+
+    private SalesOrder getEditableBatchOrder(Long orderId) {
+        SalesOrder order = getById(orderId);
+        if (order.getStatus() == SalesOrderStatus.INVOICED
+                || order.getStatus() == SalesOrderStatus.DISPATCHED
+                || order.getStatus() == SalesOrderStatus.DELIVERED
+                || order.getStatus() == SalesOrderStatus.PARTIALLY_DELIVERED) {
+            throw new IllegalStateException("Batch selection can only be changed before delivery/invoicing starts.");
+        }
+        return order;
+    }
+
+    private SalesOrderItem findItem(SalesOrder order, Long itemId) {
+        return order.getItems().stream()
+                .filter(item -> item.getId() != null && item.getId().equals(itemId))
+                .findFirst()
+                .orElseThrow(() -> new IllegalStateException("Sales Order item not found: " + itemId));
+    }
+
+    private void assignBatchBinIfNeeded(
+            SalesOrder order,
+            SalesOrderItem item,
+            com.billbull.backend.inventory.product.Product product,
+            int requiredQty) {
+        if (order == null || item == null || product == null || !product.isBatch() || item.getBinId() != null) {
+            return;
+        }
+        Long warehouseId = order.getWarehouse() != null ? order.getWarehouse().getId() : null;
+        Long binId = findPreferredBinId(warehouseId, product.getId(), requiredQty);
+        if (binId != null) {
+            item.setBinId(binId);
+            item.setBinCode(resolveBinCode(binId));
+        }
+    }
+
+    private Long findPreferredBinId(Long warehouseId, Long productId, int requiredQty) {
+        if (warehouseId == null || productId == null || requiredQty <= 0) {
+            return null;
+        }
+        return stockMovementRepo.findActiveBinsByWarehouseAndProduct(warehouseId, productId).stream()
+                .filter(row -> ((Number) row[1]).doubleValue() >= requiredQty)
+                .map(row -> (Long) row[0])
+                .findFirst()
+                .orElse(null);
+    }
+
+    private void ensureSalesOrderBatchSelectionExact(SalesOrder order, SalesOrderItem item, int requiredQty) {
+        if (order.getId() == null || item.getId() == null) {
+            throw new IllegalStateException(
+                    "Save the Sales Order as Draft before confirming batch-controlled item " + item.getItemCode());
+        }
+        int selectedQty = batchSelectionService
+                .getSelections(BatchSelectionService.DOC_TYPE_SALES_ORDER, order.getId())
+                .getOrDefault(item.getId(), List.of())
+                .stream()
+                .filter(selection -> selection.status == BatchAllocationStatus.RESERVED)
+                .mapToInt(selection -> selection.quantity != null ? selection.quantity : 0)
+                .sum();
+        if (selectedQty != requiredQty) {
+            throw new IllegalStateException(
+                    "Batch selection must exactly match Sales Order quantity for " + item.getItemCode()
+                            + ". Selected: " + selectedQty + " | Required: " + requiredQty);
+        }
+    }
+
+    private int sumActiveBatchSelections(List<DeliveryBatchSelectionResponse> selections) {
+        if (selections == null || selections.isEmpty()) {
+            return 0;
+        }
+        return selections.stream()
+                .filter(selection -> selection.status == BatchAllocationStatus.RESERVED
+                        || selection.status == BatchAllocationStatus.CONSUMED)
+                .mapToInt(selection -> selection.quantity != null ? selection.quantity : 0)
+                .sum();
+    }
+
+    private int calculateLineBaseQty(Long productId, String unitName, Integer qty, String focUnit, Integer foc) {
+        int baseQty = resolvePackingBaseQty(productId, unitName, qty != null ? qty : 0);
+        String effectiveFocUnit = focUnit != null && !focUnit.isBlank() ? focUnit : unitName;
+        int baseFoc = resolvePackingBaseQty(productId, effectiveFocUnit, foc != null ? foc : 0);
+        return baseQty + baseFoc;
+    }
+
+    private String resolveBinCode(Long binId) {
+        if (binId == null) {
+            return null;
+        }
+        return binRepo.findById(binId)
+                .map(Bin::getCode)
+                .orElse(null);
     }
 
     private java.math.BigDecimal lookupPackingValue(Long productId, String unitName, boolean isPrice) {

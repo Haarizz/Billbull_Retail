@@ -5,6 +5,14 @@ import {
   clearDeliveryNoteBatchSelection,
   saveDeliveryNoteBatchSelection
 } from '../api/deliveryNoteApi';
+import {
+  clearSalesOrderBatchSelection,
+  saveSalesOrderBatchSelection
+} from '../api/salesorderApi';
+import {
+  clearSalesInvoiceBatchSelection,
+  saveSalesInvoiceBatchSelection
+} from '../api/salesInvoiceApi';
 
 const formatDate = (value) => value ? String(value).slice(0, 10) : '-';
 
@@ -47,11 +55,36 @@ const asRow = (selection) => ({
   reserved: true
 });
 
+const resolveDocumentId = ({ sourceType, sourceDocumentId, deliveryNoteId, salesOrderId, salesInvoiceId }) => {
+  if (sourceDocumentId) return sourceDocumentId;
+  if (sourceType === 'SALES_ORDER') return salesOrderId;
+  if (sourceType === 'SALES_INVOICE') return salesInvoiceId;
+  return deliveryNoteId;
+};
+
+const saveSelection = ({ sourceType, sourceDocumentId, deliveryNoteId, salesOrderId, salesInvoiceId, itemId, payload }) => {
+  const docId = resolveDocumentId({ sourceType, sourceDocumentId, deliveryNoteId, salesOrderId, salesInvoiceId });
+  if (sourceType === 'SALES_ORDER') return saveSalesOrderBatchSelection(docId, itemId, payload);
+  if (sourceType === 'SALES_INVOICE') return saveSalesInvoiceBatchSelection(docId, itemId, payload);
+  return saveDeliveryNoteBatchSelection(docId, itemId, payload);
+};
+
+const clearSelection = ({ sourceType, sourceDocumentId, deliveryNoteId, salesOrderId, salesInvoiceId, itemId }) => {
+  const docId = resolveDocumentId({ sourceType, sourceDocumentId, deliveryNoteId, salesOrderId, salesInvoiceId });
+  if (sourceType === 'SALES_ORDER') return clearSalesOrderBatchSelection(docId, itemId);
+  if (sourceType === 'SALES_INVOICE') return clearSalesInvoiceBatchSelection(docId, itemId);
+  return clearDeliveryNoteBatchSelection(docId, itemId);
+};
+
 const BatchSelectionModal = ({
   isOpen,
   onClose,
   onSaved,
+  sourceType = 'DELIVERY_NOTE',
+  sourceDocumentId,
   deliveryNoteId,
+  salesOrderId,
+  salesInvoiceId,
   itemId,
   itemCode,
   itemName,
@@ -61,7 +94,8 @@ const BatchSelectionModal = ({
   fefoEnabled = true,
   minExpiryDaysForSale = 0,
   currentSelections = [],
-  canManualSelect = false
+  canManualSelect = false,
+  readOnly = false
 }) => {
   const [mode, setMode] = useState(fefoEnabled ? 'AUTO_FEFO' : 'MANUAL');
   const [options, setOptions] = useState(null);
@@ -69,6 +103,8 @@ const BatchSelectionModal = ({
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+  const [activeBinId, setActiveBinId] = useState(binId ?? null);
+  const [activeBinCode, setActiveBinCode] = useState(locationCode || '');
 
   const required = Math.max(0, Number(requiredQuantity) || 0);
 
@@ -76,17 +112,19 @@ const BatchSelectionModal = ({
     if (!isOpen) return;
     setMode(fefoEnabled ? 'AUTO_FEFO' : 'MANUAL');
     setSelectedIds((currentSelections || []).map(row => row.batchMasterId).filter(Boolean));
+    setActiveBinId(binId ?? null);
+    setActiveBinCode(locationCode || '');
     setError('');
-  }, [isOpen, fefoEnabled, currentSelections]);
+  }, [isOpen, fefoEnabled, currentSelections, binId, locationCode]);
 
   useEffect(() => {
-    if (!isOpen || !itemCode || !locationCode || required <= 0) return;
+    if (!isOpen || readOnly || !itemCode || !activeBinCode || required <= 0) return;
 
     let cancelled = false;
     setLoading(true);
     setError('');
 
-    getBatchSelectionOptions({ itemCode, locationCode, binId, requiredQuantity: required })
+    getBatchSelectionOptions({ itemCode, locationCode: activeBinCode, binId: activeBinId, requiredQuantity: required })
       .then(data => {
         if (!cancelled) setOptions(data);
       })
@@ -103,7 +141,17 @@ const BatchSelectionModal = ({
     return () => {
       cancelled = true;
     };
-  }, [isOpen, itemCode, locationCode, binId, required]);
+  }, [isOpen, readOnly, itemCode, activeBinCode, activeBinId, required]);
+
+  const handleBinChange = (nextBinId) => {
+    if (readOnly) return;
+    const id = Number(nextBinId);
+    const next = (options?.availableBins || []).find(b => b.id === id);
+    if (!next) return;
+    setActiveBinId(next.id);
+    setActiveBinCode(next.code);
+    setSelectedIds([]);
+  };
 
   const currentRows = useMemo(
     () => (currentSelections || []).map(asRow),
@@ -133,6 +181,7 @@ const BatchSelectionModal = ({
   if (!isOpen) return null;
 
   const toggleManualRow = (row) => {
+    if (readOnly) return;
     if (row.blockedReason) return;
     setSelectedIds(prev => {
       if (prev.includes(row.batchMasterId)) {
@@ -146,6 +195,7 @@ const BatchSelectionModal = ({
   };
 
   const handleSave = async () => {
+    if (readOnly) return;
     if (mode === 'MANUAL' && !canManualSelect) {
       setError('Manual batch selection permission is required.');
       return;
@@ -158,11 +208,21 @@ const BatchSelectionModal = ({
     setSaving(true);
     setError('');
     try {
-      const response = await saveDeliveryNoteBatchSelection(deliveryNoteId, itemId, {
+      const payload = {
         mode,
-        locationCode,
+        locationCode: activeBinCode,
+        binId: activeBinId,
         requiredQuantity: required,
         batchMasterIds: mode === 'MANUAL' ? selectedIds : []
+      };
+      const response = await saveSelection({
+        sourceType,
+        sourceDocumentId,
+        deliveryNoteId,
+        salesOrderId,
+        salesInvoiceId,
+        itemId,
+        payload
       });
       await onSaved?.(response);
       onClose();
@@ -175,10 +235,18 @@ const BatchSelectionModal = ({
   };
 
   const handleClear = async () => {
+    if (readOnly) return;
     setSaving(true);
     setError('');
     try {
-      const response = await clearDeliveryNoteBatchSelection(deliveryNoteId, itemId);
+      const response = await clearSelection({
+        sourceType,
+        sourceDocumentId,
+        deliveryNoteId,
+        salesOrderId,
+        salesInvoiceId,
+        itemId
+      });
       await onSaved?.(response);
       setSelectedIds([]);
       onClose();
@@ -195,10 +263,12 @@ const BatchSelectionModal = ({
       <div className="w-full max-w-5xl bg-white rounded-lg shadow-xl border border-slate-200 max-h-[90vh] flex flex-col">
         <div className="px-5 py-4 border-b border-slate-200 flex items-start justify-between gap-4">
           <div>
-            <div className="text-xs font-bold uppercase tracking-wider text-slate-400">Batch Selection</div>
+            <div className="text-xs font-bold uppercase tracking-wider text-slate-400">
+              {readOnly ? 'Batch Details' : 'Batch Selection'}
+            </div>
             <h3 className="text-lg font-bold text-slate-900 mt-1">{itemCode} {itemName ? `- ${itemName}` : ''}</h3>
             <div className="text-xs text-slate-500 mt-1">
-              Location: <span className="font-semibold text-slate-700">{locationCode || '-'}</span>
+              Location: <span className="font-semibold text-slate-700">{activeBinCode || '-'}</span>
               <span className="mx-2">|</span>
               Required: <span className="font-semibold text-slate-700">{required}</span>
             </div>
@@ -209,23 +279,41 @@ const BatchSelectionModal = ({
         </div>
 
         <div className="px-5 py-3 border-b border-slate-100 flex flex-wrap items-center justify-between gap-3">
-          <div className="inline-flex rounded-md border border-slate-200 overflow-hidden text-xs font-bold">
-            <button
-              type="button"
-              disabled={!fefoEnabled}
-              onClick={() => setMode('AUTO_FEFO')}
-              className={`px-4 py-2 ${mode === 'AUTO_FEFO' ? 'bg-slate-900 text-white' : 'bg-white text-slate-600 hover:bg-slate-50'} disabled:opacity-40 disabled:cursor-not-allowed`}
-            >
-              FEFO Auto
-            </button>
-            {canManualSelect && (
+          <div className="flex flex-wrap items-center gap-3">
+            <div className="inline-flex rounded-md border border-slate-200 overflow-hidden text-xs font-bold">
               <button
                 type="button"
-                onClick={() => setMode('MANUAL')}
-                className={`px-4 py-2 border-l border-slate-200 ${mode === 'MANUAL' ? 'bg-[#F5C742] text-slate-900' : 'bg-white text-slate-600 hover:bg-slate-50'}`}
+                disabled={!fefoEnabled || readOnly}
+                onClick={() => setMode('AUTO_FEFO')}
+                className={`px-4 py-2 ${mode === 'AUTO_FEFO' ? 'bg-slate-900 text-white' : 'bg-white text-slate-600 hover:bg-slate-50'} disabled:opacity-40 disabled:cursor-not-allowed`}
               >
-                Switch to Manual Override
+                FEFO Auto
               </button>
+              {canManualSelect && !readOnly && (
+                <button
+                  type="button"
+                  onClick={() => setMode('MANUAL')}
+                  className={`px-4 py-2 border-l border-slate-200 ${mode === 'MANUAL' ? 'bg-[#F5C742] text-slate-900' : 'bg-white text-slate-600 hover:bg-slate-50'}`}
+                >
+                  Switch to Manual Override
+                </button>
+              )}
+            </div>
+            {!readOnly && (options?.availableBins?.length || 0) > 1 && (
+              <label className="inline-flex items-center gap-2 text-xs font-semibold text-slate-600">
+                Bin
+                <select
+                  value={activeBinId ?? ''}
+                  onChange={(e) => handleBinChange(e.target.value)}
+                  className="px-2 py-1.5 border border-slate-200 rounded text-xs font-bold text-slate-700 bg-white focus:outline-none focus:border-[#F5C742]"
+                >
+                  {options.availableBins.map(b => (
+                    <option key={b.id} value={b.id}>
+                      {b.code}{b.name ? ` — ${b.name}` : ''}
+                    </option>
+                  ))}
+                </select>
+              </label>
             )}
           </div>
 
@@ -239,6 +327,12 @@ const BatchSelectionModal = ({
         </div>
 
         <div className="p-5 overflow-y-auto space-y-4">
+          {readOnly && (
+            <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-medium text-slate-600">
+              These batches are inherited from the source document. Delivery Notes and Pick Lists are read-only for batch allocation.
+            </div>
+          )}
+
           {error && (
             <div className="flex items-start gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
               <AlertTriangle size={16} className="shrink-0 mt-0.5" />
@@ -258,7 +352,7 @@ const BatchSelectionModal = ({
                   FEFO is disabled for this product.
                 </div>
               )}
-              {!options?.sufficient && currentRows.length === 0 && (
+              {!readOnly && !options?.sufficient && currentRows.length === 0 && (
                 <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs font-medium text-red-700">
                   {options?.message || 'Insufficient Batch Stock.'}
                 </div>
@@ -283,37 +377,42 @@ const BatchSelectionModal = ({
                 selectedIds={selectedIds}
                 onToggle={toggleManualRow}
                 manual
+                readOnly={readOnly}
               />
             </div>
           )}
         </div>
 
         <div className="px-5 py-4 border-t border-slate-200 flex items-center justify-between gap-3">
-          <button
-            type="button"
-            onClick={handleClear}
-            disabled={saving || currentRows.length === 0}
-            className="px-4 py-2 rounded-md border border-slate-200 text-xs font-bold text-slate-600 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed"
-          >
-            Clear Selection
-          </button>
+          {readOnly ? <span /> : (
+            <button
+              type="button"
+              onClick={handleClear}
+              disabled={saving || currentRows.length === 0}
+              className="px-4 py-2 rounded-md border border-slate-200 text-xs font-bold text-slate-600 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              Clear Selection
+            </button>
+          )}
           <div className="flex items-center gap-2">
             <button
               type="button"
               onClick={onClose}
               className="px-4 py-2 rounded-md border border-slate-200 text-xs font-bold text-slate-600 hover:bg-slate-50"
             >
-              Cancel
+              {readOnly ? 'Close' : 'Cancel'}
             </button>
-            <button
-              type="button"
-              onClick={handleSave}
-              disabled={saving || (mode === 'MANUAL' ? !canSaveManual : !canSaveFefo)}
-              className="inline-flex items-center gap-2 px-4 py-2 rounded-md bg-slate-900 text-white text-xs font-bold hover:bg-slate-800 disabled:opacity-40 disabled:cursor-not-allowed"
-            >
-              <CheckCircle2 size={14} />
-              {saving ? 'Saving...' : 'Confirm Selection'}
-            </button>
+            {!readOnly && (
+              <button
+                type="button"
+                onClick={handleSave}
+                disabled={saving || (mode === 'MANUAL' ? !canSaveManual : !canSaveFefo)}
+                className="inline-flex items-center gap-2 px-4 py-2 rounded-md bg-slate-900 text-white text-xs font-bold hover:bg-slate-800 disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                <CheckCircle2 size={14} />
+                {saving ? 'Saving...' : 'Confirm Selection'}
+              </button>
+            )}
           </div>
         </div>
       </div>
@@ -346,7 +445,7 @@ const BatchTable = ({ rows, selectedIds = [], onToggle, minExpiryDaysForSale, ma
         ) : rows.map(row => {
           const selected = selectedIds.includes(row.batchMasterId);
           const warning = warningFor(row, minExpiryDaysForSale);
-          const disabled = Boolean(row.blockedReason);
+          const disabled = readOnly || Boolean(row.blockedReason);
 
           return (
             <tr key={row.batchMasterId || row.batchNumber} className={`${selected ? 'bg-yellow-50/70' : 'bg-white'} ${disabled ? 'opacity-60' : ''}`}>

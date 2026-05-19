@@ -4,6 +4,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 import com.billbull.backend.security.ModulePermissionService;
+import com.billbull.backend.inventory.batch.BatchSelectionRequest;
 
 import java.time.LocalDate;
 import java.util.List;
@@ -49,6 +50,25 @@ public class SalesInvoiceController {
         modulePermissionService.requireCanEdit("sales");
         service.delete(id);
         return ResponseEntity.noContent().build();
+    }
+
+    @PostMapping("/{invoiceId}/items/{itemId}/batch-selection")
+    @PreAuthorize("isAuthenticated()")
+    public SalesInvoice saveBatchSelection(
+            @PathVariable Long invoiceId,
+            @PathVariable Long itemId,
+            @RequestBody BatchSelectionRequest request) {
+        modulePermissionService.requireCanEdit("sales");
+        return service.saveBatchSelection(invoiceId, itemId, request);
+    }
+
+    @DeleteMapping("/{invoiceId}/items/{itemId}/batch-selection")
+    @PreAuthorize("isAuthenticated()")
+    public SalesInvoice deleteBatchSelection(
+            @PathVariable Long invoiceId,
+            @PathVariable Long itemId) {
+        modulePermissionService.requireCanEdit("sales");
+        return service.deleteBatchSelection(invoiceId, itemId);
     }
 
     @GetMapping("/next-number")

@@ -12,6 +12,7 @@ import org.springframework.stereotype.Service;
 
 import com.billbull.backend.inventory.product.Product;
 import com.billbull.backend.inventory.product.ProductRepository;
+import com.billbull.backend.inventory.batch.BatchAllocationRepository;
 import com.billbull.backend.purchase.stockmovement.StockMovementRepository;
 
 @Service
@@ -26,6 +27,7 @@ public class WarehouseStockService {
     private final com.billbull.backend.sales.salesorder.SalesOrderRepository salesOrderRepo;
     private final com.billbull.backend.sales.proforma.ProformaRepository proformaRepo;
     private final com.billbull.backend.sales.delivery.DeliveryNoteRepository deliveryNoteRepo;
+    private final BatchAllocationRepository batchAllocationRepository;
 
     public WarehouseStockService(
             StockMovementRepository stockRepo,
@@ -37,7 +39,8 @@ public class WarehouseStockService {
             com.billbull.backend.sales.quotation.QuotationRepository quotationRepo,
             com.billbull.backend.sales.salesorder.SalesOrderRepository salesOrderRepo,
             com.billbull.backend.sales.proforma.ProformaRepository proformaRepo,
-            com.billbull.backend.sales.delivery.DeliveryNoteRepository deliveryNoteRepo) {
+            com.billbull.backend.sales.delivery.DeliveryNoteRepository deliveryNoteRepo,
+            BatchAllocationRepository batchAllocationRepository) {
         this.stockRepo = stockRepo;
         this.productRepo = productRepo;
         this.warehouseRepo = warehouseRepo;
@@ -47,6 +50,7 @@ public class WarehouseStockService {
         this.salesOrderRepo = salesOrderRepo;
         this.proformaRepo = proformaRepo;
         this.deliveryNoteRepo = deliveryNoteRepo;
+        this.batchAllocationRepository = batchAllocationRepository;
     }
 
     private int safeInt(BigDecimal value) {
@@ -78,7 +82,13 @@ public class WarehouseStockService {
             return allocations;
         }
 
-        List<String> productCodes = products.stream().map(Product::getCode).toList();
+        List<String> productCodes = products.stream()
+                .filter(product -> !product.isBatch())
+                .map(Product::getCode)
+                .toList();
+        if (productCodes.isEmpty()) {
+            return allocations;
+        }
         for (Object[] row : salesOrderRepo.sumReservedQuantityForProductsByWarehouse(productCodes)) {
             Long productId = (Long) row[0];
             Long warehouseId = (Long) row[1];
@@ -115,6 +125,9 @@ public class WarehouseStockService {
         if (product == null) {
             return 0;
         }
+        if (product.isBatch()) {
+            return safeInt(batchAllocationRepository.sumReservedByProductAndWarehouse(productId, warehouseId));
+        }
 
         return getSalesOrderReservationAllocations(List.of(product))
                 .getOrDefault(productId, Collections.emptyMap())
@@ -122,6 +135,10 @@ public class WarehouseStockService {
     }
 
     public int getTotalReservedForWarehouse(Long warehouseId, Long productId) {
+        Product product = productRepo.findById(productId).orElse(null);
+        if (product != null && product.isBatch()) {
+            return safeInt(batchAllocationRepository.sumReservedByProductAndWarehouse(productId, warehouseId));
+        }
         int salesOrderReserved = getSalesOrderReservedForWarehouse(warehouseId, productId);
         int deliveryNoteReserved = safeInt(deliveryNoteRepo.sumReservedQtyInDispatchedNotes(productId, warehouseId));
         return salesOrderReserved + deliveryNoteReserved;
@@ -142,10 +159,12 @@ public class WarehouseStockService {
             int onHand = ((Number) row[1]).intValue();
             Product product = productMap.get(productId);
 
-            int reserved = salesOrderAllocations
-                    .getOrDefault(productId, Collections.emptyMap())
-                    .getOrDefault(warehouseId, 0);
-            reserved += safeInt(deliveryNoteRepo.sumReservedQtyInDispatchedNotes(productId, warehouseId));
+            int reserved = product != null && product.isBatch()
+                    ? safeInt(batchAllocationRepository.sumReservedByProductAndWarehouse(productId, warehouseId))
+                    : salesOrderAllocations
+                            .getOrDefault(productId, Collections.emptyMap())
+                            .getOrDefault(warehouseId, 0)
+                            + safeInt(deliveryNoteRepo.sumReservedQtyInDispatchedNotes(productId, warehouseId));
 
             WarehouseStockResponse response = new WarehouseStockResponse();
             response.setProductId(productId);
@@ -176,8 +195,10 @@ public class WarehouseStockService {
             String warehouseName = (String) row[3];
             String warehouseType = (String) row[4];
 
-            int totalReserved = salesOrderAllocation.getOrDefault(warehouseId, 0)
-                    + safeInt(deliveryNoteRepo.sumReservedQtyInDispatchedNotes(product.getId(), warehouseId));
+            int totalReserved = product.isBatch()
+                    ? safeInt(batchAllocationRepository.sumReservedByProductAndWarehouse(product.getId(), warehouseId))
+                    : salesOrderAllocation.getOrDefault(warehouseId, 0)
+                            + safeInt(deliveryNoteRepo.sumReservedQtyInDispatchedNotes(product.getId(), warehouseId));
 
             WarehouseStockResponse response = new WarehouseStockResponse();
             response.setProductId(product.getId());
@@ -203,7 +224,12 @@ public class WarehouseStockService {
         }
 
         BigDecimal reserved = BigDecimal.ZERO;
-        if (binId != null) {
+        Product product = productRepo.findById(productId).orElse(null);
+        if (product != null && product.isBatch()) {
+            reserved = binId != null
+                    ? batchAllocationRepository.sumReservedByProductAndBin(productId, binId)
+                    : batchAllocationRepository.sumReservedByProductAndWarehouse(productId, warehouseId);
+        } else if (binId != null) {
             reserved = deliveryNoteRepo.sumReservedQtyInDispatchedNotesByBin(productId, binId);
         } else if (warehouseId != null && zoneId == null && locatorId == null) {
             reserved = BigDecimal.valueOf(getTotalReservedForWarehouse(warehouseId, productId));

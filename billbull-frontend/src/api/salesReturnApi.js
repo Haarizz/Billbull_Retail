@@ -60,3 +60,13 @@ export const updateSalesReturnStatus = async (id, status) => {
 export const deleteSalesReturn = async (id) => {
     await api.delete(`${BASE_URL}/${id}`);
 };
+
+// --------------------
+// GET RETURNABLE BATCHES FOR INVOICE
+// --------------------
+export const getReturnableBatches = async (invoiceNumber) => {
+    const res = await api.get(`${BASE_URL}/returnable-batches`, {
+        params: { invoiceNumber }
+    });
+    return res.data;
+};

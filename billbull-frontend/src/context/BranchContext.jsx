@@ -113,6 +113,7 @@ const formatBranchLocationLabel = (branch) => {
 export const BranchProvider = ({ children }) => {
     const [defaultBranch, setDefaultBranch] = useState(null);
     const [branches, setBranches] = useState([]);
+    const [isLoading, setIsLoading] = useState(() => Boolean(sessionStorage.getItem("token")));
 
     const mapProfileBranch = (profile) => {
         if (!profile?.branchId) {
@@ -135,9 +136,11 @@ export const BranchProvider = ({ children }) => {
         if (!sessionStorage.getItem("token")) {
             setDefaultBranch(null);
             setBranches([]);
+            setIsLoading(false);
             return;
         }
 
+        setIsLoading(true);
         let profileBranch = null;
         try {
             const profile = await getUserProfile();
@@ -189,6 +192,7 @@ export const BranchProvider = ({ children }) => {
         const finalBranches = sortBranches(mergedBranches);
         setBranches(finalBranches);
         setDefaultBranch(resolvedDefaultBranch || finalBranches.find((branch) => branch.isDefault) || null);
+        setIsLoading(false);
     };
 
     useEffect(() => {
@@ -210,6 +214,7 @@ export const BranchProvider = ({ children }) => {
             defaultBranchName,
             defaultBranchLabel,
             defaultBranchLocationLabel,
+            isLoading,
             formatBranchLabel,
             formatBranchLocationLabel,
             refreshDefaultBranch: load,

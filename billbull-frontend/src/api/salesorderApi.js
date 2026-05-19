@@ -45,6 +45,16 @@ export const updateSalesOrderStatus = async (id, status) => {
   return res.data;
 };
 
+export const saveSalesOrderBatchSelection = async (orderId, itemId, payload) => {
+  const res = await api.post(`${BASE_URL}/${orderId}/items/${itemId}/batch-selection`, payload);
+  return res.data;
+};
+
+export const clearSalesOrderBatchSelection = async (orderId, itemId) => {
+  const res = await api.delete(`${BASE_URL}/${orderId}/items/${itemId}/batch-selection`);
+  return res.data;
+};
+
 // --------------------
 // UPLOAD ATTACHMENT
 // --------------------
