@@ -30,6 +30,7 @@ import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 
+import com.billbull.backend.inventory.batch.BatchMasterRepository;
 import com.billbull.backend.inventory.brand.Brand;
 import com.billbull.backend.inventory.department.Department;
 import com.billbull.backend.inventory.product.Product;
@@ -61,6 +62,7 @@ class StockTakeServiceTest {
     @Mock private BinStockService binStockService;
     @Mock private StockTakeExpectedUnitRepository expectedUnitRepo;
     @Mock private StockTakeUnitScanRepository unitScanRepo;
+    @Mock private BatchMasterRepository batchMasterRepo;
 
     private StockTakeService service;
 
@@ -78,7 +80,8 @@ class StockTakeServiceTest {
                 binRepo,
                 binStockService,
                 expectedUnitRepo,
-                unitScanRepo);
+                unitScanRepo,
+                batchMasterRepo);
     }
 
     @Test
