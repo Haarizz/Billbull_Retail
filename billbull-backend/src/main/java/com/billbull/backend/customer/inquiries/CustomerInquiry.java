@@ -27,6 +27,8 @@ public class CustomerInquiry extends BaseEntity {
     private String customer;
     private String mobile;
     private String email;
+    @Column(length = 1000)
+    private String address;
     private String branch;
     private String source;
     private String category;
@@ -97,6 +99,14 @@ public class CustomerInquiry extends BaseEntity {
 
     public void setEmail(String email) {
         this.email = email;
+    }
+
+    public String getAddress() {
+        return address;
+    }
+
+    public void setAddress(String address) {
+        this.address = address;
     }
 
     public String getBranch() {

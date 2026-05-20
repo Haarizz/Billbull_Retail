@@ -193,6 +193,49 @@ const resolveApiErrorMessage = (error, fallback) => {
     return fallback;
 };
 
+const normalizeIncomingPaymentTerm = (value) => {
+    const normalized = String(value || '').trim().toLowerCase();
+    if (!normalized) return '30 Days';
+    if (['immediate', 'cash', 'cash on delivery'].includes(normalized)) return 'Immediate';
+    if (['net15', 'net 15', '15 days'].includes(normalized)) return '15 Days';
+    if (['net30', 'net 30', '30 days'].includes(normalized)) return '30 Days';
+    if (['net45', 'net 45', '45 days'].includes(normalized)) return '45 Days';
+    if (['net60', 'net 60', '60 days'].includes(normalized)) return '60 Days';
+    return value;
+};
+
+const createInquiryCustomerSnapshot = (inquiry = {}, state = {}) => {
+    const name = state.customerName || inquiry.customer || '';
+    const mobile = state.customerMobile || inquiry.mobile || '';
+    const email = state.customerEmail || inquiry.email || '';
+    const address = state.customerAddress || inquiry.address || '';
+    const code = state.customerCode || inquiry.customerCode || inquiry.inquiryNumber || 'Inquiry';
+
+    return {
+        id: inquiry.id ? `inquiry-${inquiry.id}` : 'inquiry-customer',
+        code,
+        name,
+        mobile,
+        phone: mobile,
+        email,
+        address,
+        defaultShippingAddress: address,
+        shippingAddress: address,
+        groupType: 'Inquiry',
+        creditStatus: 'Good',
+        balance: 0,
+        payTerms: normalizeIncomingPaymentTerm(state.paymentTerms),
+        trn: '',
+        savedAddresses: address ? [{
+            name: 'Inquiry Address',
+            address1: address,
+            city: '',
+            country: '',
+            isDefault: true
+        }] : []
+    };
+};
+
 const renderCurrencyDisplayHtml = (currencyProps = {}) => {
     const currencyConfig = resolveCurrencyDisplayConfig(currencyProps);
     const currencyLabel = currencyConfig.label;
@@ -401,6 +444,7 @@ const Quotations = () => {
     const [currencySearch, setCurrencySearch] = useState('');
 
     const [customer, setCustomer] = useState('');
+    const [inquiryCustomerSnapshot, setInquiryCustomerSnapshot] = useState(null);
     const [isCustomerOpen, setIsCustomerOpen] = useState(false);
     const [isCustomerSearchOpen, setIsCustomerSearchOpen] = useState(false);
 
@@ -602,6 +646,9 @@ const Quotations = () => {
             id: data.id,
             qtnNo: data.qtnNo,
             customer: data.customer,
+            customerCode: data.customerCode || '',
+            customerMobile: data.customerMobile || '',
+            customerEmail: data.customerEmail || '',
             date: data.date,
             validTill: data.validTill,
             branchId: data.branchId || null,
@@ -684,6 +731,10 @@ const Quotations = () => {
             const enrichedItems = location.state.items;
             const incomingDiscount = location.state.discount ?? 0;
             const incomingTax = location.state.tax ?? 5;
+            const incomingPaymentTerm = normalizeIncomingPaymentTerm(location.state.paymentTerms);
+            const inquiryCustomerName = location.state.customerName || inquiry.customer || '';
+            const inquiryAddress = location.state.customerAddress || inquiry.address || '';
+            const inquiryCustomer = createInquiryCustomerSnapshot(inquiry, location.state);
 
             // Switch to Create Tab
             setActiveTab('create');
@@ -693,26 +744,23 @@ const Quotations = () => {
                 id: inquiry.id || null,
                 inquiryNumber: inquiry.inquiryNumber || ''
             });
+            setPaymentTerm(incomingPaymentTerm);
+            setShippingAddress(inquiryAddress);
 
-            // Resolve customer using the shared utility (id → code → name → fuzzy),
-            // same approach used by Quotation→Invoice and Quotation→SO conversions.
-            // Also try phone matching as a final fallback for newly added customers
-            // whose name may differ slightly between inquiry and customer master.
-            if (inquiry.customer) {
-                const customerMobile = location.state.customerMobile || inquiry.mobile || '';
-                let matched = resolveCustomer({ customerName: inquiry.customer }, customersList);
-                if (!matched && customerMobile) {
-                    const digits = customerMobile.replace(/\D/g, '');
-                    matched = customersList.find(c =>
-                        c.mobile && c.mobile.replace(/\D/g, '').endsWith(digits.slice(-8))
-                    ) || null;
-                }
+            // Resolve by explicit identity or name only. Phone-only matching can
+            // attach a prospect inquiry to the wrong customer master record.
+            if (inquiryCustomerName) {
+                const matched = resolveCustomer({
+                    customerId: location.state.customerId || inquiry.customerId,
+                    customerCode: location.state.customerCode || inquiry.customerCode,
+                    customerName: inquiryCustomerName
+                }, customersList);
                 if (matched) {
                     setCustomer(`${matched.name} - ${matched.code}`);
+                    setInquiryCustomerSnapshot(null);
                 } else {
-                    // Customer not yet in master list (new/prospect): store raw name.
-                    // The effect re-runs when customersList loads, so the match is retried.
-                    setCustomer(inquiry.customer);
+                    setCustomer(inquiryCustomerName);
+                    setInquiryCustomerSnapshot(inquiryCustomer);
                 }
             }
 
@@ -847,6 +895,14 @@ const Quotations = () => {
     const selectedCustomerData = useMemo(() => {
         return customersList.find(c => `${c.name} - ${c.code}` === customer);
     }, [customer, customersList]);
+
+    const activeCustomerData = useMemo(() => {
+        if (selectedCustomerData) return selectedCustomerData;
+        if (inquiryCustomerSnapshot && customer === inquiryCustomerSnapshot.name) {
+            return inquiryCustomerSnapshot;
+        }
+        return null;
+    }, [customer, inquiryCustomerSnapshot, selectedCustomerData]);
 
     // ✅ CALCULATE ROW TOTALS - ERP STANDARD FORMULAS
     const calculateRow = (item) => {
@@ -1153,6 +1209,9 @@ const Quotations = () => {
             id: editingId,
             qtnNo: editingId ? getQuotationNo() : null,
             customer: customer,
+            customerCode: selectedCustomerData?.code || inquiryCustomerSnapshot?.code || '',
+            customerMobile: selectedCustomerData?.mobile || selectedCustomerData?.phone || inquiryCustomerSnapshot?.mobile || '',
+            customerEmail: selectedCustomerData?.email || inquiryCustomerSnapshot?.email || '',
             date: qtnDate,
             validTill: validTill,
             currency: currency,
@@ -1441,6 +1500,7 @@ const Quotations = () => {
 
     const handleSelectCustomer = (cust) => {
         setCustomer(`${cust.name} - ${cust.code}`);
+        setInquiryCustomerSnapshot(null);
         const _defaultAddr = (cust.savedAddresses || []).find(a => a.isDefault);
         const _resolvedAddr = _defaultAddr
             ? [_defaultAddr.address1, _defaultAddr.address2, _defaultAddr.city, _defaultAddr.country].filter(Boolean).join(', ')
@@ -1454,6 +1514,33 @@ const Quotations = () => {
         const allowEdit = mode === 'edit' && canEditQuotation(qtn.status);
         setEditingId(qtn.id);
         setCustomer(qtn.customer);
+        const matchedCustomer = resolveCustomer({
+            customerCode: qtn.customerCode,
+            customerName: qtn.customer
+        }, customersList);
+        setInquiryCustomerSnapshot(matchedCustomer ? null : {
+            id: qtn.id ? `quotation-${qtn.id}-customer` : 'quotation-customer',
+            code: qtn.customerCode || qtn.sourceInquiryNumber || 'Inquiry',
+            name: qtn.customer || '',
+            mobile: qtn.customerMobile || '',
+            phone: qtn.customerMobile || '',
+            email: qtn.customerEmail || '',
+            address: qtn.shippingAddress || '',
+            defaultShippingAddress: qtn.shippingAddress || '',
+            shippingAddress: qtn.shippingAddress || '',
+            groupType: qtn.sourceInquiryNumber ? 'Inquiry' : 'Prospect',
+            creditStatus: 'Good',
+            balance: 0,
+            payTerms: qtn.paymentTerm || '30 Days',
+            trn: '',
+            savedAddresses: qtn.shippingAddress ? [{
+                name: 'Quotation Address',
+                address1: qtn.shippingAddress,
+                city: '',
+                country: '',
+                isDefault: true
+            }] : []
+        });
         setQtnDate(qtn.date);
         setValidTill(qtn.validTill);
         setQuotationBranch({
@@ -1702,7 +1789,7 @@ const Quotations = () => {
                 title: 'QUOTATION',
                 docNo: qtn.qtnNo,
                 date: qtn.date,
-                customer: { name: qtn.customer, address: '', trn: '' },
+                customer: { name: qtn.customer, address: qtn.shippingAddress || '', trn: '' },
                 items: (qtn.items || []).filter(i => i.code || i.desc).map(i => ({
                     code: i.code,
                     name: i.name || i.productName || '',
@@ -1829,6 +1916,7 @@ const Quotations = () => {
         setEditorMode('edit');
         setQuotationBranch(createBranchSnapshot());
         setCustomer('');
+        setInquiryCustomerSnapshot(null);
         const walkin = customersList.find(c => c.name.toLowerCase().includes('walkin') || c.name.toLowerCase().includes('walk-in'));
         if (walkin) {
             setCustomer(`${walkin.name} - ${walkin.code}`);
@@ -2693,7 +2781,7 @@ const Quotations = () => {
 
                                 {/* 2. Customer + Shipping — unified panel */}
                                 <CustomerShippingPanel
-                                    selectedCustomer={selectedCustomerData}
+                                    selectedCustomer={activeCustomerData}
                                     onOpenCustomerSearch={() => setIsCustomerSearchOpen(true)}
                                     shippingAddress={shippingAddress}
                                     onShippingChange={setShippingAddress}
@@ -2755,7 +2843,7 @@ const Quotations = () => {
                                         </div>
                                         {isPaymentTermOpen && !isViewMode && (
                                             <div className="absolute top-full left-0 w-full bg-white border border-slate-200 rounded-lg shadow-lg z-20 mt-1 overflow-hidden">
-                                                {['Cash', '7 Days', '30 Days', '60 Days', 'Custom'].map(opt => (
+                                                {['Immediate', 'Cash', '7 Days', '15 Days', '30 Days', '45 Days', '60 Days', 'Custom'].map(opt => (
                                                     <div
                                                         key={opt}
                                                         onClick={() => { setPaymentTerm(opt); setIsPaymentTermOpen(false); }}

@@ -62,6 +62,7 @@ public class CustomerInquiryService {
         inquiry.setCustomer(req.getCustomer());
         inquiry.setMobile(req.getMobile());
         inquiry.setEmail(req.getEmail());
+        inquiry.setAddress(req.getAddress());
         inquiry.setBranch(req.getBranch());
         inquiry.setSource(req.getSource());
         inquiry.setCategory(req.getCategory());
@@ -109,6 +110,7 @@ public class CustomerInquiryService {
         if (req.getCustomer() != null) inquiry.setCustomer(req.getCustomer());
         if (req.getMobile() != null) inquiry.setMobile(req.getMobile());
         if (req.getEmail() != null) inquiry.setEmail(req.getEmail());
+        if (req.getAddress() != null) inquiry.setAddress(req.getAddress());
         if (req.getBranch() != null) inquiry.setBranch(req.getBranch());
         if (req.getSource() != null) inquiry.setSource(req.getSource());
         if (req.getCategory() != null) inquiry.setCategory(req.getCategory());
@@ -192,6 +194,7 @@ public class CustomerInquiryService {
         res.setCustomer(i.getCustomer());
         res.setMobile(i.getMobile());
         res.setEmail(i.getEmail());
+        res.setAddress(i.getAddress());
         res.setBranch(i.getBranch());
         res.setSource(i.getSource());
         res.setCategory(i.getCategory());
@@ -215,6 +218,7 @@ public class CustomerInquiryService {
         res.setCustomer(i.getCustomer());
         res.setMobile(i.getMobile());
         res.setEmail(i.getEmail());
+        res.setAddress(i.getAddress());
         res.setBranch(i.getBranch());
         res.setSource(i.getSource());
         res.setCategory(i.getCategory());
@@ -325,6 +329,7 @@ public class CustomerInquiryService {
 
         BigDecimal stock = stockRepo.getTotalAvailableStock(productId);
         double stockVal = stock != null ? stock.doubleValue() : 0;
+        ir.setAvailableStock(stockVal);
 
         if (stockVal <= 0) ir.setStockStatus("out-stock");
         else if (stockVal < 10) ir.setStockStatus("low-stock");

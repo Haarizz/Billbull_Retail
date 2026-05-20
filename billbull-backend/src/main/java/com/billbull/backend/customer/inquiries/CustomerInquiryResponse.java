@@ -10,6 +10,7 @@ public class CustomerInquiryResponse {
     private String customer;
     private String mobile;
     private String email;
+    private String address;
     private String branch;
     private String source;
     private String category;
@@ -74,6 +75,14 @@ public class CustomerInquiryResponse {
 
     public void setEmail(String email) {
         this.email = email;
+    }
+
+    public String getAddress() {
+        return address;
+    }
+
+    public void setAddress(String address) {
+        this.address = address;
     }
 
     public String getBranch() {
