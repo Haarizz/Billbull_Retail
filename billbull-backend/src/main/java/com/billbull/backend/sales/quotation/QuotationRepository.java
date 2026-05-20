@@ -41,6 +41,8 @@ public interface QuotationRepository extends JpaRepository<Quotation, Long> {
   @Query("UPDATE Quotation q SET q.status = :status WHERE q.qtnNo = :qtnNo")
   void updateStatusByQtnNo(@Param("qtnNo") String qtnNo, @Param("status") QuotationStatus status);
 
+  java.util.Optional<Quotation> findByQtnNo(@Param("qtnNo") String qtnNo);
+
   @Query("SELECT q FROM Quotation q JOIN q.items i WHERE i.itemCode = :itemCode ORDER BY q.id DESC")
   List<Quotation> findTopByItemCodeOrderByIdDesc(@Param("itemCode") String itemCode,
       org.springframework.data.domain.Pageable pageable);

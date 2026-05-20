@@ -690,7 +690,16 @@ const SalesInvoice = () => {
                 taxAmt: Number(i.taxAmt) || 0,
                 gross: Number(i.total) || 0,
                 net: Number(i.total) || 0,
-                cost: Number(i.cost) || 0
+                cost: Number(i.cost) || 0,
+                // Inherit batch picks from the SO so the invoice editor shows
+                // "Batches N/N" instead of "0/N", and the auto-DN can reuse them.
+                batchControlled: Boolean(i.batchControlled),
+                fefoEnabled: i.fefoEnabled != null ? Boolean(i.fefoEnabled) : true,
+                minExpiryDaysForSale: Number(i.minExpiryDaysForSale) || 0,
+                batchSelectedQuantity: Number(i.batchSelectedQuantity) || 0,
+                batchSelections: Array.isArray(i.batchSelections) ? i.batchSelections : [],
+                warehouseId: i.warehouseId || null,
+                binId: i.binId || null,
             }));
 
         getNextInvoiceNumber()
@@ -1362,7 +1371,10 @@ const SalesInvoice = () => {
             gp: 0,
             remarks: product.description || '',
             warehouseId: defaultBranch?.defaultWarehouseId || (warehousesList.length > 0 ? warehousesList[0].id : ''),
-            batchControlled: Boolean(product.batchControlled ?? product.isBatch ?? product.batch),
+            // QA-001: SERVICE products can never be batch-controlled (no inventory).
+            productType: (product.productType || 'STOCK').toUpperCase(),
+            batchControlled: (product.productType || '').toUpperCase() !== 'SERVICE'
+                && Boolean(product.batchControlled ?? product.isBatch ?? product.batch),
             fefoEnabled: product.fefoEnabled != null ? Boolean(product.fefoEnabled) : true,
             minExpiryDaysForSale: Number(product.minExpiryDaysForSale) || 0,
             batchSelectedQuantity: 0,
@@ -1525,6 +1537,8 @@ const SalesInvoice = () => {
             const stockIssues = [];
             for (const item of items) {
                 if (!item.code) continue;
+                // QA-001: service items hold no inventory — skip stock validation.
+                if ((item.productType || '').toUpperCase() === 'SERVICE') continue;
                 try {
                     const warehouseId = (item.warehouseId && item.warehouseId !== '')
                         ? Number(item.warehouseId)

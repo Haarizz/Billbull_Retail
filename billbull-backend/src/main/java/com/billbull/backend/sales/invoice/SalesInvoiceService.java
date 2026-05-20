@@ -810,6 +810,9 @@ public class SalesInvoiceService {
             Product product = productRepo.findByCodeAndIsActiveTrue(item.getItemCode()).orElse(null);
             if (product == null)
                 continue;
+            // QA-001: service products have no physical inventory — never validate stock.
+            if (product.isService())
+                continue;
 
             int requiredQty = resolveBaseQty(product.getId(), item.getUnit(), item.getQuantity() != null ? item.getQuantity() : 0)
                     + resolveBaseQty(product.getId(), item.getUnit(), item.getFoc() != null ? item.getFoc() : 0);
@@ -1206,6 +1209,13 @@ public class SalesInvoiceService {
         req.items = new ArrayList<>();
         if (invoice.getItems() != null) {
             for (SalesInvoiceItem item : invoice.getItems()) {
+                // QA-001: service lines never deliver — no stock movement, no DN line.
+                Product itemProduct = item.getItemCode() != null
+                        ? productRepo.findByCodeAndIsActiveTrue(item.getItemCode()).orElse(null)
+                        : null;
+                if (itemProduct != null && itemProduct.isService()) {
+                    continue;
+                }
                 DeliveryNoteItemRequest iReq = new DeliveryNoteItemRequest();
                 iReq.itemCode = item.getItemCode();
                 iReq.barcode = item.getBarcode();
@@ -1227,6 +1237,15 @@ public class SalesInvoiceService {
                 iReq.cost = item.getCost();
                 req.items.add(iReq);
             }
+        }
+
+        // QA-001: if every line on the invoice was a service item, there's
+        // nothing to deliver. Skip DN creation entirely and treat the invoice
+        // as delivered so revenue recognition still proceeds.
+        if (req.items.isEmpty()) {
+            System.out.println("[Auto-DN] Skipped: invoice " + invoice.getInvoiceNumber()
+                    + " has no stock items (all lines are services).");
+            return true;
         }
 
         var created = deliveryNoteService.create(req);

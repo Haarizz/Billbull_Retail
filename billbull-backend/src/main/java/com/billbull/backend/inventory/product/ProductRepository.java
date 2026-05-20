@@ -173,8 +173,17 @@ public interface ProductRepository extends JpaRepository<Product, Long> {
 
         /**
          * Fetches basic fields including department and brand for out of stock report
-         * to avoid N+1 full entity loads
+         * to avoid N+1 full entity loads.
+         *
+         * QA-001: excludes SERVICE products — they have no inventory by definition,
+         * so they must not appear in any stock report (SOH, Low-Stock, Out-of-Stock,
+         * Valuation). SOH/Low-Stock/Valuation are naturally filtered because they
+         * source from stock_movements (services never produce one), but
+         * Out-of-Stock iterates *all* active products, so we filter here.
          */
-        @Query("SELECT p.id, p.sku, p.code, p.name, p.category, d.name, b.name FROM Product p LEFT JOIN p.department d LEFT JOIN p.brand b WHERE p.isActive = true")
+        @Query("SELECT p.id, p.sku, p.code, p.name, p.category, d.name, b.name " +
+                "FROM Product p LEFT JOIN p.department d LEFT JOIN p.brand b " +
+                "WHERE p.isActive = true " +
+                "AND (p.productType IS NULL OR p.productType <> com.billbull.backend.inventory.product.ProductType.SERVICE)")
         List<Object[]> findActiveProductReportBasics();
 }

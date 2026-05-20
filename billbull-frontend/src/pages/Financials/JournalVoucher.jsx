@@ -13,9 +13,17 @@ import { getAuditTrail } from '../../api/auditApi';
 import CurrencyAmount, { CurrencySymbol } from '../../components/CurrencyAmount';
 import { useCompany } from '../../context/CompanyContext';
 import { printHtml } from '../../utils/printGenerator';
+import { getUsernameFromToken } from '../../api/auth';
+import { buildJournalVoucherPrintHtml } from '../../utils/journalVoucherPrintTemplate';
+import { getTemplatesByCategory } from '../../api/printTemplateApi';
 
 
 const JournalVoucher = () => {
+    // Username of the currently authenticated user — used to stamp
+    // preparedBy on new JVs and to record who posted/approved/rejected/voided.
+    // Falls back to "System" if the token is missing (should not happen in
+    // practice because the route is auth-guarded).
+    const currentUser = getUsernameFromToken() || 'System';
     // --- STATE ---
     const { company } = useCompany();
     const [viewMode, setViewMode] = useState('list'); // 'list' | 'create' | 'edit'
@@ -145,7 +153,7 @@ const JournalVoucher = () => {
         reference: '',
         narration: '',
         status: 'Draft',
-        preparedBy: 'Ahmed Hassan', // Mock user
+        preparedBy: currentUser,
         postedBy: null,
         postedAt: null,
         createdAt: null,
@@ -298,7 +306,7 @@ const JournalVoucher = () => {
             reference: '',
             narration: '',
             status: 'Draft',
-            preparedBy: 'Ahmed Hassan' // Mock user
+            preparedBy: currentUser
         });
         setJournalLines([
             { account: '', description: '', debit: 0, credit: 0, costCenter: '' }
@@ -380,11 +388,13 @@ const JournalVoucher = () => {
                 result = await journalVoucherApi.create(payload);
             }
 
-            // If target status is 'Posted', etc.
+            // State transitions record the *actor* (current user), NOT the
+            // person who originally prepared the JV — same user can prepare,
+            // a different one approves/posts.
             if (targetStatus === 'Posted' && result.id) {
-                await journalVoucherApi.post(result.id, formData.preparedBy);
+                await journalVoucherApi.post(result.id, currentUser);
             } else if (targetStatus === 'Submitted' && result.id) {
-                await journalVoucherApi.submit(result.id, formData.preparedBy);
+                await journalVoucherApi.submit(result.id, currentUser);
             }
 
             // Refresh the list
@@ -399,15 +409,15 @@ const JournalVoucher = () => {
     const handleStatusAction = async (action) => {
         try {
             if (action === 'submit') {
-                await journalVoucherApi.submit(formData.id, formData.preparedBy);
+                await journalVoucherApi.submit(formData.id, currentUser);
             } else if (action === 'approve') {
-                await journalVoucherApi.approve(formData.id, formData.preparedBy);
+                await journalVoucherApi.approve(formData.id, currentUser);
             } else if (action === 'reject') {
                 const reason = prompt('Reason for rejection:');
                 if (reason === null) return;
-                await journalVoucherApi.reject(formData.id, formData.preparedBy, reason);
+                await journalVoucherApi.reject(formData.id, currentUser, reason);
             } else if (action === 'post') {
-                await journalVoucherApi.post(formData.id, formData.preparedBy);
+                await journalVoucherApi.post(formData.id, currentUser);
             }
             await fetchJournalVouchers();
             setViewMode('list');
@@ -429,128 +439,32 @@ const JournalVoucher = () => {
         }
     };
 
-    // --- JV PRINT HTML ---
-    const buildJvPrintHtml = (jv) => {
-        const co = company || {};
-        const fmt = (n) => Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    // Resolves the configured Journal Voucher template (header/terms/footer/paper)
+    // before rendering. Falls back to the built-in default if none configured.
+    const buildJvPrintHtml = async (jv) => {
+        let template = null;
+        try {
+            const templates = await getTemplatesByCategory('Journal Voucher');
+            template = templates?.find(t => t.isDefault) || templates?.[0] || null;
+        } catch (err) {
+            console.warn('Failed to load JV template, using built-in default', err);
+        }
         const lines = (jv.lines || journalLines).filter(l => l.account || l.debit || l.credit);
-        const totalDebit = lines.reduce((s, l) => s + (parseFloat(l.debit) || 0), 0);
-        const totalCredit = lines.reduce((s, l) => s + (parseFloat(l.credit) || 0), 0);
-
-        const rows = lines.map((l, i) => `
-            <tr>
-                <td>${i + 1}</td>
-                <td>${l.accountCode || ''}</td>
-                <td>${l.account || ''}</td>
-                <td>${l.costCenter || ''}</td>
-                <td>${l.description || ''}</td>
-                <td class="num">${l.debit > 0 ? fmt(l.debit) : ''}</td>
-                <td class="num">${l.credit > 0 ? fmt(l.credit) : ''}</td>
-            </tr>`).join('');
-
-        return `<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8"/>
-<title>Journal Voucher ${jv.jvNumber || formData.reference || ''}</title>
-<style>
-  @page { size: A4; margin: 16mm 16mm 20mm; }
-  * { box-sizing: border-box; margin: 0; padding: 0; }
-  body { font-family: Arial, Helvetica, sans-serif; font-size: 10pt; color: #1e293b; }
-  .header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 18px; border-bottom: 2px solid #f5c742; padding-bottom: 12px; }
-  .company h2 { font-size: 14pt; font-weight: 700; color: #1e293b; margin-bottom: 2px; }
-  .company p { font-size: 8.5pt; color: #64748b; line-height: 1.5; }
-  .doc-title { text-align: right; }
-  .doc-title h1 { font-size: 18pt; font-weight: 800; color: #f5c742; letter-spacing: 1px; }
-  .doc-title .jv-no { font-size: 10pt; font-weight: 700; color: #1e293b; margin-top: 4px; }
-  .meta { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 24px; margin-bottom: 16px; font-size: 9pt; }
-  .meta span { color: #64748b; font-weight: 600; }
-  .narration { background: #fef9ec; border: 1px solid #fde68a; border-radius: 4px; padding: 8px 12px; margin-bottom: 16px; font-size: 9.5pt; }
-  .narration b { color: #92400e; }
-  table { width: 100%; border-collapse: collapse; font-size: 9pt; }
-  thead tr { background: #1e293b; color: #fff; }
-  thead th { padding: 7px 9px; text-align: left; font-weight: 600; white-space: nowrap; }
-  thead th.num { text-align: right; }
-  tbody tr:nth-child(even) { background: #f8fafc; }
-  tbody td { padding: 6px 9px; border-bottom: 1px solid #e2e8f0; vertical-align: top; }
-  td.num { text-align: right; font-variant-numeric: tabular-nums; }
-  tfoot tr { background: #f1f5f9; font-weight: 700; }
-  tfoot td { padding: 7px 9px; border-top: 2px solid #cbd5e1; }
-  .status-badge { display: inline-block; padding: 2px 10px; border-radius: 12px; font-size: 8pt; font-weight: 700; letter-spacing: 0.5px; }
-  .status-Posted { background: #ede9fe; color: #6d28d9; }
-  .status-Draft { background: #f1f5f9; color: #475569; }
-  .status-Voided { background: #fee2e2; color: #b91c1c; }
-  .signatures { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 32px; margin-top: 40px; }
-  .sig-box { border-top: 1px solid #94a3b8; padding-top: 6px; text-align: center; font-size: 8.5pt; color: #475569; }
-  .footer { margin-top: 20px; text-align: center; font-size: 7.5pt; color: #94a3b8; border-top: 1px solid #e2e8f0; padding-top: 8px; }
-</style>
-</head>
-<body>
-  <div class="header">
-    <div class="company">
-      <h2>${co.companyName || co.name || 'Company Name'}</h2>
-      <p>${co.address || ''}</p>
-      <p>${co.email ? 'Email: ' + co.email : ''}${co.phone ? ' | Tel: ' + co.phone : ''}</p>
-      ${co.trn ? `<p>TRN: ${co.trn}</p>` : ''}
-    </div>
-    <div class="doc-title">
-      <h1>JOURNAL VOUCHER</h1>
-      <div class="jv-no">${jv.jvNumber || ''}</div>
-      <div style="margin-top:6px"><span class="status-badge status-${jv.status || formData.status}">${jv.status || formData.status || ''}</span></div>
-    </div>
-  </div>
-
-  <div class="meta">
-    <div><span>Date:</span> ${jv.date || formData.date || ''}</div>
-    <div><span>Reference:</span> ${jv.reference || formData.reference || '—'}</div>
-    <div><span>Prepared By:</span> ${jv.preparedBy || formData.preparedBy || '—'}</div>
-    <div><span>Posted By:</span> ${jv.postedBy || formData.postedBy || '—'}</div>
-  </div>
-
-  ${(jv.narration || formData.narration) ? `<div class="narration"><b>Narration:</b> ${jv.narration || formData.narration}</div>` : ''}
-
-  <table>
-    <thead>
-      <tr>
-        <th>#</th>
-        <th>Account Code</th>
-        <th>Account</th>
-        <th>Cost Centre</th>
-        <th>Description</th>
-        <th class="num">Debit</th>
-        <th class="num">Credit</th>
-      </tr>
-    </thead>
-    <tbody>${rows}</tbody>
-    <tfoot>
-      <tr>
-        <td colspan="5" class="num" style="font-weight:700">Total</td>
-        <td class="num">${fmt(totalDebit)}</td>
-        <td class="num">${fmt(totalCredit)}</td>
-      </tr>
-    </tfoot>
-  </table>
-
-  <div class="signatures">
-    <div class="sig-box">Prepared By</div>
-    <div class="sig-box">Reviewed By</div>
-    <div class="sig-box">Approved By</div>
-  </div>
-
-  <div class="footer">Generated by BillBull ERP &nbsp;|&nbsp; ${new Date().toLocaleString()}</div>
-</body>
-</html>`;
+        return buildJournalVoucherPrintHtml(
+            { ...jv, lines },
+            { company, template }
+        );
     };
 
     // --- PRINT / EXPORT / CLONE / VOID ---
-    const handlePrint = () => {
+    const handlePrint = async () => {
         const jv = { ...formData, jvNumber: formData.jvNumber || formData.reference, lines: journalLines };
-        printHtml(buildJvPrintHtml(jv));
+        printHtml(await buildJvPrintHtml(jv));
     };
 
-    const handleExportPdf = () => {
+    const handleExportPdf = async () => {
         const jv = { ...formData, jvNumber: formData.jvNumber || formData.reference, lines: journalLines };
-        const html = buildJvPrintHtml(jv);
+        const html = await buildJvPrintHtml(jv);
         // Inject PDF-friendly title so the browser's Save-as-PDF filename is meaningful
         const titled = html.replace(/<title>.*?<\/title>/i,
             `<title>JV_${formData.jvNumber || formData.reference || formData.id || 'export'}_${formData.date || ''}</title>`);
@@ -564,7 +478,7 @@ const JournalVoucher = () => {
             reference: '',
             narration: formData.narration,
             status: 'Draft',
-            preparedBy: formData.preparedBy || 'Ahmed Hassan',
+            preparedBy: currentUser,
             postedBy: null,
             postedAt: null,
             createdAt: null,
@@ -578,7 +492,7 @@ const JournalVoucher = () => {
         if (!formData.id) return;
         if (!window.confirm(`Void Journal Voucher ${formData.jvNumber || formData.reference}?\n\nThis will permanently void this entry. If posted, a reversal entry will be created automatically.`)) return;
         try {
-            await journalVoucherApi.void(formData.id, formData.preparedBy);
+            await journalVoucherApi.void(formData.id, currentUser);
             await fetchJournalVouchers();
             setViewMode('list');
         } catch (error) {
@@ -1139,7 +1053,7 @@ const JournalVoucher = () => {
                                     <label className="block text-xs font-bold text-slate-500 mb-1">Posted By</label>
                                     <div className="flex items-center gap-2">
                                         <User size={14} className="text-slate-400" />
-                                        <span className="text-sm font-bold text-slate-700">{formData.postedBy || formData.preparedBy || '-'}</span>
+                                        <span className="text-sm font-bold text-slate-700">{formData.postedBy || '—'}</span>
                                     </div>
                                 </div>
                                 <div>
