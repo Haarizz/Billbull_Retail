@@ -174,10 +174,24 @@ public class QuotationService {
         }
 
         if (quotation.getItems() != null) {
+            // Collect the set of persisted item ids for this quotation. Any incoming
+            // item id that doesn't match a persisted row is a client-side temporary
+            // key (e.g. Date.now()) — null it so Hibernate inserts instead of trying
+            // to merge a phantom row (which throws StaleObjectStateException).
+            final java.util.Set<Long> persistedItemIds = quotation.getId() == null
+                    ? java.util.Collections.emptySet()
+                    : quotationRepo.findById(quotation.getId())
+                            .map(existing -> existing.getItems().stream()
+                                    .map(QuotationItem::getId)
+                                    .filter(java.util.Objects::nonNull)
+                                    .collect(java.util.stream.Collectors.toSet()))
+                            .orElse(java.util.Collections.emptySet());
+
             quotation.getItems().forEach(item -> {
                 item.setQuotation(quotation);
-                if (quotation.getId() == null)
+                if (item.getId() != null && !persistedItemIds.contains(item.getId())) {
                     item.setId(null);
+                }
             });
         }
 
@@ -511,6 +525,20 @@ public class QuotationService {
                 continue;
             }
 
+            // QA-001: SERVICE products carry no inventory — always report as sufficient.
+            com.billbull.backend.inventory.product.Product product =
+                    productRepo.findByCodeAndIsActiveTrue(itemCode).orElse(null);
+            if (product != null && product.isService()) {
+                QuotationStockCheckDTO dto = new QuotationStockCheckDTO();
+                dto.setItemCode(itemCode);
+                dto.setItemName(item.getDescription());
+                dto.setRequestedQty(item.getQuantity() != null ? item.getQuantity().intValue() : 0);
+                dto.setAvailableQty(Integer.MAX_VALUE);
+                dto.setSufficient(true);
+                result.add(dto);
+                continue;
+            }
+
             Long productId = resolveProductId(item);
 
             BigDecimal onHand = stockMovementRepo.getTotalAvailableStock(productId);
@@ -758,5 +786,27 @@ public class QuotationService {
         quotation.getItems().size();
         quotation.getAttachments().size();
         quotation.getRevisions().size();
+        // QA-001: enrich each line with its product's type so the frontend can
+        // short-circuit stock validation for SERVICE items on reload.
+        enrichProductTypes(quotation);
+    }
+
+    private void enrichProductTypes(Quotation quotation) {
+        if (quotation == null || quotation.getItems() == null) return;
+        java.util.List<String> codes = quotation.getItems().stream()
+                .map(QuotationItem::getItemCode)
+                .filter(c -> c != null && !c.isBlank())
+                .distinct()
+                .toList();
+        if (codes.isEmpty()) return;
+        java.util.Map<String, com.billbull.backend.inventory.product.ProductType> typeByCode = new java.util.HashMap<>();
+        for (String code : codes) {
+            productRepo.findByCodeAndIsActiveTrue(code)
+                    .ifPresent(p -> typeByCode.put(code, p.getProductType()));
+        }
+        quotation.getItems().forEach(i -> {
+            com.billbull.backend.inventory.product.ProductType type = typeByCode.get(i.getItemCode());
+            if (type != null) i.setProductType(type.name());
+        });
     }
 }

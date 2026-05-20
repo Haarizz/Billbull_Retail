@@ -596,7 +596,10 @@ const SalesOrders = () => {
       tax: tax,
       taxAmt: 0,
       total: 0,
-      batchControlled: Boolean(product.batchControlled ?? product.isBatch ?? product.batch),
+      // QA-001: SERVICE products never have batches.
+      productType: (product.productType || 'STOCK').toUpperCase(),
+      batchControlled: (product.productType || '').toUpperCase() !== 'SERVICE'
+        && Boolean(product.batchControlled ?? product.isBatch ?? product.batch),
       fefoEnabled: product.fefoEnabled != null ? Boolean(product.fefoEnabled) : true,
       minExpiryDaysForSale: Number(product.minExpiryDaysForSale) || 0,
       batchSelectedQuantity: 0,
@@ -642,7 +645,10 @@ const SalesOrders = () => {
       total: 0,
       remarks: product.description || '',
       isProductSelected: true,
-      batchControlled: Boolean(product.batchControlled ?? product.isBatch ?? product.batch),
+      // QA-001: SERVICE products never have batches.
+      productType: (product.productType || 'STOCK').toUpperCase(),
+      batchControlled: (product.productType || '').toUpperCase() !== 'SERVICE'
+        && Boolean(product.batchControlled ?? product.isBatch ?? product.batch),
       fefoEnabled: product.fefoEnabled != null ? Boolean(product.fefoEnabled) : true,
       minExpiryDaysForSale: Number(product.minExpiryDaysForSale) || 0,
       batchSelectedQuantity: 0,
@@ -748,6 +754,10 @@ const SalesOrders = () => {
           items: items
             .filter(i => i.code && i.qty > 0)
             .map(i => ({
+              // Persisted SO line id — must travel with the line so the invoice
+              // (and the auto-generated DN downstream) can look up the SO's
+              // batch reservations via BatchSelectionService.DOC_TYPE_SALES_ORDER.
+              id: i.soItemId || null,
               code: i.code,
               desc: i.desc,
               image: i.image || '',
@@ -759,6 +769,15 @@ const SalesOrders = () => {
               taxAmt: i.taxAmt,
               total: i.total,
               cost: i.cost,
+              // Carry batch metadata so the invoice editor renders "Batches X/Y"
+              // correctly and the auto-DN can reuse the SO's batch picks.
+              batchControlled: Boolean(i.batchControlled),
+              fefoEnabled: i.fefoEnabled != null ? Boolean(i.fefoEnabled) : true,
+              minExpiryDaysForSale: Number(i.minExpiryDaysForSale) || 0,
+              batchSelectedQuantity: Number(i.batchSelectedQuantity) || 0,
+              batchSelections: Array.isArray(i.batchSelections) ? i.batchSelections : [],
+              warehouseId: i.warehouseId || null,
+              binId: i.binId || null,
             }))
         }
       }
@@ -2039,7 +2058,7 @@ const SalesOrders = () => {
 
       {/* Receive Payment Modal */}
       {isPaymentModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-[1px]">
+        <div className="fixed inset-0 z-[110] flex items-center justify-center bg-black/40 backdrop-blur-[1px]">
           <div className="bg-white w-[500px] rounded-lg shadow-2xl overflow-hidden">
             {/* Header */}
             <div className="px-6 py-4 border-b border-slate-100 flex justify-between items-start">

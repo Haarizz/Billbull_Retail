@@ -612,7 +612,9 @@ const Quotations = () => {
         if (focusedItem && focusedItem.code && focusedItem.isProductSelected) {
             fetchPriceHistoryForFocusedItem(focusedItem.code);
 
-            if (!liveStockMap[focusedItem.code]) {
+            // QA-001: service items have no stock — don't hit the availability API.
+            const isService = (focusedItem.productType || '').toUpperCase() === 'SERVICE';
+            if (!isService && !liveStockMap[focusedItem.code]) {
                 getStockAvailability(focusedItem.code)
                     .then(res => {
                         const locs = res.locations || [];
@@ -1051,6 +1053,9 @@ const Quotations = () => {
             taxAmt: 0,
             total: 0,
             remarks: product.description || '',
+            // QA-001: carry product type onto the row so stock checks / availability
+            // panel can short-circuit for SERVICE items.
+            productType: (product.productType || 'STOCK').toUpperCase(),
             isProductSelected: true
         };
 
@@ -1105,6 +1110,7 @@ const Quotations = () => {
             taxAmt: 0,
             total: 0,
             remarks: product.description || '',
+            productType: (product.productType || 'STOCK').toUpperCase(),
             isProductSelected: true,
         };
         const newItem = calculateRow(rawItem);
@@ -1235,7 +1241,11 @@ const Quotations = () => {
                 targetStatus === 'Approved' ? 'APPROVED' :
                     targetStatus === 'Rejected' ? 'REJECTED' : 'DRAFT',
             items: activeItems.map(i => ({
-                id: typeof i.id === 'string' ? null : i.id,
+                // Only forward persisted DB ids. New rows get client-side keys
+                // like Date.now() / Date.now()+Math.random(), which are >= 1e12 or
+                // non-integer — those must go to the backend as null so Hibernate
+                // inserts them instead of trying to merge a phantom row.
+                id: (typeof i.id === 'number' && Number.isInteger(i.id) && i.id < 1e12) ? i.id : null,
                 itemCode: i.code,
                 barcode: i.barcode, // Pass barcode to backend
                 image: i.image, // Pass image to backend if schema supports it
@@ -1301,6 +1311,8 @@ const Quotations = () => {
             const stockIssues = [];
             for (const item of items) {
                 if (!item.code) continue;
+                // QA-001: service items hold no inventory — skip stock validation.
+                if ((item.productType || '').toUpperCase() === 'SERVICE') continue;
                 try {
                     const stockData = await getStockAvailability(item.code);
                     const locs = stockData?.locations || [];
@@ -3166,6 +3178,19 @@ const Quotations = () => {
                                         <div className="space-y-3">
                                             {(() => {
                                                 const focusedItem = items.find(i => i.id === focusedRowId);
+                                                // QA-001: service items have no inventory — show a badge instead of stock numbers.
+                                                if ((focusedItem.productType || '').toUpperCase() === 'SERVICE') {
+                                                    return (
+                                                        <div className="border rounded p-2 border-blue-200 bg-blue-50">
+                                                            <div className="font-semibold text-xs text-slate-800 truncate">
+                                                                {focusedItem.code}
+                                                            </div>
+                                                            <div className="mt-1 text-[10px] font-bold text-blue-700">
+                                                                Service item — no stock tracking
+                                                            </div>
+                                                        </div>
+                                                    );
+                                                }
                                                 const stockRes = stockCheckResult.find(s => s.itemCode === focusedItem.code);
                                                 const available = liveStockMap[focusedItem.code]?.available ?? (stockRes ? stockRes.availableQty : (focusedItem.stock || focusedItem.currentStock || 0));
                                                 const requested = Number(focusedItem.qty) || 0;
@@ -3419,8 +3444,8 @@ const Quotations = () => {
                 {
                     isRevisionsOpen && (
                         <>
-                            <div className="fixed inset-0 bg-black/20 z-40" onClick={() => setIsRevisionsOpen(false)}></div>
-                            <div className="fixed top-0 left-0 w-80 h-full bg-white border-r border-slate-200 shadow-2xl z-50 animate-in slide-in-from-left duration-300">
+                            <div className="fixed inset-0 bg-black/20 z-[90]" onClick={() => setIsRevisionsOpen(false)}></div>
+                            <div className="fixed top-0 left-0 w-80 h-full bg-white border-r border-slate-200 shadow-2xl z-[100] animate-in slide-in-from-left duration-300">
                                 <div className="p-4 border-b border-slate-100 flex justify-between items-center">
                                     <h3 className="font-bold text-slate-800">Revision & Follow-up History</h3>
                                     <button onClick={() => setIsRevisionsOpen(false)}><X size={18} className="text-slate-400" /></button>
@@ -3475,7 +3500,7 @@ const Quotations = () => {
                 {/* --- REVISE MODAL --- */}
                 {
                     isReviseModalOpen && (
-                        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+                        <div className="fixed inset-0 z-[110] flex items-center justify-center bg-black/50 p-4">
                             <div className="bg-white rounded-lg shadow-xl w-full max-w-md">
                                 <div className="p-4 border-b border-slate-100 flex justify-between items-center">
                                     <h3 className="font-bold text-slate-800">Revise Quotation & Log Follow-up</h3>
@@ -3586,8 +3611,48 @@ const Quotations = () => {
                 />
 
                 {/* --- COMPARE REVISIONS MODAL --- */}
-                {
-                    compareRevision && (
+                {(() => {
+                    if (!compareRevision) return null;
+                    // Compute a row-by-row diff so each side can be color-coded:
+                    //   added   = present in current, missing from revision (green, left)
+                    //   removed = present in revision, missing from current (red,  right)
+                    //   changed = both sides, but qty/price/disc/tax/foc differ      (amber)
+                    //   unchanged = identical numeric fields (neutral)
+                    const numeric = (v) => parseFloat(v) || 0;
+                    const keyOf = (it) => (it.itemCode || it.code || it.description || it.desc || '').trim().toLowerCase();
+                    const sigOf = (qty, price, disc, tax, foc) =>
+                        `${numeric(qty)}|${numeric(price)}|${numeric(disc)}|${numeric(tax)}|${numeric(foc)}`;
+                    const revIndex = new Map();
+                    (compareRevision.items || []).forEach(it => {
+                        revIndex.set(keyOf(it), sigOf(it.quantity ?? it.qty, it.price, it.discount ?? it.disc, it.taxRate ?? it.tax, it.foc));
+                    });
+                    const curIndex = new Map();
+                    items.forEach(it => {
+                        curIndex.set(keyOf(it), sigOf(it.qty, it.price, it.disc, it.tax, it.foc));
+                    });
+                    const statusOnLeft = (it) => {
+                        const k = keyOf(it);
+                        if (!revIndex.has(k)) return 'added';
+                        return revIndex.get(k) === curIndex.get(k) ? 'unchanged' : 'changed';
+                    };
+                    const statusOnRight = (it) => {
+                        const k = keyOf(it);
+                        if (!curIndex.has(k)) return 'removed';
+                        return curIndex.get(k) === revIndex.get(k) ? 'unchanged' : 'changed';
+                    };
+                    const tint = {
+                        added:     'border-emerald-300 bg-emerald-50',
+                        removed:   'border-red-300 bg-red-50',
+                        changed:   'border-amber-300 bg-amber-50',
+                        unchanged: 'border-slate-100 bg-slate-50'
+                    };
+                    const tag = {
+                        added:     <span className="text-[9px] font-bold uppercase px-1.5 py-0.5 rounded bg-emerald-600 text-white">Added</span>,
+                        removed:   <span className="text-[9px] font-bold uppercase px-1.5 py-0.5 rounded bg-red-600 text-white">Removed</span>,
+                        changed:   <span className="text-[9px] font-bold uppercase px-1.5 py-0.5 rounded bg-amber-500 text-white">Changed</span>,
+                        unchanged: null
+                    };
+                    return (
                         <div className="fixed inset-0 z-[120] flex items-center justify-center bg-black/60 p-4 md:p-6 backdrop-blur-sm animate-in fade-in duration-200">
                             <div className="bg-slate-50 flex flex-col w-full h-full max-w-7xl max-h-[90vh] rounded-xl shadow-2xl overflow-hidden shadow-black/20 border border-slate-200">
 
@@ -3600,6 +3665,12 @@ const Quotations = () => {
                                         <p className="text-xs font-semibold text-slate-500 mt-0.5">
                                             Comparing current draft/version against <span className="text-blue-600 bg-blue-50 px-1 py-0.5 rounded">{compareRevision.qtnNoDisplay}</span>
                                         </p>
+                                        <div className="flex gap-3 mt-2 text-[10px]">
+                                            <span className="inline-flex items-center gap-1"><span className="w-2.5 h-2.5 rounded bg-emerald-300 border border-emerald-400"></span>Added</span>
+                                            <span className="inline-flex items-center gap-1"><span className="w-2.5 h-2.5 rounded bg-red-300 border border-red-400"></span>Removed</span>
+                                            <span className="inline-flex items-center gap-1"><span className="w-2.5 h-2.5 rounded bg-amber-300 border border-amber-400"></span>Changed</span>
+                                            <span className="inline-flex items-center gap-1"><span className="w-2.5 h-2.5 rounded bg-slate-200 border border-slate-300"></span>Unchanged</span>
+                                        </div>
                                     </div>
                                     <button
                                         onClick={() => setCompareRevision(null)}
@@ -3621,11 +3692,14 @@ const Quotations = () => {
                                             {renderStatusBadge(status)}
                                         </div>
                                         <div className="flex-1 overflow-y-auto p-4 space-y-3">
-                                            {items.map((item, idx) => (
-                                                <div key={`curr-${item.id}`} className="p-3 rounded-lg border border-slate-100 bg-slate-50 hover:bg-slate-100/50 transition-colors">
+                                            {items.map((item, idx) => {
+                                                const st = statusOnLeft(item);
+                                                return (
+                                                <div key={`curr-${item.id}`} className={`p-3 rounded-lg border transition-colors ${tint[st]}`}>
                                                     <div className="flex justify-between items-start mb-2">
-                                                        <div className="font-bold text-slate-700 text-sm">
-                                                            {idx + 1}. {item.desc || item.name || 'Unnamed Item'}
+                                                        <div className="font-bold text-slate-700 text-sm flex items-center gap-2">
+                                                            <span>{idx + 1}. {item.desc || item.name || 'Unnamed Item'}</span>
+                                                            {tag[st]}
                                                         </div>
                                                         <CurrencyAmount value={item.total || 0} {...displayCurrencyProps} className="font-black text-slate-800 text-sm" />
                                                     </div>
@@ -3641,7 +3715,8 @@ const Quotations = () => {
                                                         </div>
                                                     </div>
                                                 </div>
-                                            ))}
+                                                );
+                                            })}
                                         </div>
                                         <div className="p-4 bg-slate-50 border-t border-slate-200 shrink-0">
                                             <div className="flex justify-between items-center font-black text-lg text-slate-800">
@@ -3675,11 +3750,14 @@ const Quotations = () => {
                                             )}
 
                                             {compareRevision.items && compareRevision.items.length > 0 ? (
-                                                compareRevision.items.map((item, idx) => (
-                                                    <div key={`rev-item-${idx}`} className="p-3 rounded-lg border border-slate-200/60 bg-white hover:border-blue-200/80 transition-colors shadow-sm">
+                                                compareRevision.items.map((item, idx) => {
+                                                    const st = statusOnRight(item);
+                                                    return (
+                                                    <div key={`rev-item-${idx}`} className={`p-3 rounded-lg border transition-colors shadow-sm ${tint[st]}`}>
                                                         <div className="flex justify-between items-start mb-2">
-                                                            <div className="font-bold text-slate-700 text-sm">
-                                                                {idx + 1}. {item.description || item.desc || item.name || 'Unnamed Item'}
+                                                            <div className="font-bold text-slate-700 text-sm flex items-center gap-2">
+                                                                <span>{idx + 1}. {item.description || item.desc || item.name || 'Unnamed Item'}</span>
+                                                                {tag[st]}
                                                             </div>
                                                             <CurrencyAmount
                                                                 value={parseFloat(item.lineTotal || item.total) || 0}
@@ -3699,7 +3777,8 @@ const Quotations = () => {
                                                             </div>
                                                         </div>
                                                     </div>
-                                                ))
+                                                    );
+                                                })
                                             ) : (
                                                 <div className="text-center p-8 text-slate-400 text-sm">No items found in this revision snapshot.</div>
                                             )}
@@ -3715,8 +3794,8 @@ const Quotations = () => {
                                 </div>
                             </div>
                         </div>
-                    )
-                }
+                    );
+                })()}
 
             </main >
         </div >

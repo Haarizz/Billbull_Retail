@@ -188,8 +188,16 @@ public class SalesOrderService {
 
         SalesOrder saved = orderRepo.save(order);
 
-        // ✅ MARK LINKED QUOTATION AS CONVERTED
+        // ✅ MARK LINKED QUOTATION AS CONVERTED and stamp current revision number
+        // on the order so we can reconstruct exactly which version was agreed to,
+        // even if the quotation gets revised again later.
         if (saved.getLinkedQuotation() != null && !saved.getLinkedQuotation().isBlank()) {
+            quotationRepo.findByQtnNo(saved.getLinkedQuotation()).ifPresent(qtn -> {
+                if (saved.getLinkedQuotationRevision() == null) {
+                    saved.setLinkedQuotationRevision(qtn.getRevisions() != null ? qtn.getRevisions().size() : 0);
+                    orderRepo.save(saved);
+                }
+            });
             quotationRepo.updateStatusByQtnNo(
                     saved.getLinkedQuotation(),
                     com.billbull.backend.sales.quotation.QuotationStatus.CONVERTED);

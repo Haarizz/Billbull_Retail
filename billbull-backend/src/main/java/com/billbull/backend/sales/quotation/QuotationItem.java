@@ -13,6 +13,7 @@ import jakarta.persistence.Id;
 import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
 import jakarta.persistence.Table;
+import jakarta.persistence.Transient;
 
 @Entity
 @Table(name = "sales_quotation_items")
@@ -44,6 +45,18 @@ public class QuotationItem {
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "quotation_id", nullable = false)
     private Quotation quotation;
+
+    /**
+     * QA-001: not persisted — populated by QuotationService at read-time from the
+     * Product master so the frontend can short-circuit stock checks for service
+     * lines without an extra round-trip. Stays null when the master row no
+     * longer exists (e.g. archived product).
+     */
+    @Transient
+    private String productType;
+
+    public String getProductType() { return productType; }
+    public void setProductType(String productType) { this.productType = productType; }
 
     public QuotationItem() {
     }
