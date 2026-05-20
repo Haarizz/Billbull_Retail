@@ -16,5 +16,7 @@ public record GrnSaveRequest(
         String branchCode,
         String grnType,
         Integer packages,
+        String receivedBy,
+        String checkedBy,
         List<GrnItemRequest> items) {
 }

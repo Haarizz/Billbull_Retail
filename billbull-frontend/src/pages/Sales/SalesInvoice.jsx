@@ -290,6 +290,8 @@ const SalesInvoice = () => {
         name: i.itemName || i.name || '',
         desc: i.description || i.desc || '',
         sku: i.sku || '',
+        brand: i.brand || i.brandName || '',
+        detailedDesc: i.detailedDesc || '',
         localName: i.localName || '',
         unit: i.unit || 'PCS',
         qty: i.quantity ?? i.qty ?? 0,
@@ -359,6 +361,7 @@ const SalesInvoice = () => {
     const [focusedItemStock, setFocusedItemStock] = useState(null);
     const [focusedItemPriceHistory, setFocusedItemPriceHistory] = useState([]);
     const [isContextLoading, setIsContextLoading] = useState(false);
+    const [liveStockMap, setLiveStockMap] = useState({});
 
     const resolveInvoiceTypeUI = ({
         linkedSalesOrder = '',
@@ -389,7 +392,7 @@ const SalesInvoice = () => {
     });
 
     const fetchItemContext = async (itemCode) => {
-        if (!itemCode) return; // Allow re-clicking same item
+        if (!itemCode) return;
 
         setIsContextLoading(true);
         setFocusedItemCode(itemCode);
@@ -400,6 +403,16 @@ const SalesInvoice = () => {
             ]);
             setFocusedItemStock(stockData);
             setFocusedItemPriceHistory(priceData || []);
+            if (stockData?.locations) {
+                const locs = stockData.locations;
+                setLiveStockMap(prev => ({
+                    ...prev,
+                    [itemCode]: {
+                        available: locs.reduce((s, l) => s + (l.available || 0), 0),
+                        reserved: locs.reduce((s, l) => s + (l.reserved || 0), 0),
+                    }
+                }));
+            }
         } catch (err) {
             console.error("Failed to fetch item context", err);
         } finally {
@@ -1432,6 +1445,8 @@ const SalesInvoice = () => {
             name: product.name || '',
             desc: product.shortDesc || product.description || '',
             sku: product.sku || '',
+            brand: product.brandName || product.brand || '',
+            detailedDesc: product.detailedDesc || '',
             localName: product.localName || '',
             unit: defaultUnit,
             qty: 1,
@@ -1593,6 +1608,8 @@ const SalesInvoice = () => {
                     itemName: i.name,
                     description: i.desc || '',
                     sku: i.sku || '',
+                    brand: i.brand || i.brandName || '',
+                    detailedDesc: i.detailedDesc || '',
                     localName: i.localName || '',
                     unit: i.unit,
                     quantity: qty,
@@ -1877,7 +1894,9 @@ const SalesInvoice = () => {
                         name: i.itemName || i.name || '',
                         desc: i.description || i.shortDescription || i.desc || '',
                         sku: i.sku || i.productSku || '',
-                        localName: i.localName || i.productLocalName || '',
+                        brand: i.brand || i.brandName || '',
+                        detailedDesc: i.detailedDesc || '',
+                    localName: i.localName || i.productLocalName || '',
                         barcode: i.barcode || i.itemBarcode || '',
                         salesPerson: dataToPrint.salesperson || '',
                         location: dataToPrint.branch || '',
@@ -2643,7 +2662,7 @@ const SalesInvoice = () => {
                                                         </tr>
                                                     </thead>
                                                     <tbody className="divide-y divide-slate-100/50">
-                                                        {items.map((item, index) => (
+                                                        {[...items].reverse().map((item, index) => (
                                                             <React.Fragment key={item.id}>
                                                                 <tr className="group hover:bg-slate-50/50 transition-colors bg-white align-middle">
                                                                     {/* Index */}
@@ -2959,7 +2978,45 @@ const SalesInvoice = () => {
 
                                     {/* SIDEBAR - INTELLIGENCE PANELS */}
                                     <div className="space-y-5 xl:sticky xl:top-6">
-                                        <StockSidebarPanel stock={focusedItemStock} isLoading={isContextLoading} itemCode={focusedItemCode} />
+                                        <div className="bg-white rounded-xl border border-slate-200 p-4 shadow-sm">
+                                            <div className="flex items-center gap-2 mb-3 text-slate-700 font-bold text-[11px] uppercase tracking-wider">
+                                                <Package size={14} className="text-[#F5C742]" /> Item Availability
+                                                {isContextLoading && <div className="ml-auto animate-spin h-3 w-3 border-2 border-[#F5C742] border-t-transparent rounded-full" />}
+                                            </div>
+                                            <div className="space-y-2 overflow-y-auto max-h-[260px]">
+                                                {items.some(i => i.code) ? items.filter(i => i.code).filter((item, idx, arr) => arr.findIndex(x => x.code === item.code) === idx).map(item => {
+                                                    if ((item.productType || '').toUpperCase() === 'SERVICE') {
+                                                        return (
+                                                            <div key={item.id} className="border rounded p-2 border-blue-200 bg-blue-50">
+                                                                <div className="font-semibold text-[10px] text-slate-800 truncate">{item.desc || item.productDesc || item.code}</div>
+                                                                <div className="text-[9px] text-slate-500">{item.code}</div>
+                                                                <div className="mt-1 text-[10px] font-bold text-blue-700">Service — no stock tracking</div>
+                                                            </div>
+                                                        );
+                                                    }
+                                                    const available = liveStockMap[item.code]?.available ?? (item.stock || item.currentStock || 0);
+                                                    const reserved = liveStockMap[item.code]?.reserved ?? 0;
+                                                    const requested = Number(item.qty) || 0;
+                                                    const sufficient = available >= requested;
+                                                    return (
+                                                        <div key={item.id} className={`border rounded p-2 ${sufficient ? 'border-emerald-200 bg-emerald-50' : 'border-red-200 bg-red-50'}`}>
+                                                            <div className="font-semibold text-[10px] text-slate-800 truncate">{item.desc || item.productDesc || item.code}</div>
+                                                            <div className="text-[9px] text-slate-500 mb-1">{item.code}</div>
+                                                            <div className="flex justify-between text-[10px] text-slate-600">
+                                                                <span>Req: {requested}</span>
+                                                                <span>Avail: <span className="font-bold">{available}</span></span>
+                                                            </div>
+                                                            {reserved > 0 && <div className="text-[9px] text-orange-500 mt-0.5">Reserved: {reserved}</div>}
+                                                            <div className={`mt-1 text-[10px] font-bold ${sufficient ? 'text-emerald-600' : 'text-red-600'}`}>
+                                                                {sufficient ? '✅ In Stock' : '❌ Insufficient'}
+                                                            </div>
+                                                        </div>
+                                                    );
+                                                }) : (
+                                                    <div className="text-[10px] text-slate-400 text-center py-4 italic">Add items to check stock.</div>
+                                                )}
+                                            </div>
+                                        </div>
                                         <PriceHistorySidebarPanel history={focusedItemPriceHistory} isLoading={isContextLoading} itemCode={focusedItemCode} />
                                     </div>
                                 </div>

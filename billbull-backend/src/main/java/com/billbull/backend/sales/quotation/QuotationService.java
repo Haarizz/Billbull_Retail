@@ -267,6 +267,13 @@ public class QuotationService {
                             .ifPresent(item::setUnit);
                 }
 
+                if (item.getBrandName() == null && product.getBrand() != null) {
+                    item.setBrandName(product.getBrand().getName());
+                }
+                if (item.getDetailedDesc() == null && product.getDetailedDesc() != null) {
+                    item.setDetailedDesc(product.getDetailedDesc());
+                }
+
                 completeMissingLineAmounts(item);
             });
         }

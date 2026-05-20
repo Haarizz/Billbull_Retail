@@ -4,10 +4,81 @@ import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { generateReportFilename } from './filenameUtils';
 
+const isImageColumn = (column) => column.type === 'image';
+
+const getImageSize = (column) => ({
+    width: column.imageWidth || 48,
+    height: column.imageHeight || 48
+});
+
+const getImageExtension = (mimeType = '', url = '') => {
+    const lowerUrl = String(url).toLowerCase();
+    if (mimeType.includes('png') || lowerUrl.endsWith('.png')) return 'png';
+    if (mimeType.includes('jpeg') || mimeType.includes('jpg') || lowerUrl.endsWith('.jpg') || lowerUrl.endsWith('.jpeg')) return 'jpeg';
+    return null;
+};
+
+const getPdfImageFormat = (extension) => extension === 'png' ? 'PNG' : 'JPEG';
+
+const readBlobAsDataUrl = (blob) => new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = reject;
+    reader.readAsDataURL(blob);
+});
+
+const loadImage = async (url) => {
+    if (!url) return null;
+
+    if (String(url).startsWith('data:image/')) {
+        const extension = String(url).includes('image/png') ? 'png' : 'jpeg';
+        return { dataUrl: url, extension, pdfFormat: getPdfImageFormat(extension) };
+    }
+
+    try {
+        const response = await fetch(url);
+        if (!response.ok) return null;
+
+        const blob = await response.blob();
+        const extension = getImageExtension(blob.type, url);
+        if (!extension) return null;
+
+        const dataUrl = await readBlobAsDataUrl(blob);
+        return { dataUrl, extension, pdfFormat: getPdfImageFormat(extension) };
+    } catch (error) {
+        console.warn('Failed to load export image', url, error);
+        return null;
+    }
+};
+
+const loadExportImages = async (data, columns) => {
+    const imageColumns = columns.filter(isImageColumn);
+    const images = new Map();
+    const cache = new Map();
+
+    if (imageColumns.length === 0) return images;
+
+    await Promise.all(data.flatMap((row, rowIndex) => imageColumns.map(async (column) => {
+        const url = row[column.key];
+        if (!url) return;
+
+        if (!cache.has(url)) {
+            cache.set(url, loadImage(url));
+        }
+
+        const image = await cache.get(url);
+        if (image) {
+            images.set(`${rowIndex}:${column.key}`, image);
+        }
+    })));
+
+    return images;
+};
+
 /**
  * Generic function to export JSON data to an Excel file (.xlsx)
  * @param {Array} data - Array of objects containing the row data.
- * @param {Array} columns - Array of objects defining columns: { header: 'Title', key: 'dataKey', width: 15 }
+ * @param {Array} columns - Array of objects defining columns: { header: 'Title', key: 'dataKey', width: 15, type?: 'image' }
  * @param {string} fileName - Base filename without extension
  */
 export const exportToExcel = async (data, columns, fileName = 'Export') => {
@@ -16,6 +87,8 @@ export const exportToExcel = async (data, columns, fileName = 'Export') => {
         workbook.creator = 'Billbull ERP';
         workbook.created = new Date();
         const sheet = workbook.addWorksheet('Report');
+        const imageColumns = columns.filter(isImageColumn);
+        const imageMap = await loadExportImages(data, columns);
 
         // Map definitions to ExcelJS columns format
         sheet.columns = columns.map(col => ({
@@ -35,10 +108,10 @@ export const exportToExcel = async (data, columns, fileName = 'Export') => {
         headerRow.alignment = { vertical: 'middle', horizontal: 'center' };
 
         // Add Data
-        data.forEach((row) => {
+        data.forEach((row, rowIndex) => {
             const mappedRow = {};
             columns.forEach(col => {
-                let cellValue = row[col.key];
+                let cellValue = isImageColumn(col) ? '' : row[col.key];
 
                 // If it is a number and expected to be formatted nicely, ExcelJS handles JS numbers seamlessly.
                 if (typeof cellValue === 'number') {
@@ -49,7 +122,34 @@ export const exportToExcel = async (data, columns, fileName = 'Export') => {
 
                 mappedRow[col.key] = cellValue;
             });
-            sheet.addRow(mappedRow);
+            const sheetRow = sheet.addRow(mappedRow);
+            sheetRow.alignment = { vertical: 'middle' };
+
+            if (imageColumns.length > 0) {
+                const maxImageHeight = Math.max(...imageColumns.map(col => getImageSize(col).height));
+                sheetRow.height = Math.max(sheetRow.height || 15, Math.ceil((maxImageHeight * 72) / 96) + 8);
+            }
+        });
+
+        imageColumns.forEach((column) => {
+            const columnIndex = columns.findIndex(col => col.key === column.key);
+            const { width, height } = getImageSize(column);
+
+            data.forEach((_, rowIndex) => {
+                const image = imageMap.get(`${rowIndex}:${column.key}`);
+                if (!image) return;
+
+                const imageId = workbook.addImage({
+                    base64: image.dataUrl,
+                    extension: image.extension
+                });
+
+                sheet.addImage(imageId, {
+                    tl: { col: columnIndex + 0.15, row: rowIndex + 1.15 },
+                    ext: { width, height },
+                    editAs: 'oneCell'
+                });
+            });
         });
 
         // Write to buffer and save via browser FileSaver
@@ -66,14 +166,15 @@ export const exportToExcel = async (data, columns, fileName = 'Export') => {
 /**
  * Generic function to export JSON data to a PDF file (.pdf)
  * @param {Array} data - Array of objects containing the row data.
- * @param {Array} columns - Array of objects defining columns: { header: 'Title', key: 'dataKey' }
+ * @param {Array} columns - Array of objects defining columns: { header: 'Title', key: 'dataKey', type?: 'image' }
  * @param {string} title - Title generated into the document header
  * @param {string} fileName - Base filename without extension
  */
-export const exportToPDF = (data, columns, title = 'Report', fileName = 'Export') => {
+export const exportToPDF = async (data, columns, title = 'Report', fileName = 'Export') => {
     try {
         // Create an A4 landscape orient
         const doc = new jsPDF('l', 'pt', 'a4');
+        const imageMap = await loadExportImages(data, columns);
 
         // Document Details (Header)
         doc.setFontSize(18);
@@ -91,9 +192,22 @@ export const exportToPDF = (data, columns, title = 'Report', fileName = 'Export'
         // Prep data rows mapping correctly
         const body = data.map(row => {
             return columns.map(col => {
+                if (isImageColumn(col)) return '';
                 const val = row[col.key];
                 return val !== null && val !== undefined ? String(val) : '';
             });
+        });
+
+        const columnStyles = {};
+        columns.forEach((col, index) => {
+            if (!isImageColumn(col)) return;
+            const { width, height } = getImageSize(col);
+            columnStyles[index] = {
+                cellWidth: Math.max(width + 10, 48),
+                minCellHeight: height + 10,
+                halign: 'center',
+                valign: 'middle'
+            };
         });
 
         // Generate the table
@@ -117,6 +231,34 @@ export const exportToPDF = (data, columns, title = 'Report', fileName = 'Export'
             },
             alternateRowStyles: {
                 fillColor: [250, 250, 250] // light contrast
+            },
+            columnStyles,
+            didParseCell: (hookData) => {
+                const column = columns[hookData.column.index];
+                if (hookData.section !== 'body' || !column || !isImageColumn(column)) return;
+
+                const { height } = getImageSize(column);
+                hookData.cell.text = [''];
+                hookData.cell.styles.minCellHeight = height + 10;
+            },
+            didDrawCell: (hookData) => {
+                const column = columns[hookData.column.index];
+                if (hookData.section !== 'body' || !column || !isImageColumn(column)) return;
+
+                const image = imageMap.get(`${hookData.row.index}:${column.key}`);
+                if (!image) return;
+
+                const { width, height } = getImageSize(column);
+                const padding = 5;
+                const maxWidth = hookData.cell.width - (padding * 2);
+                const maxHeight = hookData.cell.height - (padding * 2);
+                const scale = Math.min(maxWidth / width, maxHeight / height, 1);
+                const drawWidth = width * scale;
+                const drawHeight = height * scale;
+                const x = hookData.cell.x + (hookData.cell.width - drawWidth) / 2;
+                const y = hookData.cell.y + (hookData.cell.height - drawHeight) / 2;
+
+                doc.addImage(image.dataUrl, image.pdfFormat, x, y, drawWidth, drawHeight);
             },
             margin: { left: 40, right: 40 }
         });

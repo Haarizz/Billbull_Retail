@@ -23,5 +23,6 @@ public record GrnItemResponse(
         Integer focQty,
         String focUnit,
         String remarks,
-        BigDecimal purchaseTax) {
+        BigDecimal purchaseTax,
+        String detailedDesc) {
 }

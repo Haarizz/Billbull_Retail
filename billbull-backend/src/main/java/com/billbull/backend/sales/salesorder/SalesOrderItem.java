@@ -68,6 +68,11 @@ public class SalesOrderItem {
     @Transient
     private List<DeliveryBatchSelectionResponse> batchSelections = new ArrayList<>();
 
+    @Transient
+    private String brandName;
+    @Transient
+    private String detailedDesc;
+
     // ✅ LAZY + BACK REFERENCE
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "sales_order_id")
@@ -292,6 +297,11 @@ public class SalesOrderItem {
     public void setBatchSelections(List<DeliveryBatchSelectionResponse> batchSelections) {
         this.batchSelections = batchSelections;
     }
+
+    public String getBrandName() { return brandName; }
+    public void setBrandName(String brandName) { this.brandName = brandName; }
+    public String getDetailedDesc() { return detailedDesc; }
+    public void setDetailedDesc(String detailedDesc) { this.detailedDesc = detailedDesc; }
 
     public String getRemarks() {
         return remarks;

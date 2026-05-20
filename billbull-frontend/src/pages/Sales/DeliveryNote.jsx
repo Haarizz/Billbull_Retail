@@ -317,7 +317,7 @@ const DeliveryNote = () => {
     });
 
     const fetchItemContext = async (itemCode) => {
-        if (!itemCode) return; // Allow re-clicking same item
+        if (!itemCode) return;
         setIsContextLoading(true);
         setFocusedItemCode(itemCode);
         try {
@@ -327,6 +327,16 @@ const DeliveryNote = () => {
             ]);
             setFocusedItemStock(stockData);
             setFocusedItemPriceHistory(priceData || []);
+            if (stockData?.locations) {
+                const locs = stockData.locations;
+                setLiveStockMap(prev => ({
+                    ...prev,
+                    [itemCode]: {
+                        available: locs.reduce((s, l) => s + (l.available || 0), 0),
+                        reserved: locs.reduce((s, l) => s + (l.reserved || 0), 0),
+                    }
+                }));
+            }
         } catch (err) {
             console.error('Failed to fetch item context', err);
         } finally {
@@ -770,6 +780,8 @@ const DeliveryNote = () => {
             code: resolvedCode,
             name: item.name || item.itemName || item.productName || '',
             barcode: item.barcode || item.itemBarcode || '',
+            brand: item.brand || item.brandName || '',
+            detailedDesc: item.detailedDesc || '',
             image: item.primaryImage || item.image || item.thumbnailUrl || item.imageUrl || '',
             desc: item.desc || item.description || '',
             remarks: item.remarks || item.description || item.desc || '',
@@ -1273,6 +1285,7 @@ const DeliveryNote = () => {
             id: Date.now() + Math.random(),
             code: product.code || product.itemCode || '',
             barcode: product.barcode || '',
+            detailedDesc: product.detailedDesc || '',
             image: product.primaryImage || product.image || product.thumbnailUrl || product.imageUrl || '',
             desc: product.description || product.name,
             unit: product.unitName || product.unit || 'PCS',
@@ -1296,6 +1309,9 @@ const DeliveryNote = () => {
             return hasData ? [...prev, newItem] : [newItem];
         });
         setIsProductSelectorOpen(false); // âœ… Close modal after adding
+        if (newItem.code) {
+            fetchItemContext(newItem.code);
+        }
     };
     const handleFastEntryAdd = (product, qty, price, disc) => {
         if (isLockedForEdit) return;
@@ -1325,6 +1341,9 @@ const DeliveryNote = () => {
             const isFirstItemEmpty = prev.length === 1 && !prev[0].code && !prev[0].desc;
             return isFirstItemEmpty ? [newItem] : [...prev, newItem];
         });
+        if (newItem.code) {
+            fetchItemContext(newItem.code);
+        }
     };
     // 
 
@@ -1564,6 +1583,8 @@ const DeliveryNote = () => {
                         name: i.name || i.desc || '',
                         desc: (i.remarks || i.desc || '') + (i.boxes ? ` (${i.boxes} Boxes)` : ''),
                         sku: i.sku || '',
+                        brand: i.brand || i.brandName || '',
+                        detailedDesc: i.detailedDesc || '',
                         localName: i.localName || '',
                         barcode: i.barcode || '',
                         location: warehouse || '',
@@ -1638,6 +1659,7 @@ const DeliveryNote = () => {
                     name: i.name || i.desc || '',
                     desc: (i.remarks || i.desc || '') + (i.boxes ? ` (${i.boxes} Boxes)` : ''),
                     sku: i.sku || '',
+                    brand: i.brand || i.brandName || '',
                     localName: i.localName || '',
                     barcode: i.barcode || '',
                     location: warehouse || '',
@@ -2357,7 +2379,7 @@ const DeliveryNote = () => {
                                                     </tr>
                                                 </thead>
                                                 <tbody className="divide-y divide-slate-100/50">
-                                                    {hasItemData ? items.map((item, index) => (
+                                                    {hasItemData ? [...items].reverse().map((item, index) => (
                                                         <React.Fragment key={item.id}>
                                                             <tr className={`group hover:bg-slate-50/50 transition-colors bg-white align-middle ${isLockedForEdit ? 'opacity-80' : ''}`}>
                                                                 <td className="p-2 text-center text-slate-400 text-xs font-medium">{index + 1}</td>
@@ -2535,7 +2557,45 @@ const DeliveryNote = () => {
                                     </div>
 
                                     {/* Item Intelligence Sidebar */}
-                                    <StockSidebarPanel stock={focusedItemStock} isLoading={isContextLoading} itemCode={focusedItemCode} />
+                                    <div className="bg-white rounded-xl border border-slate-200 p-4 shadow-sm">
+                                        <div className="flex items-center gap-2 mb-3 text-slate-700 font-bold text-[11px] uppercase tracking-wider">
+                                            <Package size={14} className="text-[#F5C742]" /> Item Availability
+                                            {isContextLoading && <div className="ml-auto animate-spin h-3 w-3 border-2 border-[#F5C742] border-t-transparent rounded-full" />}
+                                        </div>
+                                        <div className="space-y-2 overflow-y-auto max-h-[260px]">
+                                            {items.some(i => i.code) ? items.filter(i => i.code).filter((item, idx, arr) => arr.findIndex(x => x.code === item.code) === idx).map(item => {
+                                                if ((item.productType || '').toUpperCase() === 'SERVICE') {
+                                                    return (
+                                                        <div key={item.id} className="border rounded p-2 border-blue-200 bg-blue-50">
+                                                            <div className="font-semibold text-[10px] text-slate-800 truncate">{item.desc || item.code}</div>
+                                                            <div className="text-[9px] text-slate-500">{item.code}</div>
+                                                            <div className="mt-1 text-[10px] font-bold text-blue-700">Service — no stock tracking</div>
+                                                        </div>
+                                                    );
+                                                }
+                                                const available = liveStockMap[item.code]?.available ?? (item.stock || 0);
+                                                const reserved = liveStockMap[item.code]?.reserved ?? 0;
+                                                const requested = Number(item.currentQty || item.orderedQty) || 0;
+                                                const sufficient = available >= requested;
+                                                return (
+                                                    <div key={item.id} className={`border rounded p-2 ${sufficient ? 'border-emerald-200 bg-emerald-50' : 'border-red-200 bg-red-50'}`}>
+                                                        <div className="font-semibold text-[10px] text-slate-800 truncate">{item.desc || item.code}</div>
+                                                        <div className="text-[9px] text-slate-500 mb-1">{item.code}</div>
+                                                        <div className="flex justify-between text-[10px] text-slate-600">
+                                                            <span>Req: {requested}</span>
+                                                            <span>Avail: <span className="font-bold">{available}</span></span>
+                                                        </div>
+                                                        {reserved > 0 && <div className="text-[9px] text-orange-500 mt-0.5">Reserved: {reserved}</div>}
+                                                        <div className={`mt-1 text-[10px] font-bold ${sufficient ? 'text-emerald-600' : 'text-red-600'}`}>
+                                                            {sufficient ? '✅ In Stock' : '❌ Insufficient'}
+                                                        </div>
+                                                    </div>
+                                                );
+                                            }) : (
+                                                <div className="text-[10px] text-slate-400 text-center py-4 italic">Add items to check stock.</div>
+                                            )}
+                                        </div>
+                                    </div>
                                     <PriceHistorySidebarPanel history={focusedItemPriceHistory} isLoading={isContextLoading} itemCode={focusedItemCode} />
 
                                     {/* Source Summary & Link */}

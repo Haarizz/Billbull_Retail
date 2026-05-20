@@ -9,6 +9,26 @@ const parseTemplateObject = (value) => {
     }
 };
 
+const isFalseOption = (value) => value === false || value === 'false' || value === 0 || value === '0';
+const isTrueOption = (value) => value === true || value === 'true' || value === 1 || value === '1';
+
+const findDefinedColumnValue = (columns, keys) => {
+    for (const key of keys) {
+        if (columns[key] !== undefined) return columns[key];
+    }
+    return undefined;
+};
+
+const readColumnFlag = (columns, keys, fallback = false) => {
+    const value = findDefinedColumnValue(columns, keys);
+    return value !== undefined ? isTrueOption(value) : Boolean(fallback);
+};
+
+const readColumnNotFalse = (columns, keys, fallback = true) => {
+    const value = findDefinedColumnValue(columns, keys);
+    return value !== undefined ? !isFalseOption(value) : fallback !== false;
+};
+
 export const DEFAULT_TEMPLATE_DISPLAY_OPTIONS = Object.freeze({
     showLogo: true,
     showCompanyDetails: true,
@@ -21,6 +41,8 @@ export const DEFAULT_TEMPLATE_COLUMNS = Object.freeze({
     productId: false,
     sku: false,
     barcode: false,
+    brand: false,
+    detailedDesc: false,
     arabicName: false,
     description: true,
     qty: true,
@@ -35,7 +57,12 @@ export const DEFAULT_TEMPLATE_COLUMNS = Object.freeze({
     batchNumber: false,
     batchBarcode: false,
     expiry: false,
-    total: true
+    total: true,
+    lpoQty: false,
+    received: false,
+    accepted: false,
+    receivedBy: false,
+    checkedBy: false
 });
 
 export const parsePrintTemplateObject = parseTemplateObject;
@@ -66,30 +93,33 @@ export const sanitizeTemplateColumns = (
     defaults = DEFAULT_TEMPLATE_COLUMNS
 ) => {
     const columns = parseTemplateObject(rawColumns);
-    const description = columns.description !== undefined
-        ? columns.description !== false
-        : columns.item !== undefined
-            ? columns.item !== false
-            : defaults.description !== false;
+    const description = readColumnNotFalse(columns, ['description', 'item'], defaults.description);
 
     return {
-        productId: columns.productId !== undefined ? Boolean(columns.productId) : Boolean(defaults.productId),
-        sku: columns.sku !== undefined ? Boolean(columns.sku) : Boolean(defaults.sku),
-        barcode: columns.barcode !== undefined ? Boolean(columns.barcode) : Boolean(defaults.barcode ?? false),
-        arabicName: columns.arabicName !== undefined ? Boolean(columns.arabicName) : Boolean(defaults.arabicName),
+        productId: readColumnFlag(columns, ['productId', 'itemCode', 'item_code', 'productCode', 'code'], defaults.productId),
+        sku: readColumnFlag(columns, ['sku', 'skuCode', 'SKU'], defaults.sku),
+        barcode: readColumnFlag(columns, ['barcode', 'itemBarcode', 'barCode'], defaults.barcode ?? false),
+        brand: readColumnFlag(columns, ['brand', 'brandName', 'brand_name'], defaults.brand ?? false),
+        detailedDesc: readColumnFlag(columns, ['detailedDesc', 'detailedDescription', 'detailed_desc'], defaults.detailedDesc ?? false),
+        arabicName: readColumnFlag(columns, ['arabicName', 'localName'], defaults.arabicName),
         description,
-        qty: columns.qty !== undefined ? columns.qty !== false : defaults.qty !== false,
-        unitPrice: columns.unitPrice !== undefined ? columns.unitPrice !== false : defaults.unitPrice !== false,
-        taxableAmount: columns.taxableAmount !== undefined ? Boolean(columns.taxableAmount) : Boolean(defaults.taxableAmount ?? false),
-        discount: columns.discount !== undefined ? Boolean(columns.discount) : Boolean(defaults.discount),
-        discountPercent: columns.discountPercent !== undefined ? Boolean(columns.discountPercent) : Boolean(defaults.discountPercent ?? false),
-        tax: columns.tax !== undefined ? Boolean(columns.tax) : Boolean(defaults.tax),
-        taxPercent: columns.taxPercent !== undefined ? Boolean(columns.taxPercent) : Boolean(defaults.taxPercent ?? false),
-        salesPerson: columns.salesPerson !== undefined ? Boolean(columns.salesPerson) : Boolean(defaults.salesPerson ?? false),
-        location: columns.location !== undefined ? Boolean(columns.location) : Boolean(defaults.location ?? false),
-        batchNumber: columns.batchNumber !== undefined ? Boolean(columns.batchNumber) : Boolean(defaults.batchNumber ?? false),
-        batchBarcode: columns.batchBarcode !== undefined ? Boolean(columns.batchBarcode) : Boolean(defaults.batchBarcode ?? false),
-        expiry: columns.expiry !== undefined ? Boolean(columns.expiry) : Boolean(defaults.expiry ?? false),
-        total: columns.total !== undefined ? columns.total !== false : defaults.total !== false
+        qty: readColumnNotFalse(columns, ['qty', 'quantity'], defaults.qty),
+        unitPrice: readColumnNotFalse(columns, ['unitPrice', 'price', 'sellingPrice'], defaults.unitPrice),
+        taxableAmount: readColumnFlag(columns, ['taxableAmount'], defaults.taxableAmount ?? false),
+        discount: readColumnFlag(columns, ['discount'], defaults.discount),
+        discountPercent: readColumnFlag(columns, ['discountPercent', 'discPercent'], defaults.discountPercent ?? false),
+        tax: readColumnNotFalse(columns, ['tax', 'vat'], defaults.tax),
+        taxPercent: readColumnFlag(columns, ['taxPercent', 'vatPercent'], defaults.taxPercent ?? false),
+        salesPerson: readColumnFlag(columns, ['salesPerson', 'salesperson'], defaults.salesPerson ?? false),
+        location: readColumnFlag(columns, ['location', 'branch'], defaults.location ?? false),
+        batchNumber: readColumnFlag(columns, ['batchNumber', 'batchNo'], defaults.batchNumber ?? false),
+        batchBarcode: readColumnFlag(columns, ['batchBarcode'], defaults.batchBarcode ?? false),
+        expiry: readColumnFlag(columns, ['expiry', 'expiryDate'], defaults.expiry ?? false),
+        total: readColumnNotFalse(columns, ['total', 'lineTotal'], defaults.total),
+        lpoQty: readColumnFlag(columns, ['lpoQty', 'lpo_qty', 'lpoQuantity'], defaults.lpoQty ?? false),
+        received: readColumnFlag(columns, ['received', 'receivedQty'], defaults.received ?? false),
+        accepted: readColumnFlag(columns, ['accepted', 'acceptedQty'], defaults.accepted ?? false),
+        receivedBy: readColumnFlag(columns, ['receivedBy', 'received_by'], defaults.receivedBy ?? false),
+        checkedBy: readColumnFlag(columns, ['checkedBy', 'checked_by'], defaults.checkedBy ?? false)
     };
 };

@@ -452,6 +452,13 @@ public class SalesOrderService {
             }
         }
 
+        if (item.getBrandName() == null && product.getBrand() != null) {
+            item.setBrandName(product.getBrand().getName());
+        }
+        if (item.getDetailedDesc() == null && product.getDetailedDesc() != null) {
+            item.setDetailedDesc(product.getDetailedDesc());
+        }
+
         // Hydrate price: packing-level price first, then product retail price
         if (item.getPrice() == null) {
             java.math.BigDecimal packingPrice = lookupPackingValue(product.getId(), item.getUnit(), true);

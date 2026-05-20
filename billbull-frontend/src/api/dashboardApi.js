@@ -1,3 +1,4 @@
+import api from './axiosConfig';
 import { getProducts } from './productsApi';
 import { getAllSalesInvoices } from './salesInvoiceApi';
 import { getAllSalesOrders } from './salesorderApi';
@@ -17,6 +18,123 @@ import {
 } from './inventoryReportsApi';
 
 const CACHE_TTL_MS = 120000;
+const LS_CACHE_KEY = (timeRange) => `bb_dash_v1_${timeRange}`;
+const LS_CACHE_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
+
+const readLocalStorageCache = (timeRange) => {
+    try {
+        const raw = localStorage.getItem(LS_CACHE_KEY(timeRange));
+        if (!raw) return null;
+        const { timestamp, data } = JSON.parse(raw);
+        if (Date.now() - timestamp > LS_CACHE_TTL_MS) {
+            localStorage.removeItem(LS_CACHE_KEY(timeRange));
+            return null;
+        }
+        return data;
+    } catch {
+        return null;
+    }
+};
+
+const writeLocalStorageCache = (timeRange, data) => {
+    try {
+        localStorage.setItem(LS_CACHE_KEY(timeRange), JSON.stringify({ timestamp: Date.now(), data }));
+    } catch {
+        // Storage quota exceeded — silently skip
+    }
+};
+
+const fetchDashboardSummary = async (timeRange) => {
+    const response = await api.get('/api/dashboard/summary', { params: { timeRange } });
+    return response.data;
+};
+
+const transformBackendDashboard = (backend, timeRange) => {
+    const empty = createEmptyDashboardData();
+
+    // Sales trend: array of { date, sales, count } → object keyed by date
+    const salesTrend = {};
+    (backend.salesTrend ?? []).forEach(({ date, sales, count }) => {
+        salesTrend[date] = { sales, count };
+    });
+    const salesTrendMeta = buildSalesTrendMeta(salesTrend, timeRange);
+
+    // Payment breakdown: array of { label, value } → bucket totals
+    const payRows = backend.paymentBreakdown ?? [];
+    const breakdown = { cash: 0, card: 0, wallet: 0, credit: 0 };
+    payRows.forEach(({ label, value }) => {
+        const bucket = resolvePaymentBucketFromLabel(label);
+        breakdown[bucket] += value;
+    });
+    const payTotal = Object.values(breakdown).reduce((s, v) => s + v, 0);
+
+    // Top departments: array of { label, value }
+    const topDepartments = (backend.topDepartments ?? []).map(({ label, value }) => ({ label, value }));
+
+    // Recent transactions
+    const transactions = (backend.recentTransactions ?? []).map((t) => ({
+        id: t.invoiceNumber ?? t.id,
+        customer: t.customerName ?? 'Walk-in Customer',
+        amount: t.amount ?? 0,
+        date: t.date,
+        status: t.status ?? 'UNKNOWN',
+        time: formatRelativeTime(parseDate(t.date))
+    }));
+
+    const sm = backend.salesMetrics ?? {};
+    const pm = backend.purchaseMetrics ?? {};
+    const hm = backend.hrMetrics ?? {};
+    const im = backend.inventoryMetrics ?? {};
+
+    return {
+        ...empty,
+        sales: {
+            ...empty.sales,
+            totalSales: sm.totalRevenue ?? 0,
+            invoiceCount: sm.invoiceCount ?? 0,
+        },
+        financial: {
+            ...empty.financial,
+            receivables: sm.outstanding ?? 0,
+        },
+        hr: {
+            totalEmployees: hm.totalEmployees ?? 0,
+            activeEmployees: hm.activeEmployees ?? 0,
+        },
+        purchase: {
+            ...empty.purchase,
+            pendingLPOs: pm.pendingLpos ?? 0,
+            lpoCount: pm.totalLpos ?? 0,
+        },
+        inventory: {
+            ...empty.inventory,
+            totalProducts: im.totalProducts ?? 0,
+            lowStockCount: im.lowStockCount ?? 0,
+        },
+        transactions,
+        paymentBreakdown: {
+            ...breakdown,
+            total: payTotal,
+            cashPct: payTotal > 0 ? ((breakdown.cash / payTotal) * 100).toFixed(1) : 0,
+            cardPct: payTotal > 0 ? ((breakdown.card / payTotal) * 100).toFixed(1) : 0,
+            walletPct: payTotal > 0 ? ((breakdown.wallet / payTotal) * 100).toFixed(1) : 0,
+            creditPct: payTotal > 0 ? ((breakdown.credit / payTotal) * 100).toFixed(1) : 0,
+        },
+        salesTrend,
+        salesTrendMeta,
+        topDepartments,
+        lastUpdated: new Date().toISOString(),
+    };
+};
+
+const resolvePaymentBucketFromLabel = (label) => {
+    const lower = (label ?? '').toLowerCase();
+    if (lower.includes('wallet')) return 'wallet';
+    if (lower.includes('credit')) return 'credit';
+    if (lower.includes('card') || lower.includes('visa') || lower.includes('master') || lower.includes('bank') || lower.includes('upi')) return 'card';
+    return 'cash';
+};
+
 const dashboardCache = new Map();
 const inFlightRequests = new Map();
 
@@ -83,10 +201,16 @@ const hasAnyStatus = (value, statuses) => {
 const parseDate = (...values) => {
     for (const value of values) {
         if (!value) continue;
-        const parsed = new Date(value);
-        if (!Number.isNaN(parsed.getTime())) {
-            return parsed;
+        let parsed;
+        // Date-only ISO strings (YYYY-MM-DD) must be parsed as local midnight, not UTC midnight.
+        // new Date("2025-05-20") gives UTC midnight which shifts to the previous local day in UTC- timezones.
+        if (typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value)) {
+            const [y, m, d] = value.split('-').map(Number);
+            parsed = new Date(y, m - 1, d);
+        } else {
+            parsed = new Date(value);
         }
+        if (!Number.isNaN(parsed.getTime())) return parsed;
     }
     return null;
 };
@@ -104,17 +228,17 @@ const filterByDateRange = (items, getDate, range) => {
 
     return asArray(items).filter((item) => {
         const itemDate = getDate(item);
-        if (!itemDate) return false;
-
+        // For date-specific ranges, exclude items without a parseable date.
+        // For "All Time" (default), include everything regardless of whether a date is set.
         switch (range) {
             case 'Today':
-                return itemDate >= today;
+                return itemDate ? itemDate >= today : false;
             case 'Yesterday':
-                return itemDate >= yesterday && itemDate < today;
+                return itemDate ? (itemDate >= yesterday && itemDate < today) : false;
             case 'This Week':
-                return itemDate >= weekStart;
+                return itemDate ? itemDate >= weekStart : false;
             case 'This Month':
-                return itemDate >= monthStart;
+                return itemDate ? itemDate >= monthStart : false;
             default:
                 return true;
         }
@@ -175,7 +299,6 @@ const resolveDataset = async (loader, label) => {
     }
 };
 
-// Prefer timestamp when available so "Today" can group by hour correctly.
 const getInvoiceDate = (invoice) => parseDate(invoice?.createdAt, invoice?.invoiceDate, invoice?.date);
 const getOrderDate = (order) => parseDate(order?.orderDate, order?.date, order?.createdAt);
 const getReturnDate = (salesReturn) => parseDate(salesReturn?.returnDate, salesReturn?.date, salesReturn?.createdAt);
@@ -458,12 +581,33 @@ const buildSalesMetrics = (datasets, timeRange) => {
     };
 };
 
+// The low-stock report returns one row per batch, so a product with N batches appears N times.
+// Merge all batches for the same product by summing quantities, then check the threshold.
+const deduplicateLowStockByProduct = (rows) => {
+    const byProduct = new Map();
+    rows.forEach((row) => {
+        const key = row.productId != null ? String(row.productId) : (row.sku || row.name);
+        if (!key) return;
+        if (!byProduct.has(key)) {
+            byProduct.set(key, { ...row });
+        } else {
+            byProduct.get(key).currentStock += row.currentStock;
+        }
+    });
+    // Re-apply threshold: only keep products whose total stock is still low
+    return Array.from(byProduct.values()).filter((row) => row.currentStock > 0 && row.currentStock < 10);
+};
+
 const buildInventoryMetrics = (datasets) => {
     const valuationRows = datasets.stockValuation.map(normalizeStockRow);
-    const lowStockRows = datasets.lowStockReport.map(normalizeStockRow);
+    const rawLowStockRows = datasets.lowStockReport.map(normalizeStockRow);
     const outOfStockRows = datasets.outOfStockReport.map(normalizeStockRow);
+
+    // Deduplicate batch-level low-stock rows into one row per product
+    const lowStockProducts = deduplicateLowStockByProduct(rawLowStockRows);
+
     const allKnownInventoryIds = new Set(
-        [...valuationRows, ...lowStockRows, ...outOfStockRows].map((row) => row.productId ?? row.sku ?? row.name)
+        [...valuationRows, ...rawLowStockRows, ...outOfStockRows].map((row) => row.productId ?? row.sku ?? row.name)
     );
 
     const hasActiveSignal = datasets.products.some((entry) => {
@@ -479,12 +623,12 @@ const buildInventoryMetrics = (datasets) => {
     return {
         totalProducts,
         activeProducts,
-        lowStockCount: lowStockRows.length,
+        lowStockCount: lowStockProducts.length,
         outOfStockCount: outOfStockRows.length,
         stockValueCost: sumBy(valuationRows, (row) => row.stockValue),
         stockValueRetail: sumBy(valuationRows, (row) => row.retailValue),
         pendingTransfers: datasets.transfers.filter((transfer) => hasAnyStatus(transfer?.status, ['PENDING', 'DRAFT', 'REQUESTED', 'PENDING_APPROVAL', 'IN_TRANSIT'])).length,
-        lowStockProducts: lowStockRows.slice(0, 10),
+        lowStockProducts: lowStockProducts.slice(0, 10),
         outOfStockProducts: outOfStockRows.slice(0, 10)
     };
 };
@@ -559,16 +703,14 @@ const buildSalesTrend = (datasets, timeRange) => {
 
     filteredInvoices.forEach((invoice) => {
         const invoiceDate = getInvoiceDate(invoice);
+        // Skip invoices with no parseable date — they can't be placed on a timeline.
         if (!invoiceDate) return;
 
-        const key = timeRange === 'Today'
-            ? invoiceDate.getHours()
-            : invoiceDate.toISOString().slice(0, 10);
+        // SalesInvoice stores a LocalDate (date-only), so hourly grouping is not possible.
+        // Always group by local calendar date to avoid UTC-midnight timezone shift.
+        const key = invoiceDate.toLocaleDateString('en-CA'); // produces "YYYY-MM-DD" in local time
 
-        if (!grouped[key]) {
-            grouped[key] = { sales: 0, count: 0 };
-        }
-
+        if (!grouped[key]) grouped[key] = { sales: 0, count: 0 };
         grouped[key].sales += getInvoiceAmount(invoice);
         grouped[key].count += 1;
     });
@@ -594,18 +736,14 @@ const buildSalesTrendMeta = (trendData, timeRange) => {
 
     let peakLabel = null;
     if (peakKey !== null) {
-        if (timeRange === 'Today') {
-            const h = Number(peakKey);
-            const display = h > 12 ? h - 12 : h === 0 ? 12 : h;
-            const period = h >= 12 ? 'PM' : 'AM';
-            peakLabel = `${display} ${period}`;
-        } else {
-            peakLabel = new Date(peakKey).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-        }
+        const peakDate = parseDate(peakKey);
+        peakLabel = peakDate
+            ? peakDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+            : String(peakKey);
     }
 
-    const periodCount = timeRange === 'Today' ? 10 : (entries.length || 1);
-    const avgSales = periodCount > 0 ? totalSales / periodCount : 0;
+    const periodCount = entries.length || 1;
+    const avgSales = totalSales / periodCount;
 
     return { peakLabel, avgSales };
 };
@@ -781,63 +919,76 @@ const buildEmployeePerformance = (datasets, timeRange, limit = 4) => {
 };
 
 const buildRecentActivity = (datasets, limit = 5) => {
-    const activities = [];
+    const candidates = [];
 
-    datasets.invoices
-        .filter(isInvoiceCountable)
-        .sort((left, right) => (getInvoiceDate(right)?.getTime() ?? 0) - (getInvoiceDate(left)?.getTime() ?? 0))
-        .slice(0, 2)
-        .forEach((invoice) => {
-            activities.push({
-                type: 'sale',
-                user: getSalespersonName(invoice) || 'System',
-                action: `Created Sales Invoice #${pickText(invoice?.invoiceNumber, invoice?.id?.toString(), 'Invoice')}`,
-                time: getInvoiceDate(invoice),
-                status: 'success'
-            });
+    // Collect every event from every source — no per-source cap.
+    // After merging, we sort globally and take the most recent `limit`.
+
+    datasets.invoices.filter(isInvoiceCountable).forEach((invoice) => {
+        const time = getInvoiceDate(invoice);
+        if (!time) return;
+        const num = pickText(invoice?.invoiceNumber, invoice?.id?.toString(), 'Invoice');
+        const customerName = getCustomerName(invoice);
+        candidates.push({
+            type: 'sale',
+            user: getSalespersonName(invoice) || 'System',
+            action: `Sales Invoice #${num} — ${customerName}`,
+            time,
+            status: hasAnyStatus(invoice?.status, ['PAID', 'POSTED', 'CONFIRMED', 'PARTIALLY_PAID']) ? 'success' : 'info'
         });
+    });
 
-    datasets.grns
-        .sort((left, right) => (getGrnDate(right)?.getTime() ?? 0) - (getGrnDate(left)?.getTime() ?? 0))
-        .slice(0, 1)
-        .forEach((grn) => {
-            activities.push({
-                type: 'purchase',
-                user: 'System',
-                action: `GRN #${pickText(grn?.idDisplay, grn?.id?.toString(), 'GRN')} ${hasAnyStatus(grn?.status, ['APPROVED', 'POSTED']) ? 'approved' : 'created'}`,
-                time: getGrnDate(grn),
-                status: hasAnyStatus(grn?.status, ['APPROVED', 'POSTED']) ? 'success' : 'info'
-            });
+    datasets.lpos.forEach((lpo) => {
+        const time = getLpoDate(lpo);
+        if (!time) return;
+        const num = pickText(lpo?.lpoNumber, lpo?.id?.toString(), 'LPO');
+        candidates.push({
+            type: 'purchase',
+            user: 'Procurement',
+            action: `Purchase Order #${num} ${hasAnyStatus(lpo?.status, ['APPROVED', 'SENT_TO_VENDOR', 'COMPLETED']) ? 'approved' : 'created'}`,
+            time,
+            status: hasAnyStatus(lpo?.status, ['APPROVED', 'SENT_TO_VENDOR', 'COMPLETED']) ? 'success' : 'info'
         });
+    });
 
-    datasets.inquiries
-        .sort((left, right) => (getInquiryDate(right)?.getTime() ?? 0) - (getInquiryDate(left)?.getTime() ?? 0))
-        .slice(0, 1)
-        .forEach((inquiry) => {
-            activities.push({
-                type: 'customer',
-                user: pickText(inquiry?.assignedTo, 'System'),
-                action: `New customer inquiry from ${pickText(inquiry?.customer, inquiry?.customerName, 'Customer')}`,
-                time: getInquiryDate(inquiry),
-                status: 'info'
-            });
+    datasets.grns.forEach((grn) => {
+        const time = getGrnDate(grn);
+        if (!time) return;
+        const num = pickText(grn?.idDisplay, grn?.grnNumber, grn?.id?.toString(), 'GRN');
+        candidates.push({
+            type: 'purchase',
+            user: 'Warehouse',
+            action: `GRN #${num} ${hasAnyStatus(grn?.status, ['APPROVED', 'POSTED']) ? 'posted' : 'received'}`,
+            time,
+            status: hasAnyStatus(grn?.status, ['APPROVED', 'POSTED']) ? 'success' : 'info'
         });
+    });
 
-    datasets.expenses
-        .sort((left, right) => (getExpenseDate(right)?.getTime() ?? 0) - (getExpenseDate(left)?.getTime() ?? 0))
-        .slice(0, 1)
-        .forEach((expense) => {
-            activities.push({
-                type: 'payment',
-                user: pickText(expense?.createdBy, 'System'),
-                action: `Expense recorded: ${pickText(expense?.category, expense?.vendor, 'General')}`,
-                time: getExpenseDate(expense),
-                status: 'success'
-            });
+    datasets.inquiries.forEach((inquiry) => {
+        const time = getInquiryDate(inquiry);
+        if (!time) return;
+        candidates.push({
+            type: 'customer',
+            user: pickText(inquiry?.assignedTo, 'System'),
+            action: `Customer inquiry from ${pickText(inquiry?.customer, inquiry?.customerName, 'Customer')}`,
+            time,
+            status: 'info'
         });
+    });
 
-    return activities
-        .filter((activity) => activity.time)
+    datasets.expenses.forEach((expense) => {
+        const time = getExpenseDate(expense);
+        if (!time) return;
+        candidates.push({
+            type: 'payment',
+            user: pickText(expense?.createdBy, 'System'),
+            action: `Expense: ${pickText(expense?.category, expense?.vendor, 'General')}`,
+            time,
+            status: 'success'
+        });
+    });
+
+    return candidates
         .sort((left, right) => right.time - left.time)
         .slice(0, limit)
         .map((activity) => ({
@@ -949,10 +1100,16 @@ export const getRecentActivity = async (limit = 5) => {
 };
 
 export const getDashboardData = async (timeRange = 'Today', options = {}) => {
-    const { force = false } = options;
+    const { force = false, onStale } = options;
     const cacheKey = timeRange;
-    const cached = dashboardCache.get(cacheKey);
 
+    // Fire stale callback immediately so UI paints from cache while fresh data loads
+    if (!force && onStale) {
+        const stale = readLocalStorageCache(timeRange);
+        if (stale) onStale(stale);
+    }
+
+    const cached = dashboardCache.get(cacheKey);
     if (!force && cached && (Date.now() - cached.timestamp) < CACHE_TTL_MS) {
         return cached.data;
     }
@@ -962,15 +1119,19 @@ export const getDashboardData = async (timeRange = 'Today', options = {}) => {
     }
 
     const request = (async () => {
+        // Fast path: single aggregated backend endpoint
+        try {
+            const backend = await fetchDashboardSummary(timeRange);
+            return transformBackendDashboard(backend, timeRange);
+        } catch (backendError) {
+            console.warn('Dashboard summary endpoint unavailable, falling back to full fetch:', backendError?.message);
+        }
+
+        // Fallback: full 15-call client-side aggregation
         const emptyState = createEmptyDashboardData();
         const datasets = await loadDashboardDatasets();
         const dashboardSections = buildDashboardSections(datasets, timeRange);
-
-        return {
-            ...emptyState,
-            ...dashboardSections,
-            lastUpdated: new Date().toISOString()
-        };
+        return { ...emptyState, ...dashboardSections, lastUpdated: new Date().toISOString() };
     })();
 
     inFlightRequests.set(cacheKey, request);
@@ -978,6 +1139,7 @@ export const getDashboardData = async (timeRange = 'Today', options = {}) => {
     try {
         const data = await request;
         dashboardCache.set(cacheKey, { timestamp: Date.now(), data });
+        writeLocalStorageCache(timeRange, data);
         return data;
     } catch (error) {
         console.error('Error fetching dashboard data:', error);

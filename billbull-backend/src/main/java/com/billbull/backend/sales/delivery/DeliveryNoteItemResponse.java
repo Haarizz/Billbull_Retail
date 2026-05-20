@@ -8,7 +8,9 @@ public class DeliveryNoteItemResponse {
     public Long id;
     public String itemCode;
     public String barcode;
+    public String brandName;
     public String description;
+    public String detailedDesc;
     public String unit;
 
     public Integer orderedQty;

@@ -184,6 +184,12 @@ public class DeliveryNoteService {
             ir.cost = item.getCost();
 
             Product product = item.getProduct();
+            if (product != null && product.getBrand() != null) {
+                ir.brandName = product.getBrand().getName();
+            }
+            if (product != null && product.getDetailedDesc() != null) {
+                ir.detailedDesc = product.getDetailedDesc();
+            }
             boolean batchControlled = product != null && product.isBatch();
             ir.batchControlled = batchControlled;
             ir.fefoEnabled = product == null || product.isFefoEnabled();

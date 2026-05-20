@@ -70,6 +70,11 @@ public class QuotationItem {
     @Transient
     private Integer minExpiryDaysForSale;
 
+    @Transient
+    private String brandName;
+    @Transient
+    private String detailedDesc;
+
     public String getProductType() { return productType; }
     public void setProductType(String productType) { this.productType = productType; }
 
@@ -81,6 +86,11 @@ public class QuotationItem {
 
     public Integer getMinExpiryDaysForSale() { return minExpiryDaysForSale; }
     public void setMinExpiryDaysForSale(Integer minExpiryDaysForSale) { this.minExpiryDaysForSale = minExpiryDaysForSale; }
+
+    public String getBrandName() { return brandName; }
+    public void setBrandName(String brandName) { this.brandName = brandName; }
+    public String getDetailedDesc() { return detailedDesc; }
+    public void setDetailedDesc(String detailedDesc) { this.detailedDesc = detailedDesc; }
 
     public QuotationItem() {
     }
