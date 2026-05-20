@@ -141,7 +141,7 @@ export default function TaxCompliance() {
         });
 
         return {
-            pendingAmount: pending.toLocaleString(),
+            pendingAmount: pending,
             overdue: overdueCount,
             filedThisMonth: filedThisMonthCount,
             dueThisWeek: dueThisWeekCount

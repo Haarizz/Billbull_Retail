@@ -25,6 +25,8 @@ import com.billbull.backend.financials.receiptvoucher.ReceiptVoucher;
 import com.billbull.backend.financials.receiptvoucher.ReceiptVoucherService;
 import com.billbull.backend.inventory.product.ProductBarcodeRepository;
 import com.billbull.backend.sales.customerledger.CustomerRepository;
+import com.billbull.backend.sales.customerledger.OpeningInvoice;
+import com.billbull.backend.sales.customerledger.OpeningInvoiceRepository;
 import com.billbull.backend.inventory.product.ProductMediaRepository;
 import com.billbull.backend.inventory.batch.BatchAllocationStatus;
 import com.billbull.backend.inventory.batch.BatchSelectionRequest;
@@ -66,6 +68,7 @@ public class SalesInvoiceService {
     private final com.billbull.backend.sales.salesorder.SalesOrderRepository salesOrderRepository;
     private final DeliveryNoteRepository deliveryNoteRepository;
     private final CustomerRepository customerRepository;
+    private final OpeningInvoiceRepository openingInvoiceRepository;
     private final WarehouseRepository warehouseRepository;
     private final BranchAccessService branchAccessService;
     private final StockMovementRepository stockMovementRepo;
@@ -85,6 +88,7 @@ public class SalesInvoiceService {
             com.billbull.backend.sales.salesorder.SalesOrderRepository salesOrderRepository,
             DeliveryNoteRepository deliveryNoteRepository,
             CustomerRepository customerRepository,
+            OpeningInvoiceRepository openingInvoiceRepository,
             WarehouseRepository warehouseRepository,
             BranchAccessService branchAccessService,
             StockMovementRepository stockMovementRepo,
@@ -103,6 +107,7 @@ public class SalesInvoiceService {
         this.salesOrderRepository = salesOrderRepository;
         this.deliveryNoteRepository = deliveryNoteRepository;
         this.customerRepository = customerRepository;
+        this.openingInvoiceRepository = openingInvoiceRepository;
         this.warehouseRepository = warehouseRepository;
         this.branchAccessService = branchAccessService;
         this.stockMovementRepo = stockMovementRepo;
@@ -124,9 +129,14 @@ public class SalesInvoiceService {
         Double invoiceOutstanding = invoiceRepo.findOutstandingBalanceByCustomerCode(customerCode);
         double invoiceAmt = invoiceOutstanding != null ? invoiceOutstanding : 0.0;
 
-        double openingBalance = customerRepository.findByCode(customerCode)
-                .map(c -> c.getBalance() != null ? c.getBalance().doubleValue() : 0.0)
-                .orElse(0.0);
+        // QA-035: unpaid amounts live in OpeningInvoice rows (one per migrated AR bill).
+        // Customer.balance is only the seeded total at creation and does not decrement
+        // as opening invoices get settled, so it cannot be used as the live opening
+        // outstanding. Sum each opening invoice's current outstanding instead — this
+        // mirrors what the Customer Ledger screen displays.
+        double openingBalance = openingInvoiceRepository.findByCustomer_Code(customerCode).stream()
+                .mapToDouble(this::resolveOpeningInvoiceOutstanding)
+                .sum();
 
         double total = BigDecimal.valueOf(invoiceAmt + openingBalance)
                 .setScale(2, RoundingMode.HALF_UP).doubleValue();
@@ -135,6 +145,17 @@ public class SalesInvoiceService {
                 "outstanding", total,
                 "invoiceOutstanding", BigDecimal.valueOf(invoiceAmt).setScale(2, RoundingMode.HALF_UP).doubleValue(),
                 "openingBalance", BigDecimal.valueOf(openingBalance).setScale(2, RoundingMode.HALF_UP).doubleValue());
+    }
+
+    private double resolveOpeningInvoiceOutstanding(OpeningInvoice invoice) {
+        BigDecimal outstanding = invoice.getOutstanding();
+        if (outstanding == null) {
+            outstanding = invoice.getAmount();
+        }
+        if (outstanding == null || outstanding.compareTo(BigDecimal.ZERO) <= 0) {
+            return 0.0;
+        }
+        return outstanding.doubleValue();
     }
 
     // ----------------------------

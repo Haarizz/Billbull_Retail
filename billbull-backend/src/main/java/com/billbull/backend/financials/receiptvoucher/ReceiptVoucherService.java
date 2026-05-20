@@ -95,10 +95,7 @@ public class ReceiptVoucherService {
 
     @Transactional
     public ReceiptVoucher createReceipt(ReceiptVoucher receipt, MultipartFile file) {
-        long count = repository.count();
-        String year = java.time.Year.now().toString();
-        String voucherId = String.format("RV-%s-%03d", year, count + 1);
-        receipt.setVoucherId(voucherId);
+        receipt.setVoucherId(generateNextVoucherId());
 
         if (receipt.getStatus() == null) {
             receipt.setStatus("Completed");
@@ -198,6 +195,21 @@ public class ReceiptVoucherService {
         repository.delete(receipt);
         syncLinkedInvoice(linkedInvoiceId);
         syncOpeningInvoice(linkedOpeningInvoiceId);
+    }
+
+    private String generateNextVoucherId() {
+        String year = java.time.Year.now().toString();
+        String prefix = "RV-" + year + "-";
+        String lastId = repository.findMaxVoucherIdByPrefix(prefix);
+        int next = 1;
+        if (lastId != null && lastId.startsWith(prefix)) {
+            try {
+                next = Integer.parseInt(lastId.substring(prefix.length())) + 1;
+            } catch (NumberFormatException ignored) {
+                next = 1;
+            }
+        }
+        return String.format("%s%03d", prefix, next);
     }
 
     private void storeFile(MultipartFile file, ReceiptVoucher receipt) {

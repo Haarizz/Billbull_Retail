@@ -149,7 +149,22 @@ public class TaxService {
 
     // --- Filing Methods ---
 
+    @Transactional
     public List<TaxFilingDTO> getAllFilings() {
+        // QA-057: ensure every active configuration has at least one filing so the
+        // dashboard never renders "TBD" / a missing File Return button. createConfig
+        // seeds an initial filing for new configs, but pre-existing configs (created
+        // before that hook was added) and configs whose lone filing was deleted both
+        // miss out otherwise.
+        for (TaxConfiguration config : taxConfigurationRepository.findAll()) {
+            if (!"Active".equals(config.getStatus())) {
+                continue;
+            }
+            if (taxFilingRepository.findByTaxConfigurationId(config.getId()).isEmpty()) {
+                createInitialFiling(config);
+            }
+        }
+
         return taxFilingRepository.findAll().stream()
                 .map(TaxFilingDTO::fromEntity)
                 .collect(java.util.stream.Collectors.toList());
