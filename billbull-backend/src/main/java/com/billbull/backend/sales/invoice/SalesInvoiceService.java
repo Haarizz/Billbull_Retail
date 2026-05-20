@@ -185,10 +185,18 @@ public class SalesInvoiceService {
         // Calculate totals from items
         double subTotal = 0;
         double taxTotal = 0;
+        List<DeliveryNoteItem> linkedDeliveryItems = loadLinkedDeliveryItems(invoice);
 
         if (invoice.getItems() != null) {
             for (SalesInvoiceItem item : invoice.getItems()) {
                 item.setSalesInvoice(invoice);
+
+                DeliveryNoteItem linkedDeliveryItem = findMatchingDeliveryItem(item, linkedDeliveryItems);
+                if (linkedDeliveryItem != null) {
+                    linkedDeliveryItems.remove(linkedDeliveryItem);
+                    hydrateInvoiceItemFromDeliveryNote(item, linkedDeliveryItem);
+                }
+                normalizeInvoiceItemFinancials(item, linkedDeliveryItem != null);
 
                 Product product = item.getItemCode() != null
                         ? productRepo.findByCodeAndIsActiveTrue(item.getItemCode()).orElse(null)
@@ -318,6 +326,143 @@ public class SalesInvoiceService {
         }
 
         return getById(saved.getId());
+    }
+
+    private List<DeliveryNoteItem> loadLinkedDeliveryItems(SalesInvoice invoice) {
+        if (invoice.getLinkedDeliveryNote() == null || invoice.getLinkedDeliveryNote().isBlank()) {
+            return new ArrayList<>();
+        }
+
+        List<String> dnNumbers = Arrays.stream(invoice.getLinkedDeliveryNote().split(","))
+                .map(String::trim)
+                .filter(value -> !value.isBlank())
+                .toList();
+
+        if (dnNumbers.isEmpty()) {
+            return new ArrayList<>();
+        }
+
+        List<DeliveryNoteItem> result = new ArrayList<>();
+        for (DeliveryNote note : deliveryNoteRepository.findByDnNumberIn(dnNumbers)) {
+            Hibernate.initialize(note.getItems());
+            result.addAll(note.getItems());
+        }
+        return result;
+    }
+
+    private DeliveryNoteItem findMatchingDeliveryItem(SalesInvoiceItem invoiceItem, List<DeliveryNoteItem> deliveryItems) {
+        if (invoiceItem == null || deliveryItems == null || deliveryItems.isEmpty()) {
+            return null;
+        }
+
+        if (invoiceItem.getSalesOrderItemId() != null) {
+            for (DeliveryNoteItem deliveryItem : deliveryItems) {
+                if (invoiceItem.getSalesOrderItemId().equals(deliveryItem.getSalesOrderItemId())) {
+                    return deliveryItem;
+                }
+            }
+        }
+
+        String invoiceCode = normalizeCode(invoiceItem.getItemCode());
+        if (invoiceCode == null) {
+            return null;
+        }
+
+        for (DeliveryNoteItem deliveryItem : deliveryItems) {
+            if (invoiceCode.equals(normalizeCode(deliveryItem.getItemCode()))) {
+                return deliveryItem;
+            }
+        }
+
+        return null;
+    }
+
+    private void hydrateInvoiceItemFromDeliveryNote(SalesInvoiceItem invoiceItem, DeliveryNoteItem deliveryItem) {
+        if (invoiceItem == null || deliveryItem == null) {
+            return;
+        }
+
+        if (invoiceItem.getItemCode() == null || invoiceItem.getItemCode().isBlank()) {
+            invoiceItem.setItemCode(deliveryItem.getItemCode());
+        }
+        if ((invoiceItem.getDescription() == null || invoiceItem.getDescription().isBlank())
+                && deliveryItem.getDescription() != null && !deliveryItem.getDescription().isBlank()) {
+            invoiceItem.setDescription(deliveryItem.getDescription());
+        }
+        if ((invoiceItem.getItemName() == null || invoiceItem.getItemName().isBlank())
+                && deliveryItem.getDescription() != null && !deliveryItem.getDescription().isBlank()) {
+            invoiceItem.setItemName(deliveryItem.getDescription());
+        }
+        if (invoiceItem.getUnit() == null || invoiceItem.getUnit().isBlank()) {
+            invoiceItem.setUnit(deliveryItem.getUnit());
+        }
+        if (invoiceItem.getQuantity() == null || invoiceItem.getQuantity() <= 0) {
+            invoiceItem.setQuantity(deliveryItem.getCurrentQty() != null
+                    ? deliveryItem.getCurrentQty()
+                    : deliveryItem.getOrderedQty());
+        }
+        if (deliveryItem.getPrice() != null) {
+            invoiceItem.setPrice(deliveryItem.getPrice());
+        }
+        if (deliveryItem.getDisc() != null) {
+            invoiceItem.setDiscount(deliveryItem.getDisc());
+        }
+        if (deliveryItem.getTax() != null) {
+            invoiceItem.setTaxRate(deliveryItem.getTax());
+        }
+        if (deliveryItem.getCost() != null) {
+            invoiceItem.setCost(deliveryItem.getCost());
+        }
+        if (invoiceItem.getBinId() == null) {
+            invoiceItem.setBinId(deliveryItem.getBinId());
+        }
+        if (invoiceItem.getSalesOrderItemId() == null) {
+            invoiceItem.setSalesOrderItemId(deliveryItem.getSalesOrderItemId());
+        }
+        if ((invoiceItem.getImage() == null || invoiceItem.getImage().isBlank())
+                && deliveryItem.getImage() != null && !deliveryItem.getImage().isBlank()) {
+            invoiceItem.setImage(deliveryItem.getImage());
+        }
+    }
+
+    private void normalizeInvoiceItemFinancials(SalesInvoiceItem item, boolean linkedToDeliveryNote) {
+        if (item == null) {
+            return;
+        }
+
+        boolean shouldCalculate = isMissingOrZero(item.getNetAmount())
+                && (linkedToDeliveryNote || !isMissingOrZero(item.getPrice()));
+
+        if (!shouldCalculate) {
+            return;
+        }
+
+        double qty = item.getQuantity() != null ? item.getQuantity() : 0;
+        double price = item.getPrice() != null ? item.getPrice() : 0;
+        double discountPercent = item.getDiscount() != null ? item.getDiscount() : 0;
+        double taxPercent = item.getTaxRate() != null ? item.getTaxRate() : 0;
+
+        double gross = qty * price;
+        double discountAmount = gross * (discountPercent / 100);
+        double taxableAmount = Math.max(0, gross - discountAmount);
+        double taxAmount = taxableAmount * (taxPercent / 100);
+        double netAmount = taxableAmount + taxAmount;
+
+        item.setGrossAmount(roundCurrency(gross));
+        item.setTaxAmount(roundCurrency(taxAmount));
+        item.setNetAmount(roundCurrency(netAmount));
+    }
+
+    private boolean isMissingOrZero(Double value) {
+        return value == null || Math.abs(value) < 0.0001d;
+    }
+
+    private double roundCurrency(double value) {
+        return BigDecimal.valueOf(value).setScale(2, RoundingMode.HALF_UP).doubleValue();
+    }
+
+    private String normalizeCode(String value) {
+        return value == null || value.isBlank() ? null : value.trim().toUpperCase();
     }
 
     // ----------------------------

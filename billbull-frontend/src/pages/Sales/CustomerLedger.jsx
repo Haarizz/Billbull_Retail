@@ -56,9 +56,9 @@ const getOpeningInvoiceOutstanding = (invoice = {}) => {
 };
 
 const getOpeningInvoiceOriginalAmount = (invoice = {}) => {
-    const source = invoice.openingBalanceAmount !== undefined && invoice.openingBalanceAmount !== null && invoice.openingBalanceAmount !== ''
-        ? invoice.openingBalanceAmount
-        : invoice.amount;
+    const source = invoice.amount !== undefined && invoice.amount !== null && invoice.amount !== ''
+        ? invoice.amount
+        : invoice.openingBalanceAmount;
     const value = Number(source || 0);
     return Number.isFinite(value) && value > 0 ? value : 0;
 };
@@ -537,12 +537,13 @@ const AddCustomerModal = ({ isOpen, onClose, customerToEdit, onSaveCustomer }) =
     };
 
     const handleSaveInvoice = (data) => {
+        const outstanding = data.outstanding !== undefined && data.outstanding !== null && data.outstanding !== ''
+            ? data.outstanding
+            : data.amount;
         const normalizedInvoice = {
             ...data,
-            outstanding: data.outstanding !== undefined && data.outstanding !== null && data.outstanding !== ''
-                ? data.outstanding
-                : data.amount,
-            openingBalanceAmount: data.openingBalanceAmount || data.amount
+            outstanding,
+            openingBalanceAmount: data.openingBalanceAmount || outstanding
         };
 
         if (editingInvoiceIdx !== null) {
