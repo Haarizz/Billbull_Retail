@@ -32,7 +32,9 @@ public interface SalesInvoiceRepository extends JpaRepository<SalesInvoice, Long
          * Returns total outstanding (unpaid) balance for a customer across all
          * non-cancelled invoices. Used by the credit-limit enforcement logic.
          */
-        @Query("SELECT COALESCE(SUM(s.balance), 0) FROM SalesInvoice s WHERE s.customerCode = :customerCode AND s.status NOT IN ('CANCELLED', 'PAID')")
+        @Query("SELECT COALESCE(SUM(s.balance), 0) FROM SalesInvoice s WHERE s.customerCode = :customerCode "
+                        + "AND s.status NOT IN (com.billbull.backend.sales.invoice.SalesInvoiceStatus.CANCELLED, "
+                        + "com.billbull.backend.sales.invoice.SalesInvoiceStatus.PAID)")
         Double findOutstandingBalanceByCustomerCode(
                         @org.springframework.data.repository.query.Param("customerCode") String customerCode);
 

@@ -45,4 +45,12 @@ public interface ReceiptVoucherRepository extends JpaRepository<ReceiptVoucher, 
     /** Returns all receipts whose customer_code is still null — used by the backfill at startup. */
     @Query("SELECT rv FROM ReceiptVoucher rv WHERE rv.customerCode IS NULL")
     List<ReceiptVoucher> findWithoutCustomerCode();
+
+    /**
+     * Highest voucher_id for a given year-prefix (e.g. "RV-2026-"). Used to derive
+     * the next sequence safely — counting all rows can collide with existing keys
+     * if records span multiple years or any rows have been deleted.
+     */
+    @Query("SELECT MAX(rv.voucherId) FROM ReceiptVoucher rv WHERE rv.voucherId LIKE CONCAT(:prefix, '%')")
+    String findMaxVoucherIdByPrefix(@Param("prefix") String prefix);
 }
