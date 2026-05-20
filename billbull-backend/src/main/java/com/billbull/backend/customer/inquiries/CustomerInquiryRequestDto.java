@@ -5,6 +5,8 @@ import java.util.List;
 
 public class CustomerInquiryRequestDto {
 
+    private Long customerId;
+    private String customerCode;
     private String customer;
     private String mobile;
     private String email;
@@ -22,6 +24,22 @@ public class CustomerInquiryRequestDto {
     private List<InquiryItemRequest> items;
 
     // Getters & Setters
+    public Long getCustomerId() {
+        return customerId;
+    }
+
+    public void setCustomerId(Long customerId) {
+        this.customerId = customerId;
+    }
+
+    public String getCustomerCode() {
+        return customerCode;
+    }
+
+    public void setCustomerCode(String customerCode) {
+        this.customerCode = customerCode;
+    }
+
     public String getCustomer() {
         return customer;
     }

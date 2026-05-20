@@ -4,6 +4,7 @@ import java.io.IOException;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -358,13 +359,16 @@ public class QuotationService {
                     }
 
                     if (!hasConversionActivity(inquiry, quoteNo)) {
+                        LocalDateTime now = LocalDateTime.now();
                         InquiryFollowUp activity = new InquiryFollowUp();
                         activity.setType("Quotation");
                         activity.setSummary("Inquiry converted to approved quotation " + quoteNo + ".");
                         activity.setStatus("Converted");
-                        activity.setNextFollowUpDate(LocalDate.now());
-                        activity.setNextFollowUpTime(LocalTime.now().withNano(0));
+                        activity.setNextFollowUpDate(now.toLocalDate());
+                        activity.setNextFollowUpTime(now.toLocalTime().withNano(0));
                         activity.setCreatedBy("System");
+                        activity.setCreatedAt(now);
+                        activity.setUpdatedAt(now);
                         activity.setInquiry(inquiry);
                         inquiryFollowUpRepo.save(activity);
                     }
