@@ -30,6 +30,7 @@ import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 
+import com.billbull.backend.inventory.batch.BatchMasterRepository;
 import com.billbull.backend.inventory.brand.Brand;
 import com.billbull.backend.inventory.batch.BatchMasterRepository;
 import com.billbull.backend.inventory.department.Department;
