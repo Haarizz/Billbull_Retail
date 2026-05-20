@@ -703,7 +703,16 @@ const Quotations = () => {
                 taxAmt: i.taxAmount,
                 total: i.lineTotal,
                 remarks: i.remarks,
-                isProductSelected: !!i.itemCode
+                isProductSelected: !!i.itemCode,
+                // QA-001: preserve the product-master hints the backend enriches
+                // on the QuotationItem (transient fields). Without these, items
+                // would lose their type on every list-reload — breaking the
+                // stock-check skip for SERVICE items on "Convert to Sales Order".
+                productType: (i.productType || 'STOCK').toUpperCase(),
+                batchControlled: (i.productType || '').toUpperCase() !== 'SERVICE'
+                    && Boolean(i.batchControlled),
+                fefoEnabled: i.fefoEnabled != null ? Boolean(i.fefoEnabled) : true,
+                minExpiryDaysForSale: Number(i.minExpiryDaysForSale) || 0
             }))
         };
     };
@@ -1057,6 +1066,13 @@ const Quotations = () => {
             // QA-001: carry product type onto the row so stock checks / availability
             // panel can short-circuit for SERVICE items.
             productType: (product.productType || 'STOCK').toUpperCase(),
+            // Quotations don't reserve stock themselves, but these hints travel
+            // with the row so that "Convert to Sales Order" / "Proceed to Invoice"
+            // get correct batch-selection state even before the quotation is saved.
+            batchControlled: (product.productType || '').toUpperCase() !== 'SERVICE'
+                && Boolean(product.batchControlled ?? product.isBatch ?? product.batch),
+            fefoEnabled: product.fefoEnabled != null ? Boolean(product.fefoEnabled) : true,
+            minExpiryDaysForSale: Number(product.minExpiryDaysForSale) || 0,
             isProductSelected: true
         };
 

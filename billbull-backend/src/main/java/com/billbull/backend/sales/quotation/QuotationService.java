@@ -803,14 +803,22 @@ public class QuotationService {
                 .distinct()
                 .toList();
         if (codes.isEmpty()) return;
-        java.util.Map<String, com.billbull.backend.inventory.product.ProductType> typeByCode = new java.util.HashMap<>();
+        java.util.Map<String, com.billbull.backend.inventory.product.Product> productByCode = new java.util.HashMap<>();
         for (String code : codes) {
             productRepo.findByCodeAndIsActiveTrue(code)
-                    .ifPresent(p -> typeByCode.put(code, p.getProductType()));
+                    .ifPresent(p -> productByCode.put(code, p));
         }
         quotation.getItems().forEach(i -> {
-            com.billbull.backend.inventory.product.ProductType type = typeByCode.get(i.getItemCode());
-            if (type != null) i.setProductType(type.name());
+            com.billbull.backend.inventory.product.Product p = productByCode.get(i.getItemCode());
+            if (p == null) return;
+            if (p.getProductType() != null) i.setProductType(p.getProductType().name());
+            // Service products are never batch-controlled (no inventory). For
+            // stock products, mirror the master's batch/FEFO/min-expiry flags so
+            // the SO conversion preserves batch-selection requirements.
+            boolean isService = p.isService();
+            i.setBatchControlled(!isService && p.isBatch());
+            i.setFefoEnabled(p.isFefoEnabled());
+            i.setMinExpiryDaysForSale(p.getMinExpiryDaysForSale());
         });
     }
 }

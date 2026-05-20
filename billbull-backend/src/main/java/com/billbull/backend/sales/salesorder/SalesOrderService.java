@@ -110,7 +110,11 @@ public class SalesOrderService {
                             .findByCodeAndIsActiveTrue(item.getItemCode())
                             .orElse(null);
 
-                    if (product != null) {
+                    // QA-001: service products carry no inventory — bypass the
+                    // stock validation, batch reservation, and bin assignment
+                    // entirely, but still let the line contribute to subTotal/tax
+                    // below.
+                    if (product != null && !product.isService()) {
                         java.math.BigDecimal available = warehouseStockService.getAvailableStock(
                                 order.getWarehouse().getId(),
                                 product.getId());
@@ -419,7 +423,11 @@ public class SalesOrderService {
             return;
         }
 
-        item.setBatchControlled(product.isBatch());
+        // QA-001: ship productType so the frontend can short-circuit stock checks
+        // and side-panel rendering for SERVICE items. Service products are never
+        // batch-controlled regardless of any stale flag on the master.
+        item.setProductType(product.getProductType() != null ? product.getProductType().name() : null);
+        item.setBatchControlled(!product.isService() && product.isBatch());
         item.setFefoEnabled(product.isFefoEnabled());
         item.setMinExpiryDaysForSale(product.getMinExpiryDaysForSale() != null
                 ? product.getMinExpiryDaysForSale()

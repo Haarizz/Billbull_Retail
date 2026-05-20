@@ -709,6 +709,18 @@ const SalesInvoice = () => {
         const resolvedCustomer = matched || { name: fromSO.customer, code: fromSO.customerCode || '', id: null };
         setSelectedCustomer(resolvedCustomer);
 
+        // QA-035 follow-up: pre-fill paths (fromSalesOrder / fromDeliveryNote)
+        // bypass handleSelectCustomer, so the customer's prior outstanding was
+        // never fetched — Previous Outstanding stayed at 0 until the user
+        // manually re-picked the customer. Fetch it here too.
+        if (resolvedCustomer?.code) {
+            getCustomerOutstanding(resolvedCustomer.code)
+                .then(d => setCustomerOutstanding(d?.outstanding || 0))
+                .catch(() => setCustomerOutstanding(0));
+        } else {
+            setCustomerOutstanding(0);
+        }
+
         // Resolve shipping address: prefer passed-through → customer master
         if (fromSO.shippingAddress) {
             setShippingAddress(fromSO.shippingAddress);
@@ -1058,7 +1070,17 @@ const SalesInvoice = () => {
                 { customerCode: so.customerCode, customerName: so.customerName },
                 customersList
             );
-            setSelectedCustomer(matched || { code: so.customerCode, name: so.customerName });
+            {
+                const resolved = matched || { code: so.customerCode, name: so.customerName };
+                setSelectedCustomer(resolved);
+                if (resolved?.code) {
+                    getCustomerOutstanding(resolved.code)
+                        .then(d => setCustomerOutstanding(d?.outstanding || 0))
+                        .catch(() => setCustomerOutstanding(0));
+                } else {
+                    setCustomerOutstanding(0);
+                }
+            }
 
             // Auto-fill items from SO
             if (so.items && so.items.length > 0) {
@@ -1097,7 +1119,17 @@ const SalesInvoice = () => {
                 { customerCode: dn.customerCode, customerName: dn.customerName },
                 customersList
             );
-            setSelectedCustomer(matched || { code: dn.customerCode, name: dn.customerName });
+            {
+                const resolved = matched || { code: dn.customerCode, name: dn.customerName };
+                setSelectedCustomer(resolved);
+                if (resolved?.code) {
+                    getCustomerOutstanding(resolved.code)
+                        .then(d => setCustomerOutstanding(d?.outstanding || 0))
+                        .catch(() => setCustomerOutstanding(0));
+                } else {
+                    setCustomerOutstanding(0);
+                }
+            }
 
             // Auto-fill SO if linked
             if (dn.salesOrderNo) {
@@ -1108,9 +1140,11 @@ const SalesInvoice = () => {
 
                 if (linkedSO && linkedSO.items && linkedSO.items.length > 0) {
                     setBillDiscount(Number(linkedSO.billDiscount) || 0);
-                    // Use SO items with DN quantities
-                    setItems(dn.items.map(dnItem => {
-                        // Find matching SO item for pricing
+                    // Stock lines come from the DN (with delivered qty); service
+                    // lines come from the SO (since they're never on the DN — see
+                    // DeliveryNoteService.mapToEntity QA-001 filter). The customer
+                    // still needs to be billed for both halves on one invoice.
+                    const dnStockItems = dn.items.map(dnItem => {
                         const soItem = linkedSO.items.find(si =>
                             (dnItem.salesOrderItemId && si.id === dnItem.salesOrderItemId)
                             || (dnItem.sourceLineId && si.id === dnItem.sourceLineId)
@@ -1141,6 +1175,7 @@ const SalesInvoice = () => {
                             net: net,
                             gp: 0,
                             binId: dnItem.binId || null,
+                            productType: (soItem?.productType || dnItem.productType || 'STOCK').toUpperCase(),
                             batchControlled: Boolean(dnItem.batchControlled),
                             fefoEnabled: dnItem.fefoEnabled != null ? Boolean(dnItem.fefoEnabled) : true,
                             minExpiryDaysForSale: Number(dnItem.minExpiryDaysForSale) || 0,
@@ -1149,7 +1184,43 @@ const SalesInvoice = () => {
                             batchSelectionMode: dnItem.batchSelectionMode || 'AUTO_FEFO',
                             batchSelections: Array.isArray(dnItem.batchSelections) ? dnItem.batchSelections : []
                         };
-                    }));
+                    });
+
+                    // QA-001: append SO service lines that aren't on the DN.
+                    const dnCodes = new Set(dn.items.map(i => i.itemCode));
+                    const soServiceLines = linkedSO.items
+                        .filter(si => (si.productType || '').toUpperCase() === 'SERVICE'
+                                      && !dnCodes.has(si.itemCode))
+                        .map(si => {
+                            const qty = Number(si.quantity) || 0;
+                            const price = Number(si.price) || 0;
+                            const disc = Number(si.discount) || 0;
+                            const tax = Number(si.taxRate) || 5;
+                            const cost = Number(si.cost) || 0;
+                            const { gross, taxAmt, net } = calculateLineAmounts({ qty, price, disc, tax });
+                            return {
+                                id: Date.now() + Math.random(),
+                                salesOrderItemId: si.id || null,
+                                code: si.itemCode || '',
+                                image: si.image || '',
+                                name: si.itemName || si.description || '',
+                                desc: si.description || si.itemName || '',
+                                unit: si.unit || 'PCS',
+                                qty, price, cost, disc, tax, taxAmt, gross, net,
+                                gp: 0,
+                                binId: null,
+                                productType: 'SERVICE',
+                                batchControlled: false,
+                                fefoEnabled: true,
+                                minExpiryDaysForSale: 0,
+                                baseRequiredQuantity: 0,
+                                batchSelectedQuantity: 0,
+                                batchSelectionMode: 'AUTO_FEFO',
+                                batchSelections: []
+                            };
+                        });
+
+                    setItems([...dnStockItems, ...soServiceLines]);
                     setIsGeneratedFromDN(true);
                     return; // Exit early since we got pricing from SO
                 }
@@ -1210,7 +1281,17 @@ const SalesInvoice = () => {
                 { customerCode: pi.customerCode, customerName: pi.customerName },
                 customersList
             );
-            setSelectedCustomer(matched || { code: pi.customerCode, name: pi.customerName });
+            {
+                const resolved = matched || { code: pi.customerCode, name: pi.customerName };
+                setSelectedCustomer(resolved);
+                if (resolved?.code) {
+                    getCustomerOutstanding(resolved.code)
+                        .then(d => setCustomerOutstanding(d?.outstanding || 0))
+                        .catch(() => setCustomerOutstanding(0));
+                } else {
+                    setCustomerOutstanding(0);
+                }
+            }
 
             // Auto-fill SO if linked
             if (pi.salesOrderNo) {
@@ -1783,7 +1864,7 @@ const SalesInvoice = () => {
                 const fullCustomer = customersList.find(c => c.code === custCode);
 
                 const printData = {
-                    title: 'TAX INVOICE',
+                    title: 'SALES INVOICE',
                     docNo: dataToPrint.invoiceNumber,
                     date: dataToPrint.invoiceDate,
                     customer: {

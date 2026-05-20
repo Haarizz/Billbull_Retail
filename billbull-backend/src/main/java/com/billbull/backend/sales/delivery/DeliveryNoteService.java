@@ -225,6 +225,13 @@ public class DeliveryNoteService {
         }
         DeliveryNote dn = new DeliveryNote();
         mapToEntity(req, dn);
+        // QA-001: if every requested line was a service item (and got skipped
+        // in mapToEntity), there's nothing to deliver — refuse with a clean
+        // message instead of saving an empty DN that would later fail dispatch.
+        if (dn.getItems() == null || dn.getItems().isEmpty()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "No deliverable items found. Service items cannot be dispatched on a Delivery Note.");
+        }
         dn.setStatus(DeliveryNoteStatus.DRAFT);
         return toResponse(repo.save(dn));
     }
@@ -1099,6 +1106,15 @@ public class DeliveryNoteService {
 
             Product product = productRepo.findByCodeAndIsActiveTrue(i.itemCode)
                     .orElseThrow(() -> new RuntimeException("Product not found: " + i.itemCode));
+
+            // QA-001: service products have no physical inventory — never include
+            // them on a Delivery Note (and therefore never on its Picking List).
+            // This applies to *every* DN creation path (manual SO→DN, manual
+            // SI→DN, auto-DN). Trying to dispatch a service line would attempt a
+            // stock movement against a product with no inventory ledger and fail.
+            if (product.isService()) {
+                continue;
+            }
 
             DeliveryNoteItem item = new DeliveryNoteItem();
             item.setDeliveryNote(dn);

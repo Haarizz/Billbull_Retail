@@ -24,9 +24,13 @@ public class DatabaseFixConfig {
                 updateStatusConstraint(jdbcTemplate, "delivery_notes", "delivery_notes_status_check",
                         List.of("DRAFT", "DISPATCHED", "DELIVERED", "CANCELLED"));
 
-                // 2. Fix sales_orders_status_check
+                // 2. Fix sales_orders_status_check — must mirror SalesOrderStatus enum exactly.
+                //    PARTIALLY_DELIVERED was missing, breaking SO status sync after a DN
+                //    that delivers only some lines (e.g. a mixed stock+service order
+                //    where the service line is correctly excluded from the DN).
                 updateStatusConstraint(jdbcTemplate, "sales_orders", "sales_orders_status_check",
-                        List.of("DRAFT", "CONFIRMED", "PARTIALLY_PAID", "INVOICED", "DELIVERED", "DISPATCHED"));
+                        List.of("DRAFT", "CONFIRMED", "PARTIALLY_PAID", "PARTIALLY_DELIVERED",
+                                "INVOICED", "DELIVERED", "DISPATCHED"));
 
                 // 3. Fix stock_movements source_type check to include STOCK_TAKE (BB-019)
                 //    and STOCK_TAKE_BATCH (per-batch ledger entries posted on approval)

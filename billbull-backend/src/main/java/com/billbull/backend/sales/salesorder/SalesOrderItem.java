@@ -39,6 +39,14 @@ public class SalesOrderItem {
     @Transient
     private String binCode;
 
+    /**
+     * QA-001: not persisted — populated by SalesOrderService.hydrate from the
+     * Product master so the frontend can short-circuit stock checks and the
+     * "Stock & Incoming" side panel for SERVICE items.
+     */
+    @Transient
+    private String productType;
+
     @Transient
     private Boolean batchControlled;
 
@@ -229,6 +237,9 @@ public class SalesOrderItem {
     public Boolean getBatchControlled() {
         return batchControlled;
     }
+
+    public String getProductType() { return productType; }
+    public void setProductType(String productType) { this.productType = productType; }
 
     public void setBatchControlled(Boolean batchControlled) {
         this.batchControlled = batchControlled;

@@ -127,7 +127,7 @@ const serializeSalesTemplate = (template) => ({
 const buildSalesPreviewData = (category, companyProfile = {}) => {
     const titles = {
         "Quotation": "QUOTATION",
-        "Sales Invoice": "TAX INVOICE",
+        "Sales Invoice": "SALES INVOICE",
         "Sales Order (SO)": "SALES ORDER",
         "Delivery Note (DO/DN)": "DELIVERY NOTE",
         "Proforma Invoice (PI)": "PROFORMA INVOICE",

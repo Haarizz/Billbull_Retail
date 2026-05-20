@@ -200,7 +200,9 @@ const SalesOrders = () => {
 
   useEffect(() => {
     if (focusedItem && focusedItem.code) {
-      if (!liveStockMap[focusedItem.code]) {
+      // QA-001: service items have no stock — don't hit the availability API.
+      const isService = (focusedItem.productType || '').toUpperCase() === 'SERVICE';
+      if (!isService && !liveStockMap[focusedItem.code]) {
         getStockAvailability(focusedItem.code)
           .then(res => {
             const locs = res.locations || [];
@@ -550,7 +552,11 @@ const SalesOrders = () => {
       total: Number(item.total ?? item.lineTotal) || 0,
       binId: item.binId ?? null,
       binCode: item.binCode || '',
-      batchControlled: Boolean(item.batchControlled ?? item.isBatch ?? item.product?.isBatch),
+      // QA-001: carry productType through so SERVICE lines stay gated post-conversion
+      productType: (item.productType || 'STOCK').toUpperCase(),
+      // SERVICE items never need batch selection regardless of upstream flags.
+      batchControlled: (item.productType || '').toUpperCase() !== 'SERVICE'
+        && Boolean(item.batchControlled ?? item.isBatch ?? item.product?.isBatch),
       fefoEnabled: item.fefoEnabled != null ? Boolean(item.fefoEnabled) : true,
       minExpiryDaysForSale: Number(item.minExpiryDaysForSale) || 0,
       baseRequiredQuantity: Number(item.baseRequiredQuantity) || 0,
@@ -933,6 +939,8 @@ const SalesOrders = () => {
       const stockIssues = [];
       for (const item of items) {
         if (!item.code) continue;
+        // QA-001: service items have no inventory — skip stock validation.
+        if ((item.productType || '').toUpperCase() === 'SERVICE') continue;
         try {
           const stockData = await getStockAvailability(item.code);
           const locs = stockData?.locations || [];
@@ -1943,19 +1951,27 @@ const SalesOrders = () => {
                 <div className="font-bold text-slate-700 mb-1 line-clamp-2" title={focusedItem?.desc}>{focusedItem?.desc || 'Select an item...'}</div>
                 <div className="text-slate-400 mb-4">Code: {focusedItem?.code || '-'}</div>
 
-                <div className="flex justify-between mb-1 mt-auto">
-                  <span className="text-slate-500">Total On Hand</span>
-                  <span className="text-slate-500">Blocked / Reserved</span>
-                </div>
-                <div className="flex justify-between mb-3 font-bold">
-                  <span>{focusedItem !== null ? ((liveStockMap[focusedItem.code]?.available || 0) + (liveStockMap[focusedItem.code]?.reserved || 0)) : '-'} units</span>
-                  <span className="text-orange-500">{focusedItem !== null ? (liveStockMap[focusedItem.code]?.reserved || 0) : '-'} units</span>
-                </div>
+                {(focusedItem?.productType || '').toUpperCase() === 'SERVICE' ? (
+                  <div className="mt-auto px-3 py-2 rounded border border-blue-200 bg-blue-50 text-blue-700 font-bold text-center">
+                    Service item — no stock tracking
+                  </div>
+                ) : (
+                  <>
+                    <div className="flex justify-between mb-1 mt-auto">
+                      <span className="text-slate-500">Total On Hand</span>
+                      <span className="text-slate-500">Blocked / Reserved</span>
+                    </div>
+                    <div className="flex justify-between mb-3 font-bold">
+                      <span>{focusedItem !== null ? ((liveStockMap[focusedItem.code]?.available || 0) + (liveStockMap[focusedItem.code]?.reserved || 0)) : '-'} units</span>
+                      <span className="text-orange-500">{focusedItem !== null ? (liveStockMap[focusedItem.code]?.reserved || 0) : '-'} units</span>
+                    </div>
 
-                <div className="flex justify-between font-bold border-t border-slate-100 pt-2 pb-1">
-                  <span className="text-slate-500">Free from current stock</span>
-                  <span className="text-emerald-600">{focusedItem !== null ? (liveStockMap[focusedItem.code]?.available || 0) : '-'} units</span>
-                </div>
+                    <div className="flex justify-between font-bold border-t border-slate-100 pt-2 pb-1">
+                      <span className="text-slate-500">Free from current stock</span>
+                      <span className="text-emerald-600">{focusedItem !== null ? (liveStockMap[focusedItem.code]?.available || 0) : '-'} units</span>
+                    </div>
+                  </>
+                )}
               </div>
             </div>
 

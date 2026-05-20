@@ -1159,13 +1159,18 @@ const DeliveryNote = () => {
         setShippingAddress(resolvedShipping);
 
         if (so.items && so.items.length > 0) {
-            const mappedItems = so.items.map((item, index) =>
-                normalizeDeliveryItem({
-                    ...item,
-                    salesOrderItemId: item.salesOrderItemId || item.id || null,
-                    stock: warehouseStockMap[item.itemCode || item.code] || 0
-                }, Date.now() + index + Math.random())
-            );
+            const mappedItems = so.items
+                // QA-001: service products are non-deliverable — exclude them
+                // from the DN form so users can't accidentally try to dispatch
+                // them. Backend silently strips them too as a safety net.
+                .filter(item => (item.productType || '').toUpperCase() !== 'SERVICE')
+                .map((item, index) =>
+                    normalizeDeliveryItem({
+                        ...item,
+                        salesOrderItemId: item.salesOrderItemId || item.id || null,
+                        stock: warehouseStockMap[item.itemCode || item.code] || 0
+                    }, Date.now() + index + Math.random())
+                );
             setItems(mappedItems.length > 0 ? mappedItems : [createBlankDeliveryItem()]);
         }
     };
