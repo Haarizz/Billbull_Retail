@@ -655,6 +655,9 @@ public class ProductService {
             item.put("expiryEnabled", p.isExpiryEnabled());
             item.put("fefoEnabled", p.isFefoEnabled());
             item.put("minExpiryDaysForSale", p.getMinExpiryDaysForSale());
+            // QA-001: ship productType so sales screens can short-circuit stock
+            // validation for SERVICE items.
+            item.put("productType", p.getProductType() != null ? p.getProductType().name() : null);
 
             String imgUrl = imageMap.get(p.getId());
             item.put("image", imgUrl);

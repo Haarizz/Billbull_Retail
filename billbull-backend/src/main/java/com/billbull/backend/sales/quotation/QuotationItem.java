@@ -55,8 +55,32 @@ public class QuotationItem {
     @Transient
     private String productType;
 
+    /**
+     * QA-001: transient batch-control hints for the Sales Order conversion flow.
+     * Quotations don't reserve stock, so these flags are NOT persisted on the
+     * quotation row — they're resolved from the Product master at read-time and
+     * shipped to the client. The Sales Order page reads them via
+     * `normalizeOrderItem` so that converted lines remember they need batch
+     * selection.
+     */
+    @Transient
+    private Boolean batchControlled;
+    @Transient
+    private Boolean fefoEnabled;
+    @Transient
+    private Integer minExpiryDaysForSale;
+
     public String getProductType() { return productType; }
     public void setProductType(String productType) { this.productType = productType; }
+
+    public Boolean getBatchControlled() { return batchControlled; }
+    public void setBatchControlled(Boolean batchControlled) { this.batchControlled = batchControlled; }
+
+    public Boolean getFefoEnabled() { return fefoEnabled; }
+    public void setFefoEnabled(Boolean fefoEnabled) { this.fefoEnabled = fefoEnabled; }
+
+    public Integer getMinExpiryDaysForSale() { return minExpiryDaysForSale; }
+    public void setMinExpiryDaysForSale(Integer minExpiryDaysForSale) { this.minExpiryDaysForSale = minExpiryDaysForSale; }
 
     public QuotationItem() {
     }
