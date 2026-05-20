@@ -20,7 +20,9 @@ import {
 } from '../../api/customerApi';
 import { getEmployees } from '../../api/employeeApi';
 import { getProducts, getProductById } from '../../api/productsApi';
+import { getAllCustomers } from '../../api/customerledgerApi';
 import ProductSelector from '../../components/ProductSelector';
+import CustomerSelector from '../../components/CustomerSelector';
 import CurrencyAmount from '../../components/CurrencyAmount';
 import { getImageUrl } from '../../utils/urlUtils';
 import toast from 'react-hot-toast';
@@ -122,6 +124,21 @@ const AvailableStockBadge = ({ item }) => {
       {label}
     </span>
   );
+};
+
+const resolveCustomerAddress = (customer = {}) => {
+  const defaultSaved = (customer.savedAddresses || []).find(addr => addr.isDefault) || (customer.savedAddresses || [])[0];
+  if (defaultSaved) {
+    const formatted = [
+      defaultSaved.address1,
+      defaultSaved.address2,
+      defaultSaved.city,
+      defaultSaved.country
+    ].filter(Boolean).join(', ');
+    if (formatted) return formatted;
+  }
+
+  return customer.defaultShippingAddress || customer.shippingAddress || customer.billingAddress || customer.address || '';
 };
 
 const getInquiryStatusBadgeClass = (status) => {
@@ -448,6 +465,9 @@ const InquiryList = ({ data, onAddNew, onView, onDelete, onRefresh, isLoading })
                       <td className="px-4 py-3 text-slate-500 font-mono text-xs">{getFormattedId(row)}</td>
                       <td className="px-4 py-3">
                         <div className="font-semibold text-slate-900">{row.customer}</div>
+                        {row.customerCode && (
+                          <div className="text-[11px] text-blue-600 font-semibold mt-0.5">{row.customerCode}</div>
+                        )}
                         <div className="flex gap-1 mt-0.5">
                           {row.tags && row.tags.map(tag => (
                             <span key={tag} className="text-[10px] px-1.5 py-0.5 bg-yellow-50 text-yellow-700 rounded border border-yellow-200 font-medium">{tag}</span>
@@ -545,7 +565,12 @@ const InquiryList = ({ data, onAddNew, onView, onDelete, onRefresh, isLoading })
 
 const CreateInquiry = ({ onBack, onSave, isSaving }) => {
   const [employees, setEmployees] = useState([]); // Employee State for Dropdown
+  const [customers, setCustomers] = useState([]);
+  const [selectedCustomer, setSelectedCustomer] = useState(null);
+  const [isCustomerSelectorOpen, setIsCustomerSelectorOpen] = useState(false);
   const [formData, setFormData] = useState({
+    customerId: null,
+    customerCode: '',
     customer: '',
     mobile: '',
     email: '',
@@ -567,14 +592,51 @@ const CreateInquiry = ({ onBack, onSave, isSaving }) => {
   useEffect(() => {
     const fetchInitData = async () => {
       try {
-        const employeesData = await getEmployees();
+        const [employeesData, customersData] = await Promise.all([
+          getEmployees(),
+          getAllCustomers()
+        ]);
         setEmployees(employeesData || []);
+        setCustomers(Array.isArray(customersData) ? customersData : []);
       } catch (error) {
         console.error("Failed to fetch initial data", error);
       }
     };
     fetchInitData();
   }, []);
+
+  const refreshCustomers = async () => {
+    try {
+      const customersData = await getAllCustomers();
+      setCustomers(Array.isArray(customersData) ? customersData : []);
+    } catch (error) {
+      console.error("Failed to refresh customers", error);
+      toast.error("Failed to refresh customers.");
+    }
+  };
+
+  const handleCustomerSelect = (customer) => {
+    const address = resolveCustomerAddress(customer);
+    setSelectedCustomer(customer);
+    setFormData(prev => ({
+      ...prev,
+      customerId: customer.id || null,
+      customerCode: customer.code || '',
+      customer: customer.name || '',
+      mobile: customer.mobile || customer.phone || '',
+      email: customer.email || '',
+      address
+    }));
+  };
+
+  const clearSelectedCustomer = () => {
+    setSelectedCustomer(null);
+    setFormData(prev => ({
+      ...prev,
+      customerId: null,
+      customerCode: ''
+    }));
+  };
 
   const handleProductSelect = (product) => {
     setFormData(prev => {
@@ -661,6 +723,11 @@ const CreateInquiry = ({ onBack, onSave, isSaving }) => {
 
   const handleChange = (e) => {
     const { name, value } = e.target;
+    if (name === 'customer' && selectedCustomer && value !== selectedCustomer.name) {
+      setSelectedCustomer(null);
+      setFormData(prev => ({ ...prev, customerId: null, customerCode: '', [name]: value }));
+      return;
+    }
     setFormData(prev => ({ ...prev, [name]: value }));
   };
 
@@ -705,7 +772,31 @@ const CreateInquiry = ({ onBack, onSave, isSaving }) => {
 
           {/* Section 1: Customer Information */}
           <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-8">
-            <h2 className="text-base font-bold text-slate-800 mb-6">Customer Information</h2>
+            <div className="flex items-center justify-between gap-3 mb-6">
+              <h2 className="text-base font-bold text-slate-800">Customer Information</h2>
+              <button
+                type="button"
+                onClick={() => setIsCustomerSelectorOpen(true)}
+                className="inline-flex items-center gap-2 px-3 py-2 border border-slate-200 rounded-lg text-xs font-bold text-slate-700 hover:border-[#F5C742] hover:bg-yellow-50 transition-colors"
+              >
+                <Search size={14} /> Select Existing
+              </button>
+            </div>
+            {selectedCustomer && (
+              <div className="mb-5 flex items-center justify-between gap-3 rounded-lg border border-emerald-100 bg-emerald-50 px-3 py-2 text-xs">
+                <div className="min-w-0">
+                  <span className="font-bold text-emerald-700">Existing customer selected:</span>
+                  <span className="ml-1 text-slate-700">{selectedCustomer.code} - {selectedCustomer.name}</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={clearSelectedCustomer}
+                  className="text-slate-500 hover:text-red-600 font-semibold shrink-0"
+                >
+                  Clear
+                </button>
+              </div>
+            )}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-x-12 gap-y-6">
               <div className="space-y-1.5">
                 <label className="text-xs font-semibold text-slate-700">Customer Name <span className="text-red-500">*</span></label>
@@ -989,6 +1080,14 @@ const CreateInquiry = ({ onBack, onSave, isSaving }) => {
         onSelect={handleProductSelect}
         actionLabel="Add to Inquiry"
       />
+      <CustomerSelector
+        isOpen={isCustomerSelectorOpen}
+        onClose={() => setIsCustomerSelectorOpen(false)}
+        onSelect={handleCustomerSelect}
+        customers={customers}
+        selectedCode={formData.customerCode}
+        onCustomerCreated={refreshCustomers}
+      />
     </div>
   );
 };
@@ -1138,6 +1237,8 @@ const ConvertToQuotationModal = ({ isOpen, onClose, inquiry, onSuccess }) => {
           paymentTerms: paymentTerms,
           // Pass customer identifiers explicitly so Quotations.jsx can resolve even
           // when the customer was just created and the master list is still loading.
+          customerId: inquiry.customerId || null,
+          customerCode: inquiry.customerCode || '',
           customerName: inquiry.customer || '',
           customerMobile: inquiry.mobile || '',
           customerEmail: inquiry.email || '',
@@ -1174,6 +1275,9 @@ const ConvertToQuotationModal = ({ isOpen, onClose, inquiry, onSuccess }) => {
             <h4 className="text-sm font-bold text-slate-700 mb-3">Customer Information</h4>
             <div className="bg-blue-50 border border-blue-100 rounded-lg p-3 text-sm">
               <p className="font-semibold text-slate-900">{inquiry.customer}</p>
+              {inquiry.customerCode && (
+                <p className="text-blue-700 text-xs font-semibold mt-1">{inquiry.customerCode}</p>
+              )}
               <p className="text-slate-600 text-xs mt-1">+971 {inquiry.mobile}</p>
               {inquiry.address && (
                 <p className="text-slate-600 text-xs mt-2 flex items-start gap-1.5">
@@ -1462,6 +1566,9 @@ const ViewInquiry = ({ data, onBack, onRefresh }) => {
                 </div>
                 <div>
                   <h4 className="font-bold text-slate-900">{data.customer}</h4>
+                  {data.customerCode && (
+                    <div className="text-[11px] font-semibold text-blue-600 mt-0.5">{data.customerCode}</div>
+                  )}
                   <div className="flex gap-1 mt-1">
                     {data.tags && data.tags.map(tag => (
                       <span key={tag} className="text-[10px] px-1.5 py-0.5 bg-[#F5C742]/10 text-yellow-700 rounded border border-yellow-200 font-medium">{tag}</span>

@@ -210,9 +210,10 @@ const createInquiryCustomerSnapshot = (inquiry = {}, state = {}) => {
     const email = state.customerEmail || inquiry.email || '';
     const address = state.customerAddress || inquiry.address || '';
     const code = state.customerCode || inquiry.customerCode || inquiry.inquiryNumber || 'Inquiry';
+    const id = state.customerId || inquiry.customerId || null;
 
     return {
-        id: inquiry.id ? `inquiry-${inquiry.id}` : 'inquiry-customer',
+        id: id || (inquiry.id ? `inquiry-${inquiry.id}` : 'inquiry-customer'),
         code,
         name,
         mobile,
