@@ -86,6 +86,29 @@ const SALES_INVOICE_COLUMNS = [
 ];
 
 // ✅ PRODUCT SELECTOR
+const firstPresentNumber = (...values) => {
+    for (const value of values) {
+        if (value === null || value === undefined || value === '') continue;
+        const number = Number(value);
+        if (Number.isFinite(number)) return number;
+    }
+    return 0;
+};
+
+const calculateLineAmounts = ({ qty, price, disc, tax }) => {
+    const quantity = Number(qty) || 0;
+    const unitPrice = Number(price) || 0;
+    const discountPercent = Number(disc) || 0;
+    const taxPercent = Number(tax) || 0;
+    const gross = quantity * unitPrice;
+    const discountAmount = gross * (discountPercent / 100);
+    const taxable = Math.max(0, gross - discountAmount);
+    const taxAmt = taxable * (taxPercent / 100);
+    const net = taxable + taxAmt;
+
+    return { gross, taxAmt, net };
+};
+
 import ProductSelector from '../../components/ProductSelector';
 
 // ✅ CUSTOMER SELECTOR
@@ -1079,26 +1102,25 @@ const SalesInvoice = () => {
                     // Use SO items with DN quantities
                     setItems(dn.items.map(dnItem => {
                         // Find matching SO item for pricing
-                        const soItem = linkedSO.items.find(si => si.itemCode === dnItem.itemCode);
+                        const soItem = linkedSO.items.find(si =>
+                            (dnItem.salesOrderItemId && si.id === dnItem.salesOrderItemId)
+                            || (dnItem.sourceLineId && si.id === dnItem.sourceLineId)
+                            || si.itemCode === dnItem.itemCode);
 
                         const qty = Number(dnItem.currentQty) || Number(dnItem.orderedQty) || 0;
-                        const price = soItem ? Number(soItem.price) : 0;
-                        const disc = soItem ? Number(soItem.discount) : 0;
-                        const tax = soItem ? Number(soItem.taxRate) : 5;
-                        const cost = soItem ? Number(soItem.cost) : 0;
-
-                        const base = qty * price;
-                        const discountAmt = base * (disc / 100);
-                        const taxable = base - discountAmt;
-                        const taxAmt = taxable * (tax / 100);
-                        const net = taxable + taxAmt;
+                        const price = firstPresentNumber(dnItem.price, soItem?.price);
+                        const disc = firstPresentNumber(dnItem.disc, dnItem.discount, soItem?.discount);
+                        const tax = firstPresentNumber(dnItem.tax, dnItem.taxRate, soItem?.taxRate, 5);
+                        const cost = firstPresentNumber(dnItem.cost, soItem?.cost);
+                        const { gross, taxAmt, net } = calculateLineAmounts({ qty, price, disc, tax });
 
                         return {
                             id: Date.now() + Math.random(),
-                            salesOrderItemId: soItem ? soItem.id : null,
+                            salesOrderItemId: dnItem.salesOrderItemId || soItem?.id || null,
                             code: dnItem.itemCode || '',
                             image: dnItem.primaryImage || dnItem.image || dnItem.thumbnailUrl || dnItem.imageUrl || '',
                             name: dnItem.description || '',
+                            desc: dnItem.description || '',
                             unit: dnItem.unit || 'PCS',
                             qty: qty,
                             price: price,
@@ -1106,9 +1128,17 @@ const SalesInvoice = () => {
                             disc: disc,
                             tax: tax,
                             taxAmt: taxAmt,
-                            gross: base,
+                            gross,
                             net: net,
-                            gp: 0
+                            gp: 0,
+                            binId: dnItem.binId || null,
+                            batchControlled: Boolean(dnItem.batchControlled),
+                            fefoEnabled: dnItem.fefoEnabled != null ? Boolean(dnItem.fefoEnabled) : true,
+                            minExpiryDaysForSale: Number(dnItem.minExpiryDaysForSale) || 0,
+                            baseRequiredQuantity: Number(dnItem.baseRequiredQuantity) || 0,
+                            batchSelectedQuantity: Number(dnItem.batchSelectedQuantity) || 0,
+                            batchSelectionMode: dnItem.batchSelectionMode || 'AUTO_FEFO',
+                            batchSelections: Array.isArray(dnItem.batchSelections) ? dnItem.batchSelections : []
                         };
                     }));
                     setIsGeneratedFromDN(true);
@@ -1116,24 +1146,43 @@ const SalesInvoice = () => {
                 }
             }
 
-            // Fallback: Auto-fill items from DN without pricing (if no SO linked)
+            // Fallback: Auto-fill items from DN pricing when no SO is linked.
             if (dn.items && dn.items.length > 0) {
-                setItems(dn.items.map(i => ({
-                    id: Date.now() + Math.random(),
-                    code: i.itemCode || '',
-                    image: i.primaryImage || i.image || i.thumbnailUrl || i.imageUrl || '',
-                    name: i.description || '',
-                    unit: i.unit || 'PCS',
-                    qty: Number(i.currentQty) || Number(i.orderedQty) || 0,
-                    price: 0, // DN doesn't have pricing, user needs to fill
-                    cost: 0,
-                    disc: 0,
-                    tax: 5,
-                    taxAmt: 0,
-                    gross: 0,
-                    net: 0,
-                    gp: 0
-                })));
+                setItems(dn.items.map(i => {
+                    const qty = Number(i.currentQty) || Number(i.orderedQty) || 0;
+                    const price = firstPresentNumber(i.price);
+                    const disc = firstPresentNumber(i.disc, i.discount);
+                    const tax = firstPresentNumber(i.tax, i.taxRate, 5);
+                    const cost = firstPresentNumber(i.cost);
+                    const { gross, taxAmt, net } = calculateLineAmounts({ qty, price, disc, tax });
+
+                    return {
+                        id: Date.now() + Math.random(),
+                        salesOrderItemId: i.salesOrderItemId || null,
+                        code: i.itemCode || '',
+                        image: i.primaryImage || i.image || i.thumbnailUrl || i.imageUrl || '',
+                        name: i.description || '',
+                        desc: i.description || '',
+                        unit: i.unit || 'PCS',
+                        qty,
+                        price,
+                        cost,
+                        disc,
+                        tax,
+                        taxAmt,
+                        gross,
+                        net,
+                        gp: 0,
+                        binId: i.binId || null,
+                        batchControlled: Boolean(i.batchControlled),
+                        fefoEnabled: i.fefoEnabled != null ? Boolean(i.fefoEnabled) : true,
+                        minExpiryDaysForSale: Number(i.minExpiryDaysForSale) || 0,
+                        baseRequiredQuantity: Number(i.baseRequiredQuantity) || 0,
+                        batchSelectedQuantity: Number(i.batchSelectedQuantity) || 0,
+                        batchSelectionMode: i.batchSelectionMode || 'AUTO_FEFO',
+                        batchSelections: Array.isArray(i.batchSelections) ? i.batchSelections : []
+                    };
+                }));
                 setIsGeneratedFromDN(true);
             }
         }
@@ -1440,7 +1489,6 @@ const SalesInvoice = () => {
                 const discountFactor = 1 - (Number(billDiscount) / 100);
                 const finalNet = Number(i.net) * discountFactor;
                 const finalTax = Number(i.taxAmt) * discountFactor;
-                const finalTaxable = finalNet - finalTax;
                 const qty = Number(i.qty) || 1;
 
                 return {
@@ -1455,12 +1503,12 @@ const SalesInvoice = () => {
                     localName: i.localName || '',
                     unit: i.unit,
                     quantity: qty,
-                    price: finalTaxable / qty, // Use final net price as unit price
+                    price: Number(i.price) || 0,
                     cost: Number(i.cost),
-                    discount: 0, // Set to 0 to prevent backend re-calculating
+                    discount: Number(i.disc) || 0,
                     taxRate: Number(i.tax),
                     taxAmount: finalTax,
-                    grossAmount: finalTaxable,
+                    grossAmount: Number(i.gross) || 0,
                     netAmount: finalNet,
                     foc: Number(i.foc) || 0,
                     binId: i.binId || null,

@@ -295,7 +295,10 @@ public class ReceiptVoucherService {
                 .filter(Objects::nonNull)
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
 
-        BigDecimal openingBalance = resolveOpeningBalanceAmount(openingInvoice);
+        BigDecimal openingBalance = normalizeOpeningBalanceSeed(
+                openingInvoice,
+                resolveOpeningBalanceAmount(openingInvoice),
+                otherCompletedReceipts);
         BigDecimal remainingBalance = openingBalance.subtract(otherCompletedReceipts);
         if (remainingBalance.compareTo(BigDecimal.ZERO) <= 0) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
@@ -392,6 +395,22 @@ public class ReceiptVoucherService {
 
         BigDecimal amount = openingInvoice.getAmount();
         return amount != null ? amount : BigDecimal.ZERO;
+    }
+
+    private BigDecimal normalizeOpeningBalanceSeed(
+            OpeningInvoice openingInvoice,
+            BigDecimal openingBalance,
+            BigDecimal existingCompletedReceipts) {
+        BigDecimal currentOutstanding = openingInvoice.getOutstanding();
+        if (currentOutstanding == null
+                || currentOutstanding.compareTo(BigDecimal.ZERO) <= 0
+                || currentOutstanding.compareTo(openingBalance) >= 0
+                || existingCompletedReceipts.compareTo(BigDecimal.ZERO) > 0) {
+            return openingBalance;
+        }
+
+        openingInvoice.setOpeningBalanceAmount(currentOutstanding);
+        return currentOutstanding;
     }
 
     private BigDecimal resolveCurrentOutstanding(OpeningInvoice openingInvoice) {
