@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import {
   ArrowLeft,
   Upload,
@@ -600,7 +600,10 @@ const EditorView = ({ initialData, onSaveDraft, onSubmitQC, onPost, onPrint, grn
     zoneId: null,
     locatorId: null,
     binId: null,
-    status: GRN_STATUS.DRAFT
+    status: GRN_STATUS.DRAFT,
+    receivedBy: '',
+    checkedBy: '',
+    packageCount: ''
   });
 
   const [isVendorSearchOpen, setIsVendorSearchOpen] = useState(false);
@@ -751,8 +754,11 @@ const EditorView = ({ initialData, onSaveDraft, onSubmitQC, onPost, onPrint, grn
       const lpo = await getLpoByNumber(lpoNumber);
       setSelectedLpoDetails(lpo);
 
-      // Find vendor from vendors list
-      const vendor = vendors.find(v => v.id === lpo.vendorId || v.name === lpo.vendorName);
+      // Find vendor from vendors list (LpoDetailResponse has no vendorId — match by code then name)
+      const vendor = vendors.find(v =>
+        (lpo.vendorCode && v.code === lpo.vendorCode) ||
+        (lpo.vendorName && v.name === lpo.vendorName)
+      );
 
       // Find warehouse from warehouses list
       const warehouse = warehouses.find(w =>
@@ -853,7 +859,7 @@ const EditorView = ({ initialData, onSaveDraft, onSubmitQC, onPost, onPrint, grn
               batch: Boolean(lpoItem.isBatchTracked || lpoItem.batchTracked)
             };
           })
-          .filter(item => item.received > 0)
+          .filter(item => item.lpoQty > 0)
           .map(item => recalculateItemTotals(item));
 
         setItems(grnItems);
@@ -864,6 +870,7 @@ const EditorView = ({ initialData, onSaveDraft, onSubmitQC, onPost, onPrint, grn
 
     } catch (error) {
       console.error("Failed to fetch LPO details:", error);
+      toast.error("Failed to load LPO details. Please try again.");
       setSelectedLpoDetails(null);
       setFormData(prev => ({
         ...prev,
@@ -883,6 +890,12 @@ const EditorView = ({ initialData, onSaveDraft, onSubmitQC, onPost, onPrint, grn
   useEffect(() => {
     if (!initialData) return;
 
+    // Conversion from LPO list — only LPO number is pre-set; items fetched separately once vendors load
+    if (initialData._fromLpoConvert) {
+      setFormData(prev => ({ ...prev, lpo: initialData.lpo }));
+      return;
+    }
+
     // FIX 6: Use only status from initialData
     setFormData({
       grnNo: initialData.grnNo,
@@ -896,7 +909,10 @@ const EditorView = ({ initialData, onSaveDraft, onSubmitQC, onPost, onPrint, grn
       zoneId: initialData.zoneId,
       locatorId: initialData.locatorId,
       binId: initialData.binId,
-      status: initialData.status // No qcStatus or posted
+      status: initialData.status, // No qcStatus or posted
+      receivedBy: initialData.receivedBy || '',
+      checkedBy: initialData.checkedBy || '',
+      packageCount: initialData.packageCount ?? ''
     });
 
     // Load Cascading Locations
@@ -936,6 +952,12 @@ const EditorView = ({ initialData, onSaveDraft, onSubmitQC, onPost, onPrint, grn
     );
   }, [initialData]);
 
+  // When converting from LPO: auto-fetch LPO details once vendors + warehouses are ready
+  useEffect(() => {
+    if (initialData?._fromLpoConvert && vendors.length > 0 && warehouses.length > 0) {
+      fetchLpoDetails(initialData.lpo);
+    }
+  }, [initialData, vendors, warehouses]);
 
   // Modal State
   const [isBatchModalOpen, setBatchModalOpen] = useState(false);
@@ -1447,10 +1469,12 @@ const EditorView = ({ initialData, onSaveDraft, onSubmitQC, onPost, onPrint, grn
                   <label className="text-xs font-medium text-slate-500 mb-1 block">LPO No</label>
                   <div className="relative">
                     <SearchableDropdown
-                      options={lpoList.map(lpo => ({
-                        value: lpo.lpoNumber || lpo.id,
-                        label: `${lpo.lpoNumber || lpo.id} - ${lpo.vendorName || lpo.vendor || "Vendor"}`
-                      }))}
+                      options={lpoList
+                        .filter(lpo => ['APPROVED', 'SENT_TO_VENDOR', 'PARTIALLY_RECEIVED'].includes(lpo.status))
+                        .map(lpo => ({
+                          value: lpo.lpoNumber || lpo.id,
+                          label: `${lpo.lpoNumber || lpo.id} - ${lpo.vendorName || lpo.vendor || "Vendor"}`
+                        }))}
                       value={formData.lpo}
                       onChange={handleLpoChange}
                       placeholder="Select LPO"
@@ -1505,19 +1529,19 @@ const EditorView = ({ initialData, onSaveDraft, onSubmitQC, onPost, onPrint, grn
 
               <div>
                 <label className="text-xs font-medium text-slate-500 mb-1 block">Vendor Delivery Note</label>
-                <input type="text" defaultValue="DN-12345" disabled={isLocked} className="w-full text-xs border border-slate-200 rounded p-2 text-slate-700" />
+                <input type="text" placeholder="e.g. DN-00001" disabled={isLocked} className="w-full text-xs border border-slate-200 rounded p-2 text-slate-700" />
               </div>
               <div>
                 <label className="text-xs font-medium text-slate-500 mb-1 block">Vendor Invoice No</label>
-                <input type="text" defaultValue="INV-98765" disabled={isLocked} className="w-full text-xs border border-slate-200 rounded p-2 text-slate-700" />
+                <input type="text" placeholder="e.g. INV-00001" disabled={isLocked} className="w-full text-xs border border-slate-200 rounded p-2 text-slate-700" />
               </div>
               <div>
                 <label className="text-xs font-medium text-slate-500 mb-1 block">Shipment / Container No</label>
-                <input type="text" defaultValue="SHIP-001" disabled={isLocked} className="w-full text-xs border border-slate-200 rounded p-2 text-slate-700" />
+                <input type="text" placeholder="e.g. SHIP-00001" disabled={isLocked} className="w-full text-xs border border-slate-200 rounded p-2 text-slate-700" />
               </div>
               <div>
                 <label className="text-xs font-medium text-slate-500 mb-1 block">Packing List No</label>
-                <input type="text" defaultValue="PL-001" disabled={isLocked} className="w-full text-xs border border-slate-200 rounded p-2 text-slate-700" />
+                <input type="text" placeholder="e.g. PL-00001" disabled={isLocked} className="w-full text-xs border border-slate-200 rounded p-2 text-slate-700" />
               </div>
             </div>
           </div>
@@ -1672,7 +1696,8 @@ const EditorView = ({ initialData, onSaveDraft, onSubmitQC, onPost, onPrint, grn
                 <div className="relative">
                   <input
                     type="text"
-                    defaultValue="Ahmed Khan"
+                    value={formData.receivedBy || ''}
+                    onChange={(e) => setFormData(prev => ({ ...prev, receivedBy: e.target.value }))}
                     disabled={isLocked}
                     className="w-full text-xs border border-slate-200 rounded p-1.5 bg-white text-slate-700"
                     placeholder="Receiver Name"
@@ -1685,20 +1710,30 @@ const EditorView = ({ initialData, onSaveDraft, onSubmitQC, onPost, onPrint, grn
               <div>
                 <label className="text-[10px] text-slate-500 mb-1 block">Checked By</label>
                 <div className="relative">
-                  <select disabled={isLocked} className="w-full text-xs border border-slate-200 rounded p-1.5 bg-white text-slate-700 appearance-none"><option>QC Supervisor</option></select>
-                  <ChevronDown className="absolute right-2 top-2 h-3 w-3 text-slate-400 pointer-events-none" />
+                  <input
+                    type="text"
+                    value={formData.checkedBy || ''}
+                    onChange={(e) => setFormData(prev => ({ ...prev, checkedBy: e.target.value }))}
+                    disabled={isLocked}
+                    className="w-full text-xs border border-slate-200 rounded p-1.5 bg-white text-slate-700"
+                    placeholder="Checker Name"
+                  />
                 </div>
               </div>
               <div>
                 <label className="text-[10px] text-slate-500 mb-1 block">Delivery Mode</label>
-                <div className="relative">
-                  <select disabled={isLocked} className="w-full text-xs border border-slate-200 rounded p-1.5 bg-white text-slate-700 appearance-none"><option>Supplier Delivery</option></select>
-                  <ChevronDown className="absolute right-2 top-2 h-3 w-3 text-slate-400 pointer-events-none" />
-                </div>
+                <input type="text" placeholder="e.g. Supplier Delivery" disabled={isLocked} className="w-full text-xs border border-slate-200 rounded p-1.5 text-slate-700" />
               </div>
               <div>
                 <label className="text-[10px] text-slate-500 mb-1 block">Packages Count</label>
-                <input type="number" defaultValue="12" disabled={isLocked} className="w-full text-xs border border-slate-200 rounded p-1.5 text-slate-700" />
+                <input
+                    type="number"
+                    value={formData.packageCount ?? ''}
+                    onChange={(e) => setFormData(prev => ({ ...prev, packageCount: e.target.value }))}
+                    disabled={isLocked}
+                    className="w-full text-xs border border-slate-200 rounded p-1.5 text-slate-700"
+                    placeholder="0"
+                  />
               </div>
             </div>
           </div>
@@ -1711,7 +1746,7 @@ const EditorView = ({ initialData, onSaveDraft, onSubmitQC, onPost, onPrint, grn
             <div className="space-y-3">
               <div>
                 <label className="text-[10px] text-slate-500 mb-1 block">Vehicle No</label>
-                <input type="text" defaultValue="ABC-1234" disabled={isLocked} className="w-full text-xs border border-slate-200 rounded p-1.5 text-slate-700" />
+                <input type="text" placeholder="e.g. DXB-12345" disabled={isLocked} className="w-full text-xs border border-slate-200 rounded p-1.5 text-slate-700" />
               </div>
               <div>
                 <label className="text-[10px] text-slate-500 mb-1 block">Driver Name</label>
@@ -1719,11 +1754,11 @@ const EditorView = ({ initialData, onSaveDraft, onSubmitQC, onPost, onPrint, grn
               </div>
               <div>
                 <label className="text-[10px] text-slate-500 mb-1 block">Gate Entry No</label>
-                <input type="text" defaultValue="GE-001" disabled={isLocked} className="w-full text-xs border border-slate-200 rounded p-1.5 text-slate-700" />
+                <input type="text" placeholder="e.g. GE-001" disabled={isLocked} className="w-full text-xs border border-slate-200 rounded p-1.5 text-slate-700" />
               </div>
               <div>
                 <label className="text-[10px] text-slate-500 mb-1 block">Dock No</label>
-                <input type="text" defaultValue="DOCK-1" disabled={isLocked} className="w-full text-xs border border-slate-200 rounded p-1.5 text-slate-700" />
+                <input type="text" placeholder="e.g. DOCK-1" disabled={isLocked} className="w-full text-xs border border-slate-200 rounded p-1.5 text-slate-700" />
               </div>
               <div>
                 <label className="text-[10px] text-slate-500 mb-1 block">Additional Notes</label>
@@ -1834,7 +1869,7 @@ const EditorView = ({ initialData, onSaveDraft, onSubmitQC, onPost, onPrint, grn
                 <tbody className="divide-y divide-slate-50">
                   {items.length === 0 ? (
                     <tr><td colSpan="10" className="p-8 text-center text-slate-400">No items added. {grnType === "Against LPO" || grnType === "Against Direct Purchase" ? "Select a document to load items or use Select from Products." : "Click Select from Products to add items."}</td></tr>
-                  ) : items.map((item, index) => (
+                  ) : [...items].reverse().map((item, index) => (
                     <React.Fragment key={item.id}>
                       <tr className="hover:bg-slate-50 group">
                         <td className="p-3 text-center text-slate-400 text-xs font-medium">{index + 1}</td>
@@ -2239,6 +2274,7 @@ const GRN = () => {
   const { company } = useCompany();
   const currencyLabel = resolveCurrencyDisplayCode(company);
   const navigate = useNavigate();
+  const location = useLocation();
   const [activeNavTab, setActiveNavTab] = useState("list");
   const [grns, setGrns] = useState([]);
   const [qcQueue, setQcQueue] = useState([]);
@@ -2266,6 +2302,16 @@ const GRN = () => {
     fetchGrns();
   }, []);
 
+  useEffect(() => {
+    const fromLpo = location.state?.fromLpo;
+    if (fromLpo?.lpoNumber) {
+      setGrnType("Against LPO");
+      setCurrentGrnData({ _fromLpoConvert: true, lpo: fromLpo.lpoNumber });
+      setActiveNavTab('editor');
+      navigate(location.pathname, { replace: true, state: {} });
+    }
+  }, []);
+
   // FIX 3: Shared payload logic to prevent duplication
   const persistGrn = async (formData, items, status) => {
     const payload = {
@@ -2278,7 +2324,9 @@ const GRN = () => {
       locatorId: formData.locatorId ? Number(formData.locatorId) : null,
       binId: formData.binId ? Number(formData.binId) : null,
       status: status,
-      packages: items.length,
+      packages: formData.packageCount ? Number(formData.packageCount) : items.length,
+      receivedBy: formData.receivedBy || null,
+      checkedBy: formData.checkedBy || null,
       items: items.map(i => ({
         productId: i.productId,
         code: i.code,

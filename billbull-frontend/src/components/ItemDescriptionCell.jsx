@@ -137,6 +137,13 @@ export const ItemDescriptionCell = React.memo(({
                     </button>
                 </div>
 
+                {/* Detailed Description */}
+                {item.detailedDesc && (
+                    <div className="text-[10px] text-slate-500 italic leading-tight truncate max-w-[320px] mt-0.5" title={item.detailedDesc}>
+                        {item.detailedDesc}
+                    </div>
+                )}
+
                 {/* Bottom Row: Metadata (Tax, Disc, FOC, Margin) & Actions */}
                 {(showTaxDiscount || showSettings) && (
                     <div className="flex items-center justify-between w-full max-w-[360px] mt-0.5">

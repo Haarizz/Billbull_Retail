@@ -628,7 +628,8 @@ const Quotations = () => {
                     }).catch(console.error);
             }
         }
-    }, [focusedRowId]); // Intentionally not including items to avoid loops
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [focusedRowId, items]);
 
     const fetchPriceHistoryForFocusedItem = async (itemCode) => {
         try {
@@ -1045,6 +1046,8 @@ const Quotations = () => {
             id: Date.now() + Math.random(),
             code: product.code,
             name: product.name || '',
+            brand: product.brandName || product.brand || '',
+            detailedDesc: product.detailedDesc || '',
             barcode: product.barcode || '',
             image: product.primaryImage || product.image || '', // ✅ Set Image URL
             desc: product.description || product.name,
@@ -1094,6 +1097,21 @@ const Quotations = () => {
         setFocusedRowId(newItem.id);
         setHighlightedIndex(0);
 
+        // Fetch price history + stock immediately on product add (don't wait for row click)
+        if (newItem.code) {
+            fetchPriceHistoryForFocusedItem(newItem.code);
+            const isService = (newItem.productType || '').toUpperCase() === 'SERVICE';
+            if (!isService) {
+                getStockAvailability(newItem.code)
+                    .then(res => {
+                        const locs = res.locations || [];
+                        const available = locs.reduce((sum, l) => sum + (l.available || 0), 0);
+                        const reserved = locs.reduce((sum, l) => sum + (l.reserved || 0), 0);
+                        setLiveStockMap(prev => ({ ...prev, [newItem.code]: { available, reserved, data: res } }));
+                    }).catch(console.error);
+            }
+        }
+
         // Focus Qty input after small delay
         setTimeout(() => {
             const qtyInput = document.getElementById(`qty-${newItem.id}`);
@@ -1109,6 +1127,8 @@ const Quotations = () => {
             id: Date.now() + Math.random(),
             code: product.code,
             name: product.name || '',
+            brand: product.brandName || product.brand || '',
+            detailedDesc: product.detailedDesc || '',
             barcode: product.barcode || '',
             image: product.primaryImage || product.image || '',
             desc: product.description || product.name,
@@ -1135,6 +1155,20 @@ const Quotations = () => {
             const isFirstItemEmpty = prev.length === 1 && !prev[0].code && !prev[0].desc;
             return isFirstItemEmpty ? [newItem] : [...prev, newItem];
         });
+        setFocusedRowId(newItem.id);
+        if (newItem.code) {
+            fetchPriceHistoryForFocusedItem(newItem.code);
+            const isService = (newItem.productType || '').toUpperCase() === 'SERVICE';
+            if (!isService) {
+                getStockAvailability(newItem.code)
+                    .then(res => {
+                        const locs = res.locations || [];
+                        const available = locs.reduce((sum, l) => sum + (l.available || 0), 0);
+                        const reserved = locs.reduce((sum, l) => sum + (l.reserved || 0), 0);
+                        setLiveStockMap(prev => ({ ...prev, [newItem.code]: { available, reserved, data: res } }));
+                    }).catch(console.error);
+            }
+        }
     };
 
     // --- STOCK CHECK MODAL LOGIC ---
@@ -1825,6 +1859,8 @@ const Quotations = () => {
                     desc: i.desc || '',
                     remarks: i.remarks || '',
                     sku: i.sku || i.productSku || '',
+                    brand: i.brand || i.brandName || '',
+                    detailedDesc: i.detailedDesc || '',
                     localName: i.localName || i.productLocalName || '',
                     barcode: i.barcode || '',
                     unit: i.unit,
@@ -2030,7 +2066,9 @@ const Quotations = () => {
                         desc: i.desc || '',
                         remarks: i.remarks || '',
                         sku: i.sku || i.productSku || '',
-                        localName: i.localName || i.productLocalName || '',
+                        brand: i.brand || i.brandName || '',
+                    detailedDesc: i.detailedDesc || '',
+                    localName: i.localName || i.productLocalName || '',
                         barcode: i.barcode || '',
                         salesPerson: '',
                         location: quotationBranch?.location || '',
@@ -2938,7 +2976,7 @@ const Quotations = () => {
                                                             </div>
                                                         </td>
                                                     </tr>
-                                                ) : items.map((item, index) => (
+                                                ) : [...items].reverse().map((item, index) => (
                                                     <React.Fragment key={item.id}>
                                                         <tr className="group hover:bg-slate-50/50 transition-colors bg-white align-middle" onClick={() => setFocusedRowId(item.id)}>
                                                             {/* Index */}
@@ -3191,47 +3229,42 @@ const Quotations = () => {
                                         <Box size={14} className="text-yellow-600" /> Item Availability
                                     </h3>
 
-                                    {focusedRowId && items.find(i => i.id === focusedRowId)?.code ? (
-                                        <div className="space-y-3">
-                                            {(() => {
-                                                const focusedItem = items.find(i => i.id === focusedRowId);
-                                                // QA-001: service items have no inventory — show a badge instead of stock numbers.
-                                                if ((focusedItem.productType || '').toUpperCase() === 'SERVICE') {
+                                    {items.some(i => i.code) ? (
+                                        <div className="space-y-2">
+                                            {items.filter(i => i.code).filter((item, idx, arr) => arr.findIndex(x => x.code === item.code) === idx).map(item => {
+                                                if ((item.productType || '').toUpperCase() === 'SERVICE') {
                                                     return (
-                                                        <div className="border rounded p-2 border-blue-200 bg-blue-50">
-                                                            <div className="font-semibold text-xs text-slate-800 truncate">
-                                                                {focusedItem.code}
-                                                            </div>
-                                                            <div className="mt-1 text-[10px] font-bold text-blue-700">
-                                                                Service item — no stock tracking
-                                                            </div>
+                                                        <div key={item.id} className="border rounded p-2 border-blue-200 bg-blue-50">
+                                                            <div className="font-semibold text-[10px] text-slate-800 truncate">{item.desc || item.code}</div>
+                                                            <div className="text-[9px] text-slate-500">{item.code}</div>
+                                                            <div className="mt-1 text-[10px] font-bold text-blue-700">Service — no stock tracking</div>
                                                         </div>
                                                     );
                                                 }
-                                                const stockRes = stockCheckResult.find(s => s.itemCode === focusedItem.code);
-                                                const available = liveStockMap[focusedItem.code]?.available ?? (stockRes ? stockRes.availableQty : (focusedItem.stock || focusedItem.currentStock || 0));
-                                                const requested = Number(focusedItem.qty) || 0;
+                                                const stockRes = stockCheckResult.find(s => s.itemCode === item.code);
+                                                const available = liveStockMap[item.code]?.available ?? (stockRes ? stockRes.availableQty : (item.stock || item.currentStock || 0));
+                                                const reserved = liveStockMap[item.code]?.reserved ?? 0;
+                                                const requested = Number(item.qty) || 0;
                                                 const sufficient = available >= requested;
-
                                                 return (
-                                                    <div className={`border rounded p-2 ${sufficient ? "border-emerald-200 bg-emerald-50" : "border-red-200 bg-red-50"}`}>
-                                                        <div className="font-semibold text-xs text-slate-800 truncate">
-                                                            {focusedItem.code}
-                                                        </div>
-                                                        <div className="flex justify-between mt-1 text-[10px] text-slate-600">
+                                                    <div key={item.id} className={`border rounded p-2 ${sufficient ? 'border-emerald-200 bg-emerald-50' : 'border-red-200 bg-red-50'}`}>
+                                                        <div className="font-semibold text-[10px] text-slate-800 truncate">{item.desc || item.code}</div>
+                                                        <div className="text-[9px] text-slate-500 mb-1">{item.code}</div>
+                                                        <div className="flex justify-between text-[10px] text-slate-600">
                                                             <span>Req: {requested}</span>
                                                             <span>Avail: <span className="font-bold">{available}</span></span>
                                                         </div>
-                                                        <div className={`mt-1 text-[10px] font-bold ${sufficient ? "text-emerald-600" : "text-red-600"}`}>
-                                                            {sufficient ? "✅ In Stock" : "❌ Insufficient"}
+                                                        {reserved > 0 && <div className="text-[9px] text-orange-500 mt-0.5">Reserved: {reserved}</div>}
+                                                        <div className={`mt-1 text-[10px] font-bold ${sufficient ? 'text-emerald-600' : 'text-red-600'}`}>
+                                                            {sufficient ? '✅ In Stock' : '❌ Insufficient'}
                                                         </div>
                                                     </div>
                                                 );
-                                            })()}
+                                            })}
                                         </div>
                                     ) : (
                                         <div className="text-[10px] text-slate-400 text-center mt-4">
-                                            Select an item row to check stock.
+                                            Add items to check stock.
                                         </div>
                                     )}
                                 </div>

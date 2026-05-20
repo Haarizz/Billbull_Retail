@@ -858,7 +858,7 @@ const SalesReturn = () => {
                                           </td>
                                        </tr>
                                     ) : (
-                                       items.map((item, idx) => (
+                                       [...items].reverse().map((item, idx) => (
                                           <tr key={idx} className={`hover:bg-slate-50 transition-colors ${item.returnQty > 0 ? 'bg-emerald-50/30' : ''}`}>
                                              <td>
 

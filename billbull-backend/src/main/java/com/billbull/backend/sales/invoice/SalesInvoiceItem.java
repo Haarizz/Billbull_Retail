@@ -63,6 +63,11 @@ public class SalesInvoiceItem {
     @Transient
     private List<DeliveryBatchSelectionResponse> batchSelections = new ArrayList<>();
 
+    @Transient
+    private String brandName;
+    @Transient
+    private String detailedDesc;
+
     // Cumulative revenue and COGS recognized via Delivery Notes for this item.
     // Used to track partial delivery recognition and prevent over-posting.
     private BigDecimal recognizedRevenue = BigDecimal.ZERO;
@@ -314,6 +319,11 @@ public class SalesInvoiceItem {
     public void setBatchSelections(List<DeliveryBatchSelectionResponse> batchSelections) {
         this.batchSelections = batchSelections;
     }
+
+    public String getBrandName() { return brandName; }
+    public void setBrandName(String brandName) { this.brandName = brandName; }
+    public String getDetailedDesc() { return detailedDesc; }
+    public void setDetailedDesc(String detailedDesc) { this.detailedDesc = detailedDesc; }
 
     public BigDecimal getRecognizedRevenue() {
         return recognizedRevenue != null ? recognizedRevenue : BigDecimal.ZERO;

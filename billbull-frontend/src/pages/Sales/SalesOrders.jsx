@@ -585,6 +585,8 @@ const SalesOrders = () => {
       id: Date.now() + Math.random(),
       code: product.code,
       name: product.name || '',
+      brand: product.brandName || product.brand || '',
+      detailedDesc: product.detailedDesc || '',
       barcode: product.barcode || '',
       image: product.primaryImage || product.image || product.thumbnailUrl || product.imageUrl || '',
       desc: product.description || product.name,
@@ -621,6 +623,7 @@ const SalesOrders = () => {
     });
 
     setIsProductSelectorOpen(false); // ✅ Close modal after adding
+    setFocusedItem(newItem);
   };
 
   const handleFastEntryAdd = (product, qty, price, disc) => {
@@ -816,6 +819,8 @@ const SalesOrders = () => {
             name: i.name || '',
             desc: i.desc || '',
             sku: i.sku || '',
+            brand: i.brand || i.brandName || '',
+            detailedDesc: i.detailedDesc || '',
             localName: i.localName || '',
             barcode: i.barcode || '',
             salesPerson: '',
@@ -1699,7 +1704,7 @@ const SalesOrders = () => {
                           </div>
                         </td>
                       </tr>
-                    ) : items.map((item, index) => (
+                    ) : [...items].reverse().map((item, index) => (
                       <React.Fragment key={item.id}>
                         <tr className={`group hover:bg-slate-50/50 transition-colors bg-white align-middle ${isLocked ? 'opacity-80' : ''}`} onClick={() => setFocusedItem(item)}>
                           {/* Index */}
@@ -1940,37 +1945,44 @@ const SalesOrders = () => {
 
             {/* END 8. ORDER SUMMARY */}
 
-            {/* Stock Info - Updated to show focused item data */}
-            <div className="bg-white rounded-lg border border-slate-200 shadow-sm p-5 min-h-[180px] flex flex-col">
+            {/* Stock Info - All items */}
+            <div className="bg-white rounded-lg border border-slate-200 shadow-sm p-5 flex flex-col">
               <h3 className="text-sm font-bold text-slate-800 flex items-center gap-2 mb-3">
                 <div className="p-1 rounded bg-slate-100"><Box size={14} className="text-yellow-600" /></div>
-                Stock & Incoming (Selected Item)
+                Item Availability
               </h3>
 
-              <div className="mt-2 text-xs flex-1 flex flex-col">
-                <div className="font-bold text-slate-700 mb-1 line-clamp-2" title={focusedItem?.desc}>{focusedItem?.desc || 'Select an item...'}</div>
-                <div className="text-slate-400 mb-4">Code: {focusedItem?.code || '-'}</div>
-
-                {(focusedItem?.productType || '').toUpperCase() === 'SERVICE' ? (
-                  <div className="mt-auto px-3 py-2 rounded border border-blue-200 bg-blue-50 text-blue-700 font-bold text-center">
-                    Service item — no stock tracking
-                  </div>
-                ) : (
-                  <>
-                    <div className="flex justify-between mb-1 mt-auto">
-                      <span className="text-slate-500">Total On Hand</span>
-                      <span className="text-slate-500">Blocked / Reserved</span>
+              <div className="space-y-2 overflow-y-auto max-h-[260px]">
+                {items.some(i => i.code) ? items.filter(i => i.code).filter((item, idx, arr) => arr.findIndex(x => x.code === item.code) === idx).map(item => {
+                  if ((item.productType || '').toUpperCase() === 'SERVICE') {
+                    return (
+                      <div key={item.id} className="border rounded p-2 border-blue-200 bg-blue-50">
+                        <div className="font-semibold text-[10px] text-slate-800 truncate">{item.desc || item.code}</div>
+                        <div className="text-[9px] text-slate-500">{item.code}</div>
+                        <div className="mt-1 text-[10px] font-bold text-blue-700">Service — no stock tracking</div>
+                      </div>
+                    );
+                  }
+                  const available = liveStockMap[item.code]?.available ?? (item.stock || item.currentStock || 0);
+                  const reserved = liveStockMap[item.code]?.reserved ?? 0;
+                  const requested = Number(item.qty) || 0;
+                  const sufficient = available >= requested;
+                  return (
+                    <div key={item.id} className={`border rounded p-2 ${sufficient ? 'border-emerald-200 bg-emerald-50' : 'border-red-200 bg-red-50'}`}>
+                      <div className="font-semibold text-[10px] text-slate-800 truncate">{item.desc || item.code}</div>
+                      <div className="text-[9px] text-slate-500 mb-1">{item.code}</div>
+                      <div className="flex justify-between text-[10px] text-slate-600">
+                        <span>Req: {requested}</span>
+                        <span>Avail: <span className="font-bold">{available}</span></span>
+                      </div>
+                      {reserved > 0 && <div className="text-[9px] text-orange-500 mt-0.5">Reserved: {reserved}</div>}
+                      <div className={`mt-1 text-[10px] font-bold ${sufficient ? 'text-emerald-600' : 'text-red-600'}`}>
+                        {sufficient ? '✅ In Stock' : '❌ Insufficient'}
+                      </div>
                     </div>
-                    <div className="flex justify-between mb-3 font-bold">
-                      <span>{focusedItem !== null ? ((liveStockMap[focusedItem.code]?.available || 0) + (liveStockMap[focusedItem.code]?.reserved || 0)) : '-'} units</span>
-                      <span className="text-orange-500">{focusedItem !== null ? (liveStockMap[focusedItem.code]?.reserved || 0) : '-'} units</span>
-                    </div>
-
-                    <div className="flex justify-between font-bold border-t border-slate-100 pt-2 pb-1">
-                      <span className="text-slate-500">Free from current stock</span>
-                      <span className="text-emerald-600">{focusedItem !== null ? (liveStockMap[focusedItem.code]?.available || 0) : '-'} units</span>
-                    </div>
-                  </>
+                  );
+                }) : (
+                  <div className="text-[10px] text-slate-400 text-center py-4">Add items to check stock.</div>
                 )}
               </div>
             </div>

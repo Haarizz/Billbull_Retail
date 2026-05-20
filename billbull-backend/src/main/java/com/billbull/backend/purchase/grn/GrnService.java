@@ -158,6 +158,8 @@ public class GrnService {
         }
 
         grn.setPackageCount(req.packages());
+        grn.setReceivedBy(req.receivedBy());
+        grn.setCheckedBy(req.checkedBy());
 
         // ✅ LINK SOURCE DOCUMENT (LPO or Direct Purchase)
         if (req.lpo() != null && !req.lpo().isBlank() && !req.lpo().equalsIgnoreCase("Manual")
@@ -540,6 +542,9 @@ public class GrnService {
                 g.getSubtotal(),
                 g.getTaxAmount(),
                 g.getGrandTotal(),
+                g.getPackageCount(),
+                g.getReceivedBy(),
+                g.getCheckedBy(),
                 g.getItems().stream().map(i -> new GrnItemResponse(
                         i.getId(),
                         i.getProduct().getId(),
@@ -571,7 +576,8 @@ public class GrnService {
                                 ? i.getPurchaseTax()
                                 : (i.getProduct().getTax() != null && i.getProduct().getTax().getPurchaseTax() != null)
                                 ? i.getProduct().getTax().getPurchaseTax()
-                                : java.math.BigDecimal.valueOf(5))).toList(),
+                                : java.math.BigDecimal.valueOf(5),
+                        i.getProduct().getDetailedDesc())).toList(),
                 g.getBranchId(),
                 g.getBranchName(),
                 g.getBranchCode());

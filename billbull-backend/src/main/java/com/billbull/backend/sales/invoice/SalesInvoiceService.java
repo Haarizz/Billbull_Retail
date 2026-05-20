@@ -543,6 +543,12 @@ public class SalesInvoiceService {
                 if (item.getLocalName() == null || item.getLocalName().isBlank()) item.setLocalName(p.getLocalName());
                 if (item.getDescription() == null || item.getDescription().isBlank()) item.setDescription(p.getShortDesc());
                 if (item.getItemName() == null || item.getItemName().isBlank()) item.setItemName(p.getName());
+                if (item.getBrandName() == null && p.getBrand() != null) {
+                    item.setBrandName(p.getBrand().getName());
+                }
+                if (item.getDetailedDesc() == null && p.getDetailedDesc() != null) {
+                    item.setDetailedDesc(p.getDetailedDesc());
+                }
                 if (item.getBarcode() == null || item.getBarcode().isBlank()) {
                     String barcode = barcodeMap.computeIfAbsent(
                             p.getId(),

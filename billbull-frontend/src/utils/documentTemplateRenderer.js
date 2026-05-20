@@ -36,6 +36,20 @@ const DOC_NO_LABELS = {
     'Pick List': 'Pick List Number'
 };
 
+const DOCUMENT_TITLE_LABELS = {
+    'Quotation': 'Quotation',
+    'Sales Invoice': 'Sales Invoice',
+    'Sales Order (SO)': 'Sales Order',
+    'Delivery Note (DO/DN)': 'Delivery Note',
+    'Proforma Invoice (PI)': 'Proforma Invoice',
+    'Sales Return': 'Credit Note',
+    'Local Purchase Order': 'Local Purchase Order',
+    'Goods Receipt Note': 'Goods Receipt Note',
+    'Purchase Invoice': 'Purchase Invoice',
+    'Payment Voucher': 'Payment Voucher',
+    'Pick List': 'Pick List'
+};
+
 const PAPER_DIMENSIONS_MM = {
     A3: { width: 297, height: 420 },
     A4: { width: 210, height: 297 },
@@ -106,6 +120,28 @@ const formatDocDate = (value) => {
     const parsed = new Date(text);
     return Number.isNaN(parsed.getTime()) ? text : formatDocDate(parsed);
 };
+
+const toDocumentTitleCase = (value) => {
+    const text = asText(value)
+        .replace(/\s*\((SO|DO\/DN|PI|GRV)\)\s*/gi, ' ')
+        .trim()
+        .replace(/\s+/g, ' ');
+
+    if (!text) return '';
+
+    return text
+        .toLowerCase()
+        .replace(/\b[a-z0-9]+(?:\/[a-z0-9]+)?\b/g, (word) => (
+            word
+                .split('/')
+                .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+                .join('/')
+        ));
+};
+
+const resolveDocumentTitle = (template = {}, data = {}, fallback = 'Document') => (
+    toDocumentTitleCase(data.title || DOCUMENT_TITLE_LABELS[template.category] || template.category || fallback)
+);
 
 const renderBatchBarcodeSvg = (batchNumber, options = {}) => {
     const value = asText(batchNumber).trim();
@@ -241,6 +277,8 @@ const normaliseItem = (item = {}) => {
         code: item.code || item.productId || item.itemCode || '',
         sku: item.sku || item.skuCode || '',
         barcode: item.barcode || item.itemBarcode || '',
+        brand: item.brand || item.brandName || item.brand_name || '',
+        detailedDesc: item.detailedDesc || item.detailedDescription || item.detailed_desc || '',
         localName: item.localName || item.arabicName || '',
         name: item.name || item.item || description.title || '-',
         description,
@@ -275,11 +313,13 @@ const getColumnDefaults = (category, isPurchaseDocument) =>
 const createColumnModel = (rawColumns = {}) => {
     const c = rawColumns;
     return [
-        { key: 'index',         label: '#',                               align: 'center', width: '3%',  enabled: true },
+        { key: 'index',         label: '#',                               align: 'center', width: '4%',  enabled: true },
         { key: 'location',      label: 'Location',                        align: 'left',   width: '8%',  enabled: Boolean(c.location) },
-        { key: 'productId',     label: 'Item Code',                       align: 'left',   width: '8%',  enabled: Boolean(c.productId) },
+        { key: 'productId',     label: 'Item Code',                       align: 'left',   width: '9%',  enabled: Boolean(c.productId) },
         { key: 'sku',           label: 'SKU',                             align: 'left',   width: '8%',  enabled: Boolean(c.sku) },
-        { key: 'barcode',       label: 'Barcode',                         align: 'left',   width: '10%', enabled: Boolean(c.barcode) },
+        { key: 'barcode',       label: 'Barcode',                         align: 'left',   width: '12%', enabled: Boolean(c.barcode) },
+        { key: 'brand',         label: 'Brand',                           align: 'left',   width: '9%',  enabled: Boolean(c.brand) },
+        { key: 'detailedDesc',  label: 'Detailed Description',            align: 'left',   width: '18%', enabled: Boolean(c.detailedDesc) },
         { key: 'arabicName',    label: 'Arabic Name',                     align: 'left',   width: '10%', enabled: Boolean(c.arabicName) },
         { key: 'description',   label: 'Product/Services',                align: 'left',   width: c.batchBarcode ? '16%' : '22%', enabled: true },
         { key: 'details',       label: 'Description of Product/Services', align: 'left',   width: c.batchBarcode ? '14%' : '20%', enabled: c.description !== false },
@@ -293,30 +333,34 @@ const createColumnModel = (rawColumns = {}) => {
         { key: 'tax',           label: 'VAT Amount',                      align: 'right',  width: '9%',  enabled: c.tax !== false },
         { key: 'taxPercent',    label: 'Tax %',                           align: 'center', width: '6%',  enabled: Boolean(c.taxPercent) },
         { key: 'total',         label: 'Line Total',                      align: 'right',  width: '9%',  enabled: c.total !== false },
+        { key: 'lpoQty',        label: 'LPO Qty',                         align: 'right',  width: '6%',  enabled: Boolean(c.lpoQty) },
+        { key: 'received',      label: 'Received',                        align: 'right',  width: '6%',  enabled: Boolean(c.received) },
+        { key: 'accepted',      label: 'Accepted',                        align: 'right',  width: '6%',  enabled: Boolean(c.accepted) },
+        { key: 'receivedBy',    label: 'Received By',                     align: 'left',   width: '10%', enabled: Boolean(c.receivedBy) },
+        { key: 'checkedBy',     label: 'Checked By',                      align: 'left',   width: '10%', enabled: Boolean(c.checkedBy) },
     ].filter((col) => col.enabled);
 };
 
-const buildItemDetailLines = (item, columnOptions = {}) =>
+const buildItemDetailLines = (item) =>
     (item.description.details || []).filter((line) => {
         const normalised = asText(line).trim().toLowerCase();
+        const itemCode = asText(item.code).trim().toLowerCase();
+        const itemSku = asText(item.sku).trim().toLowerCase();
+        const itemBarcode = asText(item.barcode).trim().toLowerCase();
+        const itemLocalName = asText(item.localName).trim().toLowerCase();
 
         if (!normalised) return false;
-        if (columnOptions.productId && (normalised === asText(item.code).trim().toLowerCase() || normalised.startsWith('code:') || normalised.startsWith('product id:'))) return false;
-        if (columnOptions.barcode && (normalised === asText(item.barcode).trim().toLowerCase() || normalised.startsWith('barcode:'))) return false;
-        if (columnOptions.sku && (normalised === asText(item.sku).trim().toLowerCase() || normalised.startsWith('sku:'))) return false;
-        if (columnOptions.arabicName && (normalised === asText(item.localName).trim().toLowerCase() || normalised.startsWith('arabic:') || normalised.startsWith('arabic name:'))) return false;
+        if (itemCode && (normalised === itemCode || normalised.startsWith('code:') || normalised.startsWith('item code:') || normalised.startsWith('product id:'))) return false;
+        if (itemBarcode && (normalised === itemBarcode || normalised.startsWith('barcode:') || normalised.startsWith('item barcode:'))) return false;
+        if (itemSku && (normalised === itemSku || normalised.startsWith('sku:') || normalised.startsWith('sku code:'))) return false;
+        if (itemLocalName && (normalised === itemLocalName || normalised.startsWith('arabic:') || normalised.startsWith('arabic name:') || normalised.startsWith('local name:'))) return false;
 
         return true;
     });
 
-const buildDescriptionCell = (item, displayOptions = {}, columnOptions = {}) => {
+const buildDescriptionCell = (item, displayOptions = {}) => {
     const showImage = displayOptions.showItemImage && item.image;
-    const metadataLines = [
-        !columnOptions.productId && item.code ? item.code : '',
-        !columnOptions.sku && item.sku ? item.sku : '',
-        !columnOptions.barcode && item.barcode ? item.barcode : '',
-        !columnOptions.arabicName && item.localName ? item.localName : ''
-    ].filter(Boolean);
+    const metadataLines = [];
 
     return `
         <div class="description-wrap">
@@ -330,7 +374,7 @@ const buildDescriptionCell = (item, displayOptions = {}, columnOptions = {}) => 
 };
 
 const buildDetailsCell = (item) => {
-    const lines = (item.description.details || []).filter(Boolean);
+    const lines = buildItemDetailLines(item);
     return lines.length > 0
         ? lines.map((line) => `<div class="desc-detail-line">${escapeHtml(line)}</div>`).join('')
         : '';
@@ -341,15 +385,19 @@ const renderTableCell = (column, item, index, displayOptions = {}, columnOptions
         case 'index':
             return `<td class="table-cell cell-center cell-index">${index + 1}</td>`;
         case 'description':
-            return `<td class="table-cell cell-description">${buildDescriptionCell(item, displayOptions, columnOptions)}</td>`;
+            return `<td class="table-cell cell-description">${buildDescriptionCell(item, displayOptions)}</td>`;
         case 'details':
             return `<td class="table-cell cell-details">${buildDetailsCell(item)}</td>`;
         case 'productId':
-            return `<td class="table-cell">${escapeHtml(item.code || '-')}</td>`;
+            return `<td class="table-cell cell-code">${escapeHtml(item.code || '-')}</td>`;
         case 'sku':
-            return `<td class="table-cell">${escapeHtml(item.sku || '-')}</td>`;
+            return `<td class="table-cell cell-code">${escapeHtml(item.sku || '-')}</td>`;
         case 'barcode':
-            return `<td class="table-cell">${escapeHtml(item.barcode || '-')}</td>`;
+            return `<td class="table-cell cell-code cell-barcode">${escapeHtml(item.barcode || '-')}</td>`;
+        case 'brand':
+            return `<td class="table-cell">${escapeHtml(item.brand || '-')}</td>`;
+        case 'detailedDesc':
+            return `<td class="table-cell">${escapeHtml(item.detailedDesc || '-')}</td>`;
         case 'arabicName':
             return `<td class="table-cell">${escapeHtml(item.localName || '-')}</td>`;
         case 'salesPerson':
@@ -426,6 +474,16 @@ const renderTableCell = (column, item, index, displayOptions = {}, columnOptions
             return `<td class="table-cell cell-center">${item.taxPercent > 0 ? `${formatNumber(item.taxPercent, 0)}%` : '-'}</td>`;
         case 'total':
             return `<td class="table-cell cell-right cell-strong">${formatNumber(item.total)}</td>`;
+        case 'lpoQty':
+            return `<td class="table-cell cell-right">${formatNumber(item.lpoQty, 0)}</td>`;
+        case 'received':
+            return `<td class="table-cell cell-right">${formatNumber(item.received, 0)}</td>`;
+        case 'accepted':
+            return `<td class="table-cell cell-right">${formatNumber(item.accepted, 0)}</td>`;
+        case 'receivedBy':
+            return `<td class="table-cell">${escapeHtml(item.receivedBy || '-')}</td>`;
+        case 'checkedBy':
+            return `<td class="table-cell">${escapeHtml(item.checkedBy || '-')}</td>`;
         default:
             return '<td class="table-cell">-</td>';
     }
@@ -803,8 +861,8 @@ const buildCoreStyles = () => `
     }
     .document-header {
         display: grid;
-        grid-template-columns: minmax(0, 1.15fr) minmax(180px, 240px) minmax(240px, 300px);
-        gap: 28px;
+        grid-template-columns: minmax(max-content, 1.25fr) minmax(140px, 0.85fr) minmax(120px, 0.75fr);
+        gap: 20px;
         align-items: start;
         margin-bottom: 16px;
     }
@@ -814,6 +872,8 @@ const buildCoreStyles = () => `
         font-weight: 700;
         margin: 0 0 24px;
         color: #000000;
+        white-space: nowrap;
+        word-break: keep-all;
     }
     .header-center {
         display: grid;
@@ -967,16 +1027,18 @@ const buildCoreStyles = () => `
         border-top: 1px solid #e0e0e0;
     }
     .document-table thead {
-        display: table-header-group;
+        display: table-row-group;
     }
     .document-table thead th {
-        padding: 8px;
+        padding: 7px 5px;
         background: #ffffff;
         color: #111827;
         font-weight: 700;
         text-align: left;
         border-bottom: 1px solid #e0e0e0;
         white-space: normal;
+        word-break: normal;
+        overflow-wrap: normal;
     }
     .document-table thead th.cell-right {
         text-align: right;
@@ -988,11 +1050,12 @@ const buildCoreStyles = () => `
         page-break-inside: avoid;
     }
     .table-cell {
-        padding: 10px 8px;
+        padding: 9px 5px;
         color: #111827;
         vertical-align: top;
         border-bottom: 1px solid #e0e0e0;
-        word-break: break-word;
+        word-break: normal;
+        overflow-wrap: break-word;
     }
     .table-empty {
         padding: 16px 8px;
@@ -1002,9 +1065,29 @@ const buildCoreStyles = () => `
     }
     .cell-right { text-align: right; }
     .cell-center { text-align: center; }
+    .cell-right,
+    .cell-center,
+    .cell-code {
+        word-break: normal;
+        overflow-wrap: normal;
+        white-space: nowrap;
+    }
     .cell-index {
         color: #111827;
-        vertical-align: middle;
+        vertical-align: top;
+        white-space: nowrap;
+        min-width: 18px;
+        padding-left: 3px;
+        padding-right: 3px;
+        line-height: 1.2;
+    }
+    .cell-code {
+        font-size: 9px;
+        line-height: 1.2;
+        white-space: nowrap;
+    }
+    .cell-barcode {
+        letter-spacing: -0.01em;
     }
     .cell-strong { font-weight: 700; }
     .cell-unit,
@@ -1270,14 +1353,17 @@ const buildPrintStyles = (paperSize = 'A4', orientation = 'Portrait') => {
             /* Force 3-column header layout — prevents the responsive breakpoint
                from collapsing columns on narrow paper sizes like A4 */
             .document-header {
-                grid-template-columns: minmax(0, 1.15fr) minmax(180px, 240px) minmax(240px, 300px) !important;
-                gap: 28px !important;
+                grid-template-columns: minmax(max-content, 1.25fr) minmax(140px, 0.85fr) minmax(120px, 0.75fr) !important;
+                gap: 20px !important;
             }
             .signature-grid {
                 grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
             }
             .document-title {
                 margin-bottom: 24px !important;
+            }
+            .document-table thead {
+                display: table-row-group !important;
             }
             .header-center {
                 padding-top: 48px !important;
@@ -1462,7 +1548,7 @@ const normalisePurchaseLayout = (template, data, companyProfile, renderTarget) =
     };
 
     return {
-        title: asText(data.title || template.category || 'PURCHASE DOCUMENT'),
+        title: resolveDocumentTitle(template, data, 'Purchase Document'),
         category: template.category || '',
         docNo: asText(data.docNo || ''),
         docNoLabel: DOC_NO_LABELS[template.category] || 'Document Number',
@@ -1482,7 +1568,7 @@ const normalisePurchaseLayout = (template, data, companyProfile, renderTarget) =
         terms: asText(template.termsContent || ''),
         displayOptions,
         showItemTable: items.length > 0,
-        showTotalsSection: totals.grandTotal > 0 || totals.amountPaid > 0,
+        showTotalsSection: !data.hideTotalsTable && (totals.grandTotal > 0 || totals.amountPaid > 0),
         showHighlight: summaryValue !== undefined && summaryValue !== null && asNumber(summaryValue) > 0,
         showPaymentDetails: paymentDetails.length > 0,
         showSignatureBlock: false,
@@ -1529,7 +1615,7 @@ const normaliseGenericLayout = (template, data, companyProfile, renderTarget) =>
     ].filter(Boolean);
 
     return {
-        title: asText(data.title || template.category || 'DOCUMENT'),
+        title: resolveDocumentTitle(template, data, 'Document'),
         category: template.category || '',
         docNo: asText(data.docNo || ''),
         docNoLabel: DOC_NO_LABELS[template.category] || 'Document Number',

@@ -19,6 +19,7 @@ public class LpoItemResponse {
     private String remarks;
     private String image;
     private BigDecimal purchaseTax;
+    private String detailedDesc;
 
     public LpoItemResponse(LpoItem item) {
         this.productId = item.getProduct().getId();
@@ -38,6 +39,7 @@ public class LpoItemResponse {
         this.purchaseTax = (item.getProduct().getTax() != null && item.getProduct().getTax().getPurchaseTax() != null)
                 ? item.getProduct().getTax().getPurchaseTax()
                 : java.math.BigDecimal.valueOf(5);
+        this.detailedDesc = item.getProduct().getDetailedDesc();
     }
 
     public Long getProductId() {
@@ -110,5 +112,9 @@ public class LpoItemResponse {
 
     public BigDecimal getPurchaseTax() {
         return purchaseTax;
+    }
+
+    public String getDetailedDesc() {
+        return detailedDesc;
     }
 }
