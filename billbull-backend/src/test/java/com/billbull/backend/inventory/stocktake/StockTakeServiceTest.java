@@ -30,7 +30,9 @@ import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 
+import com.billbull.backend.inventory.batch.BatchMasterRepository;
 import com.billbull.backend.inventory.brand.Brand;
+import com.billbull.backend.inventory.batch.BatchMasterRepository;
 import com.billbull.backend.inventory.department.Department;
 import com.billbull.backend.inventory.product.Product;
 import com.billbull.backend.inventory.product.ProductBarcode;
@@ -61,6 +63,7 @@ class StockTakeServiceTest {
     @Mock private BinStockService binStockService;
     @Mock private StockTakeExpectedUnitRepository expectedUnitRepo;
     @Mock private StockTakeUnitScanRepository unitScanRepo;
+    @Mock private BatchMasterRepository batchMasterRepo;
 
     private StockTakeService service;
 
@@ -78,7 +81,8 @@ class StockTakeServiceTest {
                 binRepo,
                 binStockService,
                 expectedUnitRepo,
-                unitScanRepo);
+                unitScanRepo,
+                batchMasterRepo);
     }
 
     @Test
@@ -155,6 +159,7 @@ class StockTakeServiceTest {
         when(sessionRepo.findBySessionId("STK-1")).thenReturn(Optional.of(session));
         when(stockMovementRepo.findStockIdentitiesByProductAndBin(2L, 10L, 7L))
                 .thenReturn(List.<Object[]>of(new Object[] { "OS-1", LocalDate.parse("2026-06-01"), 50 }));
+        when(batchMasterRepo.findAvailableMatching(10L, 7L, "OS-1")).thenReturn(List.of());
         when(productRepo.findById(10L)).thenReturn(Optional.of(product(10L)));
         when(sessionRepo.save(any(StockTakeSession.class))).thenAnswer(invocation -> invocation.getArgument(0));
 

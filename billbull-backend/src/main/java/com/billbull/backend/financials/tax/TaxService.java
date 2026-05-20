@@ -2,6 +2,7 @@ package com.billbull.backend.financials.tax;
 
 import java.io.IOException;
 import java.net.MalformedURLException;
+import java.math.BigDecimal;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -11,18 +12,29 @@ import java.time.format.DateTimeFormatter;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
+import java.util.stream.Collectors;
 
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.io.Resource;
+import org.springframework.http.HttpStatus;
 import org.springframework.core.io.UrlResource;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 import org.springframework.web.multipart.MultipartFile;
+import org.springframework.web.server.ResponseStatusException;
 
 @Service
 public class TaxService {
+
+    private static final Set<String> ALLOWED_FREQUENCIES = Set.of("Monthly", "Quarterly", "Annually");
+    private static final Set<String> ALLOWED_CONFIG_STATUSES = Set.of("Active", "Inactive");
+    private static final Set<String> ALLOWED_FILING_STATUSES = Set.of("Pending", "Filed", "Overdue");
+    private static final Set<String> ALLOWED_DOCUMENT_EXTENSIONS = Set.of(
+            "pdf", "png", "jpg", "jpeg", "doc", "docx", "xls", "xlsx", "xml");
+    private static final long MAX_DOCUMENT_SIZE_BYTES = 10L * 1024L * 1024L;
 
     private final TaxConfigurationRepository taxConfigurationRepository;
     private final TaxFilingRepository taxFilingRepository;
@@ -50,7 +62,11 @@ public class TaxService {
     }
 
     public TaxConfiguration saveConfig(TaxConfiguration config) {
+        validateConfig(config);
         boolean isNew = config.getId() == null;
+        if (!isNew && !taxConfigurationRepository.existsById(config.getId())) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Tax configuration not found");
+        }
         TaxConfiguration savedConfig = taxConfigurationRepository.save(config);
 
         if (isNew) {
@@ -66,11 +82,69 @@ public class TaxService {
 
     @Transactional
     public void deleteConfig(Long id) {
+        if (!taxConfigurationRepository.existsById(id)) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Tax configuration not found");
+        }
         // Cascade delete is handled by database usually, but here we can manually delete filings if needed
         // Assuming JPA handles foreign key constraints or we delete manually
         List<TaxFiling> filings = taxFilingRepository.findByTaxConfigurationId(id);
         taxFilingRepository.deleteAll(filings);
         taxConfigurationRepository.deleteById(id);
+    }
+
+    private void validateConfig(TaxConfiguration config) {
+        if (config == null) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Tax configuration is required");
+        }
+        if (!StringUtils.hasText(config.getType())) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Tax type is required");
+        }
+        if (!StringUtils.hasText(config.getFrequency()) || !ALLOWED_FREQUENCIES.contains(config.getFrequency())) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Valid filing frequency is required");
+        }
+
+        BigDecimal rate = parseRate(config.getRate());
+        if (rate.compareTo(BigDecimal.ZERO) < 0 || rate.compareTo(BigDecimal.valueOf(100)) > 0) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Tax rate must be between 0 and 100");
+        }
+        config.setRate(rate.stripTrailingZeros().toPlainString() + "%");
+
+        if (!StringUtils.hasText(config.getStatus())) {
+            config.setStatus("Active");
+        } else if (!ALLOWED_CONFIG_STATUSES.contains(config.getStatus())) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Valid tax configuration status is required");
+        }
+
+        if (config.getAccounts() != null) {
+            config.setAccounts(config.getAccounts().stream()
+                    .filter(StringUtils::hasText)
+                    .map(String::trim)
+                    .distinct()
+                    .collect(Collectors.toList()));
+        }
+    }
+
+    private BigDecimal parseRate(String rateText) {
+        if (!StringUtils.hasText(rateText)) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Tax rate is required");
+        }
+        try {
+            return new BigDecimal(rateText.replace("%", "").trim());
+        } catch (NumberFormatException ex) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Tax rate must be numeric");
+        }
+    }
+
+    private void validateFilingUpdate(TaxFiling updatedFiling) {
+        if (updatedFiling == null) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Tax filing update is required");
+        }
+        if (updatedFiling.getAmount() != null && updatedFiling.getAmount() < 0) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Tax filing amount cannot be negative");
+        }
+        if (updatedFiling.getStatus() != null && !ALLOWED_FILING_STATUSES.contains(updatedFiling.getStatus())) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Valid filing status is required");
+        }
     }
 
     // --- Filing Methods ---
@@ -82,6 +156,7 @@ public class TaxService {
     }
 
     public TaxFiling updateFiling(Long id, TaxFiling updatedFiling) {
+        validateFilingUpdate(updatedFiling);
         return taxFilingRepository.findById(id).map(filing -> {
             if (updatedFiling.getAmount() != null) {
                 filing.setAmount(updatedFiling.getAmount());
@@ -99,10 +174,12 @@ public class TaxService {
 
             if ("Filed".equals(updatedFiling.getStatus()) && filing.getFiledDate() == null) {
                 filing.setFiledDate(LocalDate.now().format(DateTimeFormatter.ofPattern("dd MMM yyyy")));
+            } else if (updatedFiling.getStatus() != null && !"Filed".equals(updatedFiling.getStatus())) {
+                filing.setFiledDate(null);
             }
 
             return taxFilingRepository.save(filing);
-        }).orElseThrow(() -> new RuntimeException("Filing not found"));
+        }).orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Tax filing not found"));
     }
 
     private void createInitialFiling(TaxConfiguration config) {
@@ -147,19 +224,40 @@ public class TaxService {
     
     public TaxFilingDTO uploadDocument(Long filingId, MultipartFile file) {
         TaxFiling filing = taxFilingRepository.findById(filingId)
-                .orElseThrow(() -> new RuntimeException("Filing not found with id " + filingId));
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND,
+                        "Tax filing not found with id " + filingId));
         
-        if (file != null && !file.isEmpty()) {
-            storeFile(file, filing);
-            
-            // Increment document count
-            Integer currentCount = filing.getDocuments() != null ? filing.getDocuments() : 0;
-            filing.setDocuments(currentCount + 1);
-            
-            taxFilingRepository.save(filing);
-        }
+        validateDocument(file);
+        deleteExistingAttachment(filing);
+        storeFile(file, filing);
+        filing.setDocuments(1);
+        taxFilingRepository.save(filing);
         
         return TaxFilingDTO.fromEntity(filing);
+    }
+
+    private void validateDocument(MultipartFile file) {
+        if (file == null || file.isEmpty()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Document file is required");
+        }
+        if (file.getSize() > MAX_DOCUMENT_SIZE_BYTES) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Document size must be 10 MB or less");
+        }
+
+        String originalFileName = file.getOriginalFilename();
+        if (!StringUtils.hasText(originalFileName)) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Document filename is required");
+        }
+
+        String extension = "";
+        int dotIndex = originalFileName.lastIndexOf('.');
+        if (dotIndex >= 0 && dotIndex < originalFileName.length() - 1) {
+            extension = originalFileName.substring(dotIndex + 1).toLowerCase();
+        }
+        if (!ALLOWED_DOCUMENT_EXTENSIONS.contains(extension)) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "Unsupported document type. Upload PDF, image, Word, Excel, or XML files");
+        }
     }
     
     private void storeFile(MultipartFile file, TaxFiling filing) {
@@ -168,7 +266,8 @@ public class TaxService {
 
         try {
             if(fileName.contains("..")) {
-                throw new RuntimeException("Sorry! Filename contains invalid path sequence " + fileName);
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                        "Filename contains invalid path sequence " + fileName);
             }
 
             Path targetLocation = this.fileStorageLocation.resolve(fileName);
@@ -177,12 +276,27 @@ public class TaxService {
             filing.setAttachmentName(originalFileName);
             filing.setAttachmentPath(targetLocation.toString());
         } catch (IOException ex) {
-            throw new RuntimeException("Could not store file " + fileName + ". Please try again!", ex);
+            throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR,
+                    "Could not store file " + originalFileName + ". Please try again!", ex);
         }
     }
+
+    private void deleteExistingAttachment(TaxFiling filing) {
+        if (filing.getAttachmentPath() == null) {
+            return;
+        }
+
+        try {
+            Files.deleteIfExists(Paths.get(filing.getAttachmentPath()));
+        } catch (IOException e) {
+            System.err.println("Failed to delete existing tax document: " + e.getMessage());
+        }
+    }
+
     public TaxFilingDTO removeDocument(Long filingId) {
         TaxFiling filing = taxFilingRepository.findById(filingId)
-                .orElseThrow(() -> new RuntimeException("Filing not found with id " + filingId));
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND,
+                        "Tax filing not found with id " + filingId));
 
         if (filing.getAttachmentPath() != null) {
             try {
@@ -207,23 +321,24 @@ public class TaxService {
 
     public Resource loadDocument(Long filingId) {
         TaxFiling filing = taxFilingRepository.findById(filingId)
-                .orElseThrow(() -> new RuntimeException("Filing not found with id " + filingId));
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND,
+                        "Tax filing not found with id " + filingId));
 
         try {
             if (filing.getAttachmentPath() == null) {
-                throw new RuntimeException("No document attached to this filing");
+                throw new ResponseStatusException(HttpStatus.NOT_FOUND, "No document attached to this filing");
             }
             
             Path filePath = Paths.get(filing.getAttachmentPath());
             Resource resource = new UrlResource(filePath.toUri());
 
-            if (resource.exists() || resource.isReadable()) {
+            if (resource.exists() && resource.isReadable()) {
                 return resource;
             } else {
-                throw new RuntimeException("Could not read the file!");
+                throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Could not read the file");
             }
         } catch (MalformedURLException ex) {
-            throw new RuntimeException("Error: " + ex.getMessage());
+            throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR, "Error reading document");
         }
     }
 }

@@ -37,6 +37,36 @@ const getFormattedId = (item) => {
   return `INQ-${year}-${String(id).padStart(5, '0')}`;
 };
 
+const getPrimaryBarcode = (productData = {}, fallback = '') => {
+  const packingBarcode =
+    productData.inventory?.packings?.find?.(packing => packing?.barcode)?.barcode ||
+    productData.packings?.find?.(packing => packing?.barcode)?.barcode ||
+    '';
+
+  return productData.barcode || productData.product?.barcode || packingBarcode || fallback || '';
+};
+
+const getPrimaryImage = (productData = {}, fallback = '') =>
+  productData.primaryImage ||
+  productData.image ||
+  productData.product?.primaryImage ||
+  productData.product?.image ||
+  fallback ||
+  '';
+
+const getInquiryStatusBadgeClass = (status) => {
+  switch (String(status || '').toLowerCase()) {
+    case 'hot': return 'bg-rose-50 text-rose-600 border-rose-100 font-bold';
+    case 'warm': return 'bg-orange-50 text-orange-600 border-orange-100 font-medium';
+    case 'cool': return 'bg-sky-50 text-sky-600 border-sky-100 font-medium';
+    case 'new': return 'bg-blue-50 text-blue-600 border-blue-100 font-medium';
+    case 'converted': return 'bg-purple-50 text-purple-600 border-purple-100 font-bold';
+    case 'invoiced': return 'bg-emerald-50 text-emerald-600 border-emerald-100 font-bold';
+    case 'lost': return 'bg-slate-100 text-slate-500 border-slate-200';
+    default: return 'bg-slate-50 text-slate-600 border-slate-100';
+  }
+};
+
 // ==========================================
 // SUB-COMPONENTS
 // ==========================================
@@ -194,16 +224,7 @@ const InquiryList = ({ data, onAddNew, onView, onDelete, onRefresh, isLoading })
   const [searchTerm, setSearchTerm] = useState("");
 
   const getStatusBadge = (status) => {
-    switch (String(status || '').toLowerCase()) {
-      case 'hot': return 'bg-rose-50 text-rose-600 border-rose-100 font-bold';
-      case 'warm': return 'bg-orange-50 text-orange-600 border-orange-100 font-medium';
-      case 'cool': return 'bg-sky-50 text-sky-600 border-sky-100 font-medium';
-      case 'new': return 'bg-blue-50 text-blue-600 border-blue-100 font-medium';
-      case 'converted': return 'bg-purple-50 text-purple-600 border-purple-100 font-bold';
-      case 'invoiced': return 'bg-emerald-50 text-emerald-600 border-emerald-100 font-bold';
-      case 'lost': return 'bg-slate-100 text-slate-500 border-slate-200';
-      default: return 'bg-slate-50 text-slate-600 border-slate-100';
-    }
+    return getInquiryStatusBadgeClass(status);
   };
 
   const getPriorityStyle = (p) => {
@@ -393,6 +414,11 @@ const InquiryList = ({ data, onAddNew, onView, onDelete, onRefresh, isLoading })
                         <span className={`text-[11px] font-semibold px-2.5 py-1 rounded-full border ${getStatusBadge(row.status)}`}>
                           {row.status}
                         </span>
+                        {row.convertedQuotationNo && (
+                          <div className="mt-1 text-[10px] font-semibold text-slate-500">
+                            Quote: {row.convertedQuotationNo}
+                          </div>
+                        )}
                       </td>
                       <td className="px-4 py-3 text-slate-600">
                         {/* ✅ FIX: Derived Last Follow Up with improved logic */}
@@ -490,6 +516,10 @@ const CreateInquiry = ({ onBack, onSave, isSaving }) => {
       } else {
         const newItem = {
           productId: product.id,
+          productCode: product.code || product.itemCode || '',
+          itemCode: product.code || product.itemCode || '',
+          barcode: product.barcode || product.itemBarcode || '',
+          image: product.primaryImage || product.image || product.imageUrl || '',
           productName: product.name,
           quantity: 1,
           price: product.retailPrice || product.sellingPrice || 0
@@ -853,15 +883,18 @@ const ConvertToQuotationModal = ({ isOpen, onClose, inquiry, onSuccess }) => {
 
           if (!productId) {
             // Fallback if no ID found
+            const fallbackPrice = item.standardPrice || item.price || 0;
             return {
-              itemCode: 'N/A',
+              itemCode: item.itemCode || item.productCode || item.code || 'N/A',
+              barcode: item.barcode || item.itemBarcode || '',
+              primaryImage: item.primaryImage || item.image || item.imageUrl || '',
               description: item.productName || item.description,
               unit: 'Unit',
               quantity: item.quantity,
-              price: item.standardPrice || item.price || 0,
+              price: fallbackPrice,
               discount: discount,
               taxRate: tax,
-              lineTotal: (item.quantity * (item.standardPrice || item.price || 0))
+              lineTotal: (item.quantity * fallbackPrice)
             };
           }
 
@@ -872,6 +905,8 @@ const ConvertToQuotationModal = ({ isOpen, onClose, inquiry, onSuccess }) => {
           const pricing = productData.pricing || {};
           const inventory = productData.inventory || {};
           const unitObj = inventory.defaultUnit || {};
+          const barcode = getPrimaryBarcode(productData, item.barcode || item.itemBarcode || '');
+          const primaryImage = getPrimaryImage(productData, item.primaryImage || item.image || item.imageUrl || '');
 
           // Calculate line totals with discount and tax
           // Use retailPrice from pricing if available
@@ -887,6 +922,7 @@ const ConvertToQuotationModal = ({ isOpen, onClose, inquiry, onSuccess }) => {
             id: Math.random(), // Temporary ID for frontend key
             itemId: product.id || productId,
             itemCode: product.code || 'N/A', // CORRECTED: product.code from aggregate
+            barcode,
             description: product.name || item.productName,
             unit: unitObj.name || (unitObj.code) || 'Msg', // CORRECTED: unit from inventory
             quantity: qty,
@@ -895,31 +931,41 @@ const ConvertToQuotationModal = ({ isOpen, onClose, inquiry, onSuccess }) => {
             taxRate: tax,       // GLOBAL TAX APPLIED
             taxAmount: taxAmt,
             lineTotal: total,
-            primaryImage: productData.primaryImage || ''
+            primaryImage,
+            image: primaryImage
           };
         } catch (err) {
           console.error(`Failed to fetch product details for ${item.productName}`, err);
+          const fallbackPrice = item.standardPrice || item.price || 0;
           return {
             // Fallback on error
-            itemCode: 'ERR',
+            itemCode: item.itemCode || item.productCode || item.code || 'ERR',
+            barcode: item.barcode || item.itemBarcode || '',
+            primaryImage: item.primaryImage || item.image || item.imageUrl || '',
+            image: item.primaryImage || item.image || item.imageUrl || '',
             description: item.productName,
             quantity: item.quantity,
-            price: item.price || 0,
+            price: fallbackPrice,
             discount: discount,
             taxRate: tax,
-            lineTotal: 0
+            lineTotal: item.quantity * fallbackPrice
           };
         }
       }));
 
-      // Navigate to quotation page with enriched items
+      // Navigate to quotation page with enriched items and explicit customer identity
       navigate('/sales/quotation', {
         state: {
           inquiry: inquiry,
-          items: enrichedItems, // PASS ENRICHED ITEMS
+          items: enrichedItems,
           discount: discount,
           tax: tax,
-          paymentTerms: paymentTerms
+          paymentTerms: paymentTerms,
+          // Pass customer identifiers explicitly so Quotations.jsx can resolve even
+          // when the customer was just created and the master list is still loading.
+          customerName: inquiry.customer || '',
+          customerMobile: inquiry.mobile || '',
+          customerEmail: inquiry.email || ''
         }
       });
       onClose();
@@ -1278,8 +1324,14 @@ const ViewInquiry = ({ data, onBack, onRefresh }) => {
                 </div>
                 <div className="flex justify-between py-1 pt-2">
                   <span className="text-slate-500">Status</span>
-                  <span className="bg-red-50 text-red-600 text-xs px-2 py-0.5 rounded border border-red-100 font-bold">{data.status}</span>
+                  <span className={`text-xs px-2 py-0.5 rounded border ${getInquiryStatusBadgeClass(data.status)}`}>{data.status}</span>
                 </div>
+                {data.convertedQuotationNo && (
+                  <div className="flex justify-between py-1 pt-2">
+                    <span className="text-slate-500">Quotation Ref</span>
+                    <span className="font-semibold text-slate-700">{data.convertedQuotationNo}</span>
+                  </div>
+                )}
               </div>
             </div>
 

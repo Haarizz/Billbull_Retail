@@ -11,6 +11,10 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import com.billbull.backend.inventory.product.Product;
+import com.billbull.backend.inventory.product.ProductBarcode;
+import com.billbull.backend.inventory.product.ProductBarcodeRepository;
+import com.billbull.backend.inventory.product.ProductMedia;
+import com.billbull.backend.inventory.product.ProductMediaRepository;
 import com.billbull.backend.inventory.product.ProductPricingRepository;
 import com.billbull.backend.inventory.product.ProductRepository;
 import com.billbull.backend.purchase.stockmovement.StockMovementRepository;
@@ -24,19 +28,25 @@ public class CustomerInquiryService {
     private final ProductRepository productRepo;
     private final StockMovementRepository stockRepo;
     private final ProductPricingRepository pricingRepo;
+    private final ProductBarcodeRepository barcodeRepo;
+    private final ProductMediaRepository mediaRepo;
 
     public CustomerInquiryService(CustomerInquiryRepository inquiryRepo,
             InquiryFollowUpRepository followUpRepo,
             InquiryItemRepository itemRepo,
             ProductRepository productRepo,
             StockMovementRepository stockRepo,
-            ProductPricingRepository pricingRepo) {
+            ProductPricingRepository pricingRepo,
+            ProductBarcodeRepository barcodeRepo,
+            ProductMediaRepository mediaRepo) {
         this.inquiryRepo = inquiryRepo;
         this.followUpRepo = followUpRepo;
         this.itemRepo = itemRepo;
         this.productRepo = productRepo;
         this.stockRepo = stockRepo;
         this.pricingRepo = pricingRepo;
+        this.barcodeRepo = barcodeRepo;
+        this.mediaRepo = mediaRepo;
     }
 
     @Transactional(readOnly = true)
@@ -106,6 +116,9 @@ public class CustomerInquiryService {
         if (req.getNotes() != null) inquiry.setNotes(req.getNotes());
         if (req.getAssignedTo() != null) inquiry.setAssignedTo(req.getAssignedTo());
         if (req.getStatus() != null) inquiry.setStatus(req.getStatus());
+        if (req.getConvertedQuotationId() != null) inquiry.setConvertedQuotationId(req.getConvertedQuotationId());
+        if (req.getConvertedQuotationNo() != null) inquiry.setConvertedQuotationNo(req.getConvertedQuotationNo());
+        if (req.getConvertedDate() != null) inquiry.setConvertedDate(req.getConvertedDate());
 
         inquiryRepo.save(inquiry);
         return mapToResponseWithTimeline(inquiry);
@@ -173,6 +186,9 @@ public class CustomerInquiryService {
         CustomerInquiryResponse res = new CustomerInquiryResponse();
         res.setId(i.getId());
         res.setInquiryNumber(i.getInquiryNumber());
+        res.setConvertedQuotationId(i.getConvertedQuotationId());
+        res.setConvertedQuotationNo(i.getConvertedQuotationNo());
+        res.setConvertedDate(i.getConvertedDate());
         res.setCustomer(i.getCustomer());
         res.setMobile(i.getMobile());
         res.setEmail(i.getEmail());
@@ -185,26 +201,7 @@ public class CustomerInquiryService {
         res.setCreatedDate(i.getCreatedDate());
         res.setTimeline(null);
         res.setItems(
-                i.getItems().stream().map(item -> {
-                    InquiryItemResponse ir = new InquiryItemResponse();
-                    ir.setId(item.getId());
-                    ir.setProductId(item.getProduct().getId());
-                    ir.setProductName(item.getProduct().getName());
-                    ir.setQuantity(item.getQuantity());
-                    ir.setPrice(item.getPrice());
-                    
-                    BigDecimal stock = stockRepo.getTotalAvailableStock(item.getProduct().getId());
-                    double stockVal = stock != null ? stock.doubleValue() : 0;
-                    
-                    if (stockVal <= 0) ir.setStockStatus("out-stock");
-                    else if (stockVal < 10) ir.setStockStatus("low-stock");
-                    else ir.setStockStatus("in-stock");
-                    
-                    pricingRepo.findByProductId(item.getProduct().getId())
-                        .ifPresent(p -> ir.setStandardPrice(p.getRetailPrice() != null ? p.getRetailPrice().doubleValue() : 0.0));
-
-                    return ir;
-                }).collect(Collectors.toList()));
+                i.getItems().stream().map(this::mapItemToResponse).collect(Collectors.toList()));
         return res;
     }
 
@@ -212,6 +209,9 @@ public class CustomerInquiryService {
         CustomerInquiryResponse res = new CustomerInquiryResponse();
         res.setId(i.getId());
         res.setInquiryNumber(i.getInquiryNumber());
+        res.setConvertedQuotationId(i.getConvertedQuotationId());
+        res.setConvertedQuotationNo(i.getConvertedQuotationNo());
+        res.setConvertedDate(i.getConvertedDate());
         res.setCustomer(i.getCustomer());
         res.setMobile(i.getMobile());
         res.setEmail(i.getEmail());
@@ -249,8 +249,10 @@ public class CustomerInquiryService {
                 else if (fType.contains("email")) type = "email";
                 
                 String text = f.getSummary() != null ? f.getSummary() : "Follow-up logged";
-                if (text.toLowerCase().contains("status updated")) type = "status";
-                else if (text.toLowerCase().contains("reassigned")) type = "status"; // Treat reassign as status/system event
+                String lowerText = text.toLowerCase();
+                if (lowerText.contains("status updated")) type = "status";
+                else if (lowerText.contains("reassigned")) type = "status"; // Treat reassign as status/system event
+                else if (lowerText.contains("quotation") || lowerText.contains("converted")) type = "status";
                 
                 String user = f.getCreatedBy() != null ? f.getCreatedBy() : (i.getAssignedTo() != null ? i.getAssignedTo() : "System");
                 
@@ -285,28 +287,53 @@ public class CustomerInquiryService {
                 }).collect(Collectors.toList()));
 
         res.setItems(
-                i.getItems().stream().map(item -> {
-                    InquiryItemResponse ir = new InquiryItemResponse();
-                    ir.setId(item.getId());
-                    ir.setProductId(item.getProduct().getId());
-                    ir.setProductName(item.getProduct().getName());
-                    ir.setQuantity(item.getQuantity());
-                    ir.setPrice(item.getPrice());
-                    
-                    BigDecimal stock = stockRepo.getTotalAvailableStock(item.getProduct().getId());
-                    double stockVal = stock != null ? stock.doubleValue() : 0;
-                    
-                    if (stockVal <= 0) ir.setStockStatus("out-stock");
-                    else if (stockVal < 10) ir.setStockStatus("low-stock");
-                    else ir.setStockStatus("in-stock");
-
-                    pricingRepo.findByProductId(item.getProduct().getId())
-                        .ifPresent(p -> ir.setStandardPrice(p.getRetailPrice() != null ? p.getRetailPrice().doubleValue() : 0.0));
-
-                    return ir;
-                }).collect(Collectors.toList()));
+                i.getItems().stream().map(this::mapItemToResponse).collect(Collectors.toList()));
 
         return res;
+    }
+
+    private InquiryItemResponse mapItemToResponse(InquiryItem item) {
+        InquiryItemResponse ir = new InquiryItemResponse();
+        Product product = item.getProduct();
+        Long productId = product.getId();
+
+        ir.setId(item.getId());
+        ir.setProductId(productId);
+        ir.setProductCode(product.getCode());
+        ir.setItemCode(product.getCode());
+        ir.setProductName(product.getName());
+        ir.setQuantity(item.getQuantity());
+        ir.setPrice(item.getPrice());
+
+        barcodeRepo.findByProductId(productId).stream()
+                .map(ProductBarcode::getBarcode)
+                .filter(barcode -> barcode != null && !barcode.isBlank())
+                .findFirst()
+                .ifPresent(ir::setBarcode);
+
+        List<ProductMedia> media = mediaRepo.findByProductId(productId);
+        String primaryImage = media.stream()
+                .filter(ProductMedia::isPrimary)
+                .map(ProductMedia::getImageUrl)
+                .findFirst()
+                .orElseGet(() -> media.stream()
+                        .map(ProductMedia::getImageUrl)
+                        .findFirst()
+                        .orElse(null));
+        ir.setPrimaryImage(primaryImage);
+        ir.setImage(primaryImage);
+
+        BigDecimal stock = stockRepo.getTotalAvailableStock(productId);
+        double stockVal = stock != null ? stock.doubleValue() : 0;
+
+        if (stockVal <= 0) ir.setStockStatus("out-stock");
+        else if (stockVal < 10) ir.setStockStatus("low-stock");
+        else ir.setStockStatus("in-stock");
+
+        pricingRepo.findByProductId(productId)
+                .ifPresent(p -> ir.setStandardPrice(p.getRetailPrice() != null ? p.getRetailPrice().doubleValue() : 0.0));
+
+        return ir;
     }
 
     @Transactional(readOnly = true)

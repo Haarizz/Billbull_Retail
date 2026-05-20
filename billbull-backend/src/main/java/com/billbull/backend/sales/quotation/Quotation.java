@@ -27,6 +27,12 @@ public class Quotation {
     private String branchCode;
     private String branchLocation;
 
+    @Column(name = "source_inquiry_id")
+    private Long sourceInquiryId;
+
+    @Column(name = "source_inquiry_number")
+    private String sourceInquiryNumber;
+
     private String paymentTerms;
     private String deliveryType;
     private LocalDate expectedDispatch;
@@ -59,7 +65,7 @@ public class Quotation {
     private List<QuotationAttachment> attachments = new ArrayList<>();
 
     @JsonManagedReference
-    @OneToMany(mappedBy = "quotation", cascade = CascadeType.ALL, orphanRemoval = true)
+    @OneToMany(mappedBy = "quotation", cascade = CascadeType.ALL)
     private List<QuotationRevision> revisions = new ArrayList<>();
 
     public Quotation() {}
@@ -95,6 +101,12 @@ public class Quotation {
 
     public String getBranchLocation() { return branchLocation; }
     public void setBranchLocation(String branchLocation) { this.branchLocation = branchLocation; }
+
+    public Long getSourceInquiryId() { return sourceInquiryId; }
+    public void setSourceInquiryId(Long sourceInquiryId) { this.sourceInquiryId = sourceInquiryId; }
+
+    public String getSourceInquiryNumber() { return sourceInquiryNumber; }
+    public void setSourceInquiryNumber(String sourceInquiryNumber) { this.sourceInquiryNumber = sourceInquiryNumber; }
 
     public String getPaymentTerms() { return paymentTerms; }
     public void setPaymentTerms(String paymentTerms) { this.paymentTerms = paymentTerms; }

@@ -2,7 +2,9 @@ package com.billbull.backend.sales.quotation;
 
 import java.io.IOException;
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.time.LocalDate;
+import java.time.LocalTime;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -10,13 +12,19 @@ import java.util.Map;
 import java.util.stream.Collectors;
 
 import org.springframework.data.domain.PageRequest;
+import org.springframework.http.HttpStatus;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
+import org.springframework.web.server.ResponseStatusException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import com.billbull.backend.customer.inquiries.CustomerInquiry;
+import com.billbull.backend.customer.inquiries.CustomerInquiryRepository;
+import com.billbull.backend.customer.inquiries.InquiryFollowUp;
+import com.billbull.backend.customer.inquiries.InquiryFollowUpRepository;
 import com.billbull.backend.inventory.product.Product;
 import com.billbull.backend.inventory.product.ProductInventoryPolicyRepository;
 import com.billbull.backend.inventory.product.ProductMedia;
@@ -52,6 +60,8 @@ public class QuotationService {
     private final ProductPackingRepository packingRepo;
     private final ProductMediaRepository mediaRepo;
     private final ProductBarcodeRepository barcodeRepo;
+    private final CustomerInquiryRepository customerInquiryRepo;
+    private final InquiryFollowUpRepository inquiryFollowUpRepo;
 
     public QuotationService(
             QuotationRepository quotationRepo,
@@ -65,7 +75,9 @@ public class QuotationService {
             com.billbull.backend.sales.invoice.SalesInvoiceRepository salesInvoiceRepo,
             ProductPackingRepository packingRepo,
             ProductMediaRepository mediaRepo,
-            ProductBarcodeRepository barcodeRepo) {
+            ProductBarcodeRepository barcodeRepo,
+            CustomerInquiryRepository customerInquiryRepo,
+            InquiryFollowUpRepository inquiryFollowUpRepo) {
         this.quotationRepo = quotationRepo;
         this.objectMapper = objectMapper;
         this.productRepo = productRepo;
@@ -78,6 +90,8 @@ public class QuotationService {
         this.packingRepo = packingRepo;
         this.mediaRepo = mediaRepo;
         this.barcodeRepo = barcodeRepo;
+        this.customerInquiryRepo = customerInquiryRepo;
+        this.inquiryFollowUpRepo = inquiryFollowUpRepo;
     }
 
     // -------------------------------------------------
@@ -137,11 +151,19 @@ public class QuotationService {
     // CREATE / UPDATE
     // -------------------------------------------------
     public Quotation createOrUpdateQuotation(Quotation quotation) {
+        enrichQuotationItemsFromProducts(quotation);
+        validateAndCleanQuotationItems(quotation);
 
         if (quotation.getId() != null) {
             quotationRepo.findById(quotation.getId()).ifPresent(existing -> {
                 if (existing.getStatus() == QuotationStatus.CONVERTED) {
                     quotation.setStatus(QuotationStatus.CONVERTED);
+                }
+                if (quotation.getSourceInquiryId() == null) {
+                    quotation.setSourceInquiryId(existing.getSourceInquiryId());
+                }
+                if (!hasText(quotation.getSourceInquiryNumber())) {
+                    quotation.setSourceInquiryNumber(existing.getSourceInquiryNumber());
                 }
             });
         }
@@ -167,9 +189,98 @@ public class QuotationService {
             quotation.getRevisions().forEach(rev -> rev.setQuotation(quotation));
         }
 
+        // Recalculate header totals from item-level values so the DB is always
+        // consistent regardless of what the frontend sends.
+        recalculateTotals(quotation);
+
         Quotation saved = quotationRepo.save(quotation);
         initialize(saved);
+        if (shouldConvertSourceInquiry(saved)) {
+            markSourceInquiryConverted(saved);
+        }
         return saved;
+    }
+
+    private void enrichQuotationItemsFromProducts(Quotation quotation) {
+        if (quotation == null || quotation.getItems() == null) {
+            return;
+        }
+
+        for (QuotationItem item : quotation.getItems()) {
+            if (item == null || !hasText(item.getItemCode())) {
+                continue;
+            }
+
+            productRepo.findByCodeAndIsActiveTrue(item.getItemCode()).ifPresent(product -> {
+                Long productId = product.getId();
+
+                if (!hasText(item.getDescription())) {
+                    item.setDescription(product.getName());
+                }
+
+                if (!hasText(item.getBarcode())) {
+                    barcodeRepo.findByProductId(productId).stream()
+                            .map(ProductBarcode::getBarcode)
+                            .filter(this::hasText)
+                            .findFirst()
+                            .ifPresent(item::setBarcode);
+                }
+
+                if (!hasText(item.getImage())) {
+                    mediaRepo.findByProductId(productId).stream()
+                            .filter(ProductMedia::isPrimary)
+                            .map(ProductMedia::getImageUrl)
+                            .findFirst()
+                            .or(() -> mediaRepo.findByProductId(productId).stream()
+                                    .map(ProductMedia::getImageUrl)
+                                    .findFirst())
+                            .ifPresent(item::setImage);
+                }
+
+                if (!isPositive(item.getPrice())) {
+                    pricingRepo.findByProductId(productId)
+                            .map(p -> p.getRetailPrice())
+                            .filter(this::isPositive)
+                            .ifPresent(item::setPrice);
+                }
+
+                if (!hasText(item.getUnit())) {
+                    inventoryRepo.findByProductId(productId)
+                            .filter(inv -> inv.getDefaultUnit() != null)
+                            .map(inv -> inv.getDefaultUnit().getName())
+                            .filter(this::hasText)
+                            .ifPresent(item::setUnit);
+                }
+
+                completeMissingLineAmounts(item);
+            });
+        }
+    }
+
+    private void completeMissingLineAmounts(QuotationItem item) {
+        if (!isPositive(item.getQuantity()) || !isPositive(item.getPrice())) {
+            return;
+        }
+
+        if (isPositive(item.getLineTotal()) && item.getTaxAmount() != null) {
+            return;
+        }
+
+        BigDecimal quantity = item.getQuantity();
+        BigDecimal price = item.getPrice();
+        BigDecimal discount = item.getDiscount() != null ? item.getDiscount() : BigDecimal.ZERO;
+        BigDecimal taxRate = item.getTaxRate() != null ? item.getTaxRate() : BigDecimal.ZERO;
+
+        BigDecimal gross = quantity.multiply(price);
+        BigDecimal discountAmount = gross.multiply(discount)
+                .divide(BigDecimal.valueOf(100), 2, RoundingMode.HALF_UP);
+        BigDecimal taxable = gross.subtract(discountAmount);
+        BigDecimal taxAmount = taxable.multiply(taxRate)
+                .divide(BigDecimal.valueOf(100), 2, RoundingMode.HALF_UP);
+        BigDecimal lineTotal = taxable.add(taxAmount).setScale(2, RoundingMode.HALF_UP);
+
+        item.setTaxAmount(taxAmount);
+        item.setLineTotal(lineTotal);
     }
 
     // -------------------------------------------------
@@ -187,6 +298,12 @@ public class QuotationService {
         Quotation quotation = quotationRepo.findById(id)
                 .orElseThrow(() -> new RuntimeException("Quotation not found"));
 
+        if (status == QuotationStatus.PENDING_APPROVAL
+                || status == QuotationStatus.APPROVED
+                || status == QuotationStatus.CONVERTED) {
+            validateAndCleanQuotationItems(quotation);
+        }
+
         if (status == QuotationStatus.APPROVED) {
             validateStockBeforeApproval(quotation);
             if (quotation.getValidTill() == null) {
@@ -197,12 +314,126 @@ public class QuotationService {
         quotation.setStatus(status);
         Quotation saved = quotationRepo.save(quotation);
         initialize(saved);
+        if (shouldConvertSourceInquiry(saved)) {
+            markSourceInquiryConverted(saved);
+        }
         return saved;
+    }
+
+    private boolean shouldConvertSourceInquiry(Quotation quotation) {
+        return quotation != null
+                && quotation.getSourceInquiryId() != null
+                && (quotation.getStatus() == QuotationStatus.APPROVED
+                        || quotation.getStatus() == QuotationStatus.CONVERTED);
+    }
+
+    private void markSourceInquiryConverted(Quotation quotation) {
+        customerInquiryRepo.findByIdWithFollowUps(quotation.getSourceInquiryId())
+                .ifPresentOrElse(inquiry -> {
+                    String quoteNo = hasText(quotation.getQtnNo())
+                            ? quotation.getQtnNo().trim()
+                            : "quotation #" + quotation.getId();
+
+                    inquiry.setStatus("Converted");
+                    inquiry.setConvertedQuotationId(quotation.getId());
+                    inquiry.setConvertedQuotationNo(quoteNo);
+                    inquiry.setConvertedDate(LocalDate.now());
+
+                    if (hasText(quotation.getSourceInquiryNumber()) && !hasText(inquiry.getInquiryNumber())) {
+                        inquiry.setInquiryNumber(quotation.getSourceInquiryNumber());
+                    }
+
+                    if (!hasConversionActivity(inquiry, quoteNo)) {
+                        InquiryFollowUp activity = new InquiryFollowUp();
+                        activity.setType("Quotation");
+                        activity.setSummary("Inquiry converted to approved quotation " + quoteNo + ".");
+                        activity.setStatus("Converted");
+                        activity.setNextFollowUpDate(LocalDate.now());
+                        activity.setNextFollowUpTime(LocalTime.now().withNano(0));
+                        activity.setCreatedBy("System");
+                        activity.setInquiry(inquiry);
+                        inquiryFollowUpRepo.save(activity);
+                    }
+
+                    customerInquiryRepo.save(inquiry);
+                }, () -> log.warn("Source inquiry {} was not found for quotation {}",
+                        quotation.getSourceInquiryId(), quotation.getQtnNo()));
+    }
+
+    private boolean hasConversionActivity(CustomerInquiry inquiry, String quoteNo) {
+        if (inquiry.getFollowUps() == null || !hasText(quoteNo)) {
+            return false;
+        }
+
+        String quoteNoLower = quoteNo.toLowerCase();
+        return inquiry.getFollowUps().stream()
+                .map(InquiryFollowUp::getSummary)
+                .filter(this::hasText)
+                .map(String::toLowerCase)
+                .anyMatch(summary -> summary.contains("quotation") && summary.contains(quoteNoLower));
     }
 
     // -------------------------------------------------
     // 🔒 STOCK VALIDATION (USED BY APPROVAL)
     // -------------------------------------------------
+    private void validateAndCleanQuotationItems(Quotation quotation) {
+        if (quotation == null) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Quotation payload is missing.");
+        }
+
+        if (quotation.getItems() == null) {
+            quotation.setItems(new ArrayList<>());
+        }
+
+        quotation.getItems().removeIf(this::isBlankQuotationItem);
+
+        if (quotation.getItems().isEmpty()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "Add at least one item before saving or approving the quotation.");
+        }
+
+        List<String> issues = new ArrayList<>();
+        for (int i = 0; i < quotation.getItems().size(); i++) {
+            QuotationItem item = quotation.getItems().get(i);
+            int lineNo = i + 1;
+
+            if (!hasText(item.getItemCode()) && !hasText(item.getDescription())) {
+                issues.add("Line " + lineNo + ": select an item or enter a description.");
+            }
+            if (!isPositive(item.getQuantity())) {
+                issues.add("Line " + lineNo + ": quantity must be greater than 0.00.");
+            }
+            if (!isPositive(item.getPrice())) {
+                issues.add("Line " + lineNo + ": price must be greater than 0.00.");
+            }
+        }
+
+        if (!issues.isEmpty()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, String.join(" ", issues));
+        }
+    }
+
+    private boolean isBlankQuotationItem(QuotationItem item) {
+        if (item == null) {
+            return true;
+        }
+
+        return !hasText(item.getItemCode())
+                && !hasText(item.getDescription())
+                && !isPositive(item.getQuantity())
+                && !isPositive(item.getPrice())
+                && !isPositive(item.getLineTotal())
+                && !isPositive(item.getFoc());
+    }
+
+    private boolean isPositive(BigDecimal value) {
+        return value != null && value.compareTo(BigDecimal.ZERO) > 0;
+    }
+
+    private boolean hasText(String value) {
+        return value != null && !value.trim().isEmpty();
+    }
+
     private void validateStockBeforeApproval(Quotation quotation) {
 
         for (QuotationItem item : quotation.getItems()) {
@@ -312,6 +543,38 @@ public class QuotationService {
     // -------------------------------------------------
     // HELPERS
     // -------------------------------------------------
+
+    /**
+     * Recomputes subTotal, taxAmount, and totalAmount on the Quotation header from
+     * the item-level lineTotal / taxAmount values.  Mirrors the approach in
+     * SalesOrderService so the stored header totals are always authoritative.
+     */
+    private void recalculateTotals(Quotation quotation) {
+        double subTotal = 0;
+        double taxTotal = 0;
+
+        if (quotation.getItems() != null) {
+            for (QuotationItem item : quotation.getItems()) {
+                double lineTotal = item.getLineTotal() != null ? item.getLineTotal().doubleValue() : 0;
+                double taxAmt    = item.getTaxAmount() != null ? item.getTaxAmount().doubleValue() : 0;
+                subTotal += (lineTotal - taxAmt);
+                taxTotal += taxAmt;
+            }
+        }
+
+        double billDiscPct = quotation.getBillDiscount() != null ? quotation.getBillDiscount().doubleValue() : 0;
+        double billDiscAmt = BigDecimal.valueOf(subTotal * (billDiscPct / 100))
+                .setScale(2, RoundingMode.HALF_UP).doubleValue();
+        subTotal = BigDecimal.valueOf(subTotal).setScale(2, RoundingMode.HALF_UP).doubleValue();
+        taxTotal = BigDecimal.valueOf(taxTotal).setScale(2, RoundingMode.HALF_UP).doubleValue();
+        double total = BigDecimal.valueOf(subTotal - billDiscAmt + taxTotal)
+                .setScale(2, RoundingMode.HALF_UP).doubleValue();
+
+        quotation.setSubTotal(BigDecimal.valueOf(subTotal));
+        quotation.setTaxAmount(BigDecimal.valueOf(taxTotal));
+        quotation.setTotalAmount(BigDecimal.valueOf(total));
+    }
+
     private Long resolveProductId(QuotationItem item) {
 
         return productRepo.findByCodeAndIsActiveTrue(item.getItemCode())

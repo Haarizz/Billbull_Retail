@@ -31,6 +31,7 @@ import ExportDropdown from '../../components/common/ExportDropdown';
 import { exportToExcel, exportToPDF } from '../../utils/exportUtils';
 import { generateSOAFilename } from '../../utils/filenameUtils';
 import { usePrintDocument } from '../../hooks/usePrintDocument';
+import { STATEMENT_EXPORT_COLUMNS, formatStatementEntryType, mapStatementEntriesForExport } from '../../utils/statementUtils';
 
 // ==========================================
 // 1. CONFIGURATION
@@ -45,6 +46,22 @@ const CUSTOMER_COLUMNS = [
     { header: 'Balance', key: 'balance', width: 15 },
     { header: 'Status', key: 'status', width: 12 }
 ];
+
+const getOpeningInvoiceOutstanding = (invoice = {}) => {
+    const source = invoice.outstanding !== undefined && invoice.outstanding !== null && invoice.outstanding !== ''
+        ? invoice.outstanding
+        : invoice.amount;
+    const value = Number(source || 0);
+    return Number.isFinite(value) && value > 0 ? value : 0;
+};
+
+const getOpeningInvoiceOriginalAmount = (invoice = {}) => {
+    const source = invoice.openingBalanceAmount !== undefined && invoice.openingBalanceAmount !== null && invoice.openingBalanceAmount !== ''
+        ? invoice.openingBalanceAmount
+        : invoice.amount;
+    const value = Number(source || 0);
+    return Number.isFinite(value) && value > 0 ? value : 0;
+};
 
 // ==========================================
 // 1. ADD ADDRESS MODAL (Nested)
@@ -468,8 +485,10 @@ const AddCustomerModal = ({ isOpen, onClose, customerToEdit, onSaveCustomer }) =
 
     const handleMainSave = () => {
         if (!isFormValid) return;
+        const normalized = normalizeCustomerFormData(formData);
         onSaveCustomer({
-            ...normalizeCustomerFormData(formData),
+            ...normalized,
+            balance: normalized.openingInvoices.reduce((sum, invoice) => sum + getOpeningInvoiceOutstanding(invoice), 0),
             avatar: avatarPreview
         });
     };
@@ -518,15 +537,23 @@ const AddCustomerModal = ({ isOpen, onClose, customerToEdit, onSaveCustomer }) =
     };
 
     const handleSaveInvoice = (data) => {
+        const normalizedInvoice = {
+            ...data,
+            outstanding: data.outstanding !== undefined && data.outstanding !== null && data.outstanding !== ''
+                ? data.outstanding
+                : data.amount,
+            openingBalanceAmount: data.openingBalanceAmount || data.amount
+        };
+
         if (editingInvoiceIdx !== null) {
             setFormData(prev => {
                 const updated = [...prev.openingInvoices];
-                updated[editingInvoiceIdx] = data;
+                updated[editingInvoiceIdx] = normalizedInvoice;
                 return { ...prev, openingInvoices: updated };
             });
             setEditingInvoiceIdx(null);
         } else {
-            setFormData(prev => ({ ...prev, openingInvoices: [...prev.openingInvoices, data] }));
+            setFormData(prev => ({ ...prev, openingInvoices: [...prev.openingInvoices, normalizedInvoice] }));
         }
     };
 
@@ -862,7 +889,7 @@ const AddCustomerModal = ({ isOpen, onClose, customerToEdit, onSaveCustomer }) =
                             <div className="bg-blue-50 border border-blue-100 rounded-lg p-4 flex justify-between items-center mb-8">
                                 <span className="text-sm font-medium text-blue-800">Total Opening Balance</span>
                                 <span className="text-xl font-bold text-blue-700">
-                                    <CurrencyAmount value={formData.openingInvoices.reduce((acc, curr) => acc + Number(curr.outstanding || curr.amount || 0), 0)} currency={currency} />
+                                    <CurrencyAmount value={formData.openingInvoices.reduce((acc, curr) => acc + getOpeningInvoiceOutstanding(curr), 0)} currency={currency} />
                                 </span>
                             </div>
 
@@ -875,7 +902,7 @@ const AddCustomerModal = ({ isOpen, onClose, customerToEdit, onSaveCustomer }) =
                                                 <div className="text-xs text-slate-400">{inv.date}</div>
                                             </div>
                                             <div className="flex items-center gap-2">
-                                                <CurrencyAmount value={inv.outstanding || inv.amount} currency={currency} className="font-mono text-slate-800" />
+                                                <CurrencyAmount value={getOpeningInvoiceOutstanding(inv)} currency={currency} className="font-mono text-slate-800" />
                                                 <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                                                     <button onClick={() => { setEditingInvoiceIdx(idx); setIsInvoiceModalOpen(true); }} className="p-1.5 text-slate-400 hover:text-blue-600 rounded hover:bg-blue-50"><Edit size={14} /></button>
                                                     <button onClick={() => handleDeleteInvoice(idx)} className="p-1.5 text-slate-400 hover:text-red-500 rounded hover:bg-red-50"><Trash2 size={14} /></button>
@@ -1366,12 +1393,12 @@ const ReceiveMoneyView = () => {
         // QA-002: opening invoices mapped to the same shape as sales invoices
         const openingInvs = openingInvoices
             .filter(oi => {
-                const outstanding = oi.outstanding != null ? Number(oi.outstanding) : Number(oi.amount || 0);
+                const outstanding = getOpeningInvoiceOutstanding(oi);
                 return outstanding > 0;
             })
             .map(oi => {
-                const amount = Number(oi.amount || 0);
-                const outstanding = oi.outstanding != null ? Number(oi.outstanding) : amount;
+                const amount = getOpeningInvoiceOriginalAmount(oi);
+                const outstanding = getOpeningInvoiceOutstanding(oi);
                 return {
                     id: `opening-${oi.id}`,
                     invoiceNumber: oi.number,
@@ -1557,7 +1584,11 @@ const ReceiveMoneyView = () => {
             alert("Payments recorded successfully!");
 
             // Reset
-            loadData();
+            await loadData();
+            if (selectedCustomer?.code) {
+                const refreshedOpeningInvoices = await getOpeningInvoicesByCustomerCode(selectedCustomer.code);
+                setOpeningInvoices(refreshedOpeningInvoices || []);
+            }
             setSelectedInvoices({});
             setSettleAmounts({});
             setReferenceNo('');
@@ -1915,16 +1946,7 @@ const CustomerSOAView = ({ customers = [] }) => {
             currency
         );
 
-        const columns = [
-            { header: 'Date', key: 'date', width: 12 },
-            { header: 'Reference', key: 'reference', width: 15 },
-            { header: 'Description', key: 'description', width: 25 },
-            { header: 'Debit', key: 'debit', width: 12 },
-            { header: 'Credit', key: 'credit', width: 12 },
-            { header: 'Balance', key: 'balance', width: 12 }
-        ];
-
-        exportToExcel(statementData.transactions || [], columns, filename);
+        exportToExcel(mapStatementEntriesForExport(statementData), STATEMENT_EXPORT_COLUMNS, filename);
     };
 
     const selectedCustomerDetails = useMemo(
@@ -2035,9 +2057,10 @@ const CustomerSOAView = ({ customers = [] }) => {
                                     <td className="px-6 py-3 text-slate-600">{entry.transactionDate}</td>
                                     <td className="px-6 py-3">
                                         <span className={`px-2 py-0.5 border rounded text-[10px] ${entry.type === 'INVOICE' ? 'text-blue-600 bg-blue-50 border-blue-100' :
-                                            entry.type.includes('PAYMENT') ? 'text-green-600 bg-green-50 border-green-100' :
+                                            (entry.type || '').includes('PAYMENT') ? 'text-green-600 bg-green-50 border-green-100' :
+                                                entry.type === 'OPENING_BALANCE' ? 'text-orange-700 bg-orange-50 border-orange-100' :
                                                 'text-slate-500 bg-slate-50'
-                                            }`}>{entry.type}</span>
+                                            }`}>{formatStatementEntryType(entry.type)}</span>
                                     </td>
                                     <td className="px-6 py-3 text-slate-600">{entry.documentNo || '-'}</td>
                                     <td className="px-6 py-3 text-right text-red-600">{entry.debit > 0 ? entry.debit.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '-'}</td>

@@ -37,6 +37,15 @@ public class CustomerInquiry extends BaseEntity {
     @Column(name = "inquiry_number")
     private String inquiryNumber;
 
+    @Column(name = "converted_quotation_id")
+    private Long convertedQuotationId;
+
+    @Column(name = "converted_quotation_no")
+    private String convertedQuotationNo;
+
+    @Column(name = "converted_date")
+    private LocalDate convertedDate;
+
     @Column(length = 1000)
     private String notes;
 
@@ -144,6 +153,30 @@ public class CustomerInquiry extends BaseEntity {
 
     public void setInquiryNumber(String inquiryNumber) {
         this.inquiryNumber = inquiryNumber;
+    }
+
+    public Long getConvertedQuotationId() {
+        return convertedQuotationId;
+    }
+
+    public void setConvertedQuotationId(Long convertedQuotationId) {
+        this.convertedQuotationId = convertedQuotationId;
+    }
+
+    public String getConvertedQuotationNo() {
+        return convertedQuotationNo;
+    }
+
+    public void setConvertedQuotationNo(String convertedQuotationNo) {
+        this.convertedQuotationNo = convertedQuotationNo;
+    }
+
+    public LocalDate getConvertedDate() {
+        return convertedDate;
+    }
+
+    public void setConvertedDate(LocalDate convertedDate) {
+        this.convertedDate = convertedDate;
     }
 
     public String getNotes() {

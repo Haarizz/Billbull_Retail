@@ -2015,12 +2015,14 @@ const SalesOrders = () => {
                   </button>
                 </>
               )}
-              <button
-                onClick={handleOpenPaymentModal}
-                className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-slate-300 text-slate-700 rounded text-xs font-bold hover:bg-slate-50 transition-colors shadow-sm"
-              >
-                <DollarSign size={14} /> Pay
-              </button>
+              {status !== 'INVOICED' && (
+                <button
+                  onClick={handleOpenPaymentModal}
+                  className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-slate-300 text-slate-700 rounded text-xs font-bold hover:bg-slate-50 transition-colors shadow-sm"
+                >
+                  <DollarSign size={14} /> Pay
+                </button>
+              )}
             </div>
           </div>
 

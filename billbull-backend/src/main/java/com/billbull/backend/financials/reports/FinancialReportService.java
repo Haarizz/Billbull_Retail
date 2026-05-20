@@ -17,6 +17,10 @@ import org.springframework.transaction.annotation.Transactional;
 import com.billbull.backend.financials.expense.ExpenseRepository;
 import com.billbull.backend.financials.generalledger.LedgerEntry;
 import com.billbull.backend.financials.generalledger.LedgerEntryRepository;
+import com.billbull.backend.sales.customerledger.Customer;
+import com.billbull.backend.sales.customerledger.CustomerRepository;
+import com.billbull.backend.sales.customerledger.OpeningInvoice;
+import com.billbull.backend.sales.customerledger.OpeningInvoiceRepository;
 import com.billbull.backend.financials.chartofaccounts.Account;
 import com.billbull.backend.financials.chartofaccounts.AccountRepository;
 import com.billbull.backend.purchase.invoice.PurchaseInvoice;
@@ -36,18 +40,24 @@ public class FinancialReportService {
     private final ExpenseRepository expenseRepository;
     private final SalesInvoiceRepository salesInvoiceRepository;
     private final PurchaseInvoiceRepository purchaseInvoiceRepository;
+    private final OpeningInvoiceRepository openingInvoiceRepository;
+    private final CustomerRepository customerRepository;
 
     public FinancialReportService(
             AccountRepository accountRepository,
             LedgerEntryRepository ledgerEntryRepository,
             ExpenseRepository expenseRepository,
             SalesInvoiceRepository salesInvoiceRepository,
-            PurchaseInvoiceRepository purchaseInvoiceRepository) {
+            PurchaseInvoiceRepository purchaseInvoiceRepository,
+            OpeningInvoiceRepository openingInvoiceRepository,
+            CustomerRepository customerRepository) {
         this.accountRepository = accountRepository;
         this.ledgerEntryRepository = ledgerEntryRepository;
         this.expenseRepository = expenseRepository;
         this.salesInvoiceRepository = salesInvoiceRepository;
         this.purchaseInvoiceRepository = purchaseInvoiceRepository;
+        this.openingInvoiceRepository = openingInvoiceRepository;
+        this.customerRepository = customerRepository;
     }
 
     // ==================== TRIAL BALANCE ====================
@@ -567,38 +577,93 @@ public class FinancialReportService {
             if (bal == null || bal <= 0)
                 continue;
 
-            LocalDate date = inv.getInvoiceDate() != null ? inv.getInvoiceDate() : asOfDate;
-            long daysOld = java.time.temporal.ChronoUnit.DAYS.between(date, asOfDate);
-            if (daysOld < 0)
-                daysOld = 0;
-
             String customer = inv.getCustomerName() != null ? inv.getCustomerName() : "Unknown Customer";
+            LocalDate date = inv.getInvoiceDate() != null ? inv.getInvoiceDate() : asOfDate;
+            addAgingAmount(agingByCustomer, customer, date, BigDecimal.valueOf(bal), asOfDate);
+        }
 
-            Map<String, Object> bucket = agingByCustomer.computeIfAbsent(customer, k -> {
-                Map<String, Object> map = new HashMap<>();
-                map.put("partnerName", k);
-                map.put("amount0to30", BigDecimal.ZERO);
-                map.put("amount31to60", BigDecimal.ZERO);
-                map.put("amount61to90", BigDecimal.ZERO);
-                map.put("amount90Plus", BigDecimal.ZERO);
-                map.put("total", BigDecimal.ZERO);
-                return map;
-            });
-
-            BigDecimal bdBal = BigDecimal.valueOf(bal);
-            bucket.put("total", ((BigDecimal) bucket.get("total")).add(bdBal));
-
-            if (daysOld <= 30) {
-                bucket.put("amount0to30", ((BigDecimal) bucket.get("amount0to30")).add(bdBal));
-            } else if (daysOld <= 60) {
-                bucket.put("amount31to60", ((BigDecimal) bucket.get("amount31to60")).add(bdBal));
-            } else if (daysOld <= 90) {
-                bucket.put("amount61to90", ((BigDecimal) bucket.get("amount61to90")).add(bdBal));
-            } else {
-                bucket.put("amount90Plus", ((BigDecimal) bucket.get("amount90Plus")).add(bdBal));
+        Set<String> customersWithOpeningInvoices = new LinkedHashSet<>();
+        for (OpeningInvoice openingInvoice : openingInvoiceRepository.findAll()) {
+            if (openingInvoice.getCustomer() != null && openingInvoice.getCustomer().getCode() != null) {
+                customersWithOpeningInvoices.add(openingInvoice.getCustomer().getCode());
             }
+
+            BigDecimal balance = resolveCurrentOpeningOutstanding(openingInvoice);
+            if (balance.compareTo(BigDecimal.ZERO) <= 0) {
+                continue;
+            }
+
+            String customer = "Unknown Customer";
+            if (openingInvoice.getCustomer() != null && openingInvoice.getCustomer().getName() != null) {
+                customer = openingInvoice.getCustomer().getName();
+            }
+
+            LocalDate date = openingInvoice.getDate() != null ? openingInvoice.getDate() : asOfDate;
+            addAgingAmount(agingByCustomer, customer, date, balance, asOfDate);
+        }
+
+        for (Customer customer : customerRepository.findAll()) {
+            if (customer.getCode() != null && customersWithOpeningInvoices.contains(customer.getCode())) {
+                continue;
+            }
+            BigDecimal balance = customer.getBalance() != null ? customer.getBalance() : BigDecimal.ZERO;
+            if (balance.compareTo(BigDecimal.ZERO) <= 0) {
+                continue;
+            }
+            String customerName = customer.getName() != null ? customer.getName() : "Unknown Customer";
+            addAgingAmount(agingByCustomer, customerName, asOfDate, balance, asOfDate);
         }
         return agingByCustomer.values();
+    }
+
+    private void addAgingAmount(
+            Map<String, Map<String, Object>> agingByPartner,
+            String partnerName,
+            LocalDate documentDate,
+            BigDecimal balance,
+            LocalDate asOfDate) {
+        long daysOld = java.time.temporal.ChronoUnit.DAYS.between(documentDate, asOfDate);
+        if (daysOld < 0) {
+            daysOld = 0;
+        }
+
+        Map<String, Object> bucket = agingByPartner.computeIfAbsent(partnerName, k -> {
+            Map<String, Object> map = new HashMap<>();
+            map.put("partnerName", k);
+            map.put("amount0to30", BigDecimal.ZERO);
+            map.put("amount31to60", BigDecimal.ZERO);
+            map.put("amount61to90", BigDecimal.ZERO);
+            map.put("amount90Plus", BigDecimal.ZERO);
+            map.put("total", BigDecimal.ZERO);
+            return map;
+        });
+
+        bucket.put("total", ((BigDecimal) bucket.get("total")).add(balance));
+
+        if (daysOld <= 30) {
+            bucket.put("amount0to30", ((BigDecimal) bucket.get("amount0to30")).add(balance));
+        } else if (daysOld <= 60) {
+            bucket.put("amount31to60", ((BigDecimal) bucket.get("amount31to60")).add(balance));
+        } else if (daysOld <= 90) {
+            bucket.put("amount61to90", ((BigDecimal) bucket.get("amount61to90")).add(balance));
+        } else {
+            bucket.put("amount90Plus", ((BigDecimal) bucket.get("amount90Plus")).add(balance));
+        }
+    }
+
+    private BigDecimal resolveCurrentOpeningOutstanding(OpeningInvoice openingInvoice) {
+        BigDecimal outstanding = openingInvoice.getOutstanding();
+        if (outstanding != null) {
+            return outstanding.compareTo(BigDecimal.ZERO) > 0 ? outstanding : BigDecimal.ZERO;
+        }
+
+        BigDecimal amount = openingInvoice.getOpeningBalanceAmount();
+        if (amount != null && amount.compareTo(BigDecimal.ZERO) > 0) {
+            return amount;
+        }
+
+        amount = openingInvoice.getAmount();
+        return amount != null ? amount : BigDecimal.ZERO;
     }
 
     @Transactional(readOnly = true)

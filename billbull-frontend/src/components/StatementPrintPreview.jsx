@@ -3,6 +3,7 @@ import { getCompanyProfile } from '../api/companyProfileApi';
 import { useCompany } from '../context/CompanyContext';
 import { normalizeDocumentCompanyProfile } from '../utils/documentTemplateRenderer';
 import { resolveCurrencyDisplayCode } from '../utils/countryCurrencyOptions';
+import { formatStatementEntryType } from '../utils/statementUtils';
 
 const asNumber = (value) => {
     const parsed = Number(value ?? 0);
@@ -376,7 +377,7 @@ const StatementPrintPreview = ({
                                     <tr key={`${entry.documentNo || entry.transactionDate || 'entry'}-${index}`}>
                                         <td style={{ ...styles.td, textAlign: 'left' }}>{entry.transactionDate || '-'}</td>
                                         <td style={{ ...styles.td, textAlign: 'left', textTransform: 'uppercase', fontSize: '11px', letterSpacing: '0.04em' }}>
-                                            {entry.type || '-'}
+                                            {formatStatementEntryType(entry.type)}
                                         </td>
                                         <td style={{ ...styles.td, textAlign: 'left' }}>{entry.documentNo || '-'}</td>
                                         <td style={{ ...styles.td, textAlign: 'right' }}>

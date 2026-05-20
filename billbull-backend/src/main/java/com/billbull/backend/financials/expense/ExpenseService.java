@@ -56,14 +56,10 @@ public class ExpenseService {
             Expense existingExpense = expenseOptional.get();
             String previousStatus = existingExpense.getStatus();
 
-            if ("Paid".equalsIgnoreCase(previousStatus) || "Posted".equalsIgnoreCase(previousStatus)) {
-                throw new org.springframework.web.server.ResponseStatusException(
-                        org.springframework.http.HttpStatus.BAD_REQUEST, "Paid or posted expenses cannot be modified.");
-            }
-
             existingExpense.setDate(expenseDetails.getDate());
             existingExpense.setVendor(expenseDetails.getVendor());
             existingExpense.setCategory(expenseDetails.getCategory());
+            existingExpense.setGlAccountId(expenseDetails.getGlAccountId());
             existingExpense.setCostCenter(expenseDetails.getCostCenter());
             existingExpense.setLocation(expenseDetails.getLocation());
             existingExpense.setAmount(expenseDetails.getAmount());

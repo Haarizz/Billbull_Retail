@@ -18,8 +18,14 @@ import org.springframework.util.StringUtils;
 import org.springframework.web.multipart.MultipartFile;
 import org.springframework.web.server.ResponseStatusException;
 
+import jakarta.annotation.PostConstruct;
+
 import com.billbull.backend.financials.audit.FinancialAuditService;
 import com.billbull.backend.financials.generalledger.postingengine.PostingEngineService;
+import com.billbull.backend.sales.customerledger.Customer;
+import com.billbull.backend.sales.customerledger.CustomerRepository;
+import com.billbull.backend.sales.customerledger.OpeningInvoice;
+import com.billbull.backend.sales.customerledger.OpeningInvoiceRepository;
 import com.billbull.backend.sales.invoice.DeliveryStatus;
 import com.billbull.backend.sales.invoice.SalesInvoice;
 import com.billbull.backend.sales.invoice.SalesInvoiceRepository;
@@ -33,17 +39,23 @@ public class ReceiptVoucherService {
     private final PostingEngineService postingEngineService;
     private final FinancialAuditService auditService;
     private final SalesInvoiceRepository salesInvoiceRepository;
+    private final OpeningInvoiceRepository openingInvoiceRepository;
+    private final CustomerRepository customerRepository;
 
     public ReceiptVoucherService(
             ReceiptVoucherRepository repository,
             PostingEngineService postingEngineService,
             FinancialAuditService auditService,
             SalesInvoiceRepository salesInvoiceRepository,
+            OpeningInvoiceRepository openingInvoiceRepository,
+            CustomerRepository customerRepository,
             @Value("${file.upload-dir:uploads/receipts}") String uploadDir) {
         this.repository = repository;
         this.postingEngineService = postingEngineService;
         this.auditService = auditService;
         this.salesInvoiceRepository = salesInvoiceRepository;
+        this.openingInvoiceRepository = openingInvoiceRepository;
+        this.customerRepository = customerRepository;
         this.fileStorageLocation = Paths.get(uploadDir).toAbsolutePath().normalize();
 
         try {
@@ -61,6 +73,26 @@ public class ReceiptVoucherService {
         return repository.findById(id).orElseThrow(() -> new RuntimeException("Receipt not found with id " + id));
     }
 
+    /**
+     * Backfill customer_code on existing ReceiptVoucher rows that pre-date the column.
+     * Runs once at startup; skips rows it cannot resolve without failing.
+     */
+    @PostConstruct
+    @Transactional
+    public void backfillCustomerCodes() {
+        List<ReceiptVoucher> missing = repository.findWithoutCustomerCode();
+        for (ReceiptVoucher rv : missing) {
+            try {
+                resolveAndSetCustomerCode(rv);
+                if (rv.getCustomerCode() != null) {
+                    repository.save(rv);
+                }
+            } catch (Exception ignored) {
+                // Skip unresolvable rows silently
+            }
+        }
+    }
+
     @Transactional
     public ReceiptVoucher createReceipt(ReceiptVoucher receipt, MultipartFile file) {
         long count = repository.count();
@@ -72,6 +104,7 @@ public class ReceiptVoucherService {
             receipt.setStatus("Completed");
         }
 
+        resolveAndSetCustomerCode(receipt);
         validateReceipt(receipt, null);
 
         if (file != null && !file.isEmpty()) {
@@ -88,6 +121,7 @@ public class ReceiptVoucherService {
         }
 
         syncLinkedInvoice(saved.getSalesInvoiceId());
+        syncOpeningInvoice(saved.getOpeningInvoiceId());
         return saved;
     }
 
@@ -96,6 +130,7 @@ public class ReceiptVoucherService {
         ReceiptVoucher receipt = getReceiptById(id);
         String previousStatus = receipt.getStatus();
         Long previousInvoiceId = receipt.getSalesInvoiceId();
+        Long previousOpeningInvoiceId = receipt.getOpeningInvoiceId();
 
         receipt.setDate(receiptDetails.getDate());
         receipt.setBranch(receiptDetails.getBranch());
@@ -106,7 +141,19 @@ public class ReceiptVoucherService {
         receipt.setReference(receiptDetails.getReference());
         receipt.setNotes(receiptDetails.getNotes());
         receipt.setPurpose(receiptDetails.getPurpose());
-        receipt.setSalesInvoiceId(receiptDetails.getSalesInvoiceId());
+        if (receiptDetails.getSalesInvoiceId() != null) {
+            receipt.setSalesInvoiceId(receiptDetails.getSalesInvoiceId());
+        }
+        if (receiptDetails.getOpeningInvoiceId() != null) {
+            receipt.setOpeningInvoiceId(receiptDetails.getOpeningInvoiceId());
+        }
+        // Inherit explicit customerCode if provided, then re-resolve from linked doc
+        if (receiptDetails.getCustomerCode() != null && !receiptDetails.getCustomerCode().isBlank()) {
+            receipt.setCustomerCode(receiptDetails.getCustomerCode());
+        } else {
+            receipt.setCustomerCode(null); // clear so resolveAndSetCustomerCode re-derives it
+            resolveAndSetCustomerCode(receipt);
+        }
 
         if (receiptDetails.getStatus() != null) {
             receipt.setStatus(receiptDetails.getStatus());
@@ -130,6 +177,10 @@ public class ReceiptVoucherService {
         if (!Objects.equals(previousInvoiceId, saved.getSalesInvoiceId())) {
             syncLinkedInvoice(saved.getSalesInvoiceId());
         }
+        syncOpeningInvoice(previousOpeningInvoiceId);
+        if (!Objects.equals(previousOpeningInvoiceId, saved.getOpeningInvoiceId())) {
+            syncOpeningInvoice(saved.getOpeningInvoiceId());
+        }
 
         auditService.logEvent("RECEIPT_VOUCHER", saved.getVoucherId(), "UPDATED",
                 "System", "Status: " + previousStatus + " -> " + saved.getStatus());
@@ -141,10 +192,12 @@ public class ReceiptVoucherService {
     public void deleteReceipt(Long id) {
         ReceiptVoucher receipt = getReceiptById(id);
         Long linkedInvoiceId = receipt.getSalesInvoiceId();
+        Long linkedOpeningInvoiceId = receipt.getOpeningInvoiceId();
         auditService.logEvent("RECEIPT_VOUCHER", receipt.getVoucherId(), "DELETED",
                 "System", "Receipt voucher deleted.");
         repository.delete(receipt);
         syncLinkedInvoice(linkedInvoiceId);
+        syncOpeningInvoice(linkedOpeningInvoiceId);
     }
 
     private void storeFile(MultipartFile file, ReceiptVoucher receipt) {
@@ -175,9 +228,21 @@ public class ReceiptVoucherService {
             return;
         }
 
-        if (receipt.getSalesInvoiceId() == null) {
+        boolean hasSalesInvoice = receipt.getSalesInvoiceId() != null;
+        boolean hasOpeningInvoice = receipt.getOpeningInvoiceId() != null;
+        if (hasSalesInvoice && hasOpeningInvoice) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
-                    "Sales invoice is required for receipts against invoice.");
+                    "Receipt can be linked to either a sales invoice or an opening balance bill, not both.");
+        }
+
+        if (!hasSalesInvoice && !hasOpeningInvoice) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "Sales invoice or opening balance bill is required for receipts against invoice.");
+        }
+
+        if (hasOpeningInvoice) {
+            validateOpeningInvoiceReceipt(receipt, currentReceiptId);
+            return;
         }
 
         SalesInvoice invoice = salesInvoiceRepository.findById(receipt.getSalesInvoiceId())
@@ -214,6 +279,35 @@ public class ReceiptVoucherService {
         }
     }
 
+    private void validateOpeningInvoiceReceipt(ReceiptVoucher receipt, Long currentReceiptId) {
+        OpeningInvoice openingInvoice = openingInvoiceRepository.findById(receipt.getOpeningInvoiceId())
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                        "Linked opening balance bill was not found."));
+
+        if (!isCompletedStatus(receipt.getStatus())) {
+            return;
+        }
+
+        BigDecimal otherCompletedReceipts = repository.findByOpeningInvoiceId(openingInvoice.getId()).stream()
+                .filter(existing -> !Objects.equals(existing.getId(), currentReceiptId))
+                .filter(existing -> isCompletedStatus(existing.getStatus()))
+                .map(ReceiptVoucher::getAmount)
+                .filter(Objects::nonNull)
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+
+        BigDecimal openingBalance = resolveOpeningBalanceAmount(openingInvoice);
+        BigDecimal remainingBalance = openingBalance.subtract(otherCompletedReceipts);
+        if (remainingBalance.compareTo(BigDecimal.ZERO) <= 0) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "This opening balance bill is already fully settled.");
+        }
+
+        if (receipt.getAmount().compareTo(remainingBalance.add(new BigDecimal("0.0001"))) > 0) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "Receipt amount exceeds the opening balance bill balance.");
+        }
+    }
+
     private void syncLinkedInvoice(Long salesInvoiceId) {
         if (salesInvoiceId == null) {
             return;
@@ -240,6 +334,72 @@ public class ReceiptVoucherService {
 
             salesInvoiceRepository.save(invoice);
         });
+    }
+
+    private void syncOpeningInvoice(Long openingInvoiceId) {
+        if (openingInvoiceId == null) {
+            return;
+        }
+
+        openingInvoiceRepository.findById(openingInvoiceId).ifPresent(openingInvoice -> {
+            BigDecimal openingBalance = resolveOpeningBalanceAmount(openingInvoice);
+            if (openingInvoice.getOpeningBalanceAmount() == null
+                    || openingInvoice.getOpeningBalanceAmount().compareTo(BigDecimal.ZERO) <= 0) {
+                openingInvoice.setOpeningBalanceAmount(openingBalance);
+            }
+
+            BigDecimal totalPaid = repository.findByOpeningInvoiceId(openingInvoiceId).stream()
+                    .filter(receipt -> isCompletedStatus(receipt.getStatus()))
+                    .map(ReceiptVoucher::getAmount)
+                    .filter(Objects::nonNull)
+                    .reduce(BigDecimal.ZERO, BigDecimal::add);
+
+            BigDecimal balance = openingBalance.subtract(totalPaid);
+            if (balance.compareTo(BigDecimal.ZERO) < 0) {
+                balance = BigDecimal.ZERO;
+            }
+
+            openingInvoice.setOutstanding(balance);
+            openingInvoiceRepository.save(openingInvoice);
+            syncCustomerOpeningBalance(openingInvoice);
+        });
+    }
+
+    private void syncCustomerOpeningBalance(OpeningInvoice openingInvoice) {
+        Customer customer = openingInvoice.getCustomer();
+        if (customer == null || customer.getCode() == null || customer.getCode().isBlank()) {
+            return;
+        }
+
+        BigDecimal openingBalance = openingInvoiceRepository.findByCustomer_Code(customer.getCode()).stream()
+                .map(this::resolveCurrentOutstanding)
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+
+        customer.setBalance(openingBalance);
+        customerRepository.save(customer);
+    }
+
+    private BigDecimal resolveOpeningBalanceAmount(OpeningInvoice openingInvoice) {
+        if (openingInvoice.getOpeningBalanceAmount() != null
+                && openingInvoice.getOpeningBalanceAmount().compareTo(BigDecimal.ZERO) > 0) {
+            return openingInvoice.getOpeningBalanceAmount();
+        }
+
+        BigDecimal outstanding = openingInvoice.getOutstanding();
+        if (outstanding != null && outstanding.compareTo(BigDecimal.ZERO) > 0) {
+            return outstanding;
+        }
+
+        BigDecimal amount = openingInvoice.getAmount();
+        return amount != null ? amount : BigDecimal.ZERO;
+    }
+
+    private BigDecimal resolveCurrentOutstanding(OpeningInvoice openingInvoice) {
+        BigDecimal outstanding = openingInvoice.getOutstanding();
+        if (outstanding != null && outstanding.compareTo(BigDecimal.ZERO) > 0) {
+            return outstanding;
+        }
+        return BigDecimal.ZERO;
     }
 
     private boolean isEffectivelyDelivered(SalesInvoice invoice) {
@@ -276,5 +436,26 @@ public class ReceiptVoucherService {
 
     private boolean isCompletedStatus(String status) {
         return status != null && "Completed".equalsIgnoreCase(status.trim());
+    }
+
+    /**
+     * Resolves the customer code from the linked sales invoice or opening invoice
+     * and stores it on the receipt. Safe to call when the code is already set
+     * (it will not overwrite a non-blank value).
+     */
+    private void resolveAndSetCustomerCode(ReceiptVoucher receipt) {
+        if (receipt.getCustomerCode() != null && !receipt.getCustomerCode().isBlank()) {
+            return;
+        }
+        if (receipt.getSalesInvoiceId() != null) {
+            salesInvoiceRepository.findById(receipt.getSalesInvoiceId())
+                    .ifPresent(inv -> receipt.setCustomerCode(inv.getCustomerCode()));
+        } else if (receipt.getOpeningInvoiceId() != null) {
+            openingInvoiceRepository.findById(receipt.getOpeningInvoiceId()).ifPresent(oi -> {
+                if (oi.getCustomer() != null) {
+                    receipt.setCustomerCode(oi.getCustomer().getCode());
+                }
+            });
+        }
     }
 }

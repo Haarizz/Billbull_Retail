@@ -9,6 +9,8 @@ import org.springframework.transaction.annotation.Transactional;
 
 import lombok.extern.slf4j.Slf4j;
 
+import com.billbull.backend.financials.chartofaccounts.Account;
+import com.billbull.backend.financials.chartofaccounts.AccountRepository;
 import com.billbull.backend.financials.expense.Expense;
 import com.billbull.backend.financials.generalledger.JournalEntry;
 import com.billbull.backend.financials.generalledger.EntryType;
@@ -79,12 +81,15 @@ public class PostingEngineService {
 
         private final JournalEntryRepository journalEntryRepository;
         private final JournalEntryService    journalEntryService;
+        private final AccountRepository      accountRepository;
 
         public PostingEngineService(
                         JournalEntryRepository journalEntryRepository,
-                        JournalEntryService    journalEntryService) {
+                        JournalEntryService    journalEntryService,
+                        AccountRepository      accountRepository) {
                 this.journalEntryRepository = journalEntryRepository;
                 this.journalEntryService    = journalEntryService;
+                this.accountRepository      = accountRepository;
         }
 
         // =========================================================
@@ -468,9 +473,21 @@ public class PostingEngineService {
                 String ref = "EXP-" + expense.getId();
                 if (isDuplicate(ref)) return null;
 
+                // Resolve the selected GL account; fall back to the default expense account
+                String expenseAccountCode = ACC_EXPENSE_GENERAL;
+                String expenseAccountName = expense.getCategory();
+                if (expense.getGlAccountId() != null && !expense.getGlAccountId().isBlank()) {
+                        Account glAccount = accountRepository.findById(expense.getGlAccountId()).orElse(null);
+                        if (glAccount != null) {
+                                expenseAccountCode = glAccount.getCode();
+                                expenseAccountName = glAccount.getName();
+                        }
+                }
+
                 JournalEntry entry = createBaseEntry(expense.getDate(), ref,
                                 "Expense - " + expense.getCategory());
-                addLine(entry, expense.getCategory(), ACC_EXPENSE_GENERAL, expense.getNotes(),
+                addLine(entry, expenseAccountName, expenseAccountCode,
+                                expense.getNotes() != null ? expense.getNotes() : "",
                                 BigDecimal.valueOf(expense.getAmount()), BigDecimal.ZERO);
                 if (expense.getTaxAmount() > 0) {
                         addLine(entry, "VAT Input", ACC_VAT_INPUT, "VAT on expense",
