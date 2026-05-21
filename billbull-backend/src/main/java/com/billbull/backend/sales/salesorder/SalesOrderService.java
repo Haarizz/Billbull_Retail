@@ -43,6 +43,7 @@ public class SalesOrderService {
     private final StockMovementRepository stockMovementRepo;
     private final BinRepository binRepo;
     private final BatchSelectionService batchSelectionService;
+    private final com.billbull.backend.sales.settings.SalesSettingsService salesSettingsService;
     private final SalesDocumentNumberingService numberingService;
 
     public SalesOrderService(
@@ -57,6 +58,7 @@ public class SalesOrderService {
             StockMovementRepository stockMovementRepo,
             BinRepository binRepo,
             BatchSelectionService batchSelectionService,
+            com.billbull.backend.sales.settings.SalesSettingsService salesSettingsService,
             SalesDocumentNumberingService numberingService) {
         this.orderRepo = orderRepo;
         this.quotationRepo = quotationRepo;
@@ -69,7 +71,15 @@ public class SalesOrderService {
         this.stockMovementRepo = stockMovementRepo;
         this.binRepo = binRepo;
         this.batchSelectionService = batchSelectionService;
+        this.salesSettingsService = salesSettingsService;
         this.numberingService = numberingService;
+    }
+
+    private com.billbull.backend.sales.settings.SalesItemPricePolicy activePricePolicy() {
+        com.billbull.backend.sales.settings.SalesSettings settings = salesSettingsService.getSettings();
+        return settings != null && settings.getSalesItemPricePolicy() != null
+                ? settings.getSalesItemPricePolicy()
+                : com.billbull.backend.sales.settings.SalesItemPricePolicy.RETAIL;
     }
 
     @Transactional
@@ -482,13 +492,19 @@ public class SalesOrderService {
             item.setDetailedDesc(product.getDetailedDesc());
         }
 
-        // Hydrate price: packing-level price first, then product retail price
+        // Hydrate price: packing-level price first, then the product's master
+        // price selected by the configured Sales Item Price Policy
+        // (RETAIL / MAX_SALE / MIN_SALE) — see SalesSettings.
         if (item.getPrice() == null) {
             java.math.BigDecimal packingPrice = lookupPackingValue(product.getId(), item.getUnit(), true);
             if (packingPrice != null) {
                 item.setPrice(packingPrice.doubleValue());
-            } else if (product.getPricing() != null && product.getPricing().getRetailPrice() != null) {
-                item.setPrice(product.getPricing().getRetailPrice().doubleValue());
+            } else if (product.getPricing() != null) {
+                java.math.BigDecimal resolved = com.billbull.backend.sales.settings.SalesPriceResolver
+                        .resolve(product.getPricing(), activePricePolicy());
+                if (resolved != null) {
+                    item.setPrice(resolved.doubleValue());
+                }
             }
         }
 

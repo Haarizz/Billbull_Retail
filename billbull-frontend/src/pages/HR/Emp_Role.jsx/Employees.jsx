@@ -52,6 +52,7 @@ import { hasRole } from '../../../api/auth';
 import { usePermissions } from '../../../context/PermissionContext';
 import { useBranch } from '../../../context/BranchContext';
 import { getImageUrl } from '../../../utils/urlUtils';
+import { formatDisplayDate as formatDateForDisplay } from '../../../utils/dateUtils';
 
 // ==========================================
 // 0. CONSTANTS & UTILS
@@ -119,7 +120,7 @@ const formatDisplayDate = (value) => {
     return value;
   }
 
-  return date.toLocaleDateString();
+  return formatDateForDisplay(date);
 };
 
 const hasFilledValue = (value) => {

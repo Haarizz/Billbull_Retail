@@ -9,6 +9,7 @@ import { getInvoices } from '../../../api/purchaseInvoiceApi';
 import toast from 'react-hot-toast';
 import CurrencyAmount from '../../../components/CurrencyAmount';
 import { useCompany } from '../../../context/CompanyContext';
+import { formatDisplayDate } from '../../../utils/dateUtils';
 
 const PurchaseSummaryReport = () => {
     const { company } = useCompany();
@@ -307,7 +308,7 @@ const PurchaseSummaryReport = () => {
                                         ) : filtered.slice(0, 100).map((inv, i) => (
                                             <tr key={i} className="hover:bg-slate-50">
                                                 <td className="px-4 py-2.5 font-mono text-slate-700">{inv.invoiceNumber || inv.referenceNumber || `#${inv.id}`}</td>
-                                                <td className="px-4 py-2.5 text-slate-500">{inv.invoiceDate || inv.date || '-'}</td>
+                                                <td className="px-4 py-2.5 text-slate-500">{formatDisplayDate(inv.invoiceDate || inv.date)}</td>
                                                 <td className="px-4 py-2.5 text-slate-700 font-medium">{inv.vendorName || '-'}</td>
                                                 <td className="px-4 py-2.5">
                                                     <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${

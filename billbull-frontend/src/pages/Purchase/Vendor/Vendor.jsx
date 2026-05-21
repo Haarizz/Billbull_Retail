@@ -16,6 +16,7 @@ import { generateSOAFilename } from '../../../utils/filenameUtils';
 import { usePrintDocument } from '../../../hooks/usePrintDocument';
 import CurrencyAmount from '../../../components/CurrencyAmount';
 import { STATEMENT_EXPORT_COLUMNS, formatStatementEntryType, mapStatementEntriesForExport } from '../../../utils/statementUtils';
+import { formatDisplayDate } from '../../../utils/dateUtils';
 
 // ==========================================
 // 1. MOCK DATA & CONFIGURATION
@@ -548,11 +549,11 @@ const PayInvoices = ({ vendors, initialVendor }) => {
                               : `#${inv.invoiceNumber}`}
                           </td>
                           <td className="px-4 py-3 text-slate-500 text-xs">
-                            {inv.invoiceDate ? new Date(inv.invoiceDate).toLocaleDateString() : '-'}
+                            {formatDisplayDate(inv.invoiceDate)}
                           </td>
                           <td className="px-4 py-3 text-xs">
                             <span className={isOverdue ? "text-red-500 font-bold" : "text-slate-500"}>
-                              {inv.dueDate ? new Date(inv.dueDate).toLocaleDateString() : 'N/A'}
+                              {formatDisplayDate(inv.dueDate, 'N/A')}
                             </span>
                             {isOverdue && <span className="block text-[9px] text-red-400">Overdue</span>}
                           </td>
@@ -769,7 +770,7 @@ const PayInvoices = ({ vendors, initialVendor }) => {
                     </div>
                     <div className="flex justify-between items-center mt-1">
                       <p className="text-[10px] text-slate-500">{payment.voucherNumber || `PV-${payment.id}`} • {payment.paymentMode}</p>
-                      <p className="text-[10px] text-slate-400">{payment.paymentDate ? new Date(payment.paymentDate).toLocaleDateString() : ''}</p>
+                      <p className="text-[10px] text-slate-400">{formatDisplayDate(payment.paymentDate, '')}</p>
                     </div>
                   </div>
                 </div>
@@ -927,7 +928,7 @@ const VendorSoA = ({ vendors }) => {
               <p>Statement Period</p>
               <p className="font-semibold text-slate-800">{startDate} to {endDate}</p>
               <p className="mt-1">Generated On</p>
-              <p className="font-semibold text-slate-800">{new Date().toLocaleDateString()}</p>
+              <p className="font-semibold text-slate-800">{formatDisplayDate(new Date())}</p>
             </div>
           </div>
 
@@ -1349,7 +1350,7 @@ const CreateVendorWizard = ({ onBack, onSave, initialData }) => {
                     </div>
                     <div className="flex items-center gap-6">
                       <div className="text-right">
-                        {doc.date && <><p className="text-xs text-slate-500">Expiry</p><p className={`text-sm font-medium ${doc.status === 'Expiring Soon' ? 'text-orange-600' : 'text-slate-700'}`}>{doc.date}</p></>}
+                        {doc.date && <><p className="text-xs text-slate-500">Expiry</p><p className={`text-sm font-medium ${doc.status === 'Expiring Soon' ? 'text-orange-600' : 'text-slate-700'}`}>{formatDisplayDate(doc.date)}</p></>}
                       </div>
                       <span className={`px-2 py-1 rounded text-xs font-medium flex items-center gap-1 ${doc.status === 'Valid' ? 'bg-green-100 text-green-700' :
                         doc.status === 'Expiring Soon' ? 'bg-orange-100 text-orange-700' : 'bg-gray-100 text-gray-700'

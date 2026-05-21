@@ -10,6 +10,7 @@ import { fetchExpenses, createExpense, updateExpense, deleteExpense } from '../.
 import toast from 'react-hot-toast';
 import { useCompany } from '../../context/CompanyContext';
 import CurrencyAmount, { CurrencySymbol } from '../../components/CurrencyAmount';
+import { formatDisplayDate } from '../../utils/dateUtils';
 
 
 const Expenses = () => {
@@ -448,7 +449,7 @@ const Expenses = () => {
                         <tbody className="divide-y divide-slate-100">
                             {filteredExpenses.map((expense) => (
                                 <tr key={expense.id} className="hover:bg-slate-50 transition-colors">
-                                    <td className="px-4 py-3 text-xs text-slate-600 whitespace-nowrap">{expense.date}</td>
+                                    <td className="px-4 py-3 text-xs text-slate-600 whitespace-nowrap">{formatDisplayDate(expense.date)}</td>
                                     <td className="px-4 py-3 text-xs font-semibold text-slate-700">{expense.vendor}</td>
                                     <td className="px-4 py-3">
                                         <span className={`px-2 py-0.5 rounded text-[10px] font-semibold ${expense.category === 'Utilities' ? 'bg-blue-50 text-blue-600' :

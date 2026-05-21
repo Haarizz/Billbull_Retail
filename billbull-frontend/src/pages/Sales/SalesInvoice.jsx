@@ -54,6 +54,8 @@ import {
 } from '../../api/salesInvoiceApi';
 import { getSalesSettings } from '../../api/salesSettingsApi';
 import { getStockAvailability } from '../../api/stockAvailabilityApi';
+import { formatDisplayDate } from '../../utils/dateUtils';
+import { pickSalesItemPrice } from '../../utils/salesPricing';
 import { getWarehouses } from '../../api/warehouseApi';
 import { getTemplatesByCategory } from '../../api/printTemplateApi';
 import { generatePrintHtml, printHtml } from '../../utils/printGenerator';
@@ -523,7 +525,7 @@ const SalesInvoice = () => {
                                     <td className="px-4 py-2.5">
                                         <div className="font-bold text-slate-700 truncate w-36 group-hover:text-blue-600 transition-colors" title={h.customerName}>{h.customerName}</div>
                                         <div className="text-[9px] text-slate-400 mt-0.5 flex items-center gap-1.5 font-medium">
-                                            <span className="text-slate-300">#</span>{h.invoiceNo} <span className="text-slate-200">|</span> {h.date}
+                                            <span className="text-slate-300">#</span>{h.invoiceNo} <span className="text-slate-200">|</span> {formatDisplayDate(h.date)}
                                         </div>
                                     </td>
                                     <td className="px-4 py-2.5 text-right font-black text-slate-700">
@@ -654,6 +656,18 @@ const SalesInvoice = () => {
 
         const resolvedCustomer = matched || { name: fromQtn.customer, code: '', id: null };
         setSelectedCustomer(resolvedCustomer);
+
+        // Pre-fill paths bypass handleSelectCustomer, so the customer's prior
+        // outstanding never gets fetched — "Previous Outstanding" stays at 0
+        // until the user re-picks the customer. Fetch it here too. (mirrors
+        // the fromSalesOrder fix.)
+        if (resolvedCustomer?.code) {
+            getCustomerOutstanding(resolvedCustomer.code)
+                .then(d => setCustomerOutstanding(d?.outstanding || 0))
+                .catch(() => setCustomerOutstanding(0));
+        } else {
+            setCustomerOutstanding(0);
+        }
 
         // Resolve shipping address: prefer passed-through → customer master
         if (fromQtn.shippingAddress) {
@@ -1439,9 +1453,12 @@ const SalesInvoice = () => {
         const defaultUnit = getDefaultProductUnit(product);
         // Use explicit null/undefined checks so that a master price of 0 does not
         // fall through to a sellingPrice from a different data path.
-        const rawRetail = product.retailPrice != null ? parseFloat(product.retailPrice) : NaN;
-        const rawSelling = product.sellingPrice != null ? parseFloat(product.sellingPrice) : NaN;
-        const masterPrice = !isNaN(rawRetail) ? rawRetail : (!isNaN(rawSelling) ? rawSelling : 0);
+        // Master price is driven by the configured Sales Item Price Policy
+        // (RETAIL / MAX_SALE / MIN_SALE) from Sales Settings. The picker
+        // falls back to retail → selling → 0 when the configured field is
+        // missing on this product, so item-add never produces a zero by
+        // surprise.
+        const masterPrice = pickSalesItemPrice(product, salesSettings?.salesItemPricePolicy);
         const price = resolveUnitAmount({
             targetUnit: defaultUnit,
             amountMap: product.unitPrices,
@@ -2017,7 +2034,7 @@ const SalesInvoice = () => {
                         {inv.invoiceNumber}
                         {renderTypeBadge(inv.salesType)}
                     </h4>
-                    <div className="text-xs text-slate-500">{inv.invoiceDate}</div>
+                    <div className="text-xs text-slate-500">{formatDisplayDate(inv.invoiceDate)}</div>
                 </div>
                 {renderListStatus(inv.status)}
             </div>
@@ -2319,7 +2336,7 @@ const SalesInvoice = () => {
                                                         {renderTypeBadge(inv.salesType)}
                                                     </div>
                                                 </td>
-                                                <td className="px-4 py-3 text-slate-500">{inv.invoiceDate}</td>
+                                                <td className="px-4 py-3 text-slate-500">{formatDisplayDate(inv.invoiceDate)}</td>
                                                 <td className="px-4 py-3">
                                                     <div className="font-medium text-slate-700">{inv.customerName}</div>
                                                     <div className="text-[10px] text-slate-400">{inv.customerCode}</div>

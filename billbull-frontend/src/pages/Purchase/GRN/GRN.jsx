@@ -65,6 +65,7 @@ import SearchableDropdown from '../../../components/SearchableDropdown';
 import VendorSelector from '../../../components/VendorSelector';
 import { getImageUrl } from '../../../utils/urlUtils';
 import { getDefaultProductUnit, resolveUnitAmount } from '../../../utils/unitPricing';
+import { formatDisplayDate } from '../../../utils/dateUtils';
 import { useBranch } from '../../../context/BranchContext';
 import { ItemDescriptionCell, ItemDescriptionHeader } from '../../../components/ItemDescriptionCell';
 import ItemAddOnsModal from '../../../components/ItemAddOnsModal';
@@ -212,7 +213,7 @@ const GRNListView = ({ data, onView, onEdit, onDelete, onPost, onPrint, onProcee
                   </td>
                   <td className="px-6 py-4 text-slate-600">
                     <div className="flex items-center gap-1.5">
-                      <Calendar className="h-3 w-3 text-slate-400" /> {row.date}
+                      <Calendar className="h-3 w-3 text-slate-400" /> {formatDisplayDate(row.date)}
                     </div>
                   </td>
                   <td className="px-6 py-4 font-medium text-slate-900">
@@ -325,7 +326,7 @@ const QCQueueView = ({ queue, onApprove }) => (
               <tr key={item.id} className="hover:bg-slate-50">
                 <td className="p-3 font-mono text-[#F5C742] font-medium">{item.idDisplay}</td>
                 <td className="p-3 font-medium text-slate-800">{item.vendor}</td>
-                <td className="p-3 text-slate-600">{item.date}</td>
+                <td className="p-3 text-slate-600">{formatDisplayDate(item.date)}</td>
                 <td className="p-3 text-slate-600">{item.warehouse}</td>
                 <td className="p-3 text-center">{item.packages || item.items}</td>
                 <td className="p-3"><StatusBadge className="bg-orange-100 text-orange-700 border-orange-200">Pending QC</StatusBadge></td>

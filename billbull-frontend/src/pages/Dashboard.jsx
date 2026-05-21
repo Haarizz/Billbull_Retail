@@ -12,6 +12,7 @@ import {
 import { getUsernameFromToken } from "../api/auth";
 import { getDashboardData } from "../api/dashboardApi";
 import CurrencyAmount from "../components/CurrencyAmount";
+import { formatDisplayDate } from "../utils/dateUtils";
 
 // Currency formatter
 const formatCurrency = (value, className = '') => (
@@ -369,7 +370,7 @@ const Dashboard = () => {
                         <div className="text-xs text-slate-500 mb-1">Welcome back, {username}</div>
                         <div className="flex items-center gap-2 text-sm text-slate-500">
                             <Clock className="w-3.5 h-3.5" />
-                            <span>{currentTime.toLocaleDateString()}</span>
+                            <span>{formatDisplayDate(currentTime)}</span>
                             <span className="w-1 h-1 bg-slate-300 rounded-full"></span>
                             <span className="font-mono">{currentTime.toLocaleTimeString()}</span>
                         </div>

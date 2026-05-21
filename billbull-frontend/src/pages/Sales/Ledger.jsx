@@ -38,6 +38,7 @@ import * as api from '../../api/ledgerApi';
 import { useBranch } from '../../context/BranchContext';
 import { useCompany } from '../../context/CompanyContext';
 import { resolveCurrencyDisplayCode } from '../../utils/countryCurrencyOptions';
+import { formatDisplayDate } from '../../utils/dateUtils';
 
 // --- HELPER: CUSTOM SELECT COMPONENT ---
 const CustomSelect = ({ label, placeholder, options, value, onChange }) => {
@@ -978,7 +979,7 @@ const Ledger = () => {
                  <tbody className="divide-y divide-slate-50">
                     {filteredGlData.map((entry, idx) => (
                       <tr key={entry.id || idx} className="hover:bg-slate-50 group">
-                        <td className="px-4 py-3 font-medium text-slate-700">{entry.date}</td>
+                        <td className="px-4 py-3 font-medium text-slate-700">{formatDisplayDate(entry.date)}</td>
                         <td className="px-4 py-3">
                            <div className="flex items-center gap-2">
                              <div className="w-6 h-6 rounded bg-slate-100 flex items-center justify-center text-[10px] font-bold text-slate-500 border border-slate-200">{entry.type}</div>
@@ -1174,7 +1175,7 @@ const Ledger = () => {
                    <tbody className="divide-y divide-slate-50">
                       {glData.map((entry, idx) => (
                         <tr key={entry.id || idx} className="hover:bg-slate-50">
-                          <td className="px-4 py-3 font-medium text-slate-700">{entry.date}</td>
+                          <td className="px-4 py-3 font-medium text-slate-700">{formatDisplayDate(entry.date)}</td>
                           <td className="px-4 py-3 text-slate-500">{entry.voucher}</td>
                           <td className="px-4 py-3 font-bold text-slate-700">{entry.accName}</td>
                           <td className="px-4 py-3 text-slate-600">{entry.desc}</td>

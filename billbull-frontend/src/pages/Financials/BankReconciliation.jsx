@@ -9,6 +9,7 @@ import { getAccounts, getTransactions, finalizeReconciliation } from '../../api/
 import toast from 'react-hot-toast';
 import { useCompany } from '../../context/CompanyContext';
 import CurrencyAmount from '../../components/CurrencyAmount';
+import { formatDisplayDate } from '../../utils/dateUtils';
 
 const BankReconciliation = () => {
     const { company } = useCompany();
@@ -415,7 +416,7 @@ const BankReconciliation = () => {
                                             />
                                         </td>
                                         <td className="px-4 py-3 text-xs text-slate-700 font-semibold">
-                                            {new Date(tx.transactionDate).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })}
+                                            {formatDisplayDate(tx.transactionDate)}
                                         </td>
                                         <td className="px-4 py-3">
                                             <div className="text-xs font-semibold text-slate-900">{tx.description}</div>
@@ -526,7 +527,7 @@ const BankReconciliation = () => {
                                     <div>
                                         <p className="text-xs text-slate-500 font-semibold">Date</p>
                                         <p className="text-sm font-bold text-slate-800 mt-1">
-                                            {new Date(selectedTx.transactionDate).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' })}
+                                            {formatDisplayDate(selectedTx.transactionDate)}
                                         </p>
                                     </div>
                                     <div>

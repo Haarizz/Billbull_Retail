@@ -39,6 +39,7 @@ import billBullLogo from '../../assets/billBullLogo.png';
 import ExportDropdown from '../../components/common/ExportDropdown';
 import { exportToExcel, exportToPDF } from '../../utils/exportUtils';
 import CurrencyAmount, { CurrencySymbol } from '../../components/CurrencyAmount';
+import { formatDisplayDate } from '../../utils/dateUtils';
 import { isAutoNumberingEnabled } from '../../utils/salesNumbering';
 
 // ==========================================
@@ -777,7 +778,7 @@ const Payment = () => {
                                         {filteredPayments.map((payment) => (
                                             <tr key={payment.id} className="hover:bg-slate-50 cursor-pointer group" onClick={() => handleViewPayment(payment)}>
                                                 <td className="px-4 py-3 font-medium text-slate-700">{payment.paymentNo}</td>
-                                                <td className="px-4 py-3 text-slate-500">{payment.date}</td>
+                                                <td className="px-4 py-3 text-slate-500">{formatDisplayDate(payment.date)}</td>
                                                 <td className="px-4 py-3">
                                                     <div className="font-medium text-slate-700">{payment.customerName}</div>
                                                     <div className="text-[10px] text-slate-400">{payment.customerCode}</div>
@@ -902,7 +903,7 @@ const Payment = () => {
                                                                         className="rounded border-slate-300 text-yellow-500 focus:ring-yellow-500 w-4 h-4 cursor-pointer" />
                                                                 </td>
                                                                 <td className="px-4 py-3 font-medium text-slate-700">{inv.invoiceNo}</td>
-                                                                <td className="px-4 py-3 text-slate-500 text-xs">{inv.invoiceDate || '-'}</td>
+                                                                <td className="px-4 py-3 text-slate-500 text-xs">{formatDisplayDate(inv.invoiceDate)}</td>
                                                                 <td className="px-4 py-3 text-xs">
                                                                     <span className={isOverdue ? 'text-red-500 font-bold' : 'text-slate-500'}>{inv.dueDate || '-'}</span>
                                                                     {isOverdue && <span className="block text-[9px] text-red-400">Overdue</span>}
@@ -1067,7 +1068,7 @@ const Payment = () => {
                                                     </div>
                                                     <div className="flex justify-between items-center mt-1">
                                                         <p className="text-[10px] text-slate-500">{p.paymentNo} • {p.mode}</p>
-                                                        <p className="text-[10px] text-slate-400">{p.date}</p>
+                                                        <p className="text-[10px] text-slate-400">{formatDisplayDate(p.date)}</p>
                                                     </div>
                                                 </div>
                                             </div>
@@ -1135,7 +1136,7 @@ const Payment = () => {
                                     </div>
                                     <div>
                                         <p className="text-[10px] text-slate-400 font-bold uppercase">Payment Date</p>
-                                        <p className="text-xs font-medium text-slate-700">{selectedPayment.date}</p>
+                                        <p className="text-xs font-medium text-slate-700">{formatDisplayDate(selectedPayment.date)}</p>
                                     </div>
                                     <div>
                                         <p className="text-[10px] text-slate-400 font-bold uppercase">Payment Mode</p>

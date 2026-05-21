@@ -31,6 +31,7 @@ import {
 import { employeesApi } from '../../../api/employeesApi';
 import { salaryPaymentApi } from '../../../api/salaryPaymentApi';
 import CurrencyAmount, { CurrencySymbol } from '../../../components/CurrencyAmount';
+import { formatDisplayDate } from '../../../utils/dateUtils';
 
 // --- Configuration ---
 
@@ -530,7 +531,7 @@ const SalaryPayments = () => {
           month: 'October 2025',
           net: tx.netPayable,
           modes: [{ type: tx.paymentMethod, val: tx.netPayable }],
-          date: new Date(tx.paymentDate).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }),
+          date: formatDisplayDate(tx.paymentDate),
           status: tx.status
         }));
         setTransactions(normalizedHistory);
@@ -626,7 +627,7 @@ const SalaryPayments = () => {
         month: 'October 2025',
         net: employee.netPayable || employee.net,
         modes: [{ type: method, val: parseCurrency(employee.netPayable || employee.net) }],
-        date: new Date(date).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }),
+        date: formatDisplayDate(date),
         status: 'Paid'
       };
       setTransactions([newTx, ...transactions]);
@@ -657,7 +658,7 @@ const SalaryPayments = () => {
         month: 'October 2025',
         net: emp.netPayable || emp.net,
         modes: [{ type: method, val: parseCurrency(emp.netPayable || emp.net) }],
-        date: new Date(date).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }),
+        date: formatDisplayDate(date),
         status: 'Paid'
       }));
 

@@ -14,6 +14,7 @@ import CurrencyAmount, { CurrencySymbol } from '../../components/CurrencyAmount'
 import { useCompany } from '../../context/CompanyContext';
 import { printHtml } from '../../utils/printGenerator';
 import { getUsernameFromToken } from '../../api/auth';
+import { formatDisplayDate } from '../../utils/dateUtils';
 import { buildJournalVoucherPrintHtml } from '../../utils/journalVoucherPrintTemplate';
 import { getTemplatesByCategory } from '../../api/printTemplateApi';
 
@@ -761,7 +762,7 @@ const JournalVoucher = () => {
                                     {filteredData.map((row) => (
                                         <tr key={row.id} className="hover:bg-slate-50">
                                             <td className="px-4 py-3 font-medium text-slate-700">{row.jvNumber}</td>
-                                            <td className="px-4 py-3 text-slate-500">{row.date}</td>
+                                            <td className="px-4 py-3 text-slate-500">{formatDisplayDate(row.date)}</td>
                                             <td className="px-4 py-3 text-slate-500">{row.reference}</td>
                                             <td className="px-4 py-3 text-slate-600 max-w-xs truncate">{row.narration}</td>
                                             <td className="px-4 py-3 text-right font-bold text-slate-700"><CurrencyAmount value={row.debit} /></td>
@@ -1035,7 +1036,7 @@ const JournalVoucher = () => {
                             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8 mb-6">
                                 <div>
                                     <label className="block text-xs font-bold text-slate-500 mb-1">Date</label>
-                                    <div className="text-sm font-bold text-slate-700">{formData.date}</div>
+                                    <div className="text-sm font-bold text-slate-700">{formatDisplayDate(formData.date)}</div>
                                     <div className="text-[10px] text-slate-400 mt-0.5">dd-mm-yyyy</div>
                                 </div>
                                 <div>
