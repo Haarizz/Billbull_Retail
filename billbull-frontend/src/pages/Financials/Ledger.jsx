@@ -70,14 +70,43 @@ const GL_COLUMNS = [
 ];
 
 // --- HELPER: CUSTOM SELECT COMPONENT ---
-const CustomSelect = ({ label, placeholder, options, value, onChange }) => {
+const normalizeSelectOption = (option) => {
+  if (option && typeof option === 'object') {
+    const optionValue = option.value ?? option.label ?? '';
+    const optionLabel = option.label ?? optionValue;
+    return {
+      value: optionValue,
+      label: optionLabel,
+      searchText: option.searchText || `${optionValue} ${optionLabel}`
+    };
+  }
+
+  return {
+    value: option,
+    label: option,
+    searchText: String(option || '')
+  };
+};
+
+const CustomSelect = ({ label, placeholder, options = [], value, onChange, searchable = false }) => {
   const [isOpen, setIsOpen] = useState(false);
+  const [searchText, setSearchText] = useState('');
   const dropdownRef = useRef(null);
+  const normalizedOptions = useMemo(() => options.map(normalizeSelectOption), [options]);
+  const selectedOption = normalizedOptions.find((option) => option.value === value);
+  const filteredOptions = useMemo(() => {
+    const query = searchText.trim().toLowerCase();
+    if (!query) return normalizedOptions;
+    return normalizedOptions.filter((option) =>
+      String(option.searchText || option.label || option.value).toLowerCase().includes(query)
+    );
+  }, [normalizedOptions, searchText]);
 
   useEffect(() => {
     const handleClickOutside = (event) => {
       if (dropdownRef.current && !dropdownRef.current.contains(event.target)) {
         setIsOpen(false);
+        setSearchText('');
       }
     };
     document.addEventListener("mousedown", handleClickOutside);
@@ -87,27 +116,46 @@ const CustomSelect = ({ label, placeholder, options, value, onChange }) => {
   return (
     <div className="relative" ref={dropdownRef}>
       <div
-        onClick={() => setIsOpen(!isOpen)}
+        onClick={() => {
+          setIsOpen(!isOpen);
+          setSearchText('');
+        }}
         className="w-full px-3 py-2 text-xs border border-slate-200 rounded-md focus:border-blue-500 bg-white text-slate-600 flex justify-between items-center cursor-pointer"
       >
         <span className={value ? "text-slate-700" : "text-slate-400"}>
-          {value || placeholder}
+          {selectedOption?.label || value || placeholder}
         </span>
         <ChevronDown size={14} className="text-slate-400" />
       </div>
 
       {isOpen && (
         <div className="absolute z-50 mt-1 w-full bg-white border border-slate-200 rounded-md shadow-lg max-h-48 overflow-y-auto">
-          {options.map((option, idx) => (
+          {searchable && (
+            <div className="sticky top-0 bg-white p-2 border-b border-slate-100">
+              <input
+                autoFocus
+                value={searchText}
+                onChange={(event) => setSearchText(event.target.value)}
+                placeholder="Search code or name"
+                className="w-full rounded border border-slate-200 px-2 py-1.5 text-xs text-slate-700 outline-none focus:border-yellow-400"
+                onClick={(event) => event.stopPropagation()}
+              />
+            </div>
+          )}
+          {filteredOptions.length === 0 && (
+            <div className="px-3 py-2 text-xs text-slate-400">No options found</div>
+          )}
+          {filteredOptions.map((option, idx) => (
             <div
-              key={idx}
+              key={`${option.value}-${idx}`}
               onClick={() => {
-                onChange(option);
+                onChange(option.value);
                 setIsOpen(false);
+                setSearchText('');
               }}
               className="px-3 py-2 text-xs cursor-pointer text-slate-600 hover:bg-[#F43F5E] hover:text-white transition-colors"
             >
-              {option}
+              {option.label}
             </div>
           ))}
         </div>
@@ -179,6 +227,39 @@ const Ledger = () => {
     return Array.from(options);
   }, [accounts, branches, costCenters, defaultBranchName]);
   const branchSelectOptions = ['All Branches', ...branchOptions];
+  const costCenterSelectOptions = useMemo(() => [
+    { value: '-', label: '- No Cost Center', searchText: 'none no cost center -' },
+    ...costCenters
+      .filter((costCenter) => costCenter?.code)
+      .sort((left, right) => (left.code || '').localeCompare(right.code || ''))
+      .map((costCenter) => ({
+        value: costCenter.code,
+        label: `${costCenter.code} - ${costCenter.name || 'Unnamed Cost Center'}`,
+        searchText: `${costCenter.code} ${costCenter.name || ''}`
+      }))
+  ], [costCenters]);
+  const costCenterByCode = useMemo(() => {
+    const map = new Map();
+    costCenters.forEach((costCenter) => {
+      if (costCenter?.code) {
+        map.set(costCenter.code, costCenter);
+      }
+    });
+    return map;
+  }, [costCenters]);
+  const formatCostCenterDisplay = (code) => {
+    if (!code || code === '-') return '-';
+    const costCenter = costCenterByCode.get(code);
+    return costCenter ? `${costCenter.code} - ${costCenter.name || 'Unnamed Cost Center'}` : code;
+  };
+  const accountSelectOptions = useMemo(() => accounts
+    .filter((account) => account?.status !== 'archived' && account?.isGroup !== true)
+    .sort((left, right) => (left.code || '').localeCompare(right.code || ''))
+    .map((account) => ({
+      value: account.name,
+      label: `${account.code || '-'} - ${account.name}`,
+      searchText: `${account.code || ''} ${account.name || ''}`
+    })), [accounts]);
 
   // --- COA TREE STATES ---
   const [accountTree, setAccountTree] = useState([]);
@@ -1376,8 +1457,8 @@ const glAccountOptions = accounts
                       <td className="px-4 py-3">
                         <div className="flex items-center gap-2">
                           <Target size={13} className="text-slate-300" />
-                          <span className="text-slate-600 font-medium font-mono text-[11px] uppercase tracking-wide">
-                            {row.cc}
+                          <span className="text-slate-600 font-medium text-[11px]">
+                            {formatCostCenterDisplay(row.cc)}
                           </span>
                         </div>
                       </td>
@@ -1960,8 +2041,8 @@ const glAccountOptions = accounts
                   <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Cost Center</p>
                   <div className="flex items-center gap-2 text-sm font-medium text-slate-700">
                     <Target size={14} className="text-slate-400" />
-                    <span className="font-mono bg-slate-50 border border-slate-200 px-1.5 rounded text-xs">
-                      {selectedAccountForView.cc}
+                    <span className="bg-slate-50 border border-slate-200 px-1.5 rounded text-xs">
+                      {formatCostCenterDisplay(selectedAccountForView.cc)}
                     </span>
                   </div>
                 </div>
@@ -2046,10 +2127,10 @@ const glAccountOptions = accounts
                   <label className="block text-xs font-bold text-slate-600 mb-1">Cost Center</label>
                   <CustomSelect
                     placeholder="Select cost center"
-                    // DYNAMICALLY LOAD COST CENTERS
-                    options={['-', ...costCenters.map(cc => cc.code)]}
+                    options={costCenterSelectOptions}
                     value={selectedCostCenter}
                     onChange={setSelectedCostCenter}
+                    searchable
                   />
                 </div>
 
@@ -2162,9 +2243,10 @@ const glAccountOptions = accounts
                   <label className="block text-xs font-bold text-slate-600 mb-1">Select Account <span className="text-red-500">*</span></label>
                   <CustomSelect
                     placeholder="Choose account"
-                    options={accounts.map(a => a.name)}
+                    options={accountSelectOptions}
                     value={txnAccount}
                     onChange={setTxnAccount}
+                    searchable
                   />
                 </div>
                 <div className="grid grid-cols-2 gap-4">

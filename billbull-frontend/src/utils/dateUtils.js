@@ -1,5 +1,5 @@
 // Canonical display format for dates across reports and transaction lists.
-// All list/report cells render dates as dd/MMM/yyyy (e.g. 21/May/2026) via
+// All list/report cells render dates as dd MMM yyyy (e.g. 21 May 2026) via
 // formatDisplayDate. Backend data is typically 'YYYY-MM-DD' (LocalDate) or an
 // ISO datetime — both work.
 
@@ -9,7 +9,7 @@ const MONTHS = [
 ];
 
 /**
- * Format a date value as dd/MMM/yyyy.
+ * Format a date value as dd MMM yyyy.
  * Accepts: Date instance, ISO date string ('YYYY-MM-DD'),
  * ISO datetime, or any string that Date can parse.
  * Returns the fallback when the input is empty/invalid.
@@ -20,7 +20,7 @@ export const formatDisplayDate = (value, fallback = '-') => {
     if (value instanceof Date) {
         if (isNaN(value.getTime())) return fallback;
         const d = String(value.getDate()).padStart(2, '0');
-        return `${d}/${MONTHS[value.getMonth()]}/${value.getFullYear()}`;
+        return `${d} ${MONTHS[value.getMonth()]} ${value.getFullYear()}`;
     }
 
     const str = String(value).trim();
@@ -34,14 +34,14 @@ export const formatDisplayDate = (value, fallback = '-') => {
         const [, y, mm, dd] = m;
         const monthIdx = parseInt(mm, 10) - 1;
         if (monthIdx >= 0 && monthIdx < 12) {
-            return `${dd}/${MONTHS[monthIdx]}/${y}`;
+            return `${dd} ${MONTHS[monthIdx]} ${y}`;
         }
     }
 
     const parsed = new Date(str);
     if (isNaN(parsed.getTime())) return fallback;
     const d = String(parsed.getDate()).padStart(2, '0');
-    return `${d}/${MONTHS[parsed.getMonth()]}/${parsed.getFullYear()}`;
+    return `${d} ${MONTHS[parsed.getMonth()]} ${parsed.getFullYear()}`;
 };
 
 /**

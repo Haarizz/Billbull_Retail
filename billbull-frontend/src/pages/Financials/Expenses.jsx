@@ -5,12 +5,13 @@ import {
     PieChart, Briefcase, Trash, Edit, X
 } from 'lucide-react';
 import { getVendors } from '../../api/vendorsApi';
-import { getCostCenters, getAccounts } from '../../api/ledgerApi';
+import { getCostCenters, getAccounts, getTransactions } from '../../api/ledgerApi';
 import { fetchExpenses, createExpense, updateExpense, deleteExpense } from '../../api/expensesApi';
 import toast from 'react-hot-toast';
 import { useCompany } from '../../context/CompanyContext';
 import CurrencyAmount, { CurrencySymbol } from '../../components/CurrencyAmount';
 import { formatDisplayDate } from '../../utils/dateUtils';
+import LedgerAccountCreateModal from '../../components/common/LedgerAccountCreateModal';
 
 
 const Expenses = () => {
@@ -29,22 +30,36 @@ const Expenses = () => {
     const [costCenters, setCostCenters] = useState([]);
     // BB-034A: GL accounts for expense account ledger selector
     const [glAccounts, setGlAccounts] = useState([]);
+    const [allAccounts, setAllAccounts] = useState([]);
     const [glAccountSearch, setGlAccountSearch] = useState('');
     const [glAccountOpen, setGlAccountOpen] = useState(false);
+    const [isAccountCreateOpen, setIsAccountCreateOpen] = useState(false);
     const glAccountRef = useRef(null);
+
+    const isSelectableExpenseAccount = (account) => {
+        if (!account || account.status === 'archived' || account.isGroup === true) return false;
+        return (account.accountGroup || '').toLowerCase() === 'expenses'
+            || (account.accountType || '').toLowerCase() === 'expense';
+    };
+
+    const loadReferenceData = async () => {
+        const [vendorData, costCenterData, glData] = await Promise.all([
+            getVendors(),
+            getCostCenters(),
+            getAccounts()
+        ]);
+        const accountData = Array.isArray(glData) ? glData : [];
+        setVendors(Array.isArray(vendorData) ? vendorData : []);
+        setCostCenters(Array.isArray(costCenterData) ? costCenterData : []);
+        setAllAccounts(accountData);
+        setGlAccounts(accountData.filter(isSelectableExpenseAccount));
+        return accountData;
+    };
 
     useEffect(() => {
         const fetchData = async () => {
             try {
-                const [vendorData, costCenterData, glData] = await Promise.all([
-                    getVendors(),
-                    getCostCenters(),
-                    getAccounts()
-                ]);
-                setVendors(vendorData);
-                setCostCenters(costCenterData);
-                // Filter to expense-type accounts for the selector
-                setGlAccounts(Array.isArray(glData) ? glData.filter(a => a.status !== 'archived') : []);
+                await loadReferenceData();
             } catch (error) {
                 console.error("Failed to fetch data", error);
             }
@@ -263,6 +278,28 @@ const Expenses = () => {
         });
     };
 
+    const handleLedgerAccountCreated = async (createdAccount) => {
+        let account = createdAccount;
+        try {
+            const refreshedAccounts = await loadReferenceData();
+            account = refreshedAccounts.find(item => item.id === createdAccount?.id) || createdAccount;
+        } catch (error) {
+            console.error("Failed to refresh expense ledger accounts", error);
+            if (createdAccount?.id) {
+                setAllAccounts(prev => [...prev, createdAccount]);
+                if (isSelectableExpenseAccount(createdAccount)) {
+                    setGlAccounts(prev => [...prev, createdAccount]);
+                }
+            }
+        }
+
+        if (account?.id) {
+            setNewExpense(prev => ({ ...prev, glAccountId: String(account.id) }));
+            setGlAccountSearch('');
+            setGlAccountOpen(false);
+        }
+    };
+
     const StatusBadge = ({ status }) => {
         const styles = {
             Paid: 'bg-emerald-50 text-emerald-700 border-emerald-100',
@@ -459,7 +496,7 @@ const Expenses = () => {
                                             }`}>{expense.category}</span>
                                     </td>
                                     <td className="px-4 py-3 text-xs text-slate-600">
-                                        {(() => { const a = glAccounts.find(acc => String(acc.id) === String(expense.glAccountId)); return a ? <span className="font-mono text-[10px]">{a.code}<span className="font-sans font-normal ml-1 text-slate-500">{a.name}</span></span> : <span className="text-slate-300">—</span>; })()}
+                                        {(() => { const a = allAccounts.find(acc => String(acc.id) === String(expense.glAccountId)); return a ? <span className="font-mono text-[10px]">{a.code}<span className="font-sans font-normal ml-1 text-slate-500">{a.name}</span></span> : <span className="text-slate-300">-</span>; })()}
                                     </td>
                                     <td className="px-4 py-3 text-xs text-slate-600">{expense.costCenter}</td>
                                     <td className="px-4 py-3 text-xs text-slate-600">{expense.location}</td>
@@ -593,13 +630,23 @@ const Expenses = () => {
 
                             {/* BB-034A: GL Account searchable selector */}
                             <div ref={glAccountRef} className="relative">
-                                <label className="block text-xs font-bold text-slate-500 mb-1">
-                                    Expense Account Ledger <span className="text-red-400">*</span>
-                                </label>
+                                <div className="mb-1 flex items-center justify-between gap-2">
+                                    <label className="block text-xs font-bold text-slate-500">
+                                        Expense Account Ledger <span className="text-red-400">*</span>
+                                    </label>
+                                    <button
+                                        type="button"
+                                        title="Create account ledger"
+                                        onClick={() => { setGlAccountOpen(false); setIsAccountCreateOpen(true); }}
+                                        className="flex h-7 w-7 items-center justify-center rounded border border-slate-200 bg-white text-slate-500 hover:border-emerald-500 hover:text-emerald-700"
+                                    >
+                                        <Plus size={13} />
+                                    </button>
+                                </div>
                                 {newExpense.glAccountId ? (
                                     <div className="w-full px-3 py-2 text-xs border border-emerald-400 rounded-md bg-emerald-50 text-slate-700 font-medium flex items-center justify-between">
                                         <span className="truncate flex-1">
-                                            {(() => { const a = glAccounts.find(acc => String(acc.id) === String(newExpense.glAccountId)); return a ? `${a.code} – ${a.name}` : newExpense.glAccountId; })()}
+                                            {(() => { const a = allAccounts.find(acc => String(acc.id) === String(newExpense.glAccountId)); return a ? `${a.code} - ${a.name}` : newExpense.glAccountId; })()}
                                         </span>
                                         <button
                                             type="button"
@@ -732,6 +779,15 @@ const Expenses = () => {
                     </div>
                 </div>
             )}
+            <LedgerAccountCreateModal
+                isOpen={isAccountCreateOpen}
+                onClose={() => setIsAccountCreateOpen(false)}
+                onCreated={handleLedgerAccountCreated}
+                existingAccounts={allAccounts}
+                defaultGroup="Expenses"
+                fixedGroup
+                initialName={glAccountSearch}
+            />
         </div>
     );
 };

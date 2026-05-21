@@ -7,6 +7,8 @@
 // Templates designer (live preview), so editing header/terms/footer in
 // Settings updates both surfaces identically.
 
+import { formatUserDisplayName } from './displayName';
+
 const fmt = (n) =>
     Number(n || 0).toLocaleString('en-AE', {
         minimumFractionDigits: 2,
@@ -51,6 +53,9 @@ export const STANDARD_JV_TERMS = `1. This Journal Voucher is system-generated an
 export const buildJournalVoucherPrintHtml = (jv = {}, { company = {}, template = null } = {}) => {
     const co = company || {};
     const lines = Array.isArray(jv.lines) ? jv.lines : [];
+    const voucherNumber = jv.jvNumber || jv.entryNumber || jv.voucherId || jv.voucherNo || jv.reference || '';
+    const preparedBy = formatUserDisplayName(jv.preparedBy || '');
+    const postedBy = formatUserDisplayName(jv.postedBy || '');
 
     const totalDebit = lines.reduce((s, l) => s + (parseFloat(l.debit) || 0), 0);
     const totalCredit = lines.reduce((s, l) => s + (parseFloat(l.credit) || 0), 0);
@@ -84,7 +89,7 @@ export const buildJournalVoucherPrintHtml = (jv = {}, { company = {}, template =
 <html lang="en">
 <head>
 <meta charset="UTF-8"/>
-<title>Journal Voucher ${escapeHtml(jv.jvNumber || jv.reference || '')}</title>
+<title>Journal Voucher ${escapeHtml(voucherNumber)}</title>
 <style>
   @page { size: ${pageSize}; margin: 16mm 16mm 20mm; }
   * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -141,7 +146,7 @@ export const buildJournalVoucherPrintHtml = (jv = {}, { company = {}, template =
     </div>
     <div class="doc-title">
       <h1>JOURNAL VOUCHER</h1>
-      <div class="jv-no">${escapeHtml(jv.jvNumber || jv.reference || '')}</div>
+      <div class="jv-no">${escapeHtml(voucherNumber)}</div>
       <div style="margin-top:6px"><span class="status-badge ${statusClass}">${escapeHtml(statusLabel)}</span></div>
     </div>
   </div>
@@ -149,8 +154,8 @@ export const buildJournalVoucherPrintHtml = (jv = {}, { company = {}, template =
   <div class="meta">
     <div><span class="label">Date:</span> ${escapeHtml(jv.date || '')}</div>
     <div><span class="label">Reference:</span> ${escapeHtml(jv.reference || '—')}</div>
-    <div><span class="label">Prepared By:</span> ${escapeHtml(jv.preparedBy || '—')}</div>
-    <div><span class="label">Posted By:</span> ${escapeHtml(jv.postedBy || '—')}</div>
+    <div><span class="label">Prepared By:</span> ${escapeHtml(preparedBy || '—')}</div>
+    <div><span class="label">Posted By:</span> ${escapeHtml(postedBy || '—')}</div>
     ${jv.postedAt ? `<div><span class="label">Posted At:</span> ${escapeHtml(new Date(jv.postedAt).toLocaleString())}</div>` : ''}
   </div>
 
@@ -186,7 +191,7 @@ export const buildJournalVoucherPrintHtml = (jv = {}, { company = {}, template =
 
   <div class="signatures">
     <div class="sig-box">
-      <div class="who">${escapeHtml(jv.preparedBy || '—')}</div>
+      <div class="who">${escapeHtml(preparedBy || '—')}</div>
       Prepared By
     </div>
     <div class="sig-box">
@@ -194,7 +199,7 @@ export const buildJournalVoucherPrintHtml = (jv = {}, { company = {}, template =
       Reviewed By
     </div>
     <div class="sig-box">
-      <div class="who">${escapeHtml(jv.postedBy || '—')}</div>
+      <div class="who">${escapeHtml(postedBy || '—')}</div>
       Approved / Posted By
     </div>
   </div>

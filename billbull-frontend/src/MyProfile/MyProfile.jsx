@@ -9,6 +9,7 @@ import {
 } from 'lucide-react';
 import { getUserProfile, updateUserProfile, changePassword, logout } from '../api/auth';
 import { getImageUrl } from '../utils/urlUtils';
+import { formatUserDisplayName } from '../utils/displayName';
 import toast from 'react-hot-toast';
 
 const MyProfile = () => {
@@ -146,7 +147,7 @@ const MyProfile = () => {
         || "https://images.unsplash.com/photo-1500648767791-00dcc994a43e?ixlib=rb-4.0.3&auto=format&fit=facearea&facepad=2&w=300&h=300&q=80";
 
     const displayUser = {
-        name: profile?.fullName || profile?.username || "User",
+        name: formatUserDisplayName(profile?.fullName || profile?.username || "User"),
         role: profile?.jobTitle || profile?.role || "Staff Member",
         dept: profile?.department || "General",
         id: profile?.employeeId || "EMP---",
