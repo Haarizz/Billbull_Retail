@@ -30,6 +30,7 @@ public class SalesInvoice {
     private String linkedSalesOrder;
     private String linkedDeliveryNote;
     private String linkedProforma;
+    private String linkedQuotation;
 
     private String paymentMode;
     private String paymentTerms;
@@ -152,6 +153,14 @@ public class SalesInvoice {
 
     public void setLinkedProforma(String linkedProforma) {
         this.linkedProforma = linkedProforma;
+    }
+
+    public String getLinkedQuotation() {
+        return linkedQuotation;
+    }
+
+    public void setLinkedQuotation(String linkedQuotation) {
+        this.linkedQuotation = linkedQuotation;
     }
 
     public String getPaymentMode() {

@@ -669,7 +669,8 @@ const Quotations = () => {
                 data.status === 'APPROVED' ? 'Approved' :
                     data.status === 'REJECTED' ? 'Rejected' :
                         data.status === 'CONVERTED' ? 'Converted' :
-                            data.status === 'EXPIRED' ? 'Expired' : 'Draft',
+                            data.status === 'INVOICED' ? 'Invoiced' :
+                                data.status === 'EXPIRED' ? 'Expired' : 'Draft',
             currency: data.currency,
             paymentTerm: data.paymentTerms,
             deliveryType: data.deliveryType,
@@ -1742,7 +1743,7 @@ const Quotations = () => {
         e.stopPropagation();
         closeActionMenu();
         try {
-            await updateQuotationStatus(qtn.id, 'Expired');
+            await updateQuotationStatus(qtn.id, 'EXPIRED');
             setToastMessage('Quotation marked as expired.');
             setToastType('success');
             await refreshData();
@@ -1764,9 +1765,11 @@ const Quotations = () => {
         }
 
         try {
-            await updateQuotationStatus(qtn.id, 'CONVERTED');
-            // Resolve full customer from the master list so the destination form
-            // gets phone/balance/TRN/savedAddresses without relying on a name match.
+            // Do NOT preemptively mark the quotation as CONVERTED here. The
+            // quotation status flips to 'Invoiced' once the invoice is actually
+            // saved (the backend stamps INVOICED via linkedQuotation). If the
+            // user abandons the invoice form, the quotation should remain in
+            // its prior status — not be stranded as Converted.
             const matched = resolveCustomer({ customerName: qtn.customer }, customersList);
             navigate('/sales/invoice', {
                 state: {
@@ -1967,10 +1970,10 @@ const Quotations = () => {
     const handleProceedToInvoice = async () => {
         if (!editingId) return;
         try {
-            await updateQuotationStatus(editingId, 'CONVERTED');
-            setStatus('Converted');
+            // The quotation will be auto-flipped to 'Invoiced' by the backend
+            // once the invoice is saved (via linkedQuotation). Just hand off the
+            // form data here — no preemptive status change.
             setEditorMode('view');
-            await refreshData();
             navigate('/sales/invoice', {
                 state: {
                     fromQuotation: {
@@ -2043,6 +2046,8 @@ const Quotations = () => {
                 return <span className="text-xs font-bold text-red-600 bg-red-50 border border-red-100 px-2 py-0.5 rounded-full">Rejected</span>;
             case 'Converted':
                 return <span className="text-xs font-bold text-blue-600 bg-blue-50 border border-blue-100 px-2 py-0.5 rounded-full">Converted</span>;
+            case 'Invoiced':
+                return <span className="text-xs font-bold text-indigo-600 bg-indigo-50 border border-indigo-100 px-2 py-0.5 rounded-full">Invoiced</span>;
             case 'Expired':
                 return <span className="text-xs font-bold text-amber-600 bg-amber-50 border border-amber-100 px-2 py-0.5 rounded-full">Expired</span>;
             default:
@@ -2488,6 +2493,9 @@ const Quotations = () => {
                                         <option value="Pending Approval">Pending Approval</option>
                                         <option value="Approved">Approved</option>
                                         <option value="Rejected">Rejected</option>
+                                        <option value="Converted">Converted</option>
+                                        <option value="Invoiced">Invoiced</option>
+                                        <option value="Expired">Expired</option>
                                     </select>
                                     <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={14} />
                                 </div>
@@ -2601,7 +2609,7 @@ const Quotations = () => {
                                                                 )}
 
                                                                 {/* --- Workflow actions --- */}
-                                                                {(qtn.status === 'Draft' || qtn.status === 'Approved' || qtn.status === 'Rejected') && (
+                                                                {(qtn.status === 'Draft' || qtn.status === 'Approved' || qtn.status === 'Rejected' || qtn.status === 'Expired') && (
                                                                     <button onClick={(e) => handleListingRevise(qtn, e)} className="w-full text-left px-4 py-2 hover:bg-slate-50 flex items-center gap-2 text-slate-700">
                                                                         <RotateCcw size={13} /> Revise
                                                                     </button>
