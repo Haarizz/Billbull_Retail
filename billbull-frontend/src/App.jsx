@@ -53,6 +53,7 @@ import StockTransfer from "./pages/Inventory/StockTransfer/StockTransfer";
 import BankReconciliation from "./pages/Financials/BankReconciliation";
 import BarcodePrinter from "./pages/Inventory/Barcode/BarcodePrinter";
 import ReceiptVoucher from "./pages/Financials/ReceiptVoucher";
+import FinancialsPaymentVoucher from "./pages/Financials/PaymentVoucher";
 import MyProfile from "./MyProfile/MyProfile";
 import Messaging from "./pages/Customer/Messaging";
 import TaxCompliance from "./pages/Financials/TaxCompliance";
@@ -402,6 +403,15 @@ function App() {
                       element={
                         <ResourceGuard module="finance.voucher">
                           <ReceiptVoucher />
+                        </ResourceGuard>
+                      }
+                    />
+
+                    <Route
+                      path="/finance/paymentvoucher"
+                      element={
+                        <ResourceGuard module="finance.voucher">
+                          <FinancialsPaymentVoucher />
                         </ResourceGuard>
                       }
                     />

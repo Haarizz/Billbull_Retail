@@ -188,6 +188,7 @@ const Sidebar = ({ children }) => {
       subItems: [
         { path: "/finance/ledger",          label: "Ledger",                    module: "finance.ledger",   icon: <BookOpen size={14} /> },
         { path: "/finance/receiptvoucher",  label: "Receipt Voucher",           module: "finance.voucher",  icon: <Receipt size={14} /> },
+        { path: "/finance/paymentvoucher",  label: "Payment Voucher",           module: "finance.voucher",  icon: <Wallet size={14} /> },
         { path: "/finance/journalvoucher",  label: "Journal Voucher",           module: "finance.voucher",  icon: <PenTool size={14} /> },
         { path: "/finance/expenses",        label: "Expenses",                  module: "finance.voucher",  icon: <TrendingDown size={14} /> },
         { path: "/finance/reconciliation",  label: "Bank Reconciliation",       module: "finance.reconcile",icon: <Landmark size={14} /> },

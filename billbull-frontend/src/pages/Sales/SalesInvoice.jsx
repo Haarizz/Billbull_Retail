@@ -31,7 +31,9 @@ import {
     Package,
     TrendingUp,
     History,
-    Zap
+    Zap,
+    Receipt,
+    Download
 } from 'lucide-react';
 
 // ✅ DYNAMIC UI COMPONENTS
@@ -53,6 +55,8 @@ import {
     getCustomerOutstanding
 } from '../../api/salesInvoiceApi';
 import { getSalesSettings } from '../../api/salesSettingsApi';
+import { getSalesPaymentsByInvoice } from '../../api/salesPaymentApi';
+import { receiptVoucherApi } from '../../api/receiptVoucherApi';
 import { getStockAvailability } from '../../api/stockAvailabilityApi';
 import { formatDisplayDate } from '../../utils/dateUtils';
 import { pickSalesItemPrice, isPolicyOverridingPackings } from '../../utils/salesPricing';
@@ -356,6 +360,14 @@ const SalesInvoice = () => {
 
     // ✅ MODAL STATES
     const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
+
+    // QA-038: Receipts modal — shows the history of all receipts (sales
+    // payments + financials receipt vouchers) tied to a given sales invoice,
+    // with per-row Print / Download.
+    const [isReceiptsModalOpen, setIsReceiptsModalOpen] = useState(false);
+    const [receiptsForInvoice, setReceiptsForInvoice] = useState([]);
+    const [receiptsLoading, setReceiptsLoading] = useState(false);
+    const [receiptsInvoiceContext, setReceiptsInvoiceContext] = useState(null);
     const [modalPaymentDate, setModalPaymentDate] = useState(new Date().toISOString().split('T')[0]);
     const [modalPaymentAmount, setModalPaymentAmount] = useState(0);
     const [modalPaymentRef, setModalPaymentRef] = useState('');
@@ -1926,6 +1938,167 @@ const SalesInvoice = () => {
     // ✅ PRINT FUNCTIONALITY
     const [isPrinting, setIsPrinting] = useState(false);
 
+    // ------------------------------------------------------------------
+    // QA-038: Receipts history modal — opened from the invoice list row
+    // action. Fetches every receipt tied to this sales invoice from both
+    // sources (sales payments by invoice number, financials receipt vouchers
+    // by salesInvoiceId) and normalizes into a single list. Each row prints
+    // a Receipt Voucher via the existing print template engine, with field
+    // mapping aligned to the receipt voucher layout.
+    // ------------------------------------------------------------------
+    const handleViewReceipts = async (invoice) => {
+        if (!invoice) return;
+        setReceiptsInvoiceContext(invoice);
+        setReceiptsForInvoice([]);
+        setIsReceiptsModalOpen(true);
+        setReceiptsLoading(true);
+        try {
+            const [salesPayments, allReceiptVouchers] = await Promise.all([
+                getSalesPaymentsByInvoice(invoice.invoiceNumber).catch(() => []),
+                receiptVoucherApi.getAll().catch(() => [])
+            ]);
+
+            const paymentRows = (salesPayments || []).map((p) => ({
+                key: `sp-${p.id}`,
+                dbId: p.id,
+                source: 'SALES_PAYMENT',
+                sourceLabel: 'Sales Payment',
+                receiptNumber: p.paymentNumber || `RV-SP-${p.id}`,
+                date: p.paymentDate,
+                customerName: p.customerName || invoice.customerName,
+                amount: Number(p.amount || 0),
+                mode: p.paymentMode || 'Cash',
+                reference: p.referenceNumber || '',
+                bankName: p.bankName || '',
+                status: p.status || 'Completed',
+                notes: p.notes || '',
+                raw: p
+            }));
+
+            const rvRows = (allReceiptVouchers || [])
+                .filter((rv) => Number(rv.salesInvoiceId) === Number(invoice.id))
+                .map((rv) => ({
+                    key: `rv-${rv.id}`,
+                    dbId: rv.id,
+                    source: 'RECEIPT_VOUCHER',
+                    sourceLabel: 'Receipt Voucher',
+                    receiptNumber: rv.voucherId || `RV-${rv.id}`,
+                    date: rv.date,
+                    customerName: rv.memberName || invoice.customerName,
+                    amount: Number(rv.amount || 0),
+                    mode: rv.paymentMode || 'Cash',
+                    reference: rv.reference || '',
+                    bankName: '',
+                    status: rv.status || 'Completed',
+                    notes: rv.notes || '',
+                    purpose: rv.purpose,
+                    raw: rv
+                }));
+
+            const merged = [...paymentRows, ...rvRows].sort((a, b) => {
+                const da = a.date ? new Date(a.date).getTime() : 0;
+                const db = b.date ? new Date(b.date).getTime() : 0;
+                return db - da;
+            });
+            setReceiptsForInvoice(merged);
+        } catch (err) {
+            console.error('Failed to load receipts for invoice', err);
+        } finally {
+            setReceiptsLoading(false);
+        }
+    };
+
+    const buildReceiptVoucherPrintData = (receipt, invoice) => {
+        // Map a normalized receipt row → print data shape understood by
+        // generatePrintHtml. We reuse the Sales Invoice template renderer
+        // (there is no dedicated "Receipt Voucher" template category yet)
+        // but override the title and item-row content so the printed output
+        // reads as a Receipt Voucher.
+        const amount = Number(receipt.amount) || 0;
+        const currencyCode = company?.currencySymbol || company?.currency || 'AED';
+        return {
+            title: 'RECEIPT VOUCHER',
+            docNo: receipt.receiptNumber,
+            date: receipt.date,
+            customer: {
+                name: receipt.customerName || invoice?.customerName || '',
+                address: invoice?.customerAddress || '',
+                trn: invoice?.customerTrn || '',
+                phone: invoice?.customerPhone || ''
+            },
+            items: [{
+                name: 'Receipt Against Invoice',
+                description: {
+                    title: 'Receipt Against Invoice',
+                    details: [
+                        `Invoice: ${invoice?.invoiceNumber || '—'}`,
+                        `Mode: ${receipt.mode || 'Cash'}`,
+                        receipt.reference ? `Ref: ${receipt.reference}` : null,
+                        receipt.bankName ? `Bank: ${receipt.bankName}` : null,
+                        receipt.purpose ? `Purpose: ${receipt.purpose}` : null
+                    ].filter(Boolean)
+                },
+                unit: '',
+                qty: 1,
+                price: amount,
+                taxableAmount: amount,
+                taxAmt: 0,
+                taxPercent: 0,
+                total: amount
+            }],
+            totals: {
+                subTotal: amount,
+                tax: 0,
+                grandTotal: amount,
+                currency: currencyCode,
+                billDiscount: 0,
+                billDiscountAmount: 0
+            },
+            summaryAmount: {
+                label: 'Amount Received',
+                value: amount,
+                currency: currencyCode
+            },
+            meta: {
+                status: receipt.status || 'Completed',
+                paymentMode: receipt.mode || '',
+                reference: receipt.reference || '',
+                notes: receipt.notes || ''
+            }
+        };
+    };
+
+    const handlePrintReceipt = async (receipt) => {
+        try {
+            const templates = await getTemplatesByCategory('Sales Invoice');
+            const defaultTemplate = (templates && templates.find((t) => t.isDefault)) || (templates && templates[0]) || {
+                category: 'Sales Invoice',
+                paperSize: 'A4',
+                orientation: 'Portrait',
+                headerContent: '',
+                footerContent: '',
+                termsContent: '',
+                displayOptions: { showLogo: true, showCompanyDetails: true, showCustomerDetails: true, showTerms: false, showItemImage: false },
+                columns: { qty: false, unitPrice: false, taxableAmount: false, tax: false, discount: false, total: true }
+            };
+
+            const printData = buildReceiptVoucherPrintData(receipt, receiptsInvoiceContext);
+            const html = generatePrintHtml(defaultTemplate, printData, { companyProfile: company, billBullLogo });
+
+            const title = generateDocFilename(
+                'Receipt Voucher',
+                receipt.receiptNumber,
+                receipt.customerName || receiptsInvoiceContext?.customerName || '',
+                receipt.date,
+                company?.currencySymbol || company?.currency || ''
+            );
+            const titledHtml = html.replace(/<title>.*?<\/title>/i, `<title>${title}</title>`);
+            printHtml(titledHtml);
+        } catch (err) {
+            console.error('Failed to print receipt voucher', err);
+        }
+    };
+
     const handlePrintClick = async (invoice = null) => {
         const isListView = invoice && invoice.invoiceNumber;
         const dataToPrint = isListView ? invoice : {
@@ -2415,6 +2588,11 @@ const SalesInvoice = () => {
                                                     <div className="flex justify-end gap-2" onClick={(e) => e.stopPropagation()}>
                                                         <button onClick={() => handleLoadInvoice(inv)} className="p-1 hover:bg-slate-200 rounded text-slate-500"><Edit size={14} /></button>
                                                         <button onClick={() => handlePrintClick(inv)} disabled={isPrinting} className="p-1 hover:bg-slate-200 rounded text-slate-500 disabled:opacity-50"><Printer size={14} /></button>
+                                                        <button
+                                                            onClick={() => handleViewReceipts(inv)}
+                                                            className="p-1 hover:bg-indigo-100 rounded text-indigo-600"
+                                                            title="Receipts"
+                                                        ><Receipt size={14} /></button>
                                                         <button
                                                             onClick={() => {
                                                                 handleLoadInvoice(inv);
@@ -3185,6 +3363,149 @@ const SalesInvoice = () => {
                     )}
                 </div>
             </main >
+
+            {/* QA-038: RECEIPTS HISTORY MODAL */}
+            {isReceiptsModalOpen && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-[1px]">
+                    <div className="bg-white w-[820px] max-w-[95vw] max-h-[90vh] rounded-lg shadow-2xl overflow-hidden animate-in zoom-in-95 duration-200 flex flex-col">
+                        <div className="px-6 py-4 border-b border-slate-100 flex justify-between items-start">
+                            <div>
+                                <h3 className="text-lg font-bold text-slate-800 flex items-center gap-2">
+                                    <Receipt size={18} className="text-indigo-600" /> Receipts History
+                                </h3>
+                                <p className="text-xs text-slate-500 mt-1">
+                                    All receipts recorded against invoice{' '}
+                                    <span className="font-bold text-slate-700">{receiptsInvoiceContext?.invoiceNumber}</span>
+                                    {receiptsInvoiceContext?.customerName ? ` — ${receiptsInvoiceContext.customerName}` : ''}
+                                </p>
+                            </div>
+                            <button onClick={() => setIsReceiptsModalOpen(false)} className="text-slate-400 hover:text-slate-600">
+                                <X size={20} />
+                            </button>
+                        </div>
+
+                        <div className="px-6 py-3 grid grid-cols-3 gap-4 bg-slate-50 border-b border-slate-100">
+                            <div className="text-xs">
+                                <p className="text-[10px] font-bold uppercase text-slate-400">Invoice Total</p>
+                                <p className="font-bold text-slate-700">
+                                    <CurrencyAmount value={receiptsInvoiceContext?.invoiceTotal || 0} currency={invoiceCurrency} />
+                                </p>
+                            </div>
+                            <div className="text-xs">
+                                <p className="text-[10px] font-bold uppercase text-slate-400">Receipts Total</p>
+                                <p className="font-bold text-emerald-600">
+                                    <CurrencyAmount
+                                        value={receiptsForInvoice.reduce((s, r) => s + Number(r.amount || 0), 0)}
+                                        currency={invoiceCurrency}
+                                    />
+                                </p>
+                            </div>
+                            <div className="text-xs">
+                                <p className="text-[10px] font-bold uppercase text-slate-400">Balance</p>
+                                <p className="font-bold text-red-500">
+                                    <CurrencyAmount
+                                        value={Math.max(
+                                            Number(receiptsInvoiceContext?.invoiceTotal || 0) -
+                                                receiptsForInvoice.reduce((s, r) => s + Number(r.amount || 0), 0),
+                                            0
+                                        )}
+                                        currency={invoiceCurrency}
+                                    />
+                                </p>
+                            </div>
+                        </div>
+
+                        <div className="flex-1 overflow-y-auto">
+                            <table className="w-full text-left text-xs">
+                                <thead className="bg-slate-50 text-slate-600 font-semibold border-b border-slate-200 sticky top-0">
+                                    <tr>
+                                        <th className="px-4 py-3">Receipt No</th>
+                                        <th className="px-4 py-3">Date</th>
+                                        <th className="px-4 py-3">Source</th>
+                                        <th className="px-4 py-3 text-right">Amount</th>
+                                        <th className="px-4 py-3">Mode</th>
+                                        <th className="px-4 py-3">Reference</th>
+                                        <th className="px-4 py-3">Status</th>
+                                        <th className="px-4 py-3 text-center">Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody className="divide-y divide-slate-100">
+                                    {receiptsLoading ? (
+                                        <tr>
+                                            <td colSpan="8" className="px-4 py-10 text-center text-slate-400 italic">
+                                                Loading receipts…
+                                            </td>
+                                        </tr>
+                                    ) : receiptsForInvoice.length === 0 ? (
+                                        <tr>
+                                            <td colSpan="8" className="px-4 py-10 text-center text-slate-400 italic">
+                                                No receipts recorded for this invoice yet.
+                                            </td>
+                                        </tr>
+                                    ) : (
+                                        receiptsForInvoice.map((r) => (
+                                            <tr key={r.key} className="hover:bg-slate-50">
+                                                <td className="px-4 py-3">
+                                                    <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-indigo-50 text-indigo-700 rounded border border-indigo-100 font-mono font-medium text-[10px]">
+                                                        <FileText size={10} /> {r.receiptNumber}
+                                                    </span>
+                                                </td>
+                                                <td className="px-4 py-3 text-slate-500">{r.date ? formatDisplayDate(r.date) : '—'}</td>
+                                                <td className="px-4 py-3">
+                                                    <span className={`px-2 py-0.5 rounded text-[10px] font-bold border w-fit ${
+                                                        r.source === 'SALES_PAYMENT'
+                                                            ? 'bg-emerald-50 text-emerald-700 border-emerald-100'
+                                                            : 'bg-indigo-50 text-indigo-700 border-indigo-100'
+                                                    }`}>
+                                                        {r.sourceLabel}
+                                                    </span>
+                                                </td>
+                                                <td className="px-4 py-3 text-right font-bold text-emerald-600">
+                                                    <CurrencyAmount value={r.amount} currency={invoiceCurrency} />
+                                                </td>
+                                                <td className="px-4 py-3 text-slate-600">{r.mode}</td>
+                                                <td className="px-4 py-3 text-slate-500">{r.reference || '—'}</td>
+                                                <td className="px-4 py-3">
+                                                    <span className="px-2 py-0.5 rounded-full text-[10px] font-bold border bg-emerald-50 text-emerald-700 border-emerald-100">
+                                                        {r.status}
+                                                    </span>
+                                                </td>
+                                                <td className="px-4 py-3 text-center">
+                                                    <div className="flex justify-center gap-1">
+                                                        <button
+                                                            onClick={() => handlePrintReceipt(r)}
+                                                            className="p-1.5 border border-slate-200 rounded hover:bg-slate-100 text-slate-500"
+                                                            title="Print Receipt Voucher"
+                                                        >
+                                                            <Printer size={14} />
+                                                        </button>
+                                                        <button
+                                                            onClick={() => handlePrintReceipt(r)}
+                                                            className="p-1.5 border border-slate-200 rounded hover:bg-slate-100 text-slate-500"
+                                                            title="Download (Save as PDF)"
+                                                        >
+                                                            <Download size={14} />
+                                                        </button>
+                                                    </div>
+                                                </td>
+                                            </tr>
+                                        ))
+                                    )}
+                                </tbody>
+                            </table>
+                        </div>
+
+                        <div className="px-6 py-3 bg-slate-50 border-t border-slate-100 flex justify-end">
+                            <button
+                                onClick={() => setIsReceiptsModalOpen(false)}
+                                className="px-4 py-2 bg-white border border-slate-200 rounded-md text-xs font-bold text-slate-600 hover:bg-slate-100"
+                            >
+                                Close
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
 
             {/* ✅ ADDED PAYMENT MODAL */}
             {
