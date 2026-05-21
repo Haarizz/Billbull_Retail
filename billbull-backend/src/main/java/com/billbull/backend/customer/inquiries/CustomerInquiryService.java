@@ -1,10 +1,12 @@
 package com.billbull.backend.customer.inquiries;
 import java.math.BigDecimal;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.Locale;
 import java.util.stream.Collectors;
 
 import org.springframework.stereotype.Service;
@@ -21,6 +23,9 @@ import com.billbull.backend.purchase.stockmovement.StockMovementRepository;
 
 @Service
 public class CustomerInquiryService {
+
+    private static final DateTimeFormatter ACTIVITY_TIME_FORMAT =
+            DateTimeFormatter.ofPattern("dd-MM-yyyy hh:mm:ss a");
 
     private final CustomerInquiryRepository inquiryRepo;
     private final InquiryFollowUpRepository followUpRepo;
@@ -58,10 +63,14 @@ public class CustomerInquiryService {
 
     @Transactional
     public CustomerInquiryResponse create(CustomerInquiryRequestDto req) {
+        LocalDateTime now = LocalDateTime.now();
         CustomerInquiry inquiry = new CustomerInquiry();
+        inquiry.setCustomerId(req.getCustomerId());
+        inquiry.setCustomerCode(req.getCustomerCode());
         inquiry.setCustomer(req.getCustomer());
         inquiry.setMobile(req.getMobile());
         inquiry.setEmail(req.getEmail());
+        inquiry.setAddress(req.getAddress());
         inquiry.setBranch(req.getBranch());
         inquiry.setSource(req.getSource());
         inquiry.setCategory(req.getCategory());
@@ -69,7 +78,9 @@ public class CustomerInquiryService {
         inquiry.setNotes(req.getNotes());
         inquiry.setAssignedTo(req.getAssignedTo());
         inquiry.setStatus("New");
-        inquiry.setCreatedDate(LocalDate.now());
+        inquiry.setCreatedAt(now);
+        inquiry.setUpdatedAt(now);
+        inquiry.setCreatedDate(now.toLocalDate());
 
         inquiryRepo.save(inquiry);
         
@@ -106,9 +117,12 @@ public class CustomerInquiryService {
                 .orElseThrow(() -> new RuntimeException("Inquiry not found"));
 
         // Update basic fields
+        if (req.getCustomerId() != null) inquiry.setCustomerId(req.getCustomerId());
+        if (req.getCustomerCode() != null) inquiry.setCustomerCode(req.getCustomerCode());
         if (req.getCustomer() != null) inquiry.setCustomer(req.getCustomer());
         if (req.getMobile() != null) inquiry.setMobile(req.getMobile());
         if (req.getEmail() != null) inquiry.setEmail(req.getEmail());
+        if (req.getAddress() != null) inquiry.setAddress(req.getAddress());
         if (req.getBranch() != null) inquiry.setBranch(req.getBranch());
         if (req.getSource() != null) inquiry.setSource(req.getSource());
         if (req.getCategory() != null) inquiry.setCategory(req.getCategory());
@@ -129,6 +143,7 @@ public class CustomerInquiryService {
                 .orElseThrow(() -> new RuntimeException("Inquiry not found"));
 
         InquiryFollowUp followUp = new InquiryFollowUp();
+        LocalDateTime now = LocalDateTime.now();
         followUp.setType(req.getType());
         followUp.setSummary(req.getSummary());
         followUp.setNextFollowUpDate(req.getNextFollowUpDate());
@@ -136,6 +151,8 @@ public class CustomerInquiryService {
         followUp.setStatus(req.getStatus());
         followUp.setInquiry(inquiry);
         followUp.setCreatedBy(inquiry.getAssignedTo()); // Set the assigned rep as the creator
+        followUp.setCreatedAt(now);
+        followUp.setUpdatedAt(now);
 
         // Only update inquiry status if provided
         if (req.getStatus() != null && !req.getStatus().isEmpty()) {
@@ -189,9 +206,12 @@ public class CustomerInquiryService {
         res.setConvertedQuotationId(i.getConvertedQuotationId());
         res.setConvertedQuotationNo(i.getConvertedQuotationNo());
         res.setConvertedDate(i.getConvertedDate());
+        res.setCustomerId(i.getCustomerId());
+        res.setCustomerCode(i.getCustomerCode());
         res.setCustomer(i.getCustomer());
         res.setMobile(i.getMobile());
         res.setEmail(i.getEmail());
+        res.setAddress(i.getAddress());
         res.setBranch(i.getBranch());
         res.setSource(i.getSource());
         res.setCategory(i.getCategory());
@@ -212,9 +232,12 @@ public class CustomerInquiryService {
         res.setConvertedQuotationId(i.getConvertedQuotationId());
         res.setConvertedQuotationNo(i.getConvertedQuotationNo());
         res.setConvertedDate(i.getConvertedDate());
+        res.setCustomerId(i.getCustomerId());
+        res.setCustomerCode(i.getCustomerCode());
         res.setCustomer(i.getCustomer());
         res.setMobile(i.getMobile());
         res.setEmail(i.getEmail());
+        res.setAddress(i.getAddress());
         res.setBranch(i.getBranch());
         res.setSource(i.getSource());
         res.setCategory(i.getCategory());
@@ -227,15 +250,22 @@ public class CustomerInquiryService {
 
         // Synthesize Activity Log
         List<ActivityLogEntry> activityLog = new ArrayList<>();
+        String creationText = i.getCustomerCode() != null && !i.getCustomerCode().isBlank()
+                ? "Inquiry created for customer " + i.getCustomerCode()
+                : "Inquiry created";
 
         // 1. Creation Event
         if (i.getCreatedAt() != null) {
-             String time = i.getCreatedAt().format(DateTimeFormatter.ofPattern("M/d/yyyy, h:mm a"));
-             activityLog.add(new ActivityLogEntry("created", "Inquiry created", 
+             String time = formatActivityTime(i.getCreatedAt());
+             activityLog.add(new ActivityLogEntry("created", creationText,
+                     i.getCreatedBy() != null ? i.getCreatedBy() : "System", time));
+        } else if (i.getUpdatedAt() != null) {
+             String time = formatActivityTime(i.getUpdatedAt());
+             activityLog.add(new ActivityLogEntry("created", creationText,
                      i.getCreatedBy() != null ? i.getCreatedBy() : "System", time));
         } else if (i.getCreatedDate() != null) {
-             String time = i.getCreatedDate().format(DateTimeFormatter.ofPattern("M/d/yyyy")) + ", 9:00 AM";
-             activityLog.add(new ActivityLogEntry("created", "Inquiry created", 
+             String time = i.getCreatedDate().format(DateTimeFormatter.ofPattern("dd-MM-yyyy")) + ", time not recorded";
+             activityLog.add(new ActivityLogEntry("created", creationText,
                      i.getAssignedTo() != null ? i.getAssignedTo() : "System", time));
         }
 
@@ -258,9 +288,11 @@ public class CustomerInquiryService {
                 
                 String time = "N/A";
                 if (f.getCreatedAt() != null) {
-                    time = f.getCreatedAt().format(DateTimeFormatter.ofPattern("M/d/yyyy, h:mm a"));
-                } else if (f.getNextFollowUpDate() != null) {
-                     time = f.getNextFollowUpDate().format(DateTimeFormatter.ofPattern("M/d/yyyy")) + ", 12:00 PM";
+                    time = formatActivityTime(f.getCreatedAt());
+                } else if (f.getUpdatedAt() != null) {
+                    time = formatActivityTime(f.getUpdatedAt());
+                } else {
+                    time = "Time not recorded";
                 }
                 
                 activityLog.add(new ActivityLogEntry(type, text, user, time));
@@ -290,6 +322,10 @@ public class CustomerInquiryService {
                 i.getItems().stream().map(this::mapItemToResponse).collect(Collectors.toList()));
 
         return res;
+    }
+
+    private String formatActivityTime(LocalDateTime timestamp) {
+        return timestamp.format(ACTIVITY_TIME_FORMAT).toUpperCase(Locale.ENGLISH);
     }
 
     private InquiryItemResponse mapItemToResponse(InquiryItem item) {
@@ -325,6 +361,7 @@ public class CustomerInquiryService {
 
         BigDecimal stock = stockRepo.getTotalAvailableStock(productId);
         double stockVal = stock != null ? stock.doubleValue() : 0;
+        ir.setAvailableStock(stockVal);
 
         if (stockVal <= 0) ir.setStockStatus("out-stock");
         else if (stockVal < 10) ir.setStockStatus("low-stock");

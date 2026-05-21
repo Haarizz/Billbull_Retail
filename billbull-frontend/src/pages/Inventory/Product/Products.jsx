@@ -42,7 +42,9 @@ import CurrencyAmount, { CurrencySymbol } from '../../../components/CurrencyAmou
 // ==========================================
 
 const PRODUCT_COLUMNS = [
+  { header: 'Photo', key: 'image', width: 12, type: 'image', imageWidth: 48, imageHeight: 48 },
   { header: 'Product', key: 'name', width: 30 },
+  { header: 'Item Description', key: 'description', width: 35 },
   { header: 'Code', key: 'code', width: 15 },
   { header: 'SKU', key: 'sku', width: 15 },
   { header: 'Brand', key: 'brandName', width: 15 },
@@ -51,6 +53,31 @@ const PRODUCT_COLUMNS = [
   { header: 'Retail Price', key: 'retailPrice', width: 15 },
   { header: 'Status', key: 'status', width: 12 }
 ];
+
+const mapProductListItem = (d) => ({
+  id: d.id,
+  code: d.code || '',
+  name: d.name || '',
+  sku: d.sku || '',
+  localName: d.localName,
+  description: d.description || d.shortDesc || '',
+  status: d.status,
+  brandName: d.brandName || '',
+  brand: d.brandId || '',
+  departmentName: d.departmentName || '',
+  department: d.departmentId || '',
+  cost: d.cost ?? 0,
+  retailPrice: d.retailPrice ?? 0,
+  image: d.image ? getImageUrl(d.image) : null,
+  packings: d.packings || [],
+});
+
+const sortProducts = (items, sortBy) => [...items].sort((a, b) => {
+  if (sortBy === "Sort by Name") return (a.name || '').localeCompare(b.name || '');
+  if (sortBy === "Sort by Code") return (a.code || '').localeCompare(b.code || '');
+  if (sortBy === "Sort by Brand") return (a.brandName || '').localeCompare(b.brandName || '');
+  return 0;
+});
 
 // ==========================================
 // 1. DATA CONSTANTS & INITIAL STATE
@@ -1784,6 +1811,7 @@ const Products = () => {
   const [filterBrand, setFilterBrand] = useState("All Brands");
   const [sortBy, setSortBy] = useState("Sort by Name");
   const [loading, setLoading] = useState(false);
+  const [isExporting, setIsExporting] = useState(false);
   const [statusCounts, setStatusCounts] = useState({ active: null, draft: null });
 
   // Pagination state
@@ -1835,16 +1863,20 @@ const Products = () => {
     }
   };
 
+  const getProductListFilterIds = () => ({
+    deptId: filterDepartment !== "All Departments"
+      ? departments.find(d => d.name === filterDepartment)?.id || null
+      : null,
+    brnId: filterBrand !== "All Brands"
+      ? brands.find(b => b.name === filterBrand)?.id || null
+      : null
+  });
+
   const fetchProducts = async (page = 0, search = debouncedSearch) => {
     try {
       setLoading(true);
       // BB-001: Resolve department/brand IDs for server-side filtering
-      const deptId = filterDepartment !== "All Departments"
-        ? departments.find(d => d.name === filterDepartment)?.id || null
-        : null;
-      const brnId = filterBrand !== "All Brands"
-        ? brands.find(b => b.name === filterBrand)?.id || null
-        : null;
+      const { deptId, brnId } = getProductListFilterIds();
       const data = await getProductsList(page, PAGE_SIZE, search, undefined, null, deptId, brnId);
 
       if (!data || !Array.isArray(data.content)) {
@@ -1853,22 +1885,7 @@ const Products = () => {
         return;
       }
 
-      const mapped = data.content.map(d => ({
-        id: d.id,
-        code: d.code,
-        name: d.name,
-        sku: d.sku,
-        localName: d.localName,
-        status: d.status,
-        brandName: d.brandName || '',
-        brand: d.brandId || '',
-        departmentName: d.departmentName || '',
-        department: d.departmentId || '',
-        cost: d.cost ?? 0,
-        retailPrice: d.retailPrice ?? 0,
-        image: d.image ? getImageUrl(d.image) : null,
-        packings: d.packings || [],
-      }));
+      const mapped = data.content.map(mapProductListItem);
       setProducts(mapped);
       setTotalPages(data.totalPages ?? 0);
       setTotalElements(data.totalElements ?? 0);
@@ -1882,6 +1899,52 @@ const Products = () => {
       console.error("Failed to load products", err);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const loadProductsForExport = async () => {
+    const { deptId, brnId } = getProductListFilterIds();
+    const initialSize = Math.max(PAGE_SIZE, totalElements || PAGE_SIZE);
+    let data = await getProductsList(0, initialSize, debouncedSearch, undefined, null, deptId, brnId);
+
+    if (!data || !Array.isArray(data.content)) {
+      throw new Error("Product list export API did not return a valid response.");
+    }
+
+    const exportTotal = data.totalElements ?? data.content.length;
+    if (exportTotal > data.content.length) {
+      data = await getProductsList(0, exportTotal, debouncedSearch, undefined, null, deptId, brnId);
+      if (!data || !Array.isArray(data.content)) {
+        throw new Error("Product list export API did not return a valid full response.");
+      }
+    }
+
+    return sortProducts(data.content.map(mapProductListItem), sortBy);
+  };
+
+  const handleExportExcel = async () => {
+    try {
+      setIsExporting(true);
+      const exportRows = await loadProductsForExport();
+      await exportToExcel(exportRows, PRODUCT_COLUMNS, 'Products');
+    } catch (err) {
+      console.error("Failed to export products to Excel", err);
+      alert(err.response?.data?.message || err.message || "Failed to export products.");
+    } finally {
+      setIsExporting(false);
+    }
+  };
+
+  const handleExportPdf = async () => {
+    try {
+      setIsExporting(true);
+      const exportRows = await loadProductsForExport();
+      await exportToPDF(exportRows, PRODUCT_COLUMNS, 'Products List', 'Products');
+    } catch (err) {
+      console.error("Failed to export products to PDF", err);
+      alert(err.response?.data?.message || err.message || "Failed to export products.");
+    } finally {
+      setIsExporting(false);
     }
   };
 
@@ -2082,12 +2145,7 @@ const Products = () => {
   // BB-001: Dept/brand filtering is now server-side. Client-side only does sort.
   const filteredData = products;
 
-  const sortedData = [...filteredData].sort((a, b) => {
-    if (sortBy === "Sort by Name") return a.name.localeCompare(b.name);
-    if (sortBy === "Sort by Code") return a.code.localeCompare(b.code);
-    if (sortBy === "Sort by Brand") return (a.brandName || '').localeCompare(b.brandName || '');
-    return 0;
-  });
+  const sortedData = sortProducts(filteredData, sortBy);
 
   // BB-001: Build departments list from the API-fetched departments state (not from current page products)
   const uniqueDepartmentsList = ["All Departments", ...departments.map(d => d.name).filter(Boolean).sort()];
@@ -2151,8 +2209,9 @@ const Products = () => {
           </button>
 
           <ExportDropdown
-            onExportExcel={() => exportToExcel(sortedData, PRODUCT_COLUMNS, 'Products')}
-            onExportPdf={() => exportToPDF(sortedData, PRODUCT_COLUMNS, 'Products List', 'Products')}
+            onExportExcel={handleExportExcel}
+            onExportPdf={handleExportPdf}
+            disabled={isExporting}
           />
         </div>
       </div>

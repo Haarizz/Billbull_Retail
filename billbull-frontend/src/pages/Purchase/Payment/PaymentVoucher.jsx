@@ -498,27 +498,22 @@ const PaymentVoucher = () => {
                 title: 'PAYMENT VOUCHER',
                 docNo: voucher.id,
                 date: voucher.date,
+                hideTotalsTable: true,
                 customer: {
                     name: voucher.vendor || 'Unknown Vendor',
                     address: '',
                     trn: ''
                 },
-                items: [
-                    {
-                        code: 'PAYMENT',
-                        desc: `Payment via ${voucher.mode}${voucher.ref !== '—' ? ` (Ref: ${voucher.ref})` : ''}`,
-                        unit: 'LS',
-                        qty: 1,
-                        price: voucher.amountVal,
-                        disc: 0,
-                        tax: 0,
-                        total: voucher.amountVal
-                    }
-                ],
+                items: [],
                 totals: {
                     subTotal: voucher.amountVal,
                     tax: 0,
                     grandTotal: voucher.amountVal,
+                    currency: company?.currencySymbol || company?.currency || 'AED'
+                },
+                summaryAmount: {
+                    label: 'Amount Paid',
+                    value: voucher.amountVal,
                     currency: company?.currencySymbol || company?.currency || 'AED'
                 },
                 meta: {

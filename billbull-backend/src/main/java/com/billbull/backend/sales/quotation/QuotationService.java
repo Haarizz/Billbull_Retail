@@ -4,6 +4,7 @@ import java.io.IOException;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -156,8 +157,13 @@ public class QuotationService {
 
         if (quotation.getId() != null) {
             quotationRepo.findById(quotation.getId()).ifPresent(existing -> {
-                if (existing.getStatus() == QuotationStatus.CONVERTED) {
-                    quotation.setStatus(QuotationStatus.CONVERTED);
+                // Once a quotation has moved into a finalized downstream state
+                // (Converted to SO or Invoiced), edits via the standard
+                // create-or-update endpoint must not silently downgrade the
+                // status — keep whatever finalized status was already there.
+                if (existing.getStatus() == QuotationStatus.CONVERTED
+                        || existing.getStatus() == QuotationStatus.INVOICED) {
+                    quotation.setStatus(existing.getStatus());
                 }
                 if (quotation.getSourceInquiryId() == null) {
                     quotation.setSourceInquiryId(existing.getSourceInquiryId());
@@ -174,10 +180,24 @@ public class QuotationService {
         }
 
         if (quotation.getItems() != null) {
+            // Collect the set of persisted item ids for this quotation. Any incoming
+            // item id that doesn't match a persisted row is a client-side temporary
+            // key (e.g. Date.now()) — null it so Hibernate inserts instead of trying
+            // to merge a phantom row (which throws StaleObjectStateException).
+            final java.util.Set<Long> persistedItemIds = quotation.getId() == null
+                    ? java.util.Collections.emptySet()
+                    : quotationRepo.findById(quotation.getId())
+                            .map(existing -> existing.getItems().stream()
+                                    .map(QuotationItem::getId)
+                                    .filter(java.util.Objects::nonNull)
+                                    .collect(java.util.stream.Collectors.toSet()))
+                            .orElse(java.util.Collections.emptySet());
+
             quotation.getItems().forEach(item -> {
                 item.setQuotation(quotation);
-                if (quotation.getId() == null)
+                if (item.getId() != null && !persistedItemIds.contains(item.getId())) {
                     item.setId(null);
+                }
             });
         }
 
@@ -252,6 +272,13 @@ public class QuotationService {
                             .ifPresent(item::setUnit);
                 }
 
+                if (item.getBrandName() == null && product.getBrand() != null) {
+                    item.setBrandName(product.getBrand().getName());
+                }
+                if (item.getDetailedDesc() == null && product.getDetailedDesc() != null) {
+                    item.setDetailedDesc(product.getDetailedDesc());
+                }
+
                 completeMissingLineAmounts(item);
             });
         }
@@ -300,7 +327,8 @@ public class QuotationService {
 
         if (status == QuotationStatus.PENDING_APPROVAL
                 || status == QuotationStatus.APPROVED
-                || status == QuotationStatus.CONVERTED) {
+                || status == QuotationStatus.CONVERTED
+                || status == QuotationStatus.INVOICED) {
             validateAndCleanQuotationItems(quotation);
         }
 
@@ -344,13 +372,16 @@ public class QuotationService {
                     }
 
                     if (!hasConversionActivity(inquiry, quoteNo)) {
+                        LocalDateTime now = LocalDateTime.now();
                         InquiryFollowUp activity = new InquiryFollowUp();
                         activity.setType("Quotation");
                         activity.setSummary("Inquiry converted to approved quotation " + quoteNo + ".");
                         activity.setStatus("Converted");
-                        activity.setNextFollowUpDate(LocalDate.now());
-                        activity.setNextFollowUpTime(LocalTime.now().withNano(0));
+                        activity.setNextFollowUpDate(now.toLocalDate());
+                        activity.setNextFollowUpTime(now.toLocalTime().withNano(0));
                         activity.setCreatedBy("System");
+                        activity.setCreatedAt(now);
+                        activity.setUpdatedAt(now);
                         activity.setInquiry(inquiry);
                         inquiryFollowUpRepo.save(activity);
                     }
@@ -476,12 +507,15 @@ public class QuotationService {
 
         int expiredCount = 0;
         for (Quotation qtn : expiredList) {
-            // Extra safety to avoid expiring converted ones, though query checks 'APPROVED'
-            // status
-            if (qtn.getStatus() == QuotationStatus.APPROVED) {
+            QuotationStatus current = qtn.getStatus();
+            // Safety: never expire a quotation already finalized downstream.
+            if (current == QuotationStatus.DRAFT
+                    || current == QuotationStatus.PENDING_APPROVAL
+                    || current == QuotationStatus.APPROVED) {
                 qtn.setStatus(QuotationStatus.EXPIRED);
                 quotationRepo.save(qtn);
-                log.info("Quotation {} expired automatically (Valid Till: {})", qtn.getQtnNo(), qtn.getValidTill());
+                log.info("Quotation {} expired automatically (Valid Till: {}, Prev Status: {})",
+                        qtn.getQtnNo(), qtn.getValidTill(), current);
                 expiredCount++;
             }
         }
@@ -507,6 +541,20 @@ public class QuotationService {
                 dto.setRequestedQty(item.getQuantity() != null ? item.getQuantity().intValue() : 0);
                 dto.setAvailableQty(0);
                 dto.setSufficient(true); // Treat free-text as sufficient
+                result.add(dto);
+                continue;
+            }
+
+            // QA-001: SERVICE products carry no inventory — always report as sufficient.
+            com.billbull.backend.inventory.product.Product product =
+                    productRepo.findByCodeAndIsActiveTrue(itemCode).orElse(null);
+            if (product != null && product.isService()) {
+                QuotationStockCheckDTO dto = new QuotationStockCheckDTO();
+                dto.setItemCode(itemCode);
+                dto.setItemName(item.getDescription());
+                dto.setRequestedQty(item.getQuantity() != null ? item.getQuantity().intValue() : 0);
+                dto.setAvailableQty(Integer.MAX_VALUE);
+                dto.setSufficient(true);
                 result.add(dto);
                 continue;
             }
@@ -758,5 +806,35 @@ public class QuotationService {
         quotation.getItems().size();
         quotation.getAttachments().size();
         quotation.getRevisions().size();
+        // QA-001: enrich each line with its product's type so the frontend can
+        // short-circuit stock validation for SERVICE items on reload.
+        enrichProductTypes(quotation);
+    }
+
+    private void enrichProductTypes(Quotation quotation) {
+        if (quotation == null || quotation.getItems() == null) return;
+        java.util.List<String> codes = quotation.getItems().stream()
+                .map(QuotationItem::getItemCode)
+                .filter(c -> c != null && !c.isBlank())
+                .distinct()
+                .toList();
+        if (codes.isEmpty()) return;
+        java.util.Map<String, com.billbull.backend.inventory.product.Product> productByCode = new java.util.HashMap<>();
+        for (String code : codes) {
+            productRepo.findByCodeAndIsActiveTrue(code)
+                    .ifPresent(p -> productByCode.put(code, p));
+        }
+        quotation.getItems().forEach(i -> {
+            com.billbull.backend.inventory.product.Product p = productByCode.get(i.getItemCode());
+            if (p == null) return;
+            if (p.getProductType() != null) i.setProductType(p.getProductType().name());
+            // Service products are never batch-controlled (no inventory). For
+            // stock products, mirror the master's batch/FEFO/min-expiry flags so
+            // the SO conversion preserves batch-selection requirements.
+            boolean isService = p.isService();
+            i.setBatchControlled(!isService && p.isBatch());
+            i.setFefoEnabled(p.isFefoEnabled());
+            i.setMinExpiryDaysForSale(p.getMinExpiryDaysForSale());
+        });
     }
 }

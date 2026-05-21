@@ -101,6 +101,26 @@ const DEFAULT_TEMPLATE_FIELDS = {
     expiryDate: true
 };
 
+const FIELD_ALIASES = {
+    productName: 'name',
+    itemName: 'name',
+    productCode: 'itemCode',
+    item_code: 'itemCode',
+    code: 'itemCode',
+    brand: 'brandName',
+    batch: 'batchNumber',
+    batchNo: 'batchNumber',
+    batchBarcode: 'batchNumber',
+    expiry: 'expiryDate',
+    expDate: 'expiryDate',
+    sellingPrice: 'price',
+    retailPrice: 'price',
+    uom: 'unit',
+    unitName: 'unit'
+};
+
+const toBooleanFlag = (value) => value === true || value === 'true' || value === 1 || value === '1';
+
 const parseTemplateFields = (fields) => {
     if (!fields) return {};
     if (typeof fields === 'object') return fields;
@@ -121,10 +141,32 @@ const clampContentScale = (value) => {
     return Math.round(clamped * 100) / 100;
 };
 
-const normalizeTemplateFields = (fields) => ({
-    ...DEFAULT_TEMPLATE_FIELDS,
-    ...parseTemplateFields(fields)
-});
+const normalizeTemplateFields = (fields) => {
+    const parsed = parseTemplateFields(fields);
+    const normalized = { ...DEFAULT_TEMPLATE_FIELDS };
+
+    Object.entries(FIELD_ALIASES).forEach(([sourceKey, targetKey]) => {
+        if (
+            Object.prototype.hasOwnProperty.call(parsed, sourceKey) &&
+            !Object.prototype.hasOwnProperty.call(parsed, targetKey)
+        ) {
+            normalized[targetKey] = toBooleanFlag(parsed[sourceKey]);
+        }
+    });
+
+    Object.entries(parsed).forEach(([key, value]) => {
+        if (key.startsWith('_')) {
+            normalized[key] = value;
+            return;
+        }
+
+        if (Object.prototype.hasOwnProperty.call(DEFAULT_TEMPLATE_FIELDS, key)) {
+            normalized[key] = toBooleanFlag(value);
+        }
+    });
+
+    return normalized;
+};
 
 const getTemplateContentScale = (template) => {
     const fields = parseTemplateFields(template?.fields);
@@ -137,12 +179,44 @@ const getTemplateContentScale = (template) => {
 };
 
 const countEnabledFields = (fields) => (
-    Object.entries(parseTemplateFields(fields))
+    Object.entries(normalizeTemplateFields(fields))
         .filter(([key, value]) => !key.startsWith('_') && value === true)
         .length
 );
 
-const toBooleanFlag = (value) => value === true || value === 'true' || value === 1 || value === '1';
+const getTemplateDescription = (template) => (
+    template?.description || template?.desc || 'Custom barcode label'
+);
+
+const isSystemTemplate = (template) => (
+    Boolean(template?.isSystem ?? template?.system)
+);
+
+const getTemplateSystemKey = (template) => (
+    template?.systemKey || (typeof template?.id === 'string' ? template.id : null)
+);
+
+const normalizeBarcodeTemplateForUi = (template) => {
+    const fields = normalizeTemplateFields(template?.fields);
+
+    return {
+        ...template,
+        description: getTemplateDescription(template),
+        desc: getTemplateDescription(template),
+        fields,
+        contentScale: getTemplateContentScale({ ...template, fields }),
+        width: Number(template?.width) || 40,
+        height: Number(template?.height) || 25,
+        perPage: Number(template?.perPage) || 1,
+        barcodeFormat: template?.barcodeFormat || 'CODE128',
+        isSystem: isSystemTemplate(template),
+        systemKey: getTemplateSystemKey(template)
+    };
+};
+
+const buildTemplateCopyName = (name = 'Template') => (
+    name.endsWith(' (Copy)') ? name : `${name} (Copy)`
+);
 
 const formatCurrencyAmount = (value, decimals = 2) => {
     const numericValue = Number(value);
@@ -359,7 +433,7 @@ const BarcodePrinter = () => {
     });
 
     // Template Manager State
-    const [templates, setTemplates] = useState(TEMPLATES);
+    const [templates, setTemplates] = useState(TEMPLATES.map(normalizeBarcodeTemplateForUi));
     const [showTemplateManager, setShowTemplateManager] = useState(false);
     const [managerTab, setManagerTab] = useState('browse'); // 'browse' | 'create'
     const [editingTemplate, setEditingTemplate] = useState({
@@ -374,23 +448,32 @@ const BarcodePrinter = () => {
         fields: { ...DEFAULT_TEMPLATE_FIELDS }
     });
 
-    const handleEditTemplate = (template) => {
-        // System templates have string ids (e.g. 'dual_standard_70x50') and aren't persisted.
-        // Editing one means cloning into a new DB-backed template — null the id and rename.
-        const isSystemSeed = typeof template.id === 'string';
-        const baseTemplate = isSystemSeed
-            ? { ...template, id: null, name: `${template.name} (Copy)` }
-            : { ...template };
-        const fields = normalizeTemplateFields(template.fields);
+    const handleEditTemplate = (template, { copy = false } = {}) => {
+        const normalizedTemplate = normalizeBarcodeTemplateForUi(template);
+        const isFrontendFallbackTemplate = typeof normalizedTemplate.id === 'string';
+        const fields = normalizeTemplateFields(normalizedTemplate.fields);
+        const description = getTemplateDescription(normalizedTemplate);
+        const baseTemplate = {
+            ...normalizedTemplate,
+            id: copy || isFrontendFallbackTemplate ? null : normalizedTemplate.id,
+            name: copy ? buildTemplateCopyName(normalizedTemplate.name) : normalizedTemplate.name,
+            description,
+            desc: description,
+            isSystem: copy ? false : normalizedTemplate.isSystem
+        };
 
         setEditingTemplate({
             ...baseTemplate,
-            barcodeFormat: template.barcodeFormat || 'CODE128',
-            contentScale: getTemplateContentScale({ ...template, fields }),
+            barcodeFormat: normalizedTemplate.barcodeFormat || 'CODE128',
+            contentScale: getTemplateContentScale({ ...normalizedTemplate, fields }),
             fields
         });
         setManagerTab('create');
         setShowTemplateManager(true);
+    };
+
+    const handleCopyTemplate = (template) => {
+        handleEditTemplate(template, { copy: true });
     };
 
     const handleCreateNew = () => {
@@ -428,24 +511,22 @@ const BarcodePrinter = () => {
     const loadTemplates = async () => {
         try {
             const apiTemplates = await getBarcodeTemplates();
-            const parsed = (apiTemplates || []).map(t => {
-                const fields = normalizeTemplateFields(t.fields);
+            const parsed = (apiTemplates || []).map(normalizeBarcodeTemplateForUi);
+            const fallbackTemplates = TEMPLATES.map(normalizeBarcodeTemplateForUi);
+            const hasPersistedSystemTemplates = parsed.some(t => t.isSystem);
+            const nextTemplates = hasPersistedSystemTemplates
+                ? parsed
+                : [...fallbackTemplates, ...parsed];
 
-                return {
-                    ...t,
-                    desc: t.description || t.desc || 'Custom barcode label',
-                    fields,
-                    contentScale: getTemplateContentScale({ ...t, fields }),
-                    width: Number(t.width),
-                    height: Number(t.height),
-                    perPage: Number(t.perPage),
-                    isSystem: false
-                };
+            setTemplates(nextTemplates);
+            setSelectedTemplate(prev => {
+                if (nextTemplates.some(t => t.id === prev)) return prev;
+                const persistedSystemMatch = nextTemplates.find(t => t.systemKey === prev);
+                return persistedSystemMatch?.id ?? nextTemplates[0]?.id ?? prev;
             });
-            setTemplates([...TEMPLATES, ...parsed]);
         } catch (e) {
             console.error("Failed to load templates", e);
-            setTemplates(TEMPLATES);
+            setTemplates(TEMPLATES.map(normalizeBarcodeTemplateForUi));
         }
     };
 
@@ -456,7 +537,6 @@ const BarcodePrinter = () => {
         try {
             await deleteBarcodeTemplate(id);
             await loadTemplates();
-            if (selectedTemplate === id) setSelectedTemplate('dual_standard_70x50');
         } catch (e) {
             console.error("Failed to delete", e);
             alert("Failed to delete template");
@@ -475,7 +555,7 @@ const BarcodePrinter = () => {
             // (createdAt/updatedAt/createdBy/updatedBy/active) so Jackson doesn't trip on them.
             const payload = {
                 name: editingTemplate.name,
-                description: editingTemplate.description || '',
+                description: editingTemplate.description || editingTemplate.desc || '',
                 type: editingTemplate.type || 'Roll',
                 width: Number(editingTemplate.width),
                 height: Number(editingTemplate.height),
@@ -2316,7 +2396,7 @@ const BarcodePrinter = () => {
                                                                 <span className="text-[10px] px-2 py-0.5 bg-slate-100 rounded text-slate-600 border border-slate-200">{t.type}</span>
                                                             </div>
 
-                                                            <div className="grid grid-cols-2 gap-2 mt-2 pt-3 border-t border-slate-100">
+                                                            <div className="grid grid-cols-3 gap-2 mt-2 pt-3 border-t border-slate-100">
                                                                 <button
                                                                     onClick={() => { setSelectedTemplate(t.id); setShowTemplateManager(false); }}
                                                                     className="py-1.5 rounded-md text-xs font-bold border border-slate-200 hover:bg-slate-50 text-slate-700"
@@ -2327,7 +2407,13 @@ const BarcodePrinter = () => {
                                                                     onClick={() => handleEditTemplate(t)}
                                                                     className="py-1.5 rounded-md text-xs font-bold bg-[#F5C742]/20 text-amber-900 hover:bg-amber-200 flex items-center justify-center gap-1"
                                                                 >
-                                                                    <Layout size={12} /> Copy & Edit
+                                                                    <Layout size={12} /> Edit
+                                                                </button>
+                                                                <button
+                                                                    onClick={() => handleCopyTemplate(t)}
+                                                                    className="py-1.5 rounded-md text-xs font-bold border border-slate-200 hover:bg-slate-50 text-slate-700 flex items-center justify-center gap-1"
+                                                                >
+                                                                    <Plus size={12} /> Copy
                                                                 </button>
                                                             </div>
                                                         </div>
@@ -2550,7 +2636,7 @@ const BarcodePrinter = () => {
                                                             </div>
 
                                                             <div className="bg-[#F5C742]/10 rounded-lg p-3 border border-[#F5C742]/20 text-xs text-amber-900">
-                                                                <strong>Note:</strong> Custom layouts will be saved to your local storage.
+                                                                <strong>Note:</strong> Template layouts are saved to the server and used by preview, browser print, and Zebra print.
                                                             </div>
                                                         </div>
 

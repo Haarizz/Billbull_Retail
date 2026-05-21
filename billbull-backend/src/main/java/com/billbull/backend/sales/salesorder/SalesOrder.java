@@ -25,6 +25,12 @@ public class SalesOrder {
     private String customerName;
 
     private String linkedQuotation;
+    /**
+     * Revision number of the source quotation at the moment of conversion.
+     * Lets us reconstruct exactly what the customer agreed to, even after the
+     * quotation is subsequently revised. Null when not converted from a quotation.
+     */
+    private Integer linkedQuotationRevision;
     private String linkedProforma;
 
     private Double subTotal;
@@ -113,6 +119,14 @@ public class SalesOrder {
 
     public void setLinkedQuotation(String linkedQuotation) {
         this.linkedQuotation = linkedQuotation;
+    }
+
+    public Integer getLinkedQuotationRevision() {
+        return linkedQuotationRevision;
+    }
+
+    public void setLinkedQuotationRevision(Integer linkedQuotationRevision) {
+        this.linkedQuotationRevision = linkedQuotationRevision;
     }
 
     public String getLinkedProforma() {

@@ -23,6 +23,7 @@ public class InvoiceItemDraft {
     private BigDecimal taxAmount;
     private BigDecimal lineTotal;
     private String remarks;
+    private String detailedDesc;
     private Boolean batchEnabled;
     private List<InvoiceItemBatchDraft> batches;
 
@@ -166,6 +167,14 @@ public class InvoiceItemDraft {
 
     public void setRemarks(String remarks) {
         this.remarks = remarks;
+    }
+
+    public String getDetailedDesc() {
+        return detailedDesc;
+    }
+
+    public void setDetailedDesc(String detailedDesc) {
+        this.detailedDesc = detailedDesc;
     }
 
     public Boolean getBatchEnabled() {

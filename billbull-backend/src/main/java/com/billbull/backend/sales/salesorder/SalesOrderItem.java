@@ -39,6 +39,14 @@ public class SalesOrderItem {
     @Transient
     private String binCode;
 
+    /**
+     * QA-001: not persisted — populated by SalesOrderService.hydrate from the
+     * Product master so the frontend can short-circuit stock checks and the
+     * "Stock & Incoming" side panel for SERVICE items.
+     */
+    @Transient
+    private String productType;
+
     @Transient
     private Boolean batchControlled;
 
@@ -59,6 +67,11 @@ public class SalesOrderItem {
 
     @Transient
     private List<DeliveryBatchSelectionResponse> batchSelections = new ArrayList<>();
+
+    @Transient
+    private String brandName;
+    @Transient
+    private String detailedDesc;
 
     // ✅ LAZY + BACK REFERENCE
     @ManyToOne(fetch = FetchType.LAZY)
@@ -230,6 +243,9 @@ public class SalesOrderItem {
         return batchControlled;
     }
 
+    public String getProductType() { return productType; }
+    public void setProductType(String productType) { this.productType = productType; }
+
     public void setBatchControlled(Boolean batchControlled) {
         this.batchControlled = batchControlled;
     }
@@ -281,6 +297,11 @@ public class SalesOrderItem {
     public void setBatchSelections(List<DeliveryBatchSelectionResponse> batchSelections) {
         this.batchSelections = batchSelections;
     }
+
+    public String getBrandName() { return brandName; }
+    public void setBrandName(String brandName) { this.brandName = brandName; }
+    public String getDetailedDesc() { return detailedDesc; }
+    public void setDetailedDesc(String detailedDesc) { this.detailedDesc = detailedDesc; }
 
     public String getRemarks() {
         return remarks;

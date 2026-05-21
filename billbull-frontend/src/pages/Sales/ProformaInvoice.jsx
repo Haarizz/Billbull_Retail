@@ -1544,7 +1544,7 @@ const ProformaInvoice = () => {
                               </div>
                             </td>
                           </tr>
-                        ) : items.map((item, index) => (
+                        ) : [...items].reverse().map((item, index) => (
                           <React.Fragment key={item.id}>
                             <tr className={`group hover:bg-slate-50/50 transition-colors bg-white align-middle ${isReadOnly ? 'opacity-80' : ''}`}>
                               <td className="p-2 text-center text-slate-400 text-xs font-medium">{index + 1}</td>

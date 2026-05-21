@@ -26,6 +26,9 @@ public class BarcodeTemplate extends BaseEntity {
 
     private boolean isSystem;
 
+    @Column(name = "system_key", unique = true, length = 80)
+    private String systemKey;
+
     @Column(length = 30)
     private String barcodeFormat; // CODE128, EAN13, EAN8, UPC, CODE39, ITF14, etc.
 
@@ -91,6 +94,14 @@ public class BarcodeTemplate extends BaseEntity {
 
     public void setSystem(boolean system) {
         isSystem = system;
+    }
+
+    public String getSystemKey() {
+        return systemKey;
+    }
+
+    public void setSystemKey(String systemKey) {
+        this.systemKey = systemKey;
     }
 
     public String getBarcodeFormat() {

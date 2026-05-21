@@ -6,7 +6,7 @@ import {
   TrendingUp, Target, CheckCircle2, UserPlus,
   ArrowLeft, Save, LayoutGrid, Calendar, Trash2,
   Send, XCircle, FileText, ChevronRight, X,
-  AlertCircle, Package
+  AlertCircle, Package, MapPin
 } from 'lucide-react';
 
 // Import API functions
@@ -20,8 +20,11 @@ import {
 } from '../../api/customerApi';
 import { getEmployees } from '../../api/employeeApi';
 import { getProducts, getProductById } from '../../api/productsApi';
+import { getAllCustomers } from '../../api/customerledgerApi';
 import ProductSelector from '../../components/ProductSelector';
+import CustomerSelector from '../../components/CustomerSelector';
 import CurrencyAmount from '../../components/CurrencyAmount';
+import { getImageUrl } from '../../utils/urlUtils';
 import toast from 'react-hot-toast';
 
 // ==========================================
@@ -53,6 +56,90 @@ const getPrimaryImage = (productData = {}, fallback = '') =>
   productData.product?.image ||
   fallback ||
   '';
+
+const firstPresentNumber = (...values) => {
+  for (const value of values) {
+    if (value === null || value === undefined || value === '') continue;
+    const number = Number(value);
+    if (Number.isFinite(number)) return number;
+  }
+  return 0;
+};
+
+const resolveInquiryItemImage = (item = {}) =>
+  item.primaryImage || item.image || item.imageUrl || '';
+
+const resolveInquiryItemPrice = (item = {}) =>
+  firstPresentNumber(item.price, item.standardPrice, item.retailPrice, item.sellingPrice);
+
+const getInquiryItemAvailableStock = (item = {}) => {
+  for (const value of [item.availableStock, item.stock, item.available]) {
+    if (value === null || value === undefined || value === '') continue;
+    const number = Number(value);
+    if (Number.isFinite(number)) return number;
+  }
+  return null;
+};
+
+const resolveInquiryItemStockStatus = (item = {}) => {
+  if (item.stockStatus) return item.stockStatus;
+  const stock = getInquiryItemAvailableStock(item);
+  if (stock === null) return '';
+  if (stock <= 0) return 'out-stock';
+  if (stock < 10) return 'low-stock';
+  return 'in-stock';
+};
+
+const InquiryItemThumb = ({ item }) => {
+  const image = resolveInquiryItemImage(item);
+  return (
+    <div className="w-12 h-12 rounded-lg border border-slate-200 bg-slate-50 overflow-hidden flex items-center justify-center shrink-0">
+      {image ? (
+        <img src={getImageUrl(image)} alt={item.productName || 'Item'} className="w-full h-full object-cover" />
+      ) : (
+        <Package className="h-5 w-5 text-slate-300" />
+      )}
+    </div>
+  );
+};
+
+const StockStatusBadge = ({ status }) => {
+  if (status === 'in-stock') {
+    return <span className="text-[10px] px-2 py-0.5 bg-emerald-50 text-emerald-600 border border-emerald-100 rounded-full font-medium">In Stock</span>;
+  }
+  if (status === 'low-stock') {
+    return <span className="text-[10px] px-2 py-0.5 bg-orange-50 text-orange-600 border border-orange-100 rounded-full font-medium">Low Stock</span>;
+  }
+  if (status === 'out-stock') {
+    return <span className="text-[10px] px-2 py-0.5 bg-red-50 text-red-600 border border-red-100 rounded-full font-medium">Out of Stock</span>;
+  }
+  return <span className="text-[10px] px-2 py-0.5 bg-slate-100 text-slate-500 border border-slate-200 rounded-full font-medium">Unknown</span>;
+};
+
+const AvailableStockBadge = ({ item }) => {
+  const stock = getInquiryItemAvailableStock(item);
+  const label = stock === null ? 'Stock: --' : `Stock: ${stock}`;
+  return (
+    <span className="text-[10px] px-2 py-0.5 bg-slate-50 text-slate-700 border border-slate-200 rounded-full font-medium">
+      {label}
+    </span>
+  );
+};
+
+const resolveCustomerAddress = (customer = {}) => {
+  const defaultSaved = (customer.savedAddresses || []).find(addr => addr.isDefault) || (customer.savedAddresses || [])[0];
+  if (defaultSaved) {
+    const formatted = [
+      defaultSaved.address1,
+      defaultSaved.address2,
+      defaultSaved.city,
+      defaultSaved.country
+    ].filter(Boolean).join(', ');
+    if (formatted) return formatted;
+  }
+
+  return customer.defaultShippingAddress || customer.shippingAddress || customer.billingAddress || customer.address || '';
+};
 
 const getInquiryStatusBadgeClass = (status) => {
   switch (String(status || '').toLowerCase()) {
@@ -378,6 +465,9 @@ const InquiryList = ({ data, onAddNew, onView, onDelete, onRefresh, isLoading })
                       <td className="px-4 py-3 text-slate-500 font-mono text-xs">{getFormattedId(row)}</td>
                       <td className="px-4 py-3">
                         <div className="font-semibold text-slate-900">{row.customer}</div>
+                        {row.customerCode && (
+                          <div className="text-[11px] text-blue-600 font-semibold mt-0.5">{row.customerCode}</div>
+                        )}
                         <div className="flex gap-1 mt-0.5">
                           {row.tags && row.tags.map(tag => (
                             <span key={tag} className="text-[10px] px-1.5 py-0.5 bg-yellow-50 text-yellow-700 rounded border border-yellow-200 font-medium">{tag}</span>
@@ -475,10 +565,16 @@ const InquiryList = ({ data, onAddNew, onView, onDelete, onRefresh, isLoading })
 
 const CreateInquiry = ({ onBack, onSave, isSaving }) => {
   const [employees, setEmployees] = useState([]); // Employee State for Dropdown
+  const [customers, setCustomers] = useState([]);
+  const [selectedCustomer, setSelectedCustomer] = useState(null);
+  const [isCustomerSelectorOpen, setIsCustomerSelectorOpen] = useState(false);
   const [formData, setFormData] = useState({
+    customerId: null,
+    customerCode: '',
     customer: '',
     mobile: '',
     email: '',
+    address: '',
     branch: '',
     source: '',
     category: '',
@@ -496,8 +592,12 @@ const CreateInquiry = ({ onBack, onSave, isSaving }) => {
   useEffect(() => {
     const fetchInitData = async () => {
       try {
-        const employeesData = await getEmployees();
+        const [employeesData, customersData] = await Promise.all([
+          getEmployees(),
+          getAllCustomers()
+        ]);
         setEmployees(employeesData || []);
+        setCustomers(Array.isArray(customersData) ? customersData : []);
       } catch (error) {
         console.error("Failed to fetch initial data", error);
       }
@@ -505,13 +605,68 @@ const CreateInquiry = ({ onBack, onSave, isSaving }) => {
     fetchInitData();
   }, []);
 
+  const refreshCustomers = async () => {
+    try {
+      const customersData = await getAllCustomers();
+      setCustomers(Array.isArray(customersData) ? customersData : []);
+    } catch (error) {
+      console.error("Failed to refresh customers", error);
+      toast.error("Failed to refresh customers.");
+    }
+  };
+
+  const handleCustomerSelect = (customer) => {
+    const address = resolveCustomerAddress(customer);
+    setSelectedCustomer(customer);
+    setFormData(prev => ({
+      ...prev,
+      customerId: customer.id || null,
+      customerCode: customer.code || '',
+      customer: customer.name || '',
+      mobile: customer.mobile || customer.phone || '',
+      email: customer.email || '',
+      address
+    }));
+  };
+
+  const clearSelectedCustomer = () => {
+    setSelectedCustomer(null);
+    setFormData(prev => ({
+      ...prev,
+      customerId: null,
+      customerCode: ''
+    }));
+  };
+
   const handleProductSelect = (product) => {
     setFormData(prev => {
       const existingIdx = prev.items.findIndex(item => item.productId === product.id);
+      const price = firstPresentNumber(product.retailPrice, product.sellingPrice, product.price);
+      const image = resolveInquiryItemImage(product);
+      const unit = product.unitName || product.unit || product.defaultUnit || 'PCS';
+      const stock = getInquiryItemAvailableStock(product);
+      const stockStatus = resolveInquiryItemStockStatus({ ...product, stock });
 
       if (existingIdx >= 0) {
         const updatedItems = [...prev.items];
         updatedItems[existingIdx].quantity += 1;
+        updatedItems[existingIdx] = {
+          ...updatedItems[existingIdx],
+          productCode: updatedItems[existingIdx].productCode || product.code || product.itemCode || '',
+          itemCode: updatedItems[existingIdx].itemCode || product.code || product.itemCode || '',
+          barcode: updatedItems[existingIdx].barcode || product.barcode || product.itemBarcode || '',
+          image: updatedItems[existingIdx].image || image,
+          primaryImage: updatedItems[existingIdx].primaryImage || image,
+          price: updatedItems[existingIdx].price || price,
+          standardPrice: updatedItems[existingIdx].standardPrice || price,
+          unit: updatedItems[existingIdx].unit || unit,
+          sku: updatedItems[existingIdx].sku || product.sku || '',
+          category: updatedItems[existingIdx].category || product.category || product.departmentName || '',
+          stock,
+          availableStock: stock,
+          stockStatus,
+          description: updatedItems[existingIdx].description || product.description || product.shortDesc || ''
+        };
         return { ...prev, items: updatedItems };
       } else {
         const newItem = {
@@ -519,10 +674,19 @@ const CreateInquiry = ({ onBack, onSave, isSaving }) => {
           productCode: product.code || product.itemCode || '',
           itemCode: product.code || product.itemCode || '',
           barcode: product.barcode || product.itemBarcode || '',
-          image: product.primaryImage || product.image || product.imageUrl || '',
+          image,
+          primaryImage: image,
           productName: product.name,
+          description: product.description || product.shortDesc || '',
+          sku: product.sku || '',
+          category: product.category || product.departmentName || '',
+          unit,
+          stock,
+          availableStock: stock,
+          stockStatus,
           quantity: 1,
-          price: product.retailPrice || product.sellingPrice || 0
+          price,
+          standardPrice: price
         };
         return { ...prev, items: [...prev.items, newItem] };
       }
@@ -539,6 +703,17 @@ const CreateInquiry = ({ onBack, onSave, isSaving }) => {
     });
   };
 
+  const handleItemPriceChange = (index, value) => {
+    const newPrice = parseFloat(value);
+    if (isNaN(newPrice) || newPrice < 0) return;
+    setFormData(prev => {
+      const updatedItems = [...prev.items];
+      updatedItems[index].price = newPrice;
+      updatedItems[index].standardPrice = newPrice;
+      return { ...prev, items: updatedItems };
+    });
+  };
+
   const removeItem = (index) => {
     setFormData(prev => ({
       ...prev,
@@ -548,6 +723,11 @@ const CreateInquiry = ({ onBack, onSave, isSaving }) => {
 
   const handleChange = (e) => {
     const { name, value } = e.target;
+    if (name === 'customer' && selectedCustomer && value !== selectedCustomer.name) {
+      setSelectedCustomer(null);
+      setFormData(prev => ({ ...prev, customerId: null, customerCode: '', [name]: value }));
+      return;
+    }
     setFormData(prev => ({ ...prev, [name]: value }));
   };
 
@@ -592,7 +772,31 @@ const CreateInquiry = ({ onBack, onSave, isSaving }) => {
 
           {/* Section 1: Customer Information */}
           <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-8">
-            <h2 className="text-base font-bold text-slate-800 mb-6">Customer Information</h2>
+            <div className="flex items-center justify-between gap-3 mb-6">
+              <h2 className="text-base font-bold text-slate-800">Customer Information</h2>
+              <button
+                type="button"
+                onClick={() => setIsCustomerSelectorOpen(true)}
+                className="inline-flex items-center gap-2 px-3 py-2 border border-slate-200 rounded-lg text-xs font-bold text-slate-700 hover:border-[#F5C742] hover:bg-yellow-50 transition-colors"
+              >
+                <Search size={14} /> Select Existing
+              </button>
+            </div>
+            {selectedCustomer && (
+              <div className="mb-5 flex items-center justify-between gap-3 rounded-lg border border-emerald-100 bg-emerald-50 px-3 py-2 text-xs">
+                <div className="min-w-0">
+                  <span className="font-bold text-emerald-700">Existing customer selected:</span>
+                  <span className="ml-1 text-slate-700">{selectedCustomer.code} - {selectedCustomer.name}</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={clearSelectedCustomer}
+                  className="text-slate-500 hover:text-red-600 font-semibold shrink-0"
+                >
+                  Clear
+                </button>
+              </div>
+            )}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-x-12 gap-y-6">
               <div className="space-y-1.5">
                 <label className="text-xs font-semibold text-slate-700">Customer Name <span className="text-red-500">*</span></label>
@@ -618,6 +822,17 @@ const CreateInquiry = ({ onBack, onSave, isSaving }) => {
                   </select>
                   <ChevronDown className="absolute right-4 top-3.5 h-4 w-4 text-slate-400 pointer-events-none" />
                 </div>
+              </div>
+              <div className="space-y-1.5 md:col-span-2">
+                <label className="text-xs font-semibold text-slate-700">Address</label>
+                <textarea
+                  name="address"
+                  value={formData.address}
+                  onChange={handleChange}
+                  rows={2}
+                  placeholder="Customer address for quotation delivery/shipping"
+                  className="w-full px-4 py-3 rounded-lg border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-[#F5C742]/50 resize-none transition-all placeholder:text-slate-400"
+                />
               </div>
               <div className="space-y-1.5">
                 <label className="text-xs font-semibold text-slate-700">Source of Inquiry <span className="text-red-500">*</span></label>
@@ -699,28 +914,79 @@ const CreateInquiry = ({ onBack, onSave, isSaving }) => {
             <div className="space-y-4">
               {formData.items.length > 0 ? (
                 <div className="border border-slate-100 rounded-lg overflow-hidden">
-                  <table className="w-full text-sm">
+                  <table className="w-full table-fixed text-sm">
                     <thead className="bg-slate-50 text-slate-500 font-medium">
                       <tr>
-                        <th className="px-6 py-3 text-left">Item</th>
-                        <th className="px-6 py-3 text-center w-32">Qty</th>
-                        <th className="px-6 py-3 text-right">Action</th>
+                        <th className="px-3 py-3 text-left w-[29%]">Item</th>
+                        <th className="px-3 py-3 text-left w-[26%]">Details</th>
+                        <th className="px-3 py-3 text-center w-[11%]">Qty</th>
+                        <th className="px-3 py-3 text-right w-[13%]">Price</th>
+                        <th className="px-3 py-3 text-right w-[14%] whitespace-nowrap">Line Total</th>
+                        <th className="px-3 py-3 text-right w-[7%]">Action</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
                       {formData.items.map((item, idx) => (
-                        <tr key={idx}>
-                          <td className="px-6 py-4 text-slate-800 font-medium">{item.productName}</td>
-                          <td className="px-6 py-4 text-center">
+                        <tr key={idx} className="align-middle">
+                          <td className="px-3 py-4">
+                            <div className="flex items-center gap-2 min-w-0">
+                              <InquiryItemThumb item={item} />
+                              <div className="min-w-0">
+                                <div className="text-slate-900 font-bold truncate">{item.productName}</div>
+                                <div className="text-[11px] text-slate-500 truncate">
+                                  {item.itemCode || item.productCode || 'No code'}
+                                  {item.barcode ? ` | ${item.barcode}` : ''}
+                                </div>
+                              </div>
+                            </div>
+                          </td>
+                          <td className="px-3 py-4">
+                            <div className="flex flex-wrap items-center gap-1.5">
+                              <StockStatusBadge status={resolveInquiryItemStockStatus(item)} />
+                              <AvailableStockBadge item={item} />
+                              {item.unit && (
+                                <span className="text-[10px] px-2 py-0.5 bg-blue-50 text-blue-600 border border-blue-100 rounded-full font-medium">
+                                  {item.unit}
+                                </span>
+                              )}
+                              {item.category && (
+                                <span className="text-[10px] px-2 py-0.5 bg-slate-50 text-slate-500 border border-slate-200 rounded-full font-medium">
+                                  {item.category}
+                                </span>
+                              )}
+                            </div>
+                            {item.description && (
+                              <div className="text-[11px] text-slate-500 mt-1 max-w-full truncate">
+                                {item.description}
+                              </div>
+                            )}
+                          </td>
+                          <td className="px-3 py-4 text-center">
                             <input
                               type="number"
                               min="1"
                               value={item.quantity}
                               onChange={(e) => handleItemQtyChange(idx, e.target.value)}
-                              className="w-20 px-2 py-1 text-center border border-slate-200 rounded-md focus:outline-none focus:ring-2 focus:ring-[#F5C742]/50"
+                              className="w-full max-w-16 px-2 py-1 text-center border border-slate-200 rounded-md focus:outline-none focus:ring-2 focus:ring-[#F5C742]/50"
                             />
                           </td>
-                          <td className="px-6 py-4 text-right">
+                          <td className="px-3 py-4 text-right">
+                            <input
+                              type="number"
+                              min="0"
+                              step="0.01"
+                              value={resolveInquiryItemPrice(item)}
+                              onChange={(e) => handleItemPriceChange(idx, e.target.value)}
+                              className="w-full max-w-24 px-2 py-1 text-right border border-slate-200 rounded-md focus:outline-none focus:ring-2 focus:ring-[#F5C742]/50"
+                            />
+                          </td>
+                          <td className="px-3 py-4 text-right font-bold text-slate-800 whitespace-nowrap">
+                            <CurrencyAmount
+                              value={(Number(item.quantity) || 0) * resolveInquiryItemPrice(item)}
+                              className="inline-block whitespace-nowrap tabular-nums"
+                            />
+                          </td>
+                          <td className="px-3 py-4 text-right">
                             <button
                               onClick={() => removeItem(idx)}
                               className="text-red-500 hover:text-red-700 p-1"
@@ -813,6 +1079,14 @@ const CreateInquiry = ({ onBack, onSave, isSaving }) => {
         onClose={() => setIsProductSelectorOpen(false)}
         onSelect={handleProductSelect}
         actionLabel="Add to Inquiry"
+      />
+      <CustomerSelector
+        isOpen={isCustomerSelectorOpen}
+        onClose={() => setIsCustomerSelectorOpen(false)}
+        onSelect={handleCustomerSelect}
+        customers={customers}
+        selectedCode={formData.customerCode}
+        onCustomerCreated={refreshCustomers}
       />
     </div>
   );
@@ -963,9 +1237,12 @@ const ConvertToQuotationModal = ({ isOpen, onClose, inquiry, onSuccess }) => {
           paymentTerms: paymentTerms,
           // Pass customer identifiers explicitly so Quotations.jsx can resolve even
           // when the customer was just created and the master list is still loading.
+          customerId: inquiry.customerId || null,
+          customerCode: inquiry.customerCode || '',
           customerName: inquiry.customer || '',
           customerMobile: inquiry.mobile || '',
-          customerEmail: inquiry.email || ''
+          customerEmail: inquiry.email || '',
+          customerAddress: inquiry.address || ''
         }
       });
       onClose();
@@ -998,7 +1275,16 @@ const ConvertToQuotationModal = ({ isOpen, onClose, inquiry, onSuccess }) => {
             <h4 className="text-sm font-bold text-slate-700 mb-3">Customer Information</h4>
             <div className="bg-blue-50 border border-blue-100 rounded-lg p-3 text-sm">
               <p className="font-semibold text-slate-900">{inquiry.customer}</p>
+              {inquiry.customerCode && (
+                <p className="text-blue-700 text-xs font-semibold mt-1">{inquiry.customerCode}</p>
+              )}
               <p className="text-slate-600 text-xs mt-1">+971 {inquiry.mobile}</p>
+              {inquiry.address && (
+                <p className="text-slate-600 text-xs mt-2 flex items-start gap-1.5">
+                  <MapPin size={12} className="mt-0.5 shrink-0 text-slate-400" />
+                  <span>{inquiry.address}</span>
+                </p>
+              )}
             </div>
           </div>
 
@@ -1280,6 +1566,9 @@ const ViewInquiry = ({ data, onBack, onRefresh }) => {
                 </div>
                 <div>
                   <h4 className="font-bold text-slate-900">{data.customer}</h4>
+                  {data.customerCode && (
+                    <div className="text-[11px] font-semibold text-blue-600 mt-0.5">{data.customerCode}</div>
+                  )}
                   <div className="flex gap-1 mt-1">
                     {data.tags && data.tags.map(tag => (
                       <span key={tag} className="text-[10px] px-1.5 py-0.5 bg-[#F5C742]/10 text-yellow-700 rounded border border-yellow-200 font-medium">{tag}</span>
@@ -1295,6 +1584,12 @@ const ViewInquiry = ({ data, onBack, onRefresh }) => {
                 <div className="flex items-center gap-2 text-slate-600">
                   <Mail className="h-4 w-4 text-slate-400" /> {data.email}
                 </div>
+                {data.address && (
+                  <div className="flex items-start gap-2 text-slate-600">
+                    <MapPin className="h-4 w-4 text-slate-400 mt-0.5 shrink-0" />
+                    <span>{data.address}</span>
+                  </div>
+                )}
               </div>
             </div>
 
@@ -1376,53 +1671,67 @@ const ViewInquiry = ({ data, onBack, onRefresh }) => {
             {/* Requested Items Table */}
             <div className="bg-white rounded-lg shadow-sm border border-slate-200 p-6">
               <h3 className="text-sm font-bold text-slate-800 mb-4">Requested Items</h3>
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm">
+              <div className="overflow-hidden">
+                <table className="w-full table-fixed text-sm">
                   <thead className="bg-gray-50 text-slate-500 font-medium">
                     <tr>
-                      <th className="px-4 py-2 text-left">Item</th>
-                      <th className="px-4 py-2 text-center">Qty</th>
-                      <th className="px-4 py-2 text-center">Status</th>
-                      <th className="px-4 py-2 text-right">Price</th>
-                      <th className="px-4 py-2 text-right">Actions</th>
+                      <th className="px-3 py-2 text-left w-[28%]">Item</th>
+                      <th className="px-3 py-2 text-left w-[20%]">Details</th>
+                      <th className="px-3 py-2 text-center w-[7%]">Qty</th>
+                      <th className="px-3 py-2 text-center w-[12%]">Status</th>
+                      <th className="px-3 py-2 text-right w-[11%]">Price</th>
+                      <th className="px-3 py-2 text-right w-[13%] whitespace-nowrap">Line Total</th>
+                      <th className="px-3 py-2 text-right w-[9%]">Actions</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
                     {data.items && data.items.length > 0 ? (
                       data.items.map((item, idx) => (
                         <tr key={idx} className="hover:bg-slate-50 transition-colors group">
-                          <td className="px-4 py-3 font-medium text-slate-900">{item.productName}</td>
-                          <td className="px-4 py-3 text-center text-slate-600">{item.quantity}</td>
-                          <td className="px-4 py-3 text-center">
-                            {/* Stock Status Badge */}
-                            {item.stockStatus === 'in-stock' && (
-                              <span className="text-[10px] px-2 py-0.5 bg-emerald-50 text-emerald-600 border border-emerald-100 rounded-full font-medium flex items-center justify-center gap-1 w-fit mx-auto">
-                                In Stock
-                              </span>
-                            )}
-                            {item.stockStatus === 'low-stock' && (
-                              <span className="text-[10px] px-2 py-0.5 bg-orange-50 text-orange-600 border border-orange-100 rounded-full font-medium flex items-center justify-center gap-1 w-fit mx-auto">
-                                Low Stock
-                              </span>
-                            )}
-                            {item.stockStatus === 'out-stock' && (
-                              <span className="text-[10px] px-2 py-0.5 bg-red-50 text-red-600 border border-red-100 rounded-full font-medium flex items-center justify-center gap-1 w-fit mx-auto">
-                                Out of Stock
-                              </span>
-                            )}
-                            {!item.stockStatus && (
-                              <span className="text-[10px] px-2 py-0.5 bg-slate-100 text-slate-500 border border-slate-200 rounded-full font-medium w-fit mx-auto block">
-                                Unknown
-                              </span>
-                            )}
+                          <td className="px-3 py-3">
+                            <div className="flex items-center gap-2 min-w-0">
+                              <InquiryItemThumb item={item} />
+                              <div className="min-w-0">
+                                <div className="font-bold text-slate-900 truncate">{item.productName}</div>
+                                <div className="text-[11px] text-slate-500 truncate">
+                                  {item.itemCode || item.productCode || 'No code'}
+                                  {item.barcode ? ` | ${item.barcode}` : ''}
+                                </div>
+                              </div>
+                            </div>
                           </td>
-                          <td className="px-4 py-3 text-right text-slate-600 font-medium">
-                            <CurrencyAmount value={item.standardPrice !== undefined && item.standardPrice !== null ? item.standardPrice : (item.price || 0)} />
+                          <td className="px-3 py-3">
+                            <div className="flex flex-wrap items-center gap-1.5">
+                              {item.standardPrice !== undefined && item.standardPrice !== null && (
+                                <span className="text-[10px] px-2 py-0.5 bg-blue-50 text-blue-600 border border-blue-100 rounded-full font-medium">
+                                  Price list
+                                </span>
+                              )}
+                              <AvailableStockBadge item={item} />
+                              {item.productCode && (
+                                <span className="text-[10px] px-2 py-0.5 bg-slate-50 text-slate-500 border border-slate-200 rounded-full font-medium">
+                                  {item.productCode}
+                                </span>
+                              )}
+                            </div>
                           </td>
-                          <td className="px-4 py-3 text-right">
+                          <td className="px-3 py-3 text-center text-slate-600">{item.quantity}</td>
+                          <td className="px-3 py-3 text-center">
+                            <StockStatusBadge status={resolveInquiryItemStockStatus(item)} />
+                          </td>
+                          <td className="px-3 py-3 text-right text-slate-600 font-medium whitespace-nowrap">
+                            <CurrencyAmount value={resolveInquiryItemPrice(item)} />
+                          </td>
+                          <td className="px-3 py-3 text-right font-bold text-slate-800 whitespace-nowrap">
+                            <CurrencyAmount
+                              value={(Number(item.quantity) || 0) * resolveInquiryItemPrice(item)}
+                              className="inline-block whitespace-nowrap tabular-nums"
+                            />
+                          </td>
+                          <td className="px-3 py-3 text-right">
                             <button
                               onClick={() => setPriceModalProduct(item)}
-                              className="text-xs font-semibold text-blue-600 hover:text-blue-700 hover:underline cursor-pointer"
+                              className="text-xs font-semibold text-blue-600 hover:text-blue-700 hover:underline cursor-pointer whitespace-nowrap"
                             >
                               View Price
                             </button>
@@ -1431,7 +1740,7 @@ const ViewInquiry = ({ data, onBack, onRefresh }) => {
                       ))
                     ) : (
                       <tr>
-                        <td className="px-4 py-3 font-medium text-slate-400 italic text-center" colSpan="5">No items added yet.</td>
+                        <td className="px-4 py-3 font-medium text-slate-400 italic text-center" colSpan="7">No items added yet.</td>
                       </tr>
                     )}
                   </tbody>

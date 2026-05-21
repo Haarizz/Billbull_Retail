@@ -127,7 +127,7 @@ const serializeSalesTemplate = (template) => ({
 const buildSalesPreviewData = (category, companyProfile = {}) => {
     const titles = {
         "Quotation": "QUOTATION",
-        "Sales Invoice": "TAX INVOICE",
+        "Sales Invoice": "SALES INVOICE",
         "Sales Order (SO)": "SALES ORDER",
         "Delivery Note (DO/DN)": "DELIVERY NOTE",
         "Proforma Invoice (PI)": "PROFORMA INVOICE",
@@ -629,6 +629,14 @@ const TemplateDesigner = ({ category, onCancel, onSave, initialData, previewComp
                                 <label className="flex items-center gap-2 cursor-pointer">
                                     <input type="checkbox" checked={columns.barcode} onChange={() => handleColumnChange('barcode')} className="w-4 h-4 text-yellow-500 rounded border-gray-300 focus:ring-yellow-400" />
                                     <span className="text-sm text-gray-700 font-medium">Item Barcode</span>
+                                </label>
+                                <label className="flex items-center gap-2 cursor-pointer">
+                                    <input type="checkbox" checked={!!columns.brand} onChange={() => handleColumnChange('brand')} className="w-4 h-4 text-yellow-500 rounded border-gray-300 focus:ring-yellow-400" />
+                                    <span className="text-sm text-gray-700 font-medium">Brand</span>
+                                </label>
+                                <label className="flex items-center gap-2 cursor-pointer">
+                                    <input type="checkbox" checked={!!columns.detailedDesc} onChange={() => handleColumnChange('detailedDesc')} className="w-4 h-4 text-yellow-500 rounded border-gray-300 focus:ring-yellow-400" />
+                                    <span className="text-sm text-gray-700 font-medium">Detailed Description</span>
                                 </label>
                                 <label className="flex items-center gap-2 cursor-pointer">
                                     <input type="checkbox" checked={columns.arabicName} onChange={() => handleColumnChange('arabicName')} className="w-4 h-4 text-yellow-500 rounded border-gray-300 focus:ring-yellow-400" />

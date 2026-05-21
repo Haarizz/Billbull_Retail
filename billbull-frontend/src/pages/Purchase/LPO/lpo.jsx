@@ -140,13 +140,18 @@ const getStatusColor = (status) => {
     case 'APPROVED': return 'bg-emerald-100 text-emerald-700 border-emerald-200';
     case 'SENT_TO_VENDOR': return 'bg-blue-100 text-blue-700 border-blue-200';
     case 'PARTIALLY_RECEIVED': return 'bg-orange-100 text-orange-700 border-orange-200';
-    case 'COMPLETED': return 'bg-blue-100 text-blue-800 border-blue-200';
+    case 'COMPLETED': return 'bg-teal-100 text-teal-700 border-teal-200';
     case 'PENDING_APPROVAL': return 'bg-yellow-100 text-yellow-700 border-yellow-200';
     case 'REJECTED': return 'bg-red-100 text-red-700 border-red-200';
     case 'CANCELLED': return 'bg-gray-100 text-gray-700 border-gray-200';
     case 'DRAFT': return 'bg-slate-100 text-slate-600 border-slate-200';
     default: return 'bg-slate-100 text-slate-600 border-slate-200';
   }
+};
+
+const getStatusLabel = (status) => {
+  if (status === 'COMPLETED') return 'GRN Converted';
+  return status?.replace(/_/g, ' ') || 'DRAFT';
 };
 
 // Data Mapper: API -> UI Format
@@ -278,7 +283,7 @@ const MobileCard = ({ row, onView, currencyLabel }) => (
         </div>
       </div>
       <span className={`text-[10px] font-bold px-2 py-0.5 rounded border ${row.statusColor}`}>
-        {row.status?.replace(/_/g, ' ') || 'DRAFT'}
+        {getStatusLabel(row.status)}
       </span>
     </div>
 
@@ -304,7 +309,7 @@ const MobileCard = ({ row, onView, currencyLabel }) => (
 // 3. VIEW COMPONENTS
 // ==========================================
 
-const ListView = ({ lpos, processedData, onEdit, onView, onPrint, activeFilter, onApprove, onReject, onStockApprove, onStockReject, onProceedToInvoice, searchQuery, setSearchQuery, sortConfig, requestSort, showFilterPanel, setShowFilterPanel, dateRange, setDateRange, selectedVendor, setSelectedVendor, vendors, currencyLabel }) => {
+const ListView = ({ lpos, processedData, onEdit, onView, onPrint, activeFilter, onApprove, onReject, onStockApprove, onStockReject, onProceedToInvoice, onConvertToGrn, searchQuery, setSearchQuery, sortConfig, requestSort, showFilterPanel, setShowFilterPanel, dateRange, setDateRange, selectedVendor, setSelectedVendor, vendors, currencyLabel }) => {
   const formatDate = (dateString) => {
     if (!dateString) return '-';
     try {
@@ -490,7 +495,7 @@ const ListView = ({ lpos, processedData, onEdit, onView, onPrint, activeFilter, 
                     </td>
                     <td className="px-4 py-3">
                       <span className={`text-[10px] font-semibold px-2.5 py-0.5 rounded border whitespace-nowrap ${row.statusColor}`}>
-                        {row.status?.replace(/_/g, ' ') || 'DRAFT'}
+                        {getStatusLabel(row.status)}
                       </span>
                     </td>
                     <td className="px-4 py-3">
@@ -555,6 +560,17 @@ const ListView = ({ lpos, processedData, onEdit, onView, onPrint, activeFilter, 
                             className="p-1.5 bg-blue-50 hover:bg-blue-100 rounded text-blue-600 hover:text-blue-700 flex items-center gap-1 font-medium text-[10px]"
                           >
                             <FileText className="h-3 w-3" /> Invoice
+                          </button>
+                        )}
+
+                        {/* Convert to GRN — APPROVED / SENT_TO_VENDOR / PARTIALLY_RECEIVED */}
+                        {['APPROVED', 'SENT_TO_VENDOR', 'PARTIALLY_RECEIVED'].includes(row.status) && (
+                          <button
+                            onClick={(e) => { e.stopPropagation(); onConvertToGrn && onConvertToGrn(row.dbId, row.lpoNumber); }}
+                            title="Convert to GRN"
+                            className="p-1.5 bg-green-50 hover:bg-green-100 rounded text-green-700 hover:text-green-800 flex items-center gap-1 font-medium text-[10px]"
+                          >
+                            <PackageCheck className="h-3 w-3" /> GRN
                           </button>
                         )}
 
@@ -827,7 +843,7 @@ const HistoryView = ({ lpos }) => {
                   </td>
                   <td className="px-4 py-3">
                     <span className={`text-[10px] font-semibold px-2.5 py-0.5 rounded border whitespace-nowrap ${row.statusColor || 'bg-slate-100 text-slate-600'}`}>
-                      {row.status?.replace(/_/g, ' ') || 'DRAFT'}
+                      {getStatusLabel(row.status)}
                     </span>
                   </td>
                   <td className="px-4 py-3">
@@ -1699,7 +1715,7 @@ const EditorView = ({ initialData, vendors, warehouses, onSave, onSubmit, onPrin
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-50">
-                  {calculations.calculatedItems.map((item, index) => (
+                  {[...calculations.calculatedItems].reverse().map((item, index) => (
                     <React.Fragment key={item.id}>
                       <tr className="group hover:bg-slate-50">
                         <td className="p-3 text-center text-slate-400 text-xs font-medium">{index + 1}</td>
@@ -2475,6 +2491,10 @@ const LPOList = () => {
     }
   };
 
+  const handleConvertToGrn = (dbId, lpoNumber) => {
+    navigate('/purchases/grn', { state: { fromLpo: { dbId, lpoNumber } } });
+  };
+
   const handleRevertLPO = async (dbId) => {
     try {
       setLoading(true);
@@ -2747,6 +2767,7 @@ const LPOList = () => {
                 onStockApprove={handleInitiateStockApprove}
                 onStockReject={handleInitiateStockReject}
                 onProceedToInvoice={handleProceedToInvoice}
+                onConvertToGrn={handleConvertToGrn}
                 onPrint={handlePrintLPO}
                 searchQuery={searchQuery}
                 setSearchQuery={setSearchQuery}

@@ -1,9 +1,12 @@
 package com.billbull.backend.sales.invoice;
 
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
+import java.time.LocalDate;
 import java.util.List;
 import java.util.Optional;
 
@@ -32,7 +35,9 @@ public interface SalesInvoiceRepository extends JpaRepository<SalesInvoice, Long
          * Returns total outstanding (unpaid) balance for a customer across all
          * non-cancelled invoices. Used by the credit-limit enforcement logic.
          */
-        @Query("SELECT COALESCE(SUM(s.balance), 0) FROM SalesInvoice s WHERE s.customerCode = :customerCode AND s.status NOT IN ('CANCELLED', 'PAID')")
+        @Query("SELECT COALESCE(SUM(s.balance), 0) FROM SalesInvoice s WHERE s.customerCode = :customerCode "
+                        + "AND s.status NOT IN (com.billbull.backend.sales.invoice.SalesInvoiceStatus.CANCELLED, "
+                        + "com.billbull.backend.sales.invoice.SalesInvoiceStatus.PAID)")
         Double findOutstandingBalanceByCustomerCode(
                         @org.springframework.data.repository.query.Param("customerCode") String customerCode);
 
@@ -62,6 +67,48 @@ public interface SalesInvoiceRepository extends JpaRepository<SalesInvoice, Long
                         String itemCode,
                         Long branchId,
                         org.springframework.data.domain.Pageable pageable);
+
+        // --- DASHBOARD AGGREGATE QUERIES ---
+
+        @Query("SELECT si.invoiceDate, SUM(si.invoiceTotal), COUNT(si) FROM SalesInvoice si " +
+               "WHERE si.status <> com.billbull.backend.sales.invoice.SalesInvoiceStatus.CANCELLED " +
+               "AND (:startDate IS NULL OR si.invoiceDate >= :startDate) " +
+               "AND (:endDate IS NULL OR si.invoiceDate < :endDate) " +
+               "GROUP BY si.invoiceDate ORDER BY si.invoiceDate")
+        List<Object[]> findSalesTrend(@Param("startDate") LocalDate startDate,
+                                      @Param("endDate") LocalDate endDate);
+
+        @Query("SELECT COALESCE(si.paymentMode, 'Cash'), SUM(si.invoiceTotal) FROM SalesInvoice si " +
+               "WHERE si.status <> com.billbull.backend.sales.invoice.SalesInvoiceStatus.CANCELLED " +
+               "AND (:startDate IS NULL OR si.invoiceDate >= :startDate) " +
+               "AND (:endDate IS NULL OR si.invoiceDate < :endDate) " +
+               "GROUP BY si.paymentMode")
+        List<Object[]> findPaymentBreakdown(@Param("startDate") LocalDate startDate,
+                                            @Param("endDate") LocalDate endDate);
+
+        @Query("SELECT COALESCE(SUM(si.invoiceTotal), 0), COUNT(si), COALESCE(SUM(si.balance), 0) " +
+               "FROM SalesInvoice si " +
+               "WHERE si.status <> com.billbull.backend.sales.invoice.SalesInvoiceStatus.CANCELLED " +
+               "AND (:startDate IS NULL OR si.invoiceDate >= :startDate) " +
+               "AND (:endDate IS NULL OR si.invoiceDate < :endDate)")
+        Object[] findSalesTotals(@Param("startDate") LocalDate startDate,
+                                 @Param("endDate") LocalDate endDate);
+
+        @Query(value = "SELECT COALESCE(d.name, 'Uncategorized') AS dept_name, SUM(sii.net_amount) AS revenue " +
+                       "FROM sales_invoice_items sii " +
+                       "JOIN sales_invoices si ON si.id = sii.sales_invoice_id " +
+                       "LEFT JOIN products p ON p.code = sii.item_code AND p.is_active = true " +
+                       "LEFT JOIN departments d ON d.id = p.department_id " +
+                       "WHERE si.status <> 'CANCELLED' " +
+                       "AND (:startDate IS NULL OR si.invoice_date >= :startDate) " +
+                       "AND (:endDate IS NULL OR si.invoice_date < :endDate) " +
+                       "GROUP BY d.name ORDER BY revenue DESC LIMIT 4",
+               nativeQuery = true)
+        List<Object[]> findTopDepartments(@Param("startDate") LocalDate startDate,
+                                          @Param("endDate") LocalDate endDate);
+
+        @Query("SELECT si FROM SalesInvoice si ORDER BY si.id DESC")
+        List<SalesInvoice> findRecentForDashboard(Pageable pageable);
 
         // --- RECONCILIATION QUERIES ---
 

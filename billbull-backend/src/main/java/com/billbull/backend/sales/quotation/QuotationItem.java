@@ -13,6 +13,7 @@ import jakarta.persistence.Id;
 import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
 import jakarta.persistence.Table;
+import jakarta.persistence.Transient;
 
 @Entity
 @Table(name = "sales_quotation_items")
@@ -44,6 +45,52 @@ public class QuotationItem {
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "quotation_id", nullable = false)
     private Quotation quotation;
+
+    /**
+     * QA-001: not persisted — populated by QuotationService at read-time from the
+     * Product master so the frontend can short-circuit stock checks for service
+     * lines without an extra round-trip. Stays null when the master row no
+     * longer exists (e.g. archived product).
+     */
+    @Transient
+    private String productType;
+
+    /**
+     * QA-001: transient batch-control hints for the Sales Order conversion flow.
+     * Quotations don't reserve stock, so these flags are NOT persisted on the
+     * quotation row — they're resolved from the Product master at read-time and
+     * shipped to the client. The Sales Order page reads them via
+     * `normalizeOrderItem` so that converted lines remember they need batch
+     * selection.
+     */
+    @Transient
+    private Boolean batchControlled;
+    @Transient
+    private Boolean fefoEnabled;
+    @Transient
+    private Integer minExpiryDaysForSale;
+
+    @Transient
+    private String brandName;
+    @Transient
+    private String detailedDesc;
+
+    public String getProductType() { return productType; }
+    public void setProductType(String productType) { this.productType = productType; }
+
+    public Boolean getBatchControlled() { return batchControlled; }
+    public void setBatchControlled(Boolean batchControlled) { this.batchControlled = batchControlled; }
+
+    public Boolean getFefoEnabled() { return fefoEnabled; }
+    public void setFefoEnabled(Boolean fefoEnabled) { this.fefoEnabled = fefoEnabled; }
+
+    public Integer getMinExpiryDaysForSale() { return minExpiryDaysForSale; }
+    public void setMinExpiryDaysForSale(Integer minExpiryDaysForSale) { this.minExpiryDaysForSale = minExpiryDaysForSale; }
+
+    public String getBrandName() { return brandName; }
+    public void setBrandName(String brandName) { this.brandName = brandName; }
+    public String getDetailedDesc() { return detailedDesc; }
+    public void setDetailedDesc(String detailedDesc) { this.detailedDesc = detailedDesc; }
 
     public QuotationItem() {
     }

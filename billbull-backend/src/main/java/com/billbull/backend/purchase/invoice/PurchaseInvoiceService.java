@@ -943,6 +943,9 @@ public class PurchaseInvoiceService {
                                 .findFirst()
                                 .orElse(null);
                         d.setBarcode(barcode);
+                        if (d.getDetailedDesc() == null && product.getDetailedDesc() != null) {
+                            d.setDetailedDesc(product.getDetailedDesc());
+                        }
                     });
                 }
                 List<BatchMaster> batches = findBatchesForResponse(invoice, i);

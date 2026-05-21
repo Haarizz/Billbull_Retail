@@ -12,6 +12,7 @@ public class InquiryItemResponse {
     private Double quantity;
     private Double price;
     private Double standardPrice;
+    private Double availableStock;
     private String stockStatus;
 
     // Getters & Setters
@@ -101,6 +102,14 @@ public class InquiryItemResponse {
 
     public void setStandardPrice(Double standardPrice) {
         this.standardPrice = standardPrice;
+    }
+
+    public Double getAvailableStock() {
+        return availableStock;
+    }
+
+    public void setAvailableStock(Double availableStock) {
+        this.availableStock = availableStock;
     }
 
     public String getStockStatus() {

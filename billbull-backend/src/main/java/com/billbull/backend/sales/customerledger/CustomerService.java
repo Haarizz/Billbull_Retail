@@ -236,8 +236,12 @@ public class CustomerService {
     }
 
     private void initializeOpeningBalanceAmount(OpeningInvoice invoice) {
-        if (invoice.getOpeningBalanceAmount() != null
-                && invoice.getOpeningBalanceAmount().compareTo(BigDecimal.ZERO) > 0) {
+        BigDecimal outstanding = resolveCurrentOpeningOutstanding(invoice);
+        BigDecimal openingBalanceAmount = invoice.getOpeningBalanceAmount();
+        if (openingBalanceAmount != null
+                && openingBalanceAmount.compareTo(BigDecimal.ZERO) > 0
+                && (outstanding.compareTo(BigDecimal.ZERO) <= 0
+                        || openingBalanceAmount.compareTo(outstanding) <= 0)) {
             return;
         }
 

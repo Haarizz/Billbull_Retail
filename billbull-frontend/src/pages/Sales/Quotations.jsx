@@ -193,6 +193,50 @@ const resolveApiErrorMessage = (error, fallback) => {
     return fallback;
 };
 
+const normalizeIncomingPaymentTerm = (value) => {
+    const normalized = String(value || '').trim().toLowerCase();
+    if (!normalized) return '30 Days';
+    if (['immediate', 'cash', 'cash on delivery'].includes(normalized)) return 'Immediate';
+    if (['net15', 'net 15', '15 days'].includes(normalized)) return '15 Days';
+    if (['net30', 'net 30', '30 days'].includes(normalized)) return '30 Days';
+    if (['net45', 'net 45', '45 days'].includes(normalized)) return '45 Days';
+    if (['net60', 'net 60', '60 days'].includes(normalized)) return '60 Days';
+    return value;
+};
+
+const createInquiryCustomerSnapshot = (inquiry = {}, state = {}) => {
+    const name = state.customerName || inquiry.customer || '';
+    const mobile = state.customerMobile || inquiry.mobile || '';
+    const email = state.customerEmail || inquiry.email || '';
+    const address = state.customerAddress || inquiry.address || '';
+    const code = state.customerCode || inquiry.customerCode || inquiry.inquiryNumber || 'Inquiry';
+    const id = state.customerId || inquiry.customerId || null;
+
+    return {
+        id: id || (inquiry.id ? `inquiry-${inquiry.id}` : 'inquiry-customer'),
+        code,
+        name,
+        mobile,
+        phone: mobile,
+        email,
+        address,
+        defaultShippingAddress: address,
+        shippingAddress: address,
+        groupType: 'Inquiry',
+        creditStatus: 'Good',
+        balance: 0,
+        payTerms: normalizeIncomingPaymentTerm(state.paymentTerms),
+        trn: '',
+        savedAddresses: address ? [{
+            name: 'Inquiry Address',
+            address1: address,
+            city: '',
+            country: '',
+            isDefault: true
+        }] : []
+    };
+};
+
 const renderCurrencyDisplayHtml = (currencyProps = {}) => {
     const currencyConfig = resolveCurrencyDisplayConfig(currencyProps);
     const currencyLabel = currencyConfig.label;
@@ -401,6 +445,7 @@ const Quotations = () => {
     const [currencySearch, setCurrencySearch] = useState('');
 
     const [customer, setCustomer] = useState('');
+    const [inquiryCustomerSnapshot, setInquiryCustomerSnapshot] = useState(null);
     const [isCustomerOpen, setIsCustomerOpen] = useState(false);
     const [isCustomerSearchOpen, setIsCustomerSearchOpen] = useState(false);
 
@@ -568,7 +613,9 @@ const Quotations = () => {
         if (focusedItem && focusedItem.code && focusedItem.isProductSelected) {
             fetchPriceHistoryForFocusedItem(focusedItem.code);
 
-            if (!liveStockMap[focusedItem.code]) {
+            // QA-001: service items have no stock — don't hit the availability API.
+            const isService = (focusedItem.productType || '').toUpperCase() === 'SERVICE';
+            if (!isService && !liveStockMap[focusedItem.code]) {
                 getStockAvailability(focusedItem.code)
                     .then(res => {
                         const locs = res.locations || [];
@@ -581,7 +628,8 @@ const Quotations = () => {
                     }).catch(console.error);
             }
         }
-    }, [focusedRowId]); // Intentionally not including items to avoid loops
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [focusedRowId, items]);
 
     const fetchPriceHistoryForFocusedItem = async (itemCode) => {
         try {
@@ -602,6 +650,9 @@ const Quotations = () => {
             id: data.id,
             qtnNo: data.qtnNo,
             customer: data.customer,
+            customerCode: data.customerCode || '',
+            customerMobile: data.customerMobile || '',
+            customerEmail: data.customerEmail || '',
             date: data.date,
             validTill: data.validTill,
             branchId: data.branchId || null,
@@ -616,7 +667,8 @@ const Quotations = () => {
                 data.status === 'APPROVED' ? 'Approved' :
                     data.status === 'REJECTED' ? 'Rejected' :
                         data.status === 'CONVERTED' ? 'Converted' :
-                            data.status === 'EXPIRED' ? 'Expired' : 'Draft',
+                            data.status === 'INVOICED' ? 'Invoiced' :
+                                data.status === 'EXPIRED' ? 'Expired' : 'Draft',
             currency: data.currency,
             paymentTerm: data.paymentTerms,
             deliveryType: data.deliveryType,
@@ -653,7 +705,16 @@ const Quotations = () => {
                 taxAmt: i.taxAmount,
                 total: i.lineTotal,
                 remarks: i.remarks,
-                isProductSelected: !!i.itemCode
+                isProductSelected: !!i.itemCode,
+                // QA-001: preserve the product-master hints the backend enriches
+                // on the QuotationItem (transient fields). Without these, items
+                // would lose their type on every list-reload — breaking the
+                // stock-check skip for SERVICE items on "Convert to Sales Order".
+                productType: (i.productType || 'STOCK').toUpperCase(),
+                batchControlled: (i.productType || '').toUpperCase() !== 'SERVICE'
+                    && Boolean(i.batchControlled),
+                fefoEnabled: i.fefoEnabled != null ? Boolean(i.fefoEnabled) : true,
+                minExpiryDaysForSale: Number(i.minExpiryDaysForSale) || 0
             }))
         };
     };
@@ -684,6 +745,10 @@ const Quotations = () => {
             const enrichedItems = location.state.items;
             const incomingDiscount = location.state.discount ?? 0;
             const incomingTax = location.state.tax ?? 5;
+            const incomingPaymentTerm = normalizeIncomingPaymentTerm(location.state.paymentTerms);
+            const inquiryCustomerName = location.state.customerName || inquiry.customer || '';
+            const inquiryAddress = location.state.customerAddress || inquiry.address || '';
+            const inquiryCustomer = createInquiryCustomerSnapshot(inquiry, location.state);
 
             // Switch to Create Tab
             setActiveTab('create');
@@ -693,26 +758,23 @@ const Quotations = () => {
                 id: inquiry.id || null,
                 inquiryNumber: inquiry.inquiryNumber || ''
             });
+            setPaymentTerm(incomingPaymentTerm);
+            setShippingAddress(inquiryAddress);
 
-            // Resolve customer using the shared utility (id → code → name → fuzzy),
-            // same approach used by Quotation→Invoice and Quotation→SO conversions.
-            // Also try phone matching as a final fallback for newly added customers
-            // whose name may differ slightly between inquiry and customer master.
-            if (inquiry.customer) {
-                const customerMobile = location.state.customerMobile || inquiry.mobile || '';
-                let matched = resolveCustomer({ customerName: inquiry.customer }, customersList);
-                if (!matched && customerMobile) {
-                    const digits = customerMobile.replace(/\D/g, '');
-                    matched = customersList.find(c =>
-                        c.mobile && c.mobile.replace(/\D/g, '').endsWith(digits.slice(-8))
-                    ) || null;
-                }
+            // Resolve by explicit identity or name only. Phone-only matching can
+            // attach a prospect inquiry to the wrong customer master record.
+            if (inquiryCustomerName) {
+                const matched = resolveCustomer({
+                    customerId: location.state.customerId || inquiry.customerId,
+                    customerCode: location.state.customerCode || inquiry.customerCode,
+                    customerName: inquiryCustomerName
+                }, customersList);
                 if (matched) {
                     setCustomer(`${matched.name} - ${matched.code}`);
+                    setInquiryCustomerSnapshot(null);
                 } else {
-                    // Customer not yet in master list (new/prospect): store raw name.
-                    // The effect re-runs when customersList loads, so the match is retried.
-                    setCustomer(inquiry.customer);
+                    setCustomer(inquiryCustomerName);
+                    setInquiryCustomerSnapshot(inquiryCustomer);
                 }
             }
 
@@ -848,6 +910,14 @@ const Quotations = () => {
         return customersList.find(c => `${c.name} - ${c.code}` === customer);
     }, [customer, customersList]);
 
+    const activeCustomerData = useMemo(() => {
+        if (selectedCustomerData) return selectedCustomerData;
+        if (inquiryCustomerSnapshot && customer === inquiryCustomerSnapshot.name) {
+            return inquiryCustomerSnapshot;
+        }
+        return null;
+    }, [customer, inquiryCustomerSnapshot, selectedCustomerData]);
+
     // ✅ CALCULATE ROW TOTALS - ERP STANDARD FORMULAS
     const calculateRow = (item) => {
         const qty = parseFloat(item.qty) || 0;
@@ -977,6 +1047,8 @@ const Quotations = () => {
             id: Date.now() + Math.random(),
             code: product.code,
             name: product.name || '',
+            brand: product.brandName || product.brand || '',
+            detailedDesc: product.detailedDesc || '',
             barcode: product.barcode || '',
             image: product.primaryImage || product.image || '', // ✅ Set Image URL
             desc: product.description || product.name,
@@ -995,6 +1067,16 @@ const Quotations = () => {
             taxAmt: 0,
             total: 0,
             remarks: product.description || '',
+            // QA-001: carry product type onto the row so stock checks / availability
+            // panel can short-circuit for SERVICE items.
+            productType: (product.productType || 'STOCK').toUpperCase(),
+            // Quotations don't reserve stock themselves, but these hints travel
+            // with the row so that "Convert to Sales Order" / "Proceed to Invoice"
+            // get correct batch-selection state even before the quotation is saved.
+            batchControlled: (product.productType || '').toUpperCase() !== 'SERVICE'
+                && Boolean(product.batchControlled ?? product.isBatch ?? product.batch),
+            fefoEnabled: product.fefoEnabled != null ? Boolean(product.fefoEnabled) : true,
+            minExpiryDaysForSale: Number(product.minExpiryDaysForSale) || 0,
             isProductSelected: true
         };
 
@@ -1016,6 +1098,21 @@ const Quotations = () => {
         setFocusedRowId(newItem.id);
         setHighlightedIndex(0);
 
+        // Fetch price history + stock immediately on product add (don't wait for row click)
+        if (newItem.code) {
+            fetchPriceHistoryForFocusedItem(newItem.code);
+            const isService = (newItem.productType || '').toUpperCase() === 'SERVICE';
+            if (!isService) {
+                getStockAvailability(newItem.code)
+                    .then(res => {
+                        const locs = res.locations || [];
+                        const available = locs.reduce((sum, l) => sum + (l.available || 0), 0);
+                        const reserved = locs.reduce((sum, l) => sum + (l.reserved || 0), 0);
+                        setLiveStockMap(prev => ({ ...prev, [newItem.code]: { available, reserved, data: res } }));
+                    }).catch(console.error);
+            }
+        }
+
         // Focus Qty input after small delay
         setTimeout(() => {
             const qtyInput = document.getElementById(`qty-${newItem.id}`);
@@ -1031,6 +1128,8 @@ const Quotations = () => {
             id: Date.now() + Math.random(),
             code: product.code,
             name: product.name || '',
+            brand: product.brandName || product.brand || '',
+            detailedDesc: product.detailedDesc || '',
             barcode: product.barcode || '',
             image: product.primaryImage || product.image || '',
             desc: product.description || product.name,
@@ -1049,6 +1148,7 @@ const Quotations = () => {
             taxAmt: 0,
             total: 0,
             remarks: product.description || '',
+            productType: (product.productType || 'STOCK').toUpperCase(),
             isProductSelected: true,
         };
         const newItem = calculateRow(rawItem);
@@ -1056,6 +1156,20 @@ const Quotations = () => {
             const isFirstItemEmpty = prev.length === 1 && !prev[0].code && !prev[0].desc;
             return isFirstItemEmpty ? [newItem] : [...prev, newItem];
         });
+        setFocusedRowId(newItem.id);
+        if (newItem.code) {
+            fetchPriceHistoryForFocusedItem(newItem.code);
+            const isService = (newItem.productType || '').toUpperCase() === 'SERVICE';
+            if (!isService) {
+                getStockAvailability(newItem.code)
+                    .then(res => {
+                        const locs = res.locations || [];
+                        const available = locs.reduce((sum, l) => sum + (l.available || 0), 0);
+                        const reserved = locs.reduce((sum, l) => sum + (l.reserved || 0), 0);
+                        setLiveStockMap(prev => ({ ...prev, [newItem.code]: { available, reserved, data: res } }));
+                    }).catch(console.error);
+            }
+        }
     };
 
     // --- STOCK CHECK MODAL LOGIC ---
@@ -1153,6 +1267,9 @@ const Quotations = () => {
             id: editingId,
             qtnNo: editingId ? getQuotationNo() : null,
             customer: customer,
+            customerCode: selectedCustomerData?.code || inquiryCustomerSnapshot?.code || '',
+            customerMobile: selectedCustomerData?.mobile || selectedCustomerData?.phone || inquiryCustomerSnapshot?.mobile || '',
+            customerEmail: selectedCustomerData?.email || inquiryCustomerSnapshot?.email || '',
             date: qtnDate,
             validTill: validTill,
             currency: currency,
@@ -1176,7 +1293,11 @@ const Quotations = () => {
                 targetStatus === 'Approved' ? 'APPROVED' :
                     targetStatus === 'Rejected' ? 'REJECTED' : 'DRAFT',
             items: activeItems.map(i => ({
-                id: typeof i.id === 'string' ? null : i.id,
+                // Only forward persisted DB ids. New rows get client-side keys
+                // like Date.now() / Date.now()+Math.random(), which are >= 1e12 or
+                // non-integer — those must go to the backend as null so Hibernate
+                // inserts them instead of trying to merge a phantom row.
+                id: (typeof i.id === 'number' && Number.isInteger(i.id) && i.id < 1e12) ? i.id : null,
                 itemCode: i.code,
                 barcode: i.barcode, // Pass barcode to backend
                 image: i.image, // Pass image to backend if schema supports it
@@ -1242,6 +1363,8 @@ const Quotations = () => {
             const stockIssues = [];
             for (const item of items) {
                 if (!item.code) continue;
+                // QA-001: service items hold no inventory — skip stock validation.
+                if ((item.productType || '').toUpperCase() === 'SERVICE') continue;
                 try {
                     const stockData = await getStockAvailability(item.code);
                     const locs = stockData?.locations || [];
@@ -1441,6 +1564,7 @@ const Quotations = () => {
 
     const handleSelectCustomer = (cust) => {
         setCustomer(`${cust.name} - ${cust.code}`);
+        setInquiryCustomerSnapshot(null);
         const _defaultAddr = (cust.savedAddresses || []).find(a => a.isDefault);
         const _resolvedAddr = _defaultAddr
             ? [_defaultAddr.address1, _defaultAddr.address2, _defaultAddr.city, _defaultAddr.country].filter(Boolean).join(', ')
@@ -1454,6 +1578,33 @@ const Quotations = () => {
         const allowEdit = mode === 'edit' && canEditQuotation(qtn.status);
         setEditingId(qtn.id);
         setCustomer(qtn.customer);
+        const matchedCustomer = resolveCustomer({
+            customerCode: qtn.customerCode,
+            customerName: qtn.customer
+        }, customersList);
+        setInquiryCustomerSnapshot(matchedCustomer ? null : {
+            id: qtn.id ? `quotation-${qtn.id}-customer` : 'quotation-customer',
+            code: qtn.customerCode || qtn.sourceInquiryNumber || 'Inquiry',
+            name: qtn.customer || '',
+            mobile: qtn.customerMobile || '',
+            phone: qtn.customerMobile || '',
+            email: qtn.customerEmail || '',
+            address: qtn.shippingAddress || '',
+            defaultShippingAddress: qtn.shippingAddress || '',
+            shippingAddress: qtn.shippingAddress || '',
+            groupType: qtn.sourceInquiryNumber ? 'Inquiry' : 'Prospect',
+            creditStatus: 'Good',
+            balance: 0,
+            payTerms: qtn.paymentTerm || '30 Days',
+            trn: '',
+            savedAddresses: qtn.shippingAddress ? [{
+                name: 'Quotation Address',
+                address1: qtn.shippingAddress,
+                city: '',
+                country: '',
+                isDefault: true
+            }] : []
+        });
         setQtnDate(qtn.date);
         setValidTill(qtn.validTill);
         setQuotationBranch({
@@ -1573,7 +1724,7 @@ const Quotations = () => {
         e.stopPropagation();
         closeActionMenu();
         try {
-            await updateQuotationStatus(qtn.id, 'Expired');
+            await updateQuotationStatus(qtn.id, 'EXPIRED');
             setToastMessage('Quotation marked as expired.');
             setToastType('success');
             await refreshData();
@@ -1595,9 +1746,11 @@ const Quotations = () => {
         }
 
         try {
-            await updateQuotationStatus(qtn.id, 'CONVERTED');
-            // Resolve full customer from the master list so the destination form
-            // gets phone/balance/TRN/savedAddresses without relying on a name match.
+            // Do NOT preemptively mark the quotation as CONVERTED here. The
+            // quotation status flips to 'Invoiced' once the invoice is actually
+            // saved (the backend stamps INVOICED via linkedQuotation). If the
+            // user abandons the invoice form, the quotation should remain in
+            // its prior status — not be stranded as Converted.
             const matched = resolveCustomer({ customerName: qtn.customer }, customersList);
             navigate('/sales/invoice', {
                 state: {
@@ -1702,13 +1855,15 @@ const Quotations = () => {
                 title: 'QUOTATION',
                 docNo: qtn.qtnNo,
                 date: qtn.date,
-                customer: { name: qtn.customer, address: '', trn: '' },
+                customer: { name: qtn.customer, address: qtn.shippingAddress || '', trn: '' },
                 items: (qtn.items || []).filter(i => i.code || i.desc).map(i => ({
                     code: i.code,
                     name: i.name || i.productName || '',
                     desc: i.desc || '',
                     remarks: i.remarks || '',
                     sku: i.sku || i.productSku || '',
+                    brand: i.brand || i.brandName || '',
+                    detailedDesc: i.detailedDesc || '',
                     localName: i.localName || i.productLocalName || '',
                     barcode: i.barcode || '',
                     unit: i.unit,
@@ -1796,10 +1951,10 @@ const Quotations = () => {
     const handleProceedToInvoice = async () => {
         if (!editingId) return;
         try {
-            await updateQuotationStatus(editingId, 'CONVERTED');
-            setStatus('Converted');
+            // The quotation will be auto-flipped to 'Invoiced' by the backend
+            // once the invoice is saved (via linkedQuotation). Just hand off the
+            // form data here — no preemptive status change.
             setEditorMode('view');
-            await refreshData();
             navigate('/sales/invoice', {
                 state: {
                     fromQuotation: {
@@ -1829,6 +1984,7 @@ const Quotations = () => {
         setEditorMode('edit');
         setQuotationBranch(createBranchSnapshot());
         setCustomer('');
+        setInquiryCustomerSnapshot(null);
         const walkin = customersList.find(c => c.name.toLowerCase().includes('walkin') || c.name.toLowerCase().includes('walk-in'));
         if (walkin) {
             setCustomer(`${walkin.name} - ${walkin.code}`);
@@ -1868,6 +2024,8 @@ const Quotations = () => {
                 return <span className="text-xs font-bold text-red-600 bg-red-50 border border-red-100 px-2 py-0.5 rounded-full">Rejected</span>;
             case 'Converted':
                 return <span className="text-xs font-bold text-blue-600 bg-blue-50 border border-blue-100 px-2 py-0.5 rounded-full">Converted</span>;
+            case 'Invoiced':
+                return <span className="text-xs font-bold text-indigo-600 bg-indigo-50 border border-indigo-100 px-2 py-0.5 rounded-full">Invoiced</span>;
             case 'Expired':
                 return <span className="text-xs font-bold text-amber-600 bg-amber-50 border border-amber-100 px-2 py-0.5 rounded-full">Expired</span>;
             default:
@@ -1913,7 +2071,9 @@ const Quotations = () => {
                         desc: i.desc || '',
                         remarks: i.remarks || '',
                         sku: i.sku || i.productSku || '',
-                        localName: i.localName || i.productLocalName || '',
+                        brand: i.brand || i.brandName || '',
+                    detailedDesc: i.detailedDesc || '',
+                    localName: i.localName || i.productLocalName || '',
                         barcode: i.barcode || '',
                         salesPerson: '',
                         location: quotationBranch?.location || '',
@@ -2311,6 +2471,9 @@ const Quotations = () => {
                                         <option value="Pending Approval">Pending Approval</option>
                                         <option value="Approved">Approved</option>
                                         <option value="Rejected">Rejected</option>
+                                        <option value="Converted">Converted</option>
+                                        <option value="Invoiced">Invoiced</option>
+                                        <option value="Expired">Expired</option>
                                     </select>
                                     <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={14} />
                                 </div>
@@ -2424,7 +2587,7 @@ const Quotations = () => {
                                                                 )}
 
                                                                 {/* --- Workflow actions --- */}
-                                                                {(qtn.status === 'Draft' || qtn.status === 'Approved' || qtn.status === 'Rejected') && (
+                                                                {(qtn.status === 'Draft' || qtn.status === 'Approved' || qtn.status === 'Rejected' || qtn.status === 'Expired') && (
                                                                     <button onClick={(e) => handleListingRevise(qtn, e)} className="w-full text-left px-4 py-2 hover:bg-slate-50 flex items-center gap-2 text-slate-700">
                                                                         <RotateCcw size={13} /> Revise
                                                                     </button>
@@ -2693,7 +2856,7 @@ const Quotations = () => {
 
                                 {/* 2. Customer + Shipping — unified panel */}
                                 <CustomerShippingPanel
-                                    selectedCustomer={selectedCustomerData}
+                                    selectedCustomer={activeCustomerData}
                                     onOpenCustomerSearch={() => setIsCustomerSearchOpen(true)}
                                     shippingAddress={shippingAddress}
                                     onShippingChange={setShippingAddress}
@@ -2755,7 +2918,7 @@ const Quotations = () => {
                                         </div>
                                         {isPaymentTermOpen && !isViewMode && (
                                             <div className="absolute top-full left-0 w-full bg-white border border-slate-200 rounded-lg shadow-lg z-20 mt-1 overflow-hidden">
-                                                {['Cash', '7 Days', '30 Days', '60 Days', 'Custom'].map(opt => (
+                                                {['Immediate', 'Cash', '7 Days', '15 Days', '30 Days', '45 Days', '60 Days', 'Custom'].map(opt => (
                                                     <div
                                                         key={opt}
                                                         onClick={() => { setPaymentTerm(opt); setIsPaymentTermOpen(false); }}
@@ -2821,7 +2984,7 @@ const Quotations = () => {
                                                             </div>
                                                         </td>
                                                     </tr>
-                                                ) : items.map((item, index) => (
+                                                ) : [...items].reverse().map((item, index) => (
                                                     <React.Fragment key={item.id}>
                                                         <tr className="group hover:bg-slate-50/50 transition-colors bg-white align-middle" onClick={() => setFocusedRowId(item.id)}>
                                                             {/* Index */}
@@ -3074,34 +3237,42 @@ const Quotations = () => {
                                         <Box size={14} className="text-yellow-600" /> Item Availability
                                     </h3>
 
-                                    {focusedRowId && items.find(i => i.id === focusedRowId)?.code ? (
-                                        <div className="space-y-3">
-                                            {(() => {
-                                                const focusedItem = items.find(i => i.id === focusedRowId);
-                                                const stockRes = stockCheckResult.find(s => s.itemCode === focusedItem.code);
-                                                const available = liveStockMap[focusedItem.code]?.available ?? (stockRes ? stockRes.availableQty : (focusedItem.stock || focusedItem.currentStock || 0));
-                                                const requested = Number(focusedItem.qty) || 0;
-                                                const sufficient = available >= requested;
-
-                                                return (
-                                                    <div className={`border rounded p-2 ${sufficient ? "border-emerald-200 bg-emerald-50" : "border-red-200 bg-red-50"}`}>
-                                                        <div className="font-semibold text-xs text-slate-800 truncate">
-                                                            {focusedItem.code}
+                                    {items.some(i => i.code) ? (
+                                        <div className="space-y-2">
+                                            {items.filter(i => i.code).filter((item, idx, arr) => arr.findIndex(x => x.code === item.code) === idx).map(item => {
+                                                if ((item.productType || '').toUpperCase() === 'SERVICE') {
+                                                    return (
+                                                        <div key={item.id} className="border rounded p-2 border-blue-200 bg-blue-50">
+                                                            <div className="font-semibold text-[10px] text-slate-800 truncate">{item.desc || item.code}</div>
+                                                            <div className="text-[9px] text-slate-500">{item.code}</div>
+                                                            <div className="mt-1 text-[10px] font-bold text-blue-700">Service — no stock tracking</div>
                                                         </div>
-                                                        <div className="flex justify-between mt-1 text-[10px] text-slate-600">
+                                                    );
+                                                }
+                                                const stockRes = stockCheckResult.find(s => s.itemCode === item.code);
+                                                const available = liveStockMap[item.code]?.available ?? (stockRes ? stockRes.availableQty : (item.stock || item.currentStock || 0));
+                                                const reserved = liveStockMap[item.code]?.reserved ?? 0;
+                                                const requested = Number(item.qty) || 0;
+                                                const sufficient = available >= requested;
+                                                return (
+                                                    <div key={item.id} className={`border rounded p-2 ${sufficient ? 'border-emerald-200 bg-emerald-50' : 'border-red-200 bg-red-50'}`}>
+                                                        <div className="font-semibold text-[10px] text-slate-800 truncate">{item.desc || item.code}</div>
+                                                        <div className="text-[9px] text-slate-500 mb-1">{item.code}</div>
+                                                        <div className="flex justify-between text-[10px] text-slate-600">
                                                             <span>Req: {requested}</span>
                                                             <span>Avail: <span className="font-bold">{available}</span></span>
                                                         </div>
-                                                        <div className={`mt-1 text-[10px] font-bold ${sufficient ? "text-emerald-600" : "text-red-600"}`}>
-                                                            {sufficient ? "✅ In Stock" : "❌ Insufficient"}
+                                                        {reserved > 0 && <div className="text-[9px] text-orange-500 mt-0.5">Reserved: {reserved}</div>}
+                                                        <div className={`mt-1 text-[10px] font-bold ${sufficient ? 'text-emerald-600' : 'text-red-600'}`}>
+                                                            {sufficient ? '✅ In Stock' : '❌ Insufficient'}
                                                         </div>
                                                     </div>
                                                 );
-                                            })()}
+                                            })}
                                         </div>
                                     ) : (
                                         <div className="text-[10px] text-slate-400 text-center mt-4">
-                                            Select an item row to check stock.
+                                            Add items to check stock.
                                         </div>
                                     )}
                                 </div>
@@ -3331,8 +3502,8 @@ const Quotations = () => {
                 {
                     isRevisionsOpen && (
                         <>
-                            <div className="fixed inset-0 bg-black/20 z-40" onClick={() => setIsRevisionsOpen(false)}></div>
-                            <div className="fixed top-0 left-0 w-80 h-full bg-white border-r border-slate-200 shadow-2xl z-50 animate-in slide-in-from-left duration-300">
+                            <div className="fixed inset-0 bg-black/20 z-[90]" onClick={() => setIsRevisionsOpen(false)}></div>
+                            <div className="fixed top-0 left-0 w-80 h-full bg-white border-r border-slate-200 shadow-2xl z-[100] animate-in slide-in-from-left duration-300">
                                 <div className="p-4 border-b border-slate-100 flex justify-between items-center">
                                     <h3 className="font-bold text-slate-800">Revision & Follow-up History</h3>
                                     <button onClick={() => setIsRevisionsOpen(false)}><X size={18} className="text-slate-400" /></button>
@@ -3387,7 +3558,7 @@ const Quotations = () => {
                 {/* --- REVISE MODAL --- */}
                 {
                     isReviseModalOpen && (
-                        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+                        <div className="fixed inset-0 z-[110] flex items-center justify-center bg-black/50 p-4">
                             <div className="bg-white rounded-lg shadow-xl w-full max-w-md">
                                 <div className="p-4 border-b border-slate-100 flex justify-between items-center">
                                     <h3 className="font-bold text-slate-800">Revise Quotation & Log Follow-up</h3>
@@ -3498,8 +3669,48 @@ const Quotations = () => {
                 />
 
                 {/* --- COMPARE REVISIONS MODAL --- */}
-                {
-                    compareRevision && (
+                {(() => {
+                    if (!compareRevision) return null;
+                    // Compute a row-by-row diff so each side can be color-coded:
+                    //   added   = present in current, missing from revision (green, left)
+                    //   removed = present in revision, missing from current (red,  right)
+                    //   changed = both sides, but qty/price/disc/tax/foc differ      (amber)
+                    //   unchanged = identical numeric fields (neutral)
+                    const numeric = (v) => parseFloat(v) || 0;
+                    const keyOf = (it) => (it.itemCode || it.code || it.description || it.desc || '').trim().toLowerCase();
+                    const sigOf = (qty, price, disc, tax, foc) =>
+                        `${numeric(qty)}|${numeric(price)}|${numeric(disc)}|${numeric(tax)}|${numeric(foc)}`;
+                    const revIndex = new Map();
+                    (compareRevision.items || []).forEach(it => {
+                        revIndex.set(keyOf(it), sigOf(it.quantity ?? it.qty, it.price, it.discount ?? it.disc, it.taxRate ?? it.tax, it.foc));
+                    });
+                    const curIndex = new Map();
+                    items.forEach(it => {
+                        curIndex.set(keyOf(it), sigOf(it.qty, it.price, it.disc, it.tax, it.foc));
+                    });
+                    const statusOnLeft = (it) => {
+                        const k = keyOf(it);
+                        if (!revIndex.has(k)) return 'added';
+                        return revIndex.get(k) === curIndex.get(k) ? 'unchanged' : 'changed';
+                    };
+                    const statusOnRight = (it) => {
+                        const k = keyOf(it);
+                        if (!curIndex.has(k)) return 'removed';
+                        return curIndex.get(k) === revIndex.get(k) ? 'unchanged' : 'changed';
+                    };
+                    const tint = {
+                        added:     'border-emerald-300 bg-emerald-50',
+                        removed:   'border-red-300 bg-red-50',
+                        changed:   'border-amber-300 bg-amber-50',
+                        unchanged: 'border-slate-100 bg-slate-50'
+                    };
+                    const tag = {
+                        added:     <span className="text-[9px] font-bold uppercase px-1.5 py-0.5 rounded bg-emerald-600 text-white">Added</span>,
+                        removed:   <span className="text-[9px] font-bold uppercase px-1.5 py-0.5 rounded bg-red-600 text-white">Removed</span>,
+                        changed:   <span className="text-[9px] font-bold uppercase px-1.5 py-0.5 rounded bg-amber-500 text-white">Changed</span>,
+                        unchanged: null
+                    };
+                    return (
                         <div className="fixed inset-0 z-[120] flex items-center justify-center bg-black/60 p-4 md:p-6 backdrop-blur-sm animate-in fade-in duration-200">
                             <div className="bg-slate-50 flex flex-col w-full h-full max-w-7xl max-h-[90vh] rounded-xl shadow-2xl overflow-hidden shadow-black/20 border border-slate-200">
 
@@ -3512,6 +3723,12 @@ const Quotations = () => {
                                         <p className="text-xs font-semibold text-slate-500 mt-0.5">
                                             Comparing current draft/version against <span className="text-blue-600 bg-blue-50 px-1 py-0.5 rounded">{compareRevision.qtnNoDisplay}</span>
                                         </p>
+                                        <div className="flex gap-3 mt-2 text-[10px]">
+                                            <span className="inline-flex items-center gap-1"><span className="w-2.5 h-2.5 rounded bg-emerald-300 border border-emerald-400"></span>Added</span>
+                                            <span className="inline-flex items-center gap-1"><span className="w-2.5 h-2.5 rounded bg-red-300 border border-red-400"></span>Removed</span>
+                                            <span className="inline-flex items-center gap-1"><span className="w-2.5 h-2.5 rounded bg-amber-300 border border-amber-400"></span>Changed</span>
+                                            <span className="inline-flex items-center gap-1"><span className="w-2.5 h-2.5 rounded bg-slate-200 border border-slate-300"></span>Unchanged</span>
+                                        </div>
                                     </div>
                                     <button
                                         onClick={() => setCompareRevision(null)}
@@ -3533,11 +3750,14 @@ const Quotations = () => {
                                             {renderStatusBadge(status)}
                                         </div>
                                         <div className="flex-1 overflow-y-auto p-4 space-y-3">
-                                            {items.map((item, idx) => (
-                                                <div key={`curr-${item.id}`} className="p-3 rounded-lg border border-slate-100 bg-slate-50 hover:bg-slate-100/50 transition-colors">
+                                            {items.map((item, idx) => {
+                                                const st = statusOnLeft(item);
+                                                return (
+                                                <div key={`curr-${item.id}`} className={`p-3 rounded-lg border transition-colors ${tint[st]}`}>
                                                     <div className="flex justify-between items-start mb-2">
-                                                        <div className="font-bold text-slate-700 text-sm">
-                                                            {idx + 1}. {item.desc || item.name || 'Unnamed Item'}
+                                                        <div className="font-bold text-slate-700 text-sm flex items-center gap-2">
+                                                            <span>{idx + 1}. {item.desc || item.name || 'Unnamed Item'}</span>
+                                                            {tag[st]}
                                                         </div>
                                                         <CurrencyAmount value={item.total || 0} {...displayCurrencyProps} className="font-black text-slate-800 text-sm" />
                                                     </div>
@@ -3553,7 +3773,8 @@ const Quotations = () => {
                                                         </div>
                                                     </div>
                                                 </div>
-                                            ))}
+                                                );
+                                            })}
                                         </div>
                                         <div className="p-4 bg-slate-50 border-t border-slate-200 shrink-0">
                                             <div className="flex justify-between items-center font-black text-lg text-slate-800">
@@ -3587,11 +3808,14 @@ const Quotations = () => {
                                             )}
 
                                             {compareRevision.items && compareRevision.items.length > 0 ? (
-                                                compareRevision.items.map((item, idx) => (
-                                                    <div key={`rev-item-${idx}`} className="p-3 rounded-lg border border-slate-200/60 bg-white hover:border-blue-200/80 transition-colors shadow-sm">
+                                                compareRevision.items.map((item, idx) => {
+                                                    const st = statusOnRight(item);
+                                                    return (
+                                                    <div key={`rev-item-${idx}`} className={`p-3 rounded-lg border transition-colors shadow-sm ${tint[st]}`}>
                                                         <div className="flex justify-between items-start mb-2">
-                                                            <div className="font-bold text-slate-700 text-sm">
-                                                                {idx + 1}. {item.description || item.desc || item.name || 'Unnamed Item'}
+                                                            <div className="font-bold text-slate-700 text-sm flex items-center gap-2">
+                                                                <span>{idx + 1}. {item.description || item.desc || item.name || 'Unnamed Item'}</span>
+                                                                {tag[st]}
                                                             </div>
                                                             <CurrencyAmount
                                                                 value={parseFloat(item.lineTotal || item.total) || 0}
@@ -3611,7 +3835,8 @@ const Quotations = () => {
                                                             </div>
                                                         </div>
                                                     </div>
-                                                ))
+                                                    );
+                                                })
                                             ) : (
                                                 <div className="text-center p-8 text-slate-400 text-sm">No items found in this revision snapshot.</div>
                                             )}
@@ -3627,8 +3852,8 @@ const Quotations = () => {
                                 </div>
                             </div>
                         </div>
-                    )
-                }
+                    );
+                })()}
 
             </main >
         </div >

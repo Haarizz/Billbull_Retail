@@ -5,9 +5,12 @@ import java.util.List;
 
 public class CustomerInquiryRequestDto {
 
+    private Long customerId;
+    private String customerCode;
     private String customer;
     private String mobile;
     private String email;
+    private String address;
     private String branch;
     private String source;
     private String category;
@@ -21,6 +24,22 @@ public class CustomerInquiryRequestDto {
     private List<InquiryItemRequest> items;
 
     // Getters & Setters
+    public Long getCustomerId() {
+        return customerId;
+    }
+
+    public void setCustomerId(Long customerId) {
+        this.customerId = customerId;
+    }
+
+    public String getCustomerCode() {
+        return customerCode;
+    }
+
+    public void setCustomerCode(String customerCode) {
+        this.customerCode = customerCode;
+    }
+
     public String getCustomer() {
         return customer;
     }
@@ -43,6 +62,14 @@ public class CustomerInquiryRequestDto {
 
     public void setEmail(String email) {
         this.email = email;
+    }
+
+    public String getAddress() {
+        return address;
+    }
+
+    public void setAddress(String address) {
+        this.address = address;
     }
 
     public String getBranch() {

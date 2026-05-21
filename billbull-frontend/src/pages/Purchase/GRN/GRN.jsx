@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import {
   ArrowLeft,
   Upload,
@@ -584,6 +584,8 @@ const EditorView = ({ initialData, onSaveDraft, onSubmitQC, onPost, onPrint, grn
   const [vendors, setVendors] = useState([]);
   const [warehouses, setWarehouses] = useState([]);
   const [selectedVendorDetails, setSelectedVendorDetails] = useState(null);
+  const [qcPhotos, setQcPhotos] = useState([]); // [{ name, previewUrl, file }]
+  const qcPhotoInputRef = useRef(null);
 
   // FIX 1: Single source of status truth, remove qcStatus and posted
   const [formData, setFormData] = useState({
@@ -598,7 +600,10 @@ const EditorView = ({ initialData, onSaveDraft, onSubmitQC, onPost, onPrint, grn
     zoneId: null,
     locatorId: null,
     binId: null,
-    status: GRN_STATUS.DRAFT
+    status: GRN_STATUS.DRAFT,
+    receivedBy: '',
+    checkedBy: '',
+    packageCount: ''
   });
 
   const [isVendorSearchOpen, setIsVendorSearchOpen] = useState(false);
@@ -749,8 +754,11 @@ const EditorView = ({ initialData, onSaveDraft, onSubmitQC, onPost, onPrint, grn
       const lpo = await getLpoByNumber(lpoNumber);
       setSelectedLpoDetails(lpo);
 
-      // Find vendor from vendors list
-      const vendor = vendors.find(v => v.id === lpo.vendorId || v.name === lpo.vendorName);
+      // Find vendor from vendors list (LpoDetailResponse has no vendorId — match by code then name)
+      const vendor = vendors.find(v =>
+        (lpo.vendorCode && v.code === lpo.vendorCode) ||
+        (lpo.vendorName && v.name === lpo.vendorName)
+      );
 
       // Find warehouse from warehouses list
       const warehouse = warehouses.find(w =>
@@ -851,7 +859,7 @@ const EditorView = ({ initialData, onSaveDraft, onSubmitQC, onPost, onPrint, grn
               batch: Boolean(lpoItem.isBatchTracked || lpoItem.batchTracked)
             };
           })
-          .filter(item => item.received > 0)
+          .filter(item => item.lpoQty > 0)
           .map(item => recalculateItemTotals(item));
 
         setItems(grnItems);
@@ -862,6 +870,7 @@ const EditorView = ({ initialData, onSaveDraft, onSubmitQC, onPost, onPrint, grn
 
     } catch (error) {
       console.error("Failed to fetch LPO details:", error);
+      toast.error("Failed to load LPO details. Please try again.");
       setSelectedLpoDetails(null);
       setFormData(prev => ({
         ...prev,
@@ -881,6 +890,12 @@ const EditorView = ({ initialData, onSaveDraft, onSubmitQC, onPost, onPrint, grn
   useEffect(() => {
     if (!initialData) return;
 
+    // Conversion from LPO list — only LPO number is pre-set; items fetched separately once vendors load
+    if (initialData._fromLpoConvert) {
+      setFormData(prev => ({ ...prev, lpo: initialData.lpo }));
+      return;
+    }
+
     // FIX 6: Use only status from initialData
     setFormData({
       grnNo: initialData.grnNo,
@@ -894,7 +909,10 @@ const EditorView = ({ initialData, onSaveDraft, onSubmitQC, onPost, onPrint, grn
       zoneId: initialData.zoneId,
       locatorId: initialData.locatorId,
       binId: initialData.binId,
-      status: initialData.status // No qcStatus or posted
+      status: initialData.status, // No qcStatus or posted
+      receivedBy: initialData.receivedBy || '',
+      checkedBy: initialData.checkedBy || '',
+      packageCount: initialData.packageCount ?? ''
     });
 
     // Load Cascading Locations
@@ -934,6 +952,12 @@ const EditorView = ({ initialData, onSaveDraft, onSubmitQC, onPost, onPrint, grn
     );
   }, [initialData]);
 
+  // When converting from LPO: auto-fetch LPO details once vendors + warehouses are ready
+  useEffect(() => {
+    if (initialData?._fromLpoConvert && vendors.length > 0 && warehouses.length > 0) {
+      fetchLpoDetails(initialData.lpo);
+    }
+  }, [initialData, vendors, warehouses]);
 
   // Modal State
   const [isBatchModalOpen, setBatchModalOpen] = useState(false);
@@ -1007,6 +1031,30 @@ const EditorView = ({ initialData, onSaveDraft, onSubmitQC, onPost, onPrint, grn
   };
 
   const handleAddSingleProduct = (product) => {
+    // FIX (QA): if the same product is already on the GRN, just increment its
+    // received/accepted count instead of creating a duplicate row. Match by
+    // productId first, then by code/barcode for safety.
+    const existingIdx = items.findIndex(it =>
+      (product.id && it.productId === product.id) ||
+      (product.code && it.code === product.code) ||
+      (product.barcode && it.barcode && it.barcode === product.barcode)
+    );
+    if (existingIdx >= 0) {
+      setItems(prev => prev.map((it, idx) => {
+        if (idx !== existingIdx) return it;
+        const received = (Number(it.received) || 0) + 1;
+        const accepted = (Number(it.accepted) || 0) + 1;
+        const lpoQty = Number(it.lpoQty) || 0;
+        return recalculateItemTotals({
+          ...it,
+          received,
+          accepted,
+          variance: received - lpoQty
+        });
+      }));
+      return;
+    }
+
     const defaultUnit = getDefaultProductUnit(product);
     const unitCost = resolveUnitAmount({
       targetUnit: defaultUnit,
@@ -1047,6 +1095,36 @@ const EditorView = ({ initialData, onSaveDraft, onSubmitQC, onPost, onPrint, grn
     setIsProductSelectionOpen(false);
   };
 
+  // /api/products/by-barcode returns ProductAggregateResponse — a wrapper with
+  // { product, pricing, tax, inventory, primaryImage } — so the GRN row code
+  // (which reads flat .code/.name/.cost/etc.) was getting "undefined" for every
+  // field. Flatten the wrapper to the shape handleAddSingleProduct expects.
+  const flattenAggregateProduct = (raw) => {
+    if (!raw) return raw;
+    if (!raw.product) return raw; // already flat (e.g. came from the product selector)
+    const p = raw.product || {};
+    const inv = raw.inventory || {};
+    const packings = inv.packings || [];
+    return {
+      ...p,
+      id: p.id,
+      code: p.code,
+      name: p.name,
+      description: p.description || p.shortDesc || p.name,
+      barcode: packings.find?.(pk => pk.barcode)?.barcode || p.barcode || '',
+      primaryImage: raw.primaryImage || null,
+      cost: raw.pricing?.cost ?? null,
+      salesPrice: raw.pricing?.retailPrice ?? null,
+      maxDiscount: p.maxDiscount ?? 0,
+      purchaseTax: raw.tax?.purchaseTax ?? raw.tax?.salesTax ?? null,
+      taxRate: raw.tax?.salesTax ?? null,
+      availableUnits: raw.availableUnits,
+      unitConversions: raw.unitConversions,
+      unitPrices: raw.unitPrices,
+      unitCosts: raw.unitCosts,
+    };
+  };
+
   const handleBarcodeScan = async () => {
     const query = scanInput.trim();
     if (!query) return;
@@ -1055,8 +1133,14 @@ const EditorView = ({ initialData, onSaveDraft, onSubmitQC, onPost, onPrint, grn
     try {
       const results = await searchProductByBarcode(query);
       if (results && results.length > 0) {
-        handleAddSingleProduct(results[0]);
-        setScanMessage({ text: `Added: ${results[0].description || results[0].name || results[0].code}`, type: 'success' });
+        const product = flattenAggregateProduct(results[0]);
+        if (!product?.id && !product?.code) {
+          setScanMessage({ text: `Product matched but its master data is incomplete. Check Inventory → Products.`, type: 'error' });
+          return;
+        }
+        handleAddSingleProduct(product);
+        const label = product.description || product.name || product.code;
+        setScanMessage({ text: `Added: ${label}`, type: 'success' });
       } else {
         setScanMessage({ text: `No product found for "${query}". Check the barcode and try again.`, type: 'error' });
       }
@@ -1385,10 +1469,12 @@ const EditorView = ({ initialData, onSaveDraft, onSubmitQC, onPost, onPrint, grn
                   <label className="text-xs font-medium text-slate-500 mb-1 block">LPO No</label>
                   <div className="relative">
                     <SearchableDropdown
-                      options={lpoList.map(lpo => ({
-                        value: lpo.lpoNumber || lpo.id,
-                        label: `${lpo.lpoNumber || lpo.id} - ${lpo.vendorName || lpo.vendor || "Vendor"}`
-                      }))}
+                      options={lpoList
+                        .filter(lpo => ['APPROVED', 'SENT_TO_VENDOR', 'PARTIALLY_RECEIVED'].includes(lpo.status))
+                        .map(lpo => ({
+                          value: lpo.lpoNumber || lpo.id,
+                          label: `${lpo.lpoNumber || lpo.id} - ${lpo.vendorName || lpo.vendor || "Vendor"}`
+                        }))}
                       value={formData.lpo}
                       onChange={handleLpoChange}
                       placeholder="Select LPO"
@@ -1443,19 +1529,19 @@ const EditorView = ({ initialData, onSaveDraft, onSubmitQC, onPost, onPrint, grn
 
               <div>
                 <label className="text-xs font-medium text-slate-500 mb-1 block">Vendor Delivery Note</label>
-                <input type="text" defaultValue="DN-12345" disabled={isLocked} className="w-full text-xs border border-slate-200 rounded p-2 text-slate-700" />
+                <input type="text" placeholder="e.g. DN-00001" disabled={isLocked} className="w-full text-xs border border-slate-200 rounded p-2 text-slate-700" />
               </div>
               <div>
                 <label className="text-xs font-medium text-slate-500 mb-1 block">Vendor Invoice No</label>
-                <input type="text" defaultValue="INV-98765" disabled={isLocked} className="w-full text-xs border border-slate-200 rounded p-2 text-slate-700" />
+                <input type="text" placeholder="e.g. INV-00001" disabled={isLocked} className="w-full text-xs border border-slate-200 rounded p-2 text-slate-700" />
               </div>
               <div>
                 <label className="text-xs font-medium text-slate-500 mb-1 block">Shipment / Container No</label>
-                <input type="text" defaultValue="SHIP-001" disabled={isLocked} className="w-full text-xs border border-slate-200 rounded p-2 text-slate-700" />
+                <input type="text" placeholder="e.g. SHIP-00001" disabled={isLocked} className="w-full text-xs border border-slate-200 rounded p-2 text-slate-700" />
               </div>
               <div>
                 <label className="text-xs font-medium text-slate-500 mb-1 block">Packing List No</label>
-                <input type="text" defaultValue="PL-001" disabled={isLocked} className="w-full text-xs border border-slate-200 rounded p-2 text-slate-700" />
+                <input type="text" placeholder="e.g. PL-00001" disabled={isLocked} className="w-full text-xs border border-slate-200 rounded p-2 text-slate-700" />
               </div>
             </div>
           </div>
@@ -1610,7 +1696,8 @@ const EditorView = ({ initialData, onSaveDraft, onSubmitQC, onPost, onPrint, grn
                 <div className="relative">
                   <input
                     type="text"
-                    defaultValue="Ahmed Khan"
+                    value={formData.receivedBy || ''}
+                    onChange={(e) => setFormData(prev => ({ ...prev, receivedBy: e.target.value }))}
                     disabled={isLocked}
                     className="w-full text-xs border border-slate-200 rounded p-1.5 bg-white text-slate-700"
                     placeholder="Receiver Name"
@@ -1623,20 +1710,30 @@ const EditorView = ({ initialData, onSaveDraft, onSubmitQC, onPost, onPrint, grn
               <div>
                 <label className="text-[10px] text-slate-500 mb-1 block">Checked By</label>
                 <div className="relative">
-                  <select disabled={isLocked} className="w-full text-xs border border-slate-200 rounded p-1.5 bg-white text-slate-700 appearance-none"><option>QC Supervisor</option></select>
-                  <ChevronDown className="absolute right-2 top-2 h-3 w-3 text-slate-400 pointer-events-none" />
+                  <input
+                    type="text"
+                    value={formData.checkedBy || ''}
+                    onChange={(e) => setFormData(prev => ({ ...prev, checkedBy: e.target.value }))}
+                    disabled={isLocked}
+                    className="w-full text-xs border border-slate-200 rounded p-1.5 bg-white text-slate-700"
+                    placeholder="Checker Name"
+                  />
                 </div>
               </div>
               <div>
                 <label className="text-[10px] text-slate-500 mb-1 block">Delivery Mode</label>
-                <div className="relative">
-                  <select disabled={isLocked} className="w-full text-xs border border-slate-200 rounded p-1.5 bg-white text-slate-700 appearance-none"><option>Supplier Delivery</option></select>
-                  <ChevronDown className="absolute right-2 top-2 h-3 w-3 text-slate-400 pointer-events-none" />
-                </div>
+                <input type="text" placeholder="e.g. Supplier Delivery" disabled={isLocked} className="w-full text-xs border border-slate-200 rounded p-1.5 text-slate-700" />
               </div>
               <div>
                 <label className="text-[10px] text-slate-500 mb-1 block">Packages Count</label>
-                <input type="number" defaultValue="12" disabled={isLocked} className="w-full text-xs border border-slate-200 rounded p-1.5 text-slate-700" />
+                <input
+                    type="number"
+                    value={formData.packageCount ?? ''}
+                    onChange={(e) => setFormData(prev => ({ ...prev, packageCount: e.target.value }))}
+                    disabled={isLocked}
+                    className="w-full text-xs border border-slate-200 rounded p-1.5 text-slate-700"
+                    placeholder="0"
+                  />
               </div>
             </div>
           </div>
@@ -1649,7 +1746,7 @@ const EditorView = ({ initialData, onSaveDraft, onSubmitQC, onPost, onPrint, grn
             <div className="space-y-3">
               <div>
                 <label className="text-[10px] text-slate-500 mb-1 block">Vehicle No</label>
-                <input type="text" defaultValue="ABC-1234" disabled={isLocked} className="w-full text-xs border border-slate-200 rounded p-1.5 text-slate-700" />
+                <input type="text" placeholder="e.g. DXB-12345" disabled={isLocked} className="w-full text-xs border border-slate-200 rounded p-1.5 text-slate-700" />
               </div>
               <div>
                 <label className="text-[10px] text-slate-500 mb-1 block">Driver Name</label>
@@ -1657,11 +1754,11 @@ const EditorView = ({ initialData, onSaveDraft, onSubmitQC, onPost, onPrint, grn
               </div>
               <div>
                 <label className="text-[10px] text-slate-500 mb-1 block">Gate Entry No</label>
-                <input type="text" defaultValue="GE-001" disabled={isLocked} className="w-full text-xs border border-slate-200 rounded p-1.5 text-slate-700" />
+                <input type="text" placeholder="e.g. GE-001" disabled={isLocked} className="w-full text-xs border border-slate-200 rounded p-1.5 text-slate-700" />
               </div>
               <div>
                 <label className="text-[10px] text-slate-500 mb-1 block">Dock No</label>
-                <input type="text" defaultValue="DOCK-1" disabled={isLocked} className="w-full text-xs border border-slate-200 rounded p-1.5 text-slate-700" />
+                <input type="text" placeholder="e.g. DOCK-1" disabled={isLocked} className="w-full text-xs border border-slate-200 rounded p-1.5 text-slate-700" />
               </div>
               <div>
                 <label className="text-[10px] text-slate-500 mb-1 block">Additional Notes</label>
@@ -1772,7 +1869,7 @@ const EditorView = ({ initialData, onSaveDraft, onSubmitQC, onPost, onPrint, grn
                 <tbody className="divide-y divide-slate-50">
                   {items.length === 0 ? (
                     <tr><td colSpan="10" className="p-8 text-center text-slate-400">No items added. {grnType === "Against LPO" || grnType === "Against Direct Purchase" ? "Select a document to load items or use Select from Products." : "Click Select from Products to add items."}</td></tr>
-                  ) : items.map((item, index) => (
+                  ) : [...items].reverse().map((item, index) => (
                     <React.Fragment key={item.id}>
                       <tr className="hover:bg-slate-50 group">
                         <td className="p-3 text-center text-slate-400 text-xs font-medium">{index + 1}</td>
@@ -1912,12 +2009,63 @@ const EditorView = ({ initialData, onSaveDraft, onSubmitQC, onPost, onPrint, grn
 
               <div className="mt-4">
                 <label className="text-[10px] font-bold text-slate-400 uppercase mb-1 block">QC Notes</label>
-                <div className="text-xs text-slate-400 italic">Quality inspection notes...</div>
+                <div className="text-xs text-slate-400 italic">Per-row QC notes are captured on each item line.</div>
               </div>
 
-              <button className="w-full mt-3 py-1.5 border border-slate-200 rounded text-xs font-medium text-slate-600 hover:bg-slate-50 flex items-center justify-center gap-1">
-                <Camera className="h-3 w-3" /> Attach Photos
+              <input
+                ref={qcPhotoInputRef}
+                type="file"
+                accept="image/*"
+                multiple
+                className="hidden"
+                onChange={(e) => {
+                  const files = Array.from(e.target.files || []);
+                  if (!files.length) return;
+                  const tooBig = files.find(f => f.size > 5 * 1024 * 1024);
+                  if (tooBig) {
+                    alert(`"${tooBig.name}" exceeds 5 MB. Pick a smaller image.`);
+                    e.target.value = '';
+                    return;
+                  }
+                  const mapped = files.map(file => ({
+                    name: file.name,
+                    previewUrl: URL.createObjectURL(file),
+                    file
+                  }));
+                  setQcPhotos(prev => [...prev, ...mapped]);
+                  e.target.value = '';
+                }}
+              />
+              <button
+                type="button"
+                onClick={() => qcPhotoInputRef.current?.click()}
+                disabled={isLocked}
+                className="w-full mt-3 py-1.5 border border-slate-200 rounded text-xs font-medium text-slate-600 hover:bg-slate-50 flex items-center justify-center gap-1 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                <Camera className="h-3 w-3" /> Attach Photos {qcPhotos.length > 0 && <span className="ml-1 px-1.5 py-0.5 rounded bg-slate-700 text-white text-[10px]">{qcPhotos.length}</span>}
               </button>
+              {qcPhotos.length > 0 && (
+                <div className="mt-2 grid grid-cols-3 gap-1.5">
+                  {qcPhotos.map((photo, i) => (
+                    <div key={`${photo.name}-${i}`} className="relative group aspect-square border border-slate-200 rounded overflow-hidden">
+                      <img src={photo.previewUrl} alt={photo.name} className="w-full h-full object-cover" />
+                      {!isLocked && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setQcPhotos(prev => prev.filter((_, idx) => idx !== i));
+                            URL.revokeObjectURL(photo.previewUrl);
+                          }}
+                          className="absolute top-0.5 right-0.5 bg-red-500/90 text-white rounded-full p-0.5 opacity-0 group-hover:opacity-100 transition-opacity"
+                          title="Remove"
+                        >
+                          <X className="h-3 w-3" />
+                        </button>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
 
@@ -2003,21 +2151,47 @@ const EditorView = ({ initialData, onSaveDraft, onSubmitQC, onPost, onPrint, grn
             </button>
           </div>
 
-          {/* Vendor Score */}
+          {/* Vendor Score — computed from THIS GRN's data, gated until a vendor is picked */}
           <div className="bg-white border border-slate-200 rounded-lg p-4 shadow-sm">
             <div className="flex items-center gap-2 mb-3">
               <Zap className="h-3 w-3 text-slate-400" />
               <h3 className="font-semibold text-sm text-slate-700">Vendor Score</h3>
+              <span className="text-[9px] text-slate-400 ml-auto">This GRN</span>
             </div>
-            <div className="space-y-1 text-xs">
-              <div className="flex justify-between"><span>Delivery Accuracy</span><span className="text-green-600 font-bold">95%</span></div>
-              <div className="flex justify-between"><span>Price Accuracy</span><span className="text-green-600 font-bold">98%</span></div>
-              <div className="flex justify-between"><span>QC Pass Rate</span><span className="text-amber-600 font-bold">92%</span></div>
-            </div>
-            <div className="mt-3 text-center">
-              <div className="flex justify-center text-[#F5C742] text-xs">★★★★☆</div>
-              <span className="text-[9px] text-slate-400">Will update on GRN post</span>
-            </div>
+            {(() => {
+              if (!formData.vendor) {
+                return <div className="text-xs text-slate-400 italic text-center py-2">Select a vendor to see scores.</div>;
+              }
+              if (!items.length || totals.received === 0) {
+                return <div className="text-xs text-slate-400 italic text-center py-2">Add received items to compute scores.</div>;
+              }
+              const deliveryAcc = Math.round((totals.accepted / totals.received) * 100);
+              const itemsWithLpoPrice = items.filter(i => Number(i.lpoPrice) > 0);
+              const priceAcc = itemsWithLpoPrice.length === 0
+                ? null
+                : Math.round((itemsWithLpoPrice.filter(i =>
+                    Math.abs(Number(i.lpoPrice) - Number(i.unitCost)) < 0.01
+                  ).length / itemsWithLpoPrice.length) * 100);
+              const qcPass = Math.round(((totals.received - totals.rejected) / totals.received) * 100);
+              const overall = priceAcc != null
+                ? Math.round((deliveryAcc + priceAcc + qcPass) / 3)
+                : Math.round((deliveryAcc + qcPass) / 2);
+              const stars = Math.max(0, Math.min(5, Math.round(overall / 20)));
+              const colorFor = (v) => v >= 95 ? 'text-green-600' : v >= 85 ? 'text-amber-600' : 'text-red-600';
+              return (
+                <>
+                  <div className="space-y-1 text-xs">
+                    <div className="flex justify-between"><span>Delivery Accuracy</span><span className={`font-bold ${colorFor(deliveryAcc)}`}>{deliveryAcc}%</span></div>
+                    <div className="flex justify-between"><span>Price Accuracy</span><span className={`font-bold ${priceAcc == null ? 'text-slate-400' : colorFor(priceAcc)}`}>{priceAcc == null ? 'N/A' : `${priceAcc}%`}</span></div>
+                    <div className="flex justify-between"><span>QC Pass Rate</span><span className={`font-bold ${colorFor(qcPass)}`}>{qcPass}%</span></div>
+                  </div>
+                  <div className="mt-3 text-center">
+                    <div className="flex justify-center text-[#F5C742] text-xs">{'★'.repeat(stars)}{'☆'.repeat(5 - stars)}</div>
+                    <span className="text-[9px] text-slate-400">Computed from current line data</span>
+                  </div>
+                </>
+              );
+            })()}
           </div>
 
         </div>
@@ -2100,6 +2274,7 @@ const GRN = () => {
   const { company } = useCompany();
   const currencyLabel = resolveCurrencyDisplayCode(company);
   const navigate = useNavigate();
+  const location = useLocation();
   const [activeNavTab, setActiveNavTab] = useState("list");
   const [grns, setGrns] = useState([]);
   const [qcQueue, setQcQueue] = useState([]);
@@ -2127,6 +2302,16 @@ const GRN = () => {
     fetchGrns();
   }, []);
 
+  useEffect(() => {
+    const fromLpo = location.state?.fromLpo;
+    if (fromLpo?.lpoNumber) {
+      setGrnType("Against LPO");
+      setCurrentGrnData({ _fromLpoConvert: true, lpo: fromLpo.lpoNumber });
+      setActiveNavTab('editor');
+      navigate(location.pathname, { replace: true, state: {} });
+    }
+  }, []);
+
   // FIX 3: Shared payload logic to prevent duplication
   const persistGrn = async (formData, items, status) => {
     const payload = {
@@ -2139,7 +2324,9 @@ const GRN = () => {
       locatorId: formData.locatorId ? Number(formData.locatorId) : null,
       binId: formData.binId ? Number(formData.binId) : null,
       status: status,
-      packages: items.length,
+      packages: formData.packageCount ? Number(formData.packageCount) : items.length,
+      receivedBy: formData.receivedBy || null,
+      checkedBy: formData.checkedBy || null,
       items: items.map(i => ({
         productId: i.productId,
         code: i.code,

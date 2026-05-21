@@ -110,7 +110,11 @@ public class SalesOrderService {
                             .findByCodeAndIsActiveTrue(item.getItemCode())
                             .orElse(null);
 
-                    if (product != null) {
+                    // QA-001: service products carry no inventory — bypass the
+                    // stock validation, batch reservation, and bin assignment
+                    // entirely, but still let the line contribute to subTotal/tax
+                    // below.
+                    if (product != null && !product.isService()) {
                         java.math.BigDecimal available = warehouseStockService.getAvailableStock(
                                 order.getWarehouse().getId(),
                                 product.getId());
@@ -188,8 +192,16 @@ public class SalesOrderService {
 
         SalesOrder saved = orderRepo.save(order);
 
-        // ✅ MARK LINKED QUOTATION AS CONVERTED
+        // ✅ MARK LINKED QUOTATION AS CONVERTED and stamp current revision number
+        // on the order so we can reconstruct exactly which version was agreed to,
+        // even if the quotation gets revised again later.
         if (saved.getLinkedQuotation() != null && !saved.getLinkedQuotation().isBlank()) {
+            quotationRepo.findByQtnNo(saved.getLinkedQuotation()).ifPresent(qtn -> {
+                if (saved.getLinkedQuotationRevision() == null) {
+                    saved.setLinkedQuotationRevision(qtn.getRevisions() != null ? qtn.getRevisions().size() : 0);
+                    orderRepo.save(saved);
+                }
+            });
             quotationRepo.updateStatusByQtnNo(
                     saved.getLinkedQuotation(),
                     com.billbull.backend.sales.quotation.QuotationStatus.CONVERTED);
@@ -411,7 +423,11 @@ public class SalesOrderService {
             return;
         }
 
-        item.setBatchControlled(product.isBatch());
+        // QA-001: ship productType so the frontend can short-circuit stock checks
+        // and side-panel rendering for SERVICE items. Service products are never
+        // batch-controlled regardless of any stale flag on the master.
+        item.setProductType(product.getProductType() != null ? product.getProductType().name() : null);
+        item.setBatchControlled(!product.isService() && product.isBatch());
         item.setFefoEnabled(product.isFefoEnabled());
         item.setMinExpiryDaysForSale(product.getMinExpiryDaysForSale() != null
                 ? product.getMinExpiryDaysForSale()
@@ -434,6 +450,13 @@ public class SalesOrderService {
             if (barcode != null) {
                 item.setBarcode(barcode);
             }
+        }
+
+        if (item.getBrandName() == null && product.getBrand() != null) {
+            item.setBrandName(product.getBrand().getName());
+        }
+        if (item.getDetailedDesc() == null && product.getDetailedDesc() != null) {
+            item.setDetailedDesc(product.getDetailedDesc());
         }
 
         // Hydrate price: packing-level price first, then product retail price

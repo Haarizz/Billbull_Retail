@@ -56,9 +56,9 @@ const getOpeningInvoiceOutstanding = (invoice = {}) => {
 };
 
 const getOpeningInvoiceOriginalAmount = (invoice = {}) => {
-    const source = invoice.openingBalanceAmount !== undefined && invoice.openingBalanceAmount !== null && invoice.openingBalanceAmount !== ''
-        ? invoice.openingBalanceAmount
-        : invoice.amount;
+    const source = invoice.amount !== undefined && invoice.amount !== null && invoice.amount !== ''
+        ? invoice.amount
+        : invoice.openingBalanceAmount;
     const value = Number(source || 0);
     return Number.isFinite(value) && value > 0 ? value : 0;
 };
@@ -474,8 +474,6 @@ const AddCustomerModal = ({ isOpen, onClose, customerToEdit, onSaveCustomer }) =
 
         // 2. Contact Tab Requirements
         if (!formData.mobile?.trim()) return false;
-        if (!formData.email?.trim()) return false;
-        if (!formData.country) return false;
 
         // 3. Photo Tab Requirement (Mandatory) -> NOW OPTIONAL
         // if (!avatarPreview) return false;
@@ -537,12 +535,13 @@ const AddCustomerModal = ({ isOpen, onClose, customerToEdit, onSaveCustomer }) =
     };
 
     const handleSaveInvoice = (data) => {
+        const outstanding = data.outstanding !== undefined && data.outstanding !== null && data.outstanding !== ''
+            ? data.outstanding
+            : data.amount;
         const normalizedInvoice = {
             ...data,
-            outstanding: data.outstanding !== undefined && data.outstanding !== null && data.outstanding !== ''
-                ? data.outstanding
-                : data.amount,
-            openingBalanceAmount: data.openingBalanceAmount || data.amount
+            outstanding,
+            openingBalanceAmount: data.openingBalanceAmount || outstanding
         };
 
         if (editingInvoiceIdx !== null) {
@@ -706,10 +705,10 @@ const AddCustomerModal = ({ isOpen, onClose, customerToEdit, onSaveCustomer }) =
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                             <div><label className="block text-xs font-medium text-slate-500 mb-1.5">Mobile Number <span className="text-red-500">*</span></label><input name="mobile" value={formData.mobile} onChange={handleInputChange} type="text" className="w-full text-sm border border-slate-200 rounded-md px-3 py-2 focus:outline-none focus:border-[#F5C742]" /></div>
                             <div><label className="block text-xs font-medium text-slate-500 mb-1.5">Phone (Optional)</label><input name="phone" value={formData.phone} onChange={handleInputChange} type="text" className="w-full text-sm border border-slate-200 rounded-md px-3 py-2 focus:outline-none focus:border-[#F5C742]" /></div>
-                            <div><label className="block text-xs font-medium text-slate-500 mb-1.5">Email <span className="text-red-500">*</span></label><input name="email" value={formData.email} onChange={handleInputChange} type="email" className="w-full text-sm border border-slate-200 rounded-md px-3 py-2 focus:outline-none focus:border-[#F5C742]" /></div>
+                            <div><label className="block text-xs font-medium text-slate-500 mb-1.5">Email (Optional)</label><input name="email" value={formData.email} onChange={handleInputChange} type="email" className="w-full text-sm border border-slate-200 rounded-md px-3 py-2 focus:outline-none focus:border-[#F5C742]" /></div>
                             <div><label className="block text-xs font-medium text-slate-500 mb-1.5">WhatsApp (Optional)</label><input name="whatsapp" value={formData.whatsapp} onChange={handleInputChange} type="text" className="w-full text-sm border border-slate-200 rounded-md px-3 py-2 focus:outline-none focus:border-[#F5C742]" /></div>
                             <div>
-                                <label className="block text-xs font-medium text-slate-500 mb-1.5">Country <span className="text-red-500">*</span></label>
+                                <label className="block text-xs font-medium text-slate-500 mb-1.5">Country (Optional)</label>
                                 <SearchableDropdown
                                     options={countryOptions}
                                     value={formData.country}

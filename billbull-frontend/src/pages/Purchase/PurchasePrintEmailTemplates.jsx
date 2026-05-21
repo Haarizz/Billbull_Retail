@@ -398,6 +398,14 @@ const TemplateDesigner = ({ category, onCancel, onSave, initialData, previewComp
                                     <span className="text-sm text-gray-700 font-medium">Item Barcode</span>
                                 </label>
                                 <label className="flex items-center gap-2 cursor-pointer">
+                                    <input type="checkbox" checked={!!columns.brand} onChange={() => handleColumnChange('brand')} className="w-4 h-4 text-yellow-500 rounded border-gray-300 focus:ring-yellow-400" />
+                                    <span className="text-sm text-gray-700 font-medium">Brand</span>
+                                </label>
+                                <label className="flex items-center gap-2 cursor-pointer">
+                                    <input type="checkbox" checked={!!columns.detailedDesc} onChange={() => handleColumnChange('detailedDesc')} className="w-4 h-4 text-yellow-500 rounded border-gray-300 focus:ring-yellow-400" />
+                                    <span className="text-sm text-gray-700 font-medium">Detailed Description</span>
+                                </label>
+                                <label className="flex items-center gap-2 cursor-pointer">
                                     <input type="checkbox" checked={!!columns.arabicName} onChange={() => handleColumnChange('arabicName')} className="w-4 h-4 text-yellow-500 rounded border-gray-300 focus:ring-yellow-400" />
                                     <span className="text-sm text-gray-700 font-medium">Arabic Name</span>
                                 </label>
@@ -447,6 +455,31 @@ const TemplateDesigner = ({ category, onCancel, onSave, initialData, previewComp
                                     <input type="checkbox" checked={!!columns.location} onChange={() => handleColumnChange('location')} className="w-4 h-4 text-yellow-500 rounded border-gray-300 focus:ring-yellow-400" />
                                     <span className="text-sm text-gray-700 font-medium">Location / Branch</span>
                                 </label>
+                                {category.title === 'Goods Receipt Note' && (
+                                    <>
+                                        <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider pt-2">GRN Columns</p>
+                                        <label className="flex items-center gap-2 cursor-pointer">
+                                            <input type="checkbox" checked={!!columns.lpoQty} onChange={() => handleColumnChange('lpoQty')} className="w-4 h-4 text-yellow-500 rounded border-gray-300 focus:ring-yellow-400" />
+                                            <span className="text-sm text-gray-700 font-medium">LPO Qty</span>
+                                        </label>
+                                        <label className="flex items-center gap-2 cursor-pointer">
+                                            <input type="checkbox" checked={!!columns.received} onChange={() => handleColumnChange('received')} className="w-4 h-4 text-yellow-500 rounded border-gray-300 focus:ring-yellow-400" />
+                                            <span className="text-sm text-gray-700 font-medium">Received Qty</span>
+                                        </label>
+                                        <label className="flex items-center gap-2 cursor-pointer">
+                                            <input type="checkbox" checked={!!columns.accepted} onChange={() => handleColumnChange('accepted')} className="w-4 h-4 text-yellow-500 rounded border-gray-300 focus:ring-yellow-400" />
+                                            <span className="text-sm text-gray-700 font-medium">Accepted Qty</span>
+                                        </label>
+                                        <label className="flex items-center gap-2 cursor-pointer">
+                                            <input type="checkbox" checked={!!columns.receivedBy} onChange={() => handleColumnChange('receivedBy')} className="w-4 h-4 text-yellow-500 rounded border-gray-300 focus:ring-yellow-400" />
+                                            <span className="text-sm text-gray-700 font-medium">Received By</span>
+                                        </label>
+                                        <label className="flex items-center gap-2 cursor-pointer">
+                                            <input type="checkbox" checked={!!columns.checkedBy} onChange={() => handleColumnChange('checkedBy')} className="w-4 h-4 text-yellow-500 rounded border-gray-300 focus:ring-yellow-400" />
+                                            <span className="text-sm text-gray-700 font-medium">Checked By</span>
+                                        </label>
+                                    </>
+                                )}
                             </div>
                         </div>
                     </div>

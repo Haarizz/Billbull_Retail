@@ -302,6 +302,7 @@ export const buildLpoPrintData = (lpo, vendor, companyProfile) => {
             code: item.itemCode || "",
             sku: item.sku || "",
             localName: item.localName || "",
+            detailedDesc: item.detailedDesc || "",
             name: item.itemName || "",
             desc: item.remarks || "",
             unit: item.uom || "PCS",
@@ -399,6 +400,10 @@ export const buildGrnPrintData = (grn, vendor, companyProfile) => {
             ),
             sku: item.sku || "",
             localName: item.localName || "",
+            detailedDesc: item.detailedDesc || "",
+            lpoQty: toNumber(item.lpoQty ?? item.lpo_qty ?? 0),
+            received: toNumber(item.received ?? item.receivedQty ?? item.received_qty ?? qty),
+            accepted: toNumber(item.accepted ?? item.acceptedQty ?? item.accepted_qty ?? qty),
         };
     });
 
@@ -432,6 +437,9 @@ export const buildGrnPrintData = (grn, vendor, companyProfile) => {
             { label: "Warehouse", value: grn?.warehouseName },
             { label: "Location", value: location },
             { label: "Source Ref", value: firstValue(grn?.lpoNumber, grn?.lpo, grn?.docRef) },
+            { label: "Packages", value: grn?.packageCount != null ? String(grn.packageCount) : null },
+            { label: "Received By", value: grn?.receivedBy },
+            { label: "Checked By", value: grn?.checkedBy },
         ].filter((item) => trimValue(item.value)),
         items,
         totals,
@@ -491,6 +499,7 @@ export const buildPurchaseInvoicePrintData = (invoice, vendor, companyProfile) =
             ),
             sku: item.sku || "",
             localName: item.localName || "",
+            detailedDesc: item.detailedDesc || "",
         };
     });
 
@@ -569,6 +578,7 @@ export const buildPaymentVoucherPrintData = (voucher, vendor, companyProfile, li
         docNo: firstValue(voucher?.voucherNumber, voucher?.id),
         date: voucher?.paymentDate || voucher?.date,
         status: firstValue(voucher?.status, "PENDING_APPROVAL"),
+        hideTotalsTable: true,
         party: resolveParty(vendor, voucher?.vendorName || voucher?.vendor),
         headerMeta: [
             { label: "Voucher No", value: firstValue(voucher?.voucherNumber, voucher?.id) },

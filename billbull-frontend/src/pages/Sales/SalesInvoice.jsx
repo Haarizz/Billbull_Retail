@@ -86,6 +86,29 @@ const SALES_INVOICE_COLUMNS = [
 ];
 
 // ✅ PRODUCT SELECTOR
+const firstPresentNumber = (...values) => {
+    for (const value of values) {
+        if (value === null || value === undefined || value === '') continue;
+        const number = Number(value);
+        if (Number.isFinite(number)) return number;
+    }
+    return 0;
+};
+
+const calculateLineAmounts = ({ qty, price, disc, tax }) => {
+    const quantity = Number(qty) || 0;
+    const unitPrice = Number(price) || 0;
+    const discountPercent = Number(disc) || 0;
+    const taxPercent = Number(tax) || 0;
+    const gross = quantity * unitPrice;
+    const discountAmount = gross * (discountPercent / 100);
+    const taxable = Math.max(0, gross - discountAmount);
+    const taxAmt = taxable * (taxPercent / 100);
+    const net = taxable + taxAmt;
+
+    return { gross, taxAmt, net };
+};
+
 import ProductSelector from '../../components/ProductSelector';
 
 // ✅ CUSTOMER SELECTOR
@@ -223,6 +246,7 @@ const SalesInvoice = () => {
     const [linkedSO, setLinkedSO] = useState('');
     const [linkedDN, setLinkedDN] = useState('');
     const [linkedPI, setLinkedPI] = useState('');
+    const [linkedQuotation, setLinkedQuotation] = useState('');
     const [shippingAddress, setShippingAddress] = useState('');
 
     // Payment Details
@@ -267,6 +291,8 @@ const SalesInvoice = () => {
         name: i.itemName || i.name || '',
         desc: i.description || i.desc || '',
         sku: i.sku || '',
+        brand: i.brand || i.brandName || '',
+        detailedDesc: i.detailedDesc || '',
         localName: i.localName || '',
         unit: i.unit || 'PCS',
         qty: i.quantity ?? i.qty ?? 0,
@@ -336,6 +362,7 @@ const SalesInvoice = () => {
     const [focusedItemStock, setFocusedItemStock] = useState(null);
     const [focusedItemPriceHistory, setFocusedItemPriceHistory] = useState([]);
     const [isContextLoading, setIsContextLoading] = useState(false);
+    const [liveStockMap, setLiveStockMap] = useState({});
 
     const resolveInvoiceTypeUI = ({
         linkedSalesOrder = '',
@@ -366,7 +393,7 @@ const SalesInvoice = () => {
     });
 
     const fetchItemContext = async (itemCode) => {
-        if (!itemCode) return; // Allow re-clicking same item
+        if (!itemCode) return;
 
         setIsContextLoading(true);
         setFocusedItemCode(itemCode);
@@ -377,6 +404,16 @@ const SalesInvoice = () => {
             ]);
             setFocusedItemStock(stockData);
             setFocusedItemPriceHistory(priceData || []);
+            if (stockData?.locations) {
+                const locs = stockData.locations;
+                setLiveStockMap(prev => ({
+                    ...prev,
+                    [itemCode]: {
+                        available: locs.reduce((s, l) => s + (l.available || 0), 0),
+                        reserved: locs.reduce((s, l) => s + (l.reserved || 0), 0),
+                    }
+                }));
+            }
         } catch (err) {
             console.error("Failed to fetch item context", err);
         } finally {
@@ -626,6 +663,7 @@ const SalesInvoice = () => {
         setItems(mappedItems.length > 0 ? mappedItems : [{ id: Date.now(), code: '', name: '', unit: 'PCS', qty: 0, price: 0, disc: 0, tax: 5, taxAmt: 0, gross: 0, net: 0, cost: 0 }]);
         setBillDiscount(Number(fromQtn.billDiscount) || 0);
         setReference(fromQtn.qtnNo || '');
+        setLinkedQuotation(fromQtn.qtnNo || '');
         setInvoiceDate(new Date().toISOString().split('T')[0]);
         setStatus('Draft');
         setActiveTab('create');
@@ -667,7 +705,16 @@ const SalesInvoice = () => {
                 taxAmt: Number(i.taxAmt) || 0,
                 gross: Number(i.total) || 0,
                 net: Number(i.total) || 0,
-                cost: Number(i.cost) || 0
+                cost: Number(i.cost) || 0,
+                // Inherit batch picks from the SO so the invoice editor shows
+                // "Batches N/N" instead of "0/N", and the auto-DN can reuse them.
+                batchControlled: Boolean(i.batchControlled),
+                fefoEnabled: i.fefoEnabled != null ? Boolean(i.fefoEnabled) : true,
+                minExpiryDaysForSale: Number(i.minExpiryDaysForSale) || 0,
+                batchSelectedQuantity: Number(i.batchSelectedQuantity) || 0,
+                batchSelections: Array.isArray(i.batchSelections) ? i.batchSelections : [],
+                warehouseId: i.warehouseId || null,
+                binId: i.binId || null,
             }));
 
         getNextInvoiceNumber()
@@ -676,6 +723,18 @@ const SalesInvoice = () => {
 
         const resolvedCustomer = matched || { name: fromSO.customer, code: fromSO.customerCode || '', id: null };
         setSelectedCustomer(resolvedCustomer);
+
+        // QA-035 follow-up: pre-fill paths (fromSalesOrder / fromDeliveryNote)
+        // bypass handleSelectCustomer, so the customer's prior outstanding was
+        // never fetched — Previous Outstanding stayed at 0 until the user
+        // manually re-picked the customer. Fetch it here too.
+        if (resolvedCustomer?.code) {
+            getCustomerOutstanding(resolvedCustomer.code)
+                .then(d => setCustomerOutstanding(d?.outstanding || 0))
+                .catch(() => setCustomerOutstanding(0));
+        } else {
+            setCustomerOutstanding(0);
+        }
 
         // Resolve shipping address: prefer passed-through → customer master
         if (fromSO.shippingAddress) {
@@ -847,6 +906,7 @@ const SalesInvoice = () => {
         setLinkedSO('');
         setLinkedDN('');
         setLinkedPI('');
+        setLinkedQuotation('');
         setIsGeneratedFromDN(false);
         setPaymentMode('Cash');
         setPaymentTerms('Immediate');
@@ -1026,7 +1086,17 @@ const SalesInvoice = () => {
                 { customerCode: so.customerCode, customerName: so.customerName },
                 customersList
             );
-            setSelectedCustomer(matched || { code: so.customerCode, name: so.customerName });
+            {
+                const resolved = matched || { code: so.customerCode, name: so.customerName };
+                setSelectedCustomer(resolved);
+                if (resolved?.code) {
+                    getCustomerOutstanding(resolved.code)
+                        .then(d => setCustomerOutstanding(d?.outstanding || 0))
+                        .catch(() => setCustomerOutstanding(0));
+                } else {
+                    setCustomerOutstanding(0);
+                }
+            }
 
             // Auto-fill items from SO
             if (so.items && so.items.length > 0) {
@@ -1065,7 +1135,17 @@ const SalesInvoice = () => {
                 { customerCode: dn.customerCode, customerName: dn.customerName },
                 customersList
             );
-            setSelectedCustomer(matched || { code: dn.customerCode, name: dn.customerName });
+            {
+                const resolved = matched || { code: dn.customerCode, name: dn.customerName };
+                setSelectedCustomer(resolved);
+                if (resolved?.code) {
+                    getCustomerOutstanding(resolved.code)
+                        .then(d => setCustomerOutstanding(d?.outstanding || 0))
+                        .catch(() => setCustomerOutstanding(0));
+                } else {
+                    setCustomerOutstanding(0);
+                }
+            }
 
             // Auto-fill SO if linked
             if (dn.salesOrderNo) {
@@ -1076,29 +1156,30 @@ const SalesInvoice = () => {
 
                 if (linkedSO && linkedSO.items && linkedSO.items.length > 0) {
                     setBillDiscount(Number(linkedSO.billDiscount) || 0);
-                    // Use SO items with DN quantities
-                    setItems(dn.items.map(dnItem => {
-                        // Find matching SO item for pricing
-                        const soItem = linkedSO.items.find(si => si.itemCode === dnItem.itemCode);
+                    // Stock lines come from the DN (with delivered qty); service
+                    // lines come from the SO (since they're never on the DN — see
+                    // DeliveryNoteService.mapToEntity QA-001 filter). The customer
+                    // still needs to be billed for both halves on one invoice.
+                    const dnStockItems = dn.items.map(dnItem => {
+                        const soItem = linkedSO.items.find(si =>
+                            (dnItem.salesOrderItemId && si.id === dnItem.salesOrderItemId)
+                            || (dnItem.sourceLineId && si.id === dnItem.sourceLineId)
+                            || si.itemCode === dnItem.itemCode);
 
                         const qty = Number(dnItem.currentQty) || Number(dnItem.orderedQty) || 0;
-                        const price = soItem ? Number(soItem.price) : 0;
-                        const disc = soItem ? Number(soItem.discount) : 0;
-                        const tax = soItem ? Number(soItem.taxRate) : 5;
-                        const cost = soItem ? Number(soItem.cost) : 0;
-
-                        const base = qty * price;
-                        const discountAmt = base * (disc / 100);
-                        const taxable = base - discountAmt;
-                        const taxAmt = taxable * (tax / 100);
-                        const net = taxable + taxAmt;
+                        const price = firstPresentNumber(dnItem.price, soItem?.price);
+                        const disc = firstPresentNumber(dnItem.disc, dnItem.discount, soItem?.discount);
+                        const tax = firstPresentNumber(dnItem.tax, dnItem.taxRate, soItem?.taxRate, 5);
+                        const cost = firstPresentNumber(dnItem.cost, soItem?.cost);
+                        const { gross, taxAmt, net } = calculateLineAmounts({ qty, price, disc, tax });
 
                         return {
                             id: Date.now() + Math.random(),
-                            salesOrderItemId: soItem ? soItem.id : null,
+                            salesOrderItemId: dnItem.salesOrderItemId || soItem?.id || null,
                             code: dnItem.itemCode || '',
                             image: dnItem.primaryImage || dnItem.image || dnItem.thumbnailUrl || dnItem.imageUrl || '',
                             name: dnItem.description || '',
+                            desc: dnItem.description || '',
                             unit: dnItem.unit || 'PCS',
                             qty: qty,
                             price: price,
@@ -1106,34 +1187,98 @@ const SalesInvoice = () => {
                             disc: disc,
                             tax: tax,
                             taxAmt: taxAmt,
-                            gross: base,
+                            gross,
                             net: net,
-                            gp: 0
+                            gp: 0,
+                            binId: dnItem.binId || null,
+                            productType: (soItem?.productType || dnItem.productType || 'STOCK').toUpperCase(),
+                            batchControlled: Boolean(dnItem.batchControlled),
+                            fefoEnabled: dnItem.fefoEnabled != null ? Boolean(dnItem.fefoEnabled) : true,
+                            minExpiryDaysForSale: Number(dnItem.minExpiryDaysForSale) || 0,
+                            baseRequiredQuantity: Number(dnItem.baseRequiredQuantity) || 0,
+                            batchSelectedQuantity: Number(dnItem.batchSelectedQuantity) || 0,
+                            batchSelectionMode: dnItem.batchSelectionMode || 'AUTO_FEFO',
+                            batchSelections: Array.isArray(dnItem.batchSelections) ? dnItem.batchSelections : []
                         };
-                    }));
+                    });
+
+                    // QA-001: append SO service lines that aren't on the DN.
+                    const dnCodes = new Set(dn.items.map(i => i.itemCode));
+                    const soServiceLines = linkedSO.items
+                        .filter(si => (si.productType || '').toUpperCase() === 'SERVICE'
+                                      && !dnCodes.has(si.itemCode))
+                        .map(si => {
+                            const qty = Number(si.quantity) || 0;
+                            const price = Number(si.price) || 0;
+                            const disc = Number(si.discount) || 0;
+                            const tax = Number(si.taxRate) || 5;
+                            const cost = Number(si.cost) || 0;
+                            const { gross, taxAmt, net } = calculateLineAmounts({ qty, price, disc, tax });
+                            return {
+                                id: Date.now() + Math.random(),
+                                salesOrderItemId: si.id || null,
+                                code: si.itemCode || '',
+                                image: si.image || '',
+                                name: si.itemName || si.description || '',
+                                desc: si.description || si.itemName || '',
+                                unit: si.unit || 'PCS',
+                                qty, price, cost, disc, tax, taxAmt, gross, net,
+                                gp: 0,
+                                binId: null,
+                                productType: 'SERVICE',
+                                batchControlled: false,
+                                fefoEnabled: true,
+                                minExpiryDaysForSale: 0,
+                                baseRequiredQuantity: 0,
+                                batchSelectedQuantity: 0,
+                                batchSelectionMode: 'AUTO_FEFO',
+                                batchSelections: []
+                            };
+                        });
+
+                    setItems([...dnStockItems, ...soServiceLines]);
                     setIsGeneratedFromDN(true);
                     return; // Exit early since we got pricing from SO
                 }
             }
 
-            // Fallback: Auto-fill items from DN without pricing (if no SO linked)
+            // Fallback: Auto-fill items from DN pricing when no SO is linked.
             if (dn.items && dn.items.length > 0) {
-                setItems(dn.items.map(i => ({
-                    id: Date.now() + Math.random(),
-                    code: i.itemCode || '',
-                    image: i.primaryImage || i.image || i.thumbnailUrl || i.imageUrl || '',
-                    name: i.description || '',
-                    unit: i.unit || 'PCS',
-                    qty: Number(i.currentQty) || Number(i.orderedQty) || 0,
-                    price: 0, // DN doesn't have pricing, user needs to fill
-                    cost: 0,
-                    disc: 0,
-                    tax: 5,
-                    taxAmt: 0,
-                    gross: 0,
-                    net: 0,
-                    gp: 0
-                })));
+                setItems(dn.items.map(i => {
+                    const qty = Number(i.currentQty) || Number(i.orderedQty) || 0;
+                    const price = firstPresentNumber(i.price);
+                    const disc = firstPresentNumber(i.disc, i.discount);
+                    const tax = firstPresentNumber(i.tax, i.taxRate, 5);
+                    const cost = firstPresentNumber(i.cost);
+                    const { gross, taxAmt, net } = calculateLineAmounts({ qty, price, disc, tax });
+
+                    return {
+                        id: Date.now() + Math.random(),
+                        salesOrderItemId: i.salesOrderItemId || null,
+                        code: i.itemCode || '',
+                        image: i.primaryImage || i.image || i.thumbnailUrl || i.imageUrl || '',
+                        name: i.description || '',
+                        desc: i.description || '',
+                        unit: i.unit || 'PCS',
+                        qty,
+                        price,
+                        cost,
+                        disc,
+                        tax,
+                        taxAmt,
+                        gross,
+                        net,
+                        gp: 0,
+                        binId: i.binId || null,
+                        batchControlled: Boolean(i.batchControlled),
+                        fefoEnabled: i.fefoEnabled != null ? Boolean(i.fefoEnabled) : true,
+                        minExpiryDaysForSale: Number(i.minExpiryDaysForSale) || 0,
+                        baseRequiredQuantity: Number(i.baseRequiredQuantity) || 0,
+                        batchSelectedQuantity: Number(i.batchSelectedQuantity) || 0,
+                        batchSelectionMode: i.batchSelectionMode || 'AUTO_FEFO',
+                        batchSelections: Array.isArray(i.batchSelections) ? i.batchSelections : []
+                    };
+                }));
                 setIsGeneratedFromDN(true);
             }
         }
@@ -1152,7 +1297,17 @@ const SalesInvoice = () => {
                 { customerCode: pi.customerCode, customerName: pi.customerName },
                 customersList
             );
-            setSelectedCustomer(matched || { code: pi.customerCode, name: pi.customerName });
+            {
+                const resolved = matched || { code: pi.customerCode, name: pi.customerName };
+                setSelectedCustomer(resolved);
+                if (resolved?.code) {
+                    getCustomerOutstanding(resolved.code)
+                        .then(d => setCustomerOutstanding(d?.outstanding || 0))
+                        .catch(() => setCustomerOutstanding(0));
+                } else {
+                    setCustomerOutstanding(0);
+                }
+            }
 
             // Auto-fill SO if linked
             if (pi.salesOrderNo) {
@@ -1293,6 +1448,8 @@ const SalesInvoice = () => {
             name: product.name || '',
             desc: product.shortDesc || product.description || '',
             sku: product.sku || '',
+            brand: product.brandName || product.brand || '',
+            detailedDesc: product.detailedDesc || '',
             localName: product.localName || '',
             unit: defaultUnit,
             qty: 1,
@@ -1313,7 +1470,10 @@ const SalesInvoice = () => {
             gp: 0,
             remarks: product.description || '',
             warehouseId: defaultBranch?.defaultWarehouseId || (warehousesList.length > 0 ? warehousesList[0].id : ''),
-            batchControlled: Boolean(product.batchControlled ?? product.isBatch ?? product.batch),
+            // QA-001: SERVICE products can never be batch-controlled (no inventory).
+            productType: (product.productType || 'STOCK').toUpperCase(),
+            batchControlled: (product.productType || '').toUpperCase() !== 'SERVICE'
+                && Boolean(product.batchControlled ?? product.isBatch ?? product.batch),
             fefoEnabled: product.fefoEnabled != null ? Boolean(product.fefoEnabled) : true,
             minExpiryDaysForSale: Number(product.minExpiryDaysForSale) || 0,
             batchSelectedQuantity: 0,
@@ -1417,6 +1577,7 @@ const SalesInvoice = () => {
             linkedSalesOrder: linkedSO,
             linkedDeliveryNote: linkedDN,
             linkedProforma: linkedPI,
+            linkedQuotation: linkedQuotation,
 
             paymentMode: paymentMode,
             paymentTerms: paymentTerms,
@@ -1440,7 +1601,6 @@ const SalesInvoice = () => {
                 const discountFactor = 1 - (Number(billDiscount) / 100);
                 const finalNet = Number(i.net) * discountFactor;
                 const finalTax = Number(i.taxAmt) * discountFactor;
-                const finalTaxable = finalNet - finalTax;
                 const qty = Number(i.qty) || 1;
 
                 return {
@@ -1452,15 +1612,17 @@ const SalesInvoice = () => {
                     itemName: i.name,
                     description: i.desc || '',
                     sku: i.sku || '',
+                    brand: i.brand || i.brandName || '',
+                    detailedDesc: i.detailedDesc || '',
                     localName: i.localName || '',
                     unit: i.unit,
                     quantity: qty,
-                    price: finalTaxable / qty, // Use final net price as unit price
+                    price: Number(i.price) || 0,
                     cost: Number(i.cost),
-                    discount: 0, // Set to 0 to prevent backend re-calculating
+                    discount: Number(i.disc) || 0,
                     taxRate: Number(i.tax),
                     taxAmount: finalTax,
-                    grossAmount: finalTaxable,
+                    grossAmount: Number(i.gross) || 0,
                     netAmount: finalNet,
                     foc: Number(i.foc) || 0,
                     binId: i.binId || null,
@@ -1477,6 +1639,8 @@ const SalesInvoice = () => {
             const stockIssues = [];
             for (const item of items) {
                 if (!item.code) continue;
+                // QA-001: service items hold no inventory — skip stock validation.
+                if ((item.productType || '').toUpperCase() === 'SERVICE') continue;
                 try {
                     const warehouseId = (item.warehouseId && item.warehouseId !== '')
                         ? Number(item.warehouseId)
@@ -1580,6 +1744,7 @@ const SalesInvoice = () => {
         setLinkedSO(invoice.linkedSalesOrder || '');
         setLinkedDN(invoice.linkedDeliveryNote || '');
         setLinkedPI(invoice.linkedProforma || '');
+        setLinkedQuotation(invoice.linkedQuotation || '');
 
         setPaymentMode(invoice.paymentMode || 'Cash');
         setPaymentTerms(invoice.paymentTerms || 'Immediate');
@@ -1721,7 +1886,7 @@ const SalesInvoice = () => {
                 const fullCustomer = customersList.find(c => c.code === custCode);
 
                 const printData = {
-                    title: 'TAX INVOICE',
+                    title: 'SALES INVOICE',
                     docNo: dataToPrint.invoiceNumber,
                     date: dataToPrint.invoiceDate,
                     customer: {
@@ -1734,7 +1899,9 @@ const SalesInvoice = () => {
                         name: i.itemName || i.name || '',
                         desc: i.description || i.shortDescription || i.desc || '',
                         sku: i.sku || i.productSku || '',
-                        localName: i.localName || i.productLocalName || '',
+                        brand: i.brand || i.brandName || '',
+                        detailedDesc: i.detailedDesc || '',
+                    localName: i.localName || i.productLocalName || '',
                         barcode: i.barcode || i.itemBarcode || '',
                         salesPerson: dataToPrint.salesperson || '',
                         location: dataToPrint.branch || '',
@@ -2500,7 +2667,7 @@ const SalesInvoice = () => {
                                                         </tr>
                                                     </thead>
                                                     <tbody className="divide-y divide-slate-100/50">
-                                                        {items.map((item, index) => (
+                                                        {[...items].reverse().map((item, index) => (
                                                             <React.Fragment key={item.id}>
                                                                 <tr className="group hover:bg-slate-50/50 transition-colors bg-white align-middle">
                                                                     {/* Index */}
@@ -2816,7 +2983,45 @@ const SalesInvoice = () => {
 
                                     {/* SIDEBAR - INTELLIGENCE PANELS */}
                                     <div className="space-y-5 xl:sticky xl:top-6">
-                                        <StockSidebarPanel stock={focusedItemStock} isLoading={isContextLoading} itemCode={focusedItemCode} />
+                                        <div className="bg-white rounded-xl border border-slate-200 p-4 shadow-sm">
+                                            <div className="flex items-center gap-2 mb-3 text-slate-700 font-bold text-[11px] uppercase tracking-wider">
+                                                <Package size={14} className="text-[#F5C742]" /> Item Availability
+                                                {isContextLoading && <div className="ml-auto animate-spin h-3 w-3 border-2 border-[#F5C742] border-t-transparent rounded-full" />}
+                                            </div>
+                                            <div className="space-y-2 overflow-y-auto max-h-[260px]">
+                                                {items.some(i => i.code) ? items.filter(i => i.code).filter((item, idx, arr) => arr.findIndex(x => x.code === item.code) === idx).map(item => {
+                                                    if ((item.productType || '').toUpperCase() === 'SERVICE') {
+                                                        return (
+                                                            <div key={item.id} className="border rounded p-2 border-blue-200 bg-blue-50">
+                                                                <div className="font-semibold text-[10px] text-slate-800 truncate">{item.desc || item.productDesc || item.code}</div>
+                                                                <div className="text-[9px] text-slate-500">{item.code}</div>
+                                                                <div className="mt-1 text-[10px] font-bold text-blue-700">Service — no stock tracking</div>
+                                                            </div>
+                                                        );
+                                                    }
+                                                    const available = liveStockMap[item.code]?.available ?? (item.stock || item.currentStock || 0);
+                                                    const reserved = liveStockMap[item.code]?.reserved ?? 0;
+                                                    const requested = Number(item.qty) || 0;
+                                                    const sufficient = available >= requested;
+                                                    return (
+                                                        <div key={item.id} className={`border rounded p-2 ${sufficient ? 'border-emerald-200 bg-emerald-50' : 'border-red-200 bg-red-50'}`}>
+                                                            <div className="font-semibold text-[10px] text-slate-800 truncate">{item.desc || item.productDesc || item.code}</div>
+                                                            <div className="text-[9px] text-slate-500 mb-1">{item.code}</div>
+                                                            <div className="flex justify-between text-[10px] text-slate-600">
+                                                                <span>Req: {requested}</span>
+                                                                <span>Avail: <span className="font-bold">{available}</span></span>
+                                                            </div>
+                                                            {reserved > 0 && <div className="text-[9px] text-orange-500 mt-0.5">Reserved: {reserved}</div>}
+                                                            <div className={`mt-1 text-[10px] font-bold ${sufficient ? 'text-emerald-600' : 'text-red-600'}`}>
+                                                                {sufficient ? '✅ In Stock' : '❌ Insufficient'}
+                                                            </div>
+                                                        </div>
+                                                    );
+                                                }) : (
+                                                    <div className="text-[10px] text-slate-400 text-center py-4 italic">Add items to check stock.</div>
+                                                )}
+                                            </div>
+                                        </div>
                                         <PriceHistorySidebarPanel history={focusedItemPriceHistory} isLoading={isContextLoading} itemCode={focusedItemCode} />
                                     </div>
                                 </div>

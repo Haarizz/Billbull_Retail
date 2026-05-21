@@ -31,7 +31,10 @@ const LineChart = ({ data, height = 200, color = "#F5C742" }) => {
     if (!data || data.length === 0) return <div className="text-center text-slate-400 py-8">No data available</div>;
 
     const max = Math.max(...data.map(d => d.value));
-    const min = Math.min(...data.map(d => d.value));
+    const rawMin = Math.min(...data.map(d => d.value));
+    // When all values are equal (or single data point), pin min to 0 so the
+    // point/line renders at a visible height instead of collapsing to the baseline.
+    const min = rawMin === max ? 0 : rawMin;
     const range = max - min || 1;
     const denominator = data.length > 1 ? data.length - 1 : 1;
 
@@ -76,20 +79,35 @@ const BarChart = ({ data, height = 160 }) => {
     if (!data || data.length === 0) return <div className="text-center text-slate-400 py-8">No data available</div>;
 
     const max = Math.max(...data.map(d => d.value), 0);
+    // Reserve space for labels; bars fill the remaining pixel height.
+    // Using pixel heights avoids the % issue where a flex-col parent has no
+    // explicit height, which makes the browser resolve height:X% to zero.
+    const labelH = 28;
+    const barAreaH = height - labelH;
 
     return (
-        <div className="flex items-end justify-between gap-2" style={{ height }}>
-            {data.map((item, i) => (
-                <div key={i} className="flex-1 flex flex-col items-center gap-2 group">
-                    <div className="w-full bg-[#F5C742] rounded-t-md opacity-90 group-hover:opacity-100 transition-all shadow-sm relative"
-                        style={{ height: `${max > 0 ? (item.value / max) * 100 : 8}%` }}>
-                        <span className="absolute -top-6 left-1/2 -translate-x-1/2 text-xs font-bold text-slate-700 opacity-0 group-hover:opacity-100 transition-opacity">
-                            {formatCurrency(item.value)}
-                        </span>
+        <div style={{ height }}>
+            <div className="flex items-end justify-between gap-2" style={{ height: barAreaH }}>
+                {data.map((item, i) => (
+                    <div key={i} className="flex-1 relative group">
+                        <div
+                            className="w-full bg-[#F5C742] rounded-t-md opacity-90 group-hover:opacity-100 transition-all shadow-sm"
+                            style={{ height: max > 0 ? Math.max(4, (item.value / max) * barAreaH) : 8 }}
+                        >
+                            <span className="absolute -top-6 left-1/2 -translate-x-1/2 text-xs font-bold text-slate-700 opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap">
+                                {formatCurrency(item.value)}
+                            </span>
+                        </div>
                     </div>
-                    <div className="text-[10px] text-slate-500 font-medium text-center">{item.label}</div>
-                </div>
-            ))}
+                ))}
+            </div>
+            <div className="flex justify-between gap-2 mt-1">
+                {data.map((item, i) => (
+                    <div key={i} className="flex-1 text-[10px] text-slate-500 font-medium text-center truncate">
+                        {item.label}
+                    </div>
+                ))}
+            </div>
         </div>
     );
 };
@@ -124,10 +142,12 @@ const DonutChart = ({ data, size = 120 }) => {
 
     const slices = data.map((item, i) => {
         const percentage = (item.value / total) * 100;
-        const angle = (percentage / 100) * 360;
+        // SVG arc paths cannot represent a full 360° arc — start and end coords
+        // become identical, so the path collapses to nothing.  Clamp to 359.9999°.
+        const angle = Math.min((percentage / 100) * 360, 359.9999);
         const startAngle = currentAngle;
         const endAngle = currentAngle + angle;
-        currentAngle = endAngle;
+        currentAngle = currentAngle + (percentage / 100) * 360; // advance by true angle
 
         const startRad = (startAngle * Math.PI) / 180;
         const endRad = (endAngle * Math.PI) / 180;
@@ -184,32 +204,21 @@ const Dashboard = () => {
         recentActivity: []
     });
 
-    // Convert sales trend data for chart
+    // Convert sales trend data for chart.
+    // Invoice dates are LocalDate (date-only), so we always group by day — never by hour.
     const getSalesTrendChartData = () => {
         if (!dashboardData.salesTrend || Object.keys(dashboardData.salesTrend).length === 0) {
             return [];
         }
 
-        if (timeRange === 'Today') {
-            // Hourly data for today
-            const hours = [];
-            for (let h = 9; h <= 18; h++) {
-                const data = dashboardData.salesTrend[h] || { sales: 0, count: 0 };
-                hours.push({
-                    label: `${h > 12 ? h - 12 : h}${h >= 12 ? 'PM' : 'AM'}`,
-                    value: data.sales
-                });
-            }
-            return hours;
-        } else {
-            // Daily data for week/month
-            return Object.entries(dashboardData.salesTrend)
-                .map(([date, data]) => ({
-                    label: new Date(date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
-                    value: data.sales
-                }))
-                .slice(0, 10);
-        }
+        return Object.entries(dashboardData.salesTrend)
+            .sort(([a], [b]) => a.localeCompare(b))
+            .map(([date, data]) => ({
+                // Append T00:00:00 (no zone) so the browser parses as local midnight, not UTC.
+                label: new Date(date + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
+                value: data.sales
+            }))
+            .slice(0, 10);
     };
 
     const salesTrendData = getSalesTrendChartData();
@@ -290,7 +299,15 @@ const Dashboard = () => {
             if (showLoader) {
                 setLoading(true);
             }
-            const data = await getDashboardData(timeRange, { force });
+            const data = await getDashboardData(timeRange, {
+                force,
+                // Paint immediately from localStorage cache, hide loader, then replace with fresh data
+                onStale: (stale) => {
+                    setDashboardData(stale);
+                    setLoading(false);
+                    hasLoadedRef.current = true;
+                }
+            });
             setDashboardData(data);
             hasLoadedRef.current = true;
         } catch (error) {
@@ -541,7 +558,7 @@ const Dashboard = () => {
                         <div className="flex justify-between items-center mb-6">
                             <div>
                                 <h3 className="font-bold text-slate-800">Sales Trend</h3>
-                                <p className="text-xs text-slate-500">Hourly performance for {timeRange.toLowerCase()}</p>
+                                <p className="text-xs text-slate-500">Daily performance for {timeRange.toLowerCase()}</p>
                             </div>
                             <div className="flex items-center gap-4">
                                 <span className="text-xs bg-slate-100 text-slate-600 px-2 py-1 rounded border border-slate-200">All branches</span>
@@ -554,7 +571,7 @@ const Dashboard = () => {
                             </span>
                             <span className="text-emerald-600 font-bold">
                                 {dashboardData.salesTrendMeta?.avgSales > 0 ? (
-                                    <>Avg: <CurrencyAmount value={dashboardData.salesTrendMeta.avgSales} />{timeRange === 'Today' ? '/hr' : '/period'}</>
+                                    <>Avg: <CurrencyAmount value={dashboardData.salesTrendMeta.avgSales} />/day</>
                                 ) : ''}
                             </span>
                         </div>

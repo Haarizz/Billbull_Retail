@@ -142,6 +142,15 @@ public class Product extends BaseEntity {
     public void setDetailedDesc(String detailedDesc) { this.detailedDesc = detailedDesc; }
     public ProductType getProductType() { return productType; }
     public void setProductType(ProductType productType) { this.productType = productType; }
+
+    /**
+     * True when this product represents a service / labour / fee with no
+     * physical inventory. Service products are excluded from stock checks,
+     * stock movements, batch selection, and stock reports.
+     */
+    @com.fasterxml.jackson.annotation.JsonIgnore
+    public boolean isService() { return productType == ProductType.SERVICE; }
+
     public String getCategory() { return category; }
     public void setCategory(String category) { this.category = category; }
     public boolean isSerial() { return isSerial; }

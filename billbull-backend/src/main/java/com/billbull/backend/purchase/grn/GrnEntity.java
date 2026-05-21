@@ -42,6 +42,8 @@ public class GrnEntity extends BaseEntity {
     private boolean stockPosted = false;
 
     private Integer packageCount;
+    private String receivedBy;
+    private String checkedBy;
 
     private BigDecimal subtotal;
     private BigDecimal taxAmount;
@@ -211,6 +213,22 @@ public class GrnEntity extends BaseEntity {
 
     public void setPackageCount(Integer packageCount) {
         this.packageCount = packageCount;
+    }
+
+    public String getReceivedBy() {
+        return receivedBy;
+    }
+
+    public void setReceivedBy(String receivedBy) {
+        this.receivedBy = receivedBy;
+    }
+
+    public String getCheckedBy() {
+        return checkedBy;
+    }
+
+    public void setCheckedBy(String checkedBy) {
+        this.checkedBy = checkedBy;
     }
 
     public BigDecimal getSubtotal() {

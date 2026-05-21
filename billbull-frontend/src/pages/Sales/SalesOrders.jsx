@@ -200,7 +200,9 @@ const SalesOrders = () => {
 
   useEffect(() => {
     if (focusedItem && focusedItem.code) {
-      if (!liveStockMap[focusedItem.code]) {
+      // QA-001: service items have no stock — don't hit the availability API.
+      const isService = (focusedItem.productType || '').toUpperCase() === 'SERVICE';
+      if (!isService && !liveStockMap[focusedItem.code]) {
         getStockAvailability(focusedItem.code)
           .then(res => {
             const locs = res.locations || [];
@@ -550,7 +552,11 @@ const SalesOrders = () => {
       total: Number(item.total ?? item.lineTotal) || 0,
       binId: item.binId ?? null,
       binCode: item.binCode || '',
-      batchControlled: Boolean(item.batchControlled ?? item.isBatch ?? item.product?.isBatch),
+      // QA-001: carry productType through so SERVICE lines stay gated post-conversion
+      productType: (item.productType || 'STOCK').toUpperCase(),
+      // SERVICE items never need batch selection regardless of upstream flags.
+      batchControlled: (item.productType || '').toUpperCase() !== 'SERVICE'
+        && Boolean(item.batchControlled ?? item.isBatch ?? item.product?.isBatch),
       fefoEnabled: item.fefoEnabled != null ? Boolean(item.fefoEnabled) : true,
       minExpiryDaysForSale: Number(item.minExpiryDaysForSale) || 0,
       baseRequiredQuantity: Number(item.baseRequiredQuantity) || 0,
@@ -579,6 +585,8 @@ const SalesOrders = () => {
       id: Date.now() + Math.random(),
       code: product.code,
       name: product.name || '',
+      brand: product.brandName || product.brand || '',
+      detailedDesc: product.detailedDesc || '',
       barcode: product.barcode || '',
       image: product.primaryImage || product.image || product.thumbnailUrl || product.imageUrl || '',
       desc: product.description || product.name,
@@ -596,7 +604,10 @@ const SalesOrders = () => {
       tax: tax,
       taxAmt: 0,
       total: 0,
-      batchControlled: Boolean(product.batchControlled ?? product.isBatch ?? product.batch),
+      // QA-001: SERVICE products never have batches.
+      productType: (product.productType || 'STOCK').toUpperCase(),
+      batchControlled: (product.productType || '').toUpperCase() !== 'SERVICE'
+        && Boolean(product.batchControlled ?? product.isBatch ?? product.batch),
       fefoEnabled: product.fefoEnabled != null ? Boolean(product.fefoEnabled) : true,
       minExpiryDaysForSale: Number(product.minExpiryDaysForSale) || 0,
       batchSelectedQuantity: 0,
@@ -612,6 +623,7 @@ const SalesOrders = () => {
     });
 
     setIsProductSelectorOpen(false); // ✅ Close modal after adding
+    setFocusedItem(newItem);
   };
 
   const handleFastEntryAdd = (product, qty, price, disc) => {
@@ -642,7 +654,10 @@ const SalesOrders = () => {
       total: 0,
       remarks: product.description || '',
       isProductSelected: true,
-      batchControlled: Boolean(product.batchControlled ?? product.isBatch ?? product.batch),
+      // QA-001: SERVICE products never have batches.
+      productType: (product.productType || 'STOCK').toUpperCase(),
+      batchControlled: (product.productType || '').toUpperCase() !== 'SERVICE'
+        && Boolean(product.batchControlled ?? product.isBatch ?? product.batch),
       fefoEnabled: product.fefoEnabled != null ? Boolean(product.fefoEnabled) : true,
       minExpiryDaysForSale: Number(product.minExpiryDaysForSale) || 0,
       batchSelectedQuantity: 0,
@@ -748,6 +763,10 @@ const SalesOrders = () => {
           items: items
             .filter(i => i.code && i.qty > 0)
             .map(i => ({
+              // Persisted SO line id — must travel with the line so the invoice
+              // (and the auto-generated DN downstream) can look up the SO's
+              // batch reservations via BatchSelectionService.DOC_TYPE_SALES_ORDER.
+              id: i.soItemId || null,
               code: i.code,
               desc: i.desc,
               image: i.image || '',
@@ -759,6 +778,15 @@ const SalesOrders = () => {
               taxAmt: i.taxAmt,
               total: i.total,
               cost: i.cost,
+              // Carry batch metadata so the invoice editor renders "Batches X/Y"
+              // correctly and the auto-DN can reuse the SO's batch picks.
+              batchControlled: Boolean(i.batchControlled),
+              fefoEnabled: i.fefoEnabled != null ? Boolean(i.fefoEnabled) : true,
+              minExpiryDaysForSale: Number(i.minExpiryDaysForSale) || 0,
+              batchSelectedQuantity: Number(i.batchSelectedQuantity) || 0,
+              batchSelections: Array.isArray(i.batchSelections) ? i.batchSelections : [],
+              warehouseId: i.warehouseId || null,
+              binId: i.binId || null,
             }))
         }
       }
@@ -791,6 +819,8 @@ const SalesOrders = () => {
             name: i.name || '',
             desc: i.desc || '',
             sku: i.sku || '',
+            brand: i.brand || i.brandName || '',
+            detailedDesc: i.detailedDesc || '',
             localName: i.localName || '',
             barcode: i.barcode || '',
             salesPerson: '',
@@ -914,6 +944,8 @@ const SalesOrders = () => {
       const stockIssues = [];
       for (const item of items) {
         if (!item.code) continue;
+        // QA-001: service items have no inventory — skip stock validation.
+        if ((item.productType || '').toUpperCase() === 'SERVICE') continue;
         try {
           const stockData = await getStockAvailability(item.code);
           const locs = stockData?.locations || [];
@@ -1672,7 +1704,7 @@ const SalesOrders = () => {
                           </div>
                         </td>
                       </tr>
-                    ) : items.map((item, index) => (
+                    ) : [...items].reverse().map((item, index) => (
                       <React.Fragment key={item.id}>
                         <tr className={`group hover:bg-slate-50/50 transition-colors bg-white align-middle ${isLocked ? 'opacity-80' : ''}`} onClick={() => setFocusedItem(item)}>
                           {/* Index */}
@@ -1913,30 +1945,45 @@ const SalesOrders = () => {
 
             {/* END 8. ORDER SUMMARY */}
 
-            {/* Stock Info - Updated to show focused item data */}
-            <div className="bg-white rounded-lg border border-slate-200 shadow-sm p-5 min-h-[180px] flex flex-col">
+            {/* Stock Info - All items */}
+            <div className="bg-white rounded-lg border border-slate-200 shadow-sm p-5 flex flex-col">
               <h3 className="text-sm font-bold text-slate-800 flex items-center gap-2 mb-3">
                 <div className="p-1 rounded bg-slate-100"><Box size={14} className="text-yellow-600" /></div>
-                Stock & Incoming (Selected Item)
+                Item Availability
               </h3>
 
-              <div className="mt-2 text-xs flex-1 flex flex-col">
-                <div className="font-bold text-slate-700 mb-1 line-clamp-2" title={focusedItem?.desc}>{focusedItem?.desc || 'Select an item...'}</div>
-                <div className="text-slate-400 mb-4">Code: {focusedItem?.code || '-'}</div>
-
-                <div className="flex justify-between mb-1 mt-auto">
-                  <span className="text-slate-500">Total On Hand</span>
-                  <span className="text-slate-500">Blocked / Reserved</span>
-                </div>
-                <div className="flex justify-between mb-3 font-bold">
-                  <span>{focusedItem !== null ? ((liveStockMap[focusedItem.code]?.available || 0) + (liveStockMap[focusedItem.code]?.reserved || 0)) : '-'} units</span>
-                  <span className="text-orange-500">{focusedItem !== null ? (liveStockMap[focusedItem.code]?.reserved || 0) : '-'} units</span>
-                </div>
-
-                <div className="flex justify-between font-bold border-t border-slate-100 pt-2 pb-1">
-                  <span className="text-slate-500">Free from current stock</span>
-                  <span className="text-emerald-600">{focusedItem !== null ? (liveStockMap[focusedItem.code]?.available || 0) : '-'} units</span>
-                </div>
+              <div className="space-y-2 overflow-y-auto max-h-[260px]">
+                {items.some(i => i.code) ? items.filter(i => i.code).filter((item, idx, arr) => arr.findIndex(x => x.code === item.code) === idx).map(item => {
+                  if ((item.productType || '').toUpperCase() === 'SERVICE') {
+                    return (
+                      <div key={item.id} className="border rounded p-2 border-blue-200 bg-blue-50">
+                        <div className="font-semibold text-[10px] text-slate-800 truncate">{item.desc || item.code}</div>
+                        <div className="text-[9px] text-slate-500">{item.code}</div>
+                        <div className="mt-1 text-[10px] font-bold text-blue-700">Service — no stock tracking</div>
+                      </div>
+                    );
+                  }
+                  const available = liveStockMap[item.code]?.available ?? (item.stock || item.currentStock || 0);
+                  const reserved = liveStockMap[item.code]?.reserved ?? 0;
+                  const requested = Number(item.qty) || 0;
+                  const sufficient = available >= requested;
+                  return (
+                    <div key={item.id} className={`border rounded p-2 ${sufficient ? 'border-emerald-200 bg-emerald-50' : 'border-red-200 bg-red-50'}`}>
+                      <div className="font-semibold text-[10px] text-slate-800 truncate">{item.desc || item.code}</div>
+                      <div className="text-[9px] text-slate-500 mb-1">{item.code}</div>
+                      <div className="flex justify-between text-[10px] text-slate-600">
+                        <span>Req: {requested}</span>
+                        <span>Avail: <span className="font-bold">{available}</span></span>
+                      </div>
+                      {reserved > 0 && <div className="text-[9px] text-orange-500 mt-0.5">Reserved: {reserved}</div>}
+                      <div className={`mt-1 text-[10px] font-bold ${sufficient ? 'text-emerald-600' : 'text-red-600'}`}>
+                        {sufficient ? '✅ In Stock' : '❌ Insufficient'}
+                      </div>
+                    </div>
+                  );
+                }) : (
+                  <div className="text-[10px] text-slate-400 text-center py-4">Add items to check stock.</div>
+                )}
               </div>
             </div>
 
@@ -2039,7 +2086,7 @@ const SalesOrders = () => {
 
       {/* Receive Payment Modal */}
       {isPaymentModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-[1px]">
+        <div className="fixed inset-0 z-[110] flex items-center justify-center bg-black/40 backdrop-blur-[1px]">
           <div className="bg-white w-[500px] rounded-lg shadow-2xl overflow-hidden">
             {/* Header */}
             <div className="px-6 py-4 border-b border-slate-100 flex justify-between items-start">

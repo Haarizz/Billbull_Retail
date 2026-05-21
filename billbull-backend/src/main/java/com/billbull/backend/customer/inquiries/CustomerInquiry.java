@@ -24,9 +24,13 @@ public class CustomerInquiry extends BaseEntity {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
+    private Long customerId;
+    private String customerCode;
     private String customer;
     private String mobile;
     private String email;
+    @Column(length = 1000)
+    private String address;
     private String branch;
     private String source;
     private String category;
@@ -75,6 +79,22 @@ public class CustomerInquiry extends BaseEntity {
         this.id = id;
     }
 
+    public Long getCustomerId() {
+        return customerId;
+    }
+
+    public void setCustomerId(Long customerId) {
+        this.customerId = customerId;
+    }
+
+    public String getCustomerCode() {
+        return customerCode;
+    }
+
+    public void setCustomerCode(String customerCode) {
+        this.customerCode = customerCode;
+    }
+
     public String getCustomer() {
         return customer;
     }
@@ -97,6 +117,14 @@ public class CustomerInquiry extends BaseEntity {
 
     public void setEmail(String email) {
         this.email = email;
+    }
+
+    public String getAddress() {
+        return address;
+    }
+
+    public void setAddress(String address) {
+        this.address = address;
     }
 
     public String getBranch() {

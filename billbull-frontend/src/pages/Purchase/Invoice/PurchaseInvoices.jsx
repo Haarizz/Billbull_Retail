@@ -2089,7 +2089,7 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-50">
-                  {formData.items.map((item, index) => {
+                  {[...formData.items].reverse().map((item, index) => {
                     const calc = calculateRow(item);
                     return (
                       <React.Fragment key={item.id}>

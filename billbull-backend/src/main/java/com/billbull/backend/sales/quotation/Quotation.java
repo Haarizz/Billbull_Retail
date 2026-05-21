@@ -19,6 +19,9 @@ public class Quotation {
     private String qtnNo;
 
     private String customer;
+    private String customerCode;
+    private String customerMobile;
+    private String customerEmail;
     private LocalDate date;
     private LocalDate validTill;
     private String currency;
@@ -80,6 +83,15 @@ public class Quotation {
 
     public String getCustomer() { return customer; }
     public void setCustomer(String customer) { this.customer = customer; }
+
+    public String getCustomerCode() { return customerCode; }
+    public void setCustomerCode(String customerCode) { this.customerCode = customerCode; }
+
+    public String getCustomerMobile() { return customerMobile; }
+    public void setCustomerMobile(String customerMobile) { this.customerMobile = customerMobile; }
+
+    public String getCustomerEmail() { return customerEmail; }
+    public void setCustomerEmail(String customerEmail) { this.customerEmail = customerEmail; }
 
     public LocalDate getDate() { return date; }
     public void setDate(LocalDate date) { this.date = date; }

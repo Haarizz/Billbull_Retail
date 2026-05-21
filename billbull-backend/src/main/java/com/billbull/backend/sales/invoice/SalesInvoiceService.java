@@ -25,6 +25,8 @@ import com.billbull.backend.financials.receiptvoucher.ReceiptVoucher;
 import com.billbull.backend.financials.receiptvoucher.ReceiptVoucherService;
 import com.billbull.backend.inventory.product.ProductBarcodeRepository;
 import com.billbull.backend.sales.customerledger.CustomerRepository;
+import com.billbull.backend.sales.customerledger.OpeningInvoice;
+import com.billbull.backend.sales.customerledger.OpeningInvoiceRepository;
 import com.billbull.backend.inventory.product.ProductMediaRepository;
 import com.billbull.backend.inventory.batch.BatchAllocationStatus;
 import com.billbull.backend.inventory.batch.BatchSelectionRequest;
@@ -64,8 +66,10 @@ public class SalesInvoiceService {
     private final ProductMediaRepository productMediaRepository;
     private final ProductPackingRepository packingRepo;
     private final com.billbull.backend.sales.salesorder.SalesOrderRepository salesOrderRepository;
+    private final com.billbull.backend.sales.quotation.QuotationRepository quotationRepository;
     private final DeliveryNoteRepository deliveryNoteRepository;
     private final CustomerRepository customerRepository;
+    private final OpeningInvoiceRepository openingInvoiceRepository;
     private final WarehouseRepository warehouseRepository;
     private final BranchAccessService branchAccessService;
     private final StockMovementRepository stockMovementRepo;
@@ -83,8 +87,10 @@ public class SalesInvoiceService {
             ProductMediaRepository productMediaRepository,
             ProductPackingRepository packingRepo,
             com.billbull.backend.sales.salesorder.SalesOrderRepository salesOrderRepository,
+            com.billbull.backend.sales.quotation.QuotationRepository quotationRepository,
             DeliveryNoteRepository deliveryNoteRepository,
             CustomerRepository customerRepository,
+            OpeningInvoiceRepository openingInvoiceRepository,
             WarehouseRepository warehouseRepository,
             BranchAccessService branchAccessService,
             StockMovementRepository stockMovementRepo,
@@ -101,8 +107,10 @@ public class SalesInvoiceService {
         this.productMediaRepository = productMediaRepository;
         this.packingRepo = packingRepo;
         this.salesOrderRepository = salesOrderRepository;
+        this.quotationRepository = quotationRepository;
         this.deliveryNoteRepository = deliveryNoteRepository;
         this.customerRepository = customerRepository;
+        this.openingInvoiceRepository = openingInvoiceRepository;
         this.warehouseRepository = warehouseRepository;
         this.branchAccessService = branchAccessService;
         this.stockMovementRepo = stockMovementRepo;
@@ -124,9 +132,14 @@ public class SalesInvoiceService {
         Double invoiceOutstanding = invoiceRepo.findOutstandingBalanceByCustomerCode(customerCode);
         double invoiceAmt = invoiceOutstanding != null ? invoiceOutstanding : 0.0;
 
-        double openingBalance = customerRepository.findByCode(customerCode)
-                .map(c -> c.getBalance() != null ? c.getBalance().doubleValue() : 0.0)
-                .orElse(0.0);
+        // QA-035: unpaid amounts live in OpeningInvoice rows (one per migrated AR bill).
+        // Customer.balance is only the seeded total at creation and does not decrement
+        // as opening invoices get settled, so it cannot be used as the live opening
+        // outstanding. Sum each opening invoice's current outstanding instead — this
+        // mirrors what the Customer Ledger screen displays.
+        double openingBalance = openingInvoiceRepository.findByCustomer_Code(customerCode).stream()
+                .mapToDouble(this::resolveOpeningInvoiceOutstanding)
+                .sum();
 
         double total = BigDecimal.valueOf(invoiceAmt + openingBalance)
                 .setScale(2, RoundingMode.HALF_UP).doubleValue();
@@ -135,6 +148,17 @@ public class SalesInvoiceService {
                 "outstanding", total,
                 "invoiceOutstanding", BigDecimal.valueOf(invoiceAmt).setScale(2, RoundingMode.HALF_UP).doubleValue(),
                 "openingBalance", BigDecimal.valueOf(openingBalance).setScale(2, RoundingMode.HALF_UP).doubleValue());
+    }
+
+    private double resolveOpeningInvoiceOutstanding(OpeningInvoice invoice) {
+        BigDecimal outstanding = invoice.getOutstanding();
+        if (outstanding == null) {
+            outstanding = invoice.getAmount();
+        }
+        if (outstanding == null || outstanding.compareTo(BigDecimal.ZERO) <= 0) {
+            return 0.0;
+        }
+        return outstanding.doubleValue();
     }
 
     // ----------------------------
@@ -185,10 +209,18 @@ public class SalesInvoiceService {
         // Calculate totals from items
         double subTotal = 0;
         double taxTotal = 0;
+        List<DeliveryNoteItem> linkedDeliveryItems = loadLinkedDeliveryItems(invoice);
 
         if (invoice.getItems() != null) {
             for (SalesInvoiceItem item : invoice.getItems()) {
                 item.setSalesInvoice(invoice);
+
+                DeliveryNoteItem linkedDeliveryItem = findMatchingDeliveryItem(item, linkedDeliveryItems);
+                if (linkedDeliveryItem != null) {
+                    linkedDeliveryItems.remove(linkedDeliveryItem);
+                    hydrateInvoiceItemFromDeliveryNote(item, linkedDeliveryItem);
+                }
+                normalizeInvoiceItemFinancials(item, linkedDeliveryItem != null);
 
                 Product product = item.getItemCode() != null
                         ? productRepo.findByCodeAndIsActiveTrue(item.getItemCode()).orElse(null)
@@ -286,11 +318,31 @@ public class SalesInvoiceService {
             doUpdateStatus(saved.getId(), intendedStatus, settings);
 
             // Auto-update linked Sales Order to INVOICED
+            String linkedQtnNo = saved.getLinkedQuotation();
             if (saved.getLinkedSalesOrder() != null && !saved.getLinkedSalesOrder().isBlank()) {
-                salesOrderRepository.findBySoNumber(saved.getLinkedSalesOrder()).ifPresent(so -> {
+                java.util.Optional<com.billbull.backend.sales.salesorder.SalesOrder> linkedSO =
+                        salesOrderRepository.findBySoNumber(saved.getLinkedSalesOrder());
+                linkedSO.ifPresent(so -> {
                     so.setStatus(com.billbull.backend.sales.salesorder.SalesOrderStatus.INVOICED);
                     salesOrderRepository.save(so);
                 });
+                // If the invoice was reached via SO and the SO came from a quotation,
+                // surface that quotation here so it gets stamped Invoiced too.
+                if ((linkedQtnNo == null || linkedQtnNo.isBlank()) && linkedSO.isPresent()) {
+                    String soQtn = linkedSO.get().getLinkedQuotation();
+                    if (soQtn != null && !soQtn.isBlank()) {
+                        linkedQtnNo = soQtn;
+                    }
+                }
+            }
+
+            // Auto-update linked Quotation to INVOICED (covers both direct
+            // Quotation→Invoice and Quotation→SO→Invoice flows). This is what
+            // surfaces 'Invoiced' instead of 'Converted' on the quotation list.
+            if (linkedQtnNo != null && !linkedQtnNo.isBlank()) {
+                quotationRepository.updateStatusByQtnNo(
+                        linkedQtnNo,
+                        com.billbull.backend.sales.quotation.QuotationStatus.INVOICED);
             }
         }
 
@@ -318,6 +370,143 @@ public class SalesInvoiceService {
         }
 
         return getById(saved.getId());
+    }
+
+    private List<DeliveryNoteItem> loadLinkedDeliveryItems(SalesInvoice invoice) {
+        if (invoice.getLinkedDeliveryNote() == null || invoice.getLinkedDeliveryNote().isBlank()) {
+            return new ArrayList<>();
+        }
+
+        List<String> dnNumbers = Arrays.stream(invoice.getLinkedDeliveryNote().split(","))
+                .map(String::trim)
+                .filter(value -> !value.isBlank())
+                .toList();
+
+        if (dnNumbers.isEmpty()) {
+            return new ArrayList<>();
+        }
+
+        List<DeliveryNoteItem> result = new ArrayList<>();
+        for (DeliveryNote note : deliveryNoteRepository.findByDnNumberIn(dnNumbers)) {
+            Hibernate.initialize(note.getItems());
+            result.addAll(note.getItems());
+        }
+        return result;
+    }
+
+    private DeliveryNoteItem findMatchingDeliveryItem(SalesInvoiceItem invoiceItem, List<DeliveryNoteItem> deliveryItems) {
+        if (invoiceItem == null || deliveryItems == null || deliveryItems.isEmpty()) {
+            return null;
+        }
+
+        if (invoiceItem.getSalesOrderItemId() != null) {
+            for (DeliveryNoteItem deliveryItem : deliveryItems) {
+                if (invoiceItem.getSalesOrderItemId().equals(deliveryItem.getSalesOrderItemId())) {
+                    return deliveryItem;
+                }
+            }
+        }
+
+        String invoiceCode = normalizeCode(invoiceItem.getItemCode());
+        if (invoiceCode == null) {
+            return null;
+        }
+
+        for (DeliveryNoteItem deliveryItem : deliveryItems) {
+            if (invoiceCode.equals(normalizeCode(deliveryItem.getItemCode()))) {
+                return deliveryItem;
+            }
+        }
+
+        return null;
+    }
+
+    private void hydrateInvoiceItemFromDeliveryNote(SalesInvoiceItem invoiceItem, DeliveryNoteItem deliveryItem) {
+        if (invoiceItem == null || deliveryItem == null) {
+            return;
+        }
+
+        if (invoiceItem.getItemCode() == null || invoiceItem.getItemCode().isBlank()) {
+            invoiceItem.setItemCode(deliveryItem.getItemCode());
+        }
+        if ((invoiceItem.getDescription() == null || invoiceItem.getDescription().isBlank())
+                && deliveryItem.getDescription() != null && !deliveryItem.getDescription().isBlank()) {
+            invoiceItem.setDescription(deliveryItem.getDescription());
+        }
+        if ((invoiceItem.getItemName() == null || invoiceItem.getItemName().isBlank())
+                && deliveryItem.getDescription() != null && !deliveryItem.getDescription().isBlank()) {
+            invoiceItem.setItemName(deliveryItem.getDescription());
+        }
+        if (invoiceItem.getUnit() == null || invoiceItem.getUnit().isBlank()) {
+            invoiceItem.setUnit(deliveryItem.getUnit());
+        }
+        if (invoiceItem.getQuantity() == null || invoiceItem.getQuantity() <= 0) {
+            invoiceItem.setQuantity(deliveryItem.getCurrentQty() != null
+                    ? deliveryItem.getCurrentQty()
+                    : deliveryItem.getOrderedQty());
+        }
+        if (deliveryItem.getPrice() != null) {
+            invoiceItem.setPrice(deliveryItem.getPrice());
+        }
+        if (deliveryItem.getDisc() != null) {
+            invoiceItem.setDiscount(deliveryItem.getDisc());
+        }
+        if (deliveryItem.getTax() != null) {
+            invoiceItem.setTaxRate(deliveryItem.getTax());
+        }
+        if (deliveryItem.getCost() != null) {
+            invoiceItem.setCost(deliveryItem.getCost());
+        }
+        if (invoiceItem.getBinId() == null) {
+            invoiceItem.setBinId(deliveryItem.getBinId());
+        }
+        if (invoiceItem.getSalesOrderItemId() == null) {
+            invoiceItem.setSalesOrderItemId(deliveryItem.getSalesOrderItemId());
+        }
+        if ((invoiceItem.getImage() == null || invoiceItem.getImage().isBlank())
+                && deliveryItem.getImage() != null && !deliveryItem.getImage().isBlank()) {
+            invoiceItem.setImage(deliveryItem.getImage());
+        }
+    }
+
+    private void normalizeInvoiceItemFinancials(SalesInvoiceItem item, boolean linkedToDeliveryNote) {
+        if (item == null) {
+            return;
+        }
+
+        boolean shouldCalculate = isMissingOrZero(item.getNetAmount())
+                && (linkedToDeliveryNote || !isMissingOrZero(item.getPrice()));
+
+        if (!shouldCalculate) {
+            return;
+        }
+
+        double qty = item.getQuantity() != null ? item.getQuantity() : 0;
+        double price = item.getPrice() != null ? item.getPrice() : 0;
+        double discountPercent = item.getDiscount() != null ? item.getDiscount() : 0;
+        double taxPercent = item.getTaxRate() != null ? item.getTaxRate() : 0;
+
+        double gross = qty * price;
+        double discountAmount = gross * (discountPercent / 100);
+        double taxableAmount = Math.max(0, gross - discountAmount);
+        double taxAmount = taxableAmount * (taxPercent / 100);
+        double netAmount = taxableAmount + taxAmount;
+
+        item.setGrossAmount(roundCurrency(gross));
+        item.setTaxAmount(roundCurrency(taxAmount));
+        item.setNetAmount(roundCurrency(netAmount));
+    }
+
+    private boolean isMissingOrZero(Double value) {
+        return value == null || Math.abs(value) < 0.0001d;
+    }
+
+    private double roundCurrency(double value) {
+        return BigDecimal.valueOf(value).setScale(2, RoundingMode.HALF_UP).doubleValue();
+    }
+
+    private String normalizeCode(String value) {
+        return value == null || value.isBlank() ? null : value.trim().toUpperCase();
     }
 
     // ----------------------------
@@ -377,6 +566,12 @@ public class SalesInvoiceService {
                 if (item.getLocalName() == null || item.getLocalName().isBlank()) item.setLocalName(p.getLocalName());
                 if (item.getDescription() == null || item.getDescription().isBlank()) item.setDescription(p.getShortDesc());
                 if (item.getItemName() == null || item.getItemName().isBlank()) item.setItemName(p.getName());
+                if (item.getBrandName() == null && p.getBrand() != null) {
+                    item.setBrandName(p.getBrand().getName());
+                }
+                if (item.getDetailedDesc() == null && p.getDetailedDesc() != null) {
+                    item.setDetailedDesc(p.getDetailedDesc());
+                }
                 if (item.getBarcode() == null || item.getBarcode().isBlank()) {
                     String barcode = barcodeMap.computeIfAbsent(
                             p.getId(),
@@ -643,6 +838,9 @@ public class SalesInvoiceService {
 
             Product product = productRepo.findByCodeAndIsActiveTrue(item.getItemCode()).orElse(null);
             if (product == null)
+                continue;
+            // QA-001: service products have no physical inventory — never validate stock.
+            if (product.isService())
                 continue;
 
             int requiredQty = resolveBaseQty(product.getId(), item.getUnit(), item.getQuantity() != null ? item.getQuantity() : 0)
@@ -1040,6 +1238,13 @@ public class SalesInvoiceService {
         req.items = new ArrayList<>();
         if (invoice.getItems() != null) {
             for (SalesInvoiceItem item : invoice.getItems()) {
+                // QA-001: service lines never deliver — no stock movement, no DN line.
+                Product itemProduct = item.getItemCode() != null
+                        ? productRepo.findByCodeAndIsActiveTrue(item.getItemCode()).orElse(null)
+                        : null;
+                if (itemProduct != null && itemProduct.isService()) {
+                    continue;
+                }
                 DeliveryNoteItemRequest iReq = new DeliveryNoteItemRequest();
                 iReq.itemCode = item.getItemCode();
                 iReq.barcode = item.getBarcode();
@@ -1061,6 +1266,15 @@ public class SalesInvoiceService {
                 iReq.cost = item.getCost();
                 req.items.add(iReq);
             }
+        }
+
+        // QA-001: if every line on the invoice was a service item, there's
+        // nothing to deliver. Skip DN creation entirely and treat the invoice
+        // as delivered so revenue recognition still proceeds.
+        if (req.items.isEmpty()) {
+            System.out.println("[Auto-DN] Skipped: invoice " + invoice.getInvoiceNumber()
+                    + " has no stock items (all lines are services).");
+            return true;
         }
 
         var created = deliveryNoteService.create(req);
