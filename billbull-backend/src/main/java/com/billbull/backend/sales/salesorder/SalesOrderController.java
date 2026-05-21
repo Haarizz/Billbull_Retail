@@ -57,6 +57,15 @@ public class SalesOrderController {
         return service.getById(id);
     }
 
+    /**
+     * QA-032: Return the Receipt Vouchers linked to this Sales Order so the
+     * editor can offer a "Print Advance Receipt" action.
+     */
+    @GetMapping("/{id}/receipt-vouchers")
+    public List<com.billbull.backend.financials.receiptvoucher.ReceiptVoucher> getReceiptVouchers(@PathVariable Long id) {
+        return service.getReceiptVouchersForOrder(id);
+    }
+
     @PutMapping("/{id}/status")
     public void updateStatus(@PathVariable Long id, @RequestParam String status) {
         service.updateStatusById(id, SalesOrderStatus.valueOf(status));

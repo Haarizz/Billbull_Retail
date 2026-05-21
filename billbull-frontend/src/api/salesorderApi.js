@@ -18,6 +18,15 @@ export const getSalesOrderById = async (id) => {
   return res.data;
 };
 
+/**
+ * QA-032: Receipt Vouchers linked to a Sales Order (advance receipts).
+ * Returns an array, ordered newest-first.
+ */
+export const getSalesOrderReceiptVouchers = async (id) => {
+  const res = await api.get(`${BASE_URL}/${id}/receipt-vouchers`);
+  return Array.isArray(res.data) ? res.data : [];
+};
+
 export const getNextSalesOrderNumber = async () => {
   const res = await api.get(`${BASE_URL}/next-number`);
   return res.data.soNumber;

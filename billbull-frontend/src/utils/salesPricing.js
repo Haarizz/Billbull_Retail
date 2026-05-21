@@ -48,3 +48,12 @@ export const pickSalesItemPrice = (product, policy) => {
     if (sellingFallback != null && sellingFallback > 0) return sellingFallback;
     return 0;
 };
+
+/**
+ * Returns true when the policy is a non-default override (MAX_SALE or
+ * MIN_SALE). Used by sales pages to decide whether the configured master
+ * price should win over packing-level unitPrices when adding an item.
+ */
+export const isPolicyOverridingPackings = (policy) =>
+    policy === SALES_ITEM_PRICE_POLICIES.MAX_SALE
+    || policy === SALES_ITEM_PRICE_POLICIES.MIN_SALE;

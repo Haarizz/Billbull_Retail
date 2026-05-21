@@ -65,6 +65,16 @@ public class SalesInvoice {
     @Enumerated(EnumType.STRING)
     private SalesInvoiceStatus status;
 
+    /**
+     * Whether line prices on this invoice are entered VAT-exclusive (tax
+     * added on top) or VAT-inclusive (tax extracted out of the line).
+     * Default EXCLUSIVE preserves legacy behaviour.
+     */
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false, length = 12, columnDefinition = "varchar(12) default 'EXCLUSIVE'")
+    private com.billbull.backend.sales.common.VatMode vatMode
+            = com.billbull.backend.sales.common.VatMode.EXCLUSIVE;
+
     @Enumerated(EnumType.STRING)
     private SalesType salesType = SalesType.STANDARD_FLOW;
 
@@ -161,6 +171,14 @@ public class SalesInvoice {
 
     public void setLinkedQuotation(String linkedQuotation) {
         this.linkedQuotation = linkedQuotation;
+    }
+
+    public com.billbull.backend.sales.common.VatMode getVatMode() {
+        return vatMode;
+    }
+
+    public void setVatMode(com.billbull.backend.sales.common.VatMode vatMode) {
+        this.vatMode = vatMode;
     }
 
     public String getPaymentMode() {

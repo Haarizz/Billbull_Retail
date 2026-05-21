@@ -64,6 +64,7 @@ public class SalesInvoiceService {
     private final SalesDocumentNumberingService numberingService;
     private final StockAvailabilityService stockAvailabilityService;
     private final ReceiptVoucherService receiptVoucherService;
+    private final com.billbull.backend.financials.receiptvoucher.ReceiptVoucherRepository receiptVoucherRepo;
     private final ProductRepository productRepo;
     private final ProductBarcodeRepository barcodeRepo;
     private final ProductMediaRepository productMediaRepository;
@@ -86,6 +87,7 @@ public class SalesInvoiceService {
             SalesDocumentNumberingService numberingService,
             StockAvailabilityService stockAvailabilityService,
             ReceiptVoucherService receiptVoucherService,
+            com.billbull.backend.financials.receiptvoucher.ReceiptVoucherRepository receiptVoucherRepo,
             ProductRepository productRepo,
             ProductBarcodeRepository barcodeRepo,
             ProductMediaRepository productMediaRepository,
@@ -107,6 +109,7 @@ public class SalesInvoiceService {
         this.numberingService = numberingService;
         this.stockAvailabilityService = stockAvailabilityService;
         this.receiptVoucherService = receiptVoucherService;
+        this.receiptVoucherRepo = receiptVoucherRepo;
         this.productRepo = productRepo;
         this.barcodeRepo = barcodeRepo;
         this.productMediaRepository = productMediaRepository;
@@ -346,14 +349,44 @@ public class SalesInvoiceService {
 
         if (isNewlyFinalized && paid > 0) {
             SalesInvoice refreshed = getById(saved.getId());
-            createReceiptForInvoicePayment(
-                    refreshed,
-                    paid,
-                    refreshed.getPaymentMode(),
-                    "Initial receipt for INV: " + refreshed.getInvoiceNumber(),
-                    refreshed.getInvoiceDate(),
-                    null,   // bankAccount — not applicable for initial receipt
-                    null);  // chequeDate  — not applicable for initial receipt
+
+            // QA-032: when this invoice originates from a Sales Order that
+            // already collected an advance, the advance was posted via a
+            // ReceiptVoucher at the time the SO was confirmed. Re-link those
+            // advance vouchers to this invoice (rather than creating a new
+            // receipt) so the cash isn't double-counted. The "new payment"
+            // RV is only created for whatever the user collected on top of
+            // the carried advance.
+            double remainingPaidToReceipt = paid;
+            if (refreshed.getLinkedSalesOrder() != null && !refreshed.getLinkedSalesOrder().isBlank()) {
+                com.billbull.backend.sales.salesorder.SalesOrder linkedSo =
+                        salesOrderRepository.findBySoNumber(refreshed.getLinkedSalesOrder()).orElse(null);
+                if (linkedSo != null) {
+                    java.util.List<com.billbull.backend.financials.receiptvoucher.ReceiptVoucher> advanceRvs =
+                            receiptVoucherRepo.findBySalesOrderIdOrderByDateDesc(linkedSo.getId());
+                    for (com.billbull.backend.financials.receiptvoucher.ReceiptVoucher rv : advanceRvs) {
+                        if (rv.getSalesInvoiceId() != null) continue; // already linked elsewhere
+                        if (rv.getAmount() == null) continue;
+                        double rvAmt = rv.getAmount().doubleValue();
+                        if (rvAmt <= 0 || rvAmt > remainingPaidToReceipt + 0.01) continue;
+                        rv.setSalesInvoiceId(refreshed.getId());
+                        rv.setPurpose(com.billbull.backend.financials.receiptvoucher.ReceiptPurpose.AGAINST_INVOICE);
+                        receiptVoucherRepo.save(rv);
+                        remainingPaidToReceipt -= rvAmt;
+                    }
+                }
+            }
+
+            if (remainingPaidToReceipt > 0.01) {
+                createReceiptForInvoicePayment(
+                        refreshed,
+                        remainingPaidToReceipt,
+                        refreshed.getPaymentMode(),
+                        "Initial receipt for INV: " + refreshed.getInvoiceNumber(),
+                        refreshed.getInvoiceDate(),
+                        null,   // bankAccount — not applicable for initial receipt
+                        null);  // chequeDate  — not applicable for initial receipt
+            }
         }
 
         // Handle Linking "Before Sale" Delivery Notes

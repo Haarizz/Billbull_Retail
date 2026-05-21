@@ -7,6 +7,7 @@ import { getBrands } from '../api/brandsApi';
 import { getUnits } from '../api/unitsApi';
 import CurrencyAmount from './CurrencyAmount';
 import toast from 'react-hot-toast';
+import { pickSalesItemPrice } from '../utils/salesPricing';
 const PAGE_SIZE = 15;
 const RECENT_KEY = 'billbull_recent_products';
 const MAX_RECENT = 5;
@@ -311,6 +312,10 @@ const ProductSelector = ({
     mode = 'sales',
     warehouseId = null,
     customFetchFn = null,  // (search, page, pageSize, signal) => Promise<{ content, totalPages, totalElements }>
+    // Configured Sales Item Price Policy (RETAIL / MAX_SALE / MIN_SALE).
+    // When set, the inline-entry default price uses this master field
+    // instead of the legacy retailPrice. Ignored in 'purchase' mode.
+    salesItemPricePolicy = null,
 }) => {
     const [searchQuery, setSearchQuery] = useState('');
     const [products, setProducts] = useState([]);
@@ -421,9 +426,12 @@ const ProductSelector = ({
 
     const getInlineDefaults = useCallback((product) => {
         const normalizedProduct = normalizeRecentProduct(product);
+        // In sales mode, honour the configured Sales Item Price Policy
+        // (RETAIL / MAX_SALE / MIN_SALE) — picks the matching master field
+        // and falls back to retail → selling. Purchase mode keeps using cost.
         const rawDefaultPrice = mode === 'purchase'
             ? normalizedProduct.cost
-            : normalizedProduct.retailPrice ?? normalizedProduct.sellingPrice;
+            : pickSalesItemPrice(normalizedProduct, salesItemPricePolicy);
         const parsedDefaultPrice = parseFloat(rawDefaultPrice);
         const parsedDefaultDiscount = parseFloat(normalizedProduct.maxDiscount ?? 0);
 
@@ -433,7 +441,7 @@ const ProductSelector = ({
             price: Number.isFinite(parsedDefaultPrice) ? parsedDefaultPrice : 0,
             disc: Number.isFinite(parsedDefaultDiscount) ? parsedDefaultDiscount : 0,
         };
-    }, [mode]);
+    }, [mode, salesItemPricePolicy]);
 
     const primeInlineEntry = useCallback((product) => {
         const defaults = getInlineDefaults(product);
@@ -820,9 +828,12 @@ const ProductSelector = ({
                     {/* Product cards */}
                     <div className="space-y-3" ref={listRef}>
                         {products.map((product, idx) => {
-                            const rawRetail = product.retailPrice != null ? parseFloat(product.retailPrice) : NaN;
-                            const rawSelling = product.sellingPrice != null ? parseFloat(product.sellingPrice) : NaN;
-                            const salesPrice = !isNaN(rawRetail) ? rawRetail : (!isNaN(rawSelling) ? rawSelling : 0);
+                            // Display the price that will actually be used as
+                            // the line default — driven by the configured Sales
+                            // Item Price Policy. Purchase mode is unaffected.
+                            const salesPrice = mode === 'purchase'
+                                ? (product.cost != null ? parseFloat(product.cost) : 0)
+                                : pickSalesItemPrice(product, salesItemPricePolicy);
                             const cost = (product.cost != null && !isNaN(parseFloat(product.cost))) ? parseFloat(product.cost) : null;
                             const gpRaw = salesPrice > 0 && cost != null ? ((salesPrice - cost) / salesPrice) * 100 : null;
                             const gp = product.gp ?? (gpRaw != null ? `${gpRaw.toFixed(1)}%` : null);

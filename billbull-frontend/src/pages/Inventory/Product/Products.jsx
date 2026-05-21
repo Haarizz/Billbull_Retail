@@ -2054,8 +2054,10 @@ const Products = () => {
         maxPrice: pricing?.maxPrice || '',
         onlinePrice: pricing?.onlinePrice || '',
 
-        purchaseTax: tax?.purchaseTax || 5,
-        salesTax: tax?.salesTax || 5,
+        // Use ?? not || here — a deliberate 0% (zero-rated item) must not
+        // silently fall through to the 5% default on each save round-trip.
+        purchaseTax: tax?.purchaseTax ?? 5,
+        salesTax: tax?.salesTax ?? 5,
         taxCategory: tax?.taxCategory || 'Standard',
         hsnCode: tax?.hsnCode || '',
 

@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect, useMemo } from 'react';
+import { useLocation } from 'react-router-dom';
 import {
     FileText,
     Plus,
@@ -96,6 +97,7 @@ const CustomSelect = ({ placeholder, options, value, onChange }) => {
 
 // --- COMPONENT: RECEIPT VOUCHER ---
 const ReceiptVoucher = () => {
+    const location = useLocation();
     const { print } = usePrintDocument();
     const { branchNames, defaultBranchName } = useBranch();
     const { company } = useCompany();
@@ -227,6 +229,24 @@ const ReceiptVoucher = () => {
     useEffect(() => {
         fetchReceipts();
     }, []);
+
+    // QA-032: When navigated here from the Sales Order screen with a specific
+    // voucher to view/print, open its detail drawer once the list has loaded.
+    const openVoucherHandled = useRef(false);
+    useEffect(() => {
+        const target = location?.state?.openReceiptVoucherId;
+        if (!target || openVoucherHandled.current) return;
+        if (!receipts || receipts.length === 0) return;
+
+        const match = receipts.find(r => r.id === target);
+        if (!match) return;
+
+        openVoucherHandled.current = true;
+        setSelectedReceipt(match);
+        setIsDrawerOpen(true);
+        // Clear the nav state so back/forward doesn't re-trigger.
+        window.history.replaceState({}, document.title);
+    }, [receipts, location?.state]);
 
     useEffect(() => {
         if (!defaultBranchName) {

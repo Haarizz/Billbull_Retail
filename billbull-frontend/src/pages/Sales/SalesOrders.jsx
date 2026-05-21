@@ -37,11 +37,14 @@ import {
   getAllSalesOrders,
   getNextSalesOrderNumber,
   saveSalesOrder,
-  uploadSalesOrderAttachment
+  uploadSalesOrderAttachment,
+  getSalesOrderReceiptVouchers
 } from '../../api/salesorderApi';
 import { getTemplatesByCategory } from '../../api/printTemplateApi';
 import { formatDisplayDate } from '../../utils/dateUtils';
-import { pickSalesItemPrice } from '../../utils/salesPricing';
+import { pickSalesItemPrice, isPolicyOverridingPackings } from '../../utils/salesPricing';
+import { computeLineTaxTotals, resolveLineTaxRate } from '../../utils/vatMath';
+import { getActiveVatRate } from '../../api/taxApi';
 import { generatePrintHtml, printHtml } from '../../utils/printGenerator';
 import { getImageUrl } from '../../utils/urlUtils';
 import { getDefaultProductUnit, resolveUnitAmount } from '../../utils/unitPricing';
@@ -257,6 +260,14 @@ const SalesOrders = () => {
   // Items
   const [items, setItems] = useState([createBlankOrderItem()]);
   const [billDiscount, setBillDiscount] = useState(0);
+  // VAT mode for line-price interpretation (EXCLUSIVE | INCLUSIVE).
+  const [vatMode, setVatMode] = useState('EXCLUSIVE');
+
+  // Fallback VAT % from Tax Compliance for products without a per-item rate.
+  const [activeVatRate, setActiveVatRate] = useState(null);
+  useEffect(() => {
+    getActiveVatRate().then(setActiveVatRate);
+  }, []);
 
   // ✅ GLOBAL SHORTCUTS
   useShortcuts({
@@ -518,9 +529,14 @@ const SalesOrders = () => {
 
     const preDiscountAmount = Math.max(0, grossAmount - focDeduction);
     const discountAmount = preDiscountAmount * (discPercent / 100);
-    const taxableAmount = preDiscountAmount - discountAmount;
-    const taxAmount = taxableAmount * (taxPercent / 100);
-    const total = taxableAmount + taxAmount;
+    const netAfterDiscount = preDiscountAmount - discountAmount;
+    // VAT mode drives whether tax is on top (EXCLUSIVE) or extracted out
+    // of the entered price (INCLUSIVE).
+    const { taxableAmount, taxAmount, total } = computeLineTaxTotals({
+      netAfterDiscount,
+      taxPercent,
+      vatMode,
+    });
 
     return {
       ...item,
@@ -529,11 +545,18 @@ const SalesOrders = () => {
       foc: focQty,
       disc: discPercent,
       tax: taxPercent,
+      taxableAmount,
       taxAmt: taxAmount,
       discountAmount,
       total
     };
   };
+
+  // Recompute every line when the VAT mode flips.
+  useEffect(() => {
+    setItems(prev => prev.map(item => calculateRow(item)));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [vatMode]);
 
   const normalizeOrderItem = (item = {}, fallbackId = Date.now() + Math.random()) => {
     const resolvedUnit = item.unit || item.focUnit || 'PCS';
@@ -582,15 +605,22 @@ const SalesOrders = () => {
   // ✅ PRODUCT SELECTOR HANDLER
   const handleAddSingleProduct = (product) => {
     const defaultUnit = getDefaultProductUnit(product);
-    const price = resolveUnitAmount({
-      targetUnit: defaultUnit,
-      amountMap: product.unitPrices,
-      unitConversions: product.unitConversions,
-      fallbackAmount: pickSalesItemPrice(product, salesSettings?.salesItemPricePolicy)
-    });
+    const policy = salesSettings?.salesItemPricePolicy;
+    const policyPrice = pickSalesItemPrice(product, policy);
+    // When the user explicitly opts into Max/Min as the default, that
+    // configured master price wins over any per-packing unitPrice. For the
+    // legacy RETAIL policy we keep the unit-aware behaviour.
+    const price = isPolicyOverridingPackings(policy)
+      ? policyPrice
+      : resolveUnitAmount({
+        targetUnit: defaultUnit,
+        amountMap: product.unitPrices,
+        unitConversions: product.unitConversions,
+        fallbackAmount: policyPrice
+      });
     const cost = parseFloat(product.cost) || 0;
     const disc = parseFloat(product.maxDiscount) || 0;
-    const tax = parseFloat(product.salesTax) || 5;
+    const tax = resolveLineTaxRate(product, activeVatRate);
 
     const rawItem = {
       id: Date.now() + Math.random(),
@@ -641,7 +671,7 @@ const SalesOrders = () => {
     if (isLocked) return;
     const defaultUnit = getDefaultProductUnit(product);
     const cost = parseFloat(product.cost) || 0;
-    const tax = parseFloat(product.salesTax) || 5;
+    const tax = resolveLineTaxRate(product, activeVatRate);
     const rawItem = {
       id: Date.now() + Math.random(),
       code: product.code,
@@ -758,6 +788,30 @@ const SalesOrders = () => {
     });
   };
 
+  // QA-032: Open the auto-generated Advance Receipt Voucher for this SO in
+  // the Receipt Voucher screen so the user can print it.
+  const handlePrintAdvanceReceipt = async () => {
+    if (!orderId) {
+      alert('Save the sales order first.');
+      return;
+    }
+    try {
+      const vouchers = await getSalesOrderReceiptVouchers(orderId);
+      if (!vouchers || vouchers.length === 0) {
+        alert('No advance receipt voucher exists for this order yet. Save the order with an advance amount first.');
+        return;
+      }
+      // Most recent advance receipt (list is newest-first).
+      const target = vouchers[0];
+      navigate('/finance/receiptvoucher', {
+        state: { openReceiptVoucherId: target.voucherId }
+      });
+    } catch (err) {
+      console.error('Failed to load advance receipt voucher', err);
+      alert('Failed to load the advance receipt voucher.');
+    }
+  };
+
   const handleProceedToInvoice = () => {
     navigate('/sales/invoice', {
       state: {
@@ -771,6 +825,9 @@ const SalesOrders = () => {
           linkedProforma: linkedPi || '',
           billDiscount: Number(billDiscount) || 0,
           shippingAddress: shippingAddress || '',
+          // QA-032: carry the SO advance so the destination invoice can
+          // pre-fill amountCollected and surface the advance to the user.
+          advanceAmount: Number(advanceAmount) || 0,
           items: items
             .filter(i => i.code && i.qty > 0)
             .map(i => ({
@@ -918,6 +975,7 @@ const SalesOrders = () => {
       linkedQuotation: sanitizedLinkedQuotation,
       linkedProforma: sanitizedLinkedProforma,
       billDiscount: Number(billDiscount) || 0,
+      vatMode,
 
       // Payment & Delivery
       advanceAmount: Number(advanceAmount),
@@ -1158,6 +1216,7 @@ const SalesOrders = () => {
     setLinkedQtn(order.linkedQuotation || '');
     setLinkedPi(order.linkedProforma || '');
     setLinkedSourceSearch(hasLinkedQuotation ? (order.linkedQuotation || '') : (order.linkedProforma || ''));
+    setVatMode(order.vatMode === 'INCLUSIVE' ? 'INCLUSIVE' : 'EXCLUSIVE');
 
     // Map items back
     if (order.items) {
@@ -1322,6 +1381,7 @@ const SalesOrders = () => {
         title="Select Items from Products / Services"
         actionLabel="Add to Order"
         mode="sales"
+        salesItemPricePolicy={salesSettings?.salesItemPricePolicy}
       />
 
       {/* ✅ STOCK AVAILABILITY MODAL */}
@@ -1697,17 +1757,33 @@ const SalesOrders = () => {
                   <ShoppingCart size={16} className="text-yellow-500" /> Sales Order Items
                 </h3>
 
-                {!isLocked && (
-                  <div className="flex gap-2">
-                    {/* ✅ SELECT FROM CATALOG BUTTON */}
+                <div className="flex items-center gap-3">
+                  {/* VAT mode toggle — drives line tax math. */}
+                  <div className="inline-flex rounded-md border border-slate-200 overflow-hidden text-[11px] font-semibold">
+                    <button
+                      type="button"
+                      disabled={isLocked}
+                      onClick={() => setVatMode('EXCLUSIVE')}
+                      className={`px-2.5 py-1 transition-colors ${vatMode === 'EXCLUSIVE' ? 'bg-yellow-400 text-slate-900' : 'bg-white text-slate-500 hover:bg-slate-50'}`}
+                      title="Prices entered exclude VAT — tax added on top"
+                    >VAT Excl.</button>
+                    <button
+                      type="button"
+                      disabled={isLocked}
+                      onClick={() => setVatMode('INCLUSIVE')}
+                      className={`px-2.5 py-1 border-l border-slate-200 transition-colors ${vatMode === 'INCLUSIVE' ? 'bg-yellow-400 text-slate-900' : 'bg-white text-slate-500 hover:bg-slate-50'}`}
+                      title="Prices entered already include VAT — tax extracted out"
+                    >VAT Incl.</button>
+                  </div>
+                  {!isLocked && (
                     <button
                       onClick={() => setIsProductSelectorOpen(true)}
                       className="flex items-center gap-1 px-3 py-1.5 bg-yellow-400 text-slate-900 text-xs font-medium rounded hover:bg-yellow-500"
                     >
                       <Plus size={14} /> Select from Products
                     </button>
-                  </div>
-                )}
+                  )}
+                </div>
               </div>
 
               <div className="overflow-auto max-h-[380px]">
@@ -1952,8 +2028,20 @@ const SalesOrders = () => {
                   <span>Order Total</span>
                   <CurrencyAmount value={orderTotal} currency={orderCurrency} />
                 </div>
-                <div className="flex justify-between text-emerald-600 font-medium">
-                  <span>Advance Received</span>
+                <div className="flex justify-between items-center text-emerald-600 font-medium">
+                  <span className="flex items-center gap-2">
+                    Advance Received
+                    {orderId && Number(advanceAmount) > 0 && (
+                      <button
+                        type="button"
+                        onClick={handlePrintAdvanceReceipt}
+                        title="View / print the auto-generated Receipt Voucher for this advance"
+                        className="flex items-center gap-1 text-[10px] font-semibold text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 rounded px-1.5 py-0.5 transition-colors"
+                      >
+                        <Printer size={10} /> Print Receipt
+                      </button>
+                    )}
+                  </span>
                   <CurrencyAmount value={advanceAmount} currency={orderCurrency} />
                 </div>
                 <div className="flex justify-between text-red-600 font-bold text-sm">

@@ -53,7 +53,9 @@ import {
 } from '../../api/quotationApi';
 import { getStockAvailability } from '../../api/stockAvailabilityApi';
 import { formatDisplayDate } from '../../utils/dateUtils';
-import { pickSalesItemPrice } from '../../utils/salesPricing';
+import { pickSalesItemPrice, isPolicyOverridingPackings } from '../../utils/salesPricing';
+import { computeLineTaxTotals, resolveLineTaxRate } from '../../utils/vatMath';
+import { getActiveVatRate } from '../../api/taxApi';
 import { getSalesSettings } from '../../api/salesSettingsApi';
 
 // Ensure you have an axios instance or use fetch
@@ -460,6 +462,17 @@ const Quotations = () => {
     const [paymentTerm, setPaymentTerm] = useState('30 Days');
     const [isPaymentTermOpen, setIsPaymentTermOpen] = useState(false);
 
+    // VAT mode for line-price interpretation. Document-level toggle: when
+    // INCLUSIVE, line prices already contain tax; calculateRow extracts it.
+    const [vatMode, setVatMode] = useState('EXCLUSIVE');
+
+    // Fallback VAT % from the Tax Compliance module's Active VAT row. Used
+    // when a product has no per-item Sales Tax % set.
+    const [activeVatRate, setActiveVatRate] = useState(null);
+    useEffect(() => {
+        getActiveVatRate().then(setActiveVatRate);
+    }, []);
+
     const [deliveryType, setDeliveryType] = useState('Delivery');
     const [isDeliveryTypeOpen, setIsDeliveryTypeOpen] = useState(false);
     const resolvedBranchLabel = formatBranchLocationLabel({
@@ -667,6 +680,7 @@ const Quotations = () => {
             sourceInquiryNumber: data.sourceInquiryNumber || '',
             total: data.totalAmount,
             billDiscount: data.billDiscount || 0,
+            vatMode: data.vatMode || 'EXCLUSIVE',
             status: data.status === 'PENDING_APPROVAL' ? 'Pending Approval' :
                 data.status === 'APPROVED' ? 'Approved' :
                     data.status === 'REJECTED' ? 'Rejected' :
@@ -964,14 +978,17 @@ const Quotations = () => {
         // 3. Discount Amount
         const discountAmount = preDiscountAmount * (discPercent / 100);
 
-        // 4. Taxable Amount
-        const taxableAmount = preDiscountAmount - discountAmount;
+        // 4. Net after discount — interpretation depends on VAT mode.
+        const netAfterDiscount = preDiscountAmount - discountAmount;
 
-        // 5. Tax Amount
-        const taxAmount = taxableAmount * (taxPercent / 100);
-
-        // 6. Line Total
-        const total = taxableAmount + taxAmount;
+        // 5/6. Taxable, Tax, Line Total — driven by the document VAT mode.
+        // When INCLUSIVE, the entered price already contains tax so tax is
+        // extracted out of the line. When EXCLUSIVE, tax is added on top.
+        const { taxableAmount, taxAmount, total } = computeLineTaxTotals({
+            netAfterDiscount,
+            taxPercent,
+            vatMode,
+        });
 
         return {
             ...item,
@@ -983,6 +1000,13 @@ const Quotations = () => {
             focValue: focDeduction
         };
     };
+
+    // When the document VAT mode flips, every existing line needs its
+    // taxableAmount/taxAmt/total recomputed against the new interpretation.
+    useEffect(() => {
+        setItems(prev => prev.map(item => calculateRow(item)));
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [vatMode]);
 
     const handleItemChange = (id, field, value) => {
         if (isViewMode) return;
@@ -1041,15 +1065,23 @@ const Quotations = () => {
     const handleAddSingleProduct = (product) => {
         if (isViewMode) return;
         const defaultUnit = getDefaultProductUnit(product);
-        const price = resolveUnitAmount({
-            targetUnit: defaultUnit,
-            amountMap: product.unitPrices,
-            unitConversions: product.unitConversions,
-            fallbackAmount: pickSalesItemPrice(product, salesSettings?.salesItemPricePolicy)
-        });
+        const policy = salesSettings?.salesItemPricePolicy;
+        const policyPrice = pickSalesItemPrice(product, policy);
+        // When the user explicitly opts into Max/Min as the default, that
+        // configured master price should win over any per-packing unitPrice.
+        // For the legacy RETAIL policy we keep the unit-aware behaviour so
+        // packing-level prices continue to apply.
+        const price = isPolicyOverridingPackings(policy)
+            ? policyPrice
+            : resolveUnitAmount({
+                targetUnit: defaultUnit,
+                amountMap: product.unitPrices,
+                unitConversions: product.unitConversions,
+                fallbackAmount: policyPrice
+            });
         const cost = parseFloat(product.cost) || 0;
         const disc = parseFloat(product.maxDiscount) || 0;
-        const tax = parseFloat(product.salesTax) || 5;
+        const tax = resolveLineTaxRate(product, activeVatRate);
         const rawItem = {
             id: Date.now() + Math.random(),
             code: product.code,
@@ -1130,7 +1162,7 @@ const Quotations = () => {
     const handleFastEntryAdd = (product, qty, price, disc) => {
         const defaultUnit = getDefaultProductUnit(product);
         const cost = parseFloat(product.cost) || 0;
-        const tax = parseFloat(product.salesTax) || 5;
+        const tax = resolveLineTaxRate(product, activeVatRate);
         const rawItem = {
             id: Date.now() + Math.random(),
             code: product.code,
@@ -1296,6 +1328,7 @@ const Quotations = () => {
             taxAmount: totalTax,
             subTotal: subTotal,
             billDiscount: billDiscount,
+            vatMode: vatMode,
             status: targetStatus === 'Pending Approval' ? 'PENDING_APPROVAL' :
                 targetStatus === 'Approved' ? 'APPROVED' :
                     targetStatus === 'Rejected' ? 'REJECTED' : 'DRAFT',
@@ -1645,6 +1678,7 @@ const Quotations = () => {
         setShippingAddress(qtn.shippingAddress || '');
         setAttachments(qtn.attachments || []);
         setBillDiscount(qtn.billDiscount || 0);
+        setVatMode(qtn.vatMode === 'INCLUSIVE' ? 'INCLUSIVE' : 'EXCLUSIVE');
         setSourceInquiry(qtn.sourceInquiryId ? {
             id: qtn.sourceInquiryId,
             inquiryNumber: qtn.sourceInquiryNumber || ''
@@ -2973,16 +3007,33 @@ const Quotations = () => {
                                         <h3 className="text-sm font-bold text-slate-800 flex items-center gap-2">
                                             <ShoppingCart size={16} className="text-yellow-500" /> Quotation Items
                                         </h3>
-                                        {!isViewMode && (
-                                            <div className="flex gap-2">
+                                        <div className="flex items-center gap-3">
+                                            {/* VAT mode toggle — drives line tax math (inclusive vs exclusive). */}
+                                            <div className="inline-flex rounded-md border border-slate-200 overflow-hidden text-[11px] font-semibold">
+                                                <button
+                                                    type="button"
+                                                    disabled={isViewMode}
+                                                    onClick={() => setVatMode('EXCLUSIVE')}
+                                                    className={`px-2.5 py-1 transition-colors ${vatMode === 'EXCLUSIVE' ? 'bg-yellow-400 text-slate-900' : 'bg-white text-slate-500 hover:bg-slate-50'}`}
+                                                    title="Prices entered exclude VAT — tax added on top"
+                                                >VAT Excl.</button>
+                                                <button
+                                                    type="button"
+                                                    disabled={isViewMode}
+                                                    onClick={() => setVatMode('INCLUSIVE')}
+                                                    className={`px-2.5 py-1 border-l border-slate-200 transition-colors ${vatMode === 'INCLUSIVE' ? 'bg-yellow-400 text-slate-900' : 'bg-white text-slate-500 hover:bg-slate-50'}`}
+                                                    title="Prices entered already include VAT — tax extracted out"
+                                                >VAT Incl.</button>
+                                            </div>
+                                            {!isViewMode && (
                                                 <button
                                                     onClick={() => setIsProductSelectionOpen(true)}
                                                     className="flex items-center gap-1 px-3 py-1.5 bg-yellow-400 text-slate-900 text-xs font-medium rounded hover:bg-yellow-500"
                                                 >
                                                     <Plus size={14} /> Select from Products
                                                 </button>
-                                            </div>
-                                        )}
+                                            )}
+                                        </div>
                                     </div>
 
                                     <div className="overflow-auto max-h-[380px]">
@@ -3639,6 +3690,7 @@ const Quotations = () => {
                     title="Select Items from Products / Services"
                     actionLabel="Add to Quotation"
                     mode="sales"
+                    salesItemPricePolicy={salesSettings?.salesItemPricePolicy}
                 />
 
                 {/* --- PRINT TEMPLATE PICKER MODAL --- */}
