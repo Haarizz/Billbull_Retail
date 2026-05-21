@@ -19,11 +19,12 @@ import {
 import { hasRole, logout, getUsernameFromToken } from "../api/auth";
 import { usePermissions } from "../context/PermissionContext";
 import { useCompany } from "../context/CompanyContext";
+import { formatUserDisplayName } from "../utils/displayName";
 
 const Sidebar = ({ children }) => {
   // --- STATE ---
   const [collapsed, setCollapsed] = useState(false);
-  const username = getUsernameFromToken() || "BillBull Admin";
+  const username = formatUserDisplayName(getUsernameFromToken()) || "BillBull Admin";
   const { canView, canAction, permissionsLoaded } = usePermissions();
   const { setCompany } = useCompany();
   const userEmail = "admin@billbull.app";

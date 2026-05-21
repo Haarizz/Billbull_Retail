@@ -169,7 +169,8 @@ public class JournalEntryService {
         entry.setPostedAt(LocalDateTime.now());
 
         JournalEntry saved = journalEntryRepository.save(entry);
-        auditService.logEvent("JOURNAL_ENTRY", saved.getEntryNumber(), "POSTED",
+        String auditEntityType = saved instanceof JournalVoucher ? "JOURNAL_VOUCHER" : "JOURNAL_ENTRY";
+        auditService.logEvent(auditEntityType, saved.getEntryNumber(), "POSTED",
                 postedBy != null ? postedBy : "System", "Posted. Synced to Ledger.");
         return saved;
     }

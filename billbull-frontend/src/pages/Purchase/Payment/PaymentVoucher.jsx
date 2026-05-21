@@ -398,7 +398,7 @@ const PaymentVoucher = () => {
             const formatted = rawData.map(v => ({
                 dbId: v.id, // Actual Database ID for API calls
                 id: v.voucherNumber || `ID-${v.id}`, // Display ID (e.g., PV-1234)
-                date: new Date(v.paymentDate).toLocaleDateString('en-US', { month: 'short', day: '2-digit', year: 'numeric' }),
+                date: v.paymentDate,
                 vendor: v.vendorName,
                 vendorId: v.vendorId || "VND-EXT",
                 mode: formatModeString(v.paymentMode),

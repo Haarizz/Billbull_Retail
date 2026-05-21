@@ -636,7 +636,7 @@ const AddCustomerModal = ({ isOpen, onClose, customerToEdit, onSaveCustomer }) =
             const newDoc = {
                 name: file.name,
                 size: (file.size / 1024).toFixed(2) + ' KB',
-                date: new Date().toLocaleDateString(),
+                date: new Date().toISOString().split('T')[0],
                 type: 'PDF',
                 fileContent: base64String
             };

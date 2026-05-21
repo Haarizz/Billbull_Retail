@@ -16,6 +16,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import com.billbull.backend.financials.chartofaccounts.Account;
+import com.billbull.backend.financials.chartofaccounts.AccountSelectionRules;
 import com.billbull.backend.financials.chartofaccounts.AccountRepository;
 import com.billbull.backend.financials.chartofaccounts.CostCenter;
 import com.billbull.backend.financials.chartofaccounts.CostCenterRepository;
@@ -38,8 +39,13 @@ public class LedgerService {
 
     public List<Account> getBankAccounts() {
         return accountRepo.findAll().stream()
-                .filter(a -> Boolean.TRUE.equals(a.getCashFlag()) && !"archived".equals(a.getStatus()))
+                .filter(AccountSelectionRules::isBankAccount)
+                .sorted((left, right) -> safeCode(left).compareToIgnoreCase(safeCode(right)))
                 .toList();
+    }
+
+    private String safeCode(Account account) {
+        return account != null && account.getCode() != null ? account.getCode() : "";
     }
 
     public Account saveAccount(Account account) {

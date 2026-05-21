@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import {
     FileText, Plus, Search, Filter, Eye, MoreHorizontal, Download,
     Trash, Edit, CheckCircle2, AlertCircle, X, Save,
@@ -17,6 +17,105 @@ import { getUsernameFromToken } from '../../api/auth';
 import { formatDisplayDate } from '../../utils/dateUtils';
 import { buildJournalVoucherPrintHtml } from '../../utils/journalVoucherPrintTemplate';
 import { getTemplatesByCategory } from '../../api/printTemplateApi';
+import LedgerAccountCreateModal from '../../components/common/LedgerAccountCreateModal';
+import { formatUserDisplayName } from '../../utils/displayName';
+
+const formatAccountLedgerLabel = (account = {}) => {
+    const code = account.code ? `${account.code} - ` : '';
+    return `${code}${account.name || ''}`.trim();
+};
+
+const AccountLedgerSearchSelect = ({ accounts = [], value, onChange, disabled }) => {
+    const [isOpen, setIsOpen] = useState(false);
+    const [query, setQuery] = useState('');
+    const dropdownRef = useRef(null);
+
+    const selectedAccount = useMemo(() => (
+        accounts.find(account => account.name === value || account.code === value)
+    ), [accounts, value]);
+
+    const filteredAccounts = useMemo(() => {
+        const text = query.trim().toLowerCase();
+        if (!text) return accounts.slice(0, 60);
+        return accounts
+            .filter(account => `${account.code || ''} ${account.name || ''}`.toLowerCase().includes(text))
+            .slice(0, 60);
+    }, [accounts, query]);
+
+    useEffect(() => {
+        const handleClickOutside = (event) => {
+            if (dropdownRef.current && !dropdownRef.current.contains(event.target)) {
+                setIsOpen(false);
+                setQuery('');
+            }
+        };
+        document.addEventListener('mousedown', handleClickOutside);
+        return () => document.removeEventListener('mousedown', handleClickOutside);
+    }, []);
+
+    const selectAccount = (account) => {
+        onChange(account.name);
+        setQuery('');
+        setIsOpen(false);
+    };
+
+    const displayValue = isOpen
+        ? query
+        : (selectedAccount ? formatAccountLedgerLabel(selectedAccount) : value || '');
+
+    return (
+        <div ref={dropdownRef} className="relative min-w-0 flex-1">
+            <input
+                type="text"
+                value={displayValue}
+                onFocus={() => {
+                    if (!disabled) {
+                        setIsOpen(true);
+                        setQuery('');
+                    }
+                }}
+                onChange={(event) => {
+                    setQuery(event.target.value);
+                    setIsOpen(true);
+                }}
+                onKeyDown={(event) => {
+                    if (event.key === 'Enter' && filteredAccounts[0]) {
+                        event.preventDefault();
+                        selectAccount(filteredAccounts[0]);
+                    }
+                    if (event.key === 'Escape') {
+                        setIsOpen(false);
+                        setQuery('');
+                    }
+                }}
+                disabled={disabled}
+                placeholder="Search code or name"
+                className="w-full px-2 py-1.5 text-xs border border-slate-200 rounded focus:border-yellow-400 focus:outline-none disabled:bg-slate-50 disabled:text-slate-400"
+            />
+
+            {isOpen && !disabled && (
+                <div className="absolute left-0 right-0 z-[80] mt-1 max-h-56 overflow-y-auto rounded-md border border-slate-200 bg-white shadow-lg">
+                    {filteredAccounts.length === 0 ? (
+                        <div className="px-3 py-2 text-xs text-slate-400">No account ledgers found</div>
+                    ) : filteredAccounts.map((account) => (
+                        <button
+                            type="button"
+                            key={account.id || account.code || account.name}
+                            onMouseDown={(event) => event.preventDefault()}
+                            onClick={() => selectAccount(account)}
+                            className={`flex w-full items-start gap-2 px-3 py-2 text-left text-xs hover:bg-yellow-50 ${account.name === value ? 'bg-yellow-50 text-slate-900' : 'text-slate-600'}`}
+                        >
+                            <span className="shrink-0 rounded bg-slate-100 px-1.5 py-0.5 font-mono text-[10px] font-bold text-slate-500">
+                                {account.code || '-'}
+                            </span>
+                            <span className="min-w-0 flex-1 truncate font-medium">{account.name}</span>
+                        </button>
+                    ))}
+                </div>
+            )}
+        </div>
+    );
+};
 
 
 const JournalVoucher = () => {
@@ -25,30 +124,37 @@ const JournalVoucher = () => {
     // Falls back to "System" if the token is missing (should not happen in
     // practice because the route is auth-guarded).
     const currentUser = getUsernameFromToken() || 'System';
+    const currentUserDisplay = formatUserDisplayName(currentUser) || 'System';
     // --- STATE ---
     const { company } = useCompany();
     const [viewMode, setViewMode] = useState('list'); // 'list' | 'create' | 'edit'
-    const [accounts, setAccounts] = useState([]);
     const [costCenters, setCostCenters] = useState([]);
     const [fullAccounts, setFullAccounts] = useState([]);
     const [fullCostCenters, setFullCostCenters] = useState([]);
+    const [isAccountCreateOpen, setIsAccountCreateOpen] = useState(false);
+    const [accountCreateTargetLine, setAccountCreateTargetLine] = useState(null);
+
+    const loadLedgerData = async () => {
+        const [accRes, ccRes] = await Promise.all([
+            ledgerApi.getAccounts(),
+            ledgerApi.getCostCenters()
+        ]);
+
+        const accountData = Array.isArray(accRes) ? accRes : [];
+        const costCenterData = Array.isArray(ccRes) ? ccRes : [];
+
+        setFullAccounts(accountData);
+        setFullCostCenters(costCenterData);
+        setCostCenters(costCenterData.map(c => c.name));
+
+        return { accounts: accountData, costCenters: costCenterData };
+    };
 
     // Fetch Ledger Data
     useEffect(() => {
         const fetchData = async () => {
             try {
-                const [accRes, ccRes] = await Promise.all([
-                    ledgerApi.getAccounts(),
-                    ledgerApi.getCostCenters()
-                ]);
-
-                // Store full data for lookup
-                setFullAccounts(accRes);
-                setFullCostCenters(ccRes);
-
-                // Map to names as per current UI requirement
-                setAccounts(accRes.map(a => a.name));
-                setCostCenters(ccRes.map(c => c.name));
+                await loadLedgerData();
             } catch (error) {
                 console.error("Failed to fetch ledger data", error);
             }
@@ -126,13 +232,14 @@ const JournalVoucher = () => {
             // Transform backend data to match frontend structure
             const transformed = data.map(jv => ({
                 id: jv.id,
-                jvNumber: jv.entryNumber || jv.voucherId,
+                jvNumber: jv.entryNumber || jv.voucherId || jv.jvNumber || jv.voucherNo,
+                entryNumber: jv.entryNumber || jv.voucherId || jv.jvNumber || jv.voucherNo,
                 date: jv.date,
                 reference: jv.reference,
                 narration: jv.narration,
                 status: jv.status || 'Posted',
-                preparedBy: jv.preparedBy || 'System',
-                postedBy: jv.postedBy,
+                preparedBy: formatUserDisplayName(jv.preparedBy || 'System'),
+                postedBy: formatUserDisplayName(jv.postedBy || ''),
                 postedAt: jv.postedAt,
                 createdAt: jv.createdAt,
                 updatedAt: jv.updatedAt,
@@ -150,11 +257,13 @@ const JournalVoucher = () => {
 
     const [formData, setFormData] = useState({
         id: null,
+        jvNumber: '',
+        entryNumber: '',
         date: new Date().toISOString().split('T')[0],
         reference: '',
         narration: '',
         status: 'Draft',
-        preparedBy: currentUser,
+        preparedBy: currentUserDisplay,
         postedBy: null,
         postedAt: null,
         createdAt: null,
@@ -167,6 +276,64 @@ const JournalVoucher = () => {
     const [filterUser, setFilterUser] = useState('All Users');
     const [filterDate, setFilterDate] = useState('This Month');
     const [auditLogs, setAuditLogs] = useState([]);
+    const selectableAccounts = useMemo(() => (
+        fullAccounts
+            .filter(account => account && account.status !== 'archived' && account.isGroup !== true)
+            .sort((left, right) => (left.code || '').localeCompare(right.code || ''))
+    ), [fullAccounts]);
+
+    const findSelectableAccount = (value) => (
+        fullAccounts.find(account => account.name === value || account.code === value)
+    );
+
+    const getJournalVoucherNumber = (journal = formData) =>
+        journal?.jvNumber || journal?.entryNumber || journal?.voucherId || journal?.voucherNo || '';
+
+    const normalizeAuditLog = (log = {}) => ({
+        ...log,
+        performedBy: formatUserDisplayName(log.performedBy || log.username || log.userId || 'System'),
+        comments: log.comments || log.details || '',
+        timestamp: log.timestamp || log.createdAt || log.updatedAt || null
+    });
+
+    const mergeAuditLogs = (logs = []) => {
+        const seen = new Set();
+        return logs
+            .filter(Boolean)
+            .map(normalizeAuditLog)
+            .filter(log => {
+                const key = log.id ? `${log.entityType || ''}-${log.id}` : `${log.entityType || ''}-${log.action || ''}-${log.timestamp || ''}-${log.comments || ''}`;
+                if (seen.has(key)) return false;
+                seen.add(key);
+                return true;
+            })
+            .sort((a, b) => new Date(b.timestamp || 0) - new Date(a.timestamp || 0));
+    };
+
+    const formatAuditTimestamp = (value) => {
+        if (!value) return '-';
+        const date = new Date(value);
+        if (Number.isNaN(date.getTime())) return '-';
+        return date.toLocaleString('en-US', {
+            year: 'numeric',
+            month: 'short',
+            day: 'numeric',
+            hour: '2-digit',
+            minute: '2-digit'
+        });
+    };
+
+    const fetchJournalAuditLogs = async (journal) => {
+        const voucherNumber = getJournalVoucherNumber(journal);
+        const ids = [...new Set([voucherNumber, journal?.id ? String(journal.id) : null].filter(Boolean))];
+        const requests = ids.flatMap(entityId => [
+            getAuditTrail('JOURNAL_VOUCHER', entityId).catch(() => []),
+            getAuditTrail('JOURNAL_ENTRY', entityId).catch(() => [])
+        ]);
+
+        const results = await Promise.all(requests);
+        return mergeAuditLogs(results.flat());
+    };
 
     // --- COMPUTED ---
     const filteredData = useMemo(() => {
@@ -264,7 +431,7 @@ const JournalVoucher = () => {
         newLines[index][field] = value;
 
         if (field === 'account') {
-            const selectedAccount = fullAccounts.find(acc => acc.name === value);
+            const selectedAccount = findSelectableAccount(value);
             if (selectedAccount) {
                 // Set Account Code
                 newLines[index].accountCode = selectedAccount.code;
@@ -300,14 +467,53 @@ const JournalVoucher = () => {
         setJournalLines(newLines);
     };
 
+    const openAccountCreate = (lineIndex) => {
+        setAccountCreateTargetLine(lineIndex);
+        setIsAccountCreateOpen(true);
+    };
+
+    const handleAccountCreated = async (createdAccount) => {
+        let account = createdAccount;
+        try {
+            const refreshed = await loadLedgerData();
+            account = refreshed.accounts.find(item => item.id === createdAccount?.id) || createdAccount;
+        } catch (error) {
+            console.error("Failed to refresh ledger accounts", error);
+            if (createdAccount?.name) {
+                setFullAccounts(prev => [...prev, createdAccount]);
+            }
+        }
+
+        if (accountCreateTargetLine !== null && account?.name) {
+            setJournalLines(prev => {
+                const next = [...prev];
+                const line = { ...(next[accountCreateTargetLine] || {}) };
+                line.account = account.name;
+                line.accountCode = account.code || '';
+
+                if (account.costCenterCode && account.costCenterCode !== '-') {
+                    const linkedCC = fullCostCenters.find(cc => cc.code === account.costCenterCode);
+                    line.costCenter = linkedCC?.name || line.costCenter || '';
+                }
+
+                next[accountCreateTargetLine] = line;
+                return next;
+            });
+        }
+
+        setAccountCreateTargetLine(null);
+    };
+
     const handleCreate = () => {
         setFormData({
             id: null,
+            jvNumber: '',
+            entryNumber: '',
             date: new Date().toISOString().split('T')[0],
             reference: '',
             narration: '',
             status: 'Draft',
-            preparedBy: currentUser
+            preparedBy: currentUserDisplay
         });
         setJournalLines([
             { account: '', description: '', debit: 0, credit: 0, costCenter: '' }
@@ -316,8 +522,11 @@ const JournalVoucher = () => {
     };
 
     const handleView = async (journal) => {
+        const voucherNumber = getJournalVoucherNumber(journal);
         setFormData({
             id: journal.id,
+            jvNumber: voucherNumber,
+            entryNumber: voucherNumber,
             date: journal.date,
             reference: journal.reference,
             narration: journal.narration,
@@ -333,7 +542,7 @@ const JournalVoucher = () => {
         setViewMode('view');
 
         try {
-            const logs = await getAuditTrail('JOURNAL_VOUCHER', journal.id);
+            const logs = await fetchJournalAuditLogs(journal);
             setAuditLogs(logs);
         } catch (error) {
             console.error("Failed to fetch audit logs", error);
@@ -349,6 +558,8 @@ const JournalVoucher = () => {
 
         setFormData({
             id: journal.id,
+            jvNumber: getJournalVoucherNumber(journal),
+            entryNumber: getJournalVoucherNumber(journal),
             date: journal.date,
             reference: journal.reference,
             narration: journal.narration,
@@ -457,29 +668,41 @@ const JournalVoucher = () => {
         );
     };
 
+    const getCurrentJvPrintPayload = () => {
+        const voucherNumber = getJournalVoucherNumber(formData);
+        return {
+            ...formData,
+            jvNumber: voucherNumber,
+            entryNumber: voucherNumber,
+            lines: journalLines
+        };
+    };
+
     // --- PRINT / EXPORT / CLONE / VOID ---
     const handlePrint = async () => {
-        const jv = { ...formData, jvNumber: formData.jvNumber || formData.reference, lines: journalLines };
+        const jv = getCurrentJvPrintPayload();
         printHtml(await buildJvPrintHtml(jv));
     };
 
     const handleExportPdf = async () => {
-        const jv = { ...formData, jvNumber: formData.jvNumber || formData.reference, lines: journalLines };
+        const jv = getCurrentJvPrintPayload();
         const html = await buildJvPrintHtml(jv);
         // Inject PDF-friendly title so the browser's Save-as-PDF filename is meaningful
         const titled = html.replace(/<title>.*?<\/title>/i,
-            `<title>JV_${formData.jvNumber || formData.reference || formData.id || 'export'}_${formData.date || ''}</title>`);
+            `<title>JV_${jv.jvNumber || formData.reference || formData.id || 'export'}_${formData.date || ''}</title>`);
         printHtml(titled);
     };
 
     const handleClone = () => {
         setFormData({
             id: null,
+            jvNumber: '',
+            entryNumber: '',
             date: new Date().toISOString().split('T')[0],
             reference: '',
             narration: formData.narration,
             status: 'Draft',
-            preparedBy: currentUser,
+            preparedBy: currentUserDisplay,
             postedBy: null,
             postedAt: null,
             createdAt: null,
@@ -491,7 +714,7 @@ const JournalVoucher = () => {
 
     const handleVoidJV = async () => {
         if (!formData.id) return;
-        if (!window.confirm(`Void Journal Voucher ${formData.jvNumber || formData.reference}?\n\nThis will permanently void this entry. If posted, a reversal entry will be created automatically.`)) return;
+        if (!window.confirm(`Void Journal Voucher ${getJournalVoucherNumber(formData) || formData.reference}?\n\nThis will permanently void this entry. If posted, a reversal entry will be created automatically.`)) return;
         try {
             await journalVoucherApi.void(formData.id, currentUser);
             await fetchJournalVouchers();
@@ -890,21 +1113,28 @@ const JournalVoucher = () => {
                                         </div>
 
                                         {journalLines.map((line, idx) => {
-                                            const selectedAccount = fullAccounts.find(a => a.name === line.account);
+                                            const selectedAccount = findSelectableAccount(line.account);
                                             const isCostCenterApplicable = selectedAccount && selectedAccount.costCenterCode && selectedAccount.costCenterCode !== '-';
 
                                             return (
                                                 <div key={idx} className="grid grid-cols-12 gap-3 items-start group">
-                                                    <div className="col-span-3">
-                                                        <select
-                                                            className="w-full px-2 py-1.5 text-xs border border-slate-200 rounded focus:border-yellow-400 focus:outline-none disabled:bg-slate-50 disabled:text-slate-400"
+                                                    <div className="col-span-3 flex items-center gap-1">
+                                                        <AccountLedgerSearchSelect
+                                                            accounts={selectableAccounts}
                                                             value={line.account}
-                                                            onChange={(e) => handleLineChange(idx, 'account', e.target.value)}
+                                                            onChange={(accountName) => handleLineChange(idx, 'account', accountName)}
                                                             disabled={!['Draft', 'Rejected'].includes(formData.status) && formData.id != null}
-                                                        >
-                                                            <option value="" disabled>Select account</option>
-                                                            {accounts.map((acc, i) => <option key={i} value={acc}>{acc}</option>)}
-                                                        </select>
+                                                        />
+                                                        {(['Draft', 'Rejected'].includes(formData.status) || formData.id == null) && (
+                                                            <button
+                                                                type="button"
+                                                                title="Create account ledger"
+                                                                onClick={() => openAccountCreate(idx)}
+                                                                className="flex h-8 w-8 shrink-0 items-center justify-center rounded border border-slate-200 bg-white text-slate-500 hover:border-yellow-400 hover:text-slate-900"
+                                                            >
+                                                                <PlusCircle size={14} />
+                                                            </button>
+                                                        )}
                                                     </div>
                                                     <div className="col-span-3">
                                                         <input
@@ -1135,17 +1365,11 @@ const JournalVoucher = () => {
                                                         {log.action}
                                                     </div>
                                                     <div className="text-[10px] text-slate-400">
-                                                        {new Date(log.timestamp).toLocaleString('en-US', {
-                                                            year: 'numeric',
-                                                            month: 'short',
-                                                            day: 'numeric',
-                                                            hour: '2-digit',
-                                                            minute: '2-digit'
-                                                        })}
+                                                        {formatAuditTimestamp(log.timestamp)}
                                                     </div>
                                                 </div>
                                                 <div className="text-xs text-slate-600 mb-0.5">
-                                                    By <span className="font-semibold">{log.performedBy}</span>
+                                                    By <span className="font-semibold">{log.performedBy || 'System'}</span>
                                                 </div>
                                                 {log.comments && (
                                                     <div className="text-[10px] text-slate-500 bg-slate-50 p-2 rounded mt-1 border border-slate-100">
@@ -1162,6 +1386,13 @@ const JournalVoucher = () => {
                     </div>
                 )
             }
+            <LedgerAccountCreateModal
+                isOpen={isAccountCreateOpen}
+                onClose={() => { setIsAccountCreateOpen(false); setAccountCreateTargetLine(null); }}
+                onCreated={handleAccountCreated}
+                existingAccounts={fullAccounts}
+                defaultGroup="Expenses"
+            />
         </div >
     );
 };
