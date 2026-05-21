@@ -5,7 +5,7 @@ import {
     PieChart, Briefcase, Trash, Edit, X
 } from 'lucide-react';
 import { getVendors } from '../../api/vendorsApi';
-import { getCostCenters, getAccounts, getTransactions } from '../../api/ledgerApi';
+import { getCostCenters, getAccounts, getBankAccounts, getTransactions } from '../../api/ledgerApi';
 import { fetchExpenses, createExpense, updateExpense, deleteExpense } from '../../api/expensesApi';
 import toast from 'react-hot-toast';
 import { useCompany } from '../../context/CompanyContext';
@@ -59,7 +59,23 @@ const Expenses = () => {
     useEffect(() => {
         const fetchData = async () => {
             try {
-                await loadReferenceData();
+                const [vendorData, costCenterData, glData, bankData] = await Promise.all([
+    getVendors(),
+    getCostCenters(),
+    getAccounts(),
+    getBankAccounts().catch(() => [])
+]);
+
+setVendors(vendorData);
+setCostCenters(costCenterData);
+
+// Filter to expense-type accounts for the selector
+setGlAccounts(Array.isArray(glData) ? glData.filter(a => a.status !== 'archived') : []);
+
+setPayAccounts(Array.isArray(bankData) ? bankData : []);
+
+// Needed by develop branch fallback expense loader
+setAllAccounts(Array.isArray(glData) ? glData : []);
             } catch (error) {
                 console.error("Failed to fetch data", error);
             }
@@ -84,8 +100,16 @@ const Expenses = () => {
         amount: '',
         taxRate: 5,
         status: 'Pending',
+        paymentMode: 'Cash',
+        paymentAccountId: '',
         notes: ''
     });
+
+    // QA-054: cash & bank ledgers loaded from the COA so the user can pick
+    // which account funded the expense. List is filtered by paymentMode in
+    // the dropdown (Cash → cash accounts, others → bank accounts).
+    const [payAccounts, setPayAccounts] = useState([]);
+    const PAYMENT_MODES = ['Cash', 'Card', 'Credit', 'Bank Transfer', 'Online Payment'];
     const [searchTerm, setSearchTerm] = useState('');
     const [filterDate, setFilterDate] = useState('This Month');
     const [filterLocation, setFilterLocation] = useState('All Locations');
@@ -238,6 +262,8 @@ const Expenses = () => {
             amount: expense.amount,
             taxRate: expense.taxRate,
             status: expense.status || 'Pending',
+            paymentMode: expense.paymentMode || 'Cash',
+            paymentAccountId: expense.paymentAccountId || '',
             notes: expense.notes
         });
         setGlAccountSearch('');
@@ -274,6 +300,8 @@ const Expenses = () => {
             amount: '',
             taxRate: 5,
             status: 'Pending',
+            paymentMode: 'Cash',
+            paymentAccountId: '',
             notes: ''
         });
     };
@@ -754,6 +782,54 @@ const Expenses = () => {
                                     className="w-full px-3 py-2 text-xs border border-emerald-200 bg-emerald-50 rounded-md text-emerald-700 font-bold"
                                     value={((parseFloat(newExpense.amount) || 0) * (1 + newExpense.taxRate / 100)).toFixed(2)}
                                 />
+                            </div>
+
+                            {/* QA-054: PAYMENT MODE */}
+                            <div>
+                                <label className="block text-xs font-bold text-slate-500 mb-1">Payment Mode</label>
+                                <select
+                                    className="w-full px-3 py-2 text-xs border border-slate-200 rounded-md focus:outline-none focus:border-emerald-500 text-slate-600 bg-white"
+                                    value={newExpense.paymentMode || ''}
+                                    onChange={(e) => {
+                                        const mode = e.target.value;
+                                        // Reset the pay-account when the mode changes so the user
+                                        // doesn't accidentally keep a bank account selected after
+                                        // switching to Cash (or vice-versa).
+                                        setNewExpense({ ...newExpense, paymentMode: mode, paymentAccountId: '' });
+                                    }}
+                                >
+                                    {PAYMENT_MODES.map(m => <option key={m} value={m}>{m}</option>)}
+                                </select>
+                            </div>
+
+                            {/* QA-054: AUTO-PAY LEDGER */}
+                            <div>
+                                <label className="block text-xs font-bold text-slate-500 mb-1">Pay From Account</label>
+                                <select
+                                    className="w-full px-3 py-2 text-xs border border-slate-200 rounded-md focus:outline-none focus:border-emerald-500 text-slate-600 bg-white"
+                                    value={newExpense.paymentAccountId || ''}
+                                    onChange={(e) => setNewExpense({ ...newExpense, paymentAccountId: e.target.value })}
+                                >
+                                    <option value="">Auto (use default for {newExpense.paymentMode || 'mode'})</option>
+                                    {payAccounts
+                                        // Filter accounts to those that look right for the mode.
+                                        // Cash mode → only Cash-named ledgers; everything else
+                                        // (Card / Bank Transfer / Online Payment / Credit) → all
+                                        // cash & bank-flagged accounts (the bank-accounts endpoint
+                                        // already excludes archived rows for us).
+                                        .filter(acc => {
+                                            if (newExpense.paymentMode === 'Cash') {
+                                                const name = (acc.name || '').toLowerCase();
+                                                return name.includes('cash');
+                                            }
+                                            return true;
+                                        })
+                                        .map(acc => (
+                                            <option key={acc.id} value={acc.id}>
+                                                {acc.code ? `${acc.code} — ` : ''}{acc.name}
+                                            </option>
+                                        ))}
+                                </select>
                             </div>
 
                             <div className="col-span-2">

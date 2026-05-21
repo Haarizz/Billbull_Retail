@@ -65,6 +65,8 @@ public class ExpenseService {
             existingExpense.setAmount(expenseDetails.getAmount());
             existingExpense.setTaxRate(expenseDetails.getTaxRate());
             existingExpense.setStatus(expenseDetails.getStatus());
+            existingExpense.setPaymentMode(expenseDetails.getPaymentMode());
+            existingExpense.setPaymentAccountId(expenseDetails.getPaymentAccountId());
             existingExpense.setNotes(expenseDetails.getNotes());
 
             // Recalculate

@@ -493,9 +493,45 @@ public class PostingEngineService {
                         addLine(entry, "VAT Input", ACC_VAT_INPUT, "VAT on expense",
                                         BigDecimal.valueOf(expense.getTaxAmount()), BigDecimal.ZERO);
                 }
-                addLine(entry, "Bank/Cash", ACC_BANK, "Payment for expense",
+
+                // QA-054: credit the pay-ledger the user selected on the expense entry.
+                // Explicit paymentAccountId wins; otherwise resolve via paymentMode
+                // (Cash → Cash GL, Credit → Accounts Payable, else → Bank). Final
+                // fallback keeps the legacy "Bank/Cash" line so historic expenses
+                // continue to post the same way.
+                String payCode = ACC_BANK;
+                String payName = "Bank/Cash";
+                if (expense.getPaymentAccountId() != null && !expense.getPaymentAccountId().isBlank()) {
+                        Account payAccount = accountRepository.findById(expense.getPaymentAccountId()).orElse(null);
+                        if (payAccount != null) {
+                                payCode = payAccount.getCode();
+                                payName = payAccount.getName();
+                        }
+                } else if (expense.getPaymentMode() != null && !expense.getPaymentMode().isBlank()) {
+                        AccountSelection sel = resolveExpenseSettlementAccount(expense.getPaymentMode());
+                        payCode = sel.code;
+                        payName = sel.name;
+                }
+                addLine(entry, payName, payCode, "Payment for expense",
                                 BigDecimal.ZERO, BigDecimal.valueOf(expense.getTotal()));
                 return post(entry);
+        }
+
+        /**
+         * QA-054: map an expense pay-mode label to a default settlement account
+         * when the user hasn't explicitly picked a ledger. Matches the labels
+         * used in the Expense entry UI (Cash / Card / Credit / Bank Transfer /
+         * Online Payment) case-insensitively.
+         */
+        private AccountSelection resolveExpenseSettlementAccount(String paymentMode) {
+                String mode = paymentMode == null ? "" : paymentMode.trim().toUpperCase();
+                return switch (mode) {
+                        case "CASH"                                  -> new AccountSelection("Cash",            ACC_CASH);
+                        case "CREDIT"                                -> new AccountSelection("Accounts Payable", ACC_ACCOUNTS_PAYABLE);
+                        case "CARD", "BANK TRANSFER", "ONLINE PAYMENT"
+                                                                     -> new AccountSelection("Bank",            ACC_BANK);
+                        default                                      -> new AccountSelection("Bank/Cash",       ACC_BANK);
+                };
         }
 
         // =========================================================
