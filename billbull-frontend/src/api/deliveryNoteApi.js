@@ -18,6 +18,9 @@ export const getPickingNotes = async (deliveryNotes = null) => {
 export const getDeliveryNoteById = (id) =>
   api.get(`/api/delivery-notes/${id}`).then(res => res.data);
 
+export const getNextDeliveryNoteNumber = () =>
+  api.get("/api/delivery-notes/next-number").then(res => res.data.dnNumber);
+
 // CREATE
 export const createDeliveryNote = (payload) =>
   api.post("/api/delivery-notes", payload).then(res => res.data);

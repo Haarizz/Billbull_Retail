@@ -25,6 +25,8 @@ import com.billbull.backend.sales.customerledger.CustomerRepository;
 import com.billbull.backend.sales.customerledger.OpeningInvoice;
 import com.billbull.backend.sales.customerledger.OpeningInvoiceRepository;
 import com.billbull.backend.sales.invoice.SalesInvoiceRepository;
+import com.billbull.backend.sales.settings.SalesDocumentNumberingService;
+import com.billbull.backend.sales.settings.SalesDocumentType;
 
 @ExtendWith(MockitoExtension.class)
 class PaymentServiceTest {
@@ -44,6 +46,9 @@ class PaymentServiceTest {
     @Mock
     private ReceiptVoucherService receiptVoucherService;
 
+    @Mock
+    private SalesDocumentNumberingService numberingService;
+
     private PaymentService paymentService;
 
     @BeforeEach
@@ -54,6 +59,7 @@ class PaymentServiceTest {
         ReflectionTestUtils.setField(paymentService, "openingInvoiceRepository", openingInvoiceRepository);
         ReflectionTestUtils.setField(paymentService, "customerRepository", customerRepository);
         ReflectionTestUtils.setField(paymentService, "receiptVoucherService", receiptVoucherService);
+        ReflectionTestUtils.setField(paymentService, "numberingService", numberingService);
     }
 
     @Test
@@ -77,6 +83,8 @@ class PaymentServiceTest {
         savedReceipt.setId(77L);
 
         when(paymentRepository.save(any(Payment.class))).thenAnswer(invocation -> invocation.getArgument(0));
+        when(numberingService.resolveNumberForCreate(SalesDocumentType.SALES_PAYMENT, "PAY-2026-0001"))
+                .thenReturn("PAY-2026-0001");
         when(salesInvoiceRepository.findByInvoiceNumber("12")).thenReturn(Optional.empty());
         when(openingInvoiceRepository.findByCustomer_Code("CUST-001")).thenReturn(List.of(openingInvoice));
         when(receiptVoucherService.createReceipt(any(ReceiptVoucher.class), any())).thenReturn(savedReceipt);

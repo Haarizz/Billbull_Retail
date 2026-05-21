@@ -5,6 +5,9 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import com.billbull.backend.sales.settings.SalesDocumentNumberingService;
+import com.billbull.backend.sales.settings.SalesDocumentType;
+
 import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.List;
@@ -23,6 +26,9 @@ public class CustomerService {
 
     @Autowired
     private com.billbull.backend.sales.invoice.SalesInvoiceRepository salesInvoiceRepo;
+
+    @Autowired(required = false)
+    private SalesDocumentNumberingService numberingService;
 
     // =========================
     // GET ALL CUSTOMERS
@@ -108,7 +114,9 @@ public class CustomerService {
         // -------------------------
 
         // QA-004: auto-generate code when not provided (quick-create from selector)
-        if (customer.getCode() == null || customer.getCode().isBlank()) {
+        if (dto.getId() == null && numberingService != null) {
+            customer.setCode(numberingService.resolveNumberForCreate(SalesDocumentType.CUSTOMER, customer.getCode()));
+        } else if (customer.getCode() == null || customer.getCode().isBlank()) {
             String candidate;
             long seq = repository.count() + 1;
             do {

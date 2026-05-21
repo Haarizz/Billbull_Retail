@@ -24,6 +24,8 @@ import com.billbull.backend.sales.customerledger.OpeningInvoice;
 import com.billbull.backend.sales.customerledger.OpeningInvoiceRepository;
 import com.billbull.backend.sales.invoice.SalesInvoice;
 import com.billbull.backend.sales.invoice.SalesInvoiceRepository;
+import com.billbull.backend.sales.settings.SalesDocumentNumberingService;
+import com.billbull.backend.sales.settings.SalesDocumentType;
 import com.billbull.backend.util.DocumentOrderingUtil;
 
 @Service
@@ -43,6 +45,9 @@ public class PaymentService {
 
     @Autowired
     private ReceiptVoucherService receiptVoucherService;
+
+    @Autowired
+    private SalesDocumentNumberingService numberingService;
 
     public List<Payment> getAllPayments() {
         List<Payment> payments = new ArrayList<>(paymentRepository.findAll());
@@ -80,36 +85,28 @@ public class PaymentService {
     }
 
     public String generatePaymentNumber() {
-        String prefix = "PAY-" + java.time.Year.now().getValue() + "-";
-        Optional<Payment> lastPayment = paymentRepository.findTopByOrderByPaymentNumberDesc();
-
-        int lastNumber = 0;
-        if (lastPayment.isPresent()) {
-            String lastNum = lastPayment.get().getPaymentNumber();
-            if (lastNum != null && lastNum.startsWith("PAY-")) {
-                try {
-                    String[] parts = lastNum.split("-");
-                    if (parts.length >= 3) {
-                        lastNumber = Integer.parseInt(parts[2]);
-                    }
-                } catch (NumberFormatException e) {
-                    lastNumber = 0;
-                }
-            }
-        }
-        return prefix + String.format("%04d", lastNumber + 1);
+        return numberingService.preview(SalesDocumentType.SALES_PAYMENT);
     }
 
     @Transactional
     public Payment savePayment(Payment payment) {
-        if (payment.getId() != null && payment.getReceiptVoucherRecordId() == null) {
-            paymentRepository.findById(payment.getId())
-                    .map(Payment::getReceiptVoucherRecordId)
-                    .ifPresent(payment::setReceiptVoucherRecordId);
+        Payment existingPayment = null;
+        if (payment.getId() != null) {
+            existingPayment = paymentRepository.findById(payment.getId()).orElse(null);
+            if (payment.getReceiptVoucherRecordId() == null && existingPayment != null) {
+                payment.setReceiptVoucherRecordId(existingPayment.getReceiptVoucherRecordId());
+            }
         }
 
-        if (payment.getId() == null && (payment.getPaymentNumber() == null || payment.getPaymentNumber().isEmpty())) {
-            payment.setPaymentNumber(generatePaymentNumber());
+        if (payment.getId() == null) {
+            payment.setPaymentNumber(numberingService.resolveNumberForCreate(
+                    SalesDocumentType.SALES_PAYMENT,
+                    payment.getPaymentNumber()));
+        } else if (existingPayment != null) {
+            payment.setPaymentNumber(numberingService.resolveNumberForUpdate(
+                    SalesDocumentType.SALES_PAYMENT,
+                    existingPayment.getPaymentNumber(),
+                    payment.getPaymentNumber()));
         }
 
         if (payment.getId() == null && payment.getCreatedDate() == null) {

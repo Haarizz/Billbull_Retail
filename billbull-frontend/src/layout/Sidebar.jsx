@@ -151,7 +151,7 @@ const Sidebar = ({ children }) => {
         { path: "/sales/payment",       label: "Payments",              module: "sales.payment",  icon: <CreditCard size={14} /> },
         { path: "/sales/templates",     label: "Print & Email Templates",module: "sales.invoice",  icon: <Printer size={14} /> },
         { path: "/sales/reports/summary",label: "Sales Summary Report", module: "sales.invoice",  icon: <PieChart size={14} /> },
-        { path: "/sales/settings",      label: "Sales Settings",        module: "sales.invoice",  icon: <Settings size={14} /> },
+        { path: "/sales/settings",      label: "Configure & customize", module: "sales.invoice",  icon: <Settings size={14} /> },
       ],
     },
     {

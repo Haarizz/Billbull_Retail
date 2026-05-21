@@ -31,6 +31,7 @@ import { getAllSalesPayments, saveSalesPayment, getNextSalesPaymentNumber, getSa
 import { getAllSalesInvoices } from '../../api/salesInvoiceApi';
 import { getAllCustomers, getOpeningInvoicesByCustomerCode } from '../../api/customerledgerApi';
 import { getBankAccounts } from '../../api/ledgerApi';
+import { getSalesSettings } from '../../api/salesSettingsApi';
 import { getTemplatesByCategory } from '../../api/printTemplateApi';
 import { generatePrintHtml, printHtml } from '../../utils/printGenerator';
 import { useCompany } from '../../context/CompanyContext';
@@ -39,6 +40,7 @@ import ExportDropdown from '../../components/common/ExportDropdown';
 import { exportToExcel, exportToPDF } from '../../utils/exportUtils';
 import CurrencyAmount, { CurrencySymbol } from '../../components/CurrencyAmount';
 import { formatDisplayDate } from '../../utils/dateUtils';
+import { isAutoNumberingEnabled } from '../../utils/salesNumbering';
 
 // ==========================================
 // 1. CONFIGURATION
@@ -87,10 +89,12 @@ const Payment = () => {
     const [openingInvoices, setOpeningInvoices] = useState([]);
     const [searchQuery, setSearchQuery] = useState('');
     const [statusFilter, setStatusFilter] = useState('All Status');
+    const [salesSettings, setSalesSettings] = useState(null);
+    const paymentAutoNumbering = isAutoNumberingEnabled(salesSettings, 'SALES_PAYMENT');
 
     // --- FORM STATES ---
     const [paymentId, setPaymentId] = useState(null);
-    const [paymentNo, setPaymentNo] = useState('PAY-2026-0001');
+    const [paymentNo, setPaymentNo] = useState('');
     const [paymentDate, setPaymentDate] = useState(new Date().toISOString().split('T')[0]);
     const [paymentType, setPaymentType] = useState('Received'); // Received or Made
     const [paymentMode, setPaymentMode] = useState('Cash');
@@ -135,6 +139,7 @@ const Payment = () => {
         fetchInvoices();
         fetchStats();
         getBankAccounts().then(data => setBankAccounts(Array.isArray(data) ? data : [])).catch(() => {});
+        getSalesSettings().then(setSalesSettings).catch(() => {});
     }, []);
 
     const fetchPayments = async () => {
@@ -300,11 +305,15 @@ const Payment = () => {
     // ==========================================
     const handleCreateNew = async () => {
         setPaymentId(null);
-        try {
-            const nextNum = await getNextSalesPaymentNumber();
-            setPaymentNo(nextNum);
-        } catch (err) {
-            setPaymentNo(`PAY-${new Date().getFullYear()}-${String(paymentsList.length + 1).padStart(4, '0')}`);
+        if (paymentAutoNumbering) {
+            try {
+                const nextNum = await getNextSalesPaymentNumber();
+                setPaymentNo(nextNum);
+            } catch (err) {
+                setPaymentNo('');
+            }
+        } else {
+            setPaymentNo('');
         }
         setPaymentDate(new Date().toISOString().split('T')[0]);
         setPaymentType('Received');
@@ -438,10 +447,18 @@ const Payment = () => {
         if (!selectedCustomer) { alert('Please select a customer'); return; }
         const selectedKeys = Object.keys(selectedInvoices).filter(k => selectedInvoices[k]);
         if (selectedKeys.length === 0) { alert('Please select at least one invoice to settle'); return; }
+        if (!paymentAutoNumbering && !paymentNo.trim()) {
+            alert('Please enter a receipt number.');
+            return;
+        }
+        if (!paymentAutoNumbering && selectedKeys.length > 1) {
+            alert('Manual receipt numbering supports one settlement at a time. Please save one invoice, then enter the next receipt number.');
+            return;
+        }
 
         setIsLoading(true);
         try {
-            let currentPaymentNo = paymentNo;
+            let lastSavedPayment = null;
             for (const invNo of selectedKeys) {
                 const amountToSettle = settleAmounts[invNo] || 0;
                 if (amountToSettle <= 0) continue;
@@ -451,14 +468,9 @@ const Payment = () => {
                 const invTotal = inv ? inv.total : 0;
                 const status = amountToSettle < invBalance ? 'PARTIAL' : 'COMPLETED';
 
-                if (selectedKeys.length > 1) {
-                    try { currentPaymentNo = await getNextSalesPaymentNumber(); }
-                    catch { currentPaymentNo = `PAY-${Date.now()}-${Math.floor(Math.random() * 1000)}`; }
-                }
-
-                await saveSalesPayment({
+                lastSavedPayment = await saveSalesPayment({
                     id: selectedKeys.length === 1 ? paymentId : null,
-                    paymentNumber: currentPaymentNo,
+                    paymentNumber: paymentAutoNumbering ? null : paymentNo.trim(),
                     paymentDate: paymentDate,
                     paymentType: 'RECEIVED',
                     customerCode: selectedCustomer.code,
@@ -474,6 +486,9 @@ const Payment = () => {
                     chequeDate: paymentMode === 'Cheque' ? chequeDate : null,
                     status: status
                 });
+            }
+            if (lastSavedPayment?.paymentNumber) {
+                setPaymentNo(lastSavedPayment.paymentNumber);
             }
 
             alert('Payments saved successfully!');
@@ -960,8 +975,14 @@ const Payment = () => {
                                             <div className="grid grid-cols-2 gap-3">
                                                 <div>
                                                     <label className="block text-xs font-bold text-slate-500 mb-1">Receipt No.</label>
-                                                    <input type="text" value={paymentNo} readOnly
-                                                        className="w-full text-xs bg-slate-50 border border-slate-200 rounded px-3 py-2 text-slate-500" />
+                                                    <input
+                                                        type="text"
+                                                        value={paymentNo}
+                                                        onChange={(e) => setPaymentNo(e.target.value)}
+                                                        readOnly={paymentAutoNumbering}
+                                                        placeholder={paymentAutoNumbering ? 'Auto generated' : 'Enter receipt number'}
+                                                        className="w-full text-xs border border-slate-200 rounded px-3 py-2 text-slate-700 read-only:bg-slate-50 read-only:text-slate-500 focus:outline-none focus:border-[#F5C742]"
+                                                    />
                                                 </div>
                                                 <div>
                                                     <label className="block text-xs font-bold text-slate-500 mb-1">Method</label>

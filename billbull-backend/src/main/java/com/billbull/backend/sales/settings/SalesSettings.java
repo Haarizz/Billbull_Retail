@@ -1,6 +1,8 @@
 package com.billbull.backend.sales.settings;
 
 import jakarta.persistence.*;
+import java.util.ArrayList;
+import java.util.List;
 
 /**
  * Singleton entity: always ONE row with id = 1.
@@ -50,6 +52,9 @@ public class SalesSettings {
     @Column(nullable = false, length = 20, columnDefinition = "varchar(20) default 'RETAIL'")
     private SalesItemPricePolicy salesItemPricePolicy = SalesItemPricePolicy.RETAIL;
 
+    @Transient
+    private List<SalesDocumentNumberSetting> documentNumbering = new ArrayList<>();
+
     // ------------------------------------------------
     // Getters & Setters
     // ------------------------------------------------
@@ -92,5 +97,13 @@ public class SalesSettings {
 
     public void setSalesItemPricePolicy(SalesItemPricePolicy salesItemPricePolicy) {
         this.salesItemPricePolicy = salesItemPricePolicy;
+    }
+
+    public List<SalesDocumentNumberSetting> getDocumentNumbering() {
+        return documentNumbering;
+    }
+
+    public void setDocumentNumbering(List<SalesDocumentNumberSetting> documentNumbering) {
+        this.documentNumbering = documentNumbering;
     }
 }

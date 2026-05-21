@@ -52,6 +52,8 @@ import {
    getReturnableBatches
 } from '../../api/salesReturnApi';
 import { getAllSalesInvoices } from '../../api/salesInvoiceApi';
+import { getSalesSettings } from '../../api/salesSettingsApi';
+import { isAutoNumberingEnabled } from '../../utils/salesNumbering';
 
 // ==========================================
 // 1. CONFIGURATION
@@ -83,10 +85,12 @@ const SalesReturn = () => {
    const [invoicesList, setInvoicesList] = useState([]);
    const [searchQuery, setSearchQuery] = useState('');
    const [statusFilter, setStatusFilter] = useState('All Status');
+   const [salesSettings, setSalesSettings] = useState(null);
+   const returnAutoNumbering = isAutoNumberingEnabled(salesSettings, 'SALES_RETURN');
 
    // --- FORM STATES ---
    const [returnId, setReturnId] = useState(null);
-   const [returnNo, setReturnNo] = useState('SR-2026-0001');
+   const [returnNo, setReturnNo] = useState('');
    const [returnDate, setReturnDate] = useState(new Date().toISOString().split('T')[0]);
    const [returnStatus, setReturnStatus] = useState('DRAFT');
 
@@ -128,6 +132,7 @@ const SalesReturn = () => {
       fetchReturns();
       fetchInvoices();
       fetchStats();
+      getSalesSettings().then(setSalesSettings).catch(() => {});
    }, []);
 
    const fetchReturns = async () => {
@@ -165,11 +170,15 @@ const SalesReturn = () => {
    // ==========================================
    const handleCreateNew = async () => {
       setReturnId(null);
-      try {
-         const nextNum = await getNextSalesReturnNumber();
-         setReturnNo(nextNum);
-      } catch (err) {
-         setReturnNo(`SR-${new Date().getFullYear()}-${String(returnsList.length + 1).padStart(4, '0')}`);
+      if (returnAutoNumbering) {
+         try {
+            const nextNum = await getNextSalesReturnNumber();
+            setReturnNo(nextNum);
+         } catch (err) {
+            setReturnNo('');
+         }
+      } else {
+         setReturnNo('');
       }
       setReturnDate(new Date().toISOString().split('T')[0]);
       setReturnStatus('DRAFT');
@@ -358,6 +367,10 @@ const SalesReturn = () => {
    };
 
    const handleSave = async (statusOverride = null) => {
+      if (!returnAutoNumbering && !returnNo.trim()) {
+         alert('Please enter a return number');
+         return;
+      }
       if (!linkedInvoice) {
          alert('Please select a source invoice');
          return;
@@ -405,7 +418,8 @@ const SalesReturn = () => {
 
       try {
          setIsLoading(true);
-         await saveSalesReturn(payload);
+         const savedReturn = await saveSalesReturn(payload);
+         setReturnNo(savedReturn?.returnNumber || returnNo);
          alert('Sales Return saved successfully!');
          await fetchReturns();
          await fetchStats();
@@ -764,6 +778,17 @@ const SalesReturn = () => {
                               <RefreshCw size={16} className="text-yellow-500" /> Header Information
                            </h3>
                            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                                 <div>
+                                    <label className="block text-xs font-semibold text-slate-500 mb-1">Return No</label>
+                                    <input
+                                       type="text"
+                                       value={returnNo}
+                                       onChange={e => setReturnNo(e.target.value)}
+                                       readOnly={returnAutoNumbering}
+                                       placeholder={returnAutoNumbering ? 'Auto generated' : 'Enter return number'}
+                                       className="w-full text-xs p-2 border border-slate-200 rounded text-slate-700 font-semibold read-only:bg-slate-50 read-only:text-slate-500 focus:border-yellow-400 outline-none"
+                                    />
+                                 </div>
                               
                                  <div>
                                     <label className="block text-xs font-semibold text-slate-500 mb-1">Return Date</label>

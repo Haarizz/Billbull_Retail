@@ -23,6 +23,8 @@ import com.billbull.backend.inventory.warehouse.Bin;
 import com.billbull.backend.inventory.warehouse.BinRepository;
 import com.billbull.backend.purchase.stockmovement.StockMovementRepository;
 import com.billbull.backend.sales.delivery.DeliveryBatchSelectionResponse;
+import com.billbull.backend.sales.settings.SalesDocumentNumberingService;
+import com.billbull.backend.sales.settings.SalesDocumentType;
 import com.billbull.backend.settings.branch.Branch;
 import com.billbull.backend.settings.branch.BranchAccessService;
 import com.billbull.backend.util.DocumentOrderingUtil;
@@ -42,6 +44,7 @@ public class SalesOrderService {
     private final BinRepository binRepo;
     private final BatchSelectionService batchSelectionService;
     private final com.billbull.backend.sales.settings.SalesSettingsService salesSettingsService;
+    private final SalesDocumentNumberingService numberingService;
 
     public SalesOrderService(
             SalesOrderRepository orderRepo,
@@ -55,7 +58,8 @@ public class SalesOrderService {
             StockMovementRepository stockMovementRepo,
             BinRepository binRepo,
             BatchSelectionService batchSelectionService,
-            com.billbull.backend.sales.settings.SalesSettingsService salesSettingsService) {
+            com.billbull.backend.sales.settings.SalesSettingsService salesSettingsService,
+            SalesDocumentNumberingService numberingService) {
         this.orderRepo = orderRepo;
         this.quotationRepo = quotationRepo;
         this.warehouseStockService = warehouseStockService;
@@ -68,6 +72,7 @@ public class SalesOrderService {
         this.binRepo = binRepo;
         this.batchSelectionService = batchSelectionService;
         this.salesSettingsService = salesSettingsService;
+        this.numberingService = numberingService;
     }
 
     private com.billbull.backend.sales.settings.SalesItemPricePolicy activePricePolicy() {
@@ -75,6 +80,11 @@ public class SalesOrderService {
         return settings != null && settings.getSalesItemPricePolicy() != null
                 ? settings.getSalesItemPricePolicy()
                 : com.billbull.backend.sales.settings.SalesItemPricePolicy.RETAIL;
+    }
+
+    @Transactional
+    public String generateSalesOrderNumber() {
+        return numberingService.preview(SalesDocumentType.SALES_ORDER);
     }
 
     // ----------------------------
@@ -86,6 +96,8 @@ public class SalesOrderService {
     })
     @Transactional(rollbackFor = Exception.class)
     public SalesOrder save(SalesOrder order) {
+        SalesOrder existingOrder = order.getId() != null ? orderRepo.findById(order.getId()).orElse(null) : null;
+
         Branch currentBranch = branchAccessService.getRequiredCurrentUserBranch();
         Warehouse reservationWarehouse = resolveReservationWarehouse(order, currentBranch);
         order.setWarehouse(reservationWarehouse);
@@ -96,6 +108,19 @@ public class SalesOrderService {
         if (order.getLinkedQuotation() != null && order.getLinkedProforma() != null) {
             throw new IllegalStateException(
                     "Sales Order can be linked to either a quotation or a PI / Proforma, not both.");
+        }
+
+        if (existingOrder == null) {
+            order.setSoNumber(numberingService.resolveNumberForCreate(
+                    SalesDocumentType.SALES_ORDER,
+                    order.getSoNumber()));
+        } else if (existingOrder.getStatus() == SalesOrderStatus.DRAFT) {
+            order.setSoNumber(numberingService.resolveNumberForUpdate(
+                    SalesDocumentType.SALES_ORDER,
+                    existingOrder.getSoNumber(),
+                    order.getSoNumber()));
+        } else {
+            order.setSoNumber(existingOrder.getSoNumber());
         }
 
         double subTotal = 0;
@@ -176,9 +201,7 @@ public class SalesOrderService {
 
         // ✅ STATUS LOGIC: Maintain reservation until delivery
         // Load current DB status to avoid overwriting finalized states on update
-        SalesOrderStatus currentStatus = (order.getId() != null)
-                ? orderRepo.findById(order.getId()).map(SalesOrder::getStatus).orElse(null)
-                : null;
+        SalesOrderStatus currentStatus = existingOrder != null ? existingOrder.getStatus() : null;
 
         if (order.getId() == null) {
             order.setStatus(requestedStatus == SalesOrderStatus.DRAFT

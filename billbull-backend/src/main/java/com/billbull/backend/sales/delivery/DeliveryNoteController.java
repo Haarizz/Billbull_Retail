@@ -6,6 +6,7 @@ import org.springframework.web.bind.annotation.*;
 import com.billbull.backend.inventory.batch.BatchSelectionRequest;
 
 import java.util.List;
+import java.util.Map;
 
 @RestController
 @RequestMapping("/api/delivery-notes")
@@ -21,6 +22,11 @@ public class DeliveryNoteController {
     @GetMapping
     public List<DeliveryNoteResponse> list() {
         return service.list();
+    }
+
+    @GetMapping("/next-number")
+    public Map<String, String> getNextNumber() {
+        return Map.of("dnNumber", service.generateDeliveryNoteNumber());
     }
 
     @GetMapping("/uninvoiced/{customerCode}")
