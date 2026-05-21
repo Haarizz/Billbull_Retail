@@ -13,6 +13,7 @@ import { getUsernameFromToken } from "../api/auth";
 import { getDashboardData } from "../api/dashboardApi";
 import CurrencyAmount from "../components/CurrencyAmount";
 import { formatDisplayDate } from "../utils/dateUtils";
+import { formatUserDisplayName } from "../utils/displayName";
 
 // Currency formatter
 const formatCurrency = (value, className = '') => (
@@ -324,7 +325,7 @@ const Dashboard = () => {
     useEffect(() => {
         const timer = setInterval(() => setCurrentTime(new Date()), 1000);
         const user = getUsernameFromToken();
-        if (user) setUsername(user);
+        if (user) setUsername(formatUserDisplayName(user));
         return () => clearInterval(timer);
     }, []);
 

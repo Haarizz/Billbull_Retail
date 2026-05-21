@@ -5,7 +5,7 @@ import {
     ExternalLink, MoreHorizontal, Info, Plus, X, Split, Check,
     CheckSquare, LayoutGrid
 } from 'lucide-react';
-import { getAccounts, getTransactions, finalizeReconciliation } from '../../api/ledgerApi';
+import { getBankAccounts, getTransactions, finalizeReconciliation } from '../../api/ledgerApi';
 import toast from 'react-hot-toast';
 import { useCompany } from '../../context/CompanyContext';
 import CurrencyAmount from '../../components/CurrencyAmount';
@@ -52,38 +52,41 @@ const BankReconciliation = () => {
     }, [selectedAccount]);
 
     useEffect(() => {
-        if (selectedAccount && allTransactions.length > 0) {
-            const filtered = allTransactions.filter(tx =>
-                tx.accountCode === selectedAccount.code ||
-                tx.accountName === selectedAccount.name
-            );
-            setLedgerTransactions(filtered);
-
-            const initialMatched = new Set(
-                filtered.filter(tx => tx.reconciled).map(tx => tx.id)
-            );
-            setMatchedIds(initialMatched);
+        if (!selectedAccount) {
+            setLedgerTransactions([]);
+            setMatchedIds(new Set());
+            return;
         }
+
+        const filtered = allTransactions.filter(tx =>
+            tx.accountCode === selectedAccount.code ||
+            tx.accountName === selectedAccount.name
+        );
+        setLedgerTransactions(filtered);
+
+        const initialMatched = new Set(
+            filtered.filter(tx => tx.reconciled).map(tx => tx.id)
+        );
+        setMatchedIds(initialMatched);
     }, [selectedAccount, allTransactions]);
 
     const fetchData = async () => {
         try {
             const [accData, txData] = await Promise.all([
-                getAccounts(),
+                getBankAccounts(),
                 getTransactions()
             ]);
 
-            setAccounts(accData);
+            const bankAccounts = Array.isArray(accData) ? accData : [];
+            setAccounts(bankAccounts);
             setAllTransactions(txData);
 
-            if (accData.length > 0) {
-                const bankAcc = accData.find(a =>
-                    (a.accountGroup === 'Assets' && a.name.toLowerCase().includes('bank')) ||
-                    a.accountGroup === 'Assets'
-                ) || accData[0];
-
-                setBankAccount(bankAcc.id);
-                setSelectedAccount(bankAcc);
+            if (bankAccounts.length > 0) {
+                setBankAccount(bankAccounts[0].id);
+                setSelectedAccount(bankAccounts[0]);
+            } else {
+                setBankAccount('');
+                setSelectedAccount(null);
             }
         } catch (error) {
             console.error("Failed to fetch data", error);
@@ -93,6 +96,10 @@ const BankReconciliation = () => {
     const handleAccountChange = (e) => {
         const id = e.target.value;
         setBankAccount(id);
+        if (!id) {
+            setSelectedAccount(null);
+            return;
+        }
         const account = accounts.find(a => a.id.toString() === id.toString());
         setSelectedAccount(account);
     };
@@ -148,6 +155,11 @@ const BankReconciliation = () => {
     };
 
     const handleFinalize = async () => {
+        if (!selectedAccount) {
+            toast.error("Select a bank account for reconciliation.");
+            return;
+        }
+
         if (matchedIds.size === 0) {
             toast.error("No transactions selected for reconciliation.");
             return;
@@ -177,15 +189,23 @@ const BankReconciliation = () => {
             toast.success("Bank Reconciliation Successful!");
 
             // Re-fetch fresh data so reconciled status updates from DB
-            const [accData, txData] = await Promise.all([getAccounts(), getTransactions()]);
-            setAccounts(accData);
+            const [accData, txData] = await Promise.all([getBankAccounts(), getTransactions()]);
+            const bankAccounts = Array.isArray(accData) ? accData : [];
+            setAccounts(bankAccounts);
             setAllTransactions(txData);
             setIgnoredIds(new Set());
 
             const currentId = selectedAccount.id;
-            const updatedAccount = accData.find(a => a.id === currentId);
+            const updatedAccount = bankAccounts.find(a => a.id === currentId);
             if (updatedAccount) {
+                setBankAccount(updatedAccount.id);
                 setSelectedAccount(updatedAccount);
+            } else if (bankAccounts.length > 0) {
+                setBankAccount(bankAccounts[0].id);
+                setSelectedAccount(bankAccounts[0]);
+            } else {
+                setBankAccount('');
+                setSelectedAccount(null);
             }
         } catch (error) {
             toast.dismiss(loadingToast);
@@ -329,8 +349,9 @@ const BankReconciliation = () => {
                             onChange={handleAccountChange}
                             className="w-full px-3 py-2 text-xs border border-slate-200 rounded focus:border-blue-500 bg-white text-slate-600"
                         >
+                            <option value="" disabled>{accounts.length === 0 ? 'No bank accounts available' : 'Select bank account...'}</option>
                             {accounts.map(acc => (
-                                <option key={acc.id} value={acc.id}>{acc.name} ({acc.accountCode || '88740'})</option>
+                                <option key={acc.id} value={acc.id}>{acc.name} ({acc.code || acc.accountCode || '-'})</option>
                             ))}
                         </select>
                     </div>
@@ -488,7 +509,7 @@ const BankReconciliation = () => {
                         </div>
                     </div>
                     <div className="lg:w-64">
-                        {Math.abs(difference) < 0.01 ? (
+                        {selectedAccount && Math.abs(difference) < 0.01 ? (
                             <button onClick={handleFinalize} className="w-full py-3 bg-[#F5C742] text-slate-900 rounded font-bold text-sm hover:bg-yellow-400 shadow-sm">Finalize Reconciliation</button>
                         ) : (
                             <button disabled className="w-full py-3 bg-slate-100 text-slate-400 rounded font-bold text-sm cursor-not-allowed border border-slate-200">Cannot Finalize</button>

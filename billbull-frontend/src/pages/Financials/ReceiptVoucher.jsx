@@ -196,7 +196,7 @@ const ReceiptVoucher = () => {
             const formatted = data.map(r => ({
                 id: r.voucherId,
                 dbId: r.id,
-                date: new Date(r.date).toLocaleDateString('en-US'),
+                date: r.date,
                 source: r.category,
                 sourceSub: r.reference,
                 member: r.memberName,
@@ -267,8 +267,6 @@ const ReceiptVoucher = () => {
         const now = new Date();
         const currentMonth = now.getMonth();
         const currentYear = now.getFullYear();
-        const todayStr = now.toLocaleDateString('en-US');
-
         let todayTotal = 0;
         let todayCount = 0;
         let monthTotal = 0;
@@ -583,10 +581,6 @@ const ReceiptVoucher = () => {
     };
 
     const hasReceiptOnDate = (day) => {
-        const checkDate = new Date(currentDate.getFullYear(), currentDate.getMonth(), day).toLocaleDateString('en-US'); // "1/21/2026"
-        // Need to match the mock data format "1/21/2026" (m/d/yyyy) - basic check 
-        // Mock data is single digit month/day without pad, LocaleString standard behavior varies but often m/d/yyyy.
-        // Let's coerce standard equality
         return receipts.some(r => {
             const rDate = new Date(r.date);
             const cDate = new Date(currentDate.getFullYear(), currentDate.getMonth(), day);
@@ -934,7 +928,7 @@ const ReceiptVoucher = () => {
                         <h3 className="text-sm font-bold text-slate-700">Receipt Vouchers</h3>
                         <p className="text-xs text-slate-500">
                             {filterDate
-                                ? `Showing receipts for ${filterDate.toLocaleDateString()}`
+                                ? `Showing receipts for ${formatDisplayDate(filterDate)}`
                                 : `All receipt vouchers and income records (${filteredReceipts.length} receipts)`
                             }
                         </p>
