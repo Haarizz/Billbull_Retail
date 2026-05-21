@@ -157,8 +157,13 @@ public class QuotationService {
 
         if (quotation.getId() != null) {
             quotationRepo.findById(quotation.getId()).ifPresent(existing -> {
-                if (existing.getStatus() == QuotationStatus.CONVERTED) {
-                    quotation.setStatus(QuotationStatus.CONVERTED);
+                // Once a quotation has moved into a finalized downstream state
+                // (Converted to SO or Invoiced), edits via the standard
+                // create-or-update endpoint must not silently downgrade the
+                // status — keep whatever finalized status was already there.
+                if (existing.getStatus() == QuotationStatus.CONVERTED
+                        || existing.getStatus() == QuotationStatus.INVOICED) {
+                    quotation.setStatus(existing.getStatus());
                 }
                 if (quotation.getSourceInquiryId() == null) {
                     quotation.setSourceInquiryId(existing.getSourceInquiryId());
@@ -315,7 +320,8 @@ public class QuotationService {
 
         if (status == QuotationStatus.PENDING_APPROVAL
                 || status == QuotationStatus.APPROVED
-                || status == QuotationStatus.CONVERTED) {
+                || status == QuotationStatus.CONVERTED
+                || status == QuotationStatus.INVOICED) {
             validateAndCleanQuotationItems(quotation);
         }
 
@@ -494,12 +500,15 @@ public class QuotationService {
 
         int expiredCount = 0;
         for (Quotation qtn : expiredList) {
-            // Extra safety to avoid expiring converted ones, though query checks 'APPROVED'
-            // status
-            if (qtn.getStatus() == QuotationStatus.APPROVED) {
+            QuotationStatus current = qtn.getStatus();
+            // Safety: never expire a quotation already finalized downstream.
+            if (current == QuotationStatus.DRAFT
+                    || current == QuotationStatus.PENDING_APPROVAL
+                    || current == QuotationStatus.APPROVED) {
                 qtn.setStatus(QuotationStatus.EXPIRED);
                 quotationRepo.save(qtn);
-                log.info("Quotation {} expired automatically (Valid Till: {})", qtn.getQtnNo(), qtn.getValidTill());
+                log.info("Quotation {} expired automatically (Valid Till: {}, Prev Status: {})",
+                        qtn.getQtnNo(), qtn.getValidTill(), current);
                 expiredCount++;
             }
         }
