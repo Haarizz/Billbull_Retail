@@ -7,6 +7,9 @@ export const getAllProformas = () =>
 export const getProformaById = (id) =>
   api.get(`/api/proforma/${id}`).then(res => res.data);
 
+export const getNextProformaNumber = () =>
+  api.get("/api/proforma/next-number").then(res => res.data.piNumber);
+
 export const createProforma = (payload) =>
   api.post("/api/proforma", payload).then(res => res.data);
 

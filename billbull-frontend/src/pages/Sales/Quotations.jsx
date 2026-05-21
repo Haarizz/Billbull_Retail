@@ -96,6 +96,7 @@ import { useBranch } from '../../context/BranchContext';
 import ExportDropdown from '../../components/common/ExportDropdown';
 import { exportToExcel, exportToPDF } from '../../utils/exportUtils';
 import { generateDocFilename } from '../../utils/filenameUtils';
+import { isAutoNumberingEnabled } from '../../utils/salesNumbering';
 
 // ==========================================
 // 1. CONFIGURATION
@@ -377,6 +378,7 @@ const Quotations = () => {
     const [toastType, setToastType] = useState('success');
     const [printOptions, setPrintOptions] = useState({ printWithImages: false });
     const [salesSettings, setSalesSettings] = useState(null);
+    const quotationAutoNumbering = isAutoNumberingEnabled(salesSettings, 'QUOTATION');
 
     // Add state for expandable rows in Quotation Form
     const [expandedRows, setExpandedRows] = useState({});
@@ -897,6 +899,9 @@ const Quotations = () => {
             try {
                 const settings = await getSalesSettings();
                 setSalesSettings(settings);
+                if (!isAutoNumberingEnabled(settings, 'QUOTATION')) {
+                    setNextQtnNo('');
+                }
             } catch {
                 // settings are optional
             }
@@ -1265,7 +1270,7 @@ const Quotations = () => {
         const activeItems = getSubmittableQuotationItems(items).map(calculateRow);
         return {
             id: editingId,
-            qtnNo: editingId ? getQuotationNo() : null,
+            qtnNo: editingId || !quotationAutoNumbering ? getQuotationNo() : null,
             customer: customer,
             customerCode: selectedCustomerData?.code || inquiryCustomerSnapshot?.code || '',
             customerMobile: selectedCustomerData?.mobile || selectedCustomerData?.phone || inquiryCustomerSnapshot?.mobile || '',
@@ -1318,6 +1323,12 @@ const Quotations = () => {
 
     const handleSaveDraft = async () => {
         if (isViewMode) return;
+        if (!quotationAutoNumbering && !getQuotationNo().trim()) {
+            setToastMessage('Please enter a quotation number.');
+            setToastType('info');
+            setShowToast(true);
+            return;
+        }
         const validationMessage = getQuotationValidationMessage(items);
         if (validationMessage) {
             setToastMessage(validationMessage);
@@ -1331,6 +1342,7 @@ const Quotations = () => {
             const savedQtn = await saveQuotation(payload);
 
             setEditingId(savedQtn.id);
+            setNextQtnNo(savedQtn.qtnNo || getQuotationNo());
             setStatus('Draft');
 
             await refreshData();
@@ -1350,6 +1362,12 @@ const Quotations = () => {
 
     const handleConfirm = async () => {
         if (isViewMode) return;
+        if (!quotationAutoNumbering && !getQuotationNo().trim()) {
+            setToastMessage('Please enter a quotation number.');
+            setToastType('info');
+            setShowToast(true);
+            return;
+        }
         const validationMessage = getQuotationValidationMessage(items);
         if (validationMessage) {
             setToastMessage(validationMessage);
@@ -1413,6 +1431,7 @@ const Quotations = () => {
             setQuotationsList(mappedQtns);
 
             setEditingId(savedQtn.id);
+            setNextQtnNo(savedQtn.qtnNo || getQuotationNo());
             setStatus('Pending Approval');
             setEditorMode('edit');
 
@@ -2007,11 +2026,14 @@ const Quotations = () => {
         setSourceInquiry(null);
         setActiveTab('create');
 
-        // Fetch a fresh number just in case others were made while we were idle
-        try {
-            const freshNo = await getNextQuotationNo();
-            setNextQtnNo(freshNo);
-        } catch (e) { /* ignore */ }
+        if (quotationAutoNumbering) {
+            try {
+                const freshNo = await getNextQuotationNo();
+                setNextQtnNo(freshNo);
+            } catch (e) { /* ignore */ }
+        } else {
+            setNextQtnNo('');
+        }
     };
 
     const renderStatusBadge = (currentStatus = status) => {
@@ -2748,7 +2770,14 @@ const Quotations = () => {
                                     <div className="grid grid-cols-2 gap-3">
                                         <div className="flex flex-col col-span-2 sm:col-span-1">
                                             <label className="text-xs font-semibold text-slate-500 mb-1">Quotation No.</label>
-                                            <input type="text" value={getQuotationNo()} readOnly className="text-sm p-1.5 bg-slate-50 border border-slate-200/50 rounded text-slate-700" />
+                                            <input
+                                                type="text"
+                                                value={getQuotationNo()}
+                                                onChange={(e) => setNextQtnNo(e.target.value)}
+                                                readOnly={isViewMode || editingId || quotationAutoNumbering}
+                                                placeholder={quotationAutoNumbering ? 'Auto generated' : 'Enter quotation number'}
+                                                className="text-sm p-1.5 border border-slate-200/50 rounded text-slate-700 read-only:bg-slate-50 read-only:text-slate-500 focus:outline-none focus:border-[#F5C742]"
+                                            />
                                         </div>
                                         <div className="flex flex-col col-span-2 sm:col-span-1">
                                             <label className="text-xs font-semibold text-slate-500 mb-1">Revision</label>

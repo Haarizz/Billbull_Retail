@@ -16,6 +16,9 @@ public interface QuotationRepository extends JpaRepository<Quotation, Long> {
 
   boolean existsByQtnNo(String qtnNo);
 
+  @Query("SELECT q.qtnNo FROM Quotation q WHERE q.qtnNo LIKE CONCAT(:prefix, '%')")
+  List<String> findQtnNumbersByPrefix(@Param("prefix") String prefix);
+
   boolean existsByCustomerContaining(String customerVal);
 
   @Query("""

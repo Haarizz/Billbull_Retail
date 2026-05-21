@@ -19,6 +19,8 @@ import com.billbull.backend.sales.invoice.DeliveryStatus;
 import com.billbull.backend.sales.invoice.SalesInvoice;
 import com.billbull.backend.sales.invoice.SalesInvoiceItem;
 import com.billbull.backend.sales.invoice.SalesInvoiceRepository;
+import com.billbull.backend.sales.settings.SalesDocumentNumberingService;
+import com.billbull.backend.sales.settings.SalesDocumentType;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
@@ -74,6 +76,9 @@ public class SalesReturnService {
     @Autowired
     private StockMovementService stockMovementService;
 
+    @Autowired
+    private SalesDocumentNumberingService numberingService;
+
     @Transactional(readOnly = true)
     public List<SalesReturn> getAllReturns() {
         List<SalesReturn> returns = new ArrayList<>(salesReturnRepository.findAll());
@@ -92,18 +97,25 @@ public class SalesReturnService {
 
     @Transactional
     public SalesReturn saveReturn(SalesReturn salesReturn) {
+        SalesReturn existingReturn = null;
         if (salesReturn.getId() != null) {
-            SalesReturn existing = getReturnById(salesReturn.getId());
-            if (existing.getStatus() == SalesReturnStatus.APPROVED) {
+            existingReturn = getReturnById(salesReturn.getId());
+            if (existingReturn.getStatus() == SalesReturnStatus.APPROVED) {
                 throw new org.springframework.web.server.ResponseStatusException(
                         org.springframework.http.HttpStatus.BAD_REQUEST,
                         "Approved returns cannot be modified. Create a reversal instead.");
             }
         }
 
-        if (salesReturn.getId() == null
-                && (salesReturn.getReturnNumber() == null || salesReturn.getReturnNumber().isEmpty())) {
-            salesReturn.setReturnNumber(generateReturnNumber());
+        if (salesReturn.getId() == null) {
+            salesReturn.setReturnNumber(numberingService.resolveNumberForCreate(
+                    SalesDocumentType.SALES_RETURN,
+                    salesReturn.getReturnNumber()));
+        } else if (existingReturn != null) {
+            salesReturn.setReturnNumber(numberingService.resolveNumberForUpdate(
+                    SalesDocumentType.SALES_RETURN,
+                    existingReturn.getReturnNumber(),
+                    salesReturn.getReturnNumber()));
         }
 
         if (salesReturn.getStatus() == null) {
@@ -132,27 +144,7 @@ public class SalesReturnService {
     }
 
     public String generateReturnNumber() {
-        String year   = String.valueOf(LocalDate.now().getYear());
-        String prefix = "SR-" + year + "-";
-
-        Optional<SalesReturn> lastReturn = salesReturnRepository.findTopByOrderByReturnNumberDesc();
-        int lastNum = 0;
-
-        if (lastReturn.isPresent()) {
-            String lastReturnNum = lastReturn.get().getReturnNumber();
-            if (lastReturnNum != null && lastReturnNum.startsWith(prefix)) {
-                try {
-                    String[] parts = lastReturnNum.split("-");
-                    if (parts.length >= 3) {
-                        lastNum = Integer.parseInt(parts[2]);
-                    }
-                } catch (NumberFormatException e) {
-                    // fall back to 0
-                }
-            }
-        }
-
-        return prefix + String.format("%04d", lastNum + 1);
+        return numberingService.preview(SalesDocumentType.SALES_RETURN);
     }
 
     @Transactional(readOnly = true)

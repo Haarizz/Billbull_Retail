@@ -10,7 +10,7 @@ import StatementPrintPreview from '../../components/StatementPrintPreview';
 import CurrencyAmount, { CurrencySymbol } from '../../components/CurrencyAmount';
 
 // --- API IMPORTS ---
-import { getAllCustomers, getCustomerById, createCustomer, deleteCustomer, getOpeningInvoicesByCustomerCode } from '../../api/customerledgerApi';
+import { getAllCustomers, getCustomerById, createCustomer, deleteCustomer, getOpeningInvoicesByCustomerCode, getNextCustomerCode } from '../../api/customerledgerApi';
 import { fetchStatementOfAccount } from '../../api/financialsApi';
 // ✅ Import Warehouse API
 import { getWarehouses } from '../../api/warehouseApi';
@@ -18,6 +18,7 @@ import { getWarehouses } from '../../api/warehouseApi';
 import { getAllSalesPayments, saveSalesPayment, getNextSalesPaymentNumber, getSalesPaymentStats } from '../../api/salesPaymentApi';
 import { getAllSalesInvoices } from '../../api/salesInvoiceApi';
 import { getBankAccounts } from '../../api/ledgerApi';
+import { getSalesSettings } from '../../api/salesSettingsApi';
 import { useBranch } from '../../context/BranchContext';
 import { useCompany } from '../../context/CompanyContext';
 import {
@@ -32,6 +33,7 @@ import { exportToExcel, exportToPDF } from '../../utils/exportUtils';
 import { generateSOAFilename } from '../../utils/filenameUtils';
 import { usePrintDocument } from '../../hooks/usePrintDocument';
 import { STATEMENT_EXPORT_COLUMNS, formatStatementEntryType, mapStatementEntriesForExport } from '../../utils/statementUtils';
+import { isAutoNumberingEnabled } from '../../utils/salesNumbering';
 
 // ==========================================
 // 1. CONFIGURATION
@@ -336,6 +338,7 @@ const AddCustomerModal = ({ isOpen, onClose, customerToEdit, onSaveCustomer }) =
     const currency = company?.currency || 'AED';
     const defaultCurrency = normalizeCurrencyValue(company?.currency || 'AED');
     const [activeTab, setActiveTab] = useState('general');
+    const [customerAutoNumbering, setCustomerAutoNumbering] = useState(true);
 
     // --- Nested Modal States ---
     const [isAddressModalOpen, setIsAddressModalOpen] = useState(false);
@@ -360,7 +363,7 @@ const AddCustomerModal = ({ isOpen, onClose, customerToEdit, onSaveCustomer }) =
     const canvasRef = useRef(null);
 
     const createInitialFormState = () => ({
-        code: 'CUST-' + Math.floor(10000 + Math.random() * 90000),
+        code: '',
         name: '',
         localName: '',
         group: '',
@@ -455,6 +458,36 @@ const AddCustomerModal = ({ isOpen, onClose, customerToEdit, onSaveCustomer }) =
     }, [customerToEdit, defaultBranchName, defaultCurrency, isOpen]);
 
     useEffect(() => {
+        if (!isOpen) return;
+        let cancelled = false;
+
+        const loadNumbering = async () => {
+            try {
+                const settings = await getSalesSettings();
+                const autoEnabled = isAutoNumberingEnabled(settings, 'CUSTOMER');
+                if (cancelled) return;
+                setCustomerAutoNumbering(autoEnabled);
+
+                if (!customerToEdit) {
+                    if (autoEnabled) {
+                        const nextCode = await getNextCustomerCode();
+                        if (!cancelled) setFormData(prev => ({ ...prev, code: nextCode || '' }));
+                    } else {
+                        setFormData(prev => ({ ...prev, code: '' }));
+                    }
+                }
+            } catch (err) {
+                if (!cancelled) setCustomerAutoNumbering(true);
+            }
+        };
+
+        loadNumbering();
+        return () => {
+            cancelled = true;
+        };
+    }, [customerToEdit, isOpen]);
+
+    useEffect(() => {
         if (!isOpen || customerToEdit || !defaultBranchName) {
             return;
         }
@@ -471,6 +504,7 @@ const AddCustomerModal = ({ isOpen, onClose, customerToEdit, onSaveCustomer }) =
         // 1. General Tab Requirements
         if (!formData.name?.trim()) return false;
         if (!formData.group) return false;
+        if (!customerAutoNumbering && !formData.code?.trim()) return false;
 
         // 2. Contact Tab Requirements
         if (!formData.mobile?.trim()) return false;
@@ -479,7 +513,7 @@ const AddCustomerModal = ({ isOpen, onClose, customerToEdit, onSaveCustomer }) =
         // if (!avatarPreview) return false;
 
         return true;
-    }, [formData, avatarPreview]);
+    }, [formData, avatarPreview, customerAutoNumbering]);
 
     const handleMainSave = () => {
         if (!isFormValid) return;
@@ -683,7 +717,7 @@ const AddCustomerModal = ({ isOpen, onClose, customerToEdit, onSaveCustomer }) =
                             <span className="text-xs text-slate-400 ml-auto">Basic customer details</span>
                         </div>
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                            <div><label className="block text-xs font-medium text-slate-500 mb-1.5">Customer Code <span className="text-red-500">*</span></label><input type="text" name="code" value={formData.code} readOnly className="w-full text-sm border border-slate-200 rounded-md px-3 py-2 bg-slate-50 text-slate-500" /></div>
+                            <div><label className="block text-xs font-medium text-slate-500 mb-1.5">Customer Code <span className="text-red-500">*</span></label><input type="text" name="code" value={formData.code} onChange={handleInputChange} readOnly={customerToEdit || customerAutoNumbering} placeholder={customerAutoNumbering ? 'Auto generated' : 'Enter customer code'} className="w-full text-sm border border-slate-200 rounded-md px-3 py-2 text-slate-700 read-only:bg-slate-50 read-only:text-slate-500 focus:outline-none focus:border-[#F5C742]" /></div>
                             <div><label className="block text-xs font-medium text-slate-500 mb-1.5">Customer Group <span className="text-red-500">*</span></label><div className="relative"><select name="group" value={formData.group} onChange={handleInputChange} className="w-full text-sm border border-slate-200 rounded-md px-3 py-2 appearance-none bg-white focus:outline-none focus:border-[#F5C742] text-slate-700"><option value="">Select group</option><option value="Retail">Retail</option><option value="Wholesale">Wholesale</option><option value="VIP">VIP</option><option value="Corporate">Corporate</option></select><ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" /></div></div>
                             <div><label className="block text-xs font-medium text-slate-500 mb-1.5">Customer Name <span className="text-red-500">*</span></label><input name="name" value={formData.name} onChange={handleInputChange} type="text" className="w-full text-sm border border-slate-200 rounded-md px-3 py-2 focus:outline-none focus:border-[#F5C742]" /></div>
                             <div><label className="block text-xs font-medium text-slate-500 mb-1.5">Local Name (Optional)</label><input name="localName" value={formData.localName} onChange={handleInputChange} type="text" className="w-full text-sm border border-slate-200 rounded-md px-3 py-2 focus:outline-none focus:border-[#F5C742] text-right" /></div>
@@ -1328,6 +1362,8 @@ const ReceiveMoneyView = () => {
     const [customers, setCustomers] = useState([]);
     const [invoices, setInvoices] = useState([]);
     const [payments, setPayments] = useState([]);
+    const [salesSettings, setSalesSettings] = useState(null);
+    const paymentAutoNumbering = isAutoNumberingEnabled(salesSettings, 'SALES_PAYMENT');
 
     // Form States
     const [paymentDate, setPaymentDate] = useState(new Date().toISOString().split('T')[0]);
@@ -1358,17 +1394,19 @@ const ReceiveMoneyView = () => {
     const loadData = async () => {
         setIsLoading(true);
         try {
-            const [custData, invData, paymentData, nextNo] = await Promise.all([
+            const [custData, invData, paymentData, nextNo, settingsData] = await Promise.all([
                 getAllCustomers(),
                 getAllSalesInvoices(),
                 getAllSalesPayments(),
-                getNextSalesPaymentNumber().catch(() => `PAY-${new Date().getFullYear()}-${Date.now().toString().slice(-4)}`)
+                getNextSalesPaymentNumber().catch(() => ''),
+                getSalesSettings().catch(() => null)
             ]);
 
             setCustomers(custData || []);
             setInvoices(invData || []);
             setPayments(paymentData || []);
-            setNextPaymentNo(nextNo);
+            if (settingsData) setSalesSettings(settingsData);
+            setNextPaymentNo(settingsData && !isAutoNumberingEnabled(settingsData, 'SALES_PAYMENT') ? '' : nextNo);
         } catch (error) {
             console.error("Error loading data:", error);
         } finally {
@@ -1540,12 +1578,19 @@ const ReceiveMoneyView = () => {
         try {
             setIsLoading(true);
             const invoicesToPay = Object.keys(selectedInvoices).filter(k => selectedInvoices[k]);
+            if (!paymentAutoNumbering && !nextPaymentNo.trim()) {
+                alert("Please enter a receipt number.");
+                return;
+            }
+            if (!paymentAutoNumbering && invoicesToPay.length > 1) {
+                alert("Manual receipt numbering supports one settlement at a time. Please save one invoice, then enter the next receipt number.");
+                return;
+            }
 
             // Generate a separate payment record for each selected invoice
             // This loop mimics "settling multiple" by creating individual backend records
             // since the backend might expect 1:1 payment-invoice mapping.
-            let currentPaymentNoSuffix = parseInt(nextPaymentNo.split('-').pop()) || 1;
-            const year = new Date().getFullYear();
+            let lastSavedPayment = null;
 
             for (const invNo of invoicesToPay) {
                 const amount = settleAmounts[invNo];
@@ -1556,10 +1601,8 @@ const ReceiveMoneyView = () => {
                 let status = 'COMPLETED';
                 if (amount < balance) status = 'PARTIAL';
 
-                const payNo = `PAY-${year}-${String(currentPaymentNoSuffix).padStart(4, '0')}`;
-
                 const payload = {
-                    paymentNumber: payNo,
+                    paymentNumber: paymentAutoNumbering ? null : nextPaymentNo.trim(),
                     paymentDate: paymentDate,
                     paymentType: 'RECEIVED',
                     customerCode: selectedCustomer.code,
@@ -1576,8 +1619,10 @@ const ReceiveMoneyView = () => {
                     chequeDate: paymentMode === 'Cheque' ? chequeDate : null
                 };
 
-                await saveSalesPayment(payload);
-                currentPaymentNoSuffix++;
+                lastSavedPayment = await saveSalesPayment(payload);
+            }
+            if (lastSavedPayment?.paymentNumber) {
+                setNextPaymentNo(lastSavedPayment.paymentNumber);
             }
 
             alert("Payments recorded successfully!");
@@ -1778,7 +1823,14 @@ const ReceiveMoneyView = () => {
                             <div className="grid grid-cols-2 gap-3">
                                 <div>
                                     <label className="block text-xs font-bold text-slate-500 mb-1">Receipt No.</label>
-                                    <input type="text" value={nextPaymentNo} readOnly className="w-full text-xs bg-slate-50 border border-slate-200 rounded px-3 py-2 text-slate-500" />
+                                    <input
+                                        type="text"
+                                        value={nextPaymentNo}
+                                        onChange={(e) => setNextPaymentNo(e.target.value)}
+                                        readOnly={paymentAutoNumbering}
+                                        placeholder={paymentAutoNumbering ? 'Auto generated' : 'Enter receipt number'}
+                                        className="w-full text-xs border border-slate-200 rounded px-3 py-2 text-slate-700 read-only:bg-slate-50 read-only:text-slate-500 focus:outline-none focus:border-[#F5C742]"
+                                    />
                                 </div>
                                 <div>
                                     <label className="block text-xs font-bold text-slate-500 mb-1">Method</label>

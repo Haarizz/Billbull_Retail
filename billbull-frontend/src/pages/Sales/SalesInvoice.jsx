@@ -69,6 +69,7 @@ import ExportDropdown from '../../components/common/ExportDropdown';
 import { exportToExcel, exportToPDF } from '../../utils/exportUtils';
 import CurrencyAmount, { CurrencySymbol } from '../../components/CurrencyAmount';
 import { formatCurrencyDisplay } from '../../utils/countryCurrencyOptions';
+import { isAutoNumberingEnabled } from '../../utils/salesNumbering';
 
 // ==========================================
 // 1. CONFIGURATION
@@ -149,6 +150,7 @@ const SalesInvoice = () => {
     // --- DATA LIST STATES ---
     const [invoicesList, setInvoicesList] = useState([]);
     const [salesSettings, setSalesSettings] = useState(null);
+    const invoiceAutoNumbering = isAutoNumberingEnabled(salesSettings, 'SALES_INVOICE');
 
     const [searchTerm, setSearchTerm] = useState('');
     const [filterStatus, setFilterStatus] = useState('All');
@@ -234,7 +236,7 @@ const SalesInvoice = () => {
     const [status, setStatus] = useState('Draft');
     const [salesType, setSalesType] = useState('STANDARD_FLOW'); // Backend mapping
     const [invoiceTypeUI, setInvoiceTypeUI] = useState('Direct Sale'); // UI Dropdown state
-    const [invoiceNo, setInvoiceNo] = useState('INV-2024-0005');
+    const [invoiceNo, setInvoiceNo] = useState('');
     const [invoiceDate, setInvoiceDate] = useState('2026-01-21');
     const [deliveryDate, setDeliveryDate] = useState(''); // Due Date
     const [reference, setReference] = useState('');
@@ -642,9 +644,13 @@ const SalesInvoice = () => {
                 cost: 0
             }));
 
-        getNextInvoiceNumber()
-            .then(nextNo => setInvoiceNo(nextNo))
-            .catch(() => { });
+        if (invoiceAutoNumbering) {
+            getNextInvoiceNumber()
+                .then(nextNo => setInvoiceNo(nextNo))
+                .catch(() => { });
+        } else {
+            setInvoiceNo('');
+        }
 
         const resolvedCustomer = matched || { name: fromQtn.customer, code: '', id: null };
         setSelectedCustomer(resolvedCustomer);
@@ -717,9 +723,13 @@ const SalesInvoice = () => {
                 binId: i.binId || null,
             }));
 
-        getNextInvoiceNumber()
-            .then(nextNo => setInvoiceNo(nextNo))
-            .catch(() => { });
+        if (invoiceAutoNumbering) {
+            getNextInvoiceNumber()
+                .then(nextNo => setInvoiceNo(nextNo))
+                .catch(() => { });
+        } else {
+            setInvoiceNo('');
+        }
 
         const resolvedCustomer = matched || { name: fromSO.customer, code: fromSO.customerCode || '', id: null };
         setSelectedCustomer(resolvedCustomer);
@@ -774,9 +784,13 @@ const SalesInvoice = () => {
 
         fromDNHandled.current = true;
 
-        getNextInvoiceNumber()
-            .then(nextNo => setInvoiceNo(nextNo))
-            .catch(() => { });
+        if (invoiceAutoNumbering) {
+            getNextInvoiceNumber()
+                .then(nextNo => setInvoiceNo(nextNo))
+                .catch(() => { });
+        } else {
+            setInvoiceNo('');
+        }
 
         setInvoiceTypeUI('Against Delivery Note');
         setSalesType('STANDARD_FLOW');
@@ -888,10 +902,10 @@ const SalesInvoice = () => {
         setInvoiceId(null); // Reset ID for new creation
         setPickingNoteVerification(null);
         try {
-            const nextNumber = await getNextInvoiceNumber();
+            const nextNumber = invoiceAutoNumbering ? await getNextInvoiceNumber() : '';
             setInvoiceNo(nextNumber);
         } catch (err) {
-            setInvoiceNo(`INV-${new Date().getFullYear()}-${Math.floor(1000 + Math.random() * 9000)}`);
+            setInvoiceNo('');
         }
         setStatus('Draft');
         setSalesType(type);
@@ -1558,6 +1572,10 @@ const SalesInvoice = () => {
             return;
         }
         if (!selectedCustomer) { alert("Please select a customer"); return; }
+        if (!invoiceAutoNumbering && !invoiceNo.trim()) {
+            alert("Please enter an invoice number.");
+            return;
+        }
 
         // Build payload for backend
         // Resolve invoice-level warehouse ID for fallback on items that have no warehouseId
@@ -1656,7 +1674,7 @@ const SalesInvoice = () => {
                 }
             }
             if (stockIssues.length > 0) {
-                alert(`Insufficient stock for the following items:\n\n${stockIssues.join('\n')}\n\nPlease adjust quantities or disable stock check in Sales Settings.`);
+                alert(`Insufficient stock for the following items:\n\n${stockIssues.join('\n')}\n\nPlease adjust quantities or disable stock check in Configure & customize.`);
                 return;
             }
         }
@@ -1672,6 +1690,7 @@ const SalesInvoice = () => {
         try {
             const savedInvoice = await saveSalesInvoice(payload);
             setInvoiceId(savedInvoice.id);
+            setInvoiceNo(savedInvoice.invoiceNumber || invoiceNo);
             setStatus(savedInvoice.status);
             if (Array.isArray(savedInvoice.items)) {
                 setItems(savedInvoice.items.map((i, index) => mapServerInvoiceItem(i, Date.now() + index)));
@@ -2453,7 +2472,14 @@ const SalesInvoice = () => {
 
                                             <div>
                                                 <label className="block text-xs font-bold text-slate-700 mb-1">Invoice Number</label>
-                                                <input type="text" value={invoiceNo} readOnly className="w-full text-xs p-2 bg-slate-50 border border-slate-200 rounded text-slate-700 font-bold" />
+                                                <input
+                                                    type="text"
+                                                    value={invoiceNo}
+                                                    onChange={e => setInvoiceNo(e.target.value)}
+                                                    readOnly={isReadOnlyInvoice || invoiceAutoNumbering}
+                                                    placeholder={invoiceAutoNumbering ? 'Auto generated' : 'Enter invoice number'}
+                                                    className="w-full text-xs p-2 border border-slate-200 rounded text-slate-700 font-bold read-only:bg-slate-50 read-only:text-slate-500 focus:border-[#F5C742] outline-none"
+                                                />
                                             </div>
 
                                             <div>

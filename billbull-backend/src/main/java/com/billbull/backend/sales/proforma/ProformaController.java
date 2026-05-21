@@ -6,6 +6,7 @@ import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
+import java.util.Map;
 
 @RestController
 @RequestMapping("/api/proforma")
@@ -23,6 +24,11 @@ public class ProformaController {
     @GetMapping
     public List<ProformaResponse> list() {
         return service.list();
+    }
+
+    @GetMapping("/next-number")
+    public Map<String, String> getNextNumber() {
+        return Map.of("piNumber", service.generateProformaNumber());
     }
 
     @GetMapping("/{id}")

@@ -6,6 +6,7 @@ import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
 import java.time.LocalDate;
+import java.util.List;
 import java.util.Optional;
 
 @Repository
@@ -14,6 +15,11 @@ public interface SalesReturnRepository extends JpaRepository<SalesReturn, Long> 
     Optional<SalesReturn> findByReturnNumber(String returnNumber);
 
     Optional<SalesReturn> findTopByOrderByReturnNumberDesc();
+
+    boolean existsByReturnNumber(String returnNumber);
+
+    @Query("SELECT r.returnNumber FROM SalesReturn r WHERE r.returnNumber LIKE CONCAT(:prefix, '%')")
+    List<String> findReturnNumbersByPrefix(@Param("prefix") String prefix);
 
     @Query("SELECT SUM(r.totalAmount) FROM SalesReturn r WHERE r.returnDate = :date")
     Double getTotalReturnsForDate(@Param("date") LocalDate date);

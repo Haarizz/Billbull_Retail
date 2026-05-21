@@ -38,6 +38,8 @@ import com.billbull.backend.inventory.product.ProductPricingRepository;
 import com.billbull.backend.inventory.product.ProductRepository;
 import com.billbull.backend.inventory.product.ProductTaxRepository;
 import com.billbull.backend.purchase.stockmovement.StockMovementRepository;
+import com.billbull.backend.sales.settings.SalesDocumentNumberingService;
+import com.billbull.backend.sales.settings.SalesDocumentType;
 import com.billbull.backend.util.DocumentOrderingUtil;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -63,6 +65,7 @@ public class QuotationService {
     private final ProductBarcodeRepository barcodeRepo;
     private final CustomerInquiryRepository customerInquiryRepo;
     private final InquiryFollowUpRepository inquiryFollowUpRepo;
+    private final SalesDocumentNumberingService numberingService;
 
     public QuotationService(
             QuotationRepository quotationRepo,
@@ -78,7 +81,8 @@ public class QuotationService {
             ProductMediaRepository mediaRepo,
             ProductBarcodeRepository barcodeRepo,
             CustomerInquiryRepository customerInquiryRepo,
-            InquiryFollowUpRepository inquiryFollowUpRepo) {
+            InquiryFollowUpRepository inquiryFollowUpRepo,
+            SalesDocumentNumberingService numberingService) {
         this.quotationRepo = quotationRepo;
         this.objectMapper = objectMapper;
         this.productRepo = productRepo;
@@ -93,6 +97,7 @@ public class QuotationService {
         this.barcodeRepo = barcodeRepo;
         this.customerInquiryRepo = customerInquiryRepo;
         this.inquiryFollowUpRepo = inquiryFollowUpRepo;
+        this.numberingService = numberingService;
     }
 
     // -------------------------------------------------
@@ -114,26 +119,9 @@ public class QuotationService {
     // -------------------------------------------------
     // GET NEXT QUOTATION NO
     // -------------------------------------------------
-    @Transactional(readOnly = true)
+    @Transactional
     public String generateNextQuotationNo() {
-        Quotation lastQtn = quotationRepo.findTopByOrderByQtnNoDesc();
-
-        if (lastQtn == null || lastQtn.getQtnNo() == null) {
-            return "QTN-0001";
-        }
-
-        try {
-            String lastNo = lastQtn.getQtnNo();
-            String prefix = "QTN-";
-            if (lastNo.startsWith(prefix)) {
-                String numPart = lastNo.substring(prefix.length());
-                int nextNum = Integer.parseInt(numPart) + 1;
-                return prefix + String.format("%04d", nextNum);
-            }
-        } catch (Exception e) {
-            // fallback if format is unexpected
-        }
-        return "QTN-" + System.currentTimeMillis();
+        return numberingService.preview(SalesDocumentType.QUOTATION);
     }
 
     // -------------------------------------------------
@@ -152,32 +140,45 @@ public class QuotationService {
     // CREATE / UPDATE
     // -------------------------------------------------
     public Quotation createOrUpdateQuotation(Quotation quotation) {
+        Quotation existingQuotation = quotation.getId() != null
+                ? quotationRepo.findById(quotation.getId()).orElse(null)
+                : null;
+
         enrichQuotationItemsFromProducts(quotation);
         validateAndCleanQuotationItems(quotation);
 
         if (quotation.getId() != null) {
-            quotationRepo.findById(quotation.getId()).ifPresent(existing -> {
-                // Once a quotation has moved into a finalized downstream state
-                // (Converted to SO or Invoiced), edits via the standard
-                // create-or-update endpoint must not silently downgrade the
-                // status — keep whatever finalized status was already there.
-                if (existing.getStatus() == QuotationStatus.CONVERTED
-                        || existing.getStatus() == QuotationStatus.INVOICED) {
-                    quotation.setStatus(existing.getStatus());
-                }
-                if (quotation.getSourceInquiryId() == null) {
-                    quotation.setSourceInquiryId(existing.getSourceInquiryId());
-                }
-                if (!hasText(quotation.getSourceInquiryNumber())) {
-                    quotation.setSourceInquiryNumber(existing.getSourceInquiryNumber());
-                }
-            });
+    quotationRepo.findById(quotation.getId()).ifPresent(existing -> {
+
+        // Preserve finalized statuses
+        if (existing.getStatus() == QuotationStatus.CONVERTED
+                || existing.getStatus() == QuotationStatus.INVOICED) {
+            quotation.setStatus(existing.getStatus());
         }
 
-        if (quotation.getId() == null &&
-                (quotation.getQtnNo() == null || quotation.getQtnNo().isBlank())) {
-            quotation.setQtnNo("QTN-" + System.currentTimeMillis());
+        if (quotation.getSourceInquiryId() == null) {
+            quotation.setSourceInquiryId(existing.getSourceInquiryId());
         }
+
+        if (!hasText(quotation.getSourceInquiryNumber())) {
+            quotation.setSourceInquiryNumber(existing.getSourceInquiryNumber());
+        }
+
+        if (existing.getStatus() == QuotationStatus.DRAFT) {
+            quotation.setQtnNo(numberingService.resolveNumberForUpdate(
+                    SalesDocumentType.QUOTATION,
+                    existing.getQtnNo(),
+                    quotation.getQtnNo()));
+        } else {
+            quotation.setQtnNo(existing.getQtnNo());
+        }
+    });
+
+} else {
+    quotation.setQtnNo(numberingService.resolveNumberForCreate(
+            SalesDocumentType.QUOTATION,
+            quotation.getQtnNo()));
+}
 
         if (quotation.getItems() != null) {
             // Collect the set of persisted item ids for this quotation. Any incoming

@@ -35,6 +35,7 @@ import { getAllQuotations } from '../../api/quotationApi';
 import { getAllProformas } from '../../api/proformaApi';
 import {
   getAllSalesOrders,
+  getNextSalesOrderNumber,
   saveSalesOrder,
   uploadSalesOrderAttachment
 } from '../../api/salesorderApi';
@@ -55,6 +56,7 @@ import ProductSelector from '../../components/ProductSelector';
 import CustomerSelector from '../../components/CustomerSelector';
 import CustomerShippingPanel from '../../components/CustomerShippingPanel';
 import { hydrateCustomerFromSource, resolveCustomer, resolveDefaultShippingAddress } from '../../utils/customerResolution';
+import { isAutoNumberingEnabled } from '../../utils/salesNumbering';
 
 // ✅ GLOBAL COMPONENTS
 import { ItemDescriptionCell, ItemDescriptionHeader } from '../../components/ItemDescriptionCell';
@@ -194,6 +196,7 @@ const SalesOrders = () => {
 
   // Sales settings (stock check, credit limit policy)
   const [salesSettings, setSalesSettings] = useState(null);
+  const orderAutoNumbering = isAutoNumberingEnabled(salesSettings, 'SALES_ORDER');
 
   // ✅ LIVE STOCK MAP
   const [liveStockMap, setLiveStockMap] = useState({});
@@ -219,7 +222,7 @@ const SalesOrders = () => {
 
 
   // Header Info
-  const [soNumber, setSoNumber] = useState(() => `SO-${Math.floor(100000 + Math.random() * 900000)}`);
+  const [soNumber, setSoNumber] = useState('');
   const [orderDate, setOrderDate] = useState(new Date().toISOString().split('T')[0]);
   const [linkedSourceType, setLinkedSourceType] = useState('');
   const [linkedSourceSearch, setLinkedSourceSearch] = useState('');
@@ -410,7 +413,13 @@ const SalesOrders = () => {
       const proformaData = proformaResult.status === 'fulfilled' ? proformaResult.value : [];
       const bankAccData = bankAccResult.status === 'fulfilled' ? bankAccResult.value : [];
       setBankAccountOptions(Array.isArray(bankAccData) ? bankAccData : []);
-      if (settingsResult.status === 'fulfilled') setSalesSettings(settingsResult.value);
+      const loadedSettings = settingsResult.status === 'fulfilled' ? settingsResult.value : null;
+      if (loadedSettings) {
+        setSalesSettings(loadedSettings);
+        if (!orderId && isAutoNumberingEnabled(loadedSettings, 'SALES_ORDER')) {
+          getNextSalesOrderNumber().then(setSoNumber).catch(() => setSoNumber(''));
+        }
+      }
 
       let validCustomers = Array.isArray(custData) ? custData : [];
 
@@ -889,6 +898,11 @@ const SalesOrders = () => {
 
   // ✅ FIX 4: INCLUDE ID IN PAYLOAD
   const saveOrUpdateOrder = async (targetStatus = 'DRAFT') => {
+    if (!orderAutoNumbering && !soNumber.trim()) {
+      alert('Please enter a sales order number.');
+      return;
+    }
+
     const sanitizedLinkedQuotation = linkedSourceType === 'quotation' ? linkedQtn.trim() : '';
     const sanitizedLinkedProforma = linkedSourceType === 'proforma' ? linkedPi.trim() : '';
 
@@ -958,7 +972,7 @@ const SalesOrders = () => {
         }
       }
       if (stockIssues.length > 0) {
-        alert(`Insufficient stock for the following items:\n\n${stockIssues.join('\n')}\n\nPlease adjust quantities or disable stock check in Sales Settings.`);
+        alert(`Insufficient stock for the following items:\n\n${stockIssues.join('\n')}\n\nPlease adjust quantities or disable stock check in Configure & customize.`);
         return;
       }
     }
@@ -984,6 +998,7 @@ const SalesOrders = () => {
 
       // Update local state to match saved record
       setOrderId(savedOrder.id); // Ensure subsequent saves are updates
+      setSoNumber(savedOrder.soNumber || soNumber);
       setStatus(savedOrder.status);
       if (Array.isArray(savedOrder.items)) {
         const mappedItems = savedOrder.items.map((item, index) =>
@@ -1053,7 +1068,11 @@ const SalesOrders = () => {
 
   const handleSelectQuotation = (qtn) => {
     if (!orderId) {
-      setSoNumber(`SO-${Math.floor(100000 + Math.random() * 900000)}`);
+      if (orderAutoNumbering) {
+        getNextSalesOrderNumber().then(setSoNumber).catch(() => setSoNumber(''));
+      } else {
+        setSoNumber('');
+      }
     }
     setLinkedSourceType('quotation');
     setLinkedQtn(qtn.qtnNo);
@@ -1085,7 +1104,11 @@ const SalesOrders = () => {
 
   const handleSelectProforma = (proforma) => {
     if (!orderId) {
-      setSoNumber(`SO-${Math.floor(100000 + Math.random() * 900000)}`);
+      if (orderAutoNumbering) {
+        getNextSalesOrderNumber().then(setSoNumber).catch(() => setSoNumber(''));
+      } else {
+        setSoNumber('');
+      }
     }
 
     setLinkedSourceType('proforma');
@@ -1165,7 +1188,11 @@ const SalesOrders = () => {
   const handleCreateNew = () => {
     setOrderId(null); // <--- Reset to null for new creation
 
-    setSoNumber(`SO-${Math.floor(100000 + Math.random() * 900000)}`);
+    if (orderAutoNumbering) {
+      getNextSalesOrderNumber().then(setSoNumber).catch(() => setSoNumber(''));
+    } else {
+      setSoNumber('');
+    }
     setOrderDate(new Date().toISOString().split('T')[0]);
 
     // ✅ Set default customer to Walk-in
@@ -1470,7 +1497,14 @@ const SalesOrders = () => {
               <div className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-4">
                 <div className="flex flex-col">
                   <label className="text-xs font-semibold text-slate-500 mb-1">Sales Order No.</label>
-                  <input type="text" value={soNumber} readOnly className="text-xs p-2 bg-slate-50 border border-slate-200 rounded text-slate-700 font-medium" />
+                  <input
+                    type="text"
+                    value={soNumber}
+                    onChange={(e) => setSoNumber(e.target.value)}
+                    readOnly={isLocked || orderAutoNumbering}
+                    placeholder={orderAutoNumbering ? 'Auto generated' : 'Enter sales order number'}
+                    className="text-xs p-2 border border-slate-200 rounded text-slate-700 font-medium read-only:bg-slate-50 read-only:text-slate-500 focus:outline-none focus:border-yellow-400"
+                  />
                 </div>
                 <div className="flex flex-col">
                   <label className="text-xs font-semibold text-slate-500 mb-1">Order Date</label>

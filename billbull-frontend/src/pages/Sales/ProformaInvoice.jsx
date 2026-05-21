@@ -54,6 +54,7 @@ import { formatCurrencyDisplay } from '../../utils/countryCurrencyOptions';
 // âœ… STEP 2: PROFORMA API IMPORTS
 import {
   getAllProformas,
+  getNextProformaNumber,
   createProforma,
   updateProforma,
   issueProforma,
@@ -61,6 +62,7 @@ import {
 } from "../../api/proformaApi";
 
 import { receiptVoucherApi } from "../../api/receiptVoucherApi";
+import { getSalesSettings } from '../../api/salesSettingsApi';
 import { useBranch } from "../../context/BranchContext";
 import ExportDropdown from '../../components/common/ExportDropdown';
 import { exportToExcel, exportToPDF } from '../../utils/exportUtils';
@@ -89,6 +91,7 @@ import CustomerShippingPanel from '../../components/CustomerShippingPanel';
 // âœ… STOCK AVAILABILITY MODAL
 import StockAvailabilityModal from '../../components/StockAvailabilityModal';
 import { getStockAvailability } from '../../api/stockAvailabilityApi'; // âœ… NEW API for LIVE STOCK
+import { isAutoNumberingEnabled } from '../../utils/salesNumbering';
 
 // âœ… SHORTCUTS HOOK
 import useShortcuts from '../../hooks/useShortcuts';
@@ -108,6 +111,8 @@ const ProformaInvoice = () => {
   const [customersList, setCustomersList] = useState([]);
   const [quotationsList, setQuotationsList] = useState([]);
   const [salesOrdersList, setSalesOrdersList] = useState([]);
+  const [salesSettings, setSalesSettings] = useState(null);
+  const proformaAutoNumbering = isAutoNumberingEnabled(salesSettings, 'PROFORMA_INVOICE');
 
   // --- PROFORMA LIST STATE ---
   // âŒ STEP 3: REMOVE MOCK DATA & REPLACE WITH EMPTY ARRAY
@@ -300,14 +305,16 @@ const ProformaInvoice = () => {
   useEffect(() => {
     const fetchAllData = async () => {
       try {
-        const [custData, qtnData, soData, piData, bankAccData] = await Promise.all([
+        const [custData, qtnData, soData, piData, bankAccData, settingsData] = await Promise.all([
           getAllCustomers(),
           getAllQuotations(),
           getAllSalesOrders(),
           getAllProformas(),
-          api.get('/api/ledger/accounts/bank-accounts').then(r => r.data).catch(() => [])
+          api.get('/api/ledger/accounts/bank-accounts').then(r => r.data).catch(() => []),
+          getSalesSettings().catch(() => null)
         ]);
         setBankAccountOptions(Array.isArray(bankAccData) ? bankAccData : []);
+        if (settingsData) setSalesSettings(settingsData);
         const customers = Array.isArray(custData) ? custData : [];
         let validCustomers = [...customers];
 
@@ -719,10 +726,11 @@ const ProformaInvoice = () => {
   };
 
   const handleCreateNew = () => {
-    const now = new Date();
-    const dateStr = now.toISOString().split('T')[0].split('-').join('');
-    const timeStr = now.getHours().toString().padStart(2, '0') + now.getMinutes().toString().padStart(2, '0');
-    setPiNumber(`PI-${dateStr}-${timeStr}`);
+    if (proformaAutoNumbering) {
+      getNextProformaNumber().then(setPiNumber).catch(() => setPiNumber(''));
+    } else {
+      setPiNumber('');
+    }
     setStatus('DRAFT');
     setPiId(null);
     setIsReadOnly(false);
@@ -749,6 +757,11 @@ const ProformaInvoice = () => {
   const handleSaveDraft = async (advanceOverride = null) => {
     setIsSaving(true);
     try {
+      if (!proformaAutoNumbering && !piNumber.trim()) {
+        alert('Please enter a proforma invoice number.');
+        return;
+      }
+
       const validItems = items.filter(i => i.code || i.desc);
 
       const finalAdvance = advanceOverride !== null ? Number(advanceOverride) : Number(advanceAmount);
@@ -787,6 +800,7 @@ const ProformaInvoice = () => {
       const saved = piId ? await updateProforma(piId, payload) : await createProforma(payload);
       const currentPiId = saved?.id || piId;
       setPiId(currentPiId);
+      setPiNumber(saved?.piNumber || piNumber);
       setReservationWarehouseId(saved?.warehouseId || reservationWarehouseId || defaultBranch?.defaultWarehouseId || null);
       setLiveStockMap({});
 
@@ -837,6 +851,9 @@ const ProformaInvoice = () => {
     if (balanceDue > 0.01) {
       return alert(`Cannot Issue PI. Full payment is required. Current Balance Due: ${formatCurrencyDisplay(balanceDue, company)}`);
     }
+    if (!proformaAutoNumbering && !piNumber.trim()) {
+      return alert('Please enter a proforma invoice number.');
+    }
 
     setIsSaving(true);
     try {
@@ -878,6 +895,7 @@ const ProformaInvoice = () => {
         const saved = await createProforma(payload);
         currentId = saved?.id;
         setPiId(currentId);
+        setPiNumber(saved?.piNumber || piNumber);
         setReservationWarehouseId(saved?.warehouseId || reservationWarehouseId || defaultBranch?.defaultWarehouseId || null);
       } else {
         const latest = await getProformaById(currentId);
@@ -1310,8 +1328,9 @@ const ProformaInvoice = () => {
                           type="text"
                           value={piNumber}
                           onChange={(e) => setPiNumber(e.target.value)}
-                          className="text-sm p-1.5 bg-white border border-slate-300 rounded text-slate-700 focus:border-yellow-400 outline-none"
-                          placeholder="e.g. PI-1001"
+                          readOnly={isReadOnly || proformaAutoNumbering}
+                          className="text-sm p-1.5 bg-white border border-slate-300 rounded text-slate-700 focus:border-yellow-400 outline-none read-only:bg-slate-50 read-only:text-slate-500"
+                          placeholder={proformaAutoNumbering ? 'Auto generated' : 'Enter PI number'}
                         />
                       </div>
                       <div className="flex flex-col col-span-2 sm:col-span-1">

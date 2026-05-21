@@ -24,6 +24,11 @@ export const createCustomer = async (payload) => {
   return res.data;
 };
 
+export const getNextCustomerCode = async () => {
+  const res = await api.get(`${BASE_URL}/next-code`);
+  return res.data.customerCode;
+};
+
 // ✅ DELETE customer
 export const deleteCustomer = async (id) => {
   await api.delete(`${BASE_URL}/${id}`);
