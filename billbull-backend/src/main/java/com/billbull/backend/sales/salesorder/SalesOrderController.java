@@ -47,6 +47,11 @@ public class SalesOrderController {
         return service.getAll();
     }
 
+    @GetMapping("/next-number")
+    public Map<String, String> getNextNumber() {
+        return Map.of("soNumber", service.generateSalesOrderNumber());
+    }
+
     @GetMapping("/{id}")
     public SalesOrder getById(@PathVariable Long id) {
         return service.getById(id);

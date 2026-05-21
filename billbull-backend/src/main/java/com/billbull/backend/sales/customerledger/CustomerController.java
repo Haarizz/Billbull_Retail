@@ -1,6 +1,8 @@
 package com.billbull.backend.sales.customerledger;
 
 import com.billbull.backend.security.AuditLogService;
+import com.billbull.backend.sales.settings.SalesDocumentNumberingService;
+import com.billbull.backend.sales.settings.SalesDocumentType;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
@@ -20,6 +22,9 @@ public class CustomerController {
     @Autowired
     private AuditLogService auditLogService;
 
+    @Autowired
+    private SalesDocumentNumberingService numberingService;
+
     // =========================
     // GET ALL CUSTOMERS
     // =========================
@@ -28,6 +33,12 @@ public class CustomerController {
     public ResponseEntity<List<Customer>> getAllCustomers() {
         List<Customer> customers = service.getAllCustomers();
         return ResponseEntity.ok(customers);
+    }
+
+    @GetMapping("/next-code")
+    @PreAuthorize("hasAnyRole('ADMIN','SALES','ACCOUNTANT')")
+    public ResponseEntity<java.util.Map<String, String>> getNextCustomerCode() {
+        return ResponseEntity.ok(java.util.Map.of("customerCode", numberingService.preview(SalesDocumentType.CUSTOMER)));
     }
 
     // =========================

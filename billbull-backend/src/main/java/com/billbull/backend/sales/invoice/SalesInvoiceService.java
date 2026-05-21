@@ -12,6 +12,8 @@ import java.util.Map;
 import org.hibernate.Hibernate;
 import org.springframework.http.HttpStatus;
 import com.billbull.backend.sales.settings.CreditLimitPolicy;
+import com.billbull.backend.sales.settings.SalesDocumentNumberingService;
+import com.billbull.backend.sales.settings.SalesDocumentType;
 import com.billbull.backend.sales.settings.SalesMode;
 import com.billbull.backend.sales.settings.SalesSettings;
 import com.billbull.backend.sales.settings.SalesSettingsService;
@@ -59,6 +61,7 @@ public class SalesInvoiceService {
     private final PostingEngineService postingEngineService;
     private final DeliveryNoteService deliveryNoteService;
     private final SalesSettingsService settingsService;
+    private final SalesDocumentNumberingService numberingService;
     private final StockAvailabilityService stockAvailabilityService;
     private final ReceiptVoucherService receiptVoucherService;
     private final ProductRepository productRepo;
@@ -79,6 +82,7 @@ public class SalesInvoiceService {
             PostingEngineService postingEngineService,
             DeliveryNoteService deliveryNoteService,
             SalesSettingsService settingsService,
+            SalesDocumentNumberingService numberingService,
             StockAvailabilityService stockAvailabilityService,
             ReceiptVoucherService receiptVoucherService,
             ProductRepository productRepo,
@@ -98,6 +102,7 @@ public class SalesInvoiceService {
         this.postingEngineService = postingEngineService;
         this.deliveryNoteService = deliveryNoteService;
         this.settingsService = settingsService;
+        this.numberingService = numberingService;
         this.stockAvailabilityService = stockAvailabilityService;
         this.receiptVoucherService = receiptVoucherService;
         this.productRepo = productRepo;
@@ -162,20 +167,7 @@ public class SalesInvoiceService {
     // GENERATE INVOICE NUMBER
     // ----------------------------
     public String generateInvoiceNumber() {
-        String prefix = "INV-" + LocalDate.now().getYear() + "-";
-        String lastNumber = invoiceRepo.findLastInvoiceNumberByPrefix(prefix);
-
-        int nextNum = 1;
-        if (lastNumber != null && lastNumber.startsWith(prefix)) {
-            try {
-                String numPart = lastNumber.substring(prefix.length());
-                nextNum = Integer.parseInt(numPart) + 1;
-            } catch (NumberFormatException e) {
-                nextNum = 1;
-            }
-        }
-
-        return prefix + String.format("%04d", nextNum);
+        return numberingService.preview(SalesDocumentType.SALES_INVOICE);
     }
 
     // ----------------------------
@@ -198,9 +190,15 @@ public class SalesInvoiceService {
         applyBranchSnapshot(invoice, existing, resolvedBranch);
         validateInvoiceWarehouses(invoice, resolvedBranch != null ? resolvedBranch.getId() : null);
 
-        // Auto-generate invoice number if new
-        if (invoice.getId() == null && (invoice.getInvoiceNumber() == null || invoice.getInvoiceNumber().isBlank())) {
-            invoice.setInvoiceNumber(generateInvoiceNumber());
+        if (invoice.getId() == null) {
+            invoice.setInvoiceNumber(numberingService.resolveNumberForCreate(
+                    SalesDocumentType.SALES_INVOICE,
+                    invoice.getInvoiceNumber()));
+        } else if (existing != null) {
+            invoice.setInvoiceNumber(numberingService.resolveNumberForUpdate(
+                    SalesDocumentType.SALES_INVOICE,
+                    existing.getInvoiceNumber(),
+                    invoice.getInvoiceNumber()));
         }
 
         // Calculate totals from items

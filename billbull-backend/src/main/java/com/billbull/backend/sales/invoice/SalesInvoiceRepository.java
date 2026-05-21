@@ -20,7 +20,10 @@ public interface SalesInvoiceRepository extends JpaRepository<SalesInvoice, Long
         List<SalesInvoice> findAllByOrderByInvoiceDateDesc();
 
         @Query("SELECT MAX(i.invoiceNumber) FROM SalesInvoice i WHERE i.invoiceNumber LIKE :prefix%")
-        String findLastInvoiceNumberByPrefix(String prefix);
+        String findLastInvoiceNumberByPrefix(@Param("prefix") String prefix);
+
+        @Query("SELECT i.invoiceNumber FROM SalesInvoice i WHERE i.invoiceNumber LIKE CONCAT(:prefix, '%')")
+        List<String> findInvoiceNumbersByPrefix(@Param("prefix") String prefix);
 
         @Query("SELECT SUM(i.quantity) FROM SalesInvoiceItem i WHERE i.itemCode = :itemCode AND i.salesInvoice.salesType = com.billbull.backend.sales.invoice.SalesType.DIRECT_SALE AND i.salesInvoice.status = com.billbull.backend.sales.invoice.SalesInvoiceStatus.DRAFT")
         java.math.BigDecimal sumDraftDirectSaleQuantity(

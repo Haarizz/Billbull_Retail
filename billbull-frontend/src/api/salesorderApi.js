@@ -18,6 +18,11 @@ export const getSalesOrderById = async (id) => {
   return res.data;
 };
 
+export const getNextSalesOrderNumber = async () => {
+  const res = await api.get(`${BASE_URL}/next-number`);
+  return res.data.soNumber;
+};
+
 // --------------------
 // CREATE OR UPDATE
 // --------------------

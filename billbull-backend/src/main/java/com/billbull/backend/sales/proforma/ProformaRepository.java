@@ -9,6 +9,11 @@ import java.util.List;
 public interface ProformaRepository extends JpaRepository<ProformaInvoice, Long> {
     List<ProformaInvoice> findByStatus(ProformaStatus status);
 
+    boolean existsByPiNumber(String piNumber);
+
+    @Query("SELECT pi.piNumber FROM ProformaInvoice pi WHERE pi.piNumber LIKE CONCAT(:prefix, '%')")
+    List<String> findPiNumbersByPrefix(@Param("prefix") String prefix);
+
     // Once a delivery note exists against a proforma the DN takes over the reservation,
     // so these queries exclude proformas that have an active (non-cancelled) DN.
     // This mirrors the SalesOrderRepository pattern where INVOICED SOs are excluded.

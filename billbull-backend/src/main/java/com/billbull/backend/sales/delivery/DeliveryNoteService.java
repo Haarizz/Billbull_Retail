@@ -31,6 +31,8 @@ import com.billbull.backend.purchase.stockmovement.StockSourceType;
 import com.billbull.backend.sales.invoice.SalesInvoice;
 import com.billbull.backend.sales.invoice.SalesInvoiceItem;
 import com.billbull.backend.sales.invoice.SalesInvoiceRepository;
+import com.billbull.backend.sales.settings.SalesDocumentNumberingService;
+import com.billbull.backend.sales.settings.SalesDocumentType;
 import com.billbull.backend.sales.settings.SalesSettings;
 import com.billbull.backend.sales.settings.SalesSettingsService;
 import com.billbull.backend.sales.stockstrategy.StockDeductionStrategyService;
@@ -70,6 +72,7 @@ public class DeliveryNoteService {
     private final ProductPackingRepository packingRepo;
     private final BatchSelectionService batchSelectionService;
     private final SalesSettingsService salesSettingsService;
+    private final SalesDocumentNumberingService numberingService;
 
     public DeliveryNoteService(
             DeliveryNoteRepository repo,
@@ -88,7 +91,8 @@ public class DeliveryNoteService {
             BranchAccessService branchAccessService,
             ProductPackingRepository packingRepo,
             BatchSelectionService batchSelectionService,
-            SalesSettingsService salesSettingsService) {
+            SalesSettingsService salesSettingsService,
+            SalesDocumentNumberingService numberingService) {
         this.repo = repo;
         this.warehouseStockService = warehouseStockService;
         this.productRepo = productRepo;
@@ -106,6 +110,12 @@ public class DeliveryNoteService {
         this.packingRepo = packingRepo;
         this.batchSelectionService = batchSelectionService;
         this.salesSettingsService = salesSettingsService;
+        this.numberingService = numberingService;
+    }
+
+    @Transactional
+    public String generateDeliveryNoteNumber() {
+        return numberingService.preview(SalesDocumentType.DELIVERY_NOTE);
     }
 
     private DeliveryNoteResponse toResponse(DeliveryNote dn) {
@@ -231,6 +241,9 @@ public class DeliveryNoteService {
         }
         DeliveryNote dn = new DeliveryNote();
         mapToEntity(req, dn);
+        dn.setDnNumber(numberingService.resolveNumberForCreate(
+                SalesDocumentType.DELIVERY_NOTE,
+                req.dnNumber));
         // QA-001: if every requested line was a service item (and got skipped
         // in mapToEntity), there's nothing to deliver — refuse with a clean
         // message instead of saving an empty DN that would later fail dispatch.
@@ -249,9 +262,14 @@ public class DeliveryNoteService {
             throw new IllegalStateException("Only Draft notes can be edited");
         }
 
+        String existingDnNumber = dn.getDnNumber();
         batchSelectionService.releaseDeliveryNote(dn.getId());
         dn.getItems().clear();
         mapToEntity(req, dn);
+        dn.setDnNumber(numberingService.resolveNumberForUpdate(
+                SalesDocumentType.DELIVERY_NOTE,
+                existingDnNumber,
+                req.dnNumber));
         return toResponse(repo.save(dn));
     }
 
