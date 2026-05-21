@@ -45,6 +45,7 @@ import { getAllSalesOrders, getSalesOrderById } from '../../api/salesorderApi';
 import { getTemplatesByCategory } from '../../api/printTemplateApi';
 import { generatePrintHtml, printHtml } from '../../utils/printGenerator';
 import { getImageUrl } from '../../utils/urlUtils';
+import { formatDisplayDate } from '../../utils/dateUtils';
 import { getDefaultProductUnit, resolveUnitAmount } from '../../utils/unitPricing';
 import { summarizeSalesItems } from '../../utils/documentSummaryUtils';
 import billBullLogo from '../../assets/billBullLogo.png';
@@ -1068,7 +1069,7 @@ const ProformaInvoice = () => {
       <div className="flex justify-between items-start mb-2">
         <div>
           <h4 className="font-bold text-slate-800 text-sm">{pi.piNumber}</h4>
-          <span className="text-xs text-slate-500">{pi.piDate}</span>
+          <span className="text-xs text-slate-500">{formatDisplayDate(pi.piDate)}</span>
         </div>
         {renderStatusBadge(pi.status)}
       </div>
@@ -1255,7 +1256,7 @@ const ProformaInvoice = () => {
                       className="hover:bg-slate-50 cursor-pointer transition-colors"
                     >
                       <td className="px-4 py-3 text-blue-600 font-medium">{pi.piNumber}</td>
-                      <td className="px-4 py-3 text-slate-600">{pi.piDate}</td>
+                      <td className="px-4 py-3 text-slate-600">{formatDisplayDate(pi.piDate)}</td>
                       <td className="px-4 py-3 text-slate-700 font-medium">{pi.customerName}</td>
                       <td className="px-4 py-3 text-right font-bold text-slate-800"><CurrencyAmount value={pi.grandTotal || 0} currency={currency} /></td>
                       <td className="px-4 py-3 text-right">{renderStatusBadge(pi.status)}</td>

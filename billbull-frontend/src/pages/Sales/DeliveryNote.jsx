@@ -46,6 +46,7 @@ import { generateDocFilename } from '../../utils/filenameUtils';
 import { usePrintDocument } from '../../hooks/usePrintDocument';
 import ExportDropdown from '../../components/common/ExportDropdown';
 import { exportToExcel, exportToPDF } from '../../utils/exportUtils';
+import { formatDisplayDate } from '../../utils/dateUtils';
 import CurrencyAmount from '../../components/CurrencyAmount';
 import BatchSelectionModal from '../../components/BatchSelectionModal';
 import { usePermissions } from '../../context/PermissionContext';
@@ -436,7 +437,7 @@ const DeliveryNote = () => {
                                     <td className="px-4 py-2.5">
                                         <div className="font-bold text-slate-700 truncate w-36 group-hover:text-blue-600 transition-colors" title={h.customerName}>{h.customerName}</div>
                                         <div className="text-[9px] text-slate-400 mt-0.5 flex items-center gap-1.5 font-medium">
-                                            <span className="text-slate-300">#</span>{h.invoiceNo} <span className="text-slate-200">|</span> {h.date}
+                                            <span className="text-slate-300">#</span>{h.invoiceNo} <span className="text-slate-200">|</span> {formatDisplayDate(h.date)}
                                         </div>
                                     </td>
                                     <td className="px-4 py-2.5 text-right font-black text-slate-700">
@@ -1721,7 +1722,7 @@ const DeliveryNote = () => {
                             <span className="px-1.5 py-0.5 rounded text-[8px] font-bold bg-blue-100 text-blue-700 uppercase tracking-wider">Auto-Gen</span>
                         )}
                     </h4>
-                    <p className="text-xs text-slate-500">{dn.date}</p>
+                    <p className="text-xs text-slate-500">{formatDisplayDate(dn.date)}</p>
                 </div>
                 {renderStatusBadge(dn.status)}
             </div>
@@ -2001,7 +2002,7 @@ const DeliveryNote = () => {
                                                         )}
                                                     </div>
                                                 </td>
-                                                <td className="px-4 py-3 text-slate-500">{dn.date}</td>
+                                                <td className="px-4 py-3 text-slate-500">{formatDisplayDate(dn.date)}</td>
                                                 <td className="px-4 py-3 text-slate-600 font-medium">{dn.customerCode} - {dn.customerName}</td>
                                                 <td className="px-4 py-3 text-slate-500">{dn.soNo}</td>
                                                 <td className="px-4 py-3 text-slate-500">{dn.piNo}</td>
@@ -2276,7 +2277,7 @@ const DeliveryNote = () => {
                                                                     return isTargetCust && !hasAlreadyDN;
                                                                 }).map(si => (
                                                                     <div key={si.id} onClick={() => handleSelectSI(si)} className="px-3 py-2 text-xs hover:bg-slate-50 cursor-pointer border-b border-slate-50">
-                                                                        <span className="font-bold">{si.invoiceNumber || si.invoiceNo}</span> <span className="text-slate-400">({si.invoiceDate || si.date})</span>
+                                                                        <span className="font-bold">{si.invoiceNumber || si.invoiceNo}</span> <span className="text-slate-400">({formatDisplayDate(si.invoiceDate || si.date)})</span>
                                                                     </div>
                                                                 ))}
                                                                 {salesInvoicesList.filter(si => {
@@ -2751,7 +2752,7 @@ const DeliveryNote = () => {
                                                                 {note.dnNo}
                                                                 <span className="text-[10px] font-bold text-blue-600 bg-blue-50 px-2 py-0.5 rounded border border-blue-100">Picking</span>
                                                             </div>
-                                                            <div className="text-[10px] text-slate-400 mt-1">{note.date}</div>
+                                                            <div className="text-[10px] text-slate-400 mt-1">{formatDisplayDate(note.date)}</div>
                                                         </td>
                                                         <td className="px-4 py-3">
                                                             <div className="font-medium text-slate-700">{note.customerName}</div>
@@ -2898,7 +2899,7 @@ const DeliveryNote = () => {
                                                             {selectedPickingNote.customerName} ({selectedPickingNote.customerCode}){selectedPickingNote.siNo ? ` • ${selectedPickingNote.siNo}` : ''}
                                                         </div>
                                                         <div className="text-xs text-slate-400 mt-1">
-                                                            Warehouse: {selectedPickingNote.warehouse || '-'} • Date: {selectedPickingNote.date}
+                                                            Warehouse: {selectedPickingNote.warehouse || '-'} • Date: {formatDisplayDate(selectedPickingNote.date)}
                                                         </div>
                                                     </div>
 
@@ -3075,7 +3076,7 @@ const DeliveryNote = () => {
                                                     </td>
                                                     <td className="px-4 py-3 text-slate-500">{note.siNo || note.linkedSalesInvoiceNumber || '-'}</td>
                                                     <td className="px-4 py-3">{renderStatusBadge(note.status)}</td>
-                                                    <td className="px-4 py-3 text-slate-500">{note.date}</td>
+                                                    <td className="px-4 py-3 text-slate-500">{formatDisplayDate(note.date)}</td>
                                                     <td className="px-4 py-3 text-right">
                                                         <button
                                                             onClick={() => handleRowClick(note)}

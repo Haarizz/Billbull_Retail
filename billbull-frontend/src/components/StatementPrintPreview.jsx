@@ -3,6 +3,7 @@ import { getCompanyProfile } from '../api/companyProfileApi';
 import { useCompany } from '../context/CompanyContext';
 import { normalizeDocumentCompanyProfile } from '../utils/documentTemplateRenderer';
 import { resolveCurrencyDisplayCode } from '../utils/countryCurrencyOptions';
+import { formatDisplayDate } from '../utils/dateUtils';
 import { formatStatementEntryType } from '../utils/statementUtils';
 
 const asNumber = (value) => {
@@ -270,7 +271,7 @@ const StatementPrintPreview = ({
     const totalCredit = asNumber(statementData?.totalCredit);
     const closingBalance = asNumber(statementData?.closingBalance);
     const entries = Array.isArray(statementData?.entries) ? statementData.entries : [];
-    const generatedOn = new Date().toLocaleDateString('en-GB');
+    const generatedOn = formatDisplayDate(new Date());
     const closingSuffix = closingBalance >= 0 ? positiveBalanceLabel : negativeBalanceLabel;
     const openingSuffix = openingBalance >= 0 ? positiveBalanceLabel : negativeBalanceLabel;
 

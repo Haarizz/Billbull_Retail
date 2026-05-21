@@ -7,6 +7,7 @@ import { generateReportPrintHtml, printHtml } from '../../../utils/printGenerato
 import { getOutOfStockReport } from '../../../api/inventoryReportsApi';
 import { getWarehouses } from '../../../api/warehouseApi';
 import toast from 'react-hot-toast';
+import { formatDisplayDate } from '../../../utils/dateUtils';
 
 const PAGE_SIZE = 25;
 
@@ -81,13 +82,13 @@ const OutOfStockReport = () => {
     const oldestLastSold = useMemo(() => {
         const dates = data.map(r => parseDate(r.lastSold)).filter(v => v != null);
         if (dates.length === 0) return 'N/A';
-        return new Date(Math.min(...dates)).toLocaleDateString();
+        return formatDisplayDate(new Date(Math.min(...dates)));
     }, [data]);
 
     const oldestLastReceived = useMemo(() => {
         const dates = data.map(r => parseDate(r.lastReceived)).filter(v => v != null);
         if (dates.length === 0) return 'N/A';
-        return new Date(Math.min(...dates)).toLocaleDateString();
+        return formatDisplayDate(new Date(Math.min(...dates)));
     }, [data]);
 
     const toggleSort = (key, defaultDir = 'asc') => {

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Settings, Package, CreditCard, Save, CheckCircle, AlertTriangle, Ban, Info, Zap } from 'lucide-react';
+import { Settings, Package, CreditCard, Save, CheckCircle, AlertTriangle, Ban, Info, Zap, Tag } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { getSalesSettings, saveSalesSettings } from '../../api/salesSettingsApi';
 
@@ -15,6 +15,7 @@ const SalesSettings = () => {
     const [stockCheckRequired, setStockCheckRequired] = useState(false);
     const [creditLimitPolicy, setCreditLimitPolicy] = useState('NO_IMPACT');
     const [salesMode, setSalesMode] = useState('FAST_SALE');
+    const [salesItemPricePolicy, setSalesItemPricePolicy] = useState('RETAIL');
 
     // Load settings on mount
     useEffect(() => {
@@ -24,6 +25,7 @@ const SalesSettings = () => {
                 setStockCheckRequired(data.stockCheckRequired ?? false);
                 setCreditLimitPolicy(data.creditLimitPolicy ?? 'NO_IMPACT');
                 setSalesMode(data.salesMode ?? 'WORKFLOW_DRIVEN');
+                setSalesItemPricePolicy(data.salesItemPricePolicy ?? 'RETAIL');
             } catch (err) {
                 console.error('Failed to load sales settings', err);
                 toast.error('Failed to load settings');
@@ -41,6 +43,7 @@ const SalesSettings = () => {
                 stockCheckRequired,
                 creditLimitPolicy,
                 salesMode,
+                salesItemPricePolicy,
             });
             toast.success('Sales settings saved successfully');
         } catch (err) {
@@ -355,6 +358,82 @@ const SalesSettings = () => {
                             <Info size={13} className="text-blue-400 mt-0.5 shrink-0" />
                             <p className="text-[11px] text-blue-600 leading-relaxed">
                                 Fast Sale applies globally to all new invoices. Invoices linked to a pre-existing Delivery Note (Before-Sale flow) are not affected — their delivery lifecycle is always respected as-is.
+                            </p>
+                        </div>
+                    </div>
+                </div>
+
+                {/* ==============================
+                    SECTION 4 — DEFAULT ITEM PRICE
+                ============================== */}
+                <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden mb-5">
+                    <div className="flex items-center gap-3 px-6 py-5 border-b border-slate-100">
+                        <div className="w-8 h-8 rounded-lg bg-emerald-50 flex items-center justify-center">
+                            <Tag size={16} className="text-emerald-500" />
+                        </div>
+                        <div>
+                            <h2 className="text-sm font-bold text-slate-800">Default Item Price</h2>
+                            <p className="text-xs text-slate-400 mt-0.5">
+                                Which price from the product master is auto-filled when adding items to a Quotation, Sales Order, or Sales Invoice
+                            </p>
+                        </div>
+                    </div>
+
+                    <div className="px-6 py-5 space-y-3">
+                        {[
+                            {
+                                value: 'RETAIL',
+                                label: 'Retail Price',
+                                description: 'Use the product master’s Retail Price as the default line price. This is the system default.',
+                                activeClass: 'border-emerald-400 bg-emerald-50 ring-1 ring-emerald-400',
+                                dotActive: 'border-emerald-500 bg-emerald-500'
+                            },
+                            {
+                                value: 'MAX_SALE',
+                                label: 'Maximum Sale Price',
+                                description: 'Use the product master’s Maximum Sale Price (ceiling). Falls back to Retail Price if Max is not set on a particular product.',
+                                activeClass: 'border-blue-400 bg-blue-50 ring-1 ring-blue-400',
+                                dotActive: 'border-blue-500 bg-blue-500'
+                            },
+                            {
+                                value: 'MIN_SALE',
+                                label: 'Minimum Sale Price',
+                                description: 'Use the product master’s Minimum Sale Price (floor). Falls back to Retail Price if Min is not set on a particular product.',
+                                activeClass: 'border-amber-400 bg-amber-50 ring-1 ring-amber-400',
+                                dotActive: 'border-amber-500 bg-amber-500'
+                            }
+                        ].map(option => {
+                            const isSelected = salesItemPricePolicy === option.value;
+                            return (
+                                <button
+                                    key={option.value}
+                                    onClick={() => setSalesItemPricePolicy(option.value)}
+                                    className={`w-full text-left border-2 rounded-xl p-4 transition-all duration-200 ${isSelected ? option.activeClass : 'border-slate-200 hover:border-slate-300 bg-white'}`}
+                                >
+                                    <div className="flex items-start gap-3">
+                                        <div className={`mt-0.5 w-4 h-4 rounded-full border-2 shrink-0 flex items-center justify-center transition-all ${isSelected ? option.dotActive : 'border-slate-300'}`}>
+                                            {isSelected && <div className="w-1.5 h-1.5 rounded-full bg-white" />}
+                                        </div>
+                                        <div className="flex-1">
+                                            <div className="flex items-center gap-2 mb-1">
+                                                <span className="text-sm font-bold text-slate-800">{option.label}</span>
+                                                {isSelected && (
+                                                    <span className="text-[9px] font-bold px-2 py-0.5 rounded-full bg-[#F5C742] text-[#1E1E1E] uppercase tracking-wider">Active</span>
+                                                )}
+                                            </div>
+                                            <p className="text-xs text-slate-500 leading-relaxed">{option.description}</p>
+                                        </div>
+                                    </div>
+                                </button>
+                            );
+                        })}
+                    </div>
+
+                    <div className="px-6 pb-5">
+                        <div className="flex items-start gap-2 bg-slate-50 border border-slate-200 rounded-xl px-4 py-3">
+                            <Info size={13} className="text-slate-400 mt-0.5 shrink-0" />
+                            <p className="text-[11px] text-slate-600 leading-relaxed">
+                                Applies only to the <strong>default</strong> price filled in when an item is first added to a document. Users can still edit the price on each line as needed.
                             </p>
                         </div>
                     </div>

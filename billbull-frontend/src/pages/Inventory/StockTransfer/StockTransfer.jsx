@@ -36,6 +36,7 @@ import ProductSelector from '../../../components/ProductSelector';
 import { printHtml } from '../../../utils/printGenerator';
 import { getImageUrl } from '../../../utils/urlUtils';
 import CurrencyAmount from '../../../components/CurrencyAmount';
+import { formatDisplayDate } from '../../../utils/dateUtils';
 
 // ==========================================
 // CONSTANTS
@@ -155,7 +156,7 @@ const ViewTransferModal = ({ isOpen, onClose, data, onPrint }) => {
                                 <StatusBadge status={data.status} />
                             </div>
                             <p className="text-xs text-slate-400 mt-0.5 font-medium flex items-center gap-1.5">
-                                <Calendar size={12} /> {data.transferDate}
+                                <Calendar size={12} /> {formatDisplayDate(data.transferDate)}
                                 <span className="w-1 h-1 bg-slate-300 rounded-full mx-1" />
                                 <User size={12} /> Requested by {data.requestedBy || 'System'}
                             </p>
@@ -438,7 +439,7 @@ const TransferHistoryView = ({ data, warehouses, onView, onSend, onPrint }) => {
                                 <td className="px-4 py-4">
                                     <div className="flex items-center gap-2 text-xs text-slate-600 font-medium">
                                         <Calendar size={12} className="text-slate-400" />
-                                        {row.transferDate}
+                                        {formatDisplayDate(row.transferDate)}
                                     </div>
                                 </td>
                                 <td className="px-4 py-4">
@@ -526,7 +527,7 @@ const ReceiveTransferView = ({ data, onReceive }) => {
                             </div>
                             <div className="flex justify-between text-xs">
                                 <span className="text-slate-500">Sent Date:</span>
-                                <span className="font-bold text-slate-700">{transfer.transferDate}</span>
+                                <span className="font-bold text-slate-700">{formatDisplayDate(transfer.transferDate)}</span>
                             </div>
                         </div>
 

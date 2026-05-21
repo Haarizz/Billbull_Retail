@@ -27,6 +27,7 @@ import {
     normalizeCurrencyValue,
     withFallbackOption
 } from '../../utils/countryCurrencyOptions';
+import { formatDisplayDate } from '../../utils/dateUtils';
 import ExportDropdown from '../../components/common/ExportDropdown';
 import { exportToExcel, exportToPDF } from '../../utils/exportUtils';
 import { generateSOAFilename } from '../../utils/filenameUtils';
@@ -898,7 +899,7 @@ const AddCustomerModal = ({ isOpen, onClose, customerToEdit, onSaveCustomer }) =
                                         <div key={idx} className="flex justify-between items-center p-3 border border-slate-100 rounded text-sm group">
                                             <div>
                                                 <div className="font-bold text-slate-700">{inv.number}</div>
-                                                <div className="text-xs text-slate-400">{inv.date}</div>
+                                                <div className="text-xs text-slate-400">{formatDisplayDate(inv.date)}</div>
                                             </div>
                                             <div className="flex items-center gap-2">
                                                 <CurrencyAmount value={getOpeningInvoiceOutstanding(inv)} currency={currency} className="font-mono text-slate-800" />
@@ -967,7 +968,7 @@ const AddCustomerModal = ({ isOpen, onClose, customerToEdit, onSaveCustomer }) =
                                                 </div>
                                                 <div>
                                                     <div className="font-bold text-sm text-slate-700">{doc.name}</div>
-                                                    <div className="text-xs text-slate-500">{doc.size} • {doc.date}</div>
+                                                    <div className="text-xs text-slate-500">{doc.size} • {formatDisplayDate(doc.date)}</div>
                                                 </div>
                                             </div>
                                             <div className="flex items-center gap-2">
@@ -1691,9 +1692,9 @@ const ReceiveMoneyView = () => {
                                                         />
                                                     </td>
                                                     <td className="px-4 py-3 font-medium text-slate-700">{inv.invoiceNumber}</td>
-                                                    <td className="px-4 py-3 text-slate-500 text-xs">{inv.invoiceDate || '-'}</td>
+                                                    <td className="px-4 py-3 text-slate-500 text-xs">{formatDisplayDate(inv.invoiceDate)}</td>
                                                     <td className="px-4 py-3 text-xs">
-                                                        <span className={isOverdue ? "text-red-500 font-bold" : "text-slate-500"}>{inv.dueDate || '-'}</span>
+                                                        <span className={isOverdue ? "text-red-500 font-bold" : "text-slate-500"}>{formatDisplayDate(inv.dueDate)}</span>
                                                         {isOverdue && <span className="block text-[9px] text-red-400">Overdue</span>}
                                                     </td>
                                                     <td className="px-4 py-3 text-right text-slate-600 font-medium"><CurrencyAmount value={inv.invoiceTotal} currency={currency} /></td>

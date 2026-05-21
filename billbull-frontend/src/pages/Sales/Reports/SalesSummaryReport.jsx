@@ -11,6 +11,7 @@ import ExportDropdown from '../../../components/common/ExportDropdown';
 import { exportToExcel, exportToPDF } from '../../../utils/exportUtils';
 import CurrencyAmount from '../../../components/CurrencyAmount';
 import { useCompany } from '../../../context/CompanyContext';
+import { formatDisplayDate } from '../../../utils/dateUtils';
 
 // ==========================================
 // 1. CONFIGURATION
@@ -309,7 +310,7 @@ const SalesSummaryReport = () => {
                                         ) : filtered.slice(0, 100).map((inv, i) => (
                                             <tr key={i} className="hover:bg-slate-50">
                                                 <td className="px-4 py-2.5 font-mono text-slate-700">{inv.invoiceNumber || `#${inv.id}`}</td>
-                                                <td className="px-4 py-2.5 text-slate-500">{inv.invoiceDate || '-'}</td>
+                                                <td className="px-4 py-2.5 text-slate-500">{formatDisplayDate(inv.invoiceDate)}</td>
                                                 <td className="px-4 py-2.5 text-slate-700 font-medium">{inv.customerName || '-'}</td>
                                                 <td className="px-4 py-2.5">
                                                     <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${

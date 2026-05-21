@@ -12,6 +12,7 @@ import {
 import ExportDropdown from '../../../components/common/ExportDropdown';
 import { exportToExcel, exportToPDF } from '../../../utils/exportUtils';
 import CurrencyAmount from '../../../components/CurrencyAmount';
+import { formatDisplayDate } from '../../../utils/dateUtils';
 
 // ==========================================
 // CONFIGURATION
@@ -632,7 +633,7 @@ const getSessionTimestamp = (session, field) => session?.[`${field}Iso`] || sess
 
 const formatStockTakeDate = (value) => {
     const parsed = parseStockTakeTimestamp(value);
-    return parsed ? parsed.toLocaleDateString() : '-';
+    return parsed ? formatDisplayDate(parsed) : '-';
 };
 
 const formatStockTakeTime = (value, { includeSeconds = false } = {}) => {

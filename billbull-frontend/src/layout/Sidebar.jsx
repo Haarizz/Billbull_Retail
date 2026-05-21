@@ -18,12 +18,14 @@ import {
 } from "lucide-react";
 import { hasRole, logout, getUsernameFromToken } from "../api/auth";
 import { usePermissions } from "../context/PermissionContext";
+import { useCompany } from "../context/CompanyContext";
 
 const Sidebar = ({ children }) => {
   // --- STATE ---
   const [collapsed, setCollapsed] = useState(false);
   const username = getUsernameFromToken() || "BillBull Admin";
   const { canView, canAction, permissionsLoaded } = usePermissions();
+  const { setCompany } = useCompany();
   const userEmail = "admin@billbull.app";
 
   const [mobileOpen, setMobileOpen] = useState(false);
@@ -795,7 +797,7 @@ const Sidebar = ({ children }) => {
             </div>
           </div>
 
-          <button className="logout-btn" onClick={() => { logout(); navigate("/login"); }}>
+          <button className="logout-btn" onClick={() => { logout(); setCompany(null); navigate("/login"); }}>
             <span style={{ display: 'flex' }}><FaSignOutAlt /></span>
             <span className="logout-text">Sign Out</span>
           </button>

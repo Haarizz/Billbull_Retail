@@ -108,6 +108,10 @@ const normalizeRecentProduct = (product, detail = null) => {
         cost: detail?.pricing?.cost ?? product?.cost ?? null,
         retailPrice: detail?.pricing?.retailPrice ?? product?.retailPrice ?? product?.sellingPrice ?? null,
         sellingPrice: detail?.pricing?.retailPrice ?? product?.sellingPrice ?? product?.retailPrice ?? null,
+        // Expose min/max sale prices so the configured Sales Item Price
+        // Policy (RETAIL / MAX_SALE / MIN_SALE) can pick the right default.
+        minPrice: detail?.pricing?.minPrice ?? product?.minPrice ?? null,
+        maxPrice: detail?.pricing?.maxPrice ?? product?.maxPrice ?? null,
         stock: product?.stock ?? detailProduct?.stock ?? 0,
         category:
             product?.category ||

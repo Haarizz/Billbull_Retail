@@ -25,6 +25,7 @@ import {
     Printer
 } from 'lucide-react';
 import { useCompany } from '../../../context/CompanyContext';
+import { formatDisplayDate } from '../../../utils/dateUtils';
 
 // Printing Utilities
 import { getTemplatesByCategory } from '../../../api/printTemplateApi';
@@ -137,7 +138,7 @@ const AuditModal = ({ isOpen, onClose, voucher, currency = 'AED' }) => {
                         <div className="flex-1 bg-white p-3 rounded border border-slate-200 shadow-sm">
                             <div className="text-[10px] text-slate-400 uppercase font-bold mb-1">Status</div>
                             <div className="font-bold text-slate-800 text-sm">{voucher.status}</div>
-                            <div className="text-[10px] text-slate-400">Date: {voucher.date}</div>
+                            <div className="text-[10px] text-slate-400">Date: {formatDisplayDate(voucher.date)}</div>
                         </div>
                     </div>
 
@@ -152,7 +153,7 @@ const AuditModal = ({ isOpen, onClose, voucher, currency = 'AED' }) => {
                                     </span>
                                     <span className="text-[10px] bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded">Audit</span>
                                 </div>
-                                <div className="text-[10px] text-slate-400 mt-1">System • {voucher.date}</div>
+                                <div className="text-[10px] text-slate-400 mt-1">System • {formatDisplayDate(voucher.date)}</div>
                             </div>
                         </div>
                     </div>
@@ -951,11 +952,11 @@ const PaymentVoucher = () => {
                                                                             : `#${inv.invoiceNumber}`}
                                                                     </td>
                                                                     <td className="px-4 py-3 text-slate-500 text-xs">
-                                                                        {inv.invoiceDate ? new Date(inv.invoiceDate).toLocaleDateString() : '-'}
+                                                                        {formatDisplayDate(inv.invoiceDate)}
                                                                     </td>
                                                                     <td className="px-4 py-3 text-xs">
                                                                         <span className={isOverdue ? 'text-red-500 font-bold' : 'text-slate-500'}>
-                                                                            {inv.dueDate ? new Date(inv.dueDate).toLocaleDateString() : 'N/A'}
+                                                                            {formatDisplayDate(inv.dueDate, 'N/A')}
                                                                         </span>
                                                                         {isOverdue && <span className="block text-[9px] text-red-400">Overdue</span>}
                                                                     </td>
@@ -1117,7 +1118,7 @@ const PaymentVoucher = () => {
                                                     </div>
                                                     <div className="flex justify-between items-center mt-1">
                                                         <p className="text-[10px] text-slate-500">{v.id} • {v.mode}</p>
-                                                        <p className="text-[10px] text-slate-400">{v.date}</p>
+                                                        <p className="text-[10px] text-slate-400">{formatDisplayDate(v.date)}</p>
                                                     </div>
                                                 </div>
                                             </div>
@@ -1167,7 +1168,7 @@ const PaymentVoucher = () => {
                                         ) : mainList.map((row) => (
                                             <tr key={row.dbId} className="hover:bg-slate-50 group transition-colors">
                                                 <td className="px-4 py-3 font-mono font-medium text-slate-700">{row.id}</td>
-                                                <td className="px-4 py-3 text-slate-500">{row.date}</td>
+                                                <td className="px-4 py-3 text-slate-500">{formatDisplayDate(row.date)}</td>
                                                 <td className="px-4 py-3">
                                                     <div className="font-medium text-slate-800">{row.vendor}</div>
                                                     <div className="text-[10px] text-slate-400">{row.vendorId}</div>
@@ -1236,7 +1237,7 @@ const PaymentVoucher = () => {
                                         ) : pendingList.map((row) => (
                                             <tr key={row.dbId} className="hover:bg-slate-50 group transition-colors">
                                                 <td className="px-4 py-3 font-mono font-medium text-slate-700">{row.id}</td>
-                                                <td className="px-4 py-3 text-slate-500">{row.date}</td>
+                                                <td className="px-4 py-3 text-slate-500">{formatDisplayDate(row.date)}</td>
                                                 <td className="px-4 py-3">
                                                     <div className="font-medium text-slate-800">{row.vendor}</div>
                                                     <div className="text-[10px] text-slate-400">{row.vendorId}</div>
@@ -1305,7 +1306,7 @@ const PaymentVoucher = () => {
                                     ) : historyList.map((row) => (
                                         <tr key={row.dbId} className="hover:bg-slate-50 transition-colors">
                                             <td className="px-4 py-3 font-mono font-medium text-slate-700">{row.id}</td>
-                                            <td className="px-4 py-3 text-slate-500">{row.date}</td>
+                                            <td className="px-4 py-3 text-slate-500">{formatDisplayDate(row.date)}</td>
                                             <td className="px-4 py-3 text-slate-800">{row.vendor}</td>
                                             <td className="px-4 py-3">
                                                 <div className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded border border-slate-200 bg-slate-50 text-slate-600">

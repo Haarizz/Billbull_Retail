@@ -43,6 +43,7 @@ import { useBranch } from '../../context/BranchContext';
 import { useCompany } from '../../context/CompanyContext';
 import { exportToExcel, exportToPDF } from '../../utils/exportUtils';
 import { resolveCurrencyDisplayCode } from '../../utils/countryCurrencyOptions';
+import { formatDisplayDate } from '../../utils/dateUtils';
 
 // --- HELPER: CUSTOM SELECT ---
 const CustomSelect = ({ placeholder, options, value, onChange }) => {
@@ -946,7 +947,7 @@ const ReceiptVoucher = () => {
                                             </span>
                                         </td>
                                         <td className="px-4 py-3 text-slate-500 flex items-center gap-1">
-                                            <CalendarDays size={12} /> {row.date}
+                                            <CalendarDays size={12} /> {formatDisplayDate(row.date)}
                                         </td>
                                         <td className="px-4 py-3">
                                             <div className="flex items-center gap-2">
@@ -1272,7 +1273,7 @@ const ReceiptVoucher = () => {
                                     </div>
                                     <div>
                                         <p className="text-[10px] text-slate-400 font-bold uppercase">Date</p>
-                                        <p className="text-xs font-medium text-slate-700">{selectedReceipt.date}</p>
+                                        <p className="text-xs font-medium text-slate-700">{formatDisplayDate(selectedReceipt.date)}</p>
                                     </div>
                                     <div>
                                         <p className="text-[10px] text-slate-400 font-bold uppercase">Payer / Employee</p>

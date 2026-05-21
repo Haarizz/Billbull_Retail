@@ -38,6 +38,10 @@ import com.billbull.backend.inventory.product.ProductPricingRepository;
 import com.billbull.backend.inventory.product.ProductRepository;
 import com.billbull.backend.inventory.product.ProductTaxRepository;
 import com.billbull.backend.purchase.stockmovement.StockMovementRepository;
+import com.billbull.backend.sales.settings.SalesPriceResolver;
+import com.billbull.backend.sales.settings.SalesItemPricePolicy;
+import com.billbull.backend.sales.settings.SalesSettings;
+import com.billbull.backend.sales.settings.SalesSettingsService;
 import com.billbull.backend.util.DocumentOrderingUtil;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -63,6 +67,7 @@ public class QuotationService {
     private final ProductBarcodeRepository barcodeRepo;
     private final CustomerInquiryRepository customerInquiryRepo;
     private final InquiryFollowUpRepository inquiryFollowUpRepo;
+    private final SalesSettingsService salesSettingsService;
 
     public QuotationService(
             QuotationRepository quotationRepo,
@@ -78,7 +83,8 @@ public class QuotationService {
             ProductMediaRepository mediaRepo,
             ProductBarcodeRepository barcodeRepo,
             CustomerInquiryRepository customerInquiryRepo,
-            InquiryFollowUpRepository inquiryFollowUpRepo) {
+            InquiryFollowUpRepository inquiryFollowUpRepo,
+            SalesSettingsService salesSettingsService) {
         this.quotationRepo = quotationRepo;
         this.objectMapper = objectMapper;
         this.productRepo = productRepo;
@@ -93,6 +99,14 @@ public class QuotationService {
         this.barcodeRepo = barcodeRepo;
         this.customerInquiryRepo = customerInquiryRepo;
         this.inquiryFollowUpRepo = inquiryFollowUpRepo;
+        this.salesSettingsService = salesSettingsService;
+    }
+
+    private SalesItemPricePolicy activePricePolicy() {
+        SalesSettings settings = salesSettingsService.getSettings();
+        return settings != null && settings.getSalesItemPricePolicy() != null
+                ? settings.getSalesItemPricePolicy()
+                : SalesItemPricePolicy.RETAIL;
     }
 
     // -------------------------------------------------
@@ -258,8 +272,9 @@ public class QuotationService {
                 }
 
                 if (!isPositive(item.getPrice())) {
+                    SalesItemPricePolicy policy = activePricePolicy();
                     pricingRepo.findByProductId(productId)
-                            .map(p -> p.getRetailPrice())
+                            .map(p -> SalesPriceResolver.resolve(p, policy))
                             .filter(this::isPositive)
                             .ifPresent(item::setPrice);
                 }
@@ -722,8 +737,9 @@ public class QuotationService {
 
         dto.setPrimaryImage(primaryImage);
 
+        SalesItemPricePolicy policy = activePricePolicy();
         pricingRepo.findByProductId(product.getId())
-                .ifPresent(p -> dto.setPrice(p.getRetailPrice()));
+                .ifPresent(p -> dto.setPrice(SalesPriceResolver.resolve(p, policy)));
 
         taxRepo.findByProductId(product.getId())
                 .ifPresent(t -> dto.setTaxRate(t.getSalesTax()));

@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { Box, X, RotateCcw, AlertTriangle } from 'lucide-react';
 import { getImageUrl } from '../utils/urlUtils';
 import { getStockAvailability } from '../api/stockAvailabilityApi';
+import { formatDisplayDate } from '../utils/dateUtils';
 
 const StockAvailabilityModal = ({ isOpen, onClose, selectedStockItem }) => {
     const [locations, setLocations] = useState([]);
@@ -188,7 +189,7 @@ const StockAvailabilityModal = ({ isOpen, onClose, selectedStockItem }) => {
                                             <tr key={idx}>
                                                 <td className="p-2 font-bold text-blue-600">{lpo.lpoNumber}</td>
                                                 <td className="p-2">{lpo.supplierName}</td>
-                                                <td className="p-2 text-slate-500">{lpo.expectedDate ? new Date(lpo.expectedDate).toLocaleDateString() : 'TBD'}</td>
+                                                <td className="p-2 text-slate-500">{formatDisplayDate(lpo.expectedDate, 'TBD')}</td>
                                                 <td className="p-2 text-right font-bold text-emerald-600">+{lpo.quantity} {lpo.uom || ''}</td>
                                             </tr>
                                         ))}

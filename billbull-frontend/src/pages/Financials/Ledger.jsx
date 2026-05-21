@@ -42,6 +42,7 @@ import { employeesApi } from '../../api/employeesApi';
 import ExportDropdown from '../../components/common/ExportDropdown';
 import { exportToExcel, exportToPDF } from '../../utils/exportUtils';
 import { resolveCurrencyDisplayCode } from '../../utils/countryCurrencyOptions';
+import { formatDisplayDate } from '../../utils/dateUtils';
 
 // ==========================================
 // 1. MOCK DATA & CONFIGURATION
@@ -1609,7 +1610,7 @@ const glAccountOptions = accounts
                   )}
                   {filteredGlData.map((entry, idx) => (
                     <tr key={entry.id || idx} className="hover:bg-slate-50 group">
-                      <td className="px-4 py-3 font-medium text-slate-700">{entry.date}</td>
+                      <td className="px-4 py-3 font-medium text-slate-700">{formatDisplayDate(entry.date)}</td>
                       <td className="px-4 py-3">
                         <div className="flex items-center gap-2">
                           <div className="w-6 h-6 rounded bg-slate-100 flex items-center justify-center text-[10px] font-bold text-slate-500 border border-slate-200">{entry.type}</div>
@@ -1869,7 +1870,7 @@ const glAccountOptions = accounts
                       </tr>
                     ) : filteredTxn.map((entry, idx) => (
                       <tr key={entry.id || idx} className="hover:bg-slate-50">
-                        <td className="px-4 py-3 font-medium text-slate-700">{entry.date}</td>
+                        <td className="px-4 py-3 font-medium text-slate-700">{formatDisplayDate(entry.date)}</td>
                         <td className="px-4 py-3 text-slate-500">{entry.voucher}</td>
                         <td className="px-4 py-3">
                           <div className="font-bold text-slate-700">{entry.accCode}</div>
@@ -2250,7 +2251,7 @@ const glAccountOptions = accounts
                     <tbody className="divide-y divide-slate-50 text-slate-600">
                       {statementData.runningBalanceLogs.map((log, i) => (
                         <tr key={i} className="hover:bg-slate-50">
-                          <td className="px-4 py-3 whitespace-nowrap">{log.date || log.transactionDate}</td>
+                          <td className="px-4 py-3 whitespace-nowrap">{formatDisplayDate(log.date || log.transactionDate)}</td>
                           <td className="px-4 py-3 whitespace-nowrap font-medium">{log.voucherNo || log.reference}</td>
                           <td className="px-4 py-3 whitespace-nowrap text-[10px] uppercase font-bold text-slate-400">{log.type}</td>
                           <td className="px-4 py-3">{log.description || log.particulars}</td>

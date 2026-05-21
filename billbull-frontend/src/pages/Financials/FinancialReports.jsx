@@ -18,6 +18,7 @@ import {
     Wallet
 } from 'lucide-react';
 import { generateReportFilename } from '../../utils/filenameUtils';
+import { formatDisplayDate } from '../../utils/dateUtils';
 import { usePrintDocument } from '../../hooks/usePrintDocument';
 import {
     Area,
@@ -763,7 +764,7 @@ const FinancialReports = () => {
                             <Scale size={20} className="text-blue-600" />
                             Trial Balance
                         </h3>
-                        <span className="text-xs text-slate-400">As of {trialBalance.asOfDate}</span>
+                        <span className="text-xs text-slate-400">As of {formatDisplayDate(trialBalance.asOfDate)}</span>
                     </div>
 
                     <div className="overflow-x-auto border border-slate-100 rounded-lg">
@@ -1076,7 +1077,7 @@ const FinancialReports = () => {
                 <div className="bg-white p-6 rounded-lg border border-slate-200 shadow-sm">
                     <div className="flex justify-between items-center mb-6">
                         <h3 className="text-lg font-bold text-slate-800">Balance Sheet</h3>
-                        <span className="text-xs text-slate-400">As of {balanceSheet.asOfDate}</span>
+                        <span className="text-xs text-slate-400">As of {formatDisplayDate(balanceSheet.asOfDate)}</span>
                     </div>
 
                     <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
@@ -1337,7 +1338,7 @@ const FinancialReports = () => {
                             <tbody className="divide-y divide-slate-100">
                                 {(expenseAnalysis.detailLines || []).slice(0, 15).map((item, index) => (
                                     <tr key={`${item.voucherNo || item.accountCode || index}`} className="hover:bg-slate-50 transition-colors">
-                                        <td className="px-4 py-3 text-xs text-slate-600 whitespace-nowrap">{item.transactionDate || '-'}</td>
+                                        <td className="px-4 py-3 text-xs text-slate-600 whitespace-nowrap">{formatDisplayDate(item.transactionDate)}</td>
                                         <td className="px-4 py-3 text-xs text-slate-600 font-mono">{item.voucherNo || '-'}</td>
                                         <td className="px-4 py-3 text-xs text-slate-700 font-semibold">
                                             {item.accountName || '-'}
@@ -1535,7 +1536,7 @@ const FinancialReports = () => {
                                                 {taxFilings.map((filing, index) => (
                                                     <tr key={`${filing.period || index}`} className="hover:bg-slate-50 transition-colors">
                                                         <td className="px-4 py-3 text-xs text-slate-700 font-semibold">{filing.period}</td>
-                                                        <td className="px-4 py-3 text-xs text-slate-600">{filing.dueDate}</td>
+                                                        <td className="px-4 py-3 text-xs text-slate-600">{formatDisplayDate(filing.dueDate)}</td>
                                                         <td className="px-4 py-3 text-xs text-slate-600">{filing.status}</td>
                                                     </tr>
                                                 ))}

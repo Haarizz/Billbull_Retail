@@ -52,6 +52,8 @@ import {
     getItemPriceHistory
 } from '../../api/quotationApi';
 import { getStockAvailability } from '../../api/stockAvailabilityApi';
+import { formatDisplayDate } from '../../utils/dateUtils';
+import { pickSalesItemPrice } from '../../utils/salesPricing';
 import { getSalesSettings } from '../../api/salesSettingsApi';
 
 // Ensure you have an axios instance or use fetch
@@ -269,7 +271,7 @@ const MobileCard = ({ qtn, onClick, renderStatusBadge, isExpanded, onToggleExpan
                     </div>
                     <div>
                         <h4 className="font-bold text-slate-800 text-sm">{qtn.qtnNo}</h4>
-                        <span className="text-xs text-slate-500">{qtn.date}</span>
+                        <span className="text-xs text-slate-500">{formatDisplayDate(qtn.date)}</span>
                     </div>
                 </div>
                 {renderStatusBadge(qtn.status)}
@@ -297,7 +299,7 @@ const MobileCard = ({ qtn, onClick, renderStatusBadge, isExpanded, onToggleExpan
                                 <div className="w-1.5 h-1.5 rounded-full bg-blue-300"></div>
                                 {rev.qtnNoDisplay}
                             </div>
-                            <div className="text-slate-500 mt-0.5">{rev.date}</div>
+                            <div className="text-slate-500 mt-0.5">{formatDisplayDate(rev.date)}</div>
                         </div>
                         <div className="text-right flex flex-col items-end gap-1">
                             <CurrencyAmount value={rev.total || 0} {...currencyProps} className="font-bold text-slate-700" />
@@ -1038,7 +1040,7 @@ const Quotations = () => {
             targetUnit: defaultUnit,
             amountMap: product.unitPrices,
             unitConversions: product.unitConversions,
-            fallbackAmount: product.retailPrice ?? product.sellingPrice ?? 0
+            fallbackAmount: pickSalesItemPrice(product, salesSettings?.salesItemPricePolicy)
         });
         const cost = parseFloat(product.cost) || 0;
         const disc = parseFloat(product.maxDiscount) || 0;
@@ -2122,7 +2124,7 @@ const Quotations = () => {
 
         const qtnNo = getQuotationNo();
         const customerName = customer || 'Walk-in Customer';
-        const today = new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+        const today = formatDisplayDate(new Date());
 
         // Template-specific styles
         const templates = {
@@ -2551,7 +2553,7 @@ const Quotations = () => {
                                                     )}
                                                     {qtn.qtnNo}
                                                 </td>
-                                                <td className="px-4 py-3 text-slate-600">{qtn.date}</td>
+                                                <td className="px-4 py-3 text-slate-600">{formatDisplayDate(qtn.date)}</td>
                                                 <td className="px-4 py-3 text-slate-700 font-medium">{qtn.customer}</td>
                                                 <td className="px-4 py-3 text-right font-bold text-slate-800">
                                                     <CurrencyAmount value={qtn.total || 0} {...getDisplayCurrencyProps(qtn.currency)} />
@@ -2667,7 +2669,7 @@ const Quotations = () => {
                                                                 {rev.qtnNoDisplay}
                                                             </div>
                                                         </td>
-                                                        <td className="px-4 py-2 text-slate-500 text-xs">{rev.date}</td>
+                                                        <td className="px-4 py-2 text-slate-500 text-xs">{formatDisplayDate(rev.date)}</td>
                                                         <td className="px-4 py-2 text-slate-500 text-xs italic opacity-70">revised version</td>
                                                         <td className="px-4 py-2 text-right font-bold text-slate-600 text-xs">
                                                             <CurrencyAmount value={rev.total || 0} {...getDisplayCurrencyProps(qtn.currency)} />
@@ -3518,7 +3520,7 @@ const Quotations = () => {
                                                     <span className="text-xs font-bold text-slate-700">{rev.qtnNoDisplay}</span>
                                                     <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${rev.status === 'Approved' ? 'bg-emerald-50 text-emerald-600 border border-emerald-100' : 'bg-slate-100 text-slate-500'}`}>{rev.status}</span>
                                                 </div>
-                                                <div className="text-[10px] text-slate-400 mb-2">{rev.date}</div>
+                                                <div className="text-[10px] text-slate-400 mb-2">{formatDisplayDate(rev.date)}</div>
                                                 <p className="text-xs text-slate-600 bg-slate-50 p-2 rounded mb-3">
                                                     <span className="font-semibold">Follow-up:</span> {rev.note}
                                                 </p>

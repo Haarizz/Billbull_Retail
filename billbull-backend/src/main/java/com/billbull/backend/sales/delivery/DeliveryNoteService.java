@@ -972,13 +972,24 @@ public class DeliveryNoteService {
             item.setRemarks(item.getDescription());
         }
 
-        // Populate price from packing-level price first, then fall back to product retail price.
+        // Populate price from packing-level price first, then fall back to the
+        // product's master price selected by the configured Sales Item Price
+        // Policy (RETAIL / MAX_SALE / MIN_SALE) — see SalesSettings.
         if (item.getPrice() == null) {
             java.math.BigDecimal packingPrice = lookupPackingPrice(product.getId(), item.getUnit());
             if (packingPrice != null) {
                 item.setPrice(packingPrice.doubleValue());
-            } else if (product.getPricing() != null && product.getPricing().getRetailPrice() != null) {
-                item.setPrice(product.getPricing().getRetailPrice().doubleValue());
+            } else if (product.getPricing() != null) {
+                com.billbull.backend.sales.settings.SalesSettings settings = salesSettingsService.getSettings();
+                com.billbull.backend.sales.settings.SalesItemPricePolicy policy =
+                        settings != null && settings.getSalesItemPricePolicy() != null
+                                ? settings.getSalesItemPricePolicy()
+                                : com.billbull.backend.sales.settings.SalesItemPricePolicy.RETAIL;
+                java.math.BigDecimal resolved = com.billbull.backend.sales.settings.SalesPriceResolver
+                        .resolve(product.getPricing(), policy);
+                if (resolved != null) {
+                    item.setPrice(resolved.doubleValue());
+                }
             }
         }
 

@@ -39,6 +39,8 @@ import {
   uploadSalesOrderAttachment
 } from '../../api/salesorderApi';
 import { getTemplatesByCategory } from '../../api/printTemplateApi';
+import { formatDisplayDate } from '../../utils/dateUtils';
+import { pickSalesItemPrice } from '../../utils/salesPricing';
 import { generatePrintHtml, printHtml } from '../../utils/printGenerator';
 import { getImageUrl } from '../../utils/urlUtils';
 import { getDefaultProductUnit, resolveUnitAmount } from '../../utils/unitPricing';
@@ -103,7 +105,7 @@ const MobileCard = ({ order, onClick, getStatusBadge, currency }) => (
     <div className="flex justify-between items-start mb-2">
       <div>
         <h4 className="font-bold text-slate-800">{order.soNumber}</h4>
-        <p className="text-xs text-slate-500">{order.orderDate}</p>
+        <p className="text-xs text-slate-500">{formatDisplayDate(order.orderDate)}</p>
       </div>
       {getStatusBadge(order.status)}
     </div>
@@ -575,7 +577,7 @@ const SalesOrders = () => {
       targetUnit: defaultUnit,
       amountMap: product.unitPrices,
       unitConversions: product.unitConversions,
-      fallbackAmount: product.retailPrice ?? product.sellingPrice ?? 0
+      fallbackAmount: pickSalesItemPrice(product, salesSettings?.salesItemPricePolicy)
     });
     const cost = parseFloat(product.cost) || 0;
     const disc = parseFloat(product.maxDiscount) || 0;
@@ -1425,7 +1427,7 @@ const SalesOrders = () => {
                 {ordersList.map((order, idx) => (
                   <tr key={idx} className="hover:bg-slate-50 cursor-pointer" onClick={() => handleLoadOrder(order)}>
                     <td className="px-4 py-3 font-medium text-slate-700">{order.soNumber}</td>
-                    <td className="px-4 py-3 text-slate-500">{order.orderDate}</td>
+                    <td className="px-4 py-3 text-slate-500">{formatDisplayDate(order.orderDate)}</td>
                     <td className="px-4 py-3 text-slate-600">{order.customerName}</td>
                     <td className="px-4 py-3 text-slate-500">{order.linkedQuotation || '-'}</td>
                     <td className="px-4 py-3 text-slate-500">{order.linkedProforma || '-'}</td>

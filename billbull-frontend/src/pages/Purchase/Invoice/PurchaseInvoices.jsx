@@ -45,6 +45,7 @@ import { ItemDescriptionCell, ItemDescriptionHeader } from '../../../components/
 import ItemAddOnsModal from '../../../components/ItemAddOnsModal'; // BB-026
 import StockAvailabilityModal from '../../../components/StockAvailabilityModal';
 import { useCompany } from '../../../context/CompanyContext';
+import { formatDisplayDate } from '../../../utils/dateUtils';
 
 // Printing Utilities
 import { getTemplatesByCategory } from '../../../api/printTemplateApi';
@@ -2549,7 +2550,7 @@ const PendingApprovalView = ({ pendingApprovals, onApprove, onView }) => {
                 {pendingApprovals.map((item) => (
                   <tr key={item.dbId} className="hover:bg-slate-50">
                     <td onClick={() => onView(item)} className="p-3 font-mono font-medium text-[#F5C742] cursor-pointer">{item.id}</td>
-                    <td className="p-3 text-slate-600 flex items-center gap-1"><Calendar className="h-3 w-3 text-slate-400" /> {item.date}</td>
+                    <td className="p-3 text-slate-600 flex items-center gap-1"><Calendar className="h-3 w-3 text-slate-400" /> {formatDisplayDate(item.date)}</td>
                     <td className="p-3">
                       <div>
                         <div className="font-medium text-slate-900">{item.vendor}</div>
@@ -2616,14 +2617,14 @@ const PendingPaymentView = ({ pendingPayments, onPay, onView }) => {
               {pendingPayments.map((item) => (
                 <tr key={item.dbId} className="hover:bg-slate-50">
                   <td onClick={() => onView(item)} className="p-3 font-mono font-medium text-[#F5C742] cursor-pointer">{item.id}</td>
-                  <td className="p-3 text-slate-600 flex items-center gap-1"><Calendar className="h-3 w-3 text-slate-400" /> {item.date}</td>
+                  <td className="p-3 text-slate-600 flex items-center gap-1"><Calendar className="h-3 w-3 text-slate-400" /> {formatDisplayDate(item.date)}</td>
                   <td className="p-3">
                     <div>
                       <div className="font-medium text-slate-900">{item.vendor}</div>
                       <div className="text-[10px] text-slate-400">{item.vendorId}</div>
                     </div>
                   </td>
-                  <td className="p-3 text-red-500 flex items-center gap-1"><History className="h-3 w-3" /> {item.dueDate}</td>
+                  <td className="p-3 text-red-500 flex items-center gap-1"><History className="h-3 w-3" /> {formatDisplayDate(item.dueDate)}</td>
                   <td className="p-3 text-right font-medium text-slate-900">{typeof item.total === 'number' ? item.total.toLocaleString() : item.total}</td>
 
                   {/* Paid Amount */}
@@ -2699,7 +2700,7 @@ const DraftInvoicesView = ({ drafts, onEdit, onDelete }) => {
                 {drafts.map((item) => (
                   <tr key={item.dbId} className="hover:bg-slate-50">
                     <td onClick={() => onEdit(item)} className="p-3 font-mono font-medium text-[#F5C742] cursor-pointer hover:underline">{item.id}</td>
-                    <td className="p-3 text-slate-600">{item.date}</td>
+                    <td className="p-3 text-slate-600">{formatDisplayDate(item.date)}</td>
                     <td className="p-3">
                       <div>
                         <div className="font-medium text-slate-900">{item.vendor}</div>

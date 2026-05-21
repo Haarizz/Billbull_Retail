@@ -36,6 +36,7 @@ import { exportToExcel, exportToPDF } from '../../utils/exportUtils';
 import { generateDocFilename } from '../../utils/filenameUtils';
 import { usePrintDocument } from '../../hooks/usePrintDocument';
 import CurrencyAmount from '../../components/CurrencyAmount';
+import { formatDisplayDate } from '../../utils/dateUtils';
 
 // ✅ DYNAMIC UI COMPONENTS
 
@@ -679,7 +680,7 @@ const SalesReturn = () => {
                               {filteredReturns.map((ret) => (
                                  <tr key={ret.id} className="hover:bg-slate-50 cursor-pointer group" onClick={() => handleViewReturn(ret)}>
                                     <td className="px-4 py-3 font-bold text-slate-700">{ret.returnNumber}</td>
-                                    <td className="px-4 py-3 text-slate-500">{ret.returnDate}</td>
+                                    <td className="px-4 py-3 text-slate-500">{formatDisplayDate(ret.returnDate)}</td>
                                     <td className="px-4 py-3">
                                        <div className="font-medium text-slate-700">{ret.customerName}</div>
                                        <div className="text-[10px] text-slate-400">{ret.customerCode}</div>
@@ -1043,7 +1044,7 @@ const SalesReturn = () => {
                            </div>
                            <div>
                               <p className="text-slate-400 mb-0.5">Return Date</p>
-                              <p className="font-bold text-slate-800">{selectedReturn.returnDate}</p>
+                              <p className="font-bold text-slate-800">{formatDisplayDate(selectedReturn.returnDate)}</p>
                            </div>
                            <div>
                               <p className="text-slate-400 mb-0.5">Source Invoice</p>
