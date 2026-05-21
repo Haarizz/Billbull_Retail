@@ -47,6 +47,9 @@ import { usePrintDocument } from '../../hooks/usePrintDocument';
 import ExportDropdown from '../../components/common/ExportDropdown';
 import { exportToExcel, exportToPDF } from '../../utils/exportUtils';
 import { formatDisplayDate } from '../../utils/dateUtils';
+import { pickSalesItemPrice } from '../../utils/salesPricing';
+import { resolveLineTaxRate } from '../../utils/vatMath';
+import { getActiveVatRate } from '../../api/taxApi';
 import CurrencyAmount from '../../components/CurrencyAmount';
 import BatchSelectionModal from '../../components/BatchSelectionModal';
 import { usePermissions } from '../../context/PermissionContext';
@@ -263,6 +266,8 @@ const DeliveryNote = () => {
     const [warehousesList, setWarehousesList] = useState([]);
     const [binsList, setBinsList] = useState([]);
     const [salesSettings, setSalesSettings] = useState(null);
+    const [activeVatRate, setActiveVatRate] = useState(null);
+    useEffect(() => { getActiveVatRate().then(setActiveVatRate); }, []);
     const deliveryAutoNumbering = isAutoNumberingEnabled(salesSettings, 'DELIVERY_NOTE');
 
     // âœ… NEW STATE: Warehouse Stock Cache (Map: ProductCode -> Qty)
@@ -1311,8 +1316,8 @@ const DeliveryNote = () => {
             boxes: 1,
             foc: 0,
             focUnit: product.unitName || product.unit || 'PCS',
-            price: Number(product.retailPrice || product.sellingPrice) || 0,
-            tax: Number(product.taxPercent || product.salesTax) || 5,
+            price: pickSalesItemPrice(product, salesSettings?.salesItemPricePolicy),
+            tax: resolveLineTaxRate(product, activeVatRate),
             disc: 0,
             taxAmt: 0,
             margin: 0,
@@ -1345,7 +1350,7 @@ const DeliveryNote = () => {
             foc: 0,
             focUnit: product.unitName || product.unit || 'PCS',
             price,
-            tax: Number(product.taxPercent || product.salesTax) || 5,
+            tax: resolveLineTaxRate(product, activeVatRate),
             disc,
             taxAmt: 0,
             margin: 0,
@@ -1782,6 +1787,7 @@ const DeliveryNote = () => {
                 title="Select Items from Products / Services"
                 actionLabel="Add to Delivery Note"
                 mode="sales"
+                salesItemPricePolicy={salesSettings?.salesItemPricePolicy}
             />
 
             {/* âœ… STOCK AVAILABILITY MODAL */}

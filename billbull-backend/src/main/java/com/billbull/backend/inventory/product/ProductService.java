@@ -641,6 +641,11 @@ public class ProductService {
             ProductPricing pr = pricingMap.get(p.getId());
             item.put("cost", pr != null ? pr.getCost() : null);
             item.put("retailPrice", pr != null ? pr.getRetailPrice() : null);
+            // Expose min/max sale prices so the sales-side "Default Item Price"
+            // policy (RETAIL / MAX_SALE / MIN_SALE) can pick the configured
+            // field directly from the product list payload.
+            item.put("minPrice", pr != null ? pr.getMinPrice() : null);
+            item.put("maxPrice", pr != null ? pr.getMaxPrice() : null);
 
             ProductTax tx = taxMap.get(p.getId());
             item.put("salesTax", tx != null ? tx.getSalesTax() : null);

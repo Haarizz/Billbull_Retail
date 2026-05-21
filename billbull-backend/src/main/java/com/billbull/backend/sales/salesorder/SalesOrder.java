@@ -66,6 +66,16 @@ public class SalesOrder {
     @Enumerated(EnumType.STRING)
     private SalesOrderStatus status;
 
+    /**
+     * Whether line prices on this order are entered VAT-exclusive (tax added
+     * on top) or VAT-inclusive (tax extracted out of the line). Default
+     * EXCLUSIVE preserves legacy behaviour.
+     */
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false, length = 12, columnDefinition = "varchar(12) default 'EXCLUSIVE'")
+    private com.billbull.backend.sales.common.VatMode vatMode
+            = com.billbull.backend.sales.common.VatMode.EXCLUSIVE;
+
     // ✅ KEEP LAZY (IMPORTANT)
     @OneToMany(mappedBy = "salesOrder", cascade = CascadeType.ALL, orphanRemoval = true)
     @JsonManagedReference
@@ -266,6 +276,14 @@ public class SalesOrder {
     @Transient
     public String getWarehouseName() {
         return warehouse != null ? warehouse.getName() : null;
+    }
+
+    public com.billbull.backend.sales.common.VatMode getVatMode() {
+        return vatMode;
+    }
+
+    public void setVatMode(com.billbull.backend.sales.common.VatMode vatMode) {
+        this.vatMode = vatMode;
     }
 
     public SalesOrderStatus getStatus() {

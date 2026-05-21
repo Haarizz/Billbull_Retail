@@ -55,7 +55,9 @@ import {
 import { getSalesSettings } from '../../api/salesSettingsApi';
 import { getStockAvailability } from '../../api/stockAvailabilityApi';
 import { formatDisplayDate } from '../../utils/dateUtils';
-import { pickSalesItemPrice } from '../../utils/salesPricing';
+import { pickSalesItemPrice, isPolicyOverridingPackings } from '../../utils/salesPricing';
+import { computeLineTaxTotals, resolveLineTaxRate } from '../../utils/vatMath';
+import { getActiveVatRate } from '../../api/taxApi';
 import { getWarehouses } from '../../api/warehouseApi';
 import { getTemplatesByCategory } from '../../api/printTemplateApi';
 import { generatePrintHtml, printHtml } from '../../utils/printGenerator';
@@ -252,6 +254,18 @@ const SalesInvoice = () => {
     const [linkedPI, setLinkedPI] = useState('');
     const [linkedQuotation, setLinkedQuotation] = useState('');
     const [shippingAddress, setShippingAddress] = useState('');
+    // QA-032: advance amount carried from the source Sales Order. Stored
+    // separately from amountCollected so we can show a clear note in the
+    // payment panel and so it's obvious it's not "new" money collected here.
+    const [carriedSoAdvance, setCarriedSoAdvance] = useState(0);
+    // VAT mode for line-price interpretation (EXCLUSIVE | INCLUSIVE).
+    const [vatMode, setVatMode] = useState('EXCLUSIVE');
+
+    // Fallback VAT % from Tax Compliance for products without a per-item rate.
+    const [activeVatRate, setActiveVatRate] = useState(null);
+    useEffect(() => {
+        getActiveVatRate().then(setActiveVatRate);
+    }, []);
 
     // Payment Details
     const [paymentMode, setPaymentMode] = useState('Cash');
@@ -782,6 +796,17 @@ const SalesInvoice = () => {
         setStatus('Draft');
         setActiveTab('create');
 
+        // QA-032: pre-fill any advance already paid on the source Sales Order
+        // into amountCollected so it surfaces as already-paid against this
+        // invoice. carriedSoAdvance is kept separately so the payment panel
+        // can show a note explaining where the pre-fill came from. The user
+        // can still override the amount before saving.
+        const carriedAdvance = Number(fromSO.advanceAmount);
+        if (Number.isFinite(carriedAdvance) && carriedAdvance > 0) {
+            setAmountCollected(carriedAdvance);
+            setCarriedSoAdvance(carriedAdvance);
+        }
+
         window.history.replaceState({}, document.title);
     }, [customersList, location.state]);
 
@@ -935,6 +960,7 @@ const SalesInvoice = () => {
         setLinkedDN('');
         setLinkedPI('');
         setLinkedQuotation('');
+        setVatMode('EXCLUSIVE');
         setIsGeneratedFromDN(false);
         setPaymentMode('Cash');
         setPaymentTerms('Immediate');
@@ -1395,9 +1421,14 @@ const SalesInvoice = () => {
 
         const preDiscountAmount = Math.max(0, grossAmount - focDeduction);
         const discountAmount = preDiscountAmount * (discPercent / 100);
-        const taxableAmount = preDiscountAmount - discountAmount;
-        const taxAmount = taxableAmount * (taxPercent / 100);
-        const netAmount = taxableAmount + taxAmount;
+        const netAfterDiscount = preDiscountAmount - discountAmount;
+        // VAT mode drives whether tax is added on top (EXCLUSIVE) or
+        // extracted out of the entered price (INCLUSIVE).
+        const { taxableAmount, taxAmount, total: netAmount } = computeLineTaxTotals({
+            netAfterDiscount,
+            taxPercent,
+            vatMode,
+        });
 
         const salesExTax = taxableAmount;
         const totalCost = qty * costVal;
@@ -1417,6 +1448,12 @@ const SalesInvoice = () => {
             gp: gpPercent
         };
     };
+
+    // Recompute every line whenever the document VAT mode flips.
+    useEffect(() => {
+        setItems(prev => prev.map(item => calculateRow(item)));
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [vatMode]);
 
     const handleItemChange = (id, field, value) => {
         if (isReadOnlyInvoice) return;
@@ -1458,15 +1495,22 @@ const SalesInvoice = () => {
         // falls back to retail → selling → 0 when the configured field is
         // missing on this product, so item-add never produces a zero by
         // surprise.
-        const masterPrice = pickSalesItemPrice(product, salesSettings?.salesItemPricePolicy);
-        const price = resolveUnitAmount({
-            targetUnit: defaultUnit,
-            amountMap: product.unitPrices,
-            unitConversions: product.unitConversions,
-            fallbackAmount: masterPrice
-        });
+        const policy = salesSettings?.salesItemPricePolicy;
+        const masterPrice = pickSalesItemPrice(product, policy);
+        // When the user explicitly opts into Max/Min as the default, the
+        // configured master price wins over per-packing unitPrices. For the
+        // legacy RETAIL policy we keep the unit-aware behaviour so existing
+        // packing-level prices continue to apply.
+        const price = isPolicyOverridingPackings(policy)
+            ? masterPrice
+            : resolveUnitAmount({
+                targetUnit: defaultUnit,
+                amountMap: product.unitPrices,
+                unitConversions: product.unitConversions,
+                fallbackAmount: masterPrice
+            });
         const disc = parseFloat(product.maxDiscount) || 0;
-        const tax = parseFloat(product.salesTax) || 5;
+        const tax = resolveLineTaxRate(product, activeVatRate);
         // Only carry through cost if the master explicitly has a non-null value
         const rawCost = product.cost != null ? parseFloat(product.cost) : NaN;
         const cost = !isNaN(rawCost) ? rawCost : 0;
@@ -1529,7 +1573,7 @@ const SalesInvoice = () => {
     const handleFastEntryAdd = (product, qty, price, disc) => {
         if (isReadOnlyInvoice) return;
         const defaultUnit = getDefaultProductUnit(product);
-        const tax = parseFloat(product.salesTax) || 5;
+        const tax = resolveLineTaxRate(product, activeVatRate);
         const cost = product.cost != null ? parseFloat(product.cost) : 0;
         const rawItem = {
             id: Date.now() + Math.random(),
@@ -1613,6 +1657,7 @@ const SalesInvoice = () => {
             linkedDeliveryNote: linkedDN,
             linkedProforma: linkedPI,
             linkedQuotation: linkedQuotation,
+            vatMode,
 
             paymentMode: paymentMode,
             paymentTerms: paymentTerms,
@@ -1781,6 +1826,7 @@ const SalesInvoice = () => {
         setLinkedDN(invoice.linkedDeliveryNote || '');
         setLinkedPI(invoice.linkedProforma || '');
         setLinkedQuotation(invoice.linkedQuotation || '');
+        setVatMode(invoice.vatMode === 'INCLUSIVE' ? 'INCLUSIVE' : 'EXCLUSIVE');
 
         setPaymentMode(invoice.paymentMode || 'Cash');
         setPaymentTerms(invoice.paymentTerms || 'Immediate');
@@ -2069,6 +2115,7 @@ const SalesInvoice = () => {
                 title="Select Items from Products / Services"
                 actionLabel="Add to Invoice"
                 mode="sales"
+                salesItemPricePolicy={salesSettings?.salesItemPricePolicy}
             />
 
             {/* ✅ STOCK AVAILABILITY MODAL */}
@@ -2672,6 +2719,23 @@ const SalesInvoice = () => {
                                         <div className="flex justify-between items-center mb-2">
                                             <h3 className="text-[13px] font-bold text-slate-700">Invoice Items {isGeneratedFromDN && <span className="ml-2 text-[10px] bg-purple-100 text-purple-700 px-2 py-0.5 rounded font-medium border border-purple-200">Generated from DNs</span>}</h3>
                                             <div className="flex items-center gap-2">
+                                                {/* VAT mode toggle — drives line tax math. */}
+                                                <div className="inline-flex rounded-md border border-slate-200 overflow-hidden text-[11px] font-semibold">
+                                                    <button
+                                                        type="button"
+                                                        disabled={isReadOnlyInvoice}
+                                                        onClick={() => setVatMode('EXCLUSIVE')}
+                                                        className={`px-2.5 py-1 transition-colors ${vatMode === 'EXCLUSIVE' ? 'bg-yellow-400 text-slate-900' : 'bg-white text-slate-500 hover:bg-slate-50'}`}
+                                                        title="Prices entered exclude VAT — tax added on top"
+                                                    >VAT Excl.</button>
+                                                    <button
+                                                        type="button"
+                                                        disabled={isReadOnlyInvoice}
+                                                        onClick={() => setVatMode('INCLUSIVE')}
+                                                        className={`px-2.5 py-1 border-l border-slate-200 transition-colors ${vatMode === 'INCLUSIVE' ? 'bg-yellow-400 text-slate-900' : 'bg-white text-slate-500 hover:bg-slate-50'}`}
+                                                        title="Prices entered already include VAT — tax extracted out"
+                                                    >VAT Incl.</button>
+                                                </div>
                                                 {/* ✅ SELECT FROM CATALOG BUTTON */}
                                                 {!isGeneratedFromDN && !isReadOnlyInvoice && (
                                                     <>
@@ -2996,6 +3060,17 @@ const SalesInvoice = () => {
                                                     <span>This Invoice Amount</span>
                                                     <CurrencyAmount value={netTotal} currency={invoiceCurrency} />
                                                 </div>
+
+                                                {/* QA-032: show the SO advance brought into this invoice so it's
+                                                    obvious where the pre-filled payment came from. */}
+                                                {carriedSoAdvance > 0 && (
+                                                    <div className="flex justify-between text-xs text-emerald-700 bg-emerald-50 border border-emerald-100 rounded px-2 py-1">
+                                                        <span title="Advance already received against the linked Sales Order">
+                                                            Advance from SO {linkedSO ? `(${linkedSO})` : ''}
+                                                        </span>
+                                                        <CurrencyAmount value={carriedSoAdvance} currency={invoiceCurrency} />
+                                                    </div>
+                                                )}
 
                                                 <div className="flex items-center gap-1 text-xs text-emerald-600 font-medium">
                                                     <span>- <CurrencySymbol currency={invoiceCurrency} /></span>

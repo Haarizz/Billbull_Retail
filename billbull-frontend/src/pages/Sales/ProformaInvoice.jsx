@@ -46,6 +46,9 @@ import { getTemplatesByCategory } from '../../api/printTemplateApi';
 import { generatePrintHtml, printHtml } from '../../utils/printGenerator';
 import { getImageUrl } from '../../utils/urlUtils';
 import { formatDisplayDate } from '../../utils/dateUtils';
+import { pickSalesItemPrice, isPolicyOverridingPackings } from '../../utils/salesPricing';
+import { resolveLineTaxRate } from '../../utils/vatMath';
+import { getActiveVatRate } from '../../api/taxApi';
 import { getDefaultProductUnit, resolveUnitAmount } from '../../utils/unitPricing';
 import { summarizeSalesItems } from '../../utils/documentSummaryUtils';
 import billBullLogo from '../../assets/billBullLogo.png';
@@ -113,6 +116,8 @@ const ProformaInvoice = () => {
   const [quotationsList, setQuotationsList] = useState([]);
   const [salesOrdersList, setSalesOrdersList] = useState([]);
   const [salesSettings, setSalesSettings] = useState(null);
+  const [activeVatRate, setActiveVatRate] = useState(null);
+  useEffect(() => { getActiveVatRate().then(setActiveVatRate); }, []);
   const proformaAutoNumbering = isAutoNumberingEnabled(salesSettings, 'PROFORMA_INVOICE');
 
   // --- PROFORMA LIST STATE ---
@@ -552,15 +557,21 @@ const ProformaInvoice = () => {
   // âœ… PRODUCT SELECTOR HANDLER
   const handleAddSingleProduct = (product) => {
     const defaultUnit = getDefaultProductUnit(product);
-    const price = resolveUnitAmount({
-      targetUnit: defaultUnit,
-      amountMap: product.unitPrices,
-      unitConversions: product.unitConversions,
-      fallbackAmount: product.retailPrice ?? product.sellingPrice ?? 0
-    });
+    const policy = salesSettings?.salesItemPricePolicy;
+    const policyPrice = pickSalesItemPrice(product, policy);
+    // When MAX_SALE / MIN_SALE is configured, the master price wins over
+    // per-packing unitPrices. RETAIL keeps the legacy unit-aware behaviour.
+    const price = isPolicyOverridingPackings(policy)
+      ? policyPrice
+      : resolveUnitAmount({
+        targetUnit: defaultUnit,
+        amountMap: product.unitPrices,
+        unitConversions: product.unitConversions,
+        fallbackAmount: policyPrice
+      });
     const cost = parseFloat(product.cost) || 0;
     const disc = parseFloat(product.maxDiscount) || 0;
-    const tax = parseFloat(product.salesTax || product.taxPercent) || 5;
+    const tax = resolveLineTaxRate(product, activeVatRate);
 
     const newItem = normalizeProformaItem({
       id: Date.now() + Math.random(),
@@ -597,7 +608,7 @@ const ProformaInvoice = () => {
     if (isReadOnly) return;
     const defaultUnit = getDefaultProductUnit(product);
     const cost = parseFloat(product.cost) || 0;
-    const tax = parseFloat(product.salesTax || product.taxPercent) || 5;
+    const tax = resolveLineTaxRate(product, activeVatRate);
 
     const newItem = normalizeProformaItem({
       id: Date.now() + Math.random(),
@@ -1129,6 +1140,7 @@ const ProformaInvoice = () => {
           title="Select Items"
           actionLabel="Add to PI"
           mode="sales"
+          salesItemPricePolicy={salesSettings?.salesItemPricePolicy}
         />
         <StockAvailabilityModal
           isOpen={isItemStockModalOpen}

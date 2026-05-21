@@ -14,6 +14,7 @@ public interface ReceiptVoucherRepository extends JpaRepository<ReceiptVoucher, 
     List<ReceiptVoucher> findAllByOrderByDateDesc();
     List<ReceiptVoucher> findBySalesInvoiceId(Long salesInvoiceId);
     List<ReceiptVoucher> findByOpeningInvoiceId(Long openingInvoiceId);
+    List<ReceiptVoucher> findBySalesOrderIdOrderByDateDesc(Long salesOrderId);
 
     /**
      * Sum of completed receipts for a customer before a given date.

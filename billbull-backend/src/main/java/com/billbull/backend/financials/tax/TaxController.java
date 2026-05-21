@@ -25,6 +25,23 @@ public class TaxController {
         return taxService.getAllConfigs();
     }
 
+    /**
+     * Lightweight endpoint returning the active VAT rate registered in Tax
+     * Compliance. Sales pages fall back to this when a product has no
+     * per-item Sales Tax % set. Returns { rate: null } when no Active VAT
+     * configuration exists.
+     */
+    @GetMapping("/active-vat-rate")
+    public java.util.Map<String, Object> getActiveVatRate() {
+        return taxService.getActiveVatRate()
+                .<java.util.Map<String, Object>>map(rate -> java.util.Map.of("rate", rate))
+                .orElseGet(() -> {
+                    java.util.HashMap<String, Object> m = new java.util.HashMap<>();
+                    m.put("rate", null);
+                    return m;
+                });
+    }
+
     @PostMapping("/configs")
     public TaxConfiguration createConfig(@RequestBody TaxConfiguration config) {
         return taxService.saveConfig(config);

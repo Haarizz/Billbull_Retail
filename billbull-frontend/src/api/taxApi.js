@@ -21,6 +21,24 @@ export const deleteTaxConfig = async (id) => {
     await api.delete(`/api/financials/tax/configs/${id}`);
 };
 
+/**
+ * Returns the active VAT rate (number, e.g. 5) registered in Tax Compliance,
+ * or null when no Active VAT configuration exists. Used by sales screens
+ * as the fall-back rate when a product has no per-item Sales Tax % set.
+ */
+export const getActiveVatRate = async () => {
+    try {
+        const res = await api.get("/api/financials/tax/active-vat-rate");
+        const raw = res.data?.rate;
+        if (raw == null) return null;
+        const parsed = parseFloat(raw);
+        return Number.isFinite(parsed) ? parsed : null;
+    } catch (err) {
+        console.warn("Failed to fetch active VAT rate", err);
+        return null;
+    }
+};
+
 // ================= FILINGS =================
 
 export const getTaxFilings = async () => {

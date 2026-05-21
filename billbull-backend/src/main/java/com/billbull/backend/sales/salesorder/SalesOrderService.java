@@ -45,6 +45,8 @@ public class SalesOrderService {
     private final BatchSelectionService batchSelectionService;
     private final com.billbull.backend.sales.settings.SalesSettingsService salesSettingsService;
     private final SalesDocumentNumberingService numberingService;
+    private final com.billbull.backend.financials.receiptvoucher.ReceiptVoucherService receiptVoucherService;
+    private final com.billbull.backend.financials.receiptvoucher.ReceiptVoucherRepository receiptVoucherRepository;
 
     public SalesOrderService(
             SalesOrderRepository orderRepo,
@@ -59,7 +61,9 @@ public class SalesOrderService {
             BinRepository binRepo,
             BatchSelectionService batchSelectionService,
             com.billbull.backend.sales.settings.SalesSettingsService salesSettingsService,
-            SalesDocumentNumberingService numberingService) {
+            SalesDocumentNumberingService numberingService,
+            com.billbull.backend.financials.receiptvoucher.ReceiptVoucherService receiptVoucherService,
+            com.billbull.backend.financials.receiptvoucher.ReceiptVoucherRepository receiptVoucherRepository) {
         this.orderRepo = orderRepo;
         this.quotationRepo = quotationRepo;
         this.warehouseStockService = warehouseStockService;
@@ -73,6 +77,8 @@ public class SalesOrderService {
         this.batchSelectionService = batchSelectionService;
         this.salesSettingsService = salesSettingsService;
         this.numberingService = numberingService;
+        this.receiptVoucherService = receiptVoucherService;
+        this.receiptVoucherRepository = receiptVoucherRepository;
     }
 
     private com.billbull.backend.sales.settings.SalesItemPricePolicy activePricePolicy() {
@@ -224,6 +230,17 @@ public class SalesOrderService {
         }
 
         SalesOrder saved = orderRepo.save(order);
+
+        // QA-032: Auto-create a Receipt Voucher when a Sales Order is saved
+        // with an advance payment. The RV is what the user prints from the SO
+        // (and what the downstream invoice will credit). Skip drafts, only
+        // create once per SO (subsequent edits don't duplicate the receipt).
+        if (saved.getStatus() != SalesOrderStatus.DRAFT
+                && saved.getAdvanceAmount() != null
+                && saved.getAdvanceAmount() > 0
+                && receiptVoucherRepository.findBySalesOrderIdOrderByDateDesc(saved.getId()).isEmpty()) {
+            createAdvanceReceiptForOrder(saved);
+        }
 
         // ✅ MARK LINKED QUOTATION AS CONVERTED and stamp current revision number
         // on the order so we can reconstruct exactly which version was agreed to,
@@ -654,5 +671,41 @@ public class SalesOrderService {
                                 .setScale(0, RoundingMode.HALF_UP).intValue()
                         : qty)
                 .orElse(qty);
+    }
+
+    /**
+     * QA-032: Generate the auto-Receipt Voucher that pairs with a Sales Order
+     * advance payment. The voucher is what the user prints from the SO and is
+     * what the downstream Sales Invoice credits when the SO is invoiced.
+     */
+    /** QA-032: Receipt Vouchers linked to a Sales Order (advance receipts). */
+    @Transactional(readOnly = true)
+    public List<com.billbull.backend.financials.receiptvoucher.ReceiptVoucher> getReceiptVouchersForOrder(Long orderId) {
+        return receiptVoucherRepository.findBySalesOrderIdOrderByDateDesc(orderId);
+    }
+
+    private void createAdvanceReceiptForOrder(SalesOrder order) {
+        com.billbull.backend.financials.receiptvoucher.ReceiptVoucher rv =
+                new com.billbull.backend.financials.receiptvoucher.ReceiptVoucher();
+        rv.setDate(order.getOrderDate() != null
+                ? order.getOrderDate()
+                : java.time.LocalDate.now());
+        rv.setPaymentMode(
+                order.getPaymentMethod() != null && !order.getPaymentMethod().isBlank()
+                        ? order.getPaymentMethod()
+                        : "Cash");
+        rv.setReference(order.getPaymentReference() != null && !order.getPaymentReference().isBlank()
+                ? order.getPaymentReference()
+                : "Advance against SO: " + order.getSoNumber());
+        rv.setAmount(java.math.BigDecimal.valueOf(order.getAdvanceAmount()));
+        rv.setMemberName(order.getCustomerName() != null
+                ? order.getCustomerName()
+                : "Walk-in Customer");
+        rv.setStatus("Completed");
+        rv.setPurpose(com.billbull.backend.financials.receiptvoucher.ReceiptPurpose.ADVANCE_RECEIVED);
+        rv.setSalesOrderId(order.getId());
+        rv.setCustomerCode(order.getCustomerCode());
+
+        receiptVoucherService.createReceipt(rv, null);
     }
 }

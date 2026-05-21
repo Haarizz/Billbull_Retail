@@ -35,6 +35,12 @@ public class ReceiptVoucher extends BaseEntity {
     // Settlement link — set when this receipt is created against a specific Sales Invoice
     private Long salesInvoiceId;
 
+    // Set when this receipt is created against a Sales Order advance payment.
+    // Used to (a) reprint the advance receipt from the SO screen and (b)
+    // surface the advance on the downstream invoice generated from the SO.
+    @Column(name = "sales_order_id")
+    private Long salesOrderId;
+
     // Settlement link for customer opening-balance bills migrated outside SalesInvoice
     private Long openingInvoiceId;
 
@@ -163,6 +169,14 @@ public class ReceiptVoucher extends BaseEntity {
 
     public void setSalesInvoiceId(Long salesInvoiceId) {
         this.salesInvoiceId = salesInvoiceId;
+    }
+
+    public Long getSalesOrderId() {
+        return salesOrderId;
+    }
+
+    public void setSalesOrderId(Long salesOrderId) {
+        this.salesOrderId = salesOrderId;
     }
 
     public Long getOpeningInvoiceId() {
