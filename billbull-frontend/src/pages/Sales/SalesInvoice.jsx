@@ -246,6 +246,7 @@ const SalesInvoice = () => {
     const [linkedSO, setLinkedSO] = useState('');
     const [linkedDN, setLinkedDN] = useState('');
     const [linkedPI, setLinkedPI] = useState('');
+    const [linkedQuotation, setLinkedQuotation] = useState('');
     const [shippingAddress, setShippingAddress] = useState('');
 
     // Payment Details
@@ -662,6 +663,7 @@ const SalesInvoice = () => {
         setItems(mappedItems.length > 0 ? mappedItems : [{ id: Date.now(), code: '', name: '', unit: 'PCS', qty: 0, price: 0, disc: 0, tax: 5, taxAmt: 0, gross: 0, net: 0, cost: 0 }]);
         setBillDiscount(Number(fromQtn.billDiscount) || 0);
         setReference(fromQtn.qtnNo || '');
+        setLinkedQuotation(fromQtn.qtnNo || '');
         setInvoiceDate(new Date().toISOString().split('T')[0]);
         setStatus('Draft');
         setActiveTab('create');
@@ -904,6 +906,7 @@ const SalesInvoice = () => {
         setLinkedSO('');
         setLinkedDN('');
         setLinkedPI('');
+        setLinkedQuotation('');
         setIsGeneratedFromDN(false);
         setPaymentMode('Cash');
         setPaymentTerms('Immediate');
@@ -1574,6 +1577,7 @@ const SalesInvoice = () => {
             linkedSalesOrder: linkedSO,
             linkedDeliveryNote: linkedDN,
             linkedProforma: linkedPI,
+            linkedQuotation: linkedQuotation,
 
             paymentMode: paymentMode,
             paymentTerms: paymentTerms,
@@ -1740,6 +1744,7 @@ const SalesInvoice = () => {
         setLinkedSO(invoice.linkedSalesOrder || '');
         setLinkedDN(invoice.linkedDeliveryNote || '');
         setLinkedPI(invoice.linkedProforma || '');
+        setLinkedQuotation(invoice.linkedQuotation || '');
 
         setPaymentMode(invoice.paymentMode || 'Cash');
         setPaymentTerms(invoice.paymentTerms || 'Immediate');

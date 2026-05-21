@@ -66,6 +66,7 @@ public class SalesInvoiceService {
     private final ProductMediaRepository productMediaRepository;
     private final ProductPackingRepository packingRepo;
     private final com.billbull.backend.sales.salesorder.SalesOrderRepository salesOrderRepository;
+    private final com.billbull.backend.sales.quotation.QuotationRepository quotationRepository;
     private final DeliveryNoteRepository deliveryNoteRepository;
     private final CustomerRepository customerRepository;
     private final OpeningInvoiceRepository openingInvoiceRepository;
@@ -86,6 +87,7 @@ public class SalesInvoiceService {
             ProductMediaRepository productMediaRepository,
             ProductPackingRepository packingRepo,
             com.billbull.backend.sales.salesorder.SalesOrderRepository salesOrderRepository,
+            com.billbull.backend.sales.quotation.QuotationRepository quotationRepository,
             DeliveryNoteRepository deliveryNoteRepository,
             CustomerRepository customerRepository,
             OpeningInvoiceRepository openingInvoiceRepository,
@@ -105,6 +107,7 @@ public class SalesInvoiceService {
         this.productMediaRepository = productMediaRepository;
         this.packingRepo = packingRepo;
         this.salesOrderRepository = salesOrderRepository;
+        this.quotationRepository = quotationRepository;
         this.deliveryNoteRepository = deliveryNoteRepository;
         this.customerRepository = customerRepository;
         this.openingInvoiceRepository = openingInvoiceRepository;
@@ -315,11 +318,31 @@ public class SalesInvoiceService {
             doUpdateStatus(saved.getId(), intendedStatus, settings);
 
             // Auto-update linked Sales Order to INVOICED
+            String linkedQtnNo = saved.getLinkedQuotation();
             if (saved.getLinkedSalesOrder() != null && !saved.getLinkedSalesOrder().isBlank()) {
-                salesOrderRepository.findBySoNumber(saved.getLinkedSalesOrder()).ifPresent(so -> {
+                java.util.Optional<com.billbull.backend.sales.salesorder.SalesOrder> linkedSO =
+                        salesOrderRepository.findBySoNumber(saved.getLinkedSalesOrder());
+                linkedSO.ifPresent(so -> {
                     so.setStatus(com.billbull.backend.sales.salesorder.SalesOrderStatus.INVOICED);
                     salesOrderRepository.save(so);
                 });
+                // If the invoice was reached via SO and the SO came from a quotation,
+                // surface that quotation here so it gets stamped Invoiced too.
+                if ((linkedQtnNo == null || linkedQtnNo.isBlank()) && linkedSO.isPresent()) {
+                    String soQtn = linkedSO.get().getLinkedQuotation();
+                    if (soQtn != null && !soQtn.isBlank()) {
+                        linkedQtnNo = soQtn;
+                    }
+                }
+            }
+
+            // Auto-update linked Quotation to INVOICED (covers both direct
+            // Quotation→Invoice and Quotation→SO→Invoice flows). This is what
+            // surfaces 'Invoiced' instead of 'Converted' on the quotation list.
+            if (linkedQtnNo != null && !linkedQtnNo.isBlank()) {
+                quotationRepository.updateStatusByQtnNo(
+                        linkedQtnNo,
+                        com.billbull.backend.sales.quotation.QuotationStatus.INVOICED);
             }
         }
 

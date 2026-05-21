@@ -47,9 +47,15 @@ public interface QuotationRepository extends JpaRepository<Quotation, Long> {
   List<Quotation> findTopByItemCodeOrderByIdDesc(@Param("itemCode") String itemCode,
       org.springframework.data.domain.Pageable pageable);
 
-  // For Expiry Scheduler: Find approved quotations that are not CONVERTED and are
-  // past their validTill date
-  @Query("SELECT q FROM Quotation q WHERE q.status = 'APPROVED' AND q.validTill < CURRENT_DATE")
+  // For Expiry Scheduler: Find quotations that are still actionable (not yet
+  // converted, invoiced, expired, or rejected) and are past their validTill date.
+  // A quotation with no further movement past its due date is treated as Expired.
+  @Query("""
+          SELECT q FROM Quotation q
+          WHERE q.status IN ('DRAFT', 'PENDING_APPROVAL', 'APPROVED')
+            AND q.validTill IS NOT NULL
+            AND q.validTill < CURRENT_DATE
+      """)
   List<Quotation> findExpiredQuotations();
 
 }
