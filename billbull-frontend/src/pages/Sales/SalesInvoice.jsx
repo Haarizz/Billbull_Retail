@@ -2175,9 +2175,16 @@ const SalesInvoice = () => {
                         total: Number(i.netAmount || i.net),
                         image: i.image || i.imageUrl ? getImageUrl(i.image || i.imageUrl) : '',
                         batchSelections: Array.isArray(i.batchSelections) ? i.batchSelections : [],
+                        // QA-030: provide both joined (legacy) and singular
+                        // (renderer-compatible) batchNumber fields so the
+                        // Batch # line / column shows on the print.
+                        batchNumber: Array.isArray(i.batchSelections)
+                            ? i.batchSelections.map(batch => batch.batchNumber).filter(Boolean).join(', ')
+                            : (i.batchNumber || ''),
                         batchNumbers: Array.isArray(i.batchSelections)
                             ? i.batchSelections.map(batch => batch.batchNumber).filter(Boolean).join(', ')
-                            : ''
+                            : '',
+                        expiry: i.expiry || i.expiryDate || ''
                     })),
                     totals: {
                         subTotal: resolvedSummary.subTotal,
@@ -2190,7 +2197,12 @@ const SalesInvoice = () => {
                     meta: {
                         status: dataToPrint.status,
                         paymentTerm: dataToPrint.paymentTerms,
-                        reference: `SO: ${dataToPrint.linkedSalesOrder || '-'} | DN: ${dataToPrint.linkedDeliveryNote || '-'}`,
+                        // QA-031: explicit source-doc cross-references — each
+                        // renders as its own labeled row when the template
+                        // toggle is on.
+                        linkedQuotation: dataToPrint.linkedQuotation || '',
+                        linkedSalesOrder: dataToPrint.linkedSalesOrder || '',
+                        linkedDeliveryNote: dataToPrint.linkedDeliveryNote || '',
                         location: dataToPrint.branch || '',
                         salesPerson: dataToPrint.salesperson || '',
                         notes: dataToPrint.notes || ''

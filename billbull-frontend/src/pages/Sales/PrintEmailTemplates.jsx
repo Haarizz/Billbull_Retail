@@ -5,6 +5,7 @@ import {
     FaTruck,
     FaClipboardList,
     FaFileInvoiceDollar,
+    FaReceipt,
     FaUndo,
     FaCog,
     FaDownload,
@@ -92,13 +93,16 @@ const getSalesDefaultDisplayOptions = (overrides = {}) =>
 
 const getSalesDefaultColumns = (category, overrides = {}) => {
     const isPickList = category === 'Pick List';
+    const isReceiptVoucher = category === 'Receipt Voucher';
     const categoryDefaults = {
         ...DEFAULT_TEMPLATE_COLUMNS,
-        discount: !['Sales Invoice', 'Delivery Note (DO/DN)', 'Pick List'].includes(category),
-        tax: category !== 'Sales Order (SO)' && category !== 'Delivery Note (DO/DN)' && !isPickList,
-        total: category !== 'Delivery Note (DO/DN)' && !isPickList,
-        unitPrice: category !== 'Delivery Note (DO/DN)' && !isPickList,
-        taxableAmount: category !== 'Delivery Note (DO/DN)' && !isPickList,
+        // QA-039: Receipt Voucher has no line items; suppress every item-table
+        // column so the renderer only emits the amount + payment summary.
+        discount: !isReceiptVoucher && !['Sales Invoice', 'Delivery Note (DO/DN)', 'Pick List'].includes(category),
+        tax: !isReceiptVoucher && category !== 'Sales Order (SO)' && category !== 'Delivery Note (DO/DN)' && !isPickList,
+        total: !isReceiptVoucher && category !== 'Delivery Note (DO/DN)' && !isPickList,
+        unitPrice: !isReceiptVoucher && category !== 'Delivery Note (DO/DN)' && !isPickList,
+        taxableAmount: !isReceiptVoucher && category !== 'Delivery Note (DO/DN)' && !isPickList,
         barcode: false,
         discountPercent: false,
         taxPercent: false,
@@ -106,7 +110,12 @@ const getSalesDefaultColumns = (category, overrides = {}) => {
         location: isPickList,
         batchNumber: isPickList,
         batchBarcode: isPickList,
-        expiry: isPickList
+        expiry: isPickList,
+        // QA-031: cross-doc references default on for DN / SI / Pick List so
+        // operations teams see the source paper trail without re-configuring.
+        quotationNo: ['Delivery Note (DO/DN)', 'Sales Invoice', 'Pick List'].includes(category),
+        salesOrderNo: ['Delivery Note (DO/DN)', 'Sales Invoice', 'Pick List'].includes(category),
+        salesInvoiceNo: ['Delivery Note (DO/DN)', 'Pick List'].includes(category)
     };
 
     return sanitizeTemplateColumns(overrides, categoryDefaults);
@@ -132,6 +141,7 @@ const buildSalesPreviewData = (category, companyProfile = {}) => {
         "Delivery Note (DO/DN)": "DELIVERY NOTE",
         "Proforma Invoice (PI)": "PROFORMA INVOICE",
         "Sales Return": "CREDIT NOTE",
+        "Receipt Voucher": "RECEIPT VOUCHER",
     };
     const docNos = {
         "Quotation": "QT-SAMPLE-0001",
@@ -140,6 +150,7 @@ const buildSalesPreviewData = (category, companyProfile = {}) => {
         "Delivery Note (DO/DN)": "DN-SAMPLE-0001",
         "Proforma Invoice (PI)": "PI-SAMPLE-0001",
         "Sales Return": "CR-SAMPLE-0001",
+        "Receipt Voucher": "RV-SAMPLE-0001",
     };
     const previewCustomer = {
         code: "CUST-SAMPLE-01",
@@ -184,6 +195,33 @@ const buildSalesPreviewData = (category, companyProfile = {}) => {
             salesPerson: "Demo User", location: "Warehouse A", total: 325.5,
         },
     ];
+    // QA-039: Receipt Voucher preview has no line items — show amount paid
+    // and the linked invoice as a reference. The renderer respects
+    // hideTotalsTable / the summaryAmount highlight to focus on the receipt.
+    if (category === 'Receipt Voucher') {
+        return {
+            title: titles[category],
+            docNo: docNos[category],
+            date: "2026-04-18",
+            customer: previewCustomer,
+            items: [],
+            totals: {
+                currency: companyProfile?.currencySymbol || companyProfile?.currency || "AED",
+            },
+            hideTotalsTable: true,
+            summaryAmount: {
+                label: "Amount Received",
+                value: 1500,
+            },
+            meta: {
+                status: "COMPLETED",
+                linkedSalesInvoice: "INV-SAMPLE-0001",
+                paymentMode: "Bank Transfer",
+                reference: "TXN-2026-987654",
+                notes: "Received against invoice INV-SAMPLE-0001",
+            },
+        };
+    }
     return {
         title: titles[category] || category,
         docNo: docNos[category] || "DOC-SAMPLE-0001",
@@ -300,6 +338,20 @@ Late payments may be subject to finance charges as per the agreed customer terms
         footerContent: "",
         displayOptions: JSON.stringify(getSalesDefaultDisplayOptions()),
         columns: JSON.stringify(getSalesDefaultColumns("Proforma Invoice (PI)"))
+    },
+    {
+        // QA-039: customer payment receipt voucher template.
+        category: "Receipt Voucher",
+        name: "Standard Receipt Voucher",
+        isDefault: true,
+        paperSize: "A4",
+        orientation: "Portrait",
+        headerContent: "",
+        termsContent: `Received with thanks the above amount in settlement of the invoice(s) listed.
+This receipt is valid only after the cheque/bank transfer is cleared.`,
+        footerContent: "",
+        displayOptions: JSON.stringify(getSalesDefaultDisplayOptions()),
+        columns: JSON.stringify(getSalesDefaultColumns("Receipt Voucher"))
     }
 ];
 
@@ -689,6 +741,20 @@ const TemplateDesigner = ({ category, onCancel, onSave, initialData, previewComp
                                     <span className="text-sm text-gray-700 font-medium">Location / Branch</span>
                                 </label>
 
+                                {/* QA-031: cross-reference toggles for DN / SI / Pick List header */}
+                                <label className="flex items-center gap-2 cursor-pointer">
+                                    <input type="checkbox" checked={Boolean(columns.quotationNo)} onChange={() => handleColumnChange('quotationNo')} className="w-4 h-4 text-yellow-500 rounded border-gray-300 focus:ring-yellow-400" />
+                                    <span className="text-sm text-gray-700 font-medium">Quotation No.</span>
+                                </label>
+                                <label className="flex items-center gap-2 cursor-pointer">
+                                    <input type="checkbox" checked={Boolean(columns.salesOrderNo)} onChange={() => handleColumnChange('salesOrderNo')} className="w-4 h-4 text-yellow-500 rounded border-gray-300 focus:ring-yellow-400" />
+                                    <span className="text-sm text-gray-700 font-medium">Sales Order No.</span>
+                                </label>
+                                <label className="flex items-center gap-2 cursor-pointer">
+                                    <input type="checkbox" checked={Boolean(columns.salesInvoiceNo)} onChange={() => handleColumnChange('salesInvoiceNo')} className="w-4 h-4 text-yellow-500 rounded border-gray-300 focus:ring-yellow-400" />
+                                    <span className="text-sm text-gray-700 font-medium">Sales Invoice No.</span>
+                                </label>
+
                                 <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider pt-2">Batch & Expiry</p>
                                 <label className="flex items-center gap-2 cursor-pointer">
                                     <input type="checkbox" checked={Boolean(columns.batchNumber)} onChange={() => handleColumnChange('batchNumber')} className="w-4 h-4 text-yellow-500 rounded border-gray-300 focus:ring-yellow-400" />
@@ -980,6 +1046,7 @@ const PrintEmailTemplates = () => {
         { title: "Pick List", description: "Warehouse pick list grouped by location, with batch barcodes", icon: FaBarcode },
         { title: "Proforma Invoice (PI)", description: "Proforma invoice template", icon: FaFileAlt },
         { title: "Sales Invoice", description: "Final sales invoice template", icon: FaFileInvoiceDollar },
+        { title: "Receipt Voucher", description: "Customer payment receipt voucher template", icon: FaReceipt },
         { title: "Credit Note", description: "Credit note template", icon: FaUndo, disabled: true },
         { title: "Goods Return Voucher (GRV)", description: "Goods return voucher template", icon: FaUndo, disabled: true }
     ].map(cat => ({

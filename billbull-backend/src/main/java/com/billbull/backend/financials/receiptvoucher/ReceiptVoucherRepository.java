@@ -47,6 +47,9 @@ public interface ReceiptVoucherRepository extends JpaRepository<ReceiptVoucher, 
     @Query("SELECT rv FROM ReceiptVoucher rv WHERE rv.customerCode IS NULL")
     List<ReceiptVoucher> findWithoutCustomerCode();
 
+    /** QA-018: batch lookup used by StatementService to populate description/reference. */
+    List<ReceiptVoucher> findByVoucherIdIn(List<String> voucherIds);
+
     /**
      * Highest voucher_id for a given year-prefix (e.g. "RV-2026-"). Used to derive
      * the next sequence safely — counting all rows can collide with existing keys

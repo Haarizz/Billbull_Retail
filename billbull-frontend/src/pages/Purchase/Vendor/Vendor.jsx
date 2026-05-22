@@ -957,6 +957,8 @@ const VendorSoA = ({ vendors }) => {
                 <tr>
                   <th className="px-4 py-2 text-left font-medium text-gray-500">DATE</th>
                   <th className="px-4 py-2 text-left font-medium text-gray-500">TYPE</th>
+                  <th className="px-4 py-2 text-left font-medium text-gray-500">DOCUMENT NO.</th>
+                  <th className="px-4 py-2 text-left font-medium text-gray-500">DESCRIPTION</th>
                   <th className="px-4 py-2 text-left font-medium text-gray-500">REFERENCE</th>
                   <th className="px-4 py-2 text-right font-medium text-gray-500">DEBIT (PAYMENT)</th>
                   <th className="px-4 py-2 text-right font-medium text-gray-500">CREDIT (INVOICE)</th>
@@ -965,7 +967,7 @@ const VendorSoA = ({ vendors }) => {
               </thead>
               <tbody className="divide-y divide-slate-100">
                 {isLoading ? (
-                  <tr><td colSpan="6" className="p-8 text-center text-slate-500"><Loader2 className="h-6 w-6 animate-spin mx-auto mb-2" />Loading Statement...</td></tr>
+                  <tr><td colSpan="8" className="p-8 text-center text-slate-500"><Loader2 className="h-6 w-6 animate-spin mx-auto mb-2" />Loading Statement...</td></tr>
                 ) : statementData.entries && statementData.entries.length > 0 ? (
                   statementData.entries.map((row, i) => (
                     <tr key={i}>
@@ -977,15 +979,17 @@ const VendorSoA = ({ vendors }) => {
                           }`}>{formatStatementEntryType(row.type)}</span>
                       </td>
                       <td className="px-4 py-3 text-slate-600">{row.documentNo || '-'}</td>
+                      <td className="px-4 py-3 text-slate-600">{row.description || formatStatementEntryType(row.type)}</td>
+                      <td className="px-4 py-3 text-slate-500">{row.reference || '-'}</td>
                       <td className="px-4 py-3 text-right font-medium text-green-600">{row.debit > 0 ? row.debit.toLocaleString(undefined, { minimumFractionDigits: 2 }) : '-'}</td>
                       <td className="px-4 py-3 text-right font-medium text-orange-600">{row.credit > 0 ? row.credit.toLocaleString(undefined, { minimumFractionDigits: 2 }) : '-'}</td>
                       <td className="px-4 py-3 text-right font-bold text-slate-800">{Math.abs(row.runningBalance).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} {row.runningBalance >= 0 ? 'Cr' : 'Dr'}</td>
                     </tr>
                   ))) : (
-                  <tr><td colSpan="6" className="p-8 text-center text-slate-500">No transactions recorded in this period.</td></tr>
+                  <tr><td colSpan="8" className="p-8 text-center text-slate-500">No transactions recorded in this period.</td></tr>
                 )}
                 <tr className="bg-gray-50 font-bold border-t border-slate-200">
-                  <td colSpan="3" className="px-4 py-3 text-right text-slate-700">CLOSING TOTALS:</td>
+                  <td colSpan="5" className="px-4 py-3 text-right text-slate-700">CLOSING TOTALS:</td>
                   <td className="px-4 py-3 text-right text-green-600">{statementData?.totalDebit?.toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
                   <td className="px-4 py-3 text-right text-orange-600">{statementData?.totalCredit?.toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
                   <td className="px-4 py-3 text-right text-purple-700">{statementData?.closingBalance ? Math.abs(statementData.closingBalance).toLocaleString(undefined, { minimumFractionDigits: 2 }) : '0.00'} {statementData?.closingBalance >= 0 ? 'Cr' : 'Dr'}</td>

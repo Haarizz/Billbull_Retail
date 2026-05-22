@@ -1682,10 +1682,23 @@ const normaliseGenericLayout = (template, data, companyProfile, renderTarget) =>
         billDiscountAmount: asNumber(data.totals?.billDiscountAmount ?? data.totals?.discountAmount)
     };
     const highlightValue = totals.balanceDue > 0 ? totals.balanceDue : totals.grandTotal;
+    // QA-031: pull each linked source-doc number out as its own labeled row
+    // (toggled per template). Fall back to data.meta.reference as a free-text
+    // catch-all when no individual links are passed.
+    const linkedQuotation = firstNonEmpty(data.meta?.linkedQuotation, data.meta?.quotationNo, data.meta?.quotationNumber);
+    const linkedSalesOrder = firstNonEmpty(data.meta?.linkedSalesOrder, data.meta?.salesOrderNo, data.meta?.salesOrderNumber);
+    const linkedSalesInvoice = firstNonEmpty(data.meta?.linkedSalesInvoice, data.meta?.salesInvoiceNo, data.meta?.salesInvoiceNumber, data.meta?.linkedInvoice);
+    const hasExplicitLinks = Boolean(linkedQuotation || linkedSalesOrder || linkedSalesInvoice);
+
     const referenceRows = [
         data.meta?.poNumber ? { label: 'P.O Number', value: data.meta.poNumber } : null,
         columnOptions.salesPerson && documentSalesPerson ? { label: 'Sales Person', value: documentSalesPerson } : null,
-        data.meta?.reference ? { label: 'Reference', value: data.meta.reference } : null,
+        columnOptions.quotationNo && linkedQuotation ? { label: 'Quotation No.', value: linkedQuotation } : null,
+        columnOptions.salesOrderNo && linkedSalesOrder ? { label: 'Sales Order No.', value: linkedSalesOrder } : null,
+        columnOptions.salesInvoiceNo && linkedSalesInvoice ? { label: 'Sales Invoice No.', value: linkedSalesInvoice } : null,
+        // Suppress the catch-all Reference row when explicit links rendered —
+        // avoids the duplicate "SO: X | PI: Y | SI: Z" string we used to jam in.
+        !hasExplicitLinks && data.meta?.reference ? { label: 'Reference', value: data.meta.reference } : null,
         columnOptions.location && documentLocation ? { label: 'Location / Branch', value: documentLocation } : null
     ].filter(Boolean);
 

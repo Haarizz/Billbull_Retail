@@ -19,6 +19,9 @@ public interface SalesInvoiceRepository extends JpaRepository<SalesInvoice, Long
 
         List<SalesInvoice> findAllByOrderByInvoiceDateDesc();
 
+        /** QA-018: batch lookup used by StatementService to populate description/reference. */
+        List<SalesInvoice> findByInvoiceNumberIn(List<String> invoiceNumbers);
+
         @Query("SELECT MAX(i.invoiceNumber) FROM SalesInvoice i WHERE i.invoiceNumber LIKE :prefix%")
         String findLastInvoiceNumberByPrefix(@Param("prefix") String prefix);
 

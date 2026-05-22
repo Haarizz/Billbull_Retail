@@ -2126,6 +2126,8 @@ const CustomerSOAView = ({ customers = [] }) => {
                             <th className="px-6 py-3 font-semibold text-xs uppercase">Date</th>
                             <th className="px-6 py-3 font-semibold text-xs uppercase">Type</th>
                             <th className="px-6 py-3 font-semibold text-xs uppercase">Document No.</th>
+                            <th className="px-6 py-3 font-semibold text-xs uppercase">Description</th>
+                            <th className="px-6 py-3 font-semibold text-xs uppercase">Reference</th>
                             <th className="px-6 py-3 font-semibold text-xs uppercase text-right">Debit</th>
                             <th className="px-6 py-3 font-semibold text-xs uppercase text-right">Credit</th>
                             <th className="px-6 py-3 font-semibold text-xs uppercase text-right">Balance</th>
@@ -2134,7 +2136,7 @@ const CustomerSOAView = ({ customers = [] }) => {
                     <tbody className="divide-y divide-slate-100">
                         {isLoading ? (
                             <tr>
-                                <td colSpan="6" className="px-6 py-12 text-center text-slate-400">Loading statement...</td>
+                                <td colSpan="8" className="px-6 py-12 text-center text-slate-400">Loading statement...</td>
                             </tr>
                         ) : statementData && statementData.entries && statementData.entries.length > 0 ? (
                             statementData.entries.map((entry, idx) => (
@@ -2148,6 +2150,8 @@ const CustomerSOAView = ({ customers = [] }) => {
                                             }`}>{formatStatementEntryType(entry.type)}</span>
                                     </td>
                                     <td className="px-6 py-3 text-slate-600">{entry.documentNo || '-'}</td>
+                                    <td className="px-6 py-3 text-slate-600">{entry.description || formatStatementEntryType(entry.type)}</td>
+                                    <td className="px-6 py-3 text-slate-500">{entry.reference || '-'}</td>
                                     <td className="px-6 py-3 text-right text-red-600">{entry.debit > 0 ? entry.debit.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '-'}</td>
                                     <td className="px-6 py-3 text-right text-green-600">{entry.credit > 0 ? entry.credit.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '-'}</td>
                                     <td className="px-6 py-3 text-right font-bold text-slate-800">{Math.abs(entry.runningBalance).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} {entry.runningBalance >= 0 ? 'Dr' : 'Cr'}</td>
@@ -2155,13 +2159,13 @@ const CustomerSOAView = ({ customers = [] }) => {
                             ))
                         ) : (
                             <tr>
-                                <td colSpan="6" className="px-6 py-12 text-center text-slate-400">No transactions found for the selected period.</td>
+                                <td colSpan="8" className="px-6 py-12 text-center text-slate-400">No transactions found for the selected period.</td>
                             </tr>
                         )}
                     </tbody>
                     <tfoot className="bg-[#FFF8E6] font-bold text-slate-800">
                         <tr>
-                            <td colSpan="3" className="px-6 py-3 text-right">Closing Balance</td>
+                            <td colSpan="5" className="px-6 py-3 text-right">Closing Balance</td>
                             <td className="px-6 py-3 text-right text-red-600">{statementData?.totalDebit?.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) || '0.00'}</td>
                             <td className="px-6 py-3 text-right text-green-600">{statementData?.totalCredit?.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) || '0.00'}</td>
                             <td className="px-6 py-3 text-right text-xl">{statementData?.closingBalance ? Math.abs(statementData.closingBalance).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '0.00'} {statementData?.closingBalance >= 0 ? 'Dr' : 'Cr'}</td>

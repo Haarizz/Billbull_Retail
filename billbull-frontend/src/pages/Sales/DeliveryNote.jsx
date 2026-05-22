@@ -1626,7 +1626,14 @@ const DeliveryNote = () => {
                         tax: Number(i.tax) || 0,
                         taxAmt: Number(i.taxAmt) || 0,
                         total: Number(i.total) || 0,
-                        image: i.image ? getImageUrl(i.image) : ''
+                        image: i.image ? getImageUrl(i.image) : '',
+                        // QA-030: thread batch picks through so the print
+                        // template can show the Batch # line when the toggle
+                        // is on (also feeds the Batch # / Batch Barcode cols
+                        // when those columns are enabled).
+                        batchNumber: i.batchNumber || '',
+                        batchSelections: Array.isArray(i.batchSelections) ? i.batchSelections : [],
+                        expiry: i.expiry || i.expiryDate || ''
                     })),
                     totals: {
                         currency: company?.currencySymbol || company?.currency || 'AED'
@@ -1634,7 +1641,11 @@ const DeliveryNote = () => {
                     hideTotalsTable: true,
                     meta: {
                         status: status,
-                        reference: `SO: ${linkedSO || '-'} | PI: ${linkedPI || '-'} | SI: ${linkedSI || '-'}`,
+                        // QA-031: explicit linked source documents — renderer
+                        // shows each as a labeled row when its template toggle
+                        // is enabled.
+                        linkedSalesOrder: linkedSO || '',
+                        linkedSalesInvoice: linkedSI || '',
                         location: warehouse || '',
                         notes: `Driver: ${driverName || '-'} | Vehicle: ${vehicleNo || '-'} | Tracking: ${trackingNo || '-'}`
                     }
@@ -1701,7 +1712,9 @@ const DeliveryNote = () => {
                 totals: {},
                 meta: {
                     status: status,
-                    reference: `SO: ${linkedSO || '-'} | PI: ${linkedPI || '-'} | SI: ${linkedSI || '-'}`,
+                    // QA-031: explicit source-doc cross-references for Pick List.
+                    linkedSalesOrder: linkedSO || '',
+                    linkedSalesInvoice: linkedSI || '',
                     location: warehouse || '',
                     warehouse: warehouse || '',
                     notes: `Driver: ${driverName || '-'} | Vehicle: ${vehicleNo || '-'} | Tracking: ${trackingNo || '-'}`
