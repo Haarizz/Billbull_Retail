@@ -603,6 +603,12 @@ public class SalesInvoiceService {
                 if (item.getDetailedDesc() == null && p.getDetailedDesc() != null) {
                     item.setDetailedDesc(p.getDetailedDesc());
                 }
+                if (item.getShortDesc() == null && p.getShortDesc() != null) {
+                    item.setShortDesc(p.getShortDesc());
+                }
+                if (item.getProductName() == null && p.getName() != null) {
+                    item.setProductName(p.getName());
+                }
                 if (item.getBarcode() == null || item.getBarcode().isBlank()) {
                     String barcode = barcodeMap.computeIfAbsent(
                             p.getId(),

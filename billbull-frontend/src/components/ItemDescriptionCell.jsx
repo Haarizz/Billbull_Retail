@@ -137,10 +137,10 @@ export const ItemDescriptionCell = React.memo(({
                     </button>
                 </div>
 
-                {/* Detailed Description */}
-                {item.detailedDesc && (
-                    <div className="text-[10px] text-slate-500 italic leading-tight truncate max-w-[320px] mt-0.5" title={item.detailedDesc}>
-                        {item.detailedDesc}
+                {/* Short Description (italic) — detailed description lives in the yellow PRODUCT DESCRIPTION box only */}
+                {item.shortDesc && (
+                    <div className="text-[10px] text-slate-500 italic leading-tight truncate max-w-[320px] mt-0.5" title={item.shortDesc}>
+                        {item.shortDesc}
                     </div>
                 )}
 

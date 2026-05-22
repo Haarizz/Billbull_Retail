@@ -37,9 +37,16 @@ public class CustomerService {
 
     // =========================
     // GET ALL CUSTOMERS
+    // QA-028: force-initialise savedAddresses while the JPA session is open
+    // so the transaction-page customer picker can render the multi-address
+    // dropdown without an extra detail fetch per row.
     // =========================
+    @Transactional(readOnly = true)
     public List<Customer> getAllCustomers() {
         List<Customer> customers = repository.findAll();
+        for (Customer customer : customers) {
+            customer.getSavedAddresses().size();
+        }
         return customers;
     }
 
@@ -68,6 +75,33 @@ public class CustomerService {
         dto.setContactPersons(new ArrayList<>(customer.getContactPersons()));
         dto.setDocuments(new ArrayList<>(customer.getDocuments()));
         return dto;
+    }
+
+    // =========================
+    // QA-028: ADD SINGLE SHIPPING ADDRESS
+    // Append-only: keeps existing addresses, preserves the existing default
+    // unless the new address is flagged isDefault (in which case the previous
+    // default is demoted).
+    // =========================
+    @Transactional
+    public List<SavedAddress> addSavedAddress(Long customerId, SavedAddress address) {
+        Customer customer = repository.findById(customerId)
+                .orElseThrow(() -> new RuntimeException("Customer not found with id " + customerId));
+
+        if (address.isDefault()) {
+            for (SavedAddress existing : customer.getSavedAddresses()) {
+                existing.setDefault(false);
+            }
+        } else if (customer.getSavedAddresses().isEmpty()) {
+            address.setDefault(true);
+        }
+
+        address.setId(null);
+        address.setCustomer(customer);
+        customer.getSavedAddresses().add(address);
+
+        Customer saved = repository.save(customer);
+        return new ArrayList<>(saved.getSavedAddresses());
     }
 
     @Transactional

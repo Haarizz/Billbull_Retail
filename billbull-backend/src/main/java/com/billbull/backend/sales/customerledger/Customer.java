@@ -106,7 +106,6 @@ public class Customer {
             orphanRemoval = true,
             fetch = FetchType.LAZY
     )
-    @JsonIgnore
     private List<SavedAddress> savedAddresses = new ArrayList<>();
 
     @OneToMany(

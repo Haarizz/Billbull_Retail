@@ -2,9 +2,11 @@ import React, { useState } from 'react';
 import {
     Search, MapPin, ChevronDown, User, Truck,
     CheckCircle2, Phone, CreditCard, Star,
-    Package, Calendar, ArrowRight, Building2
+    Package, Calendar, ArrowRight, Building2, Plus, X
 } from 'lucide-react';
 import CurrencyAmount from './CurrencyAmount';
+import { addCustomerSavedAddress } from '../api/customerledgerApi';
+import toast from 'react-hot-toast';
 
 /**
  * CustomerShippingPanel  — Two-Row Layout (narrow-column optimised)
@@ -25,10 +27,16 @@ const CustomerShippingPanel = ({
     currencySymbol,
     showAddCustomer = false,
     onAddCustomer,
+    onCustomerUpdated,
 }) => {
     const [isDeliveryTypeOpen, setIsDeliveryTypeOpen] = useState(false);
     const [selectedAddressIdx, setSelectedAddressIdx] = useState(null);
     const [showAddressPicker, setShowAddressPicker] = useState(false);
+    const [showAddAddressModal, setShowAddAddressModal] = useState(false);
+    const [newAddress, setNewAddress] = useState({
+        name: '', address1: '', city: '', country: 'UAE', contactName: '', contactPhone: '',
+    });
+    const [isSavingAddress, setIsSavingAddress] = useState(false);
 
     const savedAddresses = selectedCustomer?.savedAddresses || [];
     const defaultIdx = savedAddresses.findIndex(a => a.isDefault);
@@ -46,6 +54,60 @@ const CustomerShippingPanel = ({
             const formatted = [addr.address1, addr.address2, addr.city, addr.country]
                 .filter(Boolean).join(', ');
             onShippingChange(formatted);
+        }
+    };
+
+    const resetNewAddress = () => setNewAddress({
+        name: '', address1: '', city: '', country: 'UAE', contactName: '', contactPhone: '',
+    });
+
+    const handleSaveNewAddress = async () => {
+        if (!selectedCustomer?.id) {
+            toast.error('Select a saved customer first');
+            return;
+        }
+        if (!newAddress.name.trim() || !newAddress.address1.trim()) {
+            toast.error('Address label and address are required');
+            return;
+        }
+
+        setIsSavingAddress(true);
+        try {
+            const updatedAddresses = await addCustomerSavedAddress(selectedCustomer.id, {
+                name: newAddress.name.trim(),
+                address1: newAddress.address1.trim(),
+                city: newAddress.city.trim(),
+                country: newAddress.country.trim(),
+                // Stash the contact details on address2 since the entity has no
+                // dedicated contact fields — keeps a single round-trip.
+                address2: [newAddress.contactName, newAddress.contactPhone]
+                    .filter(v => v && v.trim())
+                    .join(' · '),
+            });
+
+            // Lift updated savedAddresses back to the parent so subsequent picks
+            // see the new entry without a full customer refetch.
+            onCustomerUpdated?.({ ...selectedCustomer, savedAddresses: updatedAddresses });
+
+            // Auto-select the newly added address (last one in the list).
+            const newIdx = updatedAddresses.length - 1;
+            setSelectedAddressIdx(newIdx);
+            const added = updatedAddresses[newIdx];
+            if (added && onShippingChange) {
+                onShippingChange(
+                    [added.address1, added.address2, added.city, added.country]
+                        .filter(Boolean).join(', ')
+                );
+            }
+
+            toast.success('Shipping address added');
+            resetNewAddress();
+            setShowAddAddressModal(false);
+        } catch (err) {
+            console.error(err);
+            toast.error('Failed to save shipping address');
+        } finally {
+            setIsSavingAddress(false);
         }
     };
 
@@ -224,11 +286,12 @@ const CustomerShippingPanel = ({
                     </div>
                 </div>
 
-                {/* Saved address picker — full width, only when addresses exist */}
-                {savedAddresses.length > 0 && (
+                {/* Saved address picker — visible whenever a saved customer is selected,
+                    so "+ Add New Address" is reachable even when no addresses exist yet. */}
+                {selectedCustomer?.id && (
                     <div className="relative">
                         <label className="text-[9px] font-semibold text-slate-400 uppercase tracking-wide mb-1 block">
-                            Saved Address
+                            Shipping Address
                         </label>
                         <button
                             disabled={isReadOnly}
@@ -242,18 +305,20 @@ const CustomerShippingPanel = ({
                             <MapPin size={11} className="text-blue-400 shrink-0" />
                             <span className="flex-1 text-left truncate">
                                 {selectedAddressIdx !== null && savedAddresses[selectedAddressIdx]
-                                    ? `${savedAddresses[selectedAddressIdx].name}${savedAddresses[selectedAddressIdx].isDefault ? ' ★' : ''}`
-                                    : 'Pick a saved address…'}
+                                    ? `${savedAddresses[selectedAddressIdx].name}${savedAddresses[selectedAddressIdx].isDefault ? ' (Default)' : ''}`
+                                    : savedAddresses.length > 0
+                                        ? 'Pick a saved address…'
+                                        : 'No saved addresses — add one'}
                             </span>
                             <ChevronDown size={10} className="text-slate-400 shrink-0" />
                         </button>
                         {showAddressPicker && !isReadOnly && (
-                            <div className="absolute top-full left-0 w-full bg-white border border-slate-200 rounded-lg shadow-xl z-30 mt-1 overflow-hidden max-h-40 overflow-y-auto">
+                            <div className="absolute top-full left-0 w-full bg-white border border-slate-200 rounded-lg shadow-xl z-30 mt-1 overflow-hidden max-h-56 overflow-y-auto">
                                 {savedAddresses.map((addr, i) => (
                                     <div
                                         key={i}
                                         onClick={() => handleAddressSelect(i)}
-                                        className={`px-3 py-2 text-xs cursor-pointer flex items-start gap-2 hover:bg-slate-50 border-b border-slate-50 last:border-0
+                                        className={`px-3 py-2 text-xs cursor-pointer flex items-start gap-2 hover:bg-slate-50 border-b border-slate-50
                                             ${selectedAddressIdx === i ? 'bg-yellow-50' : ''}`}
                                     >
                                         <MapPin size={11} className="text-yellow-500 mt-0.5 shrink-0" />
@@ -262,19 +327,31 @@ const CustomerShippingPanel = ({
                                                 {addr.name}
                                                 {addr.isDefault && <Star size={9} className="text-yellow-400 fill-yellow-400 shrink-0" />}
                                             </div>
-                                            <div className="text-slate-500 truncate">{addr.city}{addr.country ? `, ${addr.country}` : ''}</div>
+                                            <div className="text-slate-500 truncate">
+                                                {[addr.address1, addr.city, addr.country].filter(Boolean).join(', ')}
+                                            </div>
                                         </div>
                                     </div>
                                 ))}
+                                <button
+                                    type="button"
+                                    onClick={() => {
+                                        setShowAddressPicker(false);
+                                        setShowAddAddressModal(true);
+                                    }}
+                                    className="w-full px-3 py-2.5 text-xs flex items-center justify-center gap-1.5 text-yellow-700 hover:bg-yellow-50 border-t border-dashed border-slate-200 font-semibold"
+                                >
+                                    <Plus size={12} /> Add New Address
+                                </button>
                             </div>
                         )}
                     </div>
                 )}
 
-                {/* Shipping address textarea */}
+                {/* Shipping address textarea — full editable text once an address is picked or typed */}
                 <div>
                     <label className="text-[9px] font-semibold text-slate-400 uppercase tracking-wide mb-1 block">
-                        Shipping Address
+                        Address Details
                     </label>
                     <textarea
                         rows={2}
@@ -289,6 +366,114 @@ const CustomerShippingPanel = ({
                     />
                 </div>
             </div>
+
+            {/* QA-028: Add Shipping Address modal — mirrors the design file */}
+            {showAddAddressModal && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={() => !isSavingAddress && setShowAddAddressModal(false)}>
+                    <div className="bg-white rounded-xl shadow-2xl w-full max-w-md p-6" onClick={e => e.stopPropagation()}>
+                        <div className="flex items-start justify-between mb-4">
+                            <div>
+                                <h3 className="text-base font-bold text-slate-800">Add Shipping Address</h3>
+                                <p className="text-xs text-slate-500 mt-0.5">
+                                    Add a new shipping address for {selectedCustomer?.name || 'this customer'}
+                                </p>
+                            </div>
+                            <button
+                                type="button"
+                                onClick={() => !isSavingAddress && setShowAddAddressModal(false)}
+                                className="p-1 rounded hover:bg-slate-100 text-slate-400"
+                            >
+                                <X size={16} />
+                            </button>
+                        </div>
+
+                        <div className="space-y-3">
+                            <div>
+                                <label className="text-xs font-semibold text-slate-600 mb-1 block">Address Label <span className="text-red-500">*</span></label>
+                                <input
+                                    type="text"
+                                    value={newAddress.name}
+                                    onChange={e => setNewAddress(p => ({ ...p, name: e.target.value }))}
+                                    placeholder="e.g., Main Warehouse, Head Office, etc."
+                                    className="w-full px-2.5 py-2 border border-slate-200 rounded-lg text-xs text-slate-700 focus:outline-none focus:border-yellow-400"
+                                />
+                            </div>
+                            <div>
+                                <label className="text-xs font-semibold text-slate-600 mb-1 block">Address <span className="text-red-500">*</span></label>
+                                <textarea
+                                    rows={3}
+                                    value={newAddress.address1}
+                                    onChange={e => setNewAddress(p => ({ ...p, address1: e.target.value }))}
+                                    placeholder="Enter full address..."
+                                    className="w-full px-2.5 py-2 border border-slate-200 rounded-lg text-xs text-slate-700 resize-none focus:outline-none focus:border-yellow-400"
+                                />
+                            </div>
+                            <div className="grid grid-cols-2 gap-3">
+                                <div>
+                                    <label className="text-xs font-semibold text-slate-600 mb-1 block">City</label>
+                                    <input
+                                        type="text"
+                                        value={newAddress.city}
+                                        onChange={e => setNewAddress(p => ({ ...p, city: e.target.value }))}
+                                        placeholder="e.g., Dubai"
+                                        className="w-full px-2.5 py-2 border border-slate-200 rounded-lg text-xs text-slate-700 focus:outline-none focus:border-yellow-400"
+                                    />
+                                </div>
+                                <div>
+                                    <label className="text-xs font-semibold text-slate-600 mb-1 block">Country</label>
+                                    <input
+                                        type="text"
+                                        value={newAddress.country}
+                                        onChange={e => setNewAddress(p => ({ ...p, country: e.target.value }))}
+                                        className="w-full px-2.5 py-2 border border-slate-200 rounded-lg text-xs text-slate-700 focus:outline-none focus:border-yellow-400"
+                                    />
+                                </div>
+                            </div>
+                            <div className="grid grid-cols-2 gap-3">
+                                <div>
+                                    <label className="text-xs font-semibold text-slate-600 mb-1 block">Contact Person</label>
+                                    <input
+                                        type="text"
+                                        value={newAddress.contactName}
+                                        onChange={e => setNewAddress(p => ({ ...p, contactName: e.target.value }))}
+                                        placeholder="Contact name"
+                                        className="w-full px-2.5 py-2 border border-slate-200 rounded-lg text-xs text-slate-700 focus:outline-none focus:border-yellow-400"
+                                    />
+                                </div>
+                                <div>
+                                    <label className="text-xs font-semibold text-slate-600 mb-1 block">Contact Phone</label>
+                                    <input
+                                        type="text"
+                                        value={newAddress.contactPhone}
+                                        onChange={e => setNewAddress(p => ({ ...p, contactPhone: e.target.value }))}
+                                        placeholder="+971 XX XXX XXXX"
+                                        className="w-full px-2.5 py-2 border border-slate-200 rounded-lg text-xs text-slate-700 focus:outline-none focus:border-yellow-400"
+                                    />
+                                </div>
+                            </div>
+                        </div>
+
+                        <div className="flex justify-end gap-2 mt-5">
+                            <button
+                                type="button"
+                                onClick={() => { resetNewAddress(); setShowAddAddressModal(false); }}
+                                disabled={isSavingAddress}
+                                className="px-4 py-2 text-xs font-semibold text-slate-700 border border-slate-200 rounded-lg hover:bg-slate-50 disabled:opacity-50"
+                            >
+                                Cancel
+                            </button>
+                            <button
+                                type="button"
+                                onClick={handleSaveNewAddress}
+                                disabled={isSavingAddress}
+                                className="px-4 py-2 text-xs font-bold text-slate-900 bg-yellow-400 rounded-lg hover:bg-yellow-500 disabled:opacity-60 flex items-center gap-1.5"
+                            >
+                                <Plus size={12} /> {isSavingAddress ? 'Saving…' : 'Add Address'}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
         </div>
     );
 };

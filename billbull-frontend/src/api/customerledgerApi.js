@@ -34,6 +34,13 @@ export const deleteCustomer = async (id) => {
   await api.delete(`${BASE_URL}/${id}`);
 };
 
+// ✅ QA-028: append a new shipping address to an existing customer.
+// Returns the full updated list of saved addresses for that customer.
+export const addCustomerSavedAddress = async (customerId, address) => {
+  const res = await api.post(`${BASE_URL}/${customerId}/saved-addresses`, address);
+  return res.data;
+};
+
 // ✅ GET opening invoices for a customer by customer code (QA-002)
 export const getOpeningInvoicesByCustomerCode = async (customerCode) => {
   const res = await api.get(`${BASE_URL}/by-code/${encodeURIComponent(customerCode)}/opening-invoices`);

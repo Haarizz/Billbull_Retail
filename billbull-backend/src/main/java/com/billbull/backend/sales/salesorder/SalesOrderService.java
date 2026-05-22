@@ -508,6 +508,19 @@ public class SalesOrderService {
         if (item.getDetailedDesc() == null && product.getDetailedDesc() != null) {
             item.setDetailedDesc(product.getDetailedDesc());
         }
+        // QA-029: hydrate remaining identity fields for print templates.
+        if (item.getProductName() == null) {
+            item.setProductName(product.getName());
+        }
+        if (item.getSku() == null) {
+            item.setSku(product.getSku());
+        }
+        if (item.getShortDesc() == null) {
+            item.setShortDesc(product.getShortDesc());
+        }
+        if (item.getLocalName() == null) {
+            item.setLocalName(product.getLocalName());
+        }
 
         // Hydrate price: packing-level price first, then the product's master
         // price selected by the configured Sales Item Price Policy

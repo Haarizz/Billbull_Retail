@@ -67,6 +67,13 @@ public class SalesInvoiceItem {
     private String brandName;
     @Transient
     private String detailedDesc;
+    // QA-029: identity fields hydrated from Product master for print templates.
+    // sku, localName, itemName already persisted above — only need productName
+    // alias (mirrors itemName) and shortDesc.
+    @Transient
+    private String productName;
+    @Transient
+    private String shortDesc;
 
     // Cumulative revenue and COGS recognized via Delivery Notes for this item.
     // Used to track partial delivery recognition and prevent over-posting.
@@ -324,6 +331,11 @@ public class SalesInvoiceItem {
     public void setBrandName(String brandName) { this.brandName = brandName; }
     public String getDetailedDesc() { return detailedDesc; }
     public void setDetailedDesc(String detailedDesc) { this.detailedDesc = detailedDesc; }
+
+    public String getProductName() { return productName != null ? productName : itemName; }
+    public void setProductName(String productName) { this.productName = productName; }
+    public String getShortDesc() { return shortDesc; }
+    public void setShortDesc(String shortDesc) { this.shortDesc = shortDesc; }
 
     public BigDecimal getRecognizedRevenue() {
         return recognizedRevenue != null ? recognizedRevenue : BigDecimal.ZERO;

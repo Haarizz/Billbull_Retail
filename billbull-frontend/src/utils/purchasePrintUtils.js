@@ -302,6 +302,7 @@ export const buildLpoPrintData = (lpo, vendor, companyProfile) => {
             code: item.itemCode || "",
             sku: item.sku || "",
             localName: item.localName || "",
+            shortDesc: item.shortDesc || "",
             detailedDesc: item.detailedDesc || "",
             name: item.itemName || "",
             desc: item.remarks || "",
@@ -400,10 +401,13 @@ export const buildGrnPrintData = (grn, vendor, companyProfile) => {
             ),
             sku: item.sku || "",
             localName: item.localName || "",
+            shortDesc: item.shortDesc || "",
             detailedDesc: item.detailedDesc || "",
             lpoQty: toNumber(item.lpoQty ?? item.lpo_qty ?? 0),
             received: toNumber(item.received ?? item.receivedQty ?? item.received_qty ?? qty),
             accepted: toNumber(item.accepted ?? item.acceptedQty ?? item.accepted_qty ?? qty),
+            receivedBy: item.receivedBy || grn?.receivedBy || '',
+            checkedBy: item.checkedBy || grn?.checkedBy || '',
         };
     });
 
@@ -499,6 +503,7 @@ export const buildPurchaseInvoicePrintData = (invoice, vendor, companyProfile) =
             ),
             sku: item.sku || "",
             localName: item.localName || "",
+            shortDesc: item.shortDesc || "",
             detailedDesc: item.detailedDesc || "",
         };
     });
