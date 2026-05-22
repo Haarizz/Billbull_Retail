@@ -314,6 +314,7 @@ const SalesInvoice = () => {
         desc: i.description || i.desc || '',
         sku: i.sku || '',
         brand: i.brand || i.brandName || '',
+        shortDesc: i.shortDesc || '',
         detailedDesc: i.detailedDesc || '',
         localName: i.localName || '',
         unit: i.unit || 'PCS',
@@ -1533,9 +1534,10 @@ const SalesInvoice = () => {
             barcode: product.barcode || '',
             image: product.primaryImage || product.image || product.thumbnailUrl || product.imageUrl || '',
             name: product.name || '',
-            desc: product.shortDesc || product.description || '',
+            desc: product.name || product.description || '',
             sku: product.sku || '',
             brand: product.brandName || product.brand || '',
+            shortDesc: product.shortDesc || '',
             detailedDesc: product.detailedDesc || '',
             localName: product.localName || '',
             unit: defaultUnit,
@@ -1555,7 +1557,7 @@ const SalesInvoice = () => {
             net: 0,
             cost: cost,
             gp: 0,
-            remarks: product.description || '',
+            remarks: product.detailedDesc || product.description || '',
             warehouseId: defaultBranch?.defaultWarehouseId || (warehousesList.length > 0 ? warehousesList[0].id : ''),
             // QA-001: SERVICE products can never be batch-controlled (no inventory).
             productType: (product.productType || 'STOCK').toUpperCase(),
@@ -1593,7 +1595,9 @@ const SalesInvoice = () => {
             barcode: product.barcode || '',
             image: product.primaryImage || product.image || '',
             name: product.name || '',
-            desc: product.shortDesc || product.description || '',
+            shortDesc: product.shortDesc || '',
+            detailedDesc: product.detailedDesc || '',
+            desc: product.name || product.description || '',
             unit: defaultUnit,
             qty,
             price,
@@ -1611,7 +1615,7 @@ const SalesInvoice = () => {
             net: 0,
             cost,
             gp: 0,
-            remarks: product.description || '',
+            remarks: product.detailedDesc || product.description || '',
             warehouseId: defaultBranch?.defaultWarehouseId || (warehousesList.length > 0 ? warehousesList[0].id : ''),
             batchControlled: Boolean(product.batchControlled ?? product.isBatch ?? product.batch),
             fefoEnabled: product.fefoEnabled != null ? Boolean(product.fefoEnabled) : true,
@@ -1705,6 +1709,7 @@ const SalesInvoice = () => {
                     description: i.desc || '',
                     sku: i.sku || '',
                     brand: i.brand || i.brandName || '',
+                    shortDesc: i.shortDesc || '',
                     detailedDesc: i.detailedDesc || '',
                     localName: i.localName || '',
                     unit: i.unit,
@@ -2155,6 +2160,7 @@ const SalesInvoice = () => {
                         desc: i.description || i.shortDescription || i.desc || '',
                         sku: i.sku || i.productSku || '',
                         brand: i.brand || i.brandName || '',
+                        shortDesc: i.shortDesc || '',
                         detailedDesc: i.detailedDesc || '',
                     localName: i.localName || i.productLocalName || '',
                         barcode: i.barcode || i.itemBarcode || '',
@@ -2843,6 +2849,7 @@ const SalesInvoice = () => {
                                     <CustomerShippingPanel
                                         selectedCustomer={selectedCustomer}
                                         onOpenCustomerSearch={() => { if (!isGeneratedFromDN && !isReadOnlyInvoice) setIsCustomerSearchOpen(true); }}
+                                        onCustomerUpdated={setSelectedCustomer}
                                         shippingAddress={shippingAddress}
                                         onShippingChange={setShippingAddress}
                                         isReadOnly={isReadOnlyInvoice}

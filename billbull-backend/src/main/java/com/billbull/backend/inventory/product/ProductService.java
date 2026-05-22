@@ -631,6 +631,8 @@ public class ProductService {
             item.put("name", p.getName());
             item.put("sku", p.getSku());
             item.put("description", p.getShortDesc());
+            item.put("shortDesc", p.getShortDesc());
+            item.put("detailedDesc", p.getDetailedDesc());
             item.put("status", p.getStatus());
             item.put("localName", p.getLocalName());
             item.put("brandId", p.getBrand() != null ? p.getBrand().getId() : null);

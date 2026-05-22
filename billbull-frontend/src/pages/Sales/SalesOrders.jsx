@@ -566,6 +566,11 @@ const SalesOrders = () => {
       soItemId: item.soItemId || null,
       code: item.code || item.itemCode || '',
       name: item.name || item.itemName || item.productName || '',
+      brand: item.brand || item.brandName || '',
+      sku: item.sku || item.productSku || '',
+      shortDesc: item.shortDesc || '',
+      detailedDesc: item.detailedDesc || '',
+      localName: item.localName || item.productLocalName || '',
       barcode: item.barcode || item.itemBarcode || '',
       image: item.primaryImage || item.image || item.thumbnailUrl || item.imageUrl || '',
       desc: item.desc || item.description || '',
@@ -628,11 +633,12 @@ const SalesOrders = () => {
       code: product.code,
       name: product.name || '',
       brand: product.brandName || product.brand || '',
+      shortDesc: product.shortDesc || '',
       detailedDesc: product.detailedDesc || '',
       barcode: product.barcode || '',
       image: product.primaryImage || product.image || product.thumbnailUrl || product.imageUrl || '',
-      desc: product.description || product.name,
-      remarks: product.description || product.remarks || '',
+      desc: product.name || product.description || '',
+      remarks: product.detailedDesc || product.description || product.remarks || '',
       unit: defaultUnit,
       qty: 1,
       price: price,
@@ -677,9 +683,11 @@ const SalesOrders = () => {
       id: Date.now() + Math.random(),
       code: product.code,
       name: product.name || '',
+      shortDesc: product.shortDesc || '',
+      detailedDesc: product.detailedDesc || '',
       barcode: product.barcode || '',
       image: product.primaryImage || product.image || '',
-      desc: product.description || product.name,
+      desc: product.name || product.description || '',
       unit: defaultUnit,
       qty,
       price,
@@ -694,7 +702,7 @@ const SalesOrders = () => {
       tax,
       taxAmt: 0,
       total: 0,
-      remarks: product.description || '',
+      remarks: product.detailedDesc || product.description || '',
       isProductSelected: true,
       // QA-001: SERVICE products never have batches.
       productType: (product.productType || 'STOCK').toUpperCase(),
@@ -911,12 +919,13 @@ const SalesOrders = () => {
           },
           items: items.filter(i => i.code || i.desc).map(i => ({
             code: i.code,
-            name: i.name || '',
+            name: i.name || i.productName || i.itemName || '',
             desc: i.desc || '',
-            sku: i.sku || '',
+            sku: i.sku || i.productSku || '',
             brand: i.brand || i.brandName || '',
+            shortDesc: i.shortDesc || '',
             detailedDesc: i.detailedDesc || '',
-            localName: i.localName || '',
+            localName: i.localName || i.productLocalName || '',
             barcode: i.barcode || '',
             salesPerson: '',
             location: '',
@@ -1686,6 +1695,7 @@ const SalesOrders = () => {
             <CustomerShippingPanel
               selectedCustomer={selectedCustomer}
               onOpenCustomerSearch={() => { if (!hasLinkedDocument && !isLocked) setIsCustomerSearchOpen(true); }}
+              onCustomerUpdated={setSelectedCustomer}
               shippingAddress={shippingAddress}
               onShippingChange={setShippingAddress}
               deliveryType={deliveryType}

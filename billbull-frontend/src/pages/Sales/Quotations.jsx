@@ -1087,10 +1087,11 @@ const Quotations = () => {
             code: product.code,
             name: product.name || '',
             brand: product.brandName || product.brand || '',
+            shortDesc: product.shortDesc || '',
             detailedDesc: product.detailedDesc || '',
             barcode: product.barcode || '',
             image: product.primaryImage || product.image || '', // ✅ Set Image URL
-            desc: product.description || product.name,
+            desc: product.name || product.description || '',
             unit: defaultUnit,
             qty: 1,
             price: price,
@@ -1105,7 +1106,7 @@ const Quotations = () => {
             tax: tax,
             taxAmt: 0,
             total: 0,
-            remarks: product.description || '',
+            remarks: product.detailedDesc || product.description || '',
             // QA-001: carry product type onto the row so stock checks / availability
             // panel can short-circuit for SERVICE items.
             productType: (product.productType || 'STOCK').toUpperCase(),
@@ -1168,10 +1169,11 @@ const Quotations = () => {
             code: product.code,
             name: product.name || '',
             brand: product.brandName || product.brand || '',
+            shortDesc: product.shortDesc || '',
             detailedDesc: product.detailedDesc || '',
             barcode: product.barcode || '',
             image: product.primaryImage || product.image || '',
-            desc: product.description || product.name,
+            desc: product.name || product.description || '',
             unit: defaultUnit,
             qty,
             price,
@@ -1186,7 +1188,7 @@ const Quotations = () => {
             tax,
             taxAmt: 0,
             total: 0,
-            remarks: product.description || '',
+            remarks: product.detailedDesc || product.description || '',
             productType: (product.productType || 'STOCK').toUpperCase(),
             isProductSelected: true,
         };
@@ -1918,6 +1920,7 @@ const Quotations = () => {
                     remarks: i.remarks || '',
                     sku: i.sku || i.productSku || '',
                     brand: i.brand || i.brandName || '',
+                    shortDesc: i.shortDesc || '',
                     detailedDesc: i.detailedDesc || '',
                     localName: i.localName || i.productLocalName || '',
                     barcode: i.barcode || '',
@@ -2130,6 +2133,7 @@ const Quotations = () => {
                         remarks: i.remarks || '',
                         sku: i.sku || i.productSku || '',
                         brand: i.brand || i.brandName || '',
+                    shortDesc: i.shortDesc || '',
                     detailedDesc: i.detailedDesc || '',
                     localName: i.localName || i.productLocalName || '',
                         barcode: i.barcode || '',
@@ -2923,6 +2927,10 @@ const Quotations = () => {
                                 <CustomerShippingPanel
                                     selectedCustomer={activeCustomerData}
                                     onOpenCustomerSearch={() => setIsCustomerSearchOpen(true)}
+                                    onCustomerUpdated={(updated) => {
+                                        if (!updated?.code) return;
+                                        setCustomersList(prev => prev.map(c => c.code === updated.code ? { ...c, ...updated } : c));
+                                    }}
                                     shippingAddress={shippingAddress}
                                     onShippingChange={setShippingAddress}
                                     deliveryType={deliveryType}

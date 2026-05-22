@@ -75,6 +75,19 @@ public class CustomerController {
     }
 
     // =========================
+    // QA-028: ADD A SHIPPING ADDRESS TO AN EXISTING CUSTOMER
+    // Used by the inline "+ Add New Address" picker on every sales transaction
+    // screen so users don't have to bounce out to the Customer Registry.
+    // =========================
+    @PostMapping("/{customerId}/saved-addresses")
+    @PreAuthorize("hasAnyRole('ADMIN','SALES')")
+    public ResponseEntity<List<SavedAddress>> addSavedAddress(
+            @PathVariable Long customerId,
+            @RequestBody SavedAddress address) {
+        return ResponseEntity.ok(service.addSavedAddress(customerId, address));
+    }
+
+    // =========================
     // DELETE CUSTOMER
     // =========================
     @DeleteMapping("/{id}")

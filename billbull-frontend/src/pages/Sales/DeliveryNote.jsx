@@ -792,6 +792,9 @@ const DeliveryNote = () => {
             name: item.name || item.itemName || item.productName || '',
             barcode: item.barcode || item.itemBarcode || '',
             brand: item.brand || item.brandName || '',
+            sku: item.sku || item.productSku || '',
+            localName: item.localName || item.productLocalName || '',
+            shortDesc: item.shortDesc || '',
             detailedDesc: item.detailedDesc || '',
             image: item.primaryImage || item.image || item.thumbnailUrl || item.imageUrl || '',
             desc: item.desc || item.description || '',
@@ -1306,9 +1309,11 @@ const DeliveryNote = () => {
             id: Date.now() + Math.random(),
             code: product.code || product.itemCode || '',
             barcode: product.barcode || '',
+            name: product.name || '',
+            shortDesc: product.shortDesc || '',
             detailedDesc: product.detailedDesc || '',
             image: product.primaryImage || product.image || product.thumbnailUrl || product.imageUrl || '',
-            desc: product.description || product.name,
+            desc: product.name || product.description || '',
             unit: product.unitName || product.unit || 'PCS',
             orderedQty: 1,
             prevDelivered: 0,
@@ -1321,7 +1326,7 @@ const DeliveryNote = () => {
             disc: 0,
             taxAmt: 0,
             margin: 0,
-            remarks: product.description || '',
+            remarks: product.detailedDesc || product.description || '',
             stock: warehouseStockMap[product.code] || 0
         });
 
@@ -1341,7 +1346,10 @@ const DeliveryNote = () => {
             code: product.code || product.itemCode || '',
             barcode: product.barcode || '',
             image: product.primaryImage || product.image || product.thumbnailUrl || product.imageUrl || '',
-            desc: product.description || product.name,
+            name: product.name || '',
+            shortDesc: product.shortDesc || '',
+            detailedDesc: product.detailedDesc || '',
+            desc: product.name || product.description || '',
             unit: product.unitName || product.unit || 'PCS',
             orderedQty: qty,
             prevDelivered: 0,
@@ -1354,7 +1362,7 @@ const DeliveryNote = () => {
             disc,
             taxAmt: 0,
             margin: 0,
-            remarks: product.description || '',
+            remarks: product.detailedDesc || product.description || '',
             stock: warehouseStockMap[product.code] || 0
         });
 
@@ -1591,10 +1599,6 @@ const DeliveryNote = () => {
             if (defaultTemplate) {
                 const fullCustomer = customersList.find(c => c.code === selectedCustomer?.code);
 
-                const subTotal = items.reduce((sum, i) => sum + (Number(i.taxableAmount) || 0), 0);
-                const totalTax = items.reduce((sum, i) => sum + (Number(i.taxAmt) || 0), 0);
-                const grandTotal = items.reduce((sum, i) => sum + (Number(i.total) || 0), 0);
-
                 const printData = {
                     title: 'DELIVERY NOTE',
                     docNo: dnNumber,
@@ -1610,6 +1614,7 @@ const DeliveryNote = () => {
                         desc: (i.remarks || i.desc || '') + (i.boxes ? ` (${i.boxes} Boxes)` : ''),
                         sku: i.sku || '',
                         brand: i.brand || i.brandName || '',
+                        shortDesc: i.shortDesc || '',
                         detailedDesc: i.detailedDesc || '',
                         localName: i.localName || '',
                         barcode: i.barcode || '',
@@ -1624,11 +1629,9 @@ const DeliveryNote = () => {
                         image: i.image ? getImageUrl(i.image) : ''
                     })),
                     totals: {
-                        subTotal,
-                        tax: totalTax,
-                        grandTotal,
                         currency: company?.currencySymbol || company?.currency || 'AED'
                     },
+                    hideTotalsTable: true,
                     meta: {
                         status: status,
                         reference: `SO: ${linkedSO || '-'} | PI: ${linkedPI || '-'} | SI: ${linkedSI || '-'}`,
@@ -1686,6 +1689,8 @@ const DeliveryNote = () => {
                     desc: (i.remarks || i.desc || '') + (i.boxes ? ` (${i.boxes} Boxes)` : ''),
                     sku: i.sku || '',
                     brand: i.brand || i.brandName || '',
+                    shortDesc: i.shortDesc || '',
+                    detailedDesc: i.detailedDesc || '',
                     localName: i.localName || '',
                     barcode: i.barcode || '',
                     location: warehouse || '',
@@ -2150,6 +2155,7 @@ const DeliveryNote = () => {
                                     <CustomerShippingPanel
                                         selectedCustomer={selectedCustomer}
                                         onOpenCustomerSearch={() => { if (!isLockedForEdit) setIsCustomerSearchOpen(true); }}
+                                        onCustomerUpdated={setSelectedCustomer}
                                         shippingAddress={shippingAddress}
                                         onShippingChange={setShippingAddress}
                                         isReadOnly={isLockedForEdit}

@@ -74,6 +74,17 @@ public class QuotationItem {
     private String brandName;
     @Transient
     private String detailedDesc;
+    // QA-029: transient identity fields hydrated at read-time from the Product
+    // master so print templates can render Product Name, SKU, Short Desc, and
+    // Arabic Name without persisting duplicate columns on every line.
+    @Transient
+    private String productName;
+    @Transient
+    private String sku;
+    @Transient
+    private String shortDesc;
+    @Transient
+    private String localName;
 
     public String getProductType() { return productType; }
     public void setProductType(String productType) { this.productType = productType; }
@@ -91,6 +102,15 @@ public class QuotationItem {
     public void setBrandName(String brandName) { this.brandName = brandName; }
     public String getDetailedDesc() { return detailedDesc; }
     public void setDetailedDesc(String detailedDesc) { this.detailedDesc = detailedDesc; }
+
+    public String getProductName() { return productName; }
+    public void setProductName(String productName) { this.productName = productName; }
+    public String getSku() { return sku; }
+    public void setSku(String sku) { this.sku = sku; }
+    public String getShortDesc() { return shortDesc; }
+    public void setShortDesc(String shortDesc) { this.shortDesc = shortDesc; }
+    public String getLocalName() { return localName; }
+    public void setLocalName(String localName) { this.localName = localName; }
 
     public QuotationItem() {
     }

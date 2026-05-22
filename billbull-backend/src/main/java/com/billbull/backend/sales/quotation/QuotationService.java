@@ -294,6 +294,21 @@ public class QuotationService {
                 if (item.getDetailedDesc() == null && product.getDetailedDesc() != null) {
                     item.setDetailedDesc(product.getDetailedDesc());
                 }
+                // QA-029: hydrate the rest of the product identity so the
+                // shared print template can render name / SKU / short desc /
+                // arabic name without an extra fetch on the client side.
+                if (item.getProductName() == null) {
+                    item.setProductName(product.getName());
+                }
+                if (item.getSku() == null) {
+                    item.setSku(product.getSku());
+                }
+                if (item.getShortDesc() == null) {
+                    item.setShortDesc(product.getShortDesc());
+                }
+                if (item.getLocalName() == null) {
+                    item.setLocalName(product.getLocalName());
+                }
 
                 completeMissingLineAmounts(item);
             });

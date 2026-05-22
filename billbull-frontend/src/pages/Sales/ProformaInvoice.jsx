@@ -435,6 +435,8 @@ const ProformaInvoice = () => {
             name: i.name || '',
             desc: i.desc || '',
             sku: i.sku || '',
+            shortDesc: i.shortDesc || '',
+            detailedDesc: i.detailedDesc || '',
             localName: i.localName || '',
             barcode: i.barcode || '',
             location: defaultBranchName || '',
@@ -529,6 +531,11 @@ const ProformaInvoice = () => {
       id: item.id || fallbackId,
       code: item.code || item.itemCode || '',
       name: item.name || item.itemName || item.productName || '',
+      brand: item.brand || item.brandName || '',
+      sku: item.sku || item.productSku || '',
+      localName: item.localName || item.productLocalName || '',
+      shortDesc: item.shortDesc || '',
+      detailedDesc: item.detailedDesc || '',
       barcode: item.barcode || item.itemBarcode || '',
       image: item.primaryImage || item.image || item.thumbnailUrl || item.imageUrl || '',
       desc: item.desc || item.description || '',
@@ -577,10 +584,12 @@ const ProformaInvoice = () => {
       id: Date.now() + Math.random(),
       code: product.code,
       name: product.name || '',
+      shortDesc: product.shortDesc || '',
+      detailedDesc: product.detailedDesc || '',
       barcode: product.barcode || '',
       image: product.primaryImage || product.image || product.thumbnailUrl || product.imageUrl || '',
-      desc: product.description || product.name,
-      remarks: product.description || product.remarks || '',
+      desc: product.name || product.description || '',
+      remarks: product.detailedDesc || product.description || product.remarks || '',
       unit: defaultUnit,
       qty: 1,
       price,
@@ -614,10 +623,12 @@ const ProformaInvoice = () => {
       id: Date.now() + Math.random(),
       code: product.code,
       name: product.name || '',
+      shortDesc: product.shortDesc || '',
+      detailedDesc: product.detailedDesc || '',
       barcode: product.barcode || '',
       image: product.primaryImage || product.image || product.thumbnailUrl || product.imageUrl || '',
-      desc: product.description || product.name,
-      remarks: product.description || product.remarks || '',
+      desc: product.name || product.description || '',
+      remarks: product.detailedDesc || product.description || product.remarks || '',
       unit: defaultUnit,
       qty,
       price,
@@ -1497,6 +1508,7 @@ const ProformaInvoice = () => {
                 <CustomerShippingPanel
                     selectedCustomer={selectedCustomer}
                     onOpenCustomerSearch={() => setIsCustomerSearchOpen(true)}
+                    onCustomerUpdated={setSelectedCustomer}
                     shippingAddress={shippingAddress}
                     onShippingChange={setShippingAddress}
                     isReadOnly={isReadOnly}

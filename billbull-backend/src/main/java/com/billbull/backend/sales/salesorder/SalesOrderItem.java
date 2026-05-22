@@ -72,6 +72,16 @@ public class SalesOrderItem {
     private String brandName;
     @Transient
     private String detailedDesc;
+    // QA-029: identity fields hydrated from Product master at read-time so the
+    // shared print template can render Name / SKU / Short Desc / Arabic Name.
+    @Transient
+    private String productName;
+    @Transient
+    private String sku;
+    @Transient
+    private String shortDesc;
+    @Transient
+    private String localName;
 
     // ✅ LAZY + BACK REFERENCE
     @ManyToOne(fetch = FetchType.LAZY)
@@ -302,6 +312,15 @@ public class SalesOrderItem {
     public void setBrandName(String brandName) { this.brandName = brandName; }
     public String getDetailedDesc() { return detailedDesc; }
     public void setDetailedDesc(String detailedDesc) { this.detailedDesc = detailedDesc; }
+
+    public String getProductName() { return productName; }
+    public void setProductName(String productName) { this.productName = productName; }
+    public String getSku() { return sku; }
+    public void setSku(String sku) { this.sku = sku; }
+    public String getShortDesc() { return shortDesc; }
+    public void setShortDesc(String shortDesc) { this.shortDesc = shortDesc; }
+    public String getLocalName() { return localName; }
+    public void setLocalName(String localName) { this.localName = localName; }
 
     public String getRemarks() {
         return remarks;
