@@ -1,7 +1,9 @@
 package com.billbull.backend.sales.quotation;
 
 import java.io.IOException;
+import java.io.UnsupportedEncodingException;
 import java.util.List;
+import java.util.Map;
 
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
@@ -31,13 +33,16 @@ public class QuotationController {
     private final QuotationService service;
     private final AuditLogService auditLogService;
     private final ModulePermissionService permissionService;
+    private final QuotationEmailService emailService;
 
-    public QuotationController(QuotationService service, 
+    public QuotationController(QuotationService service,
                                AuditLogService auditLogService,
-                               ModulePermissionService permissionService) {
+                               ModulePermissionService permissionService,
+                               QuotationEmailService emailService) {
         this.service = service;
         this.auditLogService = auditLogService;
         this.permissionService = permissionService;
+        this.emailService = emailService;
     }
 
     // ---------------- PRODUCTS ----------------
@@ -144,6 +149,31 @@ public class QuotationController {
         } catch (Exception e) {
             return ResponseEntity.internalServerError()
                     .body("Failed to create revision");
+        }
+    }
+
+    // ---------------- SEND EMAIL ----------------
+    @PostMapping("/{id}/send-email")
+    public ResponseEntity<?> sendEmail(
+            @PathVariable Long id,
+            @RequestBody(required = false) Map<String, String> body) {
+
+        permissionService.requireCan(MODULE, "view");
+
+        String toEmail = body != null ? body.get("toEmail") : null;
+        String subject = body != null ? body.get("subject") : null;
+
+        try {
+            Quotation quotation = service.getQuotationById(id);
+            emailService.sendQuotationEmail(quotation, toEmail, subject);
+            return ResponseEntity.ok(Map.of("message", "Email sent successfully to " +
+                    (toEmail != null && !toEmail.isBlank() ? toEmail : quotation.getCustomerEmail())));
+
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body(e.getMessage());
+        } catch (UnsupportedEncodingException | jakarta.mail.MessagingException e) {
+            return ResponseEntity.internalServerError()
+                    .body("Failed to send email: " + e.getMessage());
         }
     }
 }

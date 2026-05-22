@@ -14,7 +14,7 @@ import {
   File, FileSpreadsheet, Truck, Undo2, CreditCard,
   Printer, Settings, FilePlus, Inbox, BookOpen,
   Receipt, PenTool, TrendingDown, Landmark, Percent,
-  PieChart, Users, Wallet, Banknote, ShieldCheck
+  PieChart, Users, Wallet, Banknote, ShieldCheck, Mail
 } from "lucide-react";
 import { hasRole, logout, getUsernameFromToken } from "../api/auth";
 import { usePermissions } from "../context/PermissionContext";
@@ -239,6 +239,7 @@ const Sidebar = ({ children }) => {
         { path: "/settings/company",   label: "Company Profile",    module: "userManagement.setup", icon: <Building2 size={14} /> },
         { path: "/settings/roles",     label: "User & Role Config", module: "userManagement.role",  icon: <ShieldCheck size={14} /> },
         { path: "/settings/branches",  label: "Branch Setup",       module: "userManagement.setup", icon: <Warehouse size={14} /> },
+        { path: "/settings/email",     label: "Email Settings",     module: "userManagement.setup", icon: <Mail size={14} /> },
       ],
     },
     {

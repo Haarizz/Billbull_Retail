@@ -67,6 +67,7 @@ import InventoryReports from "./pages/Inventory/Reports/InventoryReports";
 import CompanySettings from "./pages/Settings/CompanySettings";
 import UserRoleConfig from "./pages/Settings/UserRoleConfig";
 import BranchSetup from "./pages/Settings/BranchSetup";
+import EmailSettings from "./pages/Settings/EmailSettings";
 import SalesSummaryReport from "./pages/Sales/Reports/SalesSummaryReport";
 import PurchaseSummaryReport from "./pages/Purchase/Reports/PurchaseSummaryReport";
 // import Products from "./pages/Inventory/Product/Products";
@@ -579,6 +580,15 @@ function App() {
                       element={
                         <ResourceGuard module="userManagement.setup">
                           <BranchSetup />
+                        </ResourceGuard>
+                      }
+                    />
+
+                    <Route
+                      path="/settings/email"
+                      element={
+                        <ResourceGuard module="userManagement.setup">
+                          <EmailSettings />
                         </ResourceGuard>
                       }
                     />
