@@ -35,6 +35,9 @@ import { generateSOAFilename } from '../../utils/filenameUtils';
 import { usePrintDocument } from '../../hooks/usePrintDocument';
 import { STATEMENT_EXPORT_COLUMNS, formatStatementEntryType, mapStatementEntriesForExport } from '../../utils/statementUtils';
 import { isAutoNumberingEnabled } from '../../utils/salesNumbering';
+import { getTemplatesByCategory } from '../../api/printTemplateApi';
+import { generatePrintHtml, printHtml } from '../../utils/printGenerator';
+import { normalizePurchaseTemplate, buildReceiptVoucherPrintData } from '../../utils/purchasePrintUtils';
 
 // ==========================================
 // 1. CONFIGURATION
@@ -1377,6 +1380,7 @@ const ReceiveMoneyView = () => {
     const [receivedAmount, setReceivedAmount] = useState('');
     const [chequeDate, setChequeDate] = useState('');
     const [bankAccount, setBankAccount] = useState('');
+    const [lastSavedPayment, setLastSavedPayment] = useState(null);
     const [bankAccounts, setBankAccounts] = useState([]);
 
     // Selection & Settlement States
@@ -1625,6 +1629,7 @@ const ReceiveMoneyView = () => {
             if (lastSavedPayment?.paymentNumber) {
                 setNextPaymentNo(lastSavedPayment.paymentNumber);
             }
+            setLastSavedPayment(lastSavedPayment);
 
             alert("Payments recorded successfully!");
 
@@ -1648,6 +1653,30 @@ const ReceiveMoneyView = () => {
             alert(message);
         } finally {
             setIsLoading(false);
+        }
+    };
+
+    const handlePrintReceipt = async () => {
+        if (!lastSavedPayment) {
+            alert("Please record a payment first, then print the receipt.");
+            return;
+        }
+        try {
+            let templates = await getTemplatesByCategory('Receipt Voucher').catch(() => []);
+            if (!templates || templates.length === 0) {
+                templates = await getTemplatesByCategory('Payment Voucher').catch(() => []);
+            }
+            const rawTemplate = (templates && (templates.find(t => t.isDefault) || templates[0])) || null;
+            const template = normalizePurchaseTemplate(
+                { ...(rawTemplate || {}), category: 'Receipt Voucher' },
+                'Receipt Voucher'
+            );
+            const printData = buildReceiptVoucherPrintData(lastSavedPayment, selectedCustomer, company);
+            const html = generatePrintHtml(template, printData, { companyProfile: company });
+            printHtml(html);
+        } catch (err) {
+            console.error('Failed to print receipt', err);
+            alert('Failed to generate print layout');
         }
     };
 
@@ -1892,7 +1921,11 @@ const ReceiveMoneyView = () => {
                                     <Save size={16} /> {isLoading ? 'Processing...' : 'Record Payment'}
                                 </button>
 
-                                <button className="w-full mt-3 bg-white border border-slate-200 text-slate-600 font-bold py-2 rounded-md hover:bg-slate-50 transition-colors flex items-center justify-center gap-2 text-xs">
+                                <button
+                                    onClick={handlePrintReceipt}
+                                    disabled={!lastSavedPayment}
+                                    className={`w-full mt-3 bg-white border border-slate-200 text-slate-600 font-bold py-2 rounded-md hover:bg-slate-50 transition-colors flex items-center justify-center gap-2 text-xs ${!lastSavedPayment ? 'opacity-50 cursor-not-allowed' : ''}`}
+                                >
                                     <Printer size={14} /> Print Receipt
                                 </button>
                             </div>

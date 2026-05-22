@@ -5,18 +5,23 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import com.billbull.backend.financials.receiptvoucher.ReceiptVoucherRepository;
 import com.billbull.backend.sales.settings.SalesDocumentNumberingService;
 import com.billbull.backend.sales.settings.SalesDocumentType;
 
 import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Objects;
 
 @Service
 public class CustomerService {
 
     @Autowired
     private CustomerRepository repository;
+
+    @Autowired(required = false)
+    private ReceiptVoucherRepository receiptVoucherRepository;
 
     @Autowired
     private com.billbull.backend.sales.quotation.QuotationRepository quotationRepo;
@@ -72,7 +77,38 @@ public class CustomerService {
 
         ensureOpeningInvoiceForBalance(customer);
 
-        return new ArrayList<>(customer.getOpeningInvoices());
+        List<OpeningInvoice> invoices = new ArrayList<>(customer.getOpeningInvoices());
+        if (receiptVoucherRepository != null) {
+            syncOutstandingFromReceipts(invoices);
+        }
+        return invoices;
+    }
+
+    private void syncOutstandingFromReceipts(List<OpeningInvoice> invoices) {
+        for (OpeningInvoice invoice : invoices) {
+            if (invoice.getId() == null) continue;
+            BigDecimal seed = resolveOriginalOpeningBalance(invoice);
+            BigDecimal totalPaid = receiptVoucherRepository.findByOpeningInvoiceId(invoice.getId())
+                    .stream()
+                    .filter(r -> r.getAmount() != null && isCompletedReceiptStatus(r.getStatus()))
+                    .map(r -> r.getAmount())
+                    .reduce(BigDecimal.ZERO, BigDecimal::add);
+            BigDecimal outstanding = seed.subtract(totalPaid).max(BigDecimal.ZERO);
+            if (!Objects.equals(invoice.getOutstanding(), outstanding)) {
+                invoice.setOutstanding(outstanding);
+            }
+        }
+    }
+
+    private BigDecimal resolveOriginalOpeningBalance(OpeningInvoice invoice) {
+        BigDecimal ob = invoice.getOpeningBalanceAmount();
+        if (ob != null && ob.compareTo(BigDecimal.ZERO) > 0) return ob;
+        BigDecimal amt = invoice.getAmount();
+        return amt != null ? amt : BigDecimal.ZERO;
+    }
+
+    private boolean isCompletedReceiptStatus(String status) {
+        return status != null && (status.equalsIgnoreCase("Completed") || status.equalsIgnoreCase("COMPLETED"));
     }
 
     // =========================

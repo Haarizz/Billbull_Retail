@@ -585,6 +585,7 @@ export const buildPaymentVoucherPrintData = (voucher, vendor, companyProfile, li
             { label: "Status", value: voucher?.status },
         ].filter((item) => trimValue(item.value)),
         references: [
+            { label: "LPO Reference", value: voucher?.lpoId ? String(voucher.lpoId) : null },
             { label: "Invoice Ref", value: invoiceReference },
             { label: "Reference No", value: voucher?.referenceNumber || voucher?.ref },
         ].filter((item) => trimValue(item.value)),
@@ -600,6 +601,52 @@ export const buildPaymentVoucherPrintData = (voucher, vendor, companyProfile, li
             { label: "Invoice Reference", value: invoiceReference },
             { label: "Allocated", value: voucher?.allocated ? formatMoney(voucher.allocated) : "" },
             { label: "Unallocated", value: voucher?.unallocated ? formatMoney(voucher.unallocated) : "" },
+        ].filter((item) => trimValue(item.value)),
+    };
+};
+
+export const buildReceiptVoucherPrintData = (payment, customer, companyProfile) => {
+    const amount = toNumber(payment?.amount);
+    const totals = buildTotals(
+        { subTotal: amount, tax: 0, grandTotal: amount, amountPaid: amount, balanceDue: 0 },
+        companyProfile,
+        null
+    );
+
+    const party = {
+        name: firstValue(payment?.customerName, customer?.name, 'Unknown Customer'),
+        code: firstValue(payment?.customerCode, customer?.code),
+        address: firstValue(customer?.address),
+        phone: firstValue(customer?.phone, customer?.contact, customer?.mobile, customer?.primaryPhone),
+        email: firstValue(customer?.email),
+        taxId: firstValue(customer?.taxId, customer?.trn),
+    };
+
+    return {
+        title: "RECEIPT VOUCHER",
+        docNo: firstValue(payment?.paymentNumber, payment?.id),
+        date: payment?.paymentDate || payment?.date,
+        status: firstValue(payment?.status, "COMPLETED"),
+        hideTotalsTable: true,
+        party,
+        headerMeta: [
+            { label: "Receipt No", value: firstValue(payment?.paymentNumber, payment?.id) },
+            { label: "Status", value: payment?.status },
+        ].filter((item) => trimValue(item.value)),
+        references: [
+            { label: "Invoice Reference", value: payment?.linkedInvoice },
+            { label: "Reference No", value: payment?.referenceNumber },
+        ].filter((item) => trimValue(item.value)),
+        items: [],
+        totals,
+        summaryAmount: buildSummaryAmount("Amount Received", amount, companyProfile, null),
+        notes: firstValue(payment?.notes),
+        paymentDetails: [
+            { label: "Payment Mode", value: payment?.paymentMode || payment?.mode },
+            { label: "Reference Number", value: payment?.referenceNumber },
+            { label: "Bank Account", value: payment?.bankName },
+            { label: "Cheque Date", value: payment?.chequeDate },
+            { label: "Invoice Reference", value: payment?.linkedInvoice },
         ].filter((item) => trimValue(item.value)),
     };
 };

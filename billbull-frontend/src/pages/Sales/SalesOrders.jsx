@@ -62,6 +62,7 @@ import CustomerSelector from '../../components/CustomerSelector';
 import CustomerShippingPanel from '../../components/CustomerShippingPanel';
 import { hydrateCustomerFromSource, resolveCustomer, resolveDefaultShippingAddress } from '../../utils/customerResolution';
 import { isAutoNumberingEnabled } from '../../utils/salesNumbering';
+import { normalizePurchaseTemplate, buildReceiptVoucherPrintData } from '../../utils/purchasePrintUtils';
 
 // ✅ GLOBAL COMPONENTS
 import { ItemDescriptionCell, ItemDescriptionHeader } from '../../components/ItemDescriptionCell';
@@ -148,7 +149,7 @@ const MobileFloatingActions = ({ status, onConfirm, onConvertToDO, onSave, onPri
               Confirm Order
             </button>
           </>
-        ) : (status === 'CONFIRMED' || status === 'PARTIALLY_PAID') ? (
+        ) : (status === 'CONFIRMED' || status === 'PARTIALLY_PAID' || status === 'FULLY_PAID') ? (
           <button onClick={onConvertToDO} className="flex-1 py-3 bg-indigo-600 text-white font-bold rounded-lg text-xs flex items-center justify-center gap-2 active:bg-indigo-700">
             <Truck size={16} /> Convert to Delivery Note
           </button>
@@ -788,8 +789,8 @@ const SalesOrders = () => {
     });
   };
 
-  // QA-032: Open the auto-generated Advance Receipt Voucher for this SO in
-  // the Receipt Voucher screen so the user can print it.
+  // QA-032: Print the auto-generated Advance Receipt Voucher for this SO
+  // inline using the template pipeline instead of navigating away.
   const handlePrintAdvanceReceipt = async () => {
     if (!orderId) {
       alert('Save the sales order first.');
@@ -801,14 +802,40 @@ const SalesOrders = () => {
         alert('No advance receipt voucher exists for this order yet. Save the order with an advance amount first.');
         return;
       }
-      // Most recent advance receipt (list is newest-first).
-      const target = vouchers[0];
-      navigate('/finance/receiptvoucher', {
-        state: { openReceiptVoucherId: target.voucherId }
-      });
+      const voucher = vouchers[0];
+      let templates = await getTemplatesByCategory('Receipt Voucher').catch(() => []);
+      if (!templates || templates.length === 0) {
+        templates = await getTemplatesByCategory('Payment Voucher').catch(() => []);
+      }
+      const rawTemplate = (templates && (templates.find(t => t.isDefault) || templates[0])) || null;
+      const template = normalizePurchaseTemplate(
+        { ...(rawTemplate || {}), category: 'Receipt Voucher' },
+        'Receipt Voucher'
+      );
+      const paymentLike = {
+        paymentNumber: voucher.voucherId,
+        paymentDate: voucher.date,
+        customerName: voucher.memberName || selectedCustomer?.name,
+        customerCode: voucher.customerCode || selectedCustomer?.code,
+        amount: voucher.amount,
+        paymentMode: voucher.paymentMode,
+        referenceNumber: voucher.reference,
+        bankName: voucher.bankAccount,
+        chequeDate: voucher.chequeDate,
+        notes: voucher.notes,
+        linkedInvoice: soNumber ? `SO: ${soNumber}` : undefined,
+        status: voucher.status,
+      };
+      const printData = buildReceiptVoucherPrintData(
+        paymentLike,
+        { name: selectedCustomer?.name, code: selectedCustomer?.code },
+        company
+      );
+      const html = generatePrintHtml(template, printData, { companyProfile: company });
+      printHtml(html);
     } catch (err) {
-      console.error('Failed to load advance receipt voucher', err);
-      alert('Failed to load the advance receipt voucher.');
+      console.error('Failed to print advance receipt', err);
+      alert('Failed to generate print layout.');
     }
   };
 
@@ -1357,6 +1384,9 @@ const SalesOrders = () => {
     } else if (s === 'PARTIALLY_PAID') {
       styles = "bg-purple-50 border-purple-200 text-purple-700";
       label = "Partially Paid";
+    } else if (s === 'FULLY_PAID') {
+      styles = "bg-emerald-100 border-emerald-300 text-emerald-800";
+      label = "Fully Paid";
     }
 
     return <span className={`px-2 py-0.5 border rounded text-[10px] font-bold ${styles}`}>{label}</span>;
@@ -2175,8 +2205,8 @@ const SalesOrders = () => {
                 </>
               )}
 
-              {/* ── Convert to Delivery Note / Proceed to Invoice for CONFIRMED / PARTIALLY_PAID ── */}
-              {(status === 'CONFIRMED' || status === 'PARTIALLY_PAID') && canApprove('sales') && (
+              {/* ── Convert to Delivery Note / Proceed to Invoice for CONFIRMED / PARTIALLY_PAID / FULLY_PAID ── */}
+              {(status === 'CONFIRMED' || status === 'PARTIALLY_PAID' || status === 'FULLY_PAID') && canApprove('sales') && (
                 <>
                   <button onClick={handleConvertToDeliveryNote} className="flex items-center gap-1.5 px-5 py-1.5 bg-gradient-to-r from-indigo-600 to-indigo-500 text-white rounded text-xs font-bold hover:from-indigo-700 hover:to-indigo-600 transition-all shadow-md transform hover:-translate-y-0.5">
                     <Truck size={14} /> Convert to Delivery Note

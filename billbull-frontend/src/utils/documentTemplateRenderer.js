@@ -33,7 +33,8 @@ const DOC_NO_LABELS = {
     'Goods Receipt Note': 'GRN Number',
     'Purchase Invoice': 'Invoice Number',
     'Payment Voucher': 'Voucher Number',
-    'Pick List': 'Pick List Number'
+    'Pick List': 'Pick List Number',
+    'Receipt Voucher': 'Receipt Number'
 };
 
 const DOCUMENT_TITLE_LABELS = {
@@ -47,7 +48,8 @@ const DOCUMENT_TITLE_LABELS = {
     'Goods Receipt Note': 'Goods Receipt Note',
     'Purchase Invoice': 'Purchase Invoice',
     'Payment Voucher': 'Payment Voucher',
-    'Pick List': 'Pick List'
+    'Pick List': 'Pick List',
+    'Receipt Voucher': 'Receipt Voucher'
 };
 
 const PAPER_DIMENSIONS_MM = {
