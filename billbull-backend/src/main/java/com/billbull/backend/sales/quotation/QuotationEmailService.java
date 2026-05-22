@@ -25,7 +25,16 @@ public class QuotationEmailService {
         this.messagingService = messagingService;
     }
 
+    // QA-040: keep the old 3-arg signature for any internal callers, and add
+    // a 4-arg overload that accepts a pre-rendered HTML body from the
+    // frontend (so the email mirrors whatever was designed in Print & Email
+    // Templates). When htmlBody is null/blank, fall back to legacy Java HTML.
     public void sendQuotationEmail(Quotation quotation, String toEmail, String subject)
+            throws MessagingException, UnsupportedEncodingException {
+        sendQuotationEmail(quotation, toEmail, subject, null);
+    }
+
+    public void sendQuotationEmail(Quotation quotation, String toEmail, String subject, String htmlBody)
             throws MessagingException, UnsupportedEncodingException {
 
         String recipient = (toEmail != null && !toEmail.isBlank())
@@ -43,12 +52,16 @@ public class QuotationEmailService {
         String fromAddress = emailConfigService.getFromAddress();
         String fromName = emailConfigService.getFromName();
 
+        String body = (htmlBody != null && !htmlBody.isBlank())
+                ? htmlBody
+                : buildHtmlEmail(quotation, fromName);
+
         MimeMessage message = sender.createMimeMessage();
         MimeMessageHelper helper = new MimeMessageHelper(message, true, "UTF-8");
         helper.setFrom(fromAddress, fromName);
         helper.setTo(recipient);
         helper.setSubject(emailSubject);
-        helper.setText(buildHtmlEmail(quotation, fromName), true);
+        helper.setText(body, true);
 
         sender.send(message);
         logEmail(quotation, recipient, emailSubject, "sent");
