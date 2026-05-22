@@ -157,9 +157,12 @@ export const getItemPriceHistory = async (itemCode) => {
 // SEND QUOTATION EMAIL
 // toEmail and subject are optional — if omitted, uses customer email & default subject
 // --------------------
-export const sendQuotationEmail = async (id, { toEmail = "", subject = "" } = {}) => {
+// QA-040: htmlBody is optional. When provided, the backend skips its hand-built
+// Java HTML and uses this exact body — so the email mirrors whatever the user
+// designed in Print & Email Templates (same renderer as Print).
+export const sendQuotationEmail = async (id, { toEmail = "", subject = "", htmlBody = "" } = {}) => {
   try {
-    const res = await api.post(`${BASE_URL}/${id}/send-email`, { toEmail, subject });
+    const res = await api.post(`${BASE_URL}/${id}/send-email`, { toEmail, subject, htmlBody });
     return res.data;
   } catch (err) {
     const message =

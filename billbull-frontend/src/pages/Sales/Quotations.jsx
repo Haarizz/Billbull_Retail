@@ -87,7 +87,8 @@ import useShortcuts from '../../hooks/useShortcuts';
 // ✅ LOGO IMPORTS FOR PRINT
 import billBullLogo from '../../assets/billBullLogo.png';
 import { getTemplatesByCategory } from '../../api/printTemplateApi';
-import { generatePrintHtml, printHtml } from '../../utils/printGenerator';
+import { generatePrintHtml, generateEmailHtml, printHtml } from '../../utils/printGenerator';
+import { inlineEmailImages } from '../../utils/emailImageInliner';
 import { getImageUrl } from '../../utils/urlUtils';
 import { getDefaultProductUnit, resolveUnitAmount } from '../../utils/unitPricing';
 import { summarizeSalesItems } from '../../utils/documentSummaryUtils';
@@ -417,6 +418,9 @@ const Quotations = () => {
     const [emailTo, setEmailTo] = useState('');
     const [emailSubject, setEmailSubject] = useState('');
     const [emailSending, setEmailSending] = useState(false);
+    // QA-040: pre-rendered email body (same renderer as Print) so the preview
+    // iframe shows exactly what the customer will receive.
+    const [emailPreviewHtml, setEmailPreviewHtml] = useState('');
     const [activeActionMenu, setActiveActionMenu] = useState(null);
     const [actionMenuPosition, setActionMenuPosition] = useState(null);
     const [isPrintModalOpen, setIsPrintModalOpen] = useState(false);
@@ -1587,11 +1591,30 @@ const Quotations = () => {
         }
     };
 
-    const handleOpenEmailModal = () => {
+    const handleOpenEmailModal = async () => {
         const customerEmail = selectedCustomerData?.email || inquiryCustomerSnapshot?.email || '';
         setEmailTo(customerEmail);
         setEmailSubject(`Quotation ${getQuotationNo()} from BillBull ERP`);
+        // QA-040: render the preview using the same template + payload that
+        // Send Email will use. Iframe runs in the same origin so the live
+        // image URLs work here; the version we POST to the backend gets the
+        // images inlined as data URIs (see handleSendEmail).
+        setEmailPreviewHtml('');
         setIsEmailModalOpen(true);
+        try {
+            const templates = await getTemplatesByCategory('Quotation');
+            const defaultTemplate = templates.find(t => t.isDefault) || templates[0];
+            if (defaultTemplate) {
+                const html = generateEmailHtml(
+                    defaultTemplate,
+                    buildQuotationDocPayload(),
+                    { companyProfile: company, billBullLogo }
+                );
+                setEmailPreviewHtml(html);
+            }
+        } catch (err) {
+            console.warn('Email preview render failed:', err);
+        }
     };
 
     const handleSendEmail = async () => {
@@ -1603,7 +1626,34 @@ const Quotations = () => {
         }
         setEmailSending(true);
         try {
-            await sendQuotationEmail(editingId, { toEmail: emailTo, subject: emailSubject });
+            // QA-040: render the email body using the same designed template
+            // as Print, then inline every <img> as a data: URI so the
+            // recipient's mail client doesn't try to fetch /uploads/ or
+            // /assets/ paths it can't reach. If anything in the pipeline
+            // fails, we POST an empty htmlBody and the backend falls back
+            // to its legacy hand-built HTML.
+            let htmlBody = '';
+            try {
+                let html = emailPreviewHtml;
+                if (!html) {
+                    const templates = await getTemplatesByCategory('Quotation');
+                    const defaultTemplate = templates.find(t => t.isDefault) || templates[0];
+                    if (defaultTemplate) {
+                        html = generateEmailHtml(
+                            defaultTemplate,
+                            buildQuotationDocPayload(),
+                            { companyProfile: company, billBullLogo }
+                        );
+                    }
+                }
+                if (html) {
+                    htmlBody = await inlineEmailImages(html);
+                }
+            } catch (renderErr) {
+                console.warn('Email body render/inline failed; backend will use legacy template.', renderErr);
+            }
+
+            await sendQuotationEmail(editingId, { toEmail: emailTo, subject: emailSubject, htmlBody });
             setIsEmailModalOpen(false);
             setToastMessage(`Email sent successfully to ${emailTo}`);
             setToastType('success');
@@ -2216,6 +2266,57 @@ const Quotations = () => {
     // =====================================================
     // GENERIC PRINT FUNCTIONALITY
     // =====================================================
+    // QA-040: payload shared by print and email so both honour every column /
+    // header / footer / terms setting from the template designer.
+    const buildQuotationDocPayload = () => ({
+        title: 'QUOTATION',
+        docNo: getQuotationNo(),
+        date: qtnDate,
+        customer: {
+            name: customer,
+            address: selectedCustomerData?.address || '',
+            trn: selectedCustomerData?.trn
+        },
+        items: items.filter(i => i.code || i.desc).map(i => ({
+            code: i.code,
+            name: i.name || i.productName || '',
+            desc: i.desc || '',
+            remarks: i.remarks || '',
+            sku: i.sku || i.productSku || '',
+            brand: i.brand || i.brandName || '',
+            shortDesc: i.shortDesc || '',
+            detailedDesc: i.detailedDesc || '',
+            localName: i.localName || i.productLocalName || '',
+            barcode: i.barcode || '',
+            salesPerson: '',
+            location: quotationBranch?.location || '',
+            unit: i.unit,
+            qty: Number(i.qty),
+            price: Number(i.price),
+            disc: Number(i.disc),
+            tax: Number(i.tax),
+            taxAmt: Number(i.taxAmt || 0),
+            total: Number(i.total),
+            image: i.image || i.imageUrl ? getImageUrl(i.image || i.imageUrl) : ''
+        })),
+        totals: {
+            subTotal,
+            tax: totalTax,
+            grandTotal,
+            currency: displayCurrencyProps.currency,
+            billDiscount,
+            billDiscountAmount
+        },
+        meta: {
+            validTill,
+            paymentTerm,
+            status,
+            notes: notesToCustomer,
+            reference: quotationBranch?.code || '',
+            location: branchLocationDisplay || quotationBranch?.location || ''
+        }
+    });
+
     const handlePrintClick = async () => {
         setIsPrinting(true);
         try {
@@ -2223,56 +2324,7 @@ const Quotations = () => {
             const defaultTemplate = templates.find(t => t.isDefault);
 
             if (defaultTemplate) {
-                const printData = {
-                    title: 'QUOTATION',
-                    docNo: getQuotationNo(),
-                    date: qtnDate,
-                    customer: {
-                        name: customer,
-                        address: selectedCustomerData?.address || '',
-                        trn: selectedCustomerData?.trn
-                    },
-                    items: items.filter(i => i.code || i.desc).map(i => ({
-                        code: i.code,
-                        name: i.name || i.productName || '',
-                        desc: i.desc || '',
-                        remarks: i.remarks || '',
-                        sku: i.sku || i.productSku || '',
-                        brand: i.brand || i.brandName || '',
-                    shortDesc: i.shortDesc || '',
-                    detailedDesc: i.detailedDesc || '',
-                    localName: i.localName || i.productLocalName || '',
-                        barcode: i.barcode || '',
-                        salesPerson: '',
-                        location: quotationBranch?.location || '',
-                        unit: i.unit,
-                        qty: Number(i.qty),
-                        price: Number(i.price),
-                        disc: Number(i.disc),
-                        tax: Number(i.tax),
-                        taxAmt: Number(i.taxAmt || 0),
-                        total: Number(i.total),
-                        image: i.image || i.imageUrl ? getImageUrl(i.image || i.imageUrl) : ''
-                    })),
-                    totals: {
-                        subTotal,
-                        tax: totalTax,
-                        grandTotal,
-                        currency: displayCurrencyProps.currency,
-                        billDiscount,
-                        billDiscountAmount
-                    },
-                    meta: {
-                        validTill,
-                        paymentTerm,
-                        status,
-                        notes: notesToCustomer,
-                        reference: quotationBranch?.code || '',
-                        location: branchLocationDisplay || quotationBranch?.location || ''
-                    }
-                };
-
-                const html = generatePrintHtml(defaultTemplate, printData, { companyProfile: company, billBullLogo });
+                const html = generatePrintHtml(defaultTemplate, buildQuotationDocPayload(), { companyProfile: company, billBullLogo });
                 printHtml(html);
             } else {
                 setIsPrintModalOpen(true);
@@ -3840,7 +3892,7 @@ const Quotations = () => {
                             <div className="flex-1 overflow-hidden px-5 py-3">
                                 <p className="text-xs font-semibold text-slate-400 mb-2 uppercase tracking-wide">Email Preview</p>
                                 <iframe
-                                    srcDoc={buildEmailPreviewHtml()}
+                                    srcDoc={emailPreviewHtml || '<div style="padding:24px;font-family:Arial;color:#888;font-size:13px">Generating preview…</div>'}
                                     title="Email Preview"
                                     className="w-full h-full rounded border border-slate-200"
                                     style={{ minHeight: '380px' }}

@@ -162,10 +162,14 @@ public class QuotationController {
 
         String toEmail = body != null ? body.get("toEmail") : null;
         String subject = body != null ? body.get("subject") : null;
+        // QA-040: frontend pre-renders the email body from the same template
+        // used by Print, then ships it here. If absent we fall back to the
+        // legacy hand-built HTML in QuotationEmailService.
+        String htmlBody = body != null ? body.get("htmlBody") : null;
 
         try {
             Quotation quotation = service.getQuotationById(id);
-            emailService.sendQuotationEmail(quotation, toEmail, subject);
+            emailService.sendQuotationEmail(quotation, toEmail, subject, htmlBody);
             return ResponseEntity.ok(Map.of("message", "Email sent successfully to " +
                     (toEmail != null && !toEmail.isBlank() ? toEmail : quotation.getCustomerEmail())));
 
