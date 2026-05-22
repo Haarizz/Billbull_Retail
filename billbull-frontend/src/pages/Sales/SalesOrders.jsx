@@ -936,7 +936,12 @@ const SalesOrders = () => {
             tax: Number(i.tax),
             taxAmt: Number(i.taxAmt || 0),
             total: Number(i.total),
-            image: i.image ? getImageUrl(i.image) : ''
+            image: i.image ? getImageUrl(i.image) : '',
+            // QA-030: include batch picks so the Batch # line / column shows
+            // when the template toggle is on.
+            batchNumber: i.batchNumber || '',
+            batchSelections: Array.isArray(i.batchSelections) ? i.batchSelections : [],
+            expiry: i.expiry || i.expiryDate || ''
           })),
           totals: {
             subTotal,

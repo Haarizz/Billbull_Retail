@@ -27,8 +27,10 @@ export const mapStatementEntriesForExport = (statementData) => {
 
     return entries.map(entry => ({
         date: entry.transactionDate || '',
-        reference: entry.documentNo || '-',
-        description: formatStatementEntryType(entry.type),
+        // QA-018: prefer server-supplied reference / description; fall back to
+        // documentNo / type so old back-end builds still produce a useful row.
+        reference: entry.reference || entry.documentNo || '-',
+        description: entry.description || formatStatementEntryType(entry.type),
         debit: asNumber(entry.debit),
         credit: asNumber(entry.credit),
         balance: asNumber(entry.runningBalance)

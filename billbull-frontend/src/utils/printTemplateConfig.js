@@ -62,7 +62,11 @@ export const DEFAULT_TEMPLATE_COLUMNS = Object.freeze({
     received: false,
     accepted: false,
     receivedBy: false,
-    checkedBy: false
+    checkedBy: false,
+    // QA-031: cross-doc reference toggles for DN / SI / Pick List headers.
+    quotationNo: false,
+    salesOrderNo: false,
+    salesInvoiceNo: false
 });
 
 export const parsePrintTemplateObject = parseTemplateObject;
@@ -120,6 +124,9 @@ export const sanitizeTemplateColumns = (
         received: readColumnFlag(columns, ['received', 'receivedQty'], defaults.received ?? false),
         accepted: readColumnFlag(columns, ['accepted', 'acceptedQty'], defaults.accepted ?? false),
         receivedBy: readColumnFlag(columns, ['receivedBy', 'received_by'], defaults.receivedBy ?? false),
-        checkedBy: readColumnFlag(columns, ['checkedBy', 'checked_by'], defaults.checkedBy ?? false)
+        checkedBy: readColumnFlag(columns, ['checkedBy', 'checked_by'], defaults.checkedBy ?? false),
+        quotationNo: readColumnFlag(columns, ['quotationNo', 'quotation_no', 'linkedQuotation'], defaults.quotationNo ?? false),
+        salesOrderNo: readColumnFlag(columns, ['salesOrderNo', 'sales_order_no', 'linkedSalesOrder'], defaults.salesOrderNo ?? false),
+        salesInvoiceNo: readColumnFlag(columns, ['salesInvoiceNo', 'sales_invoice_no', 'linkedSalesInvoice'], defaults.salesInvoiceNo ?? false)
     };
 };

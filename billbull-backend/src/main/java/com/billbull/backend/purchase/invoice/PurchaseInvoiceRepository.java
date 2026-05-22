@@ -9,6 +9,9 @@ public interface PurchaseInvoiceRepository
 
         List<PurchaseInvoice> findByStatus(InvoiceStatus status);
 
+        /** QA-018: batch lookup used by StatementService to populate description/reference. */
+        List<PurchaseInvoice> findByInvoiceNumberIn(List<String> invoiceNumbers);
+
         boolean existsByVendorName(String vendorName);
 
         boolean existsByVendorNameAndVendorInvoiceNo(String vendorName, String vendorInvoiceNo);
