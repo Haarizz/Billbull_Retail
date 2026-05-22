@@ -43,7 +43,8 @@ import {
   PackageX,
   MessageSquare,
   GitCommit,
-  Send
+  Send,
+  DollarSign
 } from 'lucide-react';
 
 import { getImageUrl } from "../../../utils/urlUtils";
@@ -62,6 +63,7 @@ import { generatePrintHtml, printHtml } from '../../../utils/printGenerator';
 import billBullLogo from '../../../assets/billBullLogo.png';
 import {
   buildLpoPrintData,
+  buildPaymentVoucherPrintData,
   findVendorRecord,
   normalizePurchaseTemplate
 } from '../../../utils/purchasePrintUtils';
@@ -79,6 +81,8 @@ const LPO_COLUMNS = [
   { header: 'Vendor', key: 'vendorName', width: 25 },
   { header: 'Date', key: 'date', width: 12 },
   { header: 'Total Value', key: 'totalValue', width: 15 },
+  { header: 'Advance Paid', key: 'advancePaid', width: 15 },
+  { header: 'Balance Due', key: 'balanceDue', width: 15 },
   { header: 'Status', key: 'status', width: 15 },
   { header: 'ETA', key: 'eta', width: 12 },
   { header: 'Received %', key: 'received', width: 12 }
@@ -93,8 +97,11 @@ import {
   updateLpo,
   submitLpoForApproval,
   approveLpo,
-  rejectLpo
+  rejectLpo,
+  createLpoAdvancePayment,
+  getLpoPaymentVouchers
 } from '../../../api/lpoApi';
+import api from '../../../api/axiosConfig';
 import { approvalWorkflowApi } from '../../../api/purchase/approvalWorkflowApi';
 import { getVendors } from '../../../api/vendorsApi';
 import {
@@ -168,11 +175,13 @@ const mapApiToUi = (data) => {
     eta: item.expectedDeliveryDate,
     received: item.receivedPercentage || 0,
     totalValue: item.totalValue,
-    itemCount: item.itemCount || 0, // ✅ NEW
+    advancePaid: item.advancePaid ?? 0,
+    balanceDue: item.balanceDue ?? (item.totalValue ?? 0),
+    itemCount: item.itemCount || 0,
     items: item.items || [],
     statusColor: getStatusColor(item.status),
-    createdFrom: item.createdFrom || 'Manual', // Default to Manual if missing
-    warehouseId: item.warehouseId || null     // ✅ NEW
+    createdFrom: item.createdFrom || 'Manual',
+    warehouseId: item.warehouseId || null
   }));
 };
 
@@ -310,7 +319,7 @@ const MobileCard = ({ row, onView, currencyLabel }) => (
 // 3. VIEW COMPONENTS
 // ==========================================
 
-const ListView = ({ lpos, processedData, onEdit, onView, onPrint, activeFilter, onApprove, onReject, onStockApprove, onStockReject, onProceedToInvoice, onConvertToGrn, searchQuery, setSearchQuery, sortConfig, requestSort, showFilterPanel, setShowFilterPanel, dateRange, setDateRange, selectedVendor, setSelectedVendor, vendors, currencyLabel }) => {
+const ListView = ({ lpos, processedData, onEdit, onView, onPrint, activeFilter, onApprove, onReject, onStockApprove, onStockReject, onProceedToInvoice, onConvertToGrn, onAdvancePayment, onPrintPaymentVoucher, searchQuery, setSearchQuery, sortConfig, requestSort, showFilterPanel, setShowFilterPanel, dateRange, setDateRange, selectedVendor, setSelectedVendor, vendors, currencyLabel }) => {
   const formatDate = (dateString) => formatDisplayDate(dateString);
 
   return (
@@ -440,6 +449,24 @@ const ListView = ({ lpos, processedData, onEdit, onView, onPrint, activeFilter, 
                   </div>
                 </th>
                 <th
+                  className="px-4 py-3 text-right whitespace-nowrap font-medium cursor-pointer hover:bg-slate-100 transition-colors"
+                  onClick={() => requestSort('advancePaid')}
+                >
+                  <div className="flex items-center justify-end gap-1">
+                    Advance Paid
+                    {sortConfig.key === 'advancePaid' && <span className="text-xs text-slate-400">{sortConfig.direction === 'asc' ? '↑' : '↓'}</span>}
+                  </div>
+                </th>
+                <th
+                  className="px-4 py-3 text-right whitespace-nowrap font-medium cursor-pointer hover:bg-slate-100 transition-colors"
+                  onClick={() => requestSort('balanceDue')}
+                >
+                  <div className="flex items-center justify-end gap-1">
+                    Balance Due
+                    {sortConfig.key === 'balanceDue' && <span className="text-xs text-slate-400">{sortConfig.direction === 'asc' ? '↑' : '↓'}</span>}
+                  </div>
+                </th>
+                <th
                   className="px-4 py-3 whitespace-nowrap font-medium cursor-pointer hover:bg-slate-100 transition-colors"
                   onClick={() => requestSort('status')}
                 >
@@ -456,7 +483,7 @@ const ListView = ({ lpos, processedData, onEdit, onView, onPrint, activeFilter, 
             </thead>
             <tbody className="divide-y divide-slate-100 bg-white">
               {processedData.length === 0 ? (
-                <tr><td colSpan="11" className="text-center py-8 text-slate-400">No records found.</td></tr>
+                <tr><td colSpan="13" className="text-center py-8 text-slate-400">No records found.</td></tr>
               ) : processedData
                 .map((row) => (
                   <tr key={row.lpoNumber} className="hover:bg-slate-50 transition-colors group">
@@ -486,6 +513,16 @@ const ListView = ({ lpos, processedData, onEdit, onView, onPrint, activeFilter, 
                     </td>
                     <td className="px-4 py-3 text-right font-bold text-slate-900">
                       <CurrencyAmount value={row.totalValue} currency={currencyLabel} />
+                    </td>
+                    <td className="px-4 py-3 text-right text-slate-700">
+                      {Number(row.advancePaid) > 0
+                        ? <CurrencyAmount value={row.advancePaid} currency={currencyLabel} className="text-emerald-700 font-semibold" />
+                        : <span className="text-slate-300">—</span>}
+                    </td>
+                    <td className="px-4 py-3 text-right text-slate-700">
+                      {Number(row.balanceDue) > 0
+                        ? <CurrencyAmount value={row.balanceDue} currency={currencyLabel} className="text-red-600 font-semibold" />
+                        : <span className="text-emerald-600 font-semibold text-xs">Fully Paid</span>}
                     </td>
                     <td className="px-4 py-3">
                       <span className={`text-[10px] font-semibold px-2.5 py-0.5 rounded border whitespace-nowrap ${row.statusColor}`}>
@@ -585,11 +622,27 @@ const ListView = ({ lpos, processedData, onEdit, onView, onPrint, activeFilter, 
                         </button>
                         <button
                           className="p-1.5 rounded hover:bg-slate-100 text-slate-500 hover:text-slate-900"
-                          title="Print"
+                          title="Print LPO"
                           onClick={() => onPrint(row)}
                         >
                           <Printer className="h-3.5 w-3.5" />
                         </button>
+                        <button
+                          className="p-1.5 rounded hover:bg-amber-100 text-amber-600 hover:text-amber-700 border border-transparent hover:border-amber-200"
+                          title="Advance Payment"
+                          onClick={(e) => { e.stopPropagation(); onAdvancePayment && onAdvancePayment(row); }}
+                        >
+                          <DollarSign className="h-3.5 w-3.5" />
+                        </button>
+                        {Number(row.advancePaid) > 0 && (
+                          <button
+                            className="p-1.5 rounded hover:bg-slate-100 text-slate-500 hover:text-slate-900"
+                            title="Print Payment Voucher"
+                            onClick={(e) => { e.stopPropagation(); onPrintPaymentVoucher && onPrintPaymentVoucher(row); }}
+                          >
+                            <FileDown className="h-3.5 w-3.5" />
+                          </button>
+                        )}
                       </div>
                     </td>
                   </tr>
@@ -2229,6 +2282,19 @@ const LPOList = () => {
     id: null
   });
 
+  // Advance Payment Modal State
+  const [isAdvancePaymentModalOpen, setIsAdvancePaymentModalOpen] = useState(false);
+  const [advancePaymentLpo, setAdvancePaymentLpo] = useState(null);
+  const [advModalDate, setAdvModalDate] = useState(new Date().toISOString().split('T')[0]);
+  const [advModalAmount, setAdvModalAmount] = useState('');
+  const [advModalMode, setAdvModalMode] = useState('Cash');
+  const [advModalBankAccount, setAdvModalBankAccount] = useState('');
+  const [advModalChequeDate, setAdvModalChequeDate] = useState(new Date().toISOString().split('T')[0]);
+  const [advModalRef, setAdvModalRef] = useState('');
+  const [advModalNotes, setAdvModalNotes] = useState('');
+  const [advModalBankOptions, setAdvModalBankOptions] = useState([]);
+  const [advModalSaving, setAdvModalSaving] = useState(false);
+
   // Initialize Data via useEffect
   useEffect(() => {
     loadData();
@@ -2473,6 +2539,83 @@ const LPOList = () => {
 
   const handleConvertToGrn = (dbId, lpoNumber) => {
     navigate('/purchases/grn', { state: { fromLpo: { dbId, lpoNumber } } });
+  };
+
+  const handleOpenAdvancePaymentModal = async (row) => {
+    setAdvancePaymentLpo(row);
+    const balance = Number(row.balanceDue ?? row.totalValue ?? 0);
+    setAdvModalAmount(balance > 0 ? balance.toFixed(2) : '');
+    setAdvModalDate(new Date().toISOString().split('T')[0]);
+    setAdvModalMode('Cash');
+    setAdvModalBankAccount('');
+    setAdvModalChequeDate(new Date().toISOString().split('T')[0]);
+    setAdvModalRef('');
+    setAdvModalNotes('');
+    try {
+      const accs = await api.get('/api/ledger/accounts/bank-accounts').then(r => r.data);
+      setAdvModalBankOptions(Array.isArray(accs) ? accs : []);
+    } catch {
+      setAdvModalBankOptions([]);
+    }
+    setIsAdvancePaymentModalOpen(true);
+  };
+
+  const handleCreateAdvancePayment = async () => {
+    if (!advModalAmount || Number(advModalAmount) <= 0) {
+      return toast.error('Please enter a valid amount.');
+    }
+    setAdvModalSaving(true);
+    try {
+      await createLpoAdvancePayment(advancePaymentLpo.dbId, {
+        date: advModalDate,
+        mode: advModalMode,
+        amount: advModalAmount,
+        ref: advModalRef,
+        notes: advModalNotes,
+        bankAccount: advModalBankAccount || undefined,
+        chequeDate: advModalMode === 'Cheque' ? advModalChequeDate : undefined,
+      });
+      toast.success('Advance payment recorded.');
+      setIsAdvancePaymentModalOpen(false);
+      await refreshLpos();
+    } catch (err) {
+      console.error(err);
+      toast.error(err.response?.data?.message || 'Failed to record advance payment.');
+    } finally {
+      setAdvModalSaving(false);
+    }
+  };
+
+  const handlePrintPaymentVoucher = async (row) => {
+    const loadingToast = toast.loading('Loading payment vouchers...');
+    try {
+      const vouchers = await getLpoPaymentVouchers(row.dbId);
+      if (!vouchers || vouchers.length === 0) {
+        toast.dismiss(loadingToast);
+        return toast.error('No payment vouchers found for this LPO.');
+      }
+      const templates = await getTemplatesByCategory('Payment Voucher');
+      const template = normalizePurchaseTemplate(
+        templates.find(t => t.isDefault) || templates[0],
+        'Payment Voucher'
+      );
+
+      const voucher = vouchers[0];
+      const fullVendor = findVendorRecord(vendors, row.vendorCode, row.vendorName);
+      const printData = buildPaymentVoucherPrintData(
+        { ...voucher, lpoId: row.lpoNumber },
+        fullVendor,
+        company,
+        null
+      );
+      const html = generatePrintHtml(template, printData, { companyProfile: company, billBullLogo });
+      printHtml(html);
+    } catch (err) {
+      console.error(err);
+      toast.error('Failed to print payment voucher.');
+    } finally {
+      toast.dismiss(loadingToast);
+    }
   };
 
   const handleRevertLPO = async (dbId) => {
@@ -2749,6 +2892,8 @@ const LPOList = () => {
                 onProceedToInvoice={handleProceedToInvoice}
                 onConvertToGrn={handleConvertToGrn}
                 onPrint={handlePrintLPO}
+                onAdvancePayment={handleOpenAdvancePaymentModal}
+                onPrintPaymentVoucher={handlePrintPaymentVoucher}
                 searchQuery={searchQuery}
                 setSearchQuery={setSearchQuery}
                 sortConfig={sortConfig}
@@ -3000,6 +3145,145 @@ const LPOList = () => {
         onClose={() => setConfirmationModal({ ...confirmationModal, isOpen: false })}
         onConfirm={handleConfirmStockAction}
       />
+
+      {/* --- ADVANCE PAYMENT MODAL --- */}
+      {isAdvancePaymentModalOpen && advancePaymentLpo && (
+        <div className="fixed inset-0 z-[110] flex items-center justify-center bg-black/40 backdrop-blur-[1px]">
+          <div className="bg-white w-[500px] rounded-lg shadow-2xl overflow-hidden">
+            {/* Header */}
+            <div className="px-6 py-4 border-b border-slate-100 flex justify-between items-start">
+              <div>
+                <h3 className="text-lg font-bold text-slate-800">Advance Payment</h3>
+                <p className="text-xs text-slate-500 mt-1">
+                  Record advance payment to vendor for LPO <span className="font-mono font-semibold text-slate-700">{advancePaymentLpo.lpoNumber}</span>
+                </p>
+              </div>
+              <button onClick={() => setIsAdvancePaymentModalOpen(false)} className="text-slate-400 hover:text-slate-600">
+                <X size={20} />
+              </button>
+            </div>
+
+            {/* Body */}
+            <div className="p-6 space-y-4">
+              {/* Balance Display */}
+              <div className="flex justify-between items-center text-sm mb-2">
+                <span className="text-slate-500 font-medium">Balance Due</span>
+                <span className="text-red-600 font-bold text-lg">
+                  {currencyLabel} {Number(advancePaymentLpo.balanceDue ?? advancePaymentLpo.totalValue ?? 0).toFixed(2)}
+                </span>
+              </div>
+
+              {/* Payment Date */}
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">Payment Date</label>
+                <input
+                  type="date"
+                  value={advModalDate}
+                  onChange={e => setAdvModalDate(e.target.value)}
+                  className="w-full text-sm p-2 border border-slate-300 rounded focus:border-[#F5C742] focus:ring-1 focus:ring-[#F5C742] outline-none"
+                />
+              </div>
+
+              {/* Payment Mode */}
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">Payment Mode</label>
+                <select
+                  value={advModalMode}
+                  onChange={e => { setAdvModalMode(e.target.value); setAdvModalBankAccount(''); setAdvModalChequeDate(new Date().toISOString().split('T')[0]); }}
+                  className="w-full text-sm p-2 border border-slate-300 rounded focus:border-[#F5C742] focus:ring-1 focus:ring-[#F5C742] outline-none bg-white"
+                >
+                  <option>Cash</option>
+                  <option>Bank Transfer</option>
+                  <option>Cheque</option>
+                  <option>Credit Card</option>
+                </select>
+              </div>
+
+              {/* Bank Account — non-Cash */}
+              {advModalMode !== 'Cash' && (
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">Bank Account</label>
+                  <select
+                    value={advModalBankAccount}
+                    onChange={e => setAdvModalBankAccount(e.target.value)}
+                    className="w-full text-sm p-2 border border-slate-300 rounded focus:border-[#F5C742] focus:ring-1 focus:ring-[#F5C742] outline-none bg-white"
+                  >
+                    <option value="">Select bank account...</option>
+                    {advModalBankOptions.map(acc => (
+                      <option key={acc.id} value={acc.name}>{acc.code} — {acc.name}</option>
+                    ))}
+                  </select>
+                </div>
+              )}
+
+              {/* Cheque Date */}
+              {advModalMode === 'Cheque' && (
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">Cheque Date</label>
+                  <input
+                    type="date"
+                    value={advModalChequeDate}
+                    onChange={e => setAdvModalChequeDate(e.target.value)}
+                    className="w-full text-sm p-2 border border-slate-300 rounded focus:border-[#F5C742] focus:ring-1 focus:ring-[#F5C742] outline-none"
+                  />
+                </div>
+              )}
+
+              {/* Amount */}
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">Amount</label>
+                <input
+                  type="number"
+                  value={advModalAmount}
+                  onChange={e => setAdvModalAmount(e.target.value)}
+                  className="w-full text-sm p-2 border border-slate-300 rounded focus:border-[#F5C742] focus:ring-1 focus:ring-[#F5C742] outline-none"
+                />
+              </div>
+
+              {/* Reference */}
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">Reference / Instrument No</label>
+                <input
+                  type="text"
+                  placeholder="Cheque no, Transaction ID, etc."
+                  value={advModalRef}
+                  onChange={e => setAdvModalRef(e.target.value)}
+                  className="w-full text-sm p-2 border border-slate-300 rounded focus:border-[#F5C742] focus:ring-1 focus:ring-[#F5C742] outline-none"
+                />
+              </div>
+
+              {/* Notes */}
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">Notes</label>
+                <textarea
+                  rows={2}
+                  placeholder="Additional notes..."
+                  value={advModalNotes}
+                  onChange={e => setAdvModalNotes(e.target.value)}
+                  className="w-full text-sm p-2 border border-slate-300 rounded focus:border-[#F5C742] focus:ring-1 focus:ring-[#F5C742] outline-none resize-none"
+                />
+              </div>
+            </div>
+
+            {/* Footer */}
+            <div className="px-6 py-4 bg-slate-50 flex justify-end gap-3 border-t border-slate-100">
+              <button
+                onClick={() => setIsAdvancePaymentModalOpen(false)}
+                className="px-4 py-2 bg-white border border-slate-300 text-slate-700 text-xs font-bold rounded hover:bg-slate-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleCreateAdvancePayment}
+                disabled={advModalSaving}
+                className="px-6 py-2 bg-[#F5C742] text-slate-900 text-xs font-bold rounded hover:bg-yellow-500 shadow-sm flex items-center gap-2 disabled:opacity-50"
+              >
+                <DollarSign size={14} /> {advModalSaving ? 'Saving...' : 'Record Payment'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

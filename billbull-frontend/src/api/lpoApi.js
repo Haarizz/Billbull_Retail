@@ -51,3 +51,15 @@ export const deleteLpo = async (lpoNumber) => {
 export const postLpoStock = async (id) => {
   return api.post(`/api/lpos/${id}/post-stock`);
 };
+
+// ================= ADVANCE PAYMENT =================
+
+export const createLpoAdvancePayment = async (id, payload) => {
+  const res = await api.post(`/api/lpos/${id}/advance-payment`, payload);
+  return res.data;
+};
+
+export const getLpoPaymentVouchers = async (id) => {
+  const res = await api.get(`/api/lpos/${id}/payment-vouchers`);
+  return res.data;
+};

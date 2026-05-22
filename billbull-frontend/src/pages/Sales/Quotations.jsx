@@ -576,7 +576,7 @@ const Quotations = () => {
         };
     }, [currencyOptions, currency]);
 
-    const canEditQuotation = (quotationStatus) => !['Approved', 'Invoiced', 'Converted'].includes(quotationStatus);
+    const canEditQuotation = (quotationStatus) => !['Approved', 'Invoiced', 'Converted to SO'].includes(quotationStatus);
     const isViewMode = activeTab === 'create' && editorMode === 'view';
     const canEditCurrentQuotation = canEditQuotation(status);
     const closeActionMenu = () => {
@@ -684,7 +684,7 @@ const Quotations = () => {
             status: data.status === 'PENDING_APPROVAL' ? 'Pending Approval' :
                 data.status === 'APPROVED' ? 'Approved' :
                     data.status === 'REJECTED' ? 'Rejected' :
-                        data.status === 'CONVERTED' ? 'Converted' :
+                        data.status === 'CONVERTED' ? 'Converted to SO' :
                             data.status === 'INVOICED' ? 'Invoiced' :
                                 data.status === 'EXPIRED' ? 'Expired' : 'Draft',
             currency: data.currency,
@@ -2080,8 +2080,8 @@ const Quotations = () => {
                 return <span className="text-xs font-bold text-emerald-600 bg-emerald-50 border border-emerald-100 px-2 py-0.5 rounded-full">Approved</span>;
             case 'Rejected':
                 return <span className="text-xs font-bold text-red-600 bg-red-50 border border-red-100 px-2 py-0.5 rounded-full">Rejected</span>;
-            case 'Converted':
-                return <span className="text-xs font-bold text-blue-600 bg-blue-50 border border-blue-100 px-2 py-0.5 rounded-full">Converted</span>;
+            case 'Converted to SO':
+                return <span className="text-xs font-bold text-blue-600 bg-blue-50 border border-blue-100 px-2 py-0.5 rounded-full">Converted to SO</span>;
             case 'Invoiced':
                 return <span className="text-xs font-bold text-indigo-600 bg-indigo-50 border border-indigo-100 px-2 py-0.5 rounded-full">Invoiced</span>;
             case 'Expired':
@@ -2529,7 +2529,7 @@ const Quotations = () => {
                                         <option value="Pending Approval">Pending Approval</option>
                                         <option value="Approved">Approved</option>
                                         <option value="Rejected">Rejected</option>
-                                        <option value="Converted">Converted</option>
+                                        <option value="Converted to SO">Converted to SO</option>
                                         <option value="Invoiced">Invoiced</option>
                                         <option value="Expired">Expired</option>
                                     </select>
@@ -2675,7 +2675,7 @@ const Quotations = () => {
                                                                         </button>
                                                                     </>
                                                                 )}
-                                                                {qtn.status === 'Converted' && (
+                                                                {qtn.status === 'Converted to SO' && (
                                                                     <button onClick={(e) => handleListingRevertToApproved(qtn, e)} className="w-full text-left px-4 py-2 hover:bg-orange-50 flex items-center gap-2 text-orange-600 font-semibold">
                                                                         <RotateCcw size={13} /> Revert to Approved
                                                                     </button>
@@ -3457,7 +3457,7 @@ const Quotations = () => {
                                     </>
                                 )}
 
-                                {status === 'Converted' && (
+                                {status === 'Converted to SO' && (
                                     <button
                                         onClick={handleRevertToApproved}
                                         className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-orange-300 text-orange-600 rounded text-xs font-bold hover:bg-orange-50 transition-colors shadow-sm"
