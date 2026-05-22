@@ -152,3 +152,19 @@ export const getItemPriceHistory = async (itemCode) => {
     throw new Error(message);
   }
 };
+
+// --------------------
+// SEND QUOTATION EMAIL
+// toEmail and subject are optional — if omitted, uses customer email & default subject
+// --------------------
+export const sendQuotationEmail = async (id, { toEmail = "", subject = "" } = {}) => {
+  try {
+    const res = await api.post(`${BASE_URL}/${id}/send-email`, { toEmail, subject });
+    return res.data;
+  } catch (err) {
+    const message =
+      err?.response?.data ||
+      "Failed to send email";
+    throw new Error(message);
+  }
+};

@@ -49,7 +49,8 @@ import {
     uploadAttachment,
     checkQuotationStock,
     getNextQuotationNo,
-    getItemPriceHistory
+    getItemPriceHistory,
+    sendQuotationEmail
 } from '../../api/quotationApi';
 import { getStockAvailability } from '../../api/stockAvailabilityApi';
 import { formatDisplayDate } from '../../utils/dateUtils';
@@ -412,6 +413,10 @@ const Quotations = () => {
     // --- UI STATES ---
     const [isRevisionsOpen, setIsRevisionsOpen] = useState(false);
     const [isReviseModalOpen, setIsReviseModalOpen] = useState(false);
+    const [isEmailModalOpen, setIsEmailModalOpen] = useState(false);
+    const [emailTo, setEmailTo] = useState('');
+    const [emailSubject, setEmailSubject] = useState('');
+    const [emailSending, setEmailSending] = useState(false);
     const [activeActionMenu, setActiveActionMenu] = useState(null);
     const [actionMenuPosition, setActionMenuPosition] = useState(null);
     const [isPrintModalOpen, setIsPrintModalOpen] = useState(false);
@@ -1580,6 +1585,107 @@ const Quotations = () => {
             setToastType('info');
             setShowToast(true);
         }
+    };
+
+    const handleOpenEmailModal = () => {
+        const customerEmail = selectedCustomerData?.email || inquiryCustomerSnapshot?.email || '';
+        setEmailTo(customerEmail);
+        setEmailSubject(`Quotation ${getQuotationNo()} from BillBull ERP`);
+        setIsEmailModalOpen(true);
+    };
+
+    const handleSendEmail = async () => {
+        if (!editingId) {
+            setToastMessage('Please save the quotation before sending.');
+            setToastType('info');
+            setShowToast(true);
+            return;
+        }
+        setEmailSending(true);
+        try {
+            await sendQuotationEmail(editingId, { toEmail: emailTo, subject: emailSubject });
+            setIsEmailModalOpen(false);
+            setToastMessage(`Email sent successfully to ${emailTo}`);
+            setToastType('success');
+            setShowToast(true);
+            setTimeout(() => setShowToast(false), 4000);
+        } catch (err) {
+            setToastMessage(err.message || 'Failed to send email.');
+            setToastType('error');
+            setShowToast(true);
+        } finally {
+            setEmailSending(false);
+        }
+    };
+
+    const buildEmailPreviewHtml = () => {
+        const qtnNo = getQuotationNo();
+        const fmt = (d) => d ? new Date(d).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : 'N/A';
+        const fmtAmt = (v) => `${currency || ''} ${Number(v || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
+        const rows = items.map((item, i) => `
+            <tr style="background:${i % 2 === 0 ? '#fff' : '#f9f9f9'}">
+                <td style="padding:8px 12px;border-bottom:1px solid #eee">${i + 1}</td>
+                <td style="padding:8px 12px;border-bottom:1px solid #eee">${item.description || item.itemCode || ''}</td>
+                <td style="padding:8px 12px;border-bottom:1px solid #eee;text-align:center">${item.unit || ''}</td>
+                <td style="padding:8px 12px;border-bottom:1px solid #eee;text-align:center">${item.quantity || 0}</td>
+                <td style="padding:8px 12px;border-bottom:1px solid #eee;text-align:right">${fmtAmt(item.price)}</td>
+                <td style="padding:8px 12px;border-bottom:1px solid #eee;text-align:right">${fmtAmt(item.lineTotal || (item.quantity * item.price))}</td>
+            </tr>`).join('');
+
+        const notesSection = notesToCustomer ? `
+            <div style="margin:24px 32px 0;padding:16px;background:#fffbeb;border-left:4px solid #F5C742;border-radius:4px;">
+                <p style="margin:0 0 6px;font-weight:600;color:#555">Notes</p>
+                <p style="margin:0;color:#333;font-size:14px">${notesToCustomer}</p>
+            </div>` : '';
+
+        return `<!DOCTYPE html><html><head><meta charset="UTF-8"></head>
+        <body style="margin:0;padding:16px;background:#f4f4f4;font-family:Arial,sans-serif">
+        <div style="max-width:640px;margin:0 auto;background:#fff;border-radius:8px;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,0.08)">
+            <div style="background:#F5C742;padding:24px 32px">
+                <h1 style="margin:0;font-size:22px;color:#333">Quotation</h1>
+                <p style="margin:6px 0 0;font-size:15px;color:#555;font-weight:600">${qtnNo}</p>
+            </div>
+            <div style="padding:20px 32px;background:#fafafa;border-bottom:1px solid #eee">
+                <table style="width:100%"><tr>
+                    <td style="vertical-align:top">
+                        <p style="margin:0 0 4px;font-size:11px;color:#888">CUSTOMER</p>
+                        <p style="margin:0;font-weight:600;color:#333;font-size:15px">${customer || ''}</p>
+                    </td>
+                    <td style="vertical-align:top;text-align:right">
+                        <p style="margin:0 0 4px;font-size:11px;color:#888">DATE</p>
+                        <p style="margin:0;color:#333;font-size:13px">${fmt(new Date().toISOString())}</p>
+                        <p style="margin:8px 0 4px;font-size:11px;color:#888">VALID TILL</p>
+                        <p style="margin:0;color:#e05252;font-size:13px;font-weight:600">${fmt(validTill)}</p>
+                    </td>
+                </tr></table>
+            </div>
+            <div style="padding:24px 32px">
+                <table style="width:100%;border-collapse:collapse">
+                    <thead><tr style="background:#F5C742">
+                        <th style="padding:9px 12px;text-align:left;font-size:12px">#</th>
+                        <th style="padding:9px 12px;text-align:left;font-size:12px">Item</th>
+                        <th style="padding:9px 12px;text-align:center;font-size:12px">Unit</th>
+                        <th style="padding:9px 12px;text-align:center;font-size:12px">Qty</th>
+                        <th style="padding:9px 12px;text-align:right;font-size:12px">Unit Price</th>
+                        <th style="padding:9px 12px;text-align:right;font-size:12px">Total</th>
+                    </tr></thead>
+                    <tbody>${rows}</tbody>
+                </table>
+                <table style="width:100%;margin-top:16px"><tr>
+                    <td style="width:55%"></td>
+                    <td><table style="width:100%">
+                        <tr><td style="padding:4px 12px;font-size:13px;color:#555">Subtotal</td><td style="padding:4px 12px;text-align:right;font-size:13px;color:#555">${fmtAmt(subTotal)}</td></tr>
+                        <tr><td style="padding:4px 12px;font-size:13px;color:#555">Tax</td><td style="padding:4px 12px;text-align:right;font-size:13px;color:#555">${fmtAmt(totalTax)}</td></tr>
+                        <tr><td style="padding:6px 12px;font-weight:700;font-size:15px;border-top:2px solid #F5C742">Total</td><td style="padding:6px 12px;text-align:right;font-weight:700;font-size:15px;border-top:2px solid #F5C742">${fmtAmt(grandTotal)}</td></tr>
+                    </table></td>
+                </tr></table>
+            </div>
+            ${notesSection}
+            <div style="padding:16px 32px;background:#f4f4f4;border-top:1px solid #eee;text-align:center;margin-top:24px">
+                <p style="margin:0;font-size:11px;color:#999">This quotation was generated by BillBull ERP. Please do not reply to this email.</p>
+            </div>
+        </div></body></html>`;
     };
 
     const handleRestoreRevision = (revision) => {
@@ -3515,6 +3621,15 @@ const Quotations = () => {
                                     </button>
                                 )}
 
+                                {editingId && (
+                                    <button
+                                        onClick={handleOpenEmailModal}
+                                        className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-amber-300 text-amber-700 rounded text-xs font-bold hover:bg-amber-50 transition-colors"
+                                    >
+                                        <Mail size={14} /> Send Email
+                                    </button>
+                                )}
+
                                 <button
                                     onClick={() => setIsReviseModalOpen(true)}
                                     className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-slate-300 text-slate-700 rounded text-xs font-bold hover:bg-slate-50 transition-colors"
@@ -3681,6 +3796,78 @@ const Quotations = () => {
                         </div>
                     )
                 }
+
+                {/* --- EMAIL MODAL --- */}
+                {isEmailModalOpen && (
+                    <div className="fixed inset-0 z-[110] flex items-center justify-center bg-black/50 p-4">
+                        <div className="bg-white rounded-xl shadow-2xl w-full max-w-3xl flex flex-col max-h-[90vh]">
+
+                            {/* Header */}
+                            <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100">
+                                <div className="flex items-center gap-2">
+                                    <Mail size={18} className="text-amber-500" />
+                                    <h3 className="font-bold text-slate-800 text-base">Send Quotation Email</h3>
+                                </div>
+                                <button onClick={() => setIsEmailModalOpen(false)}>
+                                    <X size={18} className="text-slate-400 hover:text-slate-600" />
+                                </button>
+                            </div>
+
+                            {/* To + Subject fields */}
+                            <div className="px-5 py-4 border-b border-slate-100 space-y-3 bg-slate-50">
+                                <div className="flex items-center gap-3">
+                                    <label className="text-xs font-semibold text-slate-500 w-14 shrink-0">To</label>
+                                    <input
+                                        type="email"
+                                        value={emailTo}
+                                        onChange={(e) => setEmailTo(e.target.value)}
+                                        placeholder="customer@example.com"
+                                        className="flex-1 px-3 py-1.5 border border-slate-200 rounded text-sm focus:outline-none focus:border-amber-400 bg-white"
+                                    />
+                                </div>
+                                <div className="flex items-center gap-3">
+                                    <label className="text-xs font-semibold text-slate-500 w-14 shrink-0">Subject</label>
+                                    <input
+                                        type="text"
+                                        value={emailSubject}
+                                        onChange={(e) => setEmailSubject(e.target.value)}
+                                        className="flex-1 px-3 py-1.5 border border-slate-200 rounded text-sm focus:outline-none focus:border-amber-400 bg-white"
+                                    />
+                                </div>
+                            </div>
+
+                            {/* Email Preview */}
+                            <div className="flex-1 overflow-hidden px-5 py-3">
+                                <p className="text-xs font-semibold text-slate-400 mb-2 uppercase tracking-wide">Email Preview</p>
+                                <iframe
+                                    srcDoc={buildEmailPreviewHtml()}
+                                    title="Email Preview"
+                                    className="w-full h-full rounded border border-slate-200"
+                                    style={{ minHeight: '380px' }}
+                                    sandbox="allow-same-origin"
+                                />
+                            </div>
+
+                            {/* Footer */}
+                            <div className="px-5 py-4 border-t border-slate-100 flex justify-end gap-2">
+                                <button
+                                    onClick={() => setIsEmailModalOpen(false)}
+                                    className="px-4 py-2 border border-slate-200 rounded text-xs font-medium text-slate-600 hover:bg-slate-50"
+                                >
+                                    Cancel
+                                </button>
+                                <button
+                                    onClick={handleSendEmail}
+                                    disabled={emailSending || !emailTo.trim()}
+                                    className="flex items-center gap-2 px-5 py-2 bg-amber-500 hover:bg-amber-600 disabled:bg-slate-200 disabled:text-slate-400 text-white rounded text-xs font-bold transition-colors"
+                                >
+                                    <Mail size={13} />
+                                    {emailSending ? 'Sending...' : 'Send Email'}
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                )}
 
                 {/* ✅ STOCK AVAILABILITY MODAL (New) */}
                 <StockAvailabilityModal
