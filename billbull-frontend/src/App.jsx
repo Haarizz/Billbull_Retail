@@ -540,6 +540,15 @@ function App() {
                     />
 
                     <Route
+                      path="/sales/reports"
+                      element={
+                        <ResourceGuard module="sales.invoice">
+                          <SalesSummaryReport />
+                        </ResourceGuard>
+                      }
+                    />
+
+                    <Route
                       path="/sales/reports/summary"
                       element={
                         <ResourceGuard module="sales.invoice">
