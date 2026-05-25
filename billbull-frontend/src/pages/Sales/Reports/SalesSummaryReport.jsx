@@ -42,6 +42,7 @@ import { getPrintTemplates } from '../../../api/printTemplateApi';
 import { getSalesReportData } from '../../../api/salesReportsApi';
 import { exportToExcel, exportToPDF } from '../../../utils/exportUtils';
 import { generateReportPrintHtml, printHtml } from '../../../utils/printGenerator';
+import useReportScrollPreserver from '../../../hooks/useReportScrollPreserver';
 
 const REPORT_GROUPS = [
     {
@@ -180,6 +181,9 @@ const SalesSummaryReport = () => {
         searchQuery: ''
     });
     const reportCacheRef = useRef(new Map());
+    const reportListRef = useRef(null);
+    const reportBodyRef = useRef(null);
+    const { captureScroll } = useReportScrollPreserver([reportListRef, reportBodyRef]);
 
     const activeReport = allReports.find(report => report.id === activeId) || allReports[0];
 
@@ -268,6 +272,7 @@ const SalesSummaryReport = () => {
     };
 
     const handleReportSelect = id => {
+        captureScroll();
         setActiveId(id);
         setSidebarOpen(false);
     };
@@ -399,7 +404,7 @@ const SalesSummaryReport = () => {
                 </div>
             </div>
 
-            <div className="flex-1 overflow-y-auto p-3">
+            <div ref={reportListRef} className="flex-1 overflow-y-auto p-3">
                 {visibleGroups.map(group => {
                     const isOpen = Boolean(search.trim()) || openGroups[group.id];
                     return (
@@ -424,6 +429,7 @@ const SalesSummaryReport = () => {
                                         return (
                                             <button
                                                 key={report.id}
+                                                type="button"
                                                 onClick={() => handleReportSelect(report.id)}
                                                 className={`mb-1 w-full rounded-lg border p-2 text-left transition ${
                                                     active
@@ -474,7 +480,7 @@ const SalesSummaryReport = () => {
 
             <main className="flex min-w-0 flex-1 flex-col overflow-hidden">
                 <div className="flex items-center gap-3 border-b border-slate-200 bg-white px-4 py-3 md:hidden">
-                    <button onClick={() => setSidebarOpen(true)} className="rounded-lg border border-slate-200 p-2 text-slate-600">
+                    <button type="button" onClick={() => setSidebarOpen(true)} className="rounded-lg border border-slate-200 p-2 text-slate-600">
                         <FaBars />
                     </button>
                     <div className="min-w-0">
@@ -483,7 +489,7 @@ const SalesSummaryReport = () => {
                     </div>
                 </div>
 
-                <div className="flex-1 overflow-y-auto p-4 md:p-6">
+                <div ref={reportBodyRef} className="flex-1 overflow-y-auto p-4 md:p-6">
                     <div className="mb-4 rounded-xl border border-slate-200 bg-white p-4">
                         <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
                             <div>
