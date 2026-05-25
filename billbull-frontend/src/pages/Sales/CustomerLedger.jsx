@@ -38,12 +38,16 @@ import { isAutoNumberingEnabled } from '../../utils/salesNumbering';
 import { getTemplatesByCategory } from '../../api/printTemplateApi';
 import { generatePrintHtml, printHtml } from '../../utils/printGenerator';
 import { normalizePurchaseTemplate, buildReceiptVoucherPrintData } from '../../utils/purchasePrintUtils';
+// QA-040: shared email modal
+import SendDocumentEmailModal from '../../components/SendDocumentEmailModal';
+import { sendReceiptVoucherEmail } from '../../api/receiptVoucherApi';
 
 // ==========================================
 // 1. CONFIGURATION
 // ==========================================
 
 const CUSTOMER_COLUMNS = [
+    { header: 'S.No.', key: 'sNo', width: 8 },
     { header: 'Code', key: 'code', width: 15 },
     { header: 'Customer Name', key: 'name', width: 30 },
     { header: 'Group', key: 'group', width: 15 },
@@ -1381,6 +1385,8 @@ const ReceiveMoneyView = () => {
     const [chequeDate, setChequeDate] = useState('');
     const [bankAccount, setBankAccount] = useState('');
     const [lastSavedPayment, setLastSavedPayment] = useState(null);
+    // QA-040: Send-Email modal state for Receipt Voucher
+    const [isReceiptEmailOpen, setIsReceiptEmailOpen] = useState(false);
     const [bankAccounts, setBankAccounts] = useState([]);
 
     // Selection & Settlement States
@@ -1928,10 +1934,31 @@ const ReceiveMoneyView = () => {
                                 >
                                     <Printer size={14} /> Print Receipt
                                 </button>
+                                <button
+                                    onClick={() => setIsReceiptEmailOpen(true)}
+                                    disabled={!lastSavedPayment}
+                                    className={`w-full mt-2 bg-white border border-slate-200 text-slate-600 font-bold py-2 rounded-md hover:bg-slate-50 transition-colors flex items-center justify-center gap-2 text-xs ${!lastSavedPayment ? 'opacity-50 cursor-not-allowed' : ''}`}
+                                >
+                                    <Mail size={14} /> Email Receipt
+                                </button>
                             </div>
                         </div>
                     </div>
                 </div>
+
+                {/* QA-040: Send Receipt Voucher Email */}
+                <SendDocumentEmailModal
+                    isOpen={isReceiptEmailOpen}
+                    onClose={() => setIsReceiptEmailOpen(false)}
+                    category="Receipt Voucher"
+                    docId={lastSavedPayment?.id}
+                    docNumber={lastSavedPayment?.paymentNumber || lastSavedPayment?.voucherId}
+                    customerEmail={selectedCustomer?.email || ''}
+                    docLabel="Receipt Voucher"
+                    companyProfile={company}
+                    apiFn={sendReceiptVoucherEmail}
+                    buildPayload={() => buildReceiptVoucherPrintData(lastSavedPayment, selectedCustomer, company)}
+                />
 
                 {/* 4. Recent Transactions Panel */}
                 <div className="bg-white rounded-lg border border-slate-200 shadow-sm p-5">
@@ -2398,6 +2425,7 @@ const CustomerLedger = () => {
                                 <table className="w-full text-sm text-left">
                                     <thead className="bg-[#F7F7FA] text-slate-500 border-b border-slate-200">
                                         <tr>
+                                            <th className="px-3 py-4 font-semibold text-xs uppercase whitespace-nowrap text-center w-12">S.No.</th>
                                             <th className="px-6 py-4 font-semibold text-xs uppercase whitespace-nowrap">Code</th>
                                             <th className="px-2 py-4 font-semibold text-xs uppercase whitespace-nowrap text-center">Photo</th>
                                             <th className="px-6 py-4 font-semibold text-xs uppercase whitespace-nowrap">Customer Name</th>
@@ -2412,8 +2440,9 @@ const CustomerLedger = () => {
                                     </thead>
                                     <tbody className="divide-y divide-slate-100">
                                         {filteredCustomers.length > 0 ? (
-                                            filteredCustomers.map((cust) => (
+                                            filteredCustomers.map((cust, index) => (
                                                 <tr key={cust.id} className="hover:bg-slate-50 transition-colors group">
+                                                    <td className="px-3 py-4 whitespace-nowrap text-xs font-mono text-slate-400 font-medium text-center align-top pt-5">{index + 1}</td>
                                                     <td className="px-6 py-4 whitespace-nowrap text-xs font-mono text-slate-500 align-top pt-5">{cust.code}</td>
 
                                                     <td className="px-2 py-4 whitespace-nowrap align-top pt-4 text-center">
@@ -2477,7 +2506,7 @@ const CustomerLedger = () => {
                                             ))
                                         ) : (
                                             <tr>
-                                                <td colSpan="10" className="px-6 py-12 text-center text-slate-400 text-sm">
+                                                <td colSpan="11" className="px-6 py-12 text-center text-slate-400 text-sm">
                                                     <div className="flex flex-col items-center justify-center">
                                                         <Search size={32} strokeWidth={1.5} className="mb-2 text-slate-300" />
                                                         No customers found matching your filters.
@@ -2549,8 +2578,17 @@ const CustomerLedger = () => {
 
                         <div className="flex flex-wrap gap-2 w-full lg:w-auto">
                             <ExportDropdown
-                                onExportExcel={() => exportToExcel(filteredCustomers, CUSTOMER_COLUMNS, 'Customers')}
-                                onExportPdf={() => exportToPDF(filteredCustomers, CUSTOMER_COLUMNS, 'Customer List', 'Customers')}
+                                onExportExcel={() => exportToExcel(
+                                    filteredCustomers.map((cust, index) => ({ ...cust, sNo: index + 1 })),
+                                    CUSTOMER_COLUMNS,
+                                    'Customers'
+                                )}
+                                onExportPdf={() => exportToPDF(
+                                    filteredCustomers.map((cust, index) => ({ ...cust, sNo: index + 1 })),
+                                    CUSTOMER_COLUMNS,
+                                    'Customer List',
+                                    'Customers'
+                                )}
                             />
                             <button className="flex items-center gap-2 px-3 py-2 bg-white border border-slate-200 rounded-md text-sm text-slate-600 hover:bg-slate-50 transition-colors">
                                 <Upload size={16} /> Import

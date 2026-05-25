@@ -2,6 +2,7 @@ package com.billbull.backend.sales.salesorder;
 
 import com.billbull.backend.security.AuditLogService;
 import com.billbull.backend.inventory.batch.BatchSelectionRequest;
+import com.billbull.backend.settings.email.DocumentEmailSender;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.http.ResponseEntity;
@@ -23,14 +24,43 @@ public class SalesOrderController {
     private final SalesOrderService service;
     private final SalesOrderAttachmentRepository attachmentRepo;
     private final AuditLogService auditLogService;
+    private final DocumentEmailSender emailSender;
 
     public SalesOrderController(
             SalesOrderService service,
             SalesOrderAttachmentRepository attachmentRepo,
-            AuditLogService auditLogService) {
+            AuditLogService auditLogService,
+            DocumentEmailSender emailSender) {
         this.service = service;
         this.attachmentRepo = attachmentRepo;
         this.auditLogService = auditLogService;
+        this.emailSender = emailSender;
+    }
+
+    // QA-040: send the SO email using the frontend-rendered HTML body.
+    @PostMapping("/{id}/send-email")
+    @SuppressWarnings("unchecked")
+    public ResponseEntity<?> sendEmail(@PathVariable Long id,
+                                       @RequestBody(required = false) Map<String, Object> body) {
+        try {
+            String toEmail = body != null ? (String) body.get("toEmail") : null;
+            String subject = body != null ? (String) body.get("subject") : null;
+            String htmlBody = body != null ? (String) body.get("htmlBody") : null;
+            List<Map<String, String>> inlineAttachments = body != null
+                    ? (List<Map<String, String>>) body.get("inlineAttachments")
+                    : null;
+
+            SalesOrder order = service.getById(id);
+            if (subject == null || subject.isBlank()) {
+                subject = "Sales Order " + order.getSoNumber() + " from " + emailSender.getFromName();
+            }
+            emailSender.send(toEmail, subject, htmlBody, inlineAttachments);
+            return ResponseEntity.ok(Map.of("message", "Email sent successfully to " + toEmail));
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body(e.getMessage());
+        } catch (Exception e) {
+            return ResponseEntity.internalServerError().body("Failed to send email: " + e.getMessage());
+        }
     }
 
     @PostMapping
@@ -45,6 +75,15 @@ public class SalesOrderController {
     @GetMapping
     public List<SalesOrder> getAll() {
         return service.getAll();
+    }
+
+    @GetMapping("/page")
+    public com.billbull.backend.util.PageResponse<SalesOrder> getPage(
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "30") int size,
+            @RequestParam(required = false) String search,
+            @RequestParam(required = false) String status) {
+        return com.billbull.backend.util.PaginationUtil.paginate(service.getAll(), page, size, search, status);
     }
 
     @GetMapping("/next-number")

@@ -68,6 +68,7 @@ import { formatCurrencyDisplay } from '../../../utils/countryCurrencyOptions';
 // ==========================================
 
 const INVOICE_COLUMNS = [
+  { header: 'S.No.', key: 'sNo', width: 8 },
   { header: 'Document No', key: 'id', width: 15 },
   { header: 'Doc Date', key: 'documentDate', width: 12 },
   { header: 'Inv Date', key: 'vendorInvoiceDate', width: 12 },
@@ -526,7 +527,7 @@ const SchedulePaymentModal = ({ invoice, onClose, onConfirm }) => {
 // SUB-COMPONENTS
 // ==========================================
 
-const InvoiceListView = ({ invoices, filteredInvoices, activeFilter, setActiveFilter, searchQuery, setSearchQuery, onView, onPrint, onPay, onRefresh, dateRange, setDateRange, vendorFilter, setVendorFilter }) => {
+const InvoiceListView = ({ invoices, filteredInvoices, activeFilter, setActiveFilter, searchQuery, setSearchQuery, onView, onPrint, onPay, onRefresh, dateRange, setDateRange, vendorFilter, setVendorFilter, currentPage }) => {
   const [showFilters, setShowFilters] = useState(false);
 
   const invoiceStats = useMemo(() => {
@@ -679,6 +680,7 @@ const InvoiceListView = ({ invoices, filteredInvoices, activeFilter, setActiveFi
           <table className="w-full text-xs text-left min-w-[1320px]">
             <thead className="bg-[#F7F7FA] text-slate-500 font-medium border-b border-slate-200">
               <tr>
+                <th className="px-3 py-3 text-center text-slate-500 w-12 select-none uppercase whitespace-nowrap">S.No.</th>
                 <th className="px-6 py-3 whitespace-nowrap">Document No</th>
                 <th className="px-6 py-3 whitespace-nowrap">Document Date</th>
                 <th className="px-6 py-3 whitespace-nowrap">Invoice Date</th>
@@ -694,8 +696,9 @@ const InvoiceListView = ({ invoices, filteredInvoices, activeFilter, setActiveFi
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
-              {filteredInvoices.map((row) => (
+              {filteredInvoices.map((row, index) => (
                 <tr key={row.dbId} className="hover:bg-slate-50 group transition-colors">
+                  <td className="px-3 py-4 text-center text-slate-400 font-mono font-medium whitespace-nowrap">{index + 1}</td>
                   <td onClick={() => onView(row)} className="px-6 py-4 font-mono font-medium text-[#F5C742] cursor-pointer hover:underline">{row.id}</td>
                   <td className="px-6 py-4 text-slate-600"><div className="flex items-center gap-1.5"><Calendar className="h-3 w-3 text-slate-400" /> {row.documentDate || '-'}</div></td>
                   <td className="px-6 py-4 text-slate-600"><div className="flex items-center gap-1.5"><Calendar className="h-3 w-3 text-slate-400" /> {row.vendorInvoiceDate || '-'}</div></td>
@@ -2959,11 +2962,20 @@ const PurchaseInvoices = () => {
   }, [invoices, searchQuery, activeFilter, dateRange, vendorFilter]);
 
   const handleExportExcel = () => {
-    exportToExcel(filteredInvoices, INVOICE_COLUMNS, 'Purchase_Invoice_List');
+    exportToExcel(
+      filteredInvoices.map((inv, index) => ({ ...inv, sNo: index + 1 })),
+      INVOICE_COLUMNS,
+      'Purchase_Invoice_List'
+    );
   };
 
   const handleExportPdf = () => {
-    exportToPDF(filteredInvoices, INVOICE_COLUMNS, 'Purchase Invoices', 'Purchase_Invoice_List');
+    exportToPDF(
+      filteredInvoices.map((inv, index) => ({ ...inv, sNo: index + 1 })),
+      INVOICE_COLUMNS,
+      'Purchase Invoices',
+      'Purchase_Invoice_List'
+    );
   };
 
   const handleConfirmPayment = async (invoice, paymentMode, bankAccount, chequeDate) => {
@@ -3032,6 +3044,7 @@ const PurchaseInvoices = () => {
           setDateRange={setDateRange}
           vendorFilter={vendorFilter}
           setVendorFilter={setVendorFilter}
+          currentPage={0}
         />;
       case "editor":
         return <CreateEditView

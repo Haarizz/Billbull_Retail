@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import {
     Truck,
@@ -30,7 +30,8 @@ import {
     History,
     Eye,
     TrendingUp,
-    ShoppingCart
+    ShoppingCart,
+    Zap
 } from 'lucide-react';
 
 // ==========================================
@@ -59,6 +60,7 @@ import { usePermissions } from '../../context/PermissionContext';
 // ==========================================
 
 const DELIVERY_NOTE_COLUMNS = [
+    { header: 'S.No.', key: 'sNo', width: 8 },
     { header: 'DN Number', key: 'dnNo', width: 15 },
     { header: 'Date', key: 'date', width: 12 },
     { header: 'Customer', key: 'customerName', width: 25 },
@@ -109,6 +111,8 @@ import useShortcuts from '../../hooks/useShortcuts';
 // âœ… DYNAMIC UI COMPONENTS
 
 import { ItemDescriptionCell, ItemDescriptionHeader } from '../../components/ItemDescriptionCell';
+// QA-FAST-ENTRY: inline row search input that auto-opens ProductSelector
+import InlineProductSearchCell from '../../components/InlineProductSearchCell';
 import ItemAddOnsModal from '../../components/ItemAddOnsModal';
 
 const DeliveryNote = () => {
@@ -357,6 +361,12 @@ const DeliveryNote = () => {
 
     // âœ… PRODUCT SELECTOR STATE
     const [isProductSelectorOpen, setIsProductSelectorOpen] = useState(false);
+
+    // QA-FAST-ENTRY: inline-row-search → product-selector bridge state
+    const [pendingFastEntrySearch, setPendingFastEntrySearch] = useState('');
+    const [pendingFastEntryRowId, setPendingFastEntryRowId] = useState(null);
+    const inlineSearchRefs = useRef({});
+    const focusNextInlineSearchRef = useRef(null);
 
     // --- SIDEBAR COMPONENTS ---
     const StockSidebarPanel = ({ stock, isLoading, itemCode }) => {
@@ -901,6 +911,18 @@ const DeliveryNote = () => {
         loadDeliveryNotes();
     }, []);
 
+    // QA-FAST-ENTRY: focus the freshly-added empty row's inline search input.
+    useEffect(() => {
+        const targetId = focusNextInlineSearchRef.current;
+        if (targetId == null) return;
+        const raf = requestAnimationFrame(() => {
+            const el = inlineSearchRefs.current[targetId];
+            if (el) el.focus();
+            focusNextInlineSearchRef.current = null;
+        });
+        return () => cancelAnimationFrame(raf);
+    }, [items]);
+
     useEffect(() => {
         const fetchMasterData = async () => {
             try {
@@ -1330,14 +1352,29 @@ const DeliveryNote = () => {
             stock: warehouseStockMap[product.code] || 0
         });
 
+        // QA-FAST-ENTRY: if an empty row triggered this, replace it in-place
+        // (preserving its id) instead of appending — so focus chaining stays
+        // on the same row the user typed into.
+        const targetRowId = pendingFastEntryRowId;
         setItems(prev => {
+            if (targetRowId != null) {
+                return prev.map(it => it.id === targetRowId ? { ...newItem, id: targetRowId } : it);
+            }
             const hasData = prev.some(item => item.code || item.desc);
             return hasData ? [...prev, newItem] : [newItem];
         });
+        const filledItem = { ...newItem, id: targetRowId != null ? targetRowId : newItem.id };
+        setPendingFastEntrySearch('');
+        setPendingFastEntryRowId(null);
         setIsProductSelectorOpen(false); // âœ… Close modal after adding
         if (newItem.code) {
             fetchItemContext(newItem.code);
         }
+        // QA-FAST-ENTRY: focus Qty input on the filled row.
+        setTimeout(() => {
+            const qtyEl = document.getElementById(`qty-${filledItem.id}`);
+            if (qtyEl) { qtyEl.focus(); qtyEl.select?.(); }
+        }, 100);
     };
     const handleFastEntryAdd = (product, qty, price, disc) => {
         if (isLockedForEdit) return;
@@ -1799,9 +1836,10 @@ const DeliveryNote = () => {
             {/* âœ… PRODUCT SELECTOR MODAL */}
             <ProductSelector
                 isOpen={isProductSelectorOpen}
-                onClose={() => setIsProductSelectorOpen(false)}
+                onClose={() => { setIsProductSelectorOpen(false); setPendingFastEntryRowId(null); }}
                 onSelect={handleAddSingleProduct}
                 onInlineAdd={handleFastEntryAdd}
+                initialSearch={pendingFastEntrySearch}
                 title="Select Items from Products / Services"
                 actionLabel="Add to Delivery Note"
                 mode="sales"
@@ -1986,8 +2024,17 @@ const DeliveryNote = () => {
                                     </div>
                                 </div>
                                 <ExportDropdown
-                                    onExportExcel={() => exportToExcel(filteredDeliveryNotes, DELIVERY_NOTE_COLUMNS, 'Delivery_Notes')}
-                                    onExportPdf={() => exportToPDF(filteredDeliveryNotes, DELIVERY_NOTE_COLUMNS, 'Delivery Notes', 'Delivery_Notes')}
+                                    onExportExcel={() => exportToExcel(
+                                        filteredDeliveryNotes.map((dn, index) => ({ ...dn, sNo: index + 1 })),
+                                        DELIVERY_NOTE_COLUMNS,
+                                        'Delivery_Notes'
+                                    )}
+                                    onExportPdf={() => exportToPDF(
+                                        filteredDeliveryNotes.map((dn, index) => ({ ...dn, sNo: index + 1 })),
+                                        DELIVERY_NOTE_COLUMNS,
+                                        'Delivery Notes',
+                                        'Delivery_Notes'
+                                    )}
                                 />
                                 <button
                                     onClick={handleCreateNew}
@@ -2002,6 +2049,7 @@ const DeliveryNote = () => {
                                 <table className="w-full text-xs text-left">
                                     <thead className="bg-[#F7F7FA] text-slate-500 font-semibold border-b border-slate-200">
                                         <tr>
+                                            <th className="px-3 py-3 text-center text-slate-500 w-12 select-none">S.No.</th>
                                             <th className="px-4 py-3 cursor-pointer hover:bg-slate-100 select-none" onClick={() => handleSort('dnNo')}>
                                                 <div className="flex items-center gap-1">DN No {sortConfig.key === 'dnNo' && (sortConfig.direction === 'asc' ? <ArrowUp size={12} /> : <ArrowDown size={12} />)}</div>
                                             </th>
@@ -2036,8 +2084,9 @@ const DeliveryNote = () => {
                                         </tr>
                                     </thead>
                                     <tbody className="divide-y divide-slate-100">
-                                        {filteredDeliveryNotes.map((dn) => (
+                                        {filteredDeliveryNotes.map((dn, index) => (
                                             <tr key={dn.id} className="hover:bg-slate-50 cursor-pointer group" onClick={() => handleRowClick(dn)}>
+                                                <td className="px-3 py-3 text-center text-slate-400 font-mono font-medium">{index + 1}</td>
                                                 <td className="px-4 py-3 font-medium text-slate-700">
                                                     <div className="flex items-center gap-2">
                                                         {dn.dnNo}
@@ -2077,7 +2126,7 @@ const DeliveryNote = () => {
                                         ))}
                                         {filteredDeliveryNotes.length === 0 && (
                                             <tr>
-                                                <td colSpan="12" className="text-center py-8 text-slate-400">No Delivery Notes found.</td>
+                                                <td colSpan="13" className="text-center py-8 text-slate-400">No Delivery Notes found.</td>
                                             </tr>
                                         )}
                                     </tbody>
@@ -2392,6 +2441,7 @@ const DeliveryNote = () => {
                                         <div className="flex justify-between items-center mb-4 border-b border-slate-100/50 pb-2">
                                             <h3 className="text-sm font-bold text-slate-800 flex items-center gap-2">
                                                 <ShoppingCart size={16} className="text-yellow-500" /> Delivery Note Items
+                                                <span className="inline-flex items-center gap-1 text-[10px] bg-blue-50 text-blue-700 px-2 py-0.5 rounded-full font-medium border border-blue-200"><Zap size={10} /> Fast Entry</span>
                                             </h3>
                                             <div className="flex items-center gap-2">
                                                 {!hasItemData && (linkedSO || linkedSI) && (
@@ -2437,6 +2487,26 @@ const DeliveryNote = () => {
                                                             <tr className={`group hover:bg-slate-50/50 transition-colors bg-white align-middle ${isLockedForEdit ? 'opacity-80' : ''}`}>
                                                                 <td className="p-2 text-center text-slate-400 text-xs font-medium">{index + 1}</td>
                                                                 <td className="p-2">
+                                                                    {/* QA-FAST-ENTRY: empty rows show inline product-search input */}
+                                                                    {(!item.code && !item.desc) ? (
+                                                                        <InlineProductSearchCell
+                                                                            value={pendingFastEntryRowId === item.id ? pendingFastEntrySearch : ''}
+                                                                            inputRef={(el) => {
+                                                                                if (el) inlineSearchRefs.current[item.id] = el;
+                                                                                else delete inlineSearchRefs.current[item.id];
+                                                                            }}
+                                                                            isReadOnly={isLockedForEdit}
+                                                                            onChange={(text) => {
+                                                                                setPendingFastEntryRowId(item.id);
+                                                                                setPendingFastEntrySearch(text);
+                                                                            }}
+                                                                            onOpenSelector={(text) => {
+                                                                                setPendingFastEntryRowId(item.id);
+                                                                                setPendingFastEntrySearch(text);
+                                                                                setIsProductSelectorOpen(true);
+                                                                            }}
+                                                                        />
+                                                                    ) : (
                                                                     <ItemDescriptionCell
                                                                         item={{ ...item, availableQty: warehouseStockMap[item.code] || 0 }}
                                                                         isExpanded={expandedRows[item.id]}
@@ -2455,6 +2525,7 @@ const DeliveryNote = () => {
                                                                         showTaxDiscount={true}
                                                                         page="deliveryNote"
                                                                     />
+                                                                    )}
                                                                 </td>
                                                                 <td className="p-2 text-center align-middle">
                                                                     <div className="rounded-md border border-slate-200 bg-white inline-block px-2 py-1 min-w-[52px]">
@@ -2471,6 +2542,7 @@ const DeliveryNote = () => {
                                                                     <div className="rounded-md border border-slate-200 bg-white flex items-center px-2 py-1 w-full max-w-[92px] mx-auto">
                                                                         <input
                                                                             disabled={isLockedForEdit}
+                                                                            id={`qty-${item.id}`}
                                                                             type="number"
                                                                             className="w-full bg-transparent text-center outline-none font-bold text-sm text-slate-800 disabled:opacity-50"
                                                                             value={item.currentQty}
@@ -2479,6 +2551,14 @@ const DeliveryNote = () => {
                                                                                 stock: warehouseStockMap[item.code] || 0
                                                                             })}
                                                                             onChange={(e) => handleItemChange(item.id, 'currentQty', e.target.value)}
+                                                                            onKeyDown={(e) => {
+                                                                                if (e.key === 'Tab' && !e.shiftKey && !isLockedForEdit) {
+                                                                                    e.preventDefault();
+                                                                                    const newRow = createBlankDeliveryItem();
+                                                                                    focusNextInlineSearchRef.current = newRow.id;
+                                                                                    setItems(prev => [...prev, newRow]);
+                                                                                }
+                                                                            }}
                                                                         />
                                                                     </div>
                                                                 </td>
@@ -2566,6 +2646,18 @@ const DeliveryNote = () => {
                                                     )}
                                                 </tbody>
                                             </table>
+                                            {/* QA-FAST-ENTRY: Quick Entry hint bar */}
+                                            <div className="mt-2 px-3 py-2 bg-blue-50/30 border border-blue-100/60 rounded-md flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-slate-500">
+                                                <span className="inline-flex items-center gap-1 text-blue-600 font-semibold"><Zap size={11} /> Quick Entry:</span>
+                                                <span>Type name →</span>
+                                                <kbd className="px-1.5 py-0.5 bg-white border border-slate-200 rounded text-[10px] font-mono text-slate-600">Enter</kbd>
+                                                <span>Select →</span>
+                                                <kbd className="px-1.5 py-0.5 bg-white border border-slate-200 rounded text-[10px] font-mono text-slate-600">Tab</kbd>
+                                                <span>Qty →</span>
+                                                <kbd className="px-1.5 py-0.5 bg-white border border-slate-200 rounded text-[10px] font-mono text-slate-600">Tab</kbd>
+                                                <span>New row</span>
+                                                <span className="ml-auto text-slate-400">Tip: Use ↑↓ arrows to navigate items</span>
+                                            </div>
                                         </div>
                                     </div>
                                 </div>

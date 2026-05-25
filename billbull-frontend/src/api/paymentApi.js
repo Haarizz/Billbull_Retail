@@ -26,6 +26,11 @@ export const getPaymentVouchers = async () => {
   return res.data;
 };
 
+export const getPaymentVouchersPage = async ({ page = 0, size = 30, search = "", status = "" } = {}) => {
+  const res = await api.get("/api/vouchers/page", { params: { page, size, search, status } });
+  return res.data;
+};
+
 // --------------------
 // GET BY ID
 // --------------------

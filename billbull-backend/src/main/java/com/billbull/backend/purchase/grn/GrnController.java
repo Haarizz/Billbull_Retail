@@ -27,6 +27,15 @@ public class GrnController {
         return service.list();
     }
 
+    @GetMapping("/page")
+    public com.billbull.backend.util.PageResponse<GrnListResponse> page(
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "30") int size,
+            @RequestParam(required = false) String search,
+            @RequestParam(required = false) String status) {
+        return com.billbull.backend.util.PaginationUtil.paginate(service.list(), page, size, search, status);
+    }
+
     @GetMapping("/{id}")
     public GrnDetailResponse get(@PathVariable Long id) {
         return service.get(id);

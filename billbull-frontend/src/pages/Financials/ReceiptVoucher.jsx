@@ -36,7 +36,10 @@ import {
 } from 'lucide-react';
 
 import { employeesApi } from '../../api/employeesApi';
-import { receiptVoucherApi } from '../../api/receiptVoucherApi';
+import { receiptVoucherApi, sendReceiptVoucherEmail } from '../../api/receiptVoucherApi';
+// QA-040: shared email modal
+import SendDocumentEmailModal from '../../components/SendDocumentEmailModal';
+import { buildReceiptVoucherPrintData } from '../../utils/purchasePrintUtils';
 import { generateDocFilename, generateReportFilename } from '../../utils/filenameUtils';
 import { usePrintDocument } from '../../hooks/usePrintDocument';
 import { getImageUrl } from '../../utils/urlUtils';
@@ -108,6 +111,8 @@ const ReceiptVoucher = () => {
     // State for the Slide-in Drawer
     const [isDrawerOpen, setIsDrawerOpen] = useState(false);
     const [selectedReceipt, setSelectedReceipt] = useState(null);
+    // QA-040: Send-Email modal state
+    const [isEmailModalOpen, setIsEmailModalOpen] = useState(false);
 
     // --- DATA STATES ---
     const [employees, setEmployees] = useState([]);
@@ -1409,7 +1414,9 @@ const ReceiptVoucher = () => {
                                     className="px-4 py-2 bg-white border border-slate-200 rounded-md text-xs font-bold text-slate-600 hover:bg-slate-100 flex items-center gap-2 transition-colors">
                                     <Printer size={14} /> Print
                                 </button>
-                                <button className="px-4 py-2 bg-white border border-slate-200 rounded-md text-xs font-bold text-slate-600 hover:bg-slate-100 flex items-center gap-2 transition-colors">
+                                <button
+                                    onClick={() => setIsEmailModalOpen(true)}
+                                    className="px-4 py-2 bg-white border border-slate-200 rounded-md text-xs font-bold text-slate-600 hover:bg-slate-100 flex items-center gap-2 transition-colors">
                                     <Mail size={14} /> Email
                                 </button>
                             </div>
@@ -1417,6 +1424,41 @@ const ReceiptVoucher = () => {
                     </div>
                 )}
             </div>
+
+            {/* QA-040: Send Receipt Voucher Email */}
+            <SendDocumentEmailModal
+                isOpen={isEmailModalOpen}
+                onClose={() => setIsEmailModalOpen(false)}
+                category="Receipt Voucher"
+                docId={selectedReceipt?.dbId || selectedReceipt?.id}
+                docNumber={selectedReceipt?.id || selectedReceipt?.voucherId}
+                customerEmail={selectedReceipt?.customerEmail || selectedReceipt?.email || ''}
+                docLabel="Receipt Voucher"
+                companyProfile={company}
+                apiFn={sendReceiptVoucherEmail}
+                buildPayload={() => buildReceiptVoucherPrintData(
+                    {
+                        // Map the financials-page row shape onto what
+                        // buildReceiptVoucherPrintData expects.
+                        id: selectedReceipt?.dbId || selectedReceipt?.id,
+                        paymentNumber: selectedReceipt?.id || selectedReceipt?.voucherId,
+                        paymentDate: selectedReceipt?.date,
+                        amount: selectedReceipt?.amount,
+                        status: selectedReceipt?.status,
+                        customerName: selectedReceipt?.member || selectedReceipt?.memberName,
+                        customerCode: selectedReceipt?.customerCode,
+                        linkedInvoice: selectedReceipt?.source,
+                        referenceNumber: selectedReceipt?.reference,
+                        notes: selectedReceipt?.notes,
+                    },
+                    {
+                        name: selectedReceipt?.member || selectedReceipt?.memberName,
+                        code: selectedReceipt?.customerCode,
+                        email: selectedReceipt?.customerEmail,
+                    },
+                    company
+                )}
+            />
 
         </div>
     );

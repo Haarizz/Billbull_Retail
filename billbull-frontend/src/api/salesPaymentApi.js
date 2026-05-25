@@ -10,6 +10,11 @@ export const getAllSalesPayments = async () => {
     return res.data;
 };
 
+export const getSalesPaymentsPage = async ({ page = 0, size = 30, search = "", status = "" } = {}) => {
+    const res = await api.get(`${BASE_URL}/page`, { params: { page, size, search, status } });
+    return res.data;
+};
+
 // --------------------
 // GET BY ID
 // --------------------

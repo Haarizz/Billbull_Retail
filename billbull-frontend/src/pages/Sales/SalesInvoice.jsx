@@ -84,6 +84,7 @@ import { isAutoNumberingEnabled } from '../../utils/salesNumbering';
 // ==========================================
 
 const SALES_INVOICE_COLUMNS = [
+    { header: 'S.No.', key: 'sNo', width: 8 },
     { header: 'Invoice No', key: 'invoiceNumber', width: 15 },
     { header: 'Date', key: 'invoiceDate', width: 12 },
     { header: 'Customer', key: 'customerName', width: 25 },
@@ -125,6 +126,8 @@ import CustomerSelector from '../../components/CustomerSelector';
 import CustomerShippingPanel from '../../components/CustomerShippingPanel';
 import { resolveCustomer, hydrateCustomerFromSource } from '../../utils/customerResolution';
 import { ItemDescriptionCell, ItemDescriptionHeader } from '../../components/ItemDescriptionCell';
+// QA-FAST-ENTRY: inline row search input that auto-opens ProductSelector
+import InlineProductSearchCell from '../../components/InlineProductSearchCell';
 
 // ✅ STOCK AVAILABILITY MODAL
 import StockAvailabilityModal from '../../components/StockAvailabilityModal';
@@ -352,6 +355,12 @@ const SalesInvoice = () => {
     const [isProductSelectorOpen, setIsProductSelectorOpen] = useState(false);
     const [selectedAddonItem, setSelectedAddonItem] = useState(null); // BB-026
     const [batchSelectionTarget, setBatchSelectionTarget] = useState(null);
+
+    // QA-FAST-ENTRY: inline-row-search → product-selector bridge state
+    const [pendingFastEntrySearch, setPendingFastEntrySearch] = useState('');
+    const [pendingFastEntryRowId, setPendingFastEntryRowId] = useState(null);
+    const inlineSearchRefs = useRef({});
+    const focusNextInlineSearchRef = useRef(null);
 
     // Payment Calculation State
     const [amountCollected, setAmountCollected] = useState(0);
@@ -636,6 +645,18 @@ const SalesInvoice = () => {
             setBranch(prev => prev || defaultBranch.name);
         }
     }, [defaultBranch?.name, invoiceId]);
+
+    // QA-FAST-ENTRY: focus the freshly-added empty row's inline search input.
+    useEffect(() => {
+        const targetId = focusNextInlineSearchRef.current;
+        if (targetId == null) return;
+        const raf = requestAnimationFrame(() => {
+            const el = inlineSearchRefs.current[targetId];
+            if (el) el.focus();
+            focusNextInlineSearchRef.current = null;
+        });
+        return () => cancelAnimationFrame(raf);
+    }, [items]);
 
     // Pre-fill form from Quotation navigation state
     useEffect(() => {
@@ -1576,12 +1597,24 @@ const SalesInvoice = () => {
             fetchItemContext(newItem.code);
         }
 
+        // QA-FAST-ENTRY: replace-in-place when triggered by inline row search.
+        const targetRowId = pendingFastEntryRowId;
         setItems(prev => {
+            if (targetRowId != null) {
+                return prev.map(it => it.id === targetRowId ? { ...newItem, id: targetRowId } : it);
+            }
             const hasData = prev.some(i => i.code || i.name);
             return hasData ? [...prev, newItem] : [newItem];
         });
+        const filledItem = { ...newItem, id: targetRowId != null ? targetRowId : newItem.id };
+        setPendingFastEntrySearch('');
+        setPendingFastEntryRowId(null);
 
         setIsProductSelectorOpen(false); // ✅ Close modal after adding
+        setTimeout(() => {
+            const qtyEl = document.getElementById(`qty-${filledItem.id}`);
+            if (qtyEl) { qtyEl.focus(); qtyEl.select?.(); }
+        }, 100);
     };
 
     const handleFastEntryAdd = (product, qty, price, disc) => {
@@ -2300,9 +2333,10 @@ const SalesInvoice = () => {
             {/* ✅ PRODUCT SELECTOR MODAL */}
             <ProductSelector
                 isOpen={isProductSelectorOpen}
-                onClose={() => setIsProductSelectorOpen(false)}
+                onClose={() => { setIsProductSelectorOpen(false); setPendingFastEntryRowId(null); }}
                 onSelect={handleAddSingleProduct}
                 onInlineAdd={handleFastEntryAdd}
+                initialSearch={pendingFastEntrySearch}
                 title="Select Items from Products / Services"
                 actionLabel="Add to Invoice"
                 mode="sales"
@@ -2471,8 +2505,17 @@ const SalesInvoice = () => {
                                 {activeTab === 'list' && (
                                     <>
                                         <ExportDropdown
-                                            onExportExcel={() => exportToExcel(filteredInvoices, SALES_INVOICE_COLUMNS, 'Sales_Invoices')}
-                                            onExportPdf={() => exportToPDF(filteredInvoices, SALES_INVOICE_COLUMNS, 'Sales Invoices', 'Sales_Invoices')}
+                                            onExportExcel={() => exportToExcel(
+                                                filteredInvoices.map((inv, index) => ({ ...inv, sNo: index + 1 })),
+                                                SALES_INVOICE_COLUMNS,
+                                                'Sales_Invoices'
+                                            )}
+                                            onExportPdf={() => exportToPDF(
+                                                filteredInvoices.map((inv, index) => ({ ...inv, sNo: index + 1 })),
+                                                SALES_INVOICE_COLUMNS,
+                                                'Sales Invoices',
+                                                'Sales_Invoices'
+                                            )}
                                         />
                                         <button
                                             onClick={() => handleCreateNew('STANDARD_FLOW')}
@@ -2541,6 +2584,7 @@ const SalesInvoice = () => {
                                 <table className="w-full text-xs text-left">
                                     <thead className="bg-[#F7F7FA] text-slate-500 font-semibold border-b border-slate-200">
                                         <tr>
+                                            <th className="px-4 py-3 text-center text-slate-500 w-16 select-none">S.No.</th>
                                             <th className="px-4 py-3 cursor-pointer hover:bg-slate-100 select-none" onClick={() => handleSort('invoiceNumber')}>
                                                 <div className="flex items-center gap-1">Invoice No {sortConfig.key === 'invoiceNumber' && (sortConfig.direction === 'asc' ? <ArrowUp size={12} /> : <ArrowDown size={12} />)}</div>
                                             </th>
@@ -2566,8 +2610,11 @@ const SalesInvoice = () => {
                                         </tr>
                                     </thead>
                                     <tbody className="divide-y divide-slate-100">
-                                        {filteredInvoices.map((inv) => (
+                                        {filteredInvoices.map((inv, index) => (
                                             <tr key={inv.id} className="hover:bg-slate-50 cursor-pointer group" onClick={() => handleLoadInvoice(inv)}>
+                                                <td className="px-4 py-3 text-center text-slate-400 font-mono font-medium">
+                                                    {index + 1}
+                                                </td>
                                                 <td className="px-4 py-3 font-medium text-slate-700">
                                                     <div className="flex items-center">
                                                         {inv.invoiceNumber}
@@ -2628,7 +2675,7 @@ const SalesInvoice = () => {
                                         ))}
                                         {filteredInvoices.length === 0 && (
                                             <tr>
-                                                <td colSpan="10" className="text-center py-8 text-slate-400">No Invoices found.</td>
+                                                <td colSpan="11" className="text-center py-8 text-slate-400">No Invoices found.</td>
                                             </tr>
                                         )}
                                     </tbody>
@@ -2914,7 +2961,9 @@ const SalesInvoice = () => {
                                     {/* 4. INVOICE ITEMS */}
                                     <div className="bg-white p-5 rounded-lg border border-slate-200 shadow-sm">
                                         <div className="flex justify-between items-center mb-2">
-                                            <h3 className="text-[13px] font-bold text-slate-700">Invoice Items {isGeneratedFromDN && <span className="ml-2 text-[10px] bg-purple-100 text-purple-700 px-2 py-0.5 rounded font-medium border border-purple-200">Generated from DNs</span>}</h3>
+                                            <h3 className="text-[13px] font-bold text-slate-700 flex items-center gap-2">Invoice Items {isGeneratedFromDN && <span className="ml-2 text-[10px] bg-purple-100 text-purple-700 px-2 py-0.5 rounded font-medium border border-purple-200">Generated from DNs</span>}
+                                                <span className="inline-flex items-center gap-1 text-[10px] bg-blue-50 text-blue-700 px-2 py-0.5 rounded-full font-medium border border-blue-200"><Zap size={10} /> Fast Entry</span>
+                                            </h3>
                                             <div className="flex items-center gap-2">
                                                 {/* VAT mode toggle — drives line tax math. */}
                                                 <div className="inline-flex rounded-md border border-slate-200 overflow-hidden text-[11px] font-semibold">
@@ -2980,6 +3029,26 @@ const SalesInvoice = () => {
                                                                     {/* Item / Description */}
                                                                     <td className="px-3 py-2">
 
+                                                                        {/* QA-FAST-ENTRY: empty rows show inline product-search input */}
+                                                                        {(!item.code && !item.name && !item.desc) ? (
+                                                                            <InlineProductSearchCell
+                                                                                value={pendingFastEntryRowId === item.id ? pendingFastEntrySearch : ''}
+                                                                                inputRef={(el) => {
+                                                                                    if (el) inlineSearchRefs.current[item.id] = el;
+                                                                                    else delete inlineSearchRefs.current[item.id];
+                                                                                }}
+                                                                                isReadOnly={isReadOnlyInvoice || isGeneratedFromDN}
+                                                                                onChange={(text) => {
+                                                                                    setPendingFastEntryRowId(item.id);
+                                                                                    setPendingFastEntrySearch(text);
+                                                                                }}
+                                                                                onOpenSelector={(text) => {
+                                                                                    setPendingFastEntryRowId(item.id);
+                                                                                    setPendingFastEntrySearch(text);
+                                                                                    setIsProductSelectorOpen(true);
+                                                                                }}
+                                                                            />
+                                                                        ) : (
                                                                         <ItemDescriptionCell
                                                                             item={item}
                                                                             isExpanded={expandedRows[item.id]}
@@ -2995,6 +3064,7 @@ const SalesInvoice = () => {
                                                                             isReadOnly={isReadOnlyInvoice}
                                                                             page="salesInvoice"
                                                                         />
+                                                                        )}
                                                                         {item.batchControlled && (
                                                                             <button
                                                                                 type="button"
@@ -3062,6 +3132,12 @@ const SalesInvoice = () => {
                                                                             className={`w-full bg-transparent border-b border-transparent hover:border-slate-200 focus:border-yellow-400/50 text-center outline-none font-semibold text-xs transition-colors py-1 ${(isGeneratedFromDN || isReadOnlyInvoice) ? 'text-slate-400 cursor-not-allowed' : 'text-slate-700'}`}
                                                                             value={item.qty === 0 ? '' : item.qty}
                                                                             onChange={(e) => handleItemChange(item.id, 'qty', e.target.value)}
+                                                                            onKeyDown={(e) => {
+                                                                                if (e.key === 'Tab' && !e.shiftKey) {
+                                                                                    const priceEl = document.getElementById(`price-${item.id}`);
+                                                                                    if (priceEl) { e.preventDefault(); priceEl.focus(); priceEl.select?.(); }
+                                                                                }
+                                                                            }}
                                                                             placeholder="0"
                                                                         />
 
@@ -3113,10 +3189,19 @@ const SalesInvoice = () => {
 
                                                                         <input
                                                                             disabled={isGeneratedFromDN || isReadOnlyInvoice}
+                                                                            id={`price-${item.id}`}
                                                                             type="number"
                                                                             className={`w-full text-right bg-transparent border-b border-transparent hover:border-slate-200 focus:border-yellow-400/50 outline-none font-semibold text-xs transition-colors py-1 ${(isGeneratedFromDN || isReadOnlyInvoice) ? 'text-slate-400 cursor-not-allowed' : 'text-slate-700'}`}
                                                                             value={item.price === 0 ? '' : item.price}
                                                                             onChange={(e) => handleItemChange(item.id, 'price', e.target.value)}
+                                                                            onKeyDown={(e) => {
+                                                                                if (e.key === 'Tab' && !e.shiftKey && !isReadOnlyInvoice && !isGeneratedFromDN) {
+                                                                                    e.preventDefault();
+                                                                                    const newRow = createBlankInvoiceItem();
+                                                                                    focusNextInlineSearchRef.current = newRow.id;
+                                                                                    setItems(prev => [...prev, newRow]);
+                                                                                }
+                                                                            }}
                                                                             placeholder="0.00"
                                                                         />
 
@@ -3191,6 +3276,20 @@ const SalesInvoice = () => {
                                                         ))}
                                                     </tbody>
                                                 </table>
+                                            </div>
+                                            {/* QA-FAST-ENTRY: Quick Entry hint bar */}
+                                            <div className="mt-2 px-3 py-2 bg-blue-50/30 border border-blue-100/60 rounded-md flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-slate-500">
+                                                <span className="inline-flex items-center gap-1 text-blue-600 font-semibold"><Zap size={11} /> Quick Entry:</span>
+                                                <span>Type name →</span>
+                                                <kbd className="px-1.5 py-0.5 bg-white border border-slate-200 rounded text-[10px] font-mono text-slate-600">Enter</kbd>
+                                                <span>Select →</span>
+                                                <kbd className="px-1.5 py-0.5 bg-white border border-slate-200 rounded text-[10px] font-mono text-slate-600">Tab</kbd>
+                                                <span>Qty →</span>
+                                                <kbd className="px-1.5 py-0.5 bg-white border border-slate-200 rounded text-[10px] font-mono text-slate-600">Tab</kbd>
+                                                <span>Price →</span>
+                                                <kbd className="px-1.5 py-0.5 bg-white border border-slate-200 rounded text-[10px] font-mono text-slate-600">Tab</kbd>
+                                                <span>New row</span>
+                                                <span className="ml-auto text-slate-400">Tip: Use ↑↓ arrows to navigate items</span>
                                             </div>
                                         </div>
                                     </div>

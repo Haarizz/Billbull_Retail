@@ -657,28 +657,53 @@ const buildPaymentCard = (layout) => {
     `;
 };
 
-const buildSummarySection = (layout) => {
+const buildSummarySection = (layout, renderTarget = 'print') => {
     const hasNotes = Boolean(layout.notes);
     const hasTerms = Boolean(layout.displayOptions.showTerms !== false && layout.terms);
     const totalsTable = buildTotalsTable(layout);
 
     if (!hasNotes && !hasTerms && !totalsTable) return '';
 
+    const notesHtml = `
+        ${hasNotes ? `
+            <div class="summary-label">Notes</div>
+            <div class="notes-copy">${escapeHtml(layout.notes)}</div>
+        ` : ''}
+        ${hasTerms ? `
+            <div class="summary-label${hasNotes ? ' summary-label-terms' : ''}">Terms &amp; Conditions</div>
+            <div class="notes-copy">${escapeHtml(layout.terms)}</div>
+        ` : ''}
+    `;
+
+    // QA-040: Email mirrors the Print layout — totals stacked on the
+    // right at the top, then Notes + Terms below on the left full-width.
+    // Two rows of a presentation table since Gmail/Outlook flatten any
+    // CSS flex/grid we'd otherwise use.
+    if (renderTarget === 'email') {
+        return `
+            <table class="summary-section-table" role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="border-collapse:collapse;margin-top:16px;">
+                ${totalsTable ? `
+                    <tr>
+                        <td align="right" style="text-align:right;padding-bottom:12px;">
+                            ${totalsTable}
+                        </td>
+                    </tr>
+                ` : ''}
+                ${(hasNotes || hasTerms) ? `
+                    <tr>
+                        <td align="left" style="text-align:left;padding-top:4px;">
+                            ${notesHtml}
+                        </td>
+                    </tr>
+                ` : ''}
+            </table>
+        `;
+    }
+
     return `
         <section class="summary-section">
             ${totalsTable ? `<div class="summary-totals">${totalsTable}</div>` : ''}
-            ${(hasNotes || hasTerms) ? `
-                <div class="summary-notes">
-                    ${hasNotes ? `
-                        <div class="summary-label">Notes</div>
-                        <div class="notes-copy">${escapeHtml(layout.notes)}</div>
-                    ` : ''}
-                    ${hasTerms ? `
-                        <div class="summary-label${hasNotes ? ' summary-label-terms' : ''}">Terms &amp; Conditions</div>
-                        <div class="notes-copy">${escapeHtml(layout.terms)}</div>
-                    ` : ''}
-                </div>
-            ` : ''}
+            ${(hasNotes || hasTerms) ? `<div class="summary-notes">${notesHtml}</div>` : ''}
         </section>
     `;
 };
@@ -773,7 +798,7 @@ const buildLogoBlock = (layout) => {
         `;
 };
 
-const buildHeader = (layout) => {
+const buildHeader = (layout, renderTarget = 'print') => {
     const visibleHeaderRows = (layout.headerRows || [])
         .filter((row) => !HIDDEN_HEADER_LABEL_PATTERNS.test(asText(row.label).trim()));
     const visibleReferenceRows = (layout.referenceRows || [])
@@ -806,53 +831,79 @@ const buildHeader = (layout) => {
         layout.company.website
     );
 
-    return `
-        <header class="document-header">
-            <div class="header-left">
-                <div class="document-title">${escapeHtml(layout.title)}</div>
+    const leftContent = `
+        <div class="document-title">${escapeHtml(layout.title)}</div>
 
-                ${layout.displayOptions.showCustomerDetails !== false && layout.party ? `
-                    <div class="bill-to-block">
-                        <div class="bill-to-eyebrow">${escapeHtml(layout.partyLabel)},</div>
-                        <div class="bill-to-name">${escapeHtml(layout.party.name || '')}</div>
-                        ${customerLines.map((line) => `<div class="bill-to-line">${escapeHtml(line)}</div>`).join('')}
-                    </div>
-                ` : ''}
-
-                ${leftMetaRows.length > 0 ? `
-                    <div class="left-meta-block">
-                        ${leftMetaRows.map((row) => `
-                            <div class="left-meta-item">
-                                <div class="left-meta-label">${escapeHtml(row.label)}</div>
-                                <div class="left-meta-value">${escapeHtml(row.value)}</div>
-                            </div>
-                        `).join('')}
-                    </div>
-                ` : ''}
+        ${layout.displayOptions.showCustomerDetails !== false && layout.party ? `
+            <div class="bill-to-block">
+                <div class="bill-to-eyebrow">${escapeHtml(layout.partyLabel)},</div>
+                <div class="bill-to-name">${escapeHtml(layout.party.name || '')}</div>
+                ${customerLines.map((line) => `<div class="bill-to-line">${escapeHtml(line)}</div>`).join('')}
             </div>
+        ` : ''}
 
-            <div class="header-center">
-                ${centerItems.map((item) => `
-                    <div class="doc-meta-item">
-                        <div class="doc-meta-label">${escapeHtml(item.label)}</div>
-                        <div class="doc-meta-value">${escapeHtml(item.value)}</div>
+        ${leftMetaRows.length > 0 ? `
+            <div class="left-meta-block">
+                ${leftMetaRows.map((row) => `
+                    <div class="left-meta-item">
+                        <div class="left-meta-label">${escapeHtml(row.label)}</div>
+                        <div class="left-meta-value">${escapeHtml(row.value)}</div>
                     </div>
                 `).join('')}
             </div>
+        ` : ''}
+    `;
 
-            <div class="header-right">
-                ${buildLogoBlock(layout)}
+    const centerContent = centerItems.map((item) => `
+        <div class="doc-meta-item">
+            <div class="doc-meta-label">${escapeHtml(item.label)}</div>
+            <div class="doc-meta-value">${escapeHtml(item.value)}</div>
+        </div>
+    `).join('');
 
-                ${layout.displayOptions.showCompanyDetails !== false ? `
-                    <div class="company-panel">
-                        <div class="company-name">${escapeHtml(layout.company.companyName || '')}</div>
-                        ${layout.company.localName && layout.company.localName !== layout.company.companyName
-                            ? `<div class="company-copy company-local-name">${escapeHtml(layout.company.localName)}</div>`
-                            : ''}
-                        ${companyLines.map((line) => `<div class="company-copy">${escapeHtml(line)}</div>`).join('')}
-                    </div>
-                ` : ''}
+    const rightContent = `
+        ${buildLogoBlock(layout)}
+
+        ${layout.displayOptions.showCompanyDetails !== false ? `
+            <div class="company-panel">
+                <div class="company-name">${escapeHtml(layout.company.companyName || '')}</div>
+                ${layout.company.localName && layout.company.localName !== layout.company.companyName
+                    ? `<div class="company-copy company-local-name">${escapeHtml(layout.company.localName)}</div>`
+                    : ''}
+                ${companyLines.map((line) => `<div class="company-copy">${escapeHtml(line)}</div>`).join('')}
             </div>
+        ` : ''}
+    `;
+
+    // QA-040: Email clients (Gmail in particular) don't support CSS Grid and
+    // have spotty Flexbox support — they reflow the three header columns
+    // vertically, which is why the recipient sees Bill-To then a blank
+    // middle then logo stacked instead of side-by-side. Emit a real
+    // <table>-based header for the email render target; print mode keeps
+    // the existing semantic <header> with grid styling.
+    if (renderTarget === 'email') {
+        return `
+            <table class="document-header-table" role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="border-collapse:collapse;margin-bottom:16px;">
+                <tr>
+                    <td valign="top" align="left" width="38%" style="vertical-align:top;padding-right:8px;">
+                        ${leftContent}
+                    </td>
+                    <td valign="top" align="right" width="32%" style="vertical-align:top;text-align:right;padding:0 8px;">
+                        ${centerContent}
+                    </td>
+                    <td valign="top" align="right" width="30%" style="vertical-align:top;text-align:right;padding-left:8px;">
+                        ${rightContent}
+                    </td>
+                </tr>
+            </table>
+        `;
+    }
+
+    return `
+        <header class="document-header">
+            <div class="header-left">${leftContent}</div>
+            <div class="header-center">${centerContent}</div>
+            <div class="header-right">${rightContent}</div>
         </header>
     `;
 };
@@ -1506,17 +1557,56 @@ const buildPrintStyles = (paperSize = 'A4', orientation = 'Portrait') => {
     `;
 };
 
+// QA-040: email mode renders on a soft canvas with breathing room around the
+// content (mirrors the print preview's paper feel), but without a dark
+// outer border. Works equally well in Gmail's reading pane and in the
+// in-app preview iframe.
 const buildEmailStyles = () => `
     body {
-        background: #000000;
+        background: #f5f6f7;
         padding: 24px;
+        margin: 0;
     }
     .document-shell {
+        width: auto;
         max-width: 1000px;
         margin: 0 auto;
-        padding: 24px;
+        padding: 32px;
         border-radius: 8px;
         background: #ffffff;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+    }
+    /* Email clients ignore CSS Grid / Flex on these blocks — force block
+       layout so the right column stacks: logo on top, company address
+       lines below it (mirrors the print layout). */
+    .company-logo,
+    .company-panel,
+    .company-panel * {
+        display: block !important;
+    }
+    .company-logo {
+        text-align: right;
+        margin-left: auto;
+        margin-bottom: 8px;
+    }
+    .company-logo img {
+        display: inline-block !important;
+    }
+    .company-panel {
+        text-align: right;
+        max-width: 260px;
+        margin-left: auto;
+    }
+    /* Force the totals table to sit on the right inside its email cell
+       (juice inlines display:flex which Gmail flattens — without this
+       the totals would slide back to the left of the row). */
+    .totals-table {
+        margin-left: auto !important;
+        width: auto !important;
+    }
+    .totals-table td.tot-label,
+    .totals-table td.tot-amount {
+        padding: 4px 0 4px 16px !important;
     }
 `;
 
@@ -1781,13 +1871,13 @@ const buildDocumentHtml = (template, data, options = {}, renderTarget = 'print')
         </head>
         <body>
             <div class="document-shell">
-                ${buildHeader(layout)}
+                ${buildHeader(layout, renderTarget)}
                 ${buildHeaderAddon(layout)}
                 ${buildGrandTotal(layout)}
                 <main class="content-stack">
                     ${buildPaymentCard(layout)}
                     ${buildItemsTable(layout)}
-                    ${buildSummarySection(layout)}
+                    ${buildSummarySection(layout, renderTarget)}
                     ${buildSignatureBlock(layout)}
                     ${buildStampBlock(layout, renderTarget)}
                     ${buildPrintDateStamp(layout, renderTarget)}

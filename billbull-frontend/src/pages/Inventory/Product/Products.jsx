@@ -42,6 +42,7 @@ import CurrencyAmount, { CurrencySymbol } from '../../../components/CurrencyAmou
 // ==========================================
 
 const PRODUCT_COLUMNS = [
+  { header: 'S.No.', key: 'sNo', width: 8 },
   { header: 'Photo', key: 'image', width: 12, type: 'image', imageWidth: 48, imageHeight: 48 },
   { header: 'Product', key: 'name', width: 30 },
   { header: 'Item Description', key: 'description', width: 35 },
@@ -1926,7 +1927,8 @@ const Products = () => {
     try {
       setIsExporting(true);
       const exportRows = await loadProductsForExport();
-      await exportToExcel(exportRows, PRODUCT_COLUMNS, 'Products');
+      const exportRowsWithSNo = exportRows.map((row, index) => ({ ...row, sNo: index + 1 }));
+      await exportToExcel(exportRowsWithSNo, PRODUCT_COLUMNS, 'Products');
     } catch (err) {
       console.error("Failed to export products to Excel", err);
       alert(err.response?.data?.message || err.message || "Failed to export products.");
@@ -1939,7 +1941,8 @@ const Products = () => {
     try {
       setIsExporting(true);
       const exportRows = await loadProductsForExport();
-      await exportToPDF(exportRows, PRODUCT_COLUMNS, 'Products List', 'Products');
+      const exportRowsWithSNo = exportRows.map((row, index) => ({ ...row, sNo: index + 1 }));
+      await exportToPDF(exportRowsWithSNo, PRODUCT_COLUMNS, 'Products List', 'Products');
     } catch (err) {
       console.error("Failed to export products to PDF", err);
       alert(err.response?.data?.message || err.message || "Failed to export products.");
@@ -2279,6 +2282,7 @@ const Products = () => {
           <table className="w-full text-sm min-w-[1000px]">
             <thead className="bg-slate-50 border-b border-slate-200">
               <tr>
+                <th className="text-center p-3 font-medium text-slate-600 w-16 select-none">S.No.</th>
                 <th className="text-left p-3 font-medium text-slate-600">Product</th>
                 <th className="text-left p-3 font-medium text-slate-600">Code</th>
                 <th className="text-left p-3 font-medium text-slate-600">SKU</th>
@@ -2294,6 +2298,7 @@ const Products = () => {
               {loading ? (
                 Array.from({ length: 8 }).map((_, i) => (
                   <tr key={i} className="border-b border-slate-100">
+                    <td className="p-3"><div className="h-3 w-6 bg-slate-200 rounded animate-pulse mx-auto" /></td>
                     <td className="p-3">
                       <div className="flex items-center gap-3">
                         <div className="h-10 w-10 rounded-md bg-slate-200 animate-pulse flex-shrink-0" />
@@ -2320,15 +2325,16 @@ const Products = () => {
                   </tr>
                 ))
               ) : sortedData.length === 0 ? (
-                <tr><td colSpan="9" className="p-12 text-center text-slate-500">No products found matching your criteria.</td></tr>
+                <tr><td colSpan="10" className="p-12 text-center text-slate-500">No products found matching your criteria.</td></tr>
               ) : (
-                sortedData.map(product => {
+                sortedData.map((product, index) => {
                   const displayBarcode = product.packings && product.packings.length > 0
                     ? product.packings.find(p => p.barcode)?.barcode
                     : null;
 
                   return (
                     <tr key={product.id} className="hover:bg-slate-50 border-b border-slate-100 transition-colors group">
+                      <td className="p-3 text-center text-slate-400 font-mono font-medium">{(currentPage * PAGE_SIZE) + index + 1}</td>
                       <td className="p-3">
                         <div className="flex items-center gap-3">
                           <div className="h-10 w-10 rounded-md border border-slate-200 bg-white flex items-center justify-center overflow-hidden flex-shrink-0">

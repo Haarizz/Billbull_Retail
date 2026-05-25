@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import {
   Printer,
@@ -25,7 +25,8 @@ import {
   Paperclip,
   Save,
   ChevronRight,
-  AlertCircle
+  AlertCircle,
+  Zap
 } from 'lucide-react';
 
 // ✅ API IMPORTS
@@ -66,6 +67,8 @@ import { normalizePurchaseTemplate, buildReceiptVoucherPrintData } from '../../u
 
 // ✅ GLOBAL COMPONENTS
 import { ItemDescriptionCell, ItemDescriptionHeader } from '../../components/ItemDescriptionCell';
+// QA-FAST-ENTRY: inline row search input that auto-opens ProductSelector
+import InlineProductSearchCell from '../../components/InlineProductSearchCell';
 import ItemAddOnsModal from '../../components/ItemAddOnsModal';
 
 // ✅ STOCK AVAILABILITY MODAL
@@ -87,6 +90,7 @@ import { formatCurrencyDisplay, resolveCurrencyDisplayCode } from '../../utils/c
 // ==========================================
 
 const SALES_ORDER_COLUMNS = [
+  { header: 'S.No.', key: 'sNo', width: 8 },
   { header: 'SO No', key: 'soNumber', width: 15 },
   { header: 'Date', key: 'orderDate', width: 12 },
   { header: 'Customer', key: 'customerName', width: 25 },
@@ -258,8 +262,27 @@ const SalesOrders = () => {
   // ✅ PRODUCT SELECTOR STATE
   const [isProductSelectorOpen, setIsProductSelectorOpen] = useState(false);
 
+  // QA-FAST-ENTRY: inline-row-search → product-selector bridge state
+  const [pendingFastEntrySearch, setPendingFastEntrySearch] = useState('');
+  const [pendingFastEntryRowId, setPendingFastEntryRowId] = useState(null);
+  const inlineSearchRefs = useRef({});
+  const focusNextInlineSearchRef = useRef(null);
+
   // Items
   const [items, setItems] = useState([createBlankOrderItem()]);
+
+  // QA-FAST-ENTRY: focus the freshly-added empty row's inline search input.
+  useEffect(() => {
+    const targetId = focusNextInlineSearchRef.current;
+    if (targetId == null) return;
+    const raf = requestAnimationFrame(() => {
+      const el = inlineSearchRefs.current[targetId];
+      if (el) el.focus();
+      focusNextInlineSearchRef.current = null;
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [items]);
+
   const [billDiscount, setBillDiscount] = useState(0);
   // VAT mode for line-price interpretation (EXCLUSIVE | INCLUSIVE).
   const [vatMode, setVatMode] = useState('EXCLUSIVE');
@@ -664,14 +687,26 @@ const SalesOrders = () => {
 
     const newItem = calculateRow(rawItem);
 
+    // QA-FAST-ENTRY: replace-in-place when triggered by inline row search.
+    const targetRowId = pendingFastEntryRowId;
     setItems(prev => {
+      if (targetRowId != null) {
+        return prev.map(it => it.id === targetRowId ? { ...newItem, id: targetRowId } : it);
+      }
       // Replace empty placeholder rows when first product is added
       const hasData = prev.some(i => i.code || i.desc);
       return hasData ? [...prev, newItem] : [newItem];
     });
+    const filledItem = { ...newItem, id: targetRowId != null ? targetRowId : newItem.id };
+    setPendingFastEntrySearch('');
+    setPendingFastEntryRowId(null);
 
     setIsProductSelectorOpen(false); // ✅ Close modal after adding
-    setFocusedItem(newItem);
+    setFocusedItem(filledItem);
+    setTimeout(() => {
+      const qtyEl = document.getElementById(`qty-${filledItem.id}`);
+      if (qtyEl) { qtyEl.focus(); qtyEl.select?.(); }
+    }, 100);
   };
 
   const handleFastEntryAdd = (product, qty, price, disc) => {
@@ -1419,9 +1454,10 @@ const SalesOrders = () => {
       {/* ✅ PRODUCT SELECTOR MODAL */}
       <ProductSelector
         isOpen={isProductSelectorOpen}
-        onClose={() => setIsProductSelectorOpen(false)}
+        onClose={() => { setIsProductSelectorOpen(false); setPendingFastEntryRowId(null); }}
         onSelect={handleAddSingleProduct}
         onInlineAdd={handleFastEntryAdd}
+        initialSearch={pendingFastEntrySearch}
         title="Select Items from Products / Services"
         actionLabel="Add to Order"
         mode="sales"
@@ -1523,8 +1559,17 @@ const SalesOrders = () => {
                 </select>
                 {canExport('sales.order') && (
                   <ExportDropdown
-                    onExportExcel={() => exportToExcel(exportOrdersList, SALES_ORDER_COLUMNS, 'Sales_Orders')}
-                    onExportPdf={() => exportToPDF(exportOrdersList, SALES_ORDER_COLUMNS, 'Sales Orders', 'Sales_Orders')}
+                    onExportExcel={() => exportToExcel(
+                      exportOrdersList.map((order, index) => ({ ...order, sNo: index + 1 })),
+                      SALES_ORDER_COLUMNS,
+                      'Sales_Orders'
+                    )}
+                    onExportPdf={() => exportToPDF(
+                      exportOrdersList.map((order, index) => ({ ...order, sNo: index + 1 })),
+                      SALES_ORDER_COLUMNS,
+                      'Sales Orders',
+                      'Sales_Orders'
+                    )}
                   />
                 )}
                 {/* ── VERTICAL: canCreate('sales') ── */}
@@ -1543,6 +1588,7 @@ const SalesOrders = () => {
             <table className="w-full text-xs text-left hidden md:table">
               <thead className="bg-slate-50 text-slate-600 font-semibold border-b border-slate-200">
                 <tr>
+                  <th className="px-4 py-3 text-center text-slate-500 w-16 select-none">S.No.</th>
                   <th className="px-4 py-3">SO No</th>
                   <th className="px-4 py-3">Date</th>
                   <th className="px-4 py-3">Customer</th>
@@ -1557,6 +1603,9 @@ const SalesOrders = () => {
               <tbody className="divide-y divide-slate-50">
                 {ordersList.map((order, idx) => (
                   <tr key={idx} className="hover:bg-slate-50 cursor-pointer" onClick={() => handleLoadOrder(order)}>
+                    <td className="px-4 py-3 text-center text-slate-400 font-mono font-medium">
+                      {idx + 1}
+                    </td>
                     <td className="px-4 py-3 font-medium text-slate-700">{order.soNumber}</td>
                     <td className="px-4 py-3 text-slate-500">{formatDisplayDate(order.orderDate)}</td>
                     <td className="px-4 py-3 text-slate-600">{order.customerName}</td>
@@ -1800,6 +1849,7 @@ const SalesOrders = () => {
               <div className="flex justify-between items-center mb-4 border-b border-slate-100/50 pb-2">
                 <h3 className="text-sm font-bold text-slate-800 flex items-center gap-2">
                   <ShoppingCart size={16} className="text-yellow-500" /> Sales Order Items
+                  <span className="inline-flex items-center gap-1 text-[10px] bg-blue-50 text-blue-700 px-2 py-0.5 rounded-full font-medium border border-blue-200"><Zap size={10} /> Fast Entry</span>
                 </h3>
 
                 <div className="flex items-center gap-3">
@@ -1869,6 +1919,26 @@ const SalesOrders = () => {
 
                           {/* Item / Description */}
                           <td className="p-2">
+                            {/* QA-FAST-ENTRY: empty rows show inline product-search input */}
+                            {(!item.code && !item.desc) ? (
+                              <InlineProductSearchCell
+                                value={pendingFastEntryRowId === item.id ? pendingFastEntrySearch : ''}
+                                inputRef={(el) => {
+                                  if (el) inlineSearchRefs.current[item.id] = el;
+                                  else delete inlineSearchRefs.current[item.id];
+                                }}
+                                isReadOnly={isLocked}
+                                onChange={(text) => {
+                                  setPendingFastEntryRowId(item.id);
+                                  setPendingFastEntrySearch(text);
+                                }}
+                                onOpenSelector={(text) => {
+                                  setPendingFastEntryRowId(item.id);
+                                  setPendingFastEntrySearch(text);
+                                  setIsProductSelectorOpen(true);
+                                }}
+                              />
+                            ) : (
                             <ItemDescriptionCell
                               item={item}
                               isExpanded={expandedRows[item.id]}
@@ -1883,6 +1953,7 @@ const SalesOrders = () => {
                               onOpenSettings={(item) => setSelectedAddonItem({ ...item })}
                               page="sales_orders"
                             />
+                            )}
                             {item.batchControlled && (
                               <button
                                 type="button"
@@ -1930,6 +2001,12 @@ const SalesOrders = () => {
                                 className="w-full bg-transparent text-center outline-none font-bold text-sm text-slate-800 disabled:opacity-50"
                                 value={item.qty === 0 ? '' : item.qty}
                                 onChange={(e) => handleItemChange(item.id, 'qty', e.target.value)}
+                                onKeyDown={(e) => {
+                                  if (e.key === 'Tab' && !e.shiftKey) {
+                                    const priceEl = document.getElementById(`price-${item.id}`);
+                                    if (priceEl) { e.preventDefault(); priceEl.focus(); priceEl.select?.(); }
+                                  }
+                                }}
                                 placeholder="0"
                               />
                             </div>
@@ -1940,10 +2017,19 @@ const SalesOrders = () => {
                             <div className="rounded-md border border-slate-200 bg-white flex items-center px-2 py-1 w-full max-w-[104px] mx-auto">
                               <input
                                 disabled={isLocked}
+                                id={`price-${item.id}`}
                                 type="number"
                                 className="w-full bg-transparent text-center outline-none font-semibold text-sm text-slate-700 disabled:opacity-50"
                                 value={item.price === 0 ? '' : item.price}
                                 onChange={(e) => handleItemChange(item.id, 'price', e.target.value)}
+                                onKeyDown={(e) => {
+                                  if (e.key === 'Tab' && !e.shiftKey && !isLocked) {
+                                    e.preventDefault();
+                                    const newRow = createBlankOrderItem();
+                                    focusNextInlineSearchRef.current = newRow.id;
+                                    setItems(prev => [...prev, newRow]);
+                                  }
+                                }}
                                 placeholder="0.00"
                               />
                             </div>
@@ -2003,6 +2089,20 @@ const SalesOrders = () => {
                     ))}
                   </tbody>
                 </table>
+              </div>
+              {/* QA-FAST-ENTRY: Quick Entry hint bar */}
+              <div className="mt-2 px-3 py-2 bg-blue-50/30 border border-blue-100/60 rounded-md flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-slate-500">
+                <span className="inline-flex items-center gap-1 text-blue-600 font-semibold"><Zap size={11} /> Quick Entry:</span>
+                <span>Type name →</span>
+                <kbd className="px-1.5 py-0.5 bg-white border border-slate-200 rounded text-[10px] font-mono text-slate-600">Enter</kbd>
+                <span>Select →</span>
+                <kbd className="px-1.5 py-0.5 bg-white border border-slate-200 rounded text-[10px] font-mono text-slate-600">Tab</kbd>
+                <span>Qty →</span>
+                <kbd className="px-1.5 py-0.5 bg-white border border-slate-200 rounded text-[10px] font-mono text-slate-600">Tab</kbd>
+                <span>Price →</span>
+                <kbd className="px-1.5 py-0.5 bg-white border border-slate-200 rounded text-[10px] font-mono text-slate-600">Tab</kbd>
+                <span>New row</span>
+                <span className="ml-auto text-slate-400">Tip: Use ↑↓ arrows to navigate items</span>
               </div>
             </div>
 

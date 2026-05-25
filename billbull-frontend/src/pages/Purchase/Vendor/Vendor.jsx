@@ -23,6 +23,7 @@ import { formatDisplayDate } from '../../../utils/dateUtils';
 // ==========================================
 
 const VENDOR_COLUMNS = [
+  { header: 'S.No.', key: 'sNo', width: 8 },
   { header: 'Code', key: 'code', width: 10 },
   { header: 'Name', key: 'name', width: 25 },
   { header: 'Email', key: 'email', width: 20 },
@@ -1613,15 +1614,17 @@ const VendorListViewWithActions = ({ vendors, loading, onAddNew, onEdit, onDelet
 
 
   const handleExportExcel = () => {
-    exportToExcel(filteredVendors.map((vendor) => ({
+    exportToExcel(filteredVendors.map((vendor, index) => ({
       ...vendor,
+      sNo: index + 1,
       balance: formatCurrencyDisplay(vendor.balance, currencyLabel)
     })), VENDOR_COLUMNS, 'Vendor_List');
   };
 
   const handleExportPdf = () => {
-    exportToPDF(filteredVendors.map((vendor) => ({
+    exportToPDF(filteredVendors.map((vendor, index) => ({
       ...vendor,
+      sNo: index + 1,
       balance: formatCurrencyDisplay(vendor.balance, currencyLabel)
     })), VENDOR_COLUMNS, 'Vendor List', 'Vendor_List');
   };
@@ -1788,6 +1791,7 @@ const VendorListViewWithActions = ({ vendors, loading, onAddNew, onEdit, onDelet
                 <table className="w-full text-sm">
                   <thead className="bg-gray-50 border-b border-slate-200">
                     <tr>
+                      <th className="px-4 py-3 text-center font-medium text-gray-500 uppercase w-16 select-none">S.No.</th>
                       <th className="px-6 py-3 text-left font-medium text-gray-500 uppercase">Vendor Code</th>
                       <th className="px-6 py-3 text-left font-medium text-gray-500 uppercase">Vendor Name</th>
                       <th className="px-6 py-3 text-left font-medium text-gray-500 uppercase">Category</th>
@@ -1801,12 +1805,13 @@ const VendorListViewWithActions = ({ vendors, loading, onAddNew, onEdit, onDelet
                   </thead>
                   <tbody className="bg-white divide-y divide-slate-100">
                     {loading ? (
-                      <tr><td colSpan="9" className="p-8 text-center text-slate-500"><Loader2 className="h-6 w-6 animate-spin mx-auto mb-2" />Loading Vendors...</td></tr>
+                      <tr><td colSpan="10" className="p-8 text-center text-slate-500"><Loader2 className="h-6 w-6 animate-spin mx-auto mb-2" />Loading Vendors...</td></tr>
                     ) : filteredVendors.length === 0 ? (
-                      <tr><td colSpan="9" className="p-8 text-center text-slate-500">No vendors found matching criteria.</td></tr>
+                      <tr><td colSpan="10" className="p-8 text-center text-slate-500">No vendors found matching criteria.</td></tr>
                     ) : (
-                      filteredVendors.map((vendor) => (
+                      filteredVendors.map((vendor, index) => (
                         <tr key={vendor.id} className="hover:bg-slate-50 transition-colors">
+                          <td className="px-4 py-4 text-center text-slate-400 font-mono font-medium">{index + 1}</td>
                           <td className="px-6 py-4 whitespace-nowrap"><div className="flex items-center gap-2"><span className="text-xs bg-gray-100 px-2 py-1 rounded font-mono text-slate-600">{vendor.code || 'N/A'}</span><span className="text-lg">{vendor.flag || '🏳️'}</span></div></td>
                           <td className="px-6 py-4"><div className="flex flex-col"><div className="font-medium text-slate-900 flex items-center gap-2">{vendor.name}{vendor.isPreferred && <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] bg-purple-100 text-purple-700 font-medium"><Star className="h-3 w-3 fill-purple-700" />Preferred</span>}</div><div className="text-xs text-gray-500">{vendor.email}</div></div></td>
                           <td className="px-6 py-4"><span className="text-xs px-2 py-1 rounded font-medium bg-blue-100 text-blue-700">{vendor.category}</span></td>

@@ -192,6 +192,7 @@ const GRNListView = ({ data, onView, onEdit, onDelete, onPost, onPrint, onProcee
           <table className="w-full text-xs text-left">
             <thead className="bg-[#F7F7FA] text-slate-500 font-medium border-b border-slate-200">
               <tr>
+                <th className="px-3 py-3 text-center text-slate-500 w-12 select-none uppercase whitespace-nowrap">S.No.</th>
                 <th className="px-6 py-3 whitespace-nowrap">GRN No</th>
                 <th className="px-6 py-3 whitespace-nowrap">Date</th>
                 <th className="px-6 py-3 whitespace-nowrap">Vendor</th>
@@ -206,8 +207,9 @@ const GRNListView = ({ data, onView, onEdit, onDelete, onPost, onPrint, onProcee
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
-              {filteredData.map((row) => (
+              {filteredData.map((row, index) => (
                 <tr key={row.id} className="hover:bg-slate-50 group transition-colors">
+                  <td className="px-3 py-4 text-center text-slate-400 font-mono font-medium whitespace-nowrap">{index + 1}</td>
                   <td onClick={() => onView(row)} className="px-6 py-4 font-mono font-medium text-[#F5C742] cursor-pointer hover:underline">
                     {row.idDisplay}
                   </td>
@@ -2588,6 +2590,7 @@ const GRN = () => {
           activeFilter={activeFilter}
           setActiveFilter={setActiveFilter}
           currencyLabel={currencyLabel}
+          currentPage={0}
         />;
       case 'editor':
         return <EditorView
@@ -2618,6 +2621,7 @@ const GRN = () => {
         activeFilter={activeFilter}
         setActiveFilter={setActiveFilter}
         currencyLabel={currencyLabel}
+        currentPage={0}
       />;
     }
   };
