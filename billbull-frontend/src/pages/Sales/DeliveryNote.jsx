@@ -85,6 +85,7 @@ import { getItemPriceHistory } from '../../api/salesInvoiceApi'; // âœ… Pric
 // âœ… DELIVERY NOTE API IMPORTS
 import {
     getDeliveryNotes,
+    getDeliveryNotesPage,
     getNextDeliveryNoteNumber,
     createDeliveryNote,
     updateDeliveryNote,
@@ -113,6 +114,7 @@ import useShortcuts from '../../hooks/useShortcuts';
 import { ItemDescriptionCell, ItemDescriptionHeader } from '../../components/ItemDescriptionCell';
 // QA-FAST-ENTRY: inline row search input that auto-opens ProductSelector
 import InlineProductSearchCell from '../../components/InlineProductSearchCell';
+import PaginationFooter from '../../components/common/PaginationFooter';
 import ItemAddOnsModal from '../../components/ItemAddOnsModal';
 
 const DeliveryNote = () => {
@@ -129,6 +131,10 @@ const DeliveryNote = () => {
 
     // --- DATA LIST STATES ---
     const [deliveryNotesList, setDeliveryNotesList] = useState([]);
+    // Pagination state (server-driven via /api/sales/delivery-notes/page)
+    const [listPage, setListPage] = useState(0);
+    const [listPageMeta, setListPageMeta] = useState({ page: 0, size: 30, totalElements: 0, totalPages: 0 });
+    const [isListLoading, setIsListLoading] = useState(false);
 
     const [searchTerm, setSearchTerm] = useState('');
     const [filterStatus, setFilterStatus] = useState('All');
@@ -867,8 +873,21 @@ const DeliveryNote = () => {
     // ==========================================
 
     const loadDeliveryNotes = async () => {
+        setIsListLoading(true);
         try {
-            const data = await getDeliveryNotes();
+            const resp = await getDeliveryNotesPage({
+                page: listPage,
+                size: 30,
+                search: searchTerm || '',
+                status: filterStatus && filterStatus !== 'All' ? filterStatus : '',
+            });
+            const data = Array.isArray(resp?.content) ? resp.content : [];
+            setListPageMeta({
+                page: resp?.page ?? listPage,
+                size: resp?.size ?? 30,
+                totalElements: resp?.totalElements ?? 0,
+                totalPages: resp?.totalPages ?? 0,
+            });
 
             const mapped = data.map(dn => ({
                 id: dn.id,
@@ -904,8 +923,18 @@ const DeliveryNote = () => {
             setDeliveryNotesList(mapped);
         } catch (e) {
             console.error("Failed to load delivery notes", e);
+        } finally {
+            setIsListLoading(false);
         }
     };
+
+    // Reset page on filter change; refetch on tab/page/filter change.
+    useEffect(() => { setListPage(0); }, [searchTerm, filterStatus]);
+    useEffect(() => {
+        if (activeTab !== 'list') return;
+        loadDeliveryNotes();
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [activeTab, listPage, searchTerm, filterStatus]);
 
     useEffect(() => {
         loadDeliveryNotes();
@@ -1354,16 +1383,22 @@ const DeliveryNote = () => {
 
         // QA-FAST-ENTRY: if an empty row triggered this, replace it in-place
         // (preserving its id) instead of appending — so focus chaining stays
-        // on the same row the user typed into.
+        // on the same row the user typed into. If the target row doesn't exist
+        // (e.g. seed row when items was empty), just append.
         const targetRowId = pendingFastEntryRowId;
+        let resolvedRowId = newItem.id;
         setItems(prev => {
             if (targetRowId != null) {
-                return prev.map(it => it.id === targetRowId ? { ...newItem, id: targetRowId } : it);
+                const exists = prev.some(it => it.id === targetRowId);
+                if (exists) {
+                    resolvedRowId = targetRowId;
+                    return prev.map(it => it.id === targetRowId ? { ...newItem, id: targetRowId } : it);
+                }
             }
             const hasData = prev.some(item => item.code || item.desc);
             return hasData ? [...prev, newItem] : [newItem];
         });
-        const filledItem = { ...newItem, id: targetRowId != null ? targetRowId : newItem.id };
+        const filledItem = { ...newItem, id: resolvedRowId };
         setPendingFastEntrySearch('');
         setPendingFastEntryRowId(null);
         setIsProductSelectorOpen(false); // âœ… Close modal after adding
@@ -2143,6 +2178,14 @@ const DeliveryNote = () => {
                                     ))
                                 )}
                             </div>
+                            <PaginationFooter
+                                page={listPageMeta.page}
+                                size={listPageMeta.size}
+                                totalElements={listPageMeta.totalElements}
+                                totalPages={listPageMeta.totalPages}
+                                loading={isListLoading}
+                                onPageChange={setListPage}
+                            />
                         </div>
                     )}
 
@@ -2634,13 +2677,30 @@ const DeliveryNote = () => {
                                                             )}
                                                         </React.Fragment>
                                                     )) : (
-                                                        <tr>
-                                                            <td colSpan={9} className="py-12 text-center bg-slate-50/50 border-b border-slate-100 border-dashed rounded-b-lg">
-                                                                <div className="flex flex-col items-center justify-center text-slate-400">
-                                                                    <ShoppingCart size={32} className="mb-3 text-slate-300" />
-                                                                    <span className="text-sm font-semibold text-slate-500">No items added.</span>
-                                                                    <span className="text-xs mt-1 text-slate-400">Link a Sales Order / Sales Invoice or click "Select from Products".</span>
-                                                                </div>
+                                                        /* QA-FAST-ENTRY: seed row when no items yet — lets user type to add */
+                                                        <tr className="bg-white align-middle">
+                                                            <td className="p-2 text-center text-slate-400 text-xs font-medium">1</td>
+                                                            <td className="p-2">
+                                                                <InlineProductSearchCell
+                                                                    value={pendingFastEntryRowId === '__seed__' ? pendingFastEntrySearch : ''}
+                                                                    inputRef={(el) => {
+                                                                        if (el) inlineSearchRefs.current['__seed__'] = el;
+                                                                        else delete inlineSearchRefs.current['__seed__'];
+                                                                    }}
+                                                                    isReadOnly={isLockedForEdit}
+                                                                    onChange={(text) => {
+                                                                        setPendingFastEntryRowId('__seed__');
+                                                                        setPendingFastEntrySearch(text);
+                                                                    }}
+                                                                    onOpenSelector={(text) => {
+                                                                        setPendingFastEntryRowId('__seed__');
+                                                                        setPendingFastEntrySearch(text);
+                                                                        setIsProductSelectorOpen(true);
+                                                                    }}
+                                                                />
+                                                            </td>
+                                                            <td colSpan={7} className="p-2 text-[11px] text-slate-400">
+                                                                Link a Sales Order / Sales Invoice or type above to add an item.
                                                             </td>
                                                         </tr>
                                                     )}

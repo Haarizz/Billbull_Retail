@@ -8,6 +8,7 @@ import SearchableDropdown from '../../components/SearchableDropdown'; // ✅ Imp
 
 import StatementPrintPreview from '../../components/StatementPrintPreview';
 import CurrencyAmount, { CurrencySymbol } from '../../components/CurrencyAmount';
+import PaginationFooter from '../../components/common/PaginationFooter';
 
 // --- API IMPORTS ---
 import { getAllCustomers, getCustomerById, createCustomer, deleteCustomer, getOpeningInvoicesByCustomerCode, getNextCustomerCode } from '../../api/customerledgerApi';
@@ -2362,6 +2363,15 @@ const CustomerLedger = () => {
         });
     }, [customers, searchTerm, filterGroup, filterStatus]);
 
+    // Client-side pagination for the customer list.
+    const LIST_PAGE_SIZE = 30;
+    const [listPage, setListPage] = useState(0);
+    useEffect(() => { setListPage(0); }, [searchTerm, filterGroup, filterStatus]);
+    const pagedCustomers = useMemo(
+        () => filteredCustomers.slice(listPage * LIST_PAGE_SIZE, (listPage + 1) * LIST_PAGE_SIZE),
+        [filteredCustomers, listPage]
+    );
+
 
     // RENDER FUNCTION FOR ACTIVE VIEW
     const renderActiveView = () => {
@@ -2440,7 +2450,7 @@ const CustomerLedger = () => {
                                     </thead>
                                     <tbody className="divide-y divide-slate-100">
                                         {filteredCustomers.length > 0 ? (
-                                            filteredCustomers.map((cust, index) => (
+                                            pagedCustomers.map((cust, index) => (
                                                 <tr key={cust.id} className="hover:bg-slate-50 transition-colors group">
                                                     <td className="px-3 py-4 whitespace-nowrap text-xs font-mono text-slate-400 font-medium text-center align-top pt-5">{index + 1}</td>
                                                     <td className="px-6 py-4 whitespace-nowrap text-xs font-mono text-slate-500 align-top pt-5">{cust.code}</td>
@@ -2516,6 +2526,13 @@ const CustomerLedger = () => {
                                         )}
                                     </tbody>
                                 </table>
+                                <PaginationFooter
+                                    page={listPage}
+                                    size={LIST_PAGE_SIZE}
+                                    totalElements={filteredCustomers.length}
+                                    totalPages={Math.ceil(filteredCustomers.length / LIST_PAGE_SIZE)}
+                                    onPageChange={setListPage}
+                                />
                             </div>
                             <div className="px-6 py-4 border-t border-slate-200 flex justify-between items-center text-xs text-slate-500 bg-white">
                                 <div>Showing {filteredCustomers.length} of {customers.length} customers</div>

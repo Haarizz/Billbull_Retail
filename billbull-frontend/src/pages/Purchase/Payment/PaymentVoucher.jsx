@@ -39,6 +39,7 @@ import {
 } from '../../../utils/purchasePrintUtils';
 import { formatCurrencyDisplay } from '../../../utils/countryCurrencyOptions';
 import CurrencyAmount, { CurrencySymbol } from '../../../components/CurrencyAmount';
+import PaginationFooter from '../../../components/common/PaginationFooter';
 
 // ==========================================
 // API IMPORTS
@@ -348,6 +349,9 @@ const PaymentVoucher = () => {
 
     // Data State
     const [vouchers, setVouchers] = useState([]);
+    // Client-side pagination over the active sub-list (mainList/pendingList/historyList).
+    const [listPage, setListPage] = useState(0);
+    const LIST_PAGE_SIZE = 30;
     const [purchaseInvoices, setPurchaseInvoices] = useState([]);
     const [vendors, setVendors] = useState([]);
     const [bankAccounts, setBankAccounts] = useState([]);
@@ -746,6 +750,23 @@ const PaymentVoucher = () => {
     const mainList = vouchers.filter(v => v.rawStatus !== 'PENDING_APPROVAL' && v.rawStatus !== 'REJECTED');
     const pendingList = vouchers.filter(v => v.rawStatus === 'PENDING_APPROVAL');
     const historyList = vouchers.filter(v => v.rawStatus === 'POSTED' || v.rawStatus === 'REJECTED' || v.rawStatus === 'CLEARED');
+
+    // Reset list page when switching tabs.
+    useEffect(() => { setListPage(0); }, [activeTab]);
+    const activeListForTab = activeTab === 'approval' ? pendingList
+        : activeTab === 'history' ? historyList : mainList;
+    const pagedMainList = useMemo(
+        () => mainList.slice(listPage * LIST_PAGE_SIZE, (listPage + 1) * LIST_PAGE_SIZE),
+        [mainList, listPage]
+    );
+    const pagedPendingList = useMemo(
+        () => pendingList.slice(listPage * LIST_PAGE_SIZE, (listPage + 1) * LIST_PAGE_SIZE),
+        [pendingList, listPage]
+    );
+    const pagedHistoryList = useMemo(
+        () => historyList.slice(listPage * LIST_PAGE_SIZE, (listPage + 1) * LIST_PAGE_SIZE),
+        [historyList, listPage]
+    );
 
     return (
         <div className="min-h-screen bg-[#F7F7FA] font-sans text-slate-900 flex flex-col p-6">
@@ -1166,7 +1187,7 @@ const PaymentVoucher = () => {
                                     <tbody className="divide-y divide-slate-100">
                                         {mainList.length === 0 ? (
                                             <tr><td colSpan="11" className="p-6 text-center text-slate-400">No posted vouchers found.</td></tr>
-                                        ) : mainList.map((row, index) => (
+                                        ) : pagedMainList.map((row, index) => (
                                             <tr key={row.dbId} className="hover:bg-slate-50 group transition-colors">
                                                 <td className="px-4 py-3 text-center text-slate-400 font-mono font-medium">{index + 1}</td>
                                                 <td className="px-4 py-3 font-mono font-medium text-slate-700">{row.id}</td>
@@ -1201,6 +1222,13 @@ const PaymentVoucher = () => {
                                         ))}
                                     </tbody>
                                 </table>
+                                <PaginationFooter
+                                    page={listPage}
+                                    size={LIST_PAGE_SIZE}
+                                    totalElements={mainList.length}
+                                    totalPages={Math.ceil(mainList.length / LIST_PAGE_SIZE)}
+                                    onPageChange={setListPage}
+                                />
                             </div>
                         )}
                     </div>
@@ -1237,7 +1265,7 @@ const PaymentVoucher = () => {
                                     <tbody className="divide-y divide-slate-100">
                                         {pendingList.length === 0 ? (
                                             <tr><td colSpan="8" className="px-4 py-12 text-center text-slate-400">No vouchers pending approval.</td></tr>
-                                        ) : pendingList.map((row, index) => (
+                                        ) : pagedPendingList.map((row, index) => (
                                             <tr key={row.dbId} className="hover:bg-slate-50 group transition-colors">
                                                 <td className="px-4 py-3 text-center text-slate-400 font-mono font-medium">{index + 1}</td>
                                                 <td className="px-4 py-3 font-mono font-medium text-slate-700">{row.id}</td>
@@ -1275,6 +1303,13 @@ const PaymentVoucher = () => {
                                         ))}
                                     </tbody>
                                 </table>
+                                <PaginationFooter
+                                    page={listPage}
+                                    size={LIST_PAGE_SIZE}
+                                    totalElements={pendingList.length}
+                                    totalPages={Math.ceil(pendingList.length / LIST_PAGE_SIZE)}
+                                    onPageChange={setListPage}
+                                />
                             </div>
                         )}
                     </div>
@@ -1308,7 +1343,7 @@ const PaymentVoucher = () => {
                                 <tbody className="divide-y divide-slate-100">
                                     {historyList.length === 0 ? (
                                         <tr><td colSpan="8" className="p-6 text-center text-slate-400">No history found.</td></tr>
-                                    ) : historyList.map((row, index) => (
+                                    ) : pagedHistoryList.map((row, index) => (
                                         <tr key={row.dbId} className="hover:bg-slate-50 transition-colors">
                                             <td className="px-4 py-3 text-center text-slate-400 font-mono font-medium">{index + 1}</td>
                                             <td className="px-4 py-3 font-mono font-medium text-slate-700">{row.id}</td>
@@ -1335,6 +1370,13 @@ const PaymentVoucher = () => {
                                     ))}
                                 </tbody>
                             </table>
+                            <PaginationFooter
+                                page={listPage}
+                                size={LIST_PAGE_SIZE}
+                                totalElements={historyList.length}
+                                totalPages={Math.ceil(historyList.length / LIST_PAGE_SIZE)}
+                                onPageChange={setListPage}
+                            />
                         </div>
                     </div>
                 )}

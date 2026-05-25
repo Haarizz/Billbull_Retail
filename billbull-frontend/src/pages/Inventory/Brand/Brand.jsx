@@ -7,6 +7,7 @@ import {
   AlertTriangle
 } from 'lucide-react';
 import SearchableDropdown from "../../../components/SearchableDropdown";
+import PaginationFooter from "../../../components/common/PaginationFooter";
 
 // --- API IMPORTS ---
 import { getImageUrl } from "../../../utils/urlUtils";
@@ -286,6 +287,11 @@ const Brand = () => {
       return 0;
     });
 
+  const LIST_PAGE_SIZE = 30;
+  const [listPage, setListPage] = useState(0);
+  useEffect(() => { setListPage(0); }, [searchTerm, statusFilter, countryFilter, sortBy]);
+  const pagedBrands = filteredData.slice(listPage * LIST_PAGE_SIZE, (listPage + 1) * LIST_PAGE_SIZE);
+
   return (
     <div className="min-h-screen bg-[#F7F7FA] p-4 md:p-6 space-y-6 font-sans text-slate-900">
 
@@ -444,7 +450,7 @@ const Brand = () => {
               ) : filteredData.length === 0 ? (
                 <tr><td colSpan="9" className="p-12 text-center text-slate-500">No brands found</td></tr>
               ) : (
-                filteredData.map((brand) => (
+                pagedBrands.map((brand) => (
                   <tr key={brand.id} className="hover:bg-slate-50 hover:border-l-4 hover:border-l-[#F5C742] transition-all border-l-4 border-transparent">
                     <td className="p-3">
                       <div className="h-10 w-10 rounded-full border border-slate-200 overflow-hidden flex items-center justify-center bg-white">
@@ -502,6 +508,13 @@ const Brand = () => {
               )}
             </tbody>
           </table>
+          <PaginationFooter
+            page={listPage}
+            size={LIST_PAGE_SIZE}
+            totalElements={filteredData.length}
+            totalPages={Math.ceil(filteredData.length / LIST_PAGE_SIZE)}
+            onPageChange={setListPage}
+          />
         </div>
       </div>
 

@@ -15,6 +15,7 @@ import { exportToExcel, exportToPDF } from '../../../utils/exportUtils';
 import { generateSOAFilename } from '../../../utils/filenameUtils';
 import { usePrintDocument } from '../../../hooks/usePrintDocument';
 import CurrencyAmount from '../../../components/CurrencyAmount';
+import PaginationFooter from '../../../components/common/PaginationFooter';
 import { STATEMENT_EXPORT_COLUMNS, formatStatementEntryType, mapStatementEntriesForExport } from '../../../utils/statementUtils';
 import { formatDisplayDate } from '../../../utils/dateUtils';
 
@@ -1600,6 +1601,12 @@ const VendorListViewWithActions = ({ vendors, loading, onAddNew, onEdit, onDelet
     return matchesSearch && matchesStatus && matchesCategory && matchesGroup && matchesType;
   });
 
+  // Client-side pagination for the vendor list.
+  const LIST_PAGE_SIZE = 30;
+  const [listPage, setListPage] = useState(0);
+  useEffect(() => { setListPage(0); }, [searchTerm, filterStatus, filterCategory, filterGroup, filterType]);
+  const pagedVendors = filteredVendors.slice(listPage * LIST_PAGE_SIZE, (listPage + 1) * LIST_PAGE_SIZE);
+
   const resetFilters = () => {
     setSearchTerm("");
     setFilterStatus("All Status");
@@ -1806,10 +1813,10 @@ const VendorListViewWithActions = ({ vendors, loading, onAddNew, onEdit, onDelet
                   <tbody className="bg-white divide-y divide-slate-100">
                     {loading ? (
                       <tr><td colSpan="10" className="p-8 text-center text-slate-500"><Loader2 className="h-6 w-6 animate-spin mx-auto mb-2" />Loading Vendors...</td></tr>
-                    ) : filteredVendors.length === 0 ? (
+                    ) : pagedVendors.length === 0 ? (
                       <tr><td colSpan="10" className="p-8 text-center text-slate-500">No vendors found matching criteria.</td></tr>
                     ) : (
-                      filteredVendors.map((vendor, index) => (
+                      pagedVendors.map((vendor, index) => (
                         <tr key={vendor.id} className="hover:bg-slate-50 transition-colors">
                           <td className="px-4 py-4 text-center text-slate-400 font-mono font-medium">{index + 1}</td>
                           <td className="px-6 py-4 whitespace-nowrap"><div className="flex items-center gap-2"><span className="text-xs bg-gray-100 px-2 py-1 rounded font-mono text-slate-600">{vendor.code || 'N/A'}</span><span className="text-lg">{vendor.flag || '🏳️'}</span></div></td>
@@ -1826,6 +1833,13 @@ const VendorListViewWithActions = ({ vendors, loading, onAddNew, onEdit, onDelet
                     )}
                   </tbody>
                 </table>
+                <PaginationFooter
+                  page={listPage}
+                  size={LIST_PAGE_SIZE}
+                  totalElements={filteredVendors.length}
+                  totalPages={Math.ceil(filteredVendors.length / LIST_PAGE_SIZE)}
+                  onPageChange={setListPage}
+                />
               </div>
             </div>
           </div>

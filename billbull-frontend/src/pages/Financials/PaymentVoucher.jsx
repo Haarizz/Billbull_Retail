@@ -50,6 +50,7 @@ import billBullLogo from '../../assets/billBullLogo.png';
 import { exportToExcel, exportToPDF } from '../../utils/exportUtils';
 import { formatDisplayDate } from '../../utils/dateUtils';
 import { resolveCurrencyDisplayCode } from '../../utils/countryCurrencyOptions';
+import PaginationFooter from '../../components/common/PaginationFooter';
 import { generateDocFilename } from '../../utils/filenameUtils';
 
 // ------------------------------------------------------------------
@@ -237,6 +238,14 @@ const PaymentVoucher = () => {
             return true;
         });
     }, [rows, filterSource, filterStatus, filterMode, filterDateRange, searchQuery]);
+
+    const LIST_PAGE_SIZE = 30;
+    const [listPage, setListPage] = useState(0);
+    useEffect(() => { setListPage(0); }, [filterSource, filterStatus, filterMode, filterDateRange, searchQuery]);
+    const pagedFiltered = useMemo(
+        () => filtered.slice(listPage * LIST_PAGE_SIZE, (listPage + 1) * LIST_PAGE_SIZE),
+        [filtered, listPage]
+    );
 
     // ------------------------------------------------------------------
     // Stats
@@ -527,7 +536,7 @@ const PaymentVoucher = () => {
                                     </td>
                                 </tr>
                             ) : (
-                                filtered.map((row) => {
+                                pagedFiltered.map((row) => {
                                     const ModeIcon = iconForMode(row.mode);
                                     return (
                                         <tr
@@ -606,6 +615,13 @@ const PaymentVoucher = () => {
                             )}
                         </tbody>
                     </table>
+                    <PaginationFooter
+                        page={listPage}
+                        size={LIST_PAGE_SIZE}
+                        totalElements={filtered.length}
+                        totalPages={Math.ceil(filtered.length / LIST_PAGE_SIZE)}
+                        onPageChange={setListPage}
+                    />
                 </div>
             </div>
 

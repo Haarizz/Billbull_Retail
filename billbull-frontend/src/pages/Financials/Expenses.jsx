@@ -12,6 +12,7 @@ import { useCompany } from '../../context/CompanyContext';
 import CurrencyAmount, { CurrencySymbol } from '../../components/CurrencyAmount';
 import { formatDisplayDate } from '../../utils/dateUtils';
 import LedgerAccountCreateModal from '../../components/common/LedgerAccountCreateModal';
+import PaginationFooter from '../../components/common/PaginationFooter';
 
 
 const Expenses = () => {
@@ -194,6 +195,14 @@ setAllAccounts(Array.isArray(glData) ? glData : []);
             return matchesSearch && matchesLocation && matchesCategory && matchesCostCenter && matchesTax;
         });
     }, [expenses, searchTerm, filterLocation, filterCategory, filterCostCenter, filterTax]);
+
+    const LIST_PAGE_SIZE = 30;
+    const [listPage, setListPage] = useState(0);
+    useEffect(() => { setListPage(0); }, [searchTerm, filterLocation, filterCategory, filterCostCenter, filterTax]);
+    const pagedExpenses = useMemo(
+        () => filteredExpenses.slice(listPage * LIST_PAGE_SIZE, (listPage + 1) * LIST_PAGE_SIZE),
+        [filteredExpenses, listPage]
+    );
 
     const stats = useMemo(() => {
         const totalExpenses = filteredExpenses.reduce((sum, item) => sum + (item.total || 0), 0);
@@ -512,7 +521,7 @@ setAllAccounts(Array.isArray(glData) ? glData : []);
                             </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-100">
-                            {filteredExpenses.map((expense) => (
+                            {pagedExpenses.map((expense) => (
                                 <tr key={expense.id} className="hover:bg-slate-50 transition-colors">
                                     <td className="px-4 py-3 text-xs text-slate-600 whitespace-nowrap">{formatDisplayDate(expense.date)}</td>
                                     <td className="px-4 py-3 text-xs font-semibold text-slate-700">{expense.vendor}</td>
@@ -566,6 +575,13 @@ setAllAccounts(Array.isArray(glData) ? glData : []);
                             ))}
                         </tbody>
                     </table>
+                    <PaginationFooter
+                        page={listPage}
+                        size={LIST_PAGE_SIZE}
+                        totalElements={filteredExpenses.length}
+                        totalPages={Math.ceil(filteredExpenses.length / LIST_PAGE_SIZE)}
+                        onPageChange={setListPage}
+                    />
                 </div>
             </div>
 

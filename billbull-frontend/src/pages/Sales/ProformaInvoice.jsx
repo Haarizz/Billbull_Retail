@@ -59,6 +59,7 @@ import { formatCurrencyDisplay } from '../../utils/countryCurrencyOptions';
 // âœ… STEP 2: PROFORMA API IMPORTS
 import {
   getAllProformas,
+  getProformasPage,
   getNextProformaNumber,
   createProforma,
   updateProforma,
@@ -106,6 +107,7 @@ import useShortcuts from '../../hooks/useShortcuts';
 import { ItemDescriptionCell, ItemDescriptionHeader } from '../../components/ItemDescriptionCell';
 // QA-FAST-ENTRY: inline row search input that auto-opens ProductSelector
 import InlineProductSearchCell from '../../components/InlineProductSearchCell';
+import PaginationFooter from '../../components/common/PaginationFooter';
 import ItemAddOnsModal from '../../components/ItemAddOnsModal';
 
 const ProformaInvoice = () => {
@@ -127,6 +129,10 @@ const ProformaInvoice = () => {
   // --- PROFORMA LIST STATE ---
   // âŒ STEP 3: REMOVE MOCK DATA & REPLACE WITH EMPTY ARRAY
   const [proformaList, setProformaList] = useState([]);
+  // Pagination state (server-driven via /api/sales/proforma/page)
+  const [listPage, setListPage] = useState(0);
+  const [listPageMeta, setListPageMeta] = useState({ page: 0, size: 30, totalElements: 0, totalPages: 0 });
+  const [isListLoading, setIsListLoading] = useState(false);
 
   // --- FORM STATES ---
   const [status, setStatus] = useState('DRAFT');
@@ -378,6 +384,38 @@ const ProformaInvoice = () => {
     };
     fetchAllData();
   }, []);
+
+  // Server-paginated fetcher for the Proforma list tab.
+  const fetchProformasPage = async () => {
+    setIsListLoading(true);
+    try {
+      const data = await getProformasPage({
+        page: listPage,
+        size: 30,
+        search: searchTerm || '',
+        status: filterStatus && filterStatus !== 'All' ? filterStatus : '',
+      });
+      const rows = Array.isArray(data?.content) ? data.content : [];
+      setProformaList(rows);
+      setListPageMeta({
+        page: data?.page ?? listPage,
+        size: data?.size ?? 30,
+        totalElements: data?.totalElements ?? 0,
+        totalPages: data?.totalPages ?? 0,
+      });
+    } catch (err) {
+      console.error('Error fetching proforma page:', err);
+    } finally {
+      setIsListLoading(false);
+    }
+  };
+
+  useEffect(() => { setListPage(0); }, [searchTerm, filterStatus]);
+  useEffect(() => {
+    if (activeTab !== 'list') return;
+    fetchProformasPage();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab, listPage, searchTerm, filterStatus]);
 
   const filteredProformas = useMemo(() => {
     let data = [...proformaList];
@@ -1377,6 +1415,14 @@ const ProformaInvoice = () => {
                 </div>
               ))}
             </div>
+            <PaginationFooter
+              page={listPageMeta.page}
+              size={listPageMeta.size}
+              totalElements={listPageMeta.totalElements}
+              totalPages={listPageMeta.totalPages}
+              loading={isListLoading}
+              onPageChange={setListPage}
+            />
           </div>
         )}
 

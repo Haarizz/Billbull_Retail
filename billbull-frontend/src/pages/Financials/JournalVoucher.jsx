@@ -19,6 +19,7 @@ import { buildJournalVoucherPrintHtml } from '../../utils/journalVoucherPrintTem
 import { getTemplatesByCategory } from '../../api/printTemplateApi';
 import LedgerAccountCreateModal from '../../components/common/LedgerAccountCreateModal';
 import { formatUserDisplayName } from '../../utils/displayName';
+import PaginationFooter from '../../components/common/PaginationFooter';
 
 const formatAccountLedgerLabel = (account = {}) => {
     const code = account.code ? `${account.code} - ` : '';
@@ -359,6 +360,14 @@ const JournalVoucher = () => {
             return matchesSearch && matchesStatus && matchesUser && matchesDate;
         });
     }, [journalVouchers, searchTerm, filterStatus, filterUser, filterDate]);
+
+    const LIST_PAGE_SIZE = 30;
+    const [listPage, setListPage] = useState(0);
+    useEffect(() => { setListPage(0); }, [searchTerm, filterStatus, filterUser, filterDate]);
+    const pagedData = useMemo(
+        () => filteredData.slice(listPage * LIST_PAGE_SIZE, (listPage + 1) * LIST_PAGE_SIZE),
+        [filteredData, listPage]
+    );
 
     const lineTotals = useMemo(() => {
         const totalDebit = journalLines.reduce((sum, line) => sum + (parseFloat(line.debit) || 0), 0);
@@ -982,7 +991,7 @@ const JournalVoucher = () => {
                                     </tr>
                                 </thead>
                                 <tbody className="divide-y divide-slate-100 text-xs">
-                                    {filteredData.map((row) => (
+                                    {pagedData.map((row) => (
                                         <tr key={row.id} className="hover:bg-slate-50">
                                             <td className="px-4 py-3 font-medium text-slate-700">{row.jvNumber}</td>
                                             <td className="px-4 py-3 text-slate-500">{formatDisplayDate(row.date)}</td>
@@ -1005,6 +1014,13 @@ const JournalVoucher = () => {
                                     ))}
                                 </tbody>
                             </table>
+                            <PaginationFooter
+                                page={listPage}
+                                size={LIST_PAGE_SIZE}
+                                totalElements={filteredData.length}
+                                totalPages={Math.ceil(filteredData.length / LIST_PAGE_SIZE)}
+                                onPageChange={setListPage}
+                            />
                         </div>
                     </div> {/* Closing the card div */}
                 </>

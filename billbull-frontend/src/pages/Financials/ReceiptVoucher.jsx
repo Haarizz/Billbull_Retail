@@ -48,6 +48,7 @@ import { useCompany } from '../../context/CompanyContext';
 import { exportToExcel, exportToPDF } from '../../utils/exportUtils';
 import { resolveCurrencyDisplayCode } from '../../utils/countryCurrencyOptions';
 import { formatDisplayDate } from '../../utils/dateUtils';
+import PaginationFooter from '../../components/common/PaginationFooter';
 
 // --- HELPER: CUSTOM SELECT ---
 const CustomSelect = ({ placeholder, options, value, onChange }) => {
@@ -636,6 +637,14 @@ const ReceiptVoucher = () => {
         });
     }, [receipts, filterDate, searchQuery, filterSource, filterStatus, filterPayment, filterBranch, filterDateRange]);
 
+    const LIST_PAGE_SIZE = 30;
+    const [listPage, setListPage] = useState(0);
+    useEffect(() => { setListPage(0); }, [filterDate, searchQuery, filterSource, filterStatus, filterPayment, filterBranch, filterDateRange]);
+    const pagedReceipts = useMemo(
+        () => filteredReceipts.slice(listPage * LIST_PAGE_SIZE, (listPage + 1) * LIST_PAGE_SIZE),
+        [filteredReceipts, listPage]
+    );
+
     const handleExportExcel = () => {
         exportToExcel(filteredReceipts, RECEIPT_COLUMNS, 'Receipt_Vouchers');
     };
@@ -957,7 +966,7 @@ const ReceiptVoucher = () => {
                         </thead>
                         <tbody className="divide-y divide-slate-50">
                             {filteredReceipts.length > 0 ? (
-                                filteredReceipts.map((row) => (
+                                pagedReceipts.map((row) => (
                                     <tr key={row.id} className="hover:bg-slate-50 group cursor-pointer" onClick={() => handleViewReceipt(row)}>
                                         <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}><input type="checkbox" className="rounded border-slate-300" /></td>
                                         <td className="px-4 py-3">
@@ -1060,6 +1069,13 @@ const ReceiptVoucher = () => {
                             )}
                         </tbody>
                     </table>
+                    <PaginationFooter
+                        page={listPage}
+                        size={LIST_PAGE_SIZE}
+                        totalElements={filteredReceipts.length}
+                        totalPages={Math.ceil(filteredReceipts.length / LIST_PAGE_SIZE)}
+                        onPageChange={setListPage}
+                    />
                 </div>
             </div>
 

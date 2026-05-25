@@ -12,6 +12,7 @@ import {
 import ExportDropdown from '../../../components/common/ExportDropdown';
 import { exportToExcel, exportToPDF } from '../../../utils/exportUtils';
 import CurrencyAmount from '../../../components/CurrencyAmount';
+import PaginationFooter from '../../../components/common/PaginationFooter';
 import { formatDisplayDate } from '../../../utils/dateUtils';
 
 // ==========================================
@@ -791,6 +792,12 @@ const ListView = ({
             s.warehouse?.toLowerCase().includes(searchTerm.toLowerCase()) ||
             s.createdBy?.toLowerCase().includes(searchTerm.toLowerCase()));
 
+    // Client-side pagination for the sessions table.
+    const LIST_PAGE_SIZE = 30;
+    const [listPage, setListPage] = useState(0);
+    useEffect(() => { setListPage(0); }, [activeTab, searchTerm]);
+    const pagedSessions = filteredSessions.slice(listPage * LIST_PAGE_SIZE, (listPage + 1) * LIST_PAGE_SIZE);
+
     return (
         <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
             {/* Header */}
@@ -880,7 +887,7 @@ const ListView = ({
                             </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-100">
-                            {filteredSessions.map((session, index) => (
+                            {pagedSessions.map((session, index) => (
                                 <tr key={session.id} className="hover:bg-slate-50/80 transition-colors group">
                                     <td className="px-4 py-2 text-center text-slate-400 font-mono font-medium">{index + 1}</td>
                                     <td className="px-4 py-2 whitespace-nowrap">
@@ -1004,6 +1011,13 @@ const ListView = ({
                             ))}
                         </tbody>
                     </table>
+                    <PaginationFooter
+                        page={listPage}
+                        size={LIST_PAGE_SIZE}
+                        totalElements={filteredSessions.length}
+                        totalPages={Math.ceil(filteredSessions.length / LIST_PAGE_SIZE)}
+                        onPageChange={setListPage}
+                    />
                 </div>
             </div>
         </div>

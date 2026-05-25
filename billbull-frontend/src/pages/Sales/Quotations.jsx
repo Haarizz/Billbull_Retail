@@ -44,6 +44,7 @@ import { getAllCustomers } from '../../api/customerledgerApi';
 // ✅ NEW QUOTATION API IMPORTS
 import {
     getAllQuotations,
+    getQuotationsPage,
     saveQuotation,
     updateQuotationStatus,
     createRevision,
@@ -68,6 +69,7 @@ import api from "../../api/axiosConfig";
 import { ItemDescriptionCell, ItemDescriptionHeader } from '../../components/ItemDescriptionCell';
 // QA-FAST-ENTRY: inline row search input that auto-opens ProductSelector
 import InlineProductSearchCell from '../../components/InlineProductSearchCell';
+import PaginationFooter from '../../components/common/PaginationFooter';
 
 // ✅ PRODUCT SELECTOR — self-fetching, server-side search
 import ProductSelector from '../../components/ProductSelector';
@@ -437,6 +439,10 @@ const Quotations = () => {
 
     // --- QUOTATION MANAGEMENT STATES ---
     const [quotationsList, setQuotationsList] = useState([]);
+    // Pagination state (server-driven via /api/sales/quotations/page)
+    const [listPage, setListPage] = useState(0);
+    const [listPageMeta, setListPageMeta] = useState({ page: 0, size: 30, totalElements: 0, totalPages: 0 });
+    const [isListLoading, setIsListLoading] = useState(false);
 
     const [editingId, setEditingId] = useState(null);
     const [nextQtnNo, setNextQtnNo] = useState("QTN-NEW");
@@ -936,9 +942,8 @@ const Quotations = () => {
 
             setCustomersList(validCustomers);
 
-            const qtns = await getAllQuotations();
-            const mappedQtns = qtns.map(mapBackendToFrontend);
-            setQuotationsList(mappedQtns);
+            // List uses paginated endpoint; see fetchQuotationsList + effect below.
+            await fetchQuotationsList();
 
             const nextNo = await getNextQuotationNo();
             setNextQtnNo(nextNo);
@@ -957,6 +962,43 @@ const Quotations = () => {
             console.error("Error loading data:", error);
         }
     };
+
+    // Server-driven paginated fetch for the Quotation list tab. Filters
+    // (search + status) and the current page are pushed to the backend; the
+    // response hydrates both the visible list and the footer meta.
+    const fetchQuotationsList = async () => {
+        setIsListLoading(true);
+        try {
+            const data = await getQuotationsPage({
+                page: listPage,
+                size: 30,
+                search: searchTerm || '',
+                status: filterStatus && filterStatus !== 'All' ? filterStatus : '',
+            });
+            const rows = Array.isArray(data?.content) ? data.content : [];
+            setQuotationsList(rows.map(mapBackendToFrontend));
+            setListPageMeta({
+                page: data?.page ?? listPage,
+                size: data?.size ?? 30,
+                totalElements: data?.totalElements ?? 0,
+                totalPages: data?.totalPages ?? 0,
+            });
+        } catch (err) {
+            console.error('Error fetching quotations page:', err);
+        } finally {
+            setIsListLoading(false);
+        }
+    };
+
+    // Reset to first page whenever filter inputs change.
+    useEffect(() => { setListPage(0); }, [searchTerm, filterStatus]);
+
+    // Refetch whenever the user opens the list tab, changes filters, or pages.
+    useEffect(() => {
+        if (activeTab !== 'list') return;
+        fetchQuotationsList();
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [activeTab, listPage, searchTerm, filterStatus]);
 
     const selectedCustomerData = useMemo(() => {
         return customersList.find(c => `${c.name} - ${c.code}` === customer);
@@ -1506,10 +1548,7 @@ const Quotations = () => {
 
             const savedQtn = await saveQuotation(payload);
 
-            const qtns = await getAllQuotations();
-            const mappedQtns = qtns.map(mapBackendToFrontend);
-            setQuotationsList(mappedQtns);
-
+            // List will refresh via fetchQuotationsList when activeTab switches to 'list'.
             setEditingId(savedQtn.id);
             setNextQtnNo(savedQtn.qtnNo || getQuotationNo());
             setStatus('Pending Approval');
@@ -2987,6 +3026,14 @@ const Quotations = () => {
                                 <div className="text-center py-8 text-slate-400 text-sm">No quotations found.</div>
                             )}
                         </div>
+                        <PaginationFooter
+                            page={listPageMeta.page}
+                            size={listPageMeta.size}
+                            totalElements={listPageMeta.totalElements}
+                            totalPages={listPageMeta.totalPages}
+                            loading={isListLoading}
+                            onPageChange={setListPage}
+                        />
                     </div>
                 )}
 

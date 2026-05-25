@@ -31,6 +31,7 @@ import {
 import { employeesApi } from '../../../api/employeesApi';
 import { salaryPaymentApi } from '../../../api/salaryPaymentApi';
 import CurrencyAmount, { CurrencySymbol } from '../../../components/CurrencyAmount';
+import PaginationFooter from '../../../components/common/PaginationFooter';
 import { formatDisplayDate } from '../../../utils/dateUtils';
 
 // --- Configuration ---
@@ -577,6 +578,21 @@ const SalaryPayments = () => {
     });
   }, [bulkSearchTerm, employees]);
 
+  // Client-side pagination for the two employee lists in this page.
+  const LIST_PAGE_SIZE = 30;
+  const [listPage, setListPage] = useState(0);
+  useEffect(() => { setListPage(0); }, [searchTerm, departmentFilter, statusFilter]);
+  const pagedEmployees = useMemo(
+    () => filteredEmployees.slice(listPage * LIST_PAGE_SIZE, (listPage + 1) * LIST_PAGE_SIZE),
+    [filteredEmployees, listPage]
+  );
+  const [bulkListPage, setBulkListPage] = useState(0);
+  useEffect(() => { setBulkListPage(0); }, [bulkSearchTerm]);
+  const pagedBulkEmployees = useMemo(
+    () => filteredBulkEmployees.slice(bulkListPage * LIST_PAGE_SIZE, (bulkListPage + 1) * LIST_PAGE_SIZE),
+    [filteredBulkEmployees, bulkListPage]
+  );
+
   const toggleSelect = (id) => {
     if (selectedEmployees.includes(id)) {
       setSelectedEmployees(selectedEmployees.filter(e => e !== id));
@@ -812,7 +828,7 @@ const SalaryPayments = () => {
                     </thead>
                     <tbody className="divide-y divide-slate-100">
                       {filteredEmployees.length > 0 ? (
-                        filteredEmployees.map((emp) => (
+                        pagedEmployees.map((emp) => (
                           <tr key={emp.id} className="hover:bg-slate-50/50 transition-colors">
                             <td className="px-6 py-4">
                               <div className="font-medium text-slate-900">{emp.employeeName || emp.name}</div>
@@ -852,6 +868,13 @@ const SalaryPayments = () => {
                       )}
                     </tbody>
                   </table>
+                  <PaginationFooter
+                    page={listPage}
+                    size={LIST_PAGE_SIZE}
+                    totalElements={filteredEmployees.length}
+                    totalPages={Math.ceil(filteredEmployees.length / LIST_PAGE_SIZE)}
+                    onPageChange={setListPage}
+                  />
                 </div>
               </div>
             </div>
@@ -921,7 +944,7 @@ const SalaryPayments = () => {
                     </thead>
                     <tbody className="divide-y divide-slate-100">
                       {filteredBulkEmployees.length > 0 ? (
-                        filteredBulkEmployees.map((emp) => (
+                        pagedBulkEmployees.map((emp) => (
                           <tr key={emp.id} className="hover:bg-slate-50/50 transition-colors">
                             <td className="px-6 py-4">
                               <input
@@ -951,6 +974,13 @@ const SalaryPayments = () => {
                       )}
                     </tbody>
                   </table>
+                  <PaginationFooter
+                    page={bulkListPage}
+                    size={LIST_PAGE_SIZE}
+                    totalElements={filteredBulkEmployees.length}
+                    totalPages={Math.ceil(filteredBulkEmployees.length / LIST_PAGE_SIZE)}
+                    onPageChange={setBulkListPage}
+                  />
                 </div>
               </div>
             </div>
