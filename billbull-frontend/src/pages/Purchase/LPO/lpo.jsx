@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   LayoutDashboard,
@@ -51,6 +51,9 @@ import { getImageUrl } from "../../../utils/urlUtils";
 import { getDefaultProductUnit, resolveUnitAmount } from "../../../utils/unitPricing";
 import { createDraftFromLpo } from '../../../api/purchaseInvoiceApi';
 import { ItemDescriptionCell, ItemDescriptionHeader } from '../../../components/ItemDescriptionCell';
+// QA-FAST-ENTRY: inline row search input that auto-opens ProductSelector
+import InlineProductSearchCell from '../../../components/InlineProductSearchCell';
+import PaginationFooter from '../../../components/common/PaginationFooter';
 import ItemAddOnsModal from '../../../components/ItemAddOnsModal';
 import StockAvailabilityModal from '../../../components/StockAvailabilityModal';
 import toast from 'react-hot-toast';
@@ -973,6 +976,24 @@ const EditorView = ({ initialData, vendors, warehouses, onSave, onSubmit, onPrin
   const [isVendorSearchOpen, setIsVendorSearchOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [isProductSelectionOpen, setIsProductSelectionOpen] = useState(false);
+
+  // QA-FAST-ENTRY: inline-row-search → product-selector bridge state
+  const [pendingFastEntrySearch, setPendingFastEntrySearch] = useState('');
+  const [pendingFastEntryRowId, setPendingFastEntryRowId] = useState(null);
+  const inlineSearchRefs = useRef({});
+  const focusNextInlineSearchRef = useRef(null);
+
+  // QA-FAST-ENTRY: focus the freshly-added empty row's inline search input.
+  useEffect(() => {
+    const targetId = focusNextInlineSearchRef.current;
+    if (targetId == null) return;
+    const raf = requestAnimationFrame(() => {
+      const el = inlineSearchRefs.current[targetId];
+      if (el) el.focus();
+      focusNextInlineSearchRef.current = null;
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [formData.items]);
   const [expandedRows, setExpandedRows] = useState({});
   const [selectedAddonItem, setSelectedAddonItem] = useState(null);
   const [selectedStockItem, setSelectedStockItem] = useState(null);
@@ -1168,12 +1189,25 @@ const EditorView = ({ initialData, vendors, warehouses, onSave, onSubmit, onPrin
       unitCosts: product.unitCosts || {}
     };
 
-    // If first item is empty, replace it
-    const isFirstItemEmpty = formData.items.length === 1 && !formData.items[0].productId;
-    const updatedItems = isFirstItemEmpty ? [newItem] : [...formData.items, newItem];
+    // QA-FAST-ENTRY: replace-in-place when triggered by inline row search.
+    const targetRowId = pendingFastEntryRowId;
+    let updatedItems;
+    if (targetRowId != null) {
+      updatedItems = formData.items.map(it => it.id === targetRowId ? { ...newItem, id: targetRowId } : it);
+    } else {
+      const isFirstItemEmpty = formData.items.length === 1 && !formData.items[0].productId;
+      updatedItems = isFirstItemEmpty ? [newItem] : [...formData.items, newItem];
+    }
+    const filledItemId = targetRowId != null ? targetRowId : newItem.id;
+    setPendingFastEntrySearch('');
+    setPendingFastEntryRowId(null);
 
     setFormData({ ...formData, items: updatedItems });
     setIsProductSelectionOpen(false);
+    setTimeout(() => {
+      const qtyEl = document.getElementById(`qty-${filledItemId}`);
+      if (qtyEl) { qtyEl.focus(); qtyEl.select?.(); }
+    }, 100);
   };
 
   const handleFastEntryAdd = (product, qty, price, disc) => {
@@ -1717,7 +1751,7 @@ const EditorView = ({ initialData, vendors, warehouses, onSave, onSubmit, onPrin
             <div className="px-4 py-3 border-b border-slate-100 flex justify-between items-center">
               <div className="flex items-center gap-2">
                 <ShoppingCart className="h-4 w-4 text-yellow-500" />
-                <h3 className="font-semibold text-sm text-slate-700">LPO Items</h3>
+                <h3 className="font-semibold text-sm text-slate-700 flex items-center gap-2">LPO Items <span className="inline-flex items-center gap-1 text-[10px] bg-blue-50 text-blue-700 px-2 py-0.5 rounded-full font-medium border border-blue-200"><Zap size={10} /> Fast Entry</span></h3>
               </div>
               <div className="flex items-center gap-2">
                 {!isReadOnly && (
@@ -1760,6 +1794,26 @@ const EditorView = ({ initialData, vendors, warehouses, onSave, onSubmit, onPrin
                       <tr className="group hover:bg-slate-50">
                         <td className="p-3 text-center text-slate-400 text-xs font-medium">{index + 1}</td>
                         <td className="p-3">
+                          {/* QA-FAST-ENTRY: empty rows show inline product-search input */}
+                          {(!item.code && !item.name) ? (
+                            <InlineProductSearchCell
+                              value={pendingFastEntryRowId === item.id ? pendingFastEntrySearch : ''}
+                              inputRef={(el) => {
+                                if (el) inlineSearchRefs.current[item.id] = el;
+                                else delete inlineSearchRefs.current[item.id];
+                              }}
+                              isReadOnly={isReadOnly}
+                              onChange={(text) => {
+                                setPendingFastEntryRowId(item.id);
+                                setPendingFastEntrySearch(text);
+                              }}
+                              onOpenSelector={(text) => {
+                                setPendingFastEntryRowId(item.id);
+                                setPendingFastEntrySearch(text);
+                                setIsProductSelectionOpen(true);
+                              }}
+                            />
+                          ) : (
                           <ItemDescriptionCell
                             item={item}
                             isExpanded={expandedRows[item.id]}
@@ -1773,6 +1827,7 @@ const EditorView = ({ initialData, vendors, warehouses, onSave, onSubmit, onPrin
                             isReadOnly={isReadOnly}
                             showTaxDiscount={true}
                           />
+                          )}
                         </td>
                         <td className="p-3 text-center">
                           <select
@@ -1786,10 +1841,17 @@ const EditorView = ({ initialData, vendors, warehouses, onSave, onSubmit, onPrin
                         </td>
                         <td className="p-3">
                           <input
+                            id={`qty-${item.id}`}
                             type="number"
                             min="1"
                             value={item.qty}
                             onChange={(e) => handleItemChange(item.id, 'qty', e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Tab' && !e.shiftKey) {
+                                const priceEl = document.getElementById(`price-${item.id}`);
+                                if (priceEl) { e.preventDefault(); priceEl.focus(); priceEl.select?.(); }
+                              }
+                            }}
                             // Prevent Scroll & Paste
                             onWheel={e => e.target.blur()}
                             onPaste={e => e.preventDefault()}
@@ -1800,11 +1862,20 @@ const EditorView = ({ initialData, vendors, warehouses, onSave, onSubmit, onPrin
                         <td className="p-3">
                           <div className="relative group/price">
                             <input
+                              id={`price-${item.id}`}
                               type="number"
                               min="0"
                               step="0.01"
                               value={item.unitPrice}
                               onChange={(e) => handleItemChange(item.id, 'unitPrice', e.target.value)}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Tab' && !e.shiftKey && !isReadOnly) {
+                                  e.preventDefault();
+                                  const newRow = createBlankLpoItem();
+                                  focusNextInlineSearchRef.current = newRow.id;
+                                  setFormData(prev => ({ ...prev, items: [...prev.items, newRow] }));
+                                }
+                              }}
                               // Prevent Scroll & Paste
                               onWheel={e => e.target.blur()}
                               onPaste={e => e.preventDefault()}
@@ -1852,6 +1923,20 @@ const EditorView = ({ initialData, vendors, warehouses, onSave, onSubmit, onPrin
                   ))}
                 </tbody>
               </table>
+              {/* QA-FAST-ENTRY: Quick Entry hint bar */}
+              <div className="mt-2 px-3 py-2 bg-blue-50/30 border border-blue-100/60 rounded-md flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-slate-500">
+                <span className="inline-flex items-center gap-1 text-blue-600 font-semibold"><Zap size={11} /> Quick Entry:</span>
+                <span>Type name →</span>
+                <kbd className="px-1.5 py-0.5 bg-white border border-slate-200 rounded text-[10px] font-mono text-slate-600">Enter</kbd>
+                <span>Select →</span>
+                <kbd className="px-1.5 py-0.5 bg-white border border-slate-200 rounded text-[10px] font-mono text-slate-600">Tab</kbd>
+                <span>Qty →</span>
+                <kbd className="px-1.5 py-0.5 bg-white border border-slate-200 rounded text-[10px] font-mono text-slate-600">Tab</kbd>
+                <span>Cost →</span>
+                <kbd className="px-1.5 py-0.5 bg-white border border-slate-200 rounded text-[10px] font-mono text-slate-600">Tab</kbd>
+                <span>New row</span>
+                <span className="ml-auto text-slate-400">Tip: Use ↑↓ arrows to navigate items</span>
+              </div>
             </div>
           </div>
         </div>
@@ -2216,9 +2301,10 @@ const EditorView = ({ initialData, vendors, warehouses, onSave, onSubmit, onPrin
       {/* Product Selector Modal */}
       <ProductSelector
         isOpen={isProductSelectionOpen}
-        onClose={() => setIsProductSelectionOpen(false)}
+        onClose={() => { setIsProductSelectionOpen(false); setPendingFastEntryRowId(null); }}
         onSelect={handleAddSingleProduct}
         onInlineAdd={handleFastEntryAdd}
+        initialSearch={pendingFastEntrySearch}
         actionLabel="Add to LPO"
         mode="purchase"
       />
@@ -2252,6 +2338,11 @@ const LPOList = () => {
 
   // Master State
   const [lpos, setLpos] = useState([]);
+  // Client-side pagination over the filtered/processed list (backend /page
+  // doesn't support all the filters this page exposes — status tab + date
+  // range + vendor — so we slice processedData here).
+  const [listPage, setListPage] = useState(0);
+  const LIST_PAGE_SIZE = 30;
   const [approvalQueue, setApprovalQueue] = useState([]);
   const [autoSuggestions, setAutoSuggestions] = useState([]);
   const [currentEditorData, setCurrentEditorData] = useState(null);
@@ -2737,6 +2828,13 @@ const LPOList = () => {
     return data;
   }, [lpos, activeStatusTab, searchQuery, sortConfig, dateRange, selectedVendor]);
 
+  // Reset page when filters change, then slice processedData for the visible page.
+  useEffect(() => { setListPage(0); }, [activeStatusTab, searchQuery, dateRange, selectedVendor]);
+  const pagedProcessedData = useMemo(
+    () => processedData.slice(listPage * LIST_PAGE_SIZE, (listPage + 1) * LIST_PAGE_SIZE),
+    [processedData, listPage]
+  );
+
   const exportProcessedData = useMemo(() => processedData.map((row, index) => ({
     ...row,
     sNo: index + 1,
@@ -2889,7 +2987,7 @@ const LPOList = () => {
             {activeNavTab === 'list' && (
               <ListView
                 lpos={lpos}
-                processedData={processedData}
+                processedData={pagedProcessedData}
                 activeFilter={activeStatusTab}
                 currentPage={0}
                 onEdit={handleEditLPO}
@@ -2915,6 +3013,16 @@ const LPOList = () => {
                 setSelectedVendor={setSelectedVendor}
                 vendors={vendors}
                 currencyLabel={currencyLabel}
+              />
+            )}
+            {activeNavTab === 'list' && (
+              <PaginationFooter
+                page={listPage}
+                size={LIST_PAGE_SIZE}
+                totalElements={processedData.length}
+                totalPages={Math.ceil(processedData.length / LIST_PAGE_SIZE)}
+                loading={loading}
+                onPageChange={setListPage}
               />
             )}
             {activeNavTab === 'auto' && (

@@ -27,7 +27,8 @@ import {
 } from 'lucide-react';
 
 // API Imports
-import { getAllSalesPayments, saveSalesPayment, getNextSalesPaymentNumber, getSalesPaymentStats, deleteSalesPayment } from '../../api/salesPaymentApi';
+import { getAllSalesPayments, getSalesPaymentsPage, saveSalesPayment, getNextSalesPaymentNumber, getSalesPaymentStats, deleteSalesPayment } from '../../api/salesPaymentApi';
+import PaginationFooter from '../../components/common/PaginationFooter';
 import { getAllSalesInvoices } from '../../api/salesInvoiceApi';
 import { getAllCustomers, getOpeningInvoicesByCustomerCode } from '../../api/customerledgerApi';
 import { getBankAccounts } from '../../api/ledgerApi';
@@ -85,6 +86,9 @@ const Payment = () => {
 
     // --- DATA LIST STATES ---
     const [paymentsList, setPaymentsList] = useState([]);
+    // Pagination state (server-driven via /api/sales/payments/page)
+    const [listPage, setListPage] = useState(0);
+    const [listPageMeta, setListPageMeta] = useState({ page: 0, size: 30, totalElements: 0, totalPages: 0 });
     const [customersList, setCustomersList] = useState([]);
     const [invoicesList, setInvoicesList] = useState([]);
     const [openingInvoices, setOpeningInvoices] = useState([]);
@@ -141,12 +145,27 @@ const Payment = () => {
         fetchStats();
         getBankAccounts().then(data => setBankAccounts(Array.isArray(data) ? data : [])).catch(() => {});
         getSalesSettings().then(setSalesSettings).catch(() => {});
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
+
+    // Refetch payments when the user pages through the list.
+    useEffect(() => {
+        if (activeTab !== 'list') return;
+        fetchPayments();
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [activeTab, listPage]);
 
     const fetchPayments = async () => {
         setIsLoading(true);
         try {
-            const data = await getAllSalesPayments();
+            const resp = await getSalesPaymentsPage({ page: listPage, size: 30 });
+            const data = Array.isArray(resp?.content) ? resp.content : [];
+            setListPageMeta({
+                page: resp?.page ?? listPage,
+                size: resp?.size ?? 30,
+                totalElements: resp?.totalElements ?? 0,
+                totalPages: resp?.totalPages ?? 0,
+            });
             // Map backend fields to frontend format
             const mapped = data.map(p => ({
                 id: p.id,
@@ -823,6 +842,14 @@ const Payment = () => {
                                         )}
                                     </tbody>
                                 </table>
+                                <PaginationFooter
+                                    page={listPageMeta.page}
+                                    size={listPageMeta.size}
+                                    totalElements={listPageMeta.totalElements}
+                                    totalPages={listPageMeta.totalPages}
+                                    loading={isLoading}
+                                    onPageChange={setListPage}
+                                />
                             </div>
                         </div>
                     )}

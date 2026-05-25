@@ -16,6 +16,7 @@ import {
 } from 'recharts';
 import { useBranch } from '../../context/BranchContext';
 import CurrencyAmount from '../../components/CurrencyAmount';
+import PaginationFooter from '../../components/common/PaginationFooter';
 
 const Followups = () => {
     const navigate = useNavigate();
@@ -639,6 +640,15 @@ const Followups = () => {
         });
     }, [followupsList, searchQuery, filters]);
 
+    // Client-side pagination for the followups table.
+    const LIST_PAGE_SIZE = 30;
+    const [listPage, setListPage] = useState(0);
+    useEffect(() => { setListPage(0); }, [searchQuery, filters]);
+    const pagedFollowups = useMemo(
+        () => filteredFollowups.slice(listPage * LIST_PAGE_SIZE, (listPage + 1) * LIST_PAGE_SIZE),
+        [filteredFollowups, listPage]
+    );
+
     return (
         <div className="min-h-screen bg-slate-50 font-sans text-slate-800 p-6 pb-20">
 
@@ -764,7 +774,7 @@ const Followups = () => {
 
                 {/* MOBILE CARD VIEW */}
                 <div className="md:hidden space-y-3 mb-6">
-                    {filteredFollowups.map((item) => (
+                    {pagedFollowups.map((item) => (
                         <div key={item.id} className="bg-white rounded-lg border border-slate-200 shadow-sm p-4">
                             {/* Header */}
                             <div className="flex justify-between items-start mb-3">
@@ -904,7 +914,7 @@ const Followups = () => {
                             </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-100">
-                            {filteredFollowups.map((item) => (
+                            {pagedFollowups.map((item) => (
                                 <tr key={item.id} className="hover:bg-slate-50 transition-colors">
                                     <td className="px-4 py-3 text-xs font-medium text-slate-600">{item.id}</td>
                                     <td className="px-4 py-3">
@@ -1033,13 +1043,13 @@ const Followups = () => {
                             ))}
                         </tbody>
                     </table>
-                    <div className="px-4 py-3 border-t border-slate-100 text-xs text-slate-500 flex justify-between items-center">
-                        <span>Showing 6 follow-ups</span>
-                        <div className="flex gap-2">
-                            <button className="px-2 py-1 border border-slate-200 rounded hover:bg-slate-50 disabled:opacity-50">Prev</button>
-                            <button className="px-2 py-1 border border-slate-200 rounded hover:bg-slate-50">Next</button>
-                        </div>
-                    </div>
+                    <PaginationFooter
+                        page={listPage}
+                        size={LIST_PAGE_SIZE}
+                        totalElements={filteredFollowups.length}
+                        totalPages={Math.ceil(filteredFollowups.length / LIST_PAGE_SIZE)}
+                        onPageChange={setListPage}
+                    />
                 </div>
             </>
 

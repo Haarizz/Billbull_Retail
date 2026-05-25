@@ -68,6 +68,9 @@ import { getDefaultProductUnit, resolveUnitAmount } from '../../../utils/unitPri
 import { formatDisplayDate } from '../../../utils/dateUtils';
 import { useBranch } from '../../../context/BranchContext';
 import { ItemDescriptionCell, ItemDescriptionHeader } from '../../../components/ItemDescriptionCell';
+// QA-FAST-ENTRY: inline row search input that auto-opens ProductSelector
+import InlineProductSearchCell from '../../../components/InlineProductSearchCell';
+import PaginationFooter from '../../../components/common/PaginationFooter';
 import ItemAddOnsModal from '../../../components/ItemAddOnsModal';
 import StockAvailabilityModal from '../../../components/StockAvailabilityModal';
 import { useCompany } from '../../../context/CompanyContext';
@@ -584,6 +587,24 @@ const EditorView = ({ initialData, onSaveDraft, onSubmitQC, onPost, onPrint, grn
   const navigate = useNavigate();
   // Mock items linked from LPO
   const [items, setItems] = useState([]);
+
+  // QA-FAST-ENTRY: inline-row-search → product-selector bridge state
+  const [pendingFastEntrySearch, setPendingFastEntrySearch] = useState('');
+  const [pendingFastEntryRowId, setPendingFastEntryRowId] = useState(null);
+  const inlineSearchRefs = useRef({});
+  const focusNextInlineSearchRef = useRef(null);
+
+  // QA-FAST-ENTRY: focus the freshly-added empty row's inline search input.
+  useEffect(() => {
+    const targetId = focusNextInlineSearchRef.current;
+    if (targetId == null) return;
+    const raf = requestAnimationFrame(() => {
+      const el = inlineSearchRefs.current[targetId];
+      if (el) el.focus();
+      focusNextInlineSearchRef.current = null;
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [items]);
   const [vendors, setVendors] = useState([]);
   const [warehouses, setWarehouses] = useState([]);
   const [selectedVendorDetails, setSelectedVendorDetails] = useState(null);
@@ -1096,8 +1117,29 @@ const EditorView = ({ initialData, onSaveDraft, onSubmitQC, onPost, onPrint, grn
       unitPrices: product.unitPrices || {},
       unitCosts: product.unitCosts || {}
     };
-    setItems(prev => [...prev, recalculateItemTotals(newItem)]);
+    // QA-FAST-ENTRY: replace-in-place when triggered by inline row search;
+    // fall back to append if the target row doesn't exist (e.g. seed row).
+    const targetRowId = pendingFastEntryRowId;
+    const finalItem = recalculateItemTotals(newItem);
+    let resolvedRowId = finalItem.id;
+    setItems(prev => {
+      if (targetRowId != null) {
+        const exists = prev.some(it => it.id === targetRowId);
+        if (exists) {
+          resolvedRowId = targetRowId;
+          return prev.map(it => it.id === targetRowId ? { ...finalItem, id: targetRowId } : it);
+        }
+      }
+      return [...prev, finalItem];
+    });
+    const filledItemId = resolvedRowId;
+    setPendingFastEntrySearch('');
+    setPendingFastEntryRowId(null);
     setIsProductSelectionOpen(false);
+    setTimeout(() => {
+      const qtyEl = document.getElementById(`qty-${filledItemId}`);
+      if (qtyEl) { qtyEl.focus(); qtyEl.select?.(); }
+    }, 100);
   };
 
   // /api/products/by-barcode returns ProductAggregateResponse — a wrapper with
@@ -1782,7 +1824,7 @@ const EditorView = ({ initialData, onSaveDraft, onSubmitQC, onPost, onPrint, grn
             <div className="px-4 py-3 border-b border-slate-100 flex justify-between items-center bg-slate-50/50">
               <div className="flex items-center gap-2">
                 <Package className="h-4 w-4 text-slate-400" />
-                <h3 className="font-semibold text-sm text-slate-700">Item Lines <span className="text-xs font-normal text-slate-500 bg-slate-200 px-1.5 rounded ml-1">{items.length} items</span></h3>
+                <h3 className="font-semibold text-sm text-slate-700 flex items-center gap-2">Item Lines <span className="text-xs font-normal text-slate-500 bg-slate-200 px-1.5 rounded ml-1">{items.length} items</span> <span className="inline-flex items-center gap-1 text-[10px] bg-blue-50 text-blue-700 px-2 py-0.5 rounded-full font-medium border border-blue-200"><Zap size={10} /> Fast Entry</span></h3>
               </div>
               <div className="flex gap-2">
                 <button
@@ -1875,12 +1917,57 @@ const EditorView = ({ initialData, onSaveDraft, onSubmitQC, onPost, onPrint, grn
                 </thead>
                 <tbody className="divide-y divide-slate-50">
                   {items.length === 0 ? (
-                    <tr><td colSpan="10" className="p-8 text-center text-slate-400">No items added. {grnType === "Against LPO" || grnType === "Against Direct Purchase" ? "Select a document to load items or use Select from Products." : "Click Select from Products to add items."}</td></tr>
+                    /* QA-FAST-ENTRY: seed row when no items yet */
+                    <tr className="bg-white">
+                      <td className="p-3 text-center text-slate-400 text-xs font-medium">1</td>
+                      <td className="p-3">
+                        <InlineProductSearchCell
+                          value={pendingFastEntryRowId === '__seed__' ? pendingFastEntrySearch : ''}
+                          inputRef={(el) => {
+                            if (el) inlineSearchRefs.current['__seed__'] = el;
+                            else delete inlineSearchRefs.current['__seed__'];
+                          }}
+                          isReadOnly={isLocked}
+                          onChange={(text) => {
+                            setPendingFastEntryRowId('__seed__');
+                            setPendingFastEntrySearch(text);
+                          }}
+                          onOpenSelector={(text) => {
+                            setPendingFastEntryRowId('__seed__');
+                            setPendingFastEntrySearch(text);
+                            setIsProductSelectionOpen(true);
+                          }}
+                        />
+                      </td>
+                      <td colSpan={8} className="p-3 text-[11px] text-slate-400">
+                        {grnType === "Against LPO" || grnType === "Against Direct Purchase" ? "Select a document to load items or type above." : "Type above to add an item."}
+                      </td>
+                    </tr>
                   ) : [...items].reverse().map((item, index) => (
                     <React.Fragment key={item.id}>
                       <tr className="hover:bg-slate-50 group">
                         <td className="p-3 text-center text-slate-400 text-xs font-medium">{index + 1}</td>
                         <td className="p-3">
+                          {/* QA-FAST-ENTRY: empty rows show inline product-search input */}
+                          {(!item.code && !item.name) ? (
+                            <InlineProductSearchCell
+                              value={pendingFastEntryRowId === item.id ? pendingFastEntrySearch : ''}
+                              inputRef={(el) => {
+                                if (el) inlineSearchRefs.current[item.id] = el;
+                                else delete inlineSearchRefs.current[item.id];
+                              }}
+                              isReadOnly={isLocked}
+                              onChange={(text) => {
+                                setPendingFastEntryRowId(item.id);
+                                setPendingFastEntrySearch(text);
+                              }}
+                              onOpenSelector={(text) => {
+                                setPendingFastEntryRowId(item.id);
+                                setPendingFastEntrySearch(text);
+                                setIsProductSelectionOpen(true);
+                              }}
+                            />
+                          ) : (
                           <ItemDescriptionCell
                             item={item}
                             isExpanded={expandedRows[item.id]}
@@ -1894,6 +1981,7 @@ const EditorView = ({ initialData, onSaveDraft, onSubmitQC, onPost, onPrint, grn
                             isReadOnly={isLocked}
                             showTaxDiscount={true}
                           />
+                          )}
                         </td>
                         {/* UOM Dropdown */}
                         <td className="p-3 text-center">
@@ -1910,10 +1998,27 @@ const EditorView = ({ initialData, onSaveDraft, onSubmitQC, onPost, onPrint, grn
                         <td className="p-3 text-center">
                           <div className="relative">
                             <input
+                              id={`qty-${item.id}`}
                               type="number"
                               value={item.received}
                               disabled={isLocked}
                               onChange={(e) => handleQtyChange(item.id, 'received', e.target.value)}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Tab' && !e.shiftKey && !isLocked) {
+                                  e.preventDefault();
+                                  const blankRow = {
+                                    id: Date.now() + Math.random(),
+                                    code: '', barcode: '', name: '',
+                                    uom: 'PCS', lpoQty: 0, received: 0, accepted: 0, rejected: 0,
+                                    unitCost: 0, lpoPrice: 0, disc: 0, netCost: 0, total: 0,
+                                    variance: 0, batch: false, tax: 5, taxAmt: 0,
+                                    foc: 0, focUnit: 'PCS', availableUnits: ['PCS'],
+                                    unitConversions: {}, unitPrices: {}, unitCosts: {}
+                                  };
+                                  focusNextInlineSearchRef.current = blankRow.id;
+                                  setItems(prev => [...prev, blankRow]);
+                                }
+                              }}
                               className={`w-14 text-center border rounded py-1 outline-none focus:ring-1 focus:ring-emerald-500 ${item.variance !== 0 ? 'border-amber-300 bg-[#FFF8E1] text-amber-700 font-bold' : 'border-slate-200'}`}
                             />
                             {item.variance !== 0 && <span className={`absolute -bottom-3 left-1/2 -translate-x-1/2 text-[8px] font-bold ${item.variance > 0 ? 'text-green-500' : 'text-red-500'}`}>{item.variance > 0 ? `+${item.variance}` : item.variance}</span>}
@@ -1978,6 +2083,18 @@ const EditorView = ({ initialData, onSaveDraft, onSubmitQC, onPost, onPrint, grn
                   ))}
                 </tbody>
               </table>
+              {/* QA-FAST-ENTRY: Quick Entry hint bar */}
+              <div className="mt-2 px-3 py-2 bg-blue-50/30 border border-blue-100/60 rounded-md flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-slate-500">
+                <span className="inline-flex items-center gap-1 text-blue-600 font-semibold"><Zap size={11} /> Quick Entry:</span>
+                <span>Type name →</span>
+                <kbd className="px-1.5 py-0.5 bg-white border border-slate-200 rounded text-[10px] font-mono text-slate-600">Enter</kbd>
+                <span>Select →</span>
+                <kbd className="px-1.5 py-0.5 bg-white border border-slate-200 rounded text-[10px] font-mono text-slate-600">Tab</kbd>
+                <span>Received qty →</span>
+                <kbd className="px-1.5 py-0.5 bg-white border border-slate-200 rounded text-[10px] font-mono text-slate-600">Tab</kbd>
+                <span>New row</span>
+                <span className="ml-auto text-slate-400">Tip: Use ↑↓ arrows to navigate items</span>
+              </div>
             </div>
           </div>
         </div>
@@ -2256,9 +2373,10 @@ const EditorView = ({ initialData, onSaveDraft, onSubmitQC, onPost, onPrint, grn
       {/* Product Selector Modal */}
       <ProductSelector
         isOpen={isProductSelectionOpen}
-        onClose={() => setIsProductSelectionOpen(false)}
+        onClose={() => { setIsProductSelectionOpen(false); setPendingFastEntryRowId(null); }}
         onSelect={handleAddSingleProduct}
         onInlineAdd={handleFastEntryAdd}
+        initialSearch={pendingFastEntrySearch}
         actionLabel="Add to GRN"
         mode="purchase"
       />
@@ -2284,6 +2402,9 @@ const GRN = () => {
   const location = useLocation();
   const [activeNavTab, setActiveNavTab] = useState("list");
   const [grns, setGrns] = useState([]);
+  // Client-side pagination over filtered list (status filter is rich on this page).
+  const [listPage, setListPage] = useState(0);
+  const LIST_PAGE_SIZE = 30;
   const [qcQueue, setQcQueue] = useState([]);
   const [activeFilter, setActiveFilter] = useState("All GRNs");
 
@@ -2399,6 +2520,13 @@ const GRN = () => {
       return true;
     });
   }, [grns, activeFilter]);
+
+  // Reset page on filter change; slice for the visible page.
+  useEffect(() => { setListPage(0); }, [activeFilter]);
+  const pagedFilteredData = useMemo(
+    () => filteredData.slice(listPage * LIST_PAGE_SIZE, (listPage + 1) * LIST_PAGE_SIZE),
+    [filteredData, listPage]
+  );
 
   const handleExportExcel = () => {
     exportToExcel(filteredData.map((row) => ({
@@ -2579,19 +2707,28 @@ const GRN = () => {
   const renderContent = () => {
     switch (activeNavTab) {
       case 'list':
-        return <GRNListView
-          data={filteredData}
-          onView={handleEdit}
-          onEdit={handleEdit}
-          onDelete={handleDelete}
-          onPost={handlePost}
-          onPrint={handlePrint}
-          onProceedToInvoice={handleProceedToInvoice}
-          activeFilter={activeFilter}
-          setActiveFilter={setActiveFilter}
-          currencyLabel={currencyLabel}
-          currentPage={0}
-        />;
+        return <>
+          <GRNListView
+            data={pagedFilteredData}
+            onView={handleEdit}
+            onEdit={handleEdit}
+            onDelete={handleDelete}
+            onPost={handlePost}
+            onPrint={handlePrint}
+            onProceedToInvoice={handleProceedToInvoice}
+            activeFilter={activeFilter}
+            setActiveFilter={setActiveFilter}
+            currencyLabel={currencyLabel}
+            currentPage={0}
+          />
+          <PaginationFooter
+            page={listPage}
+            size={LIST_PAGE_SIZE}
+            totalElements={filteredData.length}
+            totalPages={Math.ceil(filteredData.length / LIST_PAGE_SIZE)}
+            onPageChange={setListPage}
+          />
+        </>;
       case 'editor':
         return <EditorView
           initialData={currentGrnData}

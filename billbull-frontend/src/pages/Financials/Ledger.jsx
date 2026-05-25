@@ -43,6 +43,7 @@ import ExportDropdown from '../../components/common/ExportDropdown';
 import { exportToExcel, exportToPDF } from '../../utils/exportUtils';
 import { resolveCurrencyDisplayCode } from '../../utils/countryCurrencyOptions';
 import { formatDisplayDate } from '../../utils/dateUtils';
+import PaginationFooter from '../../components/common/PaginationFooter';
 
 // ==========================================
 // 1. MOCK DATA & CONFIGURATION
@@ -1079,6 +1080,15 @@ const Ledger = () => {
     return matchesAccount && matchesFrom && matchesTo && matchesText;
   });
 
+  // Client-side pagination for the two big lists in this page.
+  const LIST_PAGE_SIZE = 30;
+  const [accountsPage, setAccountsPage] = useState(0);
+  useEffect(() => { setAccountsPage(0); }, [searchQuery, filterGroup, filterBranch, showArchived]);
+  const pagedAccounts = filteredAccounts.slice(accountsPage * LIST_PAGE_SIZE, (accountsPage + 1) * LIST_PAGE_SIZE);
+  const [glPage, setGlPage] = useState(0);
+  useEffect(() => { setGlPage(0); }, [glFilterAccount, glFilterFrom, glFilterTo, glTextSearch]);
+  const pagedGl = filteredGlData.slice(glPage * LIST_PAGE_SIZE, (glPage + 1) * LIST_PAGE_SIZE);
+
   const visibleCoaTree = filterCoaTree(accountTree, coaTreeSearch);
   const coaTreeAnimationCss = `
     @keyframes coaTreeRowEnter {
@@ -1427,7 +1437,7 @@ const glAccountOptions = accounts
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-50">
-                  {filteredAccounts.map((row) => (
+                  {pagedAccounts.map((row) => (
                     <tr key={row.id} className={`hover:bg-slate-50 group cursor-pointer ${row.status === 'archived' ? 'opacity-50 grayscale bg-slate-50' : ''}`}>
                       <td className="px-4 py-3 font-medium text-slate-600">{row.code}</td>
                       <td className="px-4 py-3">
@@ -1546,6 +1556,13 @@ const glAccountOptions = accounts
                   ))}
                 </tbody>
               </table>
+              <PaginationFooter
+                page={accountsPage}
+                size={LIST_PAGE_SIZE}
+                totalElements={filteredAccounts.length}
+                totalPages={Math.ceil(filteredAccounts.length / LIST_PAGE_SIZE)}
+                onPageChange={setAccountsPage}
+              />
             </div>
             </>
             )}
@@ -1689,7 +1706,7 @@ const glAccountOptions = accounts
                       </td>
                     </tr>
                   )}
-                  {filteredGlData.map((entry, idx) => (
+                  {pagedGl.map((entry, idx) => (
                     <tr key={entry.id || idx} className="hover:bg-slate-50 group">
                       <td className="px-4 py-3 font-medium text-slate-700">{formatDisplayDate(entry.date)}</td>
                       <td className="px-4 py-3">
@@ -1719,6 +1736,13 @@ const glAccountOptions = accounts
                   ))}
                 </tbody>
               </table>
+              <PaginationFooter
+                page={glPage}
+                size={LIST_PAGE_SIZE}
+                totalElements={filteredGlData.length}
+                totalPages={Math.ceil(filteredGlData.length / LIST_PAGE_SIZE)}
+                onPageChange={setGlPage}
+              />
             </div>
           </div>
         </div>

@@ -47,6 +47,7 @@ import {
 
 // Import the API helpers
 import { employeesApi } from '../../../api/employeesApi';
+import PaginationFooter from '../../../components/common/PaginationFooter';
 import { usersApi } from '../../../api/usersApi';
 import { hasRole } from '../../../api/auth';
 import { usePermissions } from '../../../context/PermissionContext';
@@ -2480,6 +2481,15 @@ const Employees = () => {
     return data;
   }, [employeeData, pendingRequests, activeCategory, searchTerm, filterRole, filterBranch]);
 
+  // Client-side pagination for both the employees and access-requests tabs.
+  const LIST_PAGE_SIZE = 30;
+  const [listPage, setListPage] = useState(0);
+  useEffect(() => { setListPage(0); }, [activeCategory, searchTerm, filterRole, filterBranch]);
+  const pagedEmployees = useMemo(
+    () => filteredEmployees.slice(listPage * LIST_PAGE_SIZE, (listPage + 1) * LIST_PAGE_SIZE),
+    [filteredEmployees, listPage]
+  );
+
 
   // --- 5. Dynamic Stats & Categories ---
   const categories = [
@@ -2788,7 +2798,7 @@ const Employees = () => {
                           </td>
                         </tr>
                       ) : (
-                        filteredEmployees.map((req) => (
+                        pagedEmployees.map((req) => (
                           <tr key={req.id} className="hover:bg-slate-50 transition-colors group">
                             <td className="px-6 py-4 whitespace-nowrap">
                               <div className="flex items-center gap-3">
@@ -2863,7 +2873,7 @@ const Employees = () => {
                       {filteredEmployees.length === 0 ? (
                         <tr><td colSpan="9" className="px-6 py-12 text-center text-slate-400">No employees found matching filters.</td></tr>
                       ) : (
-                        filteredEmployees.map((emp) => (
+                        pagedEmployees.map((emp) => (
                           <tr key={emp.id} className="hover:bg-slate-50 transition-colors group">
                             <td className="px-6 py-4 whitespace-nowrap">
                               <div className="flex items-center gap-3">
@@ -2949,6 +2959,13 @@ const Employees = () => {
                     </tbody>
                   </table>
                 )}
+                <PaginationFooter
+                  page={listPage}
+                  size={LIST_PAGE_SIZE}
+                  totalElements={filteredEmployees.length}
+                  totalPages={Math.ceil(filteredEmployees.length / LIST_PAGE_SIZE)}
+                  onPageChange={setListPage}
+                />
               </div>
             </div>
 

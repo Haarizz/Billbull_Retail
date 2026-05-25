@@ -6,12 +6,16 @@ import {
 } from '../../api/branchApi';
 import { getWarehouses } from '../../api/warehouseApi';
 import { useBranch } from '../../context/BranchContext';
+import PaginationFooter from '../../components/common/PaginationFooter';
 
 const EMPTY_FORM = { name: '', code: '', address: '', phone: '', defaultWarehouseId: '' };
 
 const BranchSetup = () => {
     const { refreshDefaultBranch } = useBranch();
     const [branches, setBranches] = useState([]);
+    const LIST_PAGE_SIZE = 30;
+    const [listPage, setListPage] = useState(0);
+    const pagedBranches = branches.slice(listPage * LIST_PAGE_SIZE, (listPage + 1) * LIST_PAGE_SIZE);
     const [warehouses, setWarehouses] = useState([]);
     const [loading, setLoading] = useState(true);
     const [showForm, setShowForm] = useState(false);
@@ -258,7 +262,7 @@ const BranchSetup = () => {
                                 </tr>
                             </thead>
                             <tbody className="divide-y divide-slate-50">
-                                {branches.map(b => (
+                                {pagedBranches.map(b => (
                                     <tr key={b.id} className="hover:bg-slate-50 transition-colors">
                                         <td className="px-5 py-3 font-medium text-slate-800">{b.name}</td>
                                         <td className="px-5 py-3 text-slate-500">{b.code || '—'}</td>
@@ -309,6 +313,13 @@ const BranchSetup = () => {
                             </tbody>
                         </table>
                     )}
+                    <PaginationFooter
+                        page={listPage}
+                        size={LIST_PAGE_SIZE}
+                        totalElements={branches.length}
+                        totalPages={Math.ceil(branches.length / LIST_PAGE_SIZE)}
+                        onPageChange={setListPage}
+                    />
                 </div>
             </div>
         </div>

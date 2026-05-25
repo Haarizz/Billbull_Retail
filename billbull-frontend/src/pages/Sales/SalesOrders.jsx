@@ -36,6 +36,7 @@ import { getAllQuotations } from '../../api/quotationApi';
 import { getAllProformas } from '../../api/proformaApi';
 import {
   getAllSalesOrders,
+  getSalesOrdersPage,
   getNextSalesOrderNumber,
   saveSalesOrder,
   uploadSalesOrderAttachment,
@@ -69,6 +70,7 @@ import { normalizePurchaseTemplate, buildReceiptVoucherPrintData } from '../../u
 import { ItemDescriptionCell, ItemDescriptionHeader } from '../../components/ItemDescriptionCell';
 // QA-FAST-ENTRY: inline row search input that auto-opens ProductSelector
 import InlineProductSearchCell from '../../components/InlineProductSearchCell';
+import PaginationFooter from '../../components/common/PaginationFooter';
 import ItemAddOnsModal from '../../components/ItemAddOnsModal';
 
 // ✅ STOCK AVAILABILITY MODAL
@@ -189,6 +191,10 @@ const SalesOrders = () => {
 
   // --- ORDER LIST STATE ---
   const [ordersList, setOrdersList] = useState([]);
+  // Pagination state (server-driven via /api/sales/orders/page)
+  const [listPage, setListPage] = useState(0);
+  const [listPageMeta, setListPageMeta] = useState({ page: 0, size: 30, totalElements: 0, totalPages: 0 });
+  const [isListLoading, setIsListLoading] = useState(false);
   const exportOrdersList = useMemo(() => ordersList.map((order) => ({
     ...order,
     orderTotal: formatCurrencyAmount(order.orderTotal, company),
@@ -491,13 +497,30 @@ const SalesOrders = () => {
   };
 
   const fetchSalesOrders = async () => {
+    setIsListLoading(true);
     try {
-      const data = await getAllSalesOrders();
-      setOrdersList(Array.isArray(data) ? data : []);
+      const data = await getSalesOrdersPage({ page: listPage, size: 30 });
+      const rows = Array.isArray(data?.content) ? data.content : [];
+      setOrdersList(rows);
+      setListPageMeta({
+        page: data?.page ?? listPage,
+        size: data?.size ?? 30,
+        totalElements: data?.totalElements ?? 0,
+        totalPages: data?.totalPages ?? 0,
+      });
     } catch (err) {
       console.error("Failed to load sales orders", err);
+    } finally {
+      setIsListLoading(false);
     }
   };
+
+  // Refetch when the user pages through the list.
+  useEffect(() => {
+    if (activeTab !== 'list') return;
+    fetchSalesOrders();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab, listPage]);
 
   // --- CALCULATIONS ---
   const calculateTotals = () => {
@@ -1635,6 +1658,14 @@ const SalesOrders = () => {
               ))}
             </div>
 
+            <PaginationFooter
+              page={listPageMeta.page}
+              size={listPageMeta.size}
+              totalElements={listPageMeta.totalElements}
+              totalPages={listPageMeta.totalPages}
+              loading={isListLoading}
+              onPageChange={setListPage}
+            />
           </div>
         </div>
       )}

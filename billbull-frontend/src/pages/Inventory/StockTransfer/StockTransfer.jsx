@@ -5,6 +5,7 @@ import {
     AlertCircle, X, MoreHorizontal, Eye, Edit, Printer, RefreshCw, Copy, Sparkles, Lightbulb, Info, List, ShieldCheck
 } from 'lucide-react';
 import ExportDropdown from '../../../components/common/ExportDropdown';
+import PaginationFooter from '../../../components/common/PaginationFooter';
 import { exportToExcel, exportToPDF } from '../../../utils/exportUtils';
 
 // ==========================================
@@ -397,6 +398,10 @@ const ChecklistItem = ({ checked, label }) => (
 // ==========================================
 
 const TransferHistoryView = ({ data, warehouses, onView, onSend, onPrint }) => {
+    const LIST_PAGE_SIZE = 30;
+    const [listPage, setListPage] = useState(0);
+    useEffect(() => { setListPage(0); }, [data.length]);
+    const pagedData = data.slice(listPage * LIST_PAGE_SIZE, (listPage + 1) * LIST_PAGE_SIZE);
     return (
         <div className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
             <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between">
@@ -430,7 +435,7 @@ const TransferHistoryView = ({ data, warehouses, onView, onSend, onPrint }) => {
                         </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-50">
-                        {data.map((row, index) => (
+                        {pagedData.map((row, index) => (
                             <tr key={row.id} className="hover:bg-slate-50/80 transition-colors group">
                                 <td className="px-3 py-4 text-center text-slate-400 font-mono font-medium">{index + 1}</td>
                                 <td className="px-6 py-4">
@@ -482,6 +487,13 @@ const TransferHistoryView = ({ data, warehouses, onView, onSend, onPrint }) => {
                         ))}
                     </tbody>
                 </table>
+                <PaginationFooter
+                    page={listPage}
+                    size={LIST_PAGE_SIZE}
+                    totalElements={data.length}
+                    totalPages={Math.ceil(data.length / LIST_PAGE_SIZE)}
+                    onPageChange={setListPage}
+                />
             </div>
         </div>
     );

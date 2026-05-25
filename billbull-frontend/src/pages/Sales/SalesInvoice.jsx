@@ -47,6 +47,7 @@ import { getDeliveryNotes, getPickingNotes, getUninvoicedDNsForCustomer } from '
 import { getEmployeeNames } from '../../api/employeeApi';
 import {
     getAllSalesInvoices,
+    getSalesInvoicesPage,
     saveSalesInvoice,
     getNextInvoiceNumber,
     recordInvoicePayment,
@@ -128,6 +129,7 @@ import { resolveCustomer, hydrateCustomerFromSource } from '../../utils/customer
 import { ItemDescriptionCell, ItemDescriptionHeader } from '../../components/ItemDescriptionCell';
 // QA-FAST-ENTRY: inline row search input that auto-opens ProductSelector
 import InlineProductSearchCell from '../../components/InlineProductSearchCell';
+import PaginationFooter from '../../components/common/PaginationFooter';
 
 // ✅ STOCK AVAILABILITY MODAL
 import StockAvailabilityModal from '../../components/StockAvailabilityModal';
@@ -160,6 +162,10 @@ const SalesInvoice = () => {
 
     // --- DATA LIST STATES ---
     const [invoicesList, setInvoicesList] = useState([]);
+    // Pagination state (server-driven via /api/sales/invoices/page)
+    const [listPage, setListPage] = useState(0);
+    const [listPageMeta, setListPageMeta] = useState({ page: 0, size: 30, totalElements: 0, totalPages: 0 });
+    const [isListLoading, setIsListLoading] = useState(false);
     const [salesSettings, setSalesSettings] = useState(null);
     const invoiceAutoNumbering = isAutoNumberingEnabled(salesSettings, 'SALES_INVOICE');
 
@@ -878,15 +884,41 @@ const SalesInvoice = () => {
         window.history.replaceState({}, document.title);
     }, [customersList, deliveryNotesList, location.state]);
 
-    // Fetch invoices separately for refresh
+    // Fetch invoices separately for refresh — uses paginated /page endpoint
+    // so the list tab only loads the currently visible page.
     const fetchInvoices = async () => {
+        setIsListLoading(true);
         try {
-            const data = await getAllSalesInvoices();
-            setInvoicesList(Array.isArray(data) ? data : []);
+            const data = await getSalesInvoicesPage({
+                page: listPage,
+                size: 30,
+                search: searchTerm || '',
+                status: filterStatus && filterStatus !== 'All' ? filterStatus : '',
+            });
+            const rows = Array.isArray(data?.content) ? data.content : [];
+            setInvoicesList(rows);
+            setListPageMeta({
+                page: data?.page ?? listPage,
+                size: data?.size ?? 30,
+                totalElements: data?.totalElements ?? 0,
+                totalPages: data?.totalPages ?? 0,
+            });
         } catch (err) {
             console.error("Failed to fetch invoices", err);
+        } finally {
+            setIsListLoading(false);
         }
     };
+
+    // Reset to page 0 when filters change.
+    useEffect(() => { setListPage(0); }, [searchTerm, filterStatus, filterPayMode]);
+
+    // Refetch on list tab + page + filter change.
+    useEffect(() => {
+        if (activeTab !== 'list') return;
+        fetchInvoices();
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [activeTab, listPage, searchTerm, filterStatus]);
 
     const verifyPickingNoteAfterSave = async (savedInvoice) => {
         if (!savedInvoice?.id) {
@@ -2691,6 +2723,14 @@ const SalesInvoice = () => {
                                     <div className="text-center py-8 text-slate-400 italic">No Invoices found.</div>
                                 )}
                             </div>
+                            <PaginationFooter
+                                page={listPageMeta.page}
+                                size={listPageMeta.size}
+                                totalElements={listPageMeta.totalElements}
+                                totalPages={listPageMeta.totalPages}
+                                loading={isListLoading}
+                                onPageChange={setListPage}
+                            />
                         </div>
                     )}
 
