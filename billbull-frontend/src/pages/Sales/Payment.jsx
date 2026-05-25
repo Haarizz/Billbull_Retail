@@ -47,6 +47,7 @@ import { isAutoNumberingEnabled } from '../../utils/salesNumbering';
 // ==========================================
 
 const PAYMENT_COLUMNS = [
+    { header: 'S.No.', key: 'sNo', width: 8 },
     { header: 'Payment No', key: 'paymentNo', width: 15 },
     { header: 'Date', key: 'date', width: 12 },
     { header: 'Customer', key: 'customerName', width: 25 },
@@ -745,8 +746,17 @@ const Payment = () => {
                                     </div>
                                     <div className="flex gap-2">
                                         <ExportDropdown
-                                            onExportExcel={() => exportToExcel(filteredPayments, PAYMENT_COLUMNS, 'Sales_Payments')}
-                                            onExportPdf={() => exportToPDF(filteredPayments, PAYMENT_COLUMNS, 'Sales Payments List', 'Sales_Payments')}
+                                            onExportExcel={() => exportToExcel(
+                                                filteredPayments.map((payment, index) => ({ ...payment, sNo: index + 1 })),
+                                                PAYMENT_COLUMNS,
+                                                'Sales_Payments'
+                                            )}
+                                            onExportPdf={() => exportToPDF(
+                                                filteredPayments.map((payment, index) => ({ ...payment, sNo: index + 1 })),
+                                                PAYMENT_COLUMNS,
+                                                'Sales Payments List',
+                                                'Sales_Payments'
+                                            )}
                                         />
                                         <button
                                             onClick={handleCreateNew}
@@ -763,6 +773,7 @@ const Payment = () => {
                                 <table className="w-full text-left text-xs">
                                     <thead className="bg-[#F7F7FA] text-slate-500 border-b border-slate-200 sticky top-0 z-10">
                                         <tr>
+                                            <th className="px-3 py-3 text-center text-slate-500 w-12 select-none uppercase">S.No.</th>
                                             <th className="px-4 py-3 font-semibold text-xs uppercase">Payment No</th>
                                             <th className="px-4 py-3 font-semibold text-xs uppercase">Date</th>
                                             <th className="px-4 py-3 font-semibold text-xs uppercase">Customer/Vendor</th>
@@ -775,8 +786,9 @@ const Payment = () => {
                                         </tr>
                                     </thead>
                                     <tbody className="divide-y divide-slate-100">
-                                        {filteredPayments.map((payment) => (
+                                        {filteredPayments.map((payment, index) => (
                                             <tr key={payment.id} className="hover:bg-slate-50 cursor-pointer group" onClick={() => handleViewPayment(payment)}>
+                                                <td className="px-3 py-3 text-center text-slate-400 font-mono font-medium">{index + 1}</td>
                                                 <td className="px-4 py-3 font-medium text-slate-700">{payment.paymentNo}</td>
                                                 <td className="px-4 py-3 text-slate-500">{formatDisplayDate(payment.date)}</td>
                                                 <td className="px-4 py-3">

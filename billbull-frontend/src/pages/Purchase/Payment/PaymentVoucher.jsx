@@ -1150,6 +1150,7 @@ const PaymentVoucher = () => {
                                 <table className="w-full text-left text-xs">
                                     <thead className="bg-[#F9FAFB] text-slate-500 font-semibold border-b border-slate-200">
                                         <tr>
+                                            <th className="px-4 py-3 text-center text-slate-500 w-12 select-none uppercase font-medium">S.No.</th>
                                             <th className="px-4 py-3">Voucher No</th>
                                             <th className="px-4 py-3">Date</th>
                                             <th className="px-4 py-3">Vendor</th>
@@ -1164,9 +1165,10 @@ const PaymentVoucher = () => {
                                     </thead>
                                     <tbody className="divide-y divide-slate-100">
                                         {mainList.length === 0 ? (
-                                            <tr><td colSpan="10" className="p-6 text-center text-slate-400">No posted vouchers found.</td></tr>
-                                        ) : mainList.map((row) => (
+                                            <tr><td colSpan="11" className="p-6 text-center text-slate-400">No posted vouchers found.</td></tr>
+                                        ) : mainList.map((row, index) => (
                                             <tr key={row.dbId} className="hover:bg-slate-50 group transition-colors">
+                                                <td className="px-4 py-3 text-center text-slate-400 font-mono font-medium">{index + 1}</td>
                                                 <td className="px-4 py-3 font-mono font-medium text-slate-700">{row.id}</td>
                                                 <td className="px-4 py-3 text-slate-500">{formatDisplayDate(row.date)}</td>
                                                 <td className="px-4 py-3">
@@ -1222,6 +1224,7 @@ const PaymentVoucher = () => {
                                 <table className="w-full text-left text-xs">
                                     <thead className="bg-[#F9FAFB] text-slate-500 font-semibold border-b border-slate-200">
                                         <tr>
+                                            <th className="px-4 py-3 text-center text-slate-500 w-12 select-none uppercase font-medium">S.No.</th>
                                             <th className="px-4 py-3">Voucher No</th>
                                             <th className="px-4 py-3">Date</th>
                                             <th className="px-4 py-3">Vendor</th>
@@ -1233,9 +1236,10 @@ const PaymentVoucher = () => {
                                     </thead>
                                     <tbody className="divide-y divide-slate-100">
                                         {pendingList.length === 0 ? (
-                                            <tr><td colSpan="7" className="px-4 py-12 text-center text-slate-400">No vouchers pending approval.</td></tr>
-                                        ) : pendingList.map((row) => (
+                                            <tr><td colSpan="8" className="px-4 py-12 text-center text-slate-400">No vouchers pending approval.</td></tr>
+                                        ) : pendingList.map((row, index) => (
                                             <tr key={row.dbId} className="hover:bg-slate-50 group transition-colors">
+                                                <td className="px-4 py-3 text-center text-slate-400 font-mono font-medium">{index + 1}</td>
                                                 <td className="px-4 py-3 font-mono font-medium text-slate-700">{row.id}</td>
                                                 <td className="px-4 py-3 text-slate-500">{formatDisplayDate(row.date)}</td>
                                                 <td className="px-4 py-3">
@@ -1291,6 +1295,7 @@ const PaymentVoucher = () => {
                             <table className="w-full text-left text-xs">
                                 <thead className="bg-[#F9FAFB] text-slate-500 font-semibold border-b border-slate-200">
                                     <tr>
+                                        <th className="px-4 py-3 text-center text-slate-500 w-12 select-none uppercase font-medium">S.No.</th>
                                         <th className="px-4 py-3">Voucher No</th>
                                         <th className="px-4 py-3">Date</th>
                                         <th className="px-4 py-3">Vendor</th>
@@ -1302,9 +1307,10 @@ const PaymentVoucher = () => {
                                 </thead>
                                 <tbody className="divide-y divide-slate-100">
                                     {historyList.length === 0 ? (
-                                        <tr><td colSpan="7" className="p-6 text-center text-slate-400">No history found.</td></tr>
-                                    ) : historyList.map((row) => (
+                                        <tr><td colSpan="8" className="p-6 text-center text-slate-400">No history found.</td></tr>
+                                    ) : historyList.map((row, index) => (
                                         <tr key={row.dbId} className="hover:bg-slate-50 transition-colors">
+                                            <td className="px-4 py-3 text-center text-slate-400 font-mono font-medium">{index + 1}</td>
                                             <td className="px-4 py-3 font-mono font-medium text-slate-700">{row.id}</td>
                                             <td className="px-4 py-3 text-slate-500">{formatDisplayDate(row.date)}</td>
                                             <td className="px-4 py-3 text-slate-800">{row.vendor}</td>

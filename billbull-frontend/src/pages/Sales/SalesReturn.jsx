@@ -32,6 +32,7 @@ import {
    Mail
 } from 'lucide-react';
 import ExportDropdown from '../../components/common/ExportDropdown';
+import PaginationFooter from '../../components/common/PaginationFooter';
 import { exportToExcel, exportToPDF } from '../../utils/exportUtils';
 import { generateDocFilename } from '../../utils/filenameUtils';
 import { usePrintDocument } from '../../hooks/usePrintDocument';
@@ -43,7 +44,7 @@ import { formatDisplayDate } from '../../utils/dateUtils';
 
 // API Imports
 import {
-   getAllSalesReturns,
+   getSalesReturnsPage,
    saveSalesReturn,
    getNextSalesReturnNumber,
    getSalesReturnStats,
@@ -85,6 +86,8 @@ const SalesReturn = () => {
    const [invoicesList, setInvoicesList] = useState([]);
    const [searchQuery, setSearchQuery] = useState('');
    const [statusFilter, setStatusFilter] = useState('All Status');
+   const [returnsPage, setReturnsPage] = useState(0);
+   const [returnsPageMeta, setReturnsPageMeta] = useState({ page: 0, size: 30, totalElements: 0, totalPages: 0 });
    const [salesSettings, setSalesSettings] = useState(null);
    const returnAutoNumbering = isAutoNumberingEnabled(salesSettings, 'SALES_RETURN');
 
@@ -135,11 +138,28 @@ const SalesReturn = () => {
       getSalesSettings().then(setSalesSettings).catch(() => {});
    }, []);
 
+   useEffect(() => {
+      if (activeTab === 'list') {
+         fetchReturns();
+      }
+   }, [activeTab, returnsPage, searchQuery, statusFilter]);
+
    const fetchReturns = async () => {
       setIsLoading(true);
       try {
-         const data = await getAllSalesReturns();
-         setReturnsList(data);
+         const data = await getSalesReturnsPage({
+            page: returnsPage,
+            size: 30,
+            search: searchQuery,
+            status: statusFilter === 'All Status' ? '' : statusFilter.toUpperCase()
+         });
+         setReturnsList(Array.isArray(data?.content) ? data.content : []);
+         setReturnsPageMeta({
+            page: data?.page ?? returnsPage,
+            size: data?.size ?? 30,
+            totalElements: data?.totalElements ?? 0,
+            totalPages: data?.totalPages ?? 0
+         });
       } catch (err) {
          console.error('Error fetching returns:', err);
       } finally {
@@ -516,16 +536,7 @@ const SalesReturn = () => {
    // ==========================================
    // FILTER LOGIC
    // ==========================================
-   const filteredReturns = returnsList.filter(ret => {
-      const matchesSearch = !searchQuery || 
-         ret.returnNumber.toLowerCase().includes(searchQuery.toLowerCase()) ||
-         ret.customerName.toLowerCase().includes(searchQuery.toLowerCase()) ||
-         ret.customerCode.toLowerCase().includes(searchQuery.toLowerCase());
-      
-      const matchesStatus = statusFilter === 'All Status' || ret.status === statusFilter.toUpperCase();
-      
-      return matchesSearch && matchesStatus;
-   });
+   const filteredReturns = returnsList;
 
    // ==========================================
    // RENDER
@@ -636,7 +647,7 @@ const SalesReturn = () => {
                                  placeholder="Search by return no or customer..." 
                                  className="w-full pl-9 pr-3 py-2 text-xs border border-slate-200 rounded-md focus:outline-none focus:border-[#F5C742]"
                                  value={searchQuery}
-                                 onChange={(e) => setSearchQuery(e.target.value)}
+                                 onChange={(e) => { setSearchQuery(e.target.value); setReturnsPage(0); }}
                               />
                            </div>
                            <div>
@@ -652,7 +663,7 @@ const SalesReturn = () => {
                               <select 
                                  className="w-full px-3 py-2 text-xs border border-slate-200 rounded-md bg-white text-slate-600 font-medium"
                                  value={statusFilter}
-                                 onChange={(e) => setStatusFilter(e.target.value)}
+                                 onChange={(e) => { setStatusFilter(e.target.value); setReturnsPage(0); }}
                               >
                                  <option>All Status</option>
                                  <option>Draft</option>
@@ -728,7 +739,15 @@ const SalesReturn = () => {
                                  </tr>
                               )}
                            </tbody>
-                        </table>
+                            </table>
+                        <PaginationFooter
+                           page={returnsPageMeta.page}
+                           size={returnsPageMeta.size}
+                           totalElements={returnsPageMeta.totalElements}
+                           totalPages={returnsPageMeta.totalPages}
+                           loading={isLoading}
+                           onPageChange={setReturnsPage}
+                        />
                      </div>
                   </div>
                )}

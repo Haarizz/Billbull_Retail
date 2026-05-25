@@ -77,6 +77,7 @@ import CurrencyAmount from '../../../components/CurrencyAmount';
 // ==========================================
 
 const LPO_COLUMNS = [
+  { header: 'S.No.', key: 'sNo', width: 8 },
   { header: 'LPO No.', key: 'lpoNumber', width: 15 },
   { header: 'Vendor', key: 'vendorName', width: 25 },
   { header: 'Date', key: 'date', width: 12 },
@@ -319,7 +320,7 @@ const MobileCard = ({ row, onView, currencyLabel }) => (
 // 3. VIEW COMPONENTS
 // ==========================================
 
-const ListView = ({ lpos, processedData, onEdit, onView, onPrint, activeFilter, onApprove, onReject, onStockApprove, onStockReject, onProceedToInvoice, onConvertToGrn, onAdvancePayment, onPrintPaymentVoucher, searchQuery, setSearchQuery, sortConfig, requestSort, showFilterPanel, setShowFilterPanel, dateRange, setDateRange, selectedVendor, setSelectedVendor, vendors, currencyLabel }) => {
+const ListView = ({ lpos, processedData, onEdit, onView, onPrint, activeFilter, onApprove, onReject, onStockApprove, onStockReject, onProceedToInvoice, onConvertToGrn, onAdvancePayment, onPrintPaymentVoucher, searchQuery, setSearchQuery, sortConfig, requestSort, showFilterPanel, setShowFilterPanel, dateRange, setDateRange, selectedVendor, setSelectedVendor, vendors, currencyLabel, currentPage }) => {
   const formatDate = (dateString) => formatDisplayDate(dateString);
 
   return (
@@ -410,6 +411,7 @@ const ListView = ({ lpos, processedData, onEdit, onView, onPrint, activeFilter, 
 
             <thead className="bg-[#F7F7FA] text-slate-600 font-semibold border-b border-slate-200">
               <tr>
+                <th className="px-3 py-3 text-center text-slate-500 w-12 select-none uppercase font-medium">S.No.</th>
                 <th
                   className="px-4 py-3 whitespace-nowrap font-medium cursor-pointer hover:bg-slate-100 transition-colors"
                   onClick={() => requestSort('lpoNumber')}
@@ -483,10 +485,11 @@ const ListView = ({ lpos, processedData, onEdit, onView, onPrint, activeFilter, 
             </thead>
             <tbody className="divide-y divide-slate-100 bg-white">
               {processedData.length === 0 ? (
-                <tr><td colSpan="13" className="text-center py-8 text-slate-400">No records found.</td></tr>
+                <tr><td colSpan="14" className="text-center py-8 text-slate-400">No records found.</td></tr>
               ) : processedData
-                .map((row) => (
+                .map((row, index) => (
                   <tr key={row.lpoNumber} className="hover:bg-slate-50 transition-colors group">
+                    <td className="px-3 py-3 text-center text-slate-400 font-mono font-medium">{index + 1}</td>
                     <td
                       onClick={() => onView(row)} // View by default on click
                       className="px-4 py-3 font-mono font-medium text-[#F5C742] cursor-pointer hover:underline"
@@ -2734,8 +2737,9 @@ const LPOList = () => {
     return data;
   }, [lpos, activeStatusTab, searchQuery, sortConfig, dateRange, selectedVendor]);
 
-  const exportProcessedData = useMemo(() => processedData.map((row) => ({
+  const exportProcessedData = useMemo(() => processedData.map((row, index) => ({
     ...row,
+    sNo: index + 1,
     totalValue: formatCurrencyDisplay(row.totalValue, currencyLabel)
   })), [currencyLabel, processedData]);
 
@@ -2887,6 +2891,7 @@ const LPOList = () => {
                 lpos={lpos}
                 processedData={processedData}
                 activeFilter={activeStatusTab}
+                currentPage={0}
                 onEdit={handleEditLPO}
                 onView={handleViewLPO}
                 onApprove={handleApprove}

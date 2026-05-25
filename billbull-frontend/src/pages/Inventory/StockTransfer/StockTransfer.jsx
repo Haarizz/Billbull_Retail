@@ -12,6 +12,7 @@ import { exportToExcel, exportToPDF } from '../../../utils/exportUtils';
 // ==========================================
 
 const STOCK_TRANSFER_COLUMNS = [
+    { header: 'S.No.', key: 'sNo', width: 8 },
     { header: 'Transfer No', key: 'transferNo', width: 20 },
     { header: 'Date', key: 'transferDate', width: 15 },
     { header: 'From Warehouse', key: 'fromWarehouseName', width: 25 },
@@ -405,8 +406,8 @@ const TransferHistoryView = ({ data, warehouses, onView, onSend, onPrint }) => {
                 </div>
                 <div className="flex gap-2">
                     <ExportDropdown
-                        onExportExcel={() => exportToExcel(data, STOCK_TRANSFER_COLUMNS, 'StockTransfers')}
-                        onExportPdf={() => exportToPDF(data, STOCK_TRANSFER_COLUMNS, 'Stock Transfer Records', 'StockTransfers')}
+                        onExportExcel={() => exportToExcel(data.map((row, index) => ({ ...row, sNo: index + 1 })), STOCK_TRANSFER_COLUMNS, 'StockTransfers')}
+                        onExportPdf={() => exportToPDF(data.map((row, index) => ({ ...row, sNo: index + 1 })), STOCK_TRANSFER_COLUMNS, 'Stock Transfer Records', 'StockTransfers')}
                     />
                     <div className="relative">
                         <input type="text" placeholder="Search transfers..." className="h-9 w-64 bg-slate-50 border border-slate-200 rounded-lg px-9 text-xs outline-none focus:bg-white focus:ring-1 focus:ring-[#F5C742] transition-all" />
@@ -419,6 +420,7 @@ const TransferHistoryView = ({ data, warehouses, onView, onSend, onPrint }) => {
                 <table className="w-full text-left">
                     <thead className="bg-slate-50/50 text-slate-500 font-bold uppercase text-[10px] border-b border-slate-100">
                         <tr>
+                            <th className="px-3 py-4 text-center text-slate-500 w-12 select-none">S.No.</th>
                             <th className="px-6 py-4">Transfer No</th>
                             <th className="px-4 py-4">Date</th>
                             <th className="px-4 py-4">Path (From → To)</th>
@@ -428,8 +430,9 @@ const TransferHistoryView = ({ data, warehouses, onView, onSend, onPrint }) => {
                         </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-50">
-                        {data.map((row) => (
+                        {data.map((row, index) => (
                             <tr key={row.id} className="hover:bg-slate-50/80 transition-colors group">
+                                <td className="px-3 py-4 text-center text-slate-400 font-mono font-medium">{index + 1}</td>
                                 <td className="px-6 py-4">
                                     <div className="flex flex-col">
                                         <span className="font-mono font-bold text-slate-800 text-xs">{row.transferNo}</span>

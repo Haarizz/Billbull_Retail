@@ -39,6 +39,17 @@ public class LpoController {
         return ResponseEntity.ok(service.list(status));
     }
 
+    @GetMapping("/page")
+    @PreAuthorize("hasAnyRole('ADMIN','INVENTORY_MANAGER','ACCOUNTANT')")
+    public ResponseEntity<com.billbull.backend.util.PageResponse<LpoListResponse>> page(
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "30") int size,
+            @RequestParam(required = false) String search,
+            @RequestParam(required = false) LpoStatus status) {
+        return ResponseEntity.ok(com.billbull.backend.util.PaginationUtil.paginate(
+                service.list(status), page, size, search, null));
+    }
+
     /* READ SINGLE */
     @GetMapping("/{lpoNumber}")
     @PreAuthorize("hasAnyRole('ADMIN','INVENTORY_MANAGER','ACCOUNTANT')")

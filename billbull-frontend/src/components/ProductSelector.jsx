@@ -316,6 +316,10 @@ const ProductSelector = ({
     // When set, the inline-entry default price uses this master field
     // instead of the legacy retailPrice. Ignored in 'purchase' mode.
     salesItemPricePolicy = null,
+    // FAST-ENTRY: when the parent opens the selector with a pre-typed
+    // string (from the in-row inline search), seed the search and force
+    // the first fetch with that query instead of an empty list.
+    initialSearch = '',
 }) => {
     const [searchQuery, setSearchQuery] = useState('');
     const [products, setProducts] = useState([]);
@@ -496,7 +500,9 @@ const ProductSelector = ({
         let active = true;
 
         if (isOpen) {
-            setSearchQuery('');
+            // FAST-ENTRY: honour pre-typed search from the in-row input.
+            const seed = typeof initialSearch === 'string' ? initialSearch : '';
+            setSearchQuery(seed);
             setPage(0);
             setInitialLoad(true);
             setProducts([]);
@@ -507,7 +513,7 @@ const ProductSelector = ({
             setEntryPrice('');
             setEntryDisc('0');
             loadRecentProducts(() => active);
-            fetchProducts('', 0, warehouseId);
+            fetchProducts(seed, 0, warehouseId);
             setTimeout(() => searchInputRef.current?.focus(), 50);
         } else {
             // Cancel any in-flight request when modal is closed
@@ -573,6 +579,18 @@ const ProductSelector = ({
                 e.preventDefault();
                 if (focusedIdx >= 0 && products[focusedIdx]) {
                     handleSelect(products[focusedIdx]);
+                }
+                break;
+            case 'Tab':
+                // FAST-ENTRY: Tab while focused in the search input picks the
+                // first matching result and closes the modal — skipping the
+                // inline qty/price form entirely so the user lands back in
+                // the row's Qty input. Shift+Tab keeps normal focus behaviour.
+                if (e.shiftKey) break;
+                if (products.length > 0) {
+                    e.preventDefault();
+                    const pick = focusedIdx >= 0 ? products[focusedIdx] : products[0];
+                    handleImmediateSelect(pick);
                 }
                 break;
             default:

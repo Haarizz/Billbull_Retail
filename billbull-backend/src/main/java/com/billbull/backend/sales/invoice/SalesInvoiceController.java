@@ -5,6 +5,7 @@ import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 import com.billbull.backend.security.ModulePermissionService;
 import com.billbull.backend.inventory.batch.BatchSelectionRequest;
+import com.billbull.backend.settings.email.DocumentEmailSender;
 
 import java.time.LocalDate;
 import java.util.List;
@@ -17,10 +18,43 @@ public class SalesInvoiceController {
 
     private final SalesInvoiceService service;
     private final ModulePermissionService modulePermissionService;
+    private final DocumentEmailSender emailSender;
 
-    public SalesInvoiceController(SalesInvoiceService service, ModulePermissionService modulePermissionService) {
+    public SalesInvoiceController(SalesInvoiceService service,
+                                  ModulePermissionService modulePermissionService,
+                                  DocumentEmailSender emailSender) {
         this.service = service;
         this.modulePermissionService = modulePermissionService;
+        this.emailSender = emailSender;
+    }
+
+    // QA-040: send the invoice email using the frontend-rendered HTML body
+    // (same template as Print) + CID inline images.
+    @PostMapping("/{id}/send-email")
+    @PreAuthorize("isAuthenticated()")
+    @SuppressWarnings("unchecked")
+    public ResponseEntity<?> sendEmail(@PathVariable Long id,
+                                       @RequestBody(required = false) Map<String, Object> body) {
+        modulePermissionService.requireCanView("sales");
+        try {
+            String toEmail = body != null ? (String) body.get("toEmail") : null;
+            String subject = body != null ? (String) body.get("subject") : null;
+            String htmlBody = body != null ? (String) body.get("htmlBody") : null;
+            List<Map<String, String>> inlineAttachments = body != null
+                    ? (List<Map<String, String>>) body.get("inlineAttachments")
+                    : null;
+
+            SalesInvoice invoice = service.getById(id);
+            if (subject == null || subject.isBlank()) {
+                subject = "Sales Invoice " + invoice.getInvoiceNumber() + " from " + emailSender.getFromName();
+            }
+            emailSender.send(toEmail, subject, htmlBody, inlineAttachments);
+            return ResponseEntity.ok(Map.of("message", "Email sent successfully to " + toEmail));
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body(e.getMessage());
+        } catch (Exception e) {
+            return ResponseEntity.internalServerError().body("Failed to send email: " + e.getMessage());
+        }
     }
 
     @GetMapping
@@ -28,6 +62,17 @@ public class SalesInvoiceController {
     public List<SalesInvoice> getAll() {
         modulePermissionService.requireCanView("sales");
         return service.getAll();
+    }
+
+    @GetMapping("/page")
+    @PreAuthorize("isAuthenticated()")
+    public com.billbull.backend.util.PageResponse<SalesInvoice> getPage(
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "30") int size,
+            @RequestParam(required = false) String search,
+            @RequestParam(required = false) String status) {
+        modulePermissionService.requireCanView("sales");
+        return com.billbull.backend.util.PaginationUtil.paginate(service.getAll(), page, size, search, status);
     }
 
     @GetMapping("/{id}")

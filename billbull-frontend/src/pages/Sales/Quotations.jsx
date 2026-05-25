@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import {
     Printer,
@@ -34,7 +34,8 @@ import {
     ArrowLeft,
     SlidersHorizontal,
     MoreVertical,
-    AlertCircle
+    AlertCircle,
+    Zap
 } from 'lucide-react';
 
 // ✅ API IMPORTS
@@ -65,6 +66,8 @@ import api from "../../api/axiosConfig";
 // ✅ DYNAMIC UI COMPONENTS
 
 import { ItemDescriptionCell, ItemDescriptionHeader } from '../../components/ItemDescriptionCell';
+// QA-FAST-ENTRY: inline row search input that auto-opens ProductSelector
+import InlineProductSearchCell from '../../components/InlineProductSearchCell';
 
 // ✅ PRODUCT SELECTOR — self-fetching, server-side search
 import ProductSelector from '../../components/ProductSelector';
@@ -88,7 +91,7 @@ import useShortcuts from '../../hooks/useShortcuts';
 import billBullLogo from '../../assets/billBullLogo.png';
 import { getTemplatesByCategory } from '../../api/printTemplateApi';
 import { generatePrintHtml, generateEmailHtml, printHtml } from '../../utils/printGenerator';
-import { inlineEmailImages } from '../../utils/emailImageInliner';
+import { buildEmailBody } from '../../utils/emailImageInliner';
 import { getImageUrl } from '../../utils/urlUtils';
 import { getDefaultProductUnit, resolveUnitAmount } from '../../utils/unitPricing';
 import { summarizeSalesItems } from '../../utils/documentSummaryUtils';
@@ -109,6 +112,7 @@ import { isAutoNumberingEnabled } from '../../utils/salesNumbering';
 // ==========================================
 
 const QUOTATION_COLUMNS = [
+    { header: 'S.No.', key: 'sNo', width: 8 },
     { header: 'Quotation No', key: 'qtnNo', width: 15 },
     { header: 'Date', key: 'date', width: 12 },
     { header: 'Customer', key: 'customer', width: 25 },
@@ -454,6 +458,12 @@ const Quotations = () => {
     const [isProductSelectionOpen, setIsProductSelectionOpen] = useState(false);
     const [selectedProductIds, setSelectedProductIds] = useState([]);
 
+    // QA-FAST-ENTRY: inline-row-search → product-selector bridge state
+    const [pendingFastEntrySearch, setPendingFastEntrySearch] = useState('');
+    const [pendingFastEntryRowId, setPendingFastEntryRowId] = useState(null);
+    const inlineSearchRefs = useRef({});
+    const focusNextInlineSearchRef = useRef(null);
+
     // --- DROPDOWN STATES ---
     const [currency, setCurrency] = useState('AED');
     const [isCurrencyOpen, setIsCurrencyOpen] = useState(false);
@@ -629,6 +639,18 @@ const Quotations = () => {
     });
 
     // ✅ Fetch price history and live stock whenever focusedRowId changes
+    // QA-FAST-ENTRY: focus the freshly-added empty row's inline search input.
+    useEffect(() => {
+        const targetId = focusNextInlineSearchRef.current;
+        if (targetId == null) return;
+        const raf = requestAnimationFrame(() => {
+            const el = inlineSearchRefs.current[targetId];
+            if (el) el.focus();
+            focusNextInlineSearchRef.current = null;
+        });
+        return () => cancelAnimationFrame(raf);
+    }, [items]);
+
     useEffect(() => {
         if (!focusedRowId) {
             setPriceHistory([]);
@@ -1131,11 +1153,19 @@ const Quotations = () => {
 
         const newItem = calculateRow(rawItem);
 
+        // QA-FAST-ENTRY: replace-in-place when triggered by inline row search.
+        const targetRowId = pendingFastEntryRowId;
         setItems(prev => {
+            if (targetRowId != null) {
+                return prev.map(it => it.id === targetRowId ? { ...newItem, id: targetRowId } : it);
+            }
             // If the first row is empty, replace it
             const isFirstItemEmpty = prev.length === 1 && !prev[0].code && !prev[0].desc;
             return isFirstItemEmpty ? [newItem] : [...prev, newItem];
         });
+        const filledItemId = targetRowId != null ? targetRowId : newItem.id;
+        setPendingFastEntrySearch('');
+        setPendingFastEntryRowId(null);
 
         setToastMessage(`${product.name} added to quotation`);
         setToastType('success');
@@ -1144,8 +1174,12 @@ const Quotations = () => {
 
         // ✅ Close modal and focus Qty
         setIsProductSelectionOpen(false);
-        setFocusedRowId(newItem.id);
+        setFocusedRowId(filledItemId);
         setHighlightedIndex(0);
+        setTimeout(() => {
+            const qtyEl = document.getElementById(`qty-${filledItemId}`);
+            if (qtyEl) { qtyEl.focus(); qtyEl.select?.(); }
+        }, 100);
 
         // Fetch price history + stock immediately on product add (don't wait for row click)
         if (newItem.code) {
@@ -1633,6 +1667,7 @@ const Quotations = () => {
             // fails, we POST an empty htmlBody and the backend falls back
             // to its legacy hand-built HTML.
             let htmlBody = '';
+            let inlineAttachments = [];
             try {
                 let html = emailPreviewHtml;
                 if (!html) {
@@ -1647,13 +1682,15 @@ const Quotations = () => {
                     }
                 }
                 if (html) {
-                    htmlBody = await inlineEmailImages(html);
+                    const built = await buildEmailBody(html);
+                    htmlBody = built.html;
+                    inlineAttachments = built.inlineAttachments;
                 }
             } catch (renderErr) {
                 console.warn('Email body render/inline failed; backend will use legacy template.', renderErr);
             }
 
-            await sendQuotationEmail(editingId, { toEmail: emailTo, subject: emailSubject, htmlBody });
+            await sendQuotationEmail(editingId, { toEmail: emailTo, subject: emailSubject, htmlBody, inlineAttachments });
             setIsEmailModalOpen(false);
             setToastMessage(`Email sent successfully to ${emailTo}`);
             setToastType('success');
@@ -2699,8 +2736,17 @@ const Quotations = () => {
                                 </div>
 
                                 <ExportDropdown
-                                    onExportExcel={() => exportToExcel(filteredQuotations, QUOTATION_COLUMNS, 'Quotations')}
-                                    onExportPdf={() => exportToPDF(filteredQuotations, QUOTATION_COLUMNS, 'Quotations List', 'Quotations')}
+                                    onExportExcel={() => exportToExcel(
+                                        filteredQuotations.map((qtn, index) => ({ ...qtn, sNo: index + 1 })),
+                                        QUOTATION_COLUMNS,
+                                        'Quotations'
+                                    )}
+                                    onExportPdf={() => exportToPDF(
+                                        filteredQuotations.map((qtn, index) => ({ ...qtn, sNo: index + 1 })),
+                                        QUOTATION_COLUMNS,
+                                        'Quotations List',
+                                        'Quotations'
+                                    )}
                                 />
                                 <button onClick={handleCreateNew} className="flex items-center justify-center gap-1 px-4 py-2 bg-yellow-400 text-slate-900 text-sm font-bold rounded-lg hover:bg-yellow-500 transition-colors shadow-sm whitespace-nowrap">
                                     <Plus size={16} /> Create New
@@ -2713,6 +2759,9 @@ const Quotations = () => {
                             <table className="w-full text-sm text-left hidden md:table">
                                 <thead className="bg-slate-50 text-slate-600 border-b border-slate-200/50">
                                     <tr>
+                                        <th className="px-4 py-3 text-center text-slate-500 w-16 select-none">
+                                            S.No.
+                                        </th>
                                         <th
                                             className="px-4 py-3 cursor-pointer hover:bg-slate-100 transition-colors select-none"
                                             onClick={() => handleSort('qtnNo')}
@@ -2754,12 +2803,15 @@ const Quotations = () => {
                                     </tr>
                                 </thead>
                                 <tbody className="divide-y divide-slate-100/30">
-                                    {filteredQuotations.map((qtn) => (
+                                    {filteredQuotations.map((qtn, index) => (
                                         <React.Fragment key={qtn.id}>
                                             <tr
                                                 onClick={() => handleViewQuotation(qtn)}
                                                 className="hover:bg-slate-50 cursor-pointer transition-colors"
                                             >
+                                                <td className="px-4 py-3 text-center text-slate-400 font-mono font-medium">
+                                                    {index + 1}
+                                                </td>
                                                 <td className="px-4 py-3 text-blue-600 font-medium flex items-center gap-2">
                                                     {qtn.revisions && qtn.revisions.length > 0 && (
                                                         <button
@@ -2903,7 +2955,7 @@ const Quotations = () => {
                                     ))}
                                     {filteredQuotations.length === 0 && (
                                         <tr>
-                                            <td colSpan="6" className="text-center py-12 text-slate-400">
+                                            <td colSpan="7" className="text-center py-12 text-slate-400">
                                                 <div className="flex flex-col items-center gap-2">
                                                     <div className="w-12 h-12 bg-slate-100 rounded-full flex items-center justify-center">
                                                         <Search size={20} className="text-slate-400" />
@@ -3172,6 +3224,7 @@ const Quotations = () => {
                                     <div className="flex justify-between items-center mb-4 border-b border-slate-100/50 pb-2">
                                         <h3 className="text-sm font-bold text-slate-800 flex items-center gap-2">
                                             <ShoppingCart size={16} className="text-yellow-500" /> Quotation Items
+                                            <span className="inline-flex items-center gap-1 text-[10px] bg-blue-50 text-blue-700 px-2 py-0.5 rounded-full font-medium border border-blue-200"><Zap size={10} /> Fast Entry</span>
                                         </h3>
                                         <div className="flex items-center gap-3">
                                             {/* VAT mode toggle — drives line tax math (inclusive vs exclusive). */}
@@ -3240,6 +3293,26 @@ const Quotations = () => {
 
                                                             {/* Item / Description */}
                                                             <td className="p-2">
+                                                                {/* QA-FAST-ENTRY: empty rows show inline product-search input */}
+                                                                {(!item.code && !item.desc) ? (
+                                                                    <InlineProductSearchCell
+                                                                        value={pendingFastEntryRowId === item.id ? pendingFastEntrySearch : ''}
+                                                                        inputRef={(el) => {
+                                                                            if (el) inlineSearchRefs.current[item.id] = el;
+                                                                            else delete inlineSearchRefs.current[item.id];
+                                                                        }}
+                                                                        isReadOnly={isViewMode}
+                                                                        onChange={(text) => {
+                                                                            setPendingFastEntryRowId(item.id);
+                                                                            setPendingFastEntrySearch(text);
+                                                                        }}
+                                                                        onOpenSelector={(text) => {
+                                                                            setPendingFastEntryRowId(item.id);
+                                                                            setPendingFastEntrySearch(text);
+                                                                            setIsProductSelectionOpen(true);
+                                                                        }}
+                                                                    />
+                                                                ) : (
                                                                 <ItemDescriptionCell
                                                                     item={item}
                                                                     isExpanded={expandedRows[item.id]}
@@ -3252,6 +3325,7 @@ const Quotations = () => {
                                                                     isReadOnly={isViewMode}
                                                                     showSettings={Boolean(item.code || item.desc || item.remarks)}
                                                                 />
+                                                                )}
                                                             </td>
 
                                                             {/* Unit */}
@@ -3278,6 +3352,12 @@ const Quotations = () => {
                                                                         className="w-full bg-transparent text-center outline-none font-bold text-sm text-slate-800"
                                                                         value={item.qty === 0 ? '' : item.qty}
                                                                         onChange={(e) => handleItemChange(item.id, 'qty', e.target.value)}
+                                                                        onKeyDown={(e) => {
+                                                                            if (e.key === 'Tab' && !e.shiftKey) {
+                                                                                const priceEl = document.getElementById(`price-${item.id}`);
+                                                                                if (priceEl) { e.preventDefault(); priceEl.focus(); priceEl.select?.(); }
+                                                                            }
+                                                                        }}
                                                                         placeholder="0"
                                                                         disabled={isViewMode}
                                                                     />
@@ -3288,10 +3368,19 @@ const Quotations = () => {
                                                             <td className="p-2 text-center align-middle">
                                                                 <div className="rounded-md border border-slate-200 bg-white flex items-center px-2 py-1 w-full max-w-[104px] mx-auto">
                                                                     <input
+                                                                        id={`price-${item.id}`}
                                                                         type="number"
                                                                         className="w-full bg-transparent text-center outline-none font-semibold text-sm text-slate-700"
                                                                         value={item.price === 0 ? '' : item.price}
                                                                         onChange={(e) => handleItemChange(item.id, 'price', e.target.value)}
+                                                                        onKeyDown={(e) => {
+                                                                            if (e.key === 'Tab' && !e.shiftKey && !isViewMode) {
+                                                                                e.preventDefault();
+                                                                                const newRow = createBlankQuotationItem();
+                                                                                focusNextInlineSearchRef.current = newRow.id;
+                                                                                setItems(prev => [...prev, newRow]);
+                                                                            }
+                                                                        }}
                                                                         placeholder="0.00"
                                                                         disabled={isViewMode}
                                                                     />
@@ -3352,6 +3441,20 @@ const Quotations = () => {
 
                                             </tbody>
                                         </table>
+                                    </div>
+                                    {/* QA-FAST-ENTRY: Quick Entry hint bar */}
+                                    <div className="mt-2 px-3 py-2 bg-blue-50/30 border border-blue-100/60 rounded-md flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-slate-500">
+                                        <span className="inline-flex items-center gap-1 text-blue-600 font-semibold"><Zap size={11} /> Quick Entry:</span>
+                                        <span>Type name →</span>
+                                        <kbd className="px-1.5 py-0.5 bg-white border border-slate-200 rounded text-[10px] font-mono text-slate-600">Enter</kbd>
+                                        <span>Select →</span>
+                                        <kbd className="px-1.5 py-0.5 bg-white border border-slate-200 rounded text-[10px] font-mono text-slate-600">Tab</kbd>
+                                        <span>Qty →</span>
+                                        <kbd className="px-1.5 py-0.5 bg-white border border-slate-200 rounded text-[10px] font-mono text-slate-600">Tab</kbd>
+                                        <span>Price →</span>
+                                        <kbd className="px-1.5 py-0.5 bg-white border border-slate-200 rounded text-[10px] font-mono text-slate-600">Tab</kbd>
+                                        <span>New row</span>
+                                        <span className="ml-auto text-slate-400">Tip: Use ↑↓ arrows to navigate items</span>
                                     </div>
                                 </div>
 
@@ -3931,9 +4034,10 @@ const Quotations = () => {
                 {/* Product Selector Modal — self-fetching, server-side search */}
                 <ProductSelector
                     isOpen={!isViewMode && isProductSelectionOpen}
-                    onClose={() => setIsProductSelectionOpen(false)}
+                    onClose={() => { setIsProductSelectionOpen(false); setPendingFastEntryRowId(null); }}
                     onSelect={handleAddSingleProduct}
                     onInlineAdd={handleFastEntryAdd}
+                    initialSearch={pendingFastEntrySearch}
                     title="Select Items from Products / Services"
                     actionLabel="Add to Quotation"
                     mode="sales"

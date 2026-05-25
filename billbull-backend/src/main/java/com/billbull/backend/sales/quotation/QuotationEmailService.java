@@ -5,6 +5,7 @@ import com.billbull.backend.customer.messaging.MessagingService;
 import com.billbull.backend.settings.email.EmailConfigService;
 import jakarta.mail.MessagingException;
 import jakarta.mail.internet.MimeMessage;
+import jakarta.mail.util.ByteArrayDataSource;
 import org.springframework.mail.javamail.JavaMailSender;
 import org.springframework.mail.javamail.MimeMessageHelper;
 import org.springframework.stereotype.Service;
@@ -12,6 +13,9 @@ import org.springframework.stereotype.Service;
 import java.io.UnsupportedEncodingException;
 import java.math.BigDecimal;
 import java.time.format.DateTimeFormatter;
+import java.util.Base64;
+import java.util.List;
+import java.util.Map;
 
 @Service
 public class QuotationEmailService {
@@ -25,16 +29,25 @@ public class QuotationEmailService {
         this.messagingService = messagingService;
     }
 
-    // QA-040: keep the old 3-arg signature for any internal callers, and add
-    // a 4-arg overload that accepts a pre-rendered HTML body from the
-    // frontend (so the email mirrors whatever was designed in Print & Email
-    // Templates). When htmlBody is null/blank, fall back to legacy Java HTML.
+    // QA-040: legacy 3-arg signature preserved for internal callers.
     public void sendQuotationEmail(Quotation quotation, String toEmail, String subject)
             throws MessagingException, UnsupportedEncodingException {
-        sendQuotationEmail(quotation, toEmail, subject, null);
+        sendQuotationEmail(quotation, toEmail, subject, null, null);
     }
 
+    // QA-040: 4-arg overload — pre-rendered HTML body from the frontend
+    // (so the email mirrors whatever was designed in Print & Email Templates).
     public void sendQuotationEmail(Quotation quotation, String toEmail, String subject, String htmlBody)
+            throws MessagingException, UnsupportedEncodingException {
+        sendQuotationEmail(quotation, toEmail, subject, htmlBody, null);
+    }
+
+    // QA-040: 5-arg overload — htmlBody references images by `cid:<id>`, the
+    // matching bytes ride along in `inlineAttachments` and are attached as
+    // MIME inline parts. Keeps the body under Gmail's 102KB limit instead of
+    // bloating it with data: URIs that get stripped on delivery.
+    public void sendQuotationEmail(Quotation quotation, String toEmail, String subject,
+                                   String htmlBody, List<Map<String, String>> inlineAttachments)
             throws MessagingException, UnsupportedEncodingException {
 
         String recipient = (toEmail != null && !toEmail.isBlank())
@@ -56,12 +69,34 @@ public class QuotationEmailService {
                 ? htmlBody
                 : buildHtmlEmail(quotation, fromName);
 
+        boolean hasInlineParts = inlineAttachments != null && !inlineAttachments.isEmpty();
+
         MimeMessage message = sender.createMimeMessage();
-        MimeMessageHelper helper = new MimeMessageHelper(message, true, "UTF-8");
+        // multipart=true is required as soon as we addInline anything.
+        MimeMessageHelper helper = new MimeMessageHelper(message, hasInlineParts, "UTF-8");
         helper.setFrom(fromAddress, fromName);
         helper.setTo(recipient);
         helper.setSubject(emailSubject);
         helper.setText(body, true);
+
+        if (hasInlineParts) {
+            for (Map<String, String> att : inlineAttachments) {
+                String cid = att.get("cid");
+                String base64 = att.get("base64");
+                String contentType = att.getOrDefault("contentType", "application/octet-stream");
+                if (cid == null || cid.isBlank() || base64 == null || base64.isBlank()) continue;
+                try {
+                    byte[] bytes = Base64.getDecoder().decode(base64);
+                    ByteArrayDataSource source = new ByteArrayDataSource(bytes, contentType);
+                    // addInline(<cid>, ...) — JavaMail handles the Content-ID
+                    // and angle-bracket wrapping so the email body's
+                    // `src="cid:<cid>"` resolves on the recipient side.
+                    helper.addInline(cid, source);
+                } catch (IllegalArgumentException e) {
+                    // Bad base64 — skip this attachment instead of failing the send.
+                }
+            }
+        }
 
         sender.send(message);
         logEmail(quotation, recipient, emailSubject, "sent");

@@ -543,11 +543,12 @@ const WarehouseDetail = ({ warehouse, zones, onEdit, onDelete, onAddZone, onEdit
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead className="bg-slate-50 text-slate-500 font-medium border-b border-slate-200">
-              <tr><th className="px-6 py-3 text-left whitespace-nowrap">Code</th><th className="px-6 py-3 text-left whitespace-nowrap">Name</th><th className="px-6 py-3 text-left whitespace-nowrap">Type</th><th className="px-6 py-3 text-left whitespace-nowrap">Status</th><th className="px-6 py-3 text-center whitespace-nowrap">Actions</th></tr>
+              <tr><th className="px-3 py-3 text-center text-slate-500 w-12 select-none">S.No.</th><th className="px-6 py-3 text-left whitespace-nowrap">Code</th><th className="px-6 py-3 text-left whitespace-nowrap">Name</th><th className="px-6 py-3 text-left whitespace-nowrap">Type</th><th className="px-6 py-3 text-left whitespace-nowrap">Status</th><th className="px-6 py-3 text-center whitespace-nowrap">Actions</th></tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
-              {zones.map(z => (
+              {zones.map((z, idx) => (
                 <tr key={z.id} className="hover:bg-slate-50">
+                  <td className="px-3 py-3 text-center text-slate-400 font-mono font-medium">{idx + 1}</td>
                   <td className="px-6 py-3 font-medium text-slate-900">{z.code}</td>
                   <td className="px-6 py-3 text-slate-600">{z.name}</td>
                   <td className="px-6 py-3 text-slate-600">{z.zoneType || 'Storage'}</td>
@@ -558,7 +559,7 @@ const WarehouseDetail = ({ warehouse, zones, onEdit, onDelete, onAddZone, onEdit
                   </td>
                 </tr>
               ))}
-              {zones.length === 0 && <tr><td colSpan="5" className="px-6 py-12 text-center text-slate-400">No zones created yet</td></tr>}
+              {zones.length === 0 && <tr><td colSpan="6" className="px-6 py-12 text-center text-slate-400">No zones created yet</td></tr>}
             </tbody>
           </table>
         </div>
@@ -595,11 +596,12 @@ const ZoneDetail = ({ zone, locators, onEdit, onAddLocator, onEditLocator, onDel
       <div className="overflow-x-auto">
         <table className="w-full text-sm">
           <thead className="bg-slate-50 text-slate-500 font-medium border-b border-slate-200">
-            <tr><th className="px-6 py-3 text-left whitespace-nowrap">Code</th><th className="px-6 py-3 text-left whitespace-nowrap">Name</th><th className="px-6 py-3 text-left whitespace-nowrap">Aisle</th><th className="px-6 py-3 text-left whitespace-nowrap">Rack</th><th className="px-6 py-3 text-left whitespace-nowrap">Status</th><th className="px-6 py-3 text-center whitespace-nowrap">Actions</th></tr>
+            <tr><th className="px-3 py-3 text-center text-slate-500 w-12 select-none">S.No.</th><th className="px-6 py-3 text-left whitespace-nowrap">Code</th><th className="px-6 py-3 text-left whitespace-nowrap">Name</th><th className="px-6 py-3 text-left whitespace-nowrap">Aisle</th><th className="px-6 py-3 text-left whitespace-nowrap">Rack</th><th className="px-6 py-3 text-left whitespace-nowrap">Status</th><th className="px-6 py-3 text-center whitespace-nowrap">Actions</th></tr>
           </thead>
           <tbody className="divide-y divide-slate-100">
-            {locators.map(l => (
+            {locators.map((l, idx) => (
               <tr key={l.id} className="hover:bg-slate-50">
+                <td className="px-3 py-3 text-center text-slate-400 font-mono font-medium">{idx + 1}</td>
                 <td className="px-6 py-3 font-medium text-slate-900">{l.code}</td>
                 <td className="px-6 py-3 text-slate-600">{l.name || '-'}</td>
                 <td className="px-6 py-3 text-slate-600">{l.aisleNumber || '-'}</td>
@@ -611,7 +613,7 @@ const ZoneDetail = ({ zone, locators, onEdit, onAddLocator, onEditLocator, onDel
                 </td>
               </tr>
             ))}
-            {locators.length === 0 && <tr><td colSpan="6" className="px-6 py-12 text-center text-slate-400">No locators created yet</td></tr>}
+            {locators.length === 0 && <tr><td colSpan="7" className="px-6 py-12 text-center text-slate-400">No locators created yet</td></tr>}
           </tbody>
         </table>
       </div>
@@ -648,11 +650,12 @@ const LocatorDetail = ({ locator, bins, onEdit, onAddBin, onEditBin, onDeleteBin
       <div className="overflow-x-auto">
         <table className="w-full text-sm">
           <thead className="bg-slate-50 text-slate-500 font-medium border-b border-slate-200">
-            <tr><th className="px-6 py-3 text-left whitespace-nowrap">Code</th><th className="px-6 py-3 text-left whitespace-nowrap">Name</th><th className="px-6 py-3 text-left whitespace-nowrap">Capacity</th><th className="px-6 py-3 text-left whitespace-nowrap">Type</th><th className="px-6 py-3 text-left whitespace-nowrap">Status</th><th className="px-6 py-3 text-center whitespace-nowrap">Actions</th></tr>
+            <tr><th className="px-3 py-3 text-center text-slate-500 w-12 select-none">S.No.</th><th className="px-6 py-3 text-left whitespace-nowrap">Code</th><th className="px-6 py-3 text-left whitespace-nowrap">Name</th><th className="px-6 py-3 text-left whitespace-nowrap">Capacity</th><th className="px-6 py-3 text-left whitespace-nowrap">Type</th><th className="px-6 py-3 text-left whitespace-nowrap">Status</th><th className="px-6 py-3 text-center whitespace-nowrap">Actions</th></tr>
           </thead>
           <tbody className="divide-y divide-slate-100">
-            {bins.map(b => (
+            {bins.map((b, idx) => (
               <tr key={b.id} className="hover:bg-slate-50">
+                <td className="px-3 py-3 text-center text-slate-400 font-mono font-medium">{idx + 1}</td>
                 <td className="px-6 py-3 font-medium text-slate-900">{b.code}</td>
                 <td className="px-6 py-3 text-slate-600">{b.name || '-'}</td>
                 <td className="px-6 py-3 text-slate-600">{b.capacity || '-'}</td>
@@ -664,7 +667,7 @@ const LocatorDetail = ({ locator, bins, onEdit, onAddBin, onEditBin, onDeleteBin
                 </td>
               </tr>
             ))}
-            {bins.length === 0 && <tr><td colSpan="6" className="px-6 py-12 text-center text-slate-400">No bins created yet</td></tr>}
+            {bins.length === 0 && <tr><td colSpan="7" className="px-6 py-12 text-center text-slate-400">No bins created yet</td></tr>}
           </tbody>
         </table>
       </div>
@@ -734,6 +737,7 @@ const BinDetail = ({ bin, onEdit }) => {
             <table className="w-full text-sm">
               <thead className="bg-slate-50 text-slate-500 font-medium border-b border-slate-200">
                 <tr>
+                  <th className="px-3 py-3 text-center text-slate-500 w-12 select-none">S.No.</th>
                   <th className="px-6 py-3 text-left whitespace-nowrap">SKU</th>
                   <th className="px-6 py-3 text-left whitespace-nowrap">DESCRIPTION</th>
                   <th className="px-6 py-3 text-left whitespace-nowrap">BATCH</th>
@@ -750,6 +754,7 @@ const BinDetail = ({ bin, onEdit }) => {
                   const available = onHand - reserved;
                   return (
                     <tr key={s.stockIdentityKey || `${s.id || 'row'}-${idx}`} className="hover:bg-slate-50">
+                      <td className="px-3 py-3 text-center text-slate-400 font-mono font-medium">{idx + 1}</td>
                       <td className="px-6 py-3 font-medium text-slate-900">{s.productCode || '-'}</td>
                       <td className="px-6 py-3 text-slate-600">{s.productName || '-'}</td>
                       <td className="px-6 py-3"><span className="px-2 py-0.5 bg-blue-100 text-blue-700 text-xs rounded font-medium">{s.batchNumber || '-'}</span></td>
@@ -765,7 +770,7 @@ const BinDetail = ({ bin, onEdit }) => {
                   );
                 })}
                 {binStock.length === 0 && (
-                  <tr><td colSpan="7" className="px-6 py-12 text-center text-slate-400">No stock in this bin</td></tr>
+                  <tr><td colSpan="8" className="px-6 py-12 text-center text-slate-400">No stock in this bin</td></tr>
                 )}
               </tbody>
             </table>

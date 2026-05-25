@@ -131,19 +131,19 @@ const CustomerShippingPanel = ({
     return (
         <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-visible" style={{ fontFamily: "'Inter', sans-serif" }}>
 
-            {/* ══ ROW 1 — CUSTOMER ══ */}
-            <div className="px-4 pt-4 pb-3 space-y-2.5">
+            {/* ══ CUSTOMER ══ */}
+            <div className="p-5 space-y-3">
 
-                {/* Header row */}
+                {/* Section header — consistent yellow accent, larger label */}
                 <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-1.5">
-                        <div className="w-5 h-5 rounded bg-yellow-50 flex items-center justify-center shrink-0">
-                            <User size={11} className="text-yellow-500" />
+                    <div className="flex items-center gap-2">
+                        <div className="w-7 h-7 rounded-lg bg-yellow-50 flex items-center justify-center shrink-0">
+                            <User size={14} className="text-yellow-600" />
                         </div>
-                        <span className="text-[10px] font-bold text-slate-600 uppercase tracking-widest">Customer</span>
+                        <span className="text-[11px] font-bold text-slate-700 uppercase tracking-wider">Customer</span>
                     </div>
                     {selectedCustomer && (
-                        <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded-full border ${credit.cls}`}>
+                        <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full border ${credit.cls}`}>
                             ● {credit.label}
                         </span>
                     )}
@@ -153,13 +153,13 @@ const CustomerShippingPanel = ({
                 <button
                     onClick={() => !isReadOnly && onOpenCustomerSearch?.()}
                     disabled={isReadOnly}
-                    className={`w-full flex items-center gap-2 px-3 py-2 rounded-lg border text-xs transition-all
+                    className={`w-full flex items-center gap-2 px-3 py-2.5 rounded-lg border text-xs transition-all
                         ${isReadOnly
                             ? 'bg-slate-50 border-slate-200 text-slate-500 cursor-not-allowed'
                             : 'bg-white border-slate-200 text-slate-700 hover:border-yellow-400 hover:shadow-sm cursor-pointer'
                         }`}
                 >
-                    <Search size={13} className={selectedCustomer ? 'text-yellow-500 shrink-0' : 'text-slate-400 shrink-0'} />
+                    <Search size={14} className={selectedCustomer ? 'text-yellow-500 shrink-0' : 'text-slate-400 shrink-0'} />
                     <span className="flex-1 text-left truncate font-medium">
                         {selectedCustomer
                             ? `${selectedCustomer.code} — ${selectedCustomer.name}`
@@ -167,67 +167,76 @@ const CustomerShippingPanel = ({
                     </span>
                 </button>
 
-                {/* Customer info — compact rows, only when selected */}
+                {/* Customer info card — unified container so name, key metrics, and meta read as one block */}
                 {selectedCustomer && (
-                    <div className="space-y-1.5 animate-in fade-in duration-200">
+                    <div className="rounded-xl border border-slate-200 bg-linear-to-b from-slate-50/60 to-white overflow-hidden animate-in fade-in duration-200">
 
                         {/* Name + group */}
-                        <div className="flex items-center gap-2 px-2.5 py-2 bg-slate-50 rounded-lg border border-slate-100">
-                            <Building2 size={12} className="text-slate-400 shrink-0" />
+                        <div className="flex items-center gap-3 px-3.5 py-3 border-b border-slate-100">
+                            <div className="w-9 h-9 rounded-lg bg-yellow-100/60 flex items-center justify-center shrink-0">
+                                <Building2 size={16} className="text-yellow-600" />
+                            </div>
                             <div className="min-w-0 flex-1">
-                                <div className="text-xs font-bold text-slate-800 truncate">{selectedCustomer.name}</div>
-                                <div className="text-[10px] text-slate-500 truncate">
+                                <div className="text-sm font-bold text-slate-800 truncate leading-tight">{selectedCustomer.name}</div>
+                                <div className="text-[11px] text-slate-500 truncate mt-0.5">
                                     {selectedCustomer.groupType || selectedCustomer.group || 'General'}
                                 </div>
                             </div>
                         </div>
 
-                        {/* Two-column row: Phone | Outstanding */}
-                        <div className="grid grid-cols-2 gap-1.5">
-                            <div className="flex items-center gap-1.5 px-2.5 py-1.5 bg-slate-50 rounded-lg border border-slate-100 min-w-0">
-                                <Phone size={10} className="text-slate-400 shrink-0" />
-                                <div className="min-w-0">
-                                    <div className="text-[9px] text-slate-400 font-semibold uppercase">Phone</div>
-                                    <div className="text-[10px] font-medium text-slate-700 truncate">
-                                        {selectedCustomer.mobile || selectedCustomer.phone || '—'}
-                                    </div>
+                        {/* Phone | Balance — flush divider between, no boxed cards */}
+                        <div className="grid grid-cols-2 divide-x divide-slate-100">
+                            <div className="px-3.5 py-2.5 min-w-0">
+                                <div className="flex items-center gap-1 mb-1">
+                                    <Phone size={10} className="text-slate-400 shrink-0" />
+                                    <div className="text-[9px] text-slate-400 font-semibold uppercase tracking-wide">Phone</div>
+                                </div>
+                                <div className="text-xs font-semibold text-slate-700 truncate">
+                                    {selectedCustomer.mobile || selectedCustomer.phone || '—'}
                                 </div>
                             </div>
-                            <div className="flex items-center gap-1.5 px-2.5 py-1.5 bg-slate-50 rounded-lg border border-slate-100 min-w-0">
-                                <CreditCard size={10} className="text-slate-400 shrink-0" />
-                                <div className="min-w-0">
-                                    <div className="text-[9px] text-slate-400 font-semibold uppercase">Balance</div>
-                                    <div className="text-[10px] font-semibold text-slate-700 truncate">
-                                        <CurrencyAmount value={selectedCustomer.balance || 0} currency={currency} currencySymbol={currencySymbol} />
-                                    </div>
+                            <div className="px-3.5 py-2.5 min-w-0">
+                                <div className="flex items-center gap-1 mb-1">
+                                    <CreditCard size={10} className="text-slate-400 shrink-0" />
+                                    <div className="text-[9px] text-slate-400 font-semibold uppercase tracking-wide">Balance</div>
+                                </div>
+                                <div className="text-xs font-bold text-slate-800 truncate">
+                                    <CurrencyAmount value={selectedCustomer.balance || 0} currency={currency} currencySymbol={currencySymbol} />
                                 </div>
                             </div>
                         </div>
 
-                        {/* Meta row: TRN · Code · Terms */}
-                        <div className="flex items-center gap-2 flex-wrap px-2.5 py-1.5 bg-slate-50 rounded-lg border border-slate-100 text-[10px] text-slate-500">
-                            <span><b className="text-slate-600">TRN:</b> {selectedCustomer.trn || '—'}</span>
-                            <span className="w-px h-2.5 bg-slate-200 shrink-0" />
-                            <span><b className="text-slate-600">Code:</b> {selectedCustomer.code}</span>
-                            <span className="w-px h-2.5 bg-slate-200 shrink-0" />
-                            <span><b className="text-slate-600">Terms:</b> {selectedCustomer.payTerms || 'Cash'}</span>
+                        {/* Meta chips — TRN / Code / Terms as inline labelled chips */}
+                        <div className="flex items-center gap-1.5 flex-wrap px-3 py-2 bg-slate-50/50 border-t border-slate-100">
+                            <span className="inline-flex items-center gap-1 text-[10px] text-slate-600 bg-white border border-slate-200 rounded-full px-2 py-0.5">
+                                <span className="text-slate-400 font-semibold">TRN</span>
+                                <span className="font-medium">{selectedCustomer.trn || '—'}</span>
+                            </span>
+                            <span className="inline-flex items-center gap-1 text-[10px] text-slate-600 bg-white border border-slate-200 rounded-full px-2 py-0.5">
+                                <span className="text-slate-400 font-semibold">Code</span>
+                                <span className="font-medium">{selectedCustomer.code}</span>
+                            </span>
+                            <span className="inline-flex items-center gap-1 text-[10px] text-slate-600 bg-white border border-slate-200 rounded-full px-2 py-0.5">
+                                <span className="text-slate-400 font-semibold">Terms</span>
+                                <span className="font-medium">{selectedCustomer.payTerms || 'Cash'}</span>
+                            </span>
                         </div>
                     </div>
                 )}
             </div>
 
             {/* Divider */}
-            <div className="h-px bg-slate-100 mx-4" />
+            <div className="h-px bg-slate-100 mx-5" />
 
-            {/* ══ ROW 2 — SHIPPING ══ */}
-            <div className="px-4 pt-3 pb-4 space-y-2.5">
+            {/* ══ SHIPPING ══ */}
+            <div className="p-5 space-y-3">
 
-                {/* Header */}
-                <div className="flex items-center gap-1.5">
-                    <div className="w-5 h-5 rounded bg-blue-50 flex items-center justify-center shrink-0">
-                        <Truck size={11} className="text-blue-400" />
+                {/* Section header — same visual weight as CUSTOMER for parity */}
+                <div className="flex items-center gap-2">
+                    <div className="w-7 h-7 rounded-lg bg-yellow-50 flex items-center justify-center shrink-0">
+                        <Truck size={14} className="text-yellow-600" />
                     </div>
-                    <span className="text-[10px] font-bold text-slate-600 uppercase tracking-widest">Shipping</span>
+                    <span className="text-[11px] font-bold text-slate-700 uppercase tracking-wider">Shipping</span>
                 </div>
 
                 {/* Delivery Type + Expected Dispatch — 2 equal columns */}

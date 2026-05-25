@@ -19,6 +19,7 @@ import { formatDisplayDate } from '../../../utils/dateUtils';
 // ==========================================
 
 const STOCK_TAKING_COLUMNS = [
+    { header: 'S.No.', key: 'sNo', width: 8 },
     { header: 'Session ID', key: 'id', width: 20 },
     { header: 'Warehouse', key: 'warehouse', width: 20 },
     { header: 'Created By', key: 'createdBy', width: 20 },
@@ -817,8 +818,17 @@ const ListView = ({
                         <Plus className="h-3.5 w-3.5" /> New Stock Take
                     </button>
                     <ExportDropdown
-                        onExportExcel={() => exportToExcel(filteredSessions, STOCK_TAKING_COLUMNS, 'StockTaking')}
-                        onExportPdf={() => exportToPDF(filteredSessions, STOCK_TAKING_COLUMNS, 'Stock Taking Sessions', 'StockTaking')}
+                        onExportExcel={() => exportToExcel(
+                            filteredSessions.map((session, index) => ({ ...session, sNo: index + 1 })),
+                            STOCK_TAKING_COLUMNS,
+                            'StockTaking'
+                        )}
+                        onExportPdf={() => exportToPDF(
+                            filteredSessions.map((session, index) => ({ ...session, sNo: index + 1 })),
+                            STOCK_TAKING_COLUMNS,
+                            'Stock Taking Sessions',
+                            'StockTaking'
+                        )}
                     />
                 </div>
             </div>
@@ -858,6 +868,7 @@ const ListView = ({
                     <table className="w-full text-sm">
                         <thead className="bg-[#F8FAFC] border-b border-slate-200">
                             <tr>
+                                <th className="text-center px-4 py-2 font-semibold text-slate-500 w-16 select-none uppercase">S.No.</th>
                                 <th className="text-left px-4 py-2 font-semibold text-slate-600">Session</th>
                                 <th className="text-left px-4 py-2 font-semibold text-slate-600">Warehouse</th>
                                 <th className="text-left px-4 py-2 font-semibold text-slate-600">Created By</th>
@@ -869,8 +880,9 @@ const ListView = ({
                             </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-100">
-                            {filteredSessions.map((session) => (
+                            {filteredSessions.map((session, index) => (
                                 <tr key={session.id} className="hover:bg-slate-50/80 transition-colors group">
+                                    <td className="px-4 py-2 text-center text-slate-400 font-mono font-medium">{index + 1}</td>
                                     <td className="px-4 py-2 whitespace-nowrap">
                                         <div className="space-y-1">
                                             <p className="font-bold text-slate-800 text-[13px]">{session.id}</p>

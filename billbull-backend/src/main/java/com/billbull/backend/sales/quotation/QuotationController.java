@@ -63,6 +63,17 @@ public class QuotationController {
         return ResponseEntity.ok(service.getAllQuotations());
     }
 
+    @GetMapping("/page")
+    public ResponseEntity<com.billbull.backend.util.PageResponse<Quotation>> getPage(
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "30") int size,
+            @RequestParam(required = false) String search,
+            @RequestParam(required = false) String status) {
+        permissionService.requireCan(MODULE, "view");
+        return ResponseEntity.ok(com.billbull.backend.util.PaginationUtil.paginate(
+                service.getAllQuotations(), page, size, search, status));
+    }
+
     @GetMapping("/{id}")
     public ResponseEntity<Quotation> getById(@PathVariable Long id) {
         return ResponseEntity.ok(service.getQuotationById(id));
@@ -154,22 +165,30 @@ public class QuotationController {
 
     // ---------------- SEND EMAIL ----------------
     @PostMapping("/{id}/send-email")
+    @SuppressWarnings("unchecked")
     public ResponseEntity<?> sendEmail(
             @PathVariable Long id,
-            @RequestBody(required = false) Map<String, String> body) {
+            @RequestBody(required = false) Map<String, Object> body) {
 
         permissionService.requireCan(MODULE, "view");
 
-        String toEmail = body != null ? body.get("toEmail") : null;
-        String subject = body != null ? body.get("subject") : null;
+        String toEmail = body != null ? (String) body.get("toEmail") : null;
+        String subject = body != null ? (String) body.get("subject") : null;
         // QA-040: frontend pre-renders the email body from the same template
         // used by Print, then ships it here. If absent we fall back to the
         // legacy hand-built HTML in QuotationEmailService.
-        String htmlBody = body != null ? body.get("htmlBody") : null;
+        String htmlBody = body != null ? (String) body.get("htmlBody") : null;
+        // QA-040: <img> tags in the body reference cid:<id> — the actual
+        // bytes are shipped here as base64 strings + content type, so we
+        // attach them as MIME inline parts. Keeps the body under Gmail's
+        // 102KB cap (data: URIs blow past it instantly).
+        List<Map<String, String>> inlineAttachments = body != null
+                ? (List<Map<String, String>>) body.get("inlineAttachments")
+                : null;
 
         try {
             Quotation quotation = service.getQuotationById(id);
-            emailService.sendQuotationEmail(quotation, toEmail, subject, htmlBody);
+            emailService.sendQuotationEmail(quotation, toEmail, subject, htmlBody, inlineAttachments);
             return ResponseEntity.ok(Map.of("message", "Email sent successfully to " +
                     (toEmail != null && !toEmail.isBlank() ? toEmail : quotation.getCustomerEmail())));
 
