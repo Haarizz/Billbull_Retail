@@ -195,6 +195,7 @@ const Sidebar = ({ children }) => {
         { path: "/finance/tax",             label: "Tax Dashboard",             module: "finance.tax",      icon: <Percent size={14} /> },
         { path: "/finance/reports",         label: "Reports",                   module: "finance.tax",      icon: <PieChart size={14} /> },
         { path: "/finance/config",          label: "Chart of Accounts & Config",module: "finance.tax",      icon: <Settings size={14} /> },
+        { path: "/finance/templates",       label: "Print & Email Templates",   module: "finance.voucher",  icon: <Printer size={14} /> },
       ],
     },
     {

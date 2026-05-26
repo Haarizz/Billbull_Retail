@@ -2504,7 +2504,7 @@ const DeliveryNote = () => {
                                         </div>
 
                                         <div className="overflow-auto max-h-[380px]">
-                                            <table className="w-full text-xs text-left min-w-[940px]">
+                                            <table className="w-full text-xs text-left min-w-[880px]">
                                                 <thead className="sticky top-0 z-10 bg-white border-b border-slate-100/80 text-[11px] font-semibold text-slate-500">
                                                     <tr>
                                                         <th className="p-2 w-8 text-center text-slate-400">#</th>
@@ -2516,10 +2516,10 @@ const DeliveryNote = () => {
                                                             />
                                                         </th>
                                                         <th className="p-2 w-16 text-center">Unit</th>
-                                                        <th className="p-2 w-20 text-center">Qty ordered</th>
-                                                        <th className="p-2 w-24 text-center text-slate-400">Prev. Del</th>
-                                                        <th className="p-2 w-24 text-center">Current Qty</th>
-                                                        <th className="p-2 w-16 text-center">Boxes</th>
+                                                        <th className="p-2 w-20 text-center">Ordered</th>
+                                                        <th className="p-2 w-24 text-center">To Deliver</th>
+                                                        <th className="p-2 w-20 text-center text-slate-400">Picked</th>
+                                                        <th className="p-2 w-28 text-center">Location</th>
                                                         <th className="p-2 w-32 text-center">Bin</th>
                                                         <th className="p-2 w-10 text-center">Actions</th>
                                                     </tr>
@@ -2579,9 +2579,6 @@ const DeliveryNote = () => {
                                                                     <span className="font-bold text-slate-700">{item.orderedQty}</span>
                                                                 </td>
                                                                 <td className="p-2 text-center align-middle">
-                                                                    <span className="text-slate-400">{item.prevDelivered}</span>
-                                                                </td>
-                                                                <td className="p-2 text-center align-middle">
                                                                     <div className="rounded-md border border-slate-200 bg-white flex items-center px-2 py-1 w-full max-w-[92px] mx-auto">
                                                                         <input
                                                                             disabled={isLockedForEdit}
@@ -2605,16 +2602,32 @@ const DeliveryNote = () => {
                                                                         />
                                                                     </div>
                                                                 </td>
+                                                                {/* Picked — read-only: shows batch-selected qty or 0 */}
                                                                 <td className="p-2 text-center align-middle">
-                                                                    <div className="rounded-md border border-slate-200 bg-white flex items-center px-2 py-1 w-full max-w-[80px] mx-auto">
-                                                                        <input
-                                                                            disabled={isLockedForEdit}
-                                                                            type="number"
-                                                                            className="w-full bg-transparent text-center outline-none font-semibold text-xs text-slate-700 disabled:opacity-50"
-                                                                            value={item.boxes || ''}
-                                                                            onChange={(e) => handleItemChange(item.id, 'boxes', e.target.value)}
-                                                                        />
-                                                                    </div>
+                                                                    {item.batchControlled ? (
+                                                                        <span className={`font-bold text-sm ${
+                                                                            item.batchSelectedQuantity > 0
+                                                                                ? item.batchSelectedQuantity >= item.currentQty
+                                                                                    ? 'text-emerald-600'
+                                                                                    : 'text-amber-500'
+                                                                                : 'text-slate-300'
+                                                                        }`}>
+                                                                            {item.batchSelectedQuantity || 0}
+                                                                        </span>
+                                                                    ) : (
+                                                                        <span className="text-slate-300 text-xs">—</span>
+                                                                    )}
+                                                                </td>
+                                                                {/* Location — shows the selected bin's location code */}
+                                                                <td className="p-2 text-center align-middle">
+                                                                    <span className="text-xs font-medium text-slate-600">
+                                                                        {item.binId
+                                                                            ? (binsList.find(b => b.id === Number(item.binId))?.locationCode ||
+                                                                               binsList.find(b => b.id === Number(item.binId))?.location ||
+                                                                               warehouse ||
+                                                                               '—')
+                                                                            : (warehouse || '—')}
+                                                                    </span>
                                                                 </td>
                                                                 <td className="p-2 text-center align-middle">
                                                                     <div className="rounded-md border border-slate-200 bg-white px-2 py-1 w-full max-w-[140px] mx-auto">
@@ -2720,6 +2733,86 @@ const DeliveryNote = () => {
                                             </div>
                                         </div>
                                     </div>
+
+                                    {/* ── Picking Summary Box — separate card below the items table ── */}
+                                    {hasItemData && (() => {
+                                        const dataItems = items.filter(i => i.code || i.desc);
+
+                                        // Use the same helpers as the Picking tab, keyed to the current DN
+                                        const fullyPicked = dataItems.filter(i => {
+                                            const required = getRequiredPickingQty(i);
+                                            const picked   = getPickedQty(currentDnId, i.id, i);
+                                            return required > 0 && picked >= required;
+                                        }).length;
+
+                                        const partial = dataItems.filter(i => {
+                                            const required = getRequiredPickingQty(i);
+                                            const picked   = getPickedQty(currentDnId, i.id, i);
+                                            return picked > 0 && picked < required;
+                                        }).length;
+
+                                        const notStarted = dataItems.filter(i => {
+                                            const picked = getPickedQty(currentDnId, i.id, i);
+                                            return picked === 0;
+                                        }).length;
+
+                                        const totalRequired = dataItems.reduce((s, i) => s + getRequiredPickingQty(i), 0);
+                                        const totalPicked   = dataItems.reduce((s, i) =>
+                                            s + Math.min(getPickedQty(currentDnId, i.id, i), getRequiredPickingQty(i)), 0
+                                        );
+                                        const progress = totalRequired > 0
+                                            ? Math.min(100, Math.round((totalPicked / totalRequired) * 100))
+                                            : 0;
+
+                                        // Shortage: To Deliver qty exceeds live available stock
+                                        const shortageLines = dataItems.filter(i => {
+                                            const avail = liveStockMap[i.code]?.available ?? (i.stock || 0);
+                                            return avail < (Number(i.currentQty) || 0);
+                                        });
+                                        const shortageUnits = shortageLines.reduce((s, i) => {
+                                            const avail = liveStockMap[i.code]?.available ?? (i.stock || 0);
+                                            return s + Math.max(0, (Number(i.currentQty) || 0) - avail);
+                                        }, 0);
+
+                                        return (
+                                            <div className="rounded-xl border border-slate-200 bg-white shadow-sm overflow-hidden">
+                                                <div className="grid grid-cols-4 divide-x divide-slate-100">
+                                                    {/* Fully Picked */}
+                                                    <div className="flex flex-col items-center justify-center py-5 px-3 gap-1">
+                                                        <span className="text-2xl font-black text-emerald-500">{fullyPicked}</span>
+                                                        <span className="text-[11px] text-slate-500 font-medium text-center">Fully Picked</span>
+                                                    </div>
+                                                    {/* Partial */}
+                                                    <div className="flex flex-col items-center justify-center py-5 px-3 gap-1">
+                                                        <span className="text-2xl font-black text-amber-500">{partial}</span>
+                                                        <span className="text-[11px] text-slate-500 font-medium text-center">Partial</span>
+                                                    </div>
+                                                    {/* Not Started */}
+                                                    <div className="flex flex-col items-center justify-center py-5 px-3 gap-1">
+                                                        <span className="text-2xl font-black text-slate-400">{notStarted}</span>
+                                                        <span className="text-[11px] text-slate-500 font-medium text-center">Not Started</span>
+                                                    </div>
+                                                    {/* Progress */}
+                                                    <div className="flex flex-col items-center justify-center py-5 px-3 gap-1">
+                                                        <span className={`text-2xl font-black ${progress >= 100 ? 'text-emerald-500' : progress > 0 ? 'text-[#F5C742]' : 'text-slate-400'}`}>
+                                                            {progress}%
+                                                        </span>
+                                                        <span className="text-[11px] text-slate-500 font-medium text-center">Progress</span>
+                                                    </div>
+                                                </div>
+
+                                                {/* Shortage warning */}
+                                                {shortageLines.length > 0 && (
+                                                    <div className="border-t border-amber-100 bg-amber-50 px-4 py-2.5 flex items-center gap-2">
+                                                        <AlertTriangle size={13} className="text-amber-500 shrink-0" />
+                                                        <span className="text-[11px] text-amber-700 font-medium">
+                                                            {shortageLines.length} line(s) with shortage — {shortageUnits} unit{shortageUnits !== 1 ? 's' : ''} may need backorder.
+                                                        </span>
+                                                    </div>
+                                                )}
+                                            </div>
+                                        );
+                                    })()}
                                 </div>
 
                                 {/* --- RIGHT COLUMN: SUMMARY & STOCK --- */}

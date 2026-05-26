@@ -59,6 +59,7 @@ import Messaging from "./pages/Customer/Messaging";
 import TaxCompliance from "./pages/Financials/TaxCompliance";
 import FinancialReports from "./pages/Financials/FinancialReports";
 import FinancialConfig from "./pages/Financials/FinancialConfig";
+import FinancialsPrintEmailTemplates from "./pages/Financials/FinancialsPrintEmailTemplates";
 import PrintEmailTemplates from "./pages/Sales/PrintEmailTemplates";
 import SalesSettings from "./pages/Sales/SalesSettings";
 import PurchasePrintEmailTemplates from "./pages/Purchase/PurchasePrintEmailTemplates";
@@ -467,6 +468,15 @@ function App() {
                       element={
                         <ResourceGuard module="finance.tax">
                           <FinancialConfig />
+                        </ResourceGuard>
+                      }
+                    />
+
+                    <Route
+                      path="/finance/templates"
+                      element={
+                        <ResourceGuard module="finance.voucher">
+                          <FinancialsPrintEmailTemplates />
                         </ResourceGuard>
                       }
                     />
