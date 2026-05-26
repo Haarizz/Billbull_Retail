@@ -379,14 +379,40 @@ const SalesReturn = () => {
    };
 
    const handleBatchDraftChange = (allocId, value) => {
-      setBatchModalDraft(prev => prev.map(d => {
-         if (d.allocationId !== allocId) return d;
-         let v = Math.max(0, Math.min(Number(value) || 0, d.returnableQty || 0));
-         return { ...d, qtyToReturn: v };
-      }));
+      // Hard caps:
+      //  1) Per-row — can't return more from a lot than what's still returnable.
+      //  2) Aggregate — if the line already has a Return Qty set, the sum
+      //     across batches must not exceed it (backend rejects mismatches
+      //     anyway at approve time; this prevents the bad state in the UI).
+      const lineReturnQty = Number(items[batchModalIdx]?.returnQty) || 0;
+      setBatchModalDraft(prev => {
+         const target = prev.find(d => d.allocationId === allocId);
+         if (!target) return prev;
+         const sumOfOthers = prev.reduce(
+            (s, d) => s + (d.allocationId === allocId ? 0 : (Number(d.qtyToReturn) || 0)),
+            0
+         );
+         const perRowCap = Number(target.returnableQty) || 0;
+         const aggCap = lineReturnQty > 0
+            ? Math.max(0, lineReturnQty - sumOfOthers)
+            : Infinity;
+         const cap = Math.min(perRowCap, aggCap);
+         const v = Math.max(0, Math.min(Number(value) || 0, cap));
+         return prev.map(d => d.allocationId === allocId ? { ...d, qtyToReturn: v } : d);
+      });
    };
 
+   // Approved returns are immutable on the backend
+   // (SalesReturnService.saveReturn — line 103). Locking the form here keeps
+   // the UI in sync and avoids the generic "Please try again" toast when the
+   // user clicks Save Draft on a record that can never be saved.
+   const isLocked = String(returnStatus || '').toUpperCase() === 'APPROVED';
+
    const handleSave = async (statusOverride = null) => {
+      if (isLocked) {
+         alert('This return has already been approved and cannot be modified. Create a reversal instead.');
+         return;
+      }
       if (!returnAutoNumbering && !returnNo.trim()) {
          alert('Please enter a return number');
          return;
@@ -446,7 +472,11 @@ const SalesReturn = () => {
          setActiveTab('list');
       } catch (err) {
          console.error('Error saving return:', err);
-         alert('Error saving return. Please try again.');
+         const serverMsg =
+            err?.response?.data?.message ||
+            (typeof err?.response?.data === 'string' ? err.response.data : null) ||
+            err?.message;
+         alert(serverMsg ? `Error saving return: ${serverMsg}` : 'Error saving return. Please try again.');
       } finally {
          setIsLoading(false);
       }
@@ -772,22 +802,34 @@ const SalesReturn = () => {
                                  <span className="text-sm font-bold text-slate-700">{returnNo}</span>
                               </div>
                            </div>
-                           <div className="flex gap-2">
+                           <div className="flex gap-2 items-center">
+                              {isLocked && (
+                                 <span
+                                    title="Approved returns are locked. Create a reversal to undo or adjust."
+                                    className="text-[11px] text-emerald-700 bg-emerald-50 border border-emerald-200 rounded px-2 py-1 font-semibold"
+                                 >
+                                    Locked — Approved
+                                 </span>
+                              )}
                               <button onClick={() => setActiveTab('list')} className="px-4 py-2 border border-slate-200 rounded-md text-xs font-bold text-slate-600 hover:bg-slate-50">
-                                 Cancel
+                                 {isLocked ? 'Back to List' : 'Cancel'}
                               </button>
-                              <button
-                                 onClick={() => handleSave('DRAFT')}
-                                 className="px-4 py-2 bg-white border border-[#F5C742] rounded-md text-xs font-bold text-slate-700 hover:bg-yellow-50 shadow-sm flex items-center gap-2"
-                              >
-                                 <Save size={16} /> Save Draft
-                              </button>
-                              <button
-                                 onClick={() => handleSave('APPROVED')}
-                                 className="px-4 py-2 bg-[#F5C742] rounded-md text-xs font-bold text-slate-900 hover:bg-yellow-400 shadow-sm flex items-center gap-2"
-                              >
-                                 <CheckCircle2 size={16} /> Approve & Credit
-                              </button>
+                              {!isLocked && (
+                                 <>
+                                    <button
+                                       onClick={() => handleSave('DRAFT')}
+                                       className="px-4 py-2 bg-white border border-[#F5C742] rounded-md text-xs font-bold text-slate-700 hover:bg-yellow-50 shadow-sm flex items-center gap-2"
+                                    >
+                                       <Save size={16} /> Save Draft
+                                    </button>
+                                    <button
+                                       onClick={() => handleSave('APPROVED')}
+                                       className="px-4 py-2 bg-[#F5C742] rounded-md text-xs font-bold text-slate-900 hover:bg-yellow-400 shadow-sm flex items-center gap-2"
+                                    >
+                                       <CheckCircle2 size={16} /> Approve & Credit
+                                    </button>
+                                 </>
+                              )}
                            </div>
                         </div>
 
@@ -1196,42 +1238,86 @@ const SalesReturn = () => {
                                     <td className="p-2 text-right text-slate-500">{d.alreadyReturnedQty}</td>
                                     <td className="p-2 text-right text-slate-700 font-semibold">{d.returnableQty}</td>
                                     <td className="p-2 text-center">
-                                       <input
-                                          type="number"
-                                          min="0"
-                                          max={d.returnableQty}
-                                          value={d.qtyToReturn}
-                                          onChange={(e) => handleBatchDraftChange(d.allocationId, e.target.value)}
-                                          className="w-20 text-center p-1 border border-slate-200 rounded focus:border-amber-400 outline-none"
-                                       />
+                                       {(() => {
+                                          const lineReturnQty = Number(items[batchModalIdx]?.returnQty) || 0;
+                                          const sumOfOthers = batchModalDraft.reduce(
+                                             (s, x) => s + (x.allocationId === d.allocationId ? 0 : (Number(x.qtyToReturn) || 0)),
+                                             0
+                                          );
+                                          const perRowCap = Number(d.returnableQty) || 0;
+                                          const aggCap = lineReturnQty > 0
+                                             ? Math.max(0, lineReturnQty - sumOfOthers)
+                                             : perRowCap;
+                                          const cap = Math.min(perRowCap, aggCap);
+                                          return (
+                                             <input
+                                                type="number"
+                                                min="0"
+                                                max={cap}
+                                                value={d.qtyToReturn}
+                                                onChange={(e) => handleBatchDraftChange(d.allocationId, e.target.value)}
+                                                className="w-20 text-center p-1 border border-slate-200 rounded focus:border-amber-400 outline-none"
+                                             />
+                                          );
+                                       })()}
                                     </td>
                                  </tr>
                               ))}
                            </tbody>
                            <tfoot>
-                              <tr className="bg-amber-50 border-t border-amber-200 font-bold">
-                                 <td className="p-2" colSpan="6">Total selected</td>
-                                 <td className="p-2 text-center">
-                                    {batchModalDraft.reduce((s, d) => s + (Number(d.qtyToReturn) || 0), 0)}
-                                 </td>
-                              </tr>
+                              {(() => {
+                                 const totalSelected = batchModalDraft.reduce((s, d) => s + (Number(d.qtyToReturn) || 0), 0);
+                                 const lineReturnQty = Number(items[batchModalIdx]?.returnQty) || 0;
+                                 const hasTarget = lineReturnQty > 0;
+                                 const matches = !hasTarget || totalSelected === lineReturnQty;
+                                 return (
+                                    <tr className={`${matches ? 'bg-amber-50 border-t border-amber-200' : 'bg-red-50 border-t border-red-200'} font-bold`}>
+                                       <td className="p-2" colSpan="6">
+                                          Total selected
+                                          {hasTarget && (
+                                             <span className={`ml-2 font-medium ${matches ? 'text-slate-500' : 'text-red-600'}`}>
+                                                (target {lineReturnQty})
+                                             </span>
+                                          )}
+                                       </td>
+                                       <td className={`p-2 text-center ${matches ? '' : 'text-red-600'}`}>
+                                          {totalSelected}{hasTarget ? ` / ${lineReturnQty}` : ''}
+                                       </td>
+                                    </tr>
+                                 );
+                              })()}
                            </tfoot>
                         </table>
                      )}
                   </div>
-                  <div className="px-5 py-3 border-t border-slate-200 flex justify-end gap-2">
-                     <button
-                        onClick={closeBatchModal}
-                        className="px-3 py-1.5 text-xs font-medium border border-slate-200 rounded hover:bg-slate-50"
-                     >
-                        Cancel
-                     </button>
-                     <button
-                        onClick={saveBatchModal}
-                        className="px-3 py-1.5 text-xs font-bold rounded bg-[#F5C742] text-slate-900 hover:bg-yellow-400"
-                     >
-                        Save Batches
-                     </button>
+                  <div className="px-5 py-3 border-t border-slate-200 flex items-center justify-between gap-2">
+                     {(() => {
+                        const totalSelected = batchModalDraft.reduce((s, d) => s + (Number(d.qtyToReturn) || 0), 0);
+                        const lineReturnQty = Number(items[batchModalIdx]?.returnQty) || 0;
+                        const mismatch = lineReturnQty > 0 && totalSelected !== lineReturnQty;
+                        return (
+                           <>
+                              <div className="text-[11px] text-red-600 min-h-[1em]">
+                                 {mismatch && `Batch quantities must sum to ${lineReturnQty} (currently ${totalSelected}).`}
+                              </div>
+                              <div className="flex gap-2">
+                                 <button
+                                    onClick={closeBatchModal}
+                                    className="px-3 py-1.5 text-xs font-medium border border-slate-200 rounded hover:bg-slate-50"
+                                 >
+                                    Cancel
+                                 </button>
+                                 <button
+                                    onClick={saveBatchModal}
+                                    disabled={mismatch}
+                                    className={`px-3 py-1.5 text-xs font-bold rounded ${mismatch ? 'bg-slate-200 text-slate-400 cursor-not-allowed' : 'bg-[#F5C742] text-slate-900 hover:bg-yellow-400'}`}
+                                 >
+                                    Save Batches
+                                 </button>
+                              </div>
+                           </>
+                        );
+                     })()}
                   </div>
                </div>
             </div>

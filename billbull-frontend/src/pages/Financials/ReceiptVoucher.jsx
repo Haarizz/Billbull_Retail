@@ -42,6 +42,9 @@ import SendDocumentEmailModal from '../../components/SendDocumentEmailModal';
 import { buildReceiptVoucherPrintData } from '../../utils/purchasePrintUtils';
 import { generateDocFilename, generateReportFilename } from '../../utils/filenameUtils';
 import { usePrintDocument } from '../../hooks/usePrintDocument';
+import { getTemplatesByCategory } from '../../api/printTemplateApi';
+import { buildFinancialVoucherPrintHtml } from '../../utils/financialPrintTemplate';
+import { printHtml } from '../../utils/printGenerator';
 import { getImageUrl } from '../../utils/urlUtils';
 import { useBranch } from '../../context/BranchContext';
 import { useCompany } from '../../context/CompanyContext';
@@ -512,7 +515,8 @@ const ReceiptVoucher = () => {
         }
     };
 
-    const handlePrint = (receipt) => {
+    const handlePrint = async (receipt) => {
+        setOpenActionId(null);
         const title = generateDocFilename(
             'Receipt Voucher',
             receipt.id,
@@ -520,8 +524,51 @@ const ReceiptVoucher = () => {
             receipt.date,
             currency
         );
+
+        // Try the new Financials designer template first; fall back to
+        // the legacy window.print() of the on-screen layout if none is
+        // configured.
+        try {
+            const templates = await getTemplatesByCategory('Receipt Voucher');
+            const tmpl = templates?.find(t => t.isDefault) || templates?.[0] || null;
+            const hasNewSettings = (() => {
+                if (!tmpl?.displayOptions) return false;
+                try {
+                    const opts = typeof tmpl.displayOptions === 'string'
+                        ? JSON.parse(tmpl.displayOptions)
+                        : tmpl.displayOptions;
+                    return opts && typeof opts === 'object' && ('accentColor' in opts || 'showLogo' in opts);
+                } catch { return false; }
+            })();
+
+            if (hasNewSettings) {
+                const html = buildFinancialVoucherPrintHtml('receipt-voucher', {
+                    voucherNumber: receipt.id || receipt.voucherId,
+                    date: receipt.date,
+                    party: receipt.member || receipt.memberName,
+                    partyCode: receipt.customerCode || '',
+                    amount: receipt.amount,
+                    currency,
+                    mode: receipt.mode || receipt.paymentMode,
+                    bank: receipt.bank || '',
+                    reference: receipt.reference,
+                    chequeRef: receipt.chequeNumber || '',
+                    narration: receipt.notes || '',
+                    branch: receipt.branch,
+                    preparedBy: receipt.preparedBy || '',
+                    linkedInvoice: receipt.source,
+                    invoiceDate: receipt.date,
+                }, { company, template: tmpl });
+                const titled = html.replace(/<title>.*?<\/title>/i, `<title>${title}</title>`);
+                printHtml(titled);
+                return;
+            }
+        } catch (err) {
+            console.warn('Failed to load Receipt Voucher template, falling back to browser print', err);
+        }
+
+        // Legacy fallback — print the on-screen layout.
         print(title);
-        setOpenActionId(null);
     };
 
     const handleDelete = async (id, dbId) => {

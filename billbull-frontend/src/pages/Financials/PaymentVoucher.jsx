@@ -46,6 +46,7 @@ import {
     normalizePurchaseTemplate
 } from '../../utils/purchasePrintUtils';
 import { generatePrintHtml, printHtml } from '../../utils/printGenerator';
+import { buildFinancialVoucherPrintHtml } from '../../utils/financialPrintTemplate';
 import billBullLogo from '../../assets/billBullLogo.png';
 import { exportToExcel, exportToPDF } from '../../utils/exportUtils';
 import { formatDisplayDate } from '../../utils/dateUtils';
@@ -308,16 +309,23 @@ const PaymentVoucher = () => {
                 toast.error('No Payment Voucher template configured.');
                 return;
             }
-            const template = normalizePurchaseTemplate(
-                templates.find((t) => t.isDefault) || templates[0],
-                'Payment Voucher'
-            );
+            const rawTemplate = templates.find((t) => t.isDefault) || templates[0];
+
+            // Detect Financials-designer templates (carry rich settings in
+            // displayOptions). Route those through the new renderer so toggles
+            // like accent colour, signature labels, narration etc. apply.
+            const hasNewSettings = (() => {
+                if (!rawTemplate?.displayOptions) return false;
+                try {
+                    const opts = typeof rawTemplate.displayOptions === 'string'
+                        ? JSON.parse(rawTemplate.displayOptions)
+                        : rawTemplate.displayOptions;
+                    return opts && typeof opts === 'object' && ('accentColor' in opts || 'showLogo' in opts);
+                } catch { return false; }
+            })();
 
             let printData;
             if (row.sourceType === 'VENDOR_PAYMENT') {
-                // Pull the freshest voucher record + linked invoice for the
-                // most accurate field mapping (allocated/unallocated, cheque
-                // date, bank, etc).
                 const detail = await getPaymentVoucherById(row.dbId).catch(() => row.raw);
                 const fullVendor = findVendorRecord(vendors, detail, detail?.vendorName);
                 const linkedInvoice = purchaseInvoices.find((inv) => inv.id === detail.invoiceId) || null;
@@ -327,12 +335,6 @@ const PaymentVoucher = () => {
                 printData = buildPaymentVoucherPrintData(shaped, null, company, null);
             }
 
-            const html = generatePrintHtml(template, printData, {
-                companyProfile: company,
-                billBullLogo
-            });
-
-            // Title drives the Save-as-PDF filename.
             const title = generateDocFilename(
                 'Payment Voucher',
                 row.voucherNumber,
@@ -340,8 +342,35 @@ const PaymentVoucher = () => {
                 row.date,
                 currency
             );
-            const titledHtml = html.replace(/<title>.*?<\/title>/i, `<title>${title}</title>`);
-            printHtml(titledHtml);
+
+            let html;
+            if (hasNewSettings) {
+                // Map the legacy print payload onto the new renderer's shape.
+                html = buildFinancialVoucherPrintHtml('payment-voucher', {
+                    voucherNumber: row.voucherNumber,
+                    date: row.date,
+                    party: row.paidTo || printData?.vendor?.name,
+                    partyCode: printData?.vendor?.code || '',
+                    amount: row.amount,
+                    currency,
+                    mode: row.mode || printData?.payment?.mode,
+                    bank: printData?.payment?.bank || printData?.payment?.bankAccount,
+                    reference: row.reference,
+                    chequeRef: printData?.payment?.chequeNumber || printData?.payment?.referenceNumber,
+                    narration: printData?.notes || row.notes,
+                    amountInWords: printData?.amountInWords,
+                    preparedBy: printData?.preparedBy || row.preparedBy,
+                    branch: row.branch,
+                    linkedInvoice: printData?.invoice?.number,
+                    invoiceDate: printData?.invoice?.date,
+                }, { company, template: rawTemplate });
+                html = html.replace(/<title>.*?<\/title>/i, `<title>${title}</title>`);
+            } else {
+                const template = normalizePurchaseTemplate(rawTemplate, 'Payment Voucher');
+                html = generatePrintHtml(template, printData, { companyProfile: company, billBullLogo });
+                html = html.replace(/<title>.*?<\/title>/i, `<title>${title}</title>`);
+            }
+            printHtml(html);
         } catch (err) {
             console.error('Failed to print payment voucher', err);
             toast.error('Failed to generate print layout');

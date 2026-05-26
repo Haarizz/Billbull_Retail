@@ -17,6 +17,7 @@ import { getUsernameFromToken } from '../../api/auth';
 import { formatDisplayDate } from '../../utils/dateUtils';
 import { buildJournalVoucherPrintHtml } from '../../utils/journalVoucherPrintTemplate';
 import { getTemplatesByCategory } from '../../api/printTemplateApi';
+import { buildFinancialVoucherPrintHtml } from '../../utils/financialPrintTemplate';
 import LedgerAccountCreateModal from '../../components/common/LedgerAccountCreateModal';
 import { formatUserDisplayName } from '../../utils/displayName';
 import PaginationFooter from '../../components/common/PaginationFooter';
@@ -671,10 +672,27 @@ const JournalVoucher = () => {
             console.warn('Failed to load JV template, using built-in default', err);
         }
         const lines = (jv.lines || journalLines).filter(l => l.account || l.debit || l.credit);
-        return buildJournalVoucherPrintHtml(
-            { ...jv, lines },
-            { company, template }
-        );
+
+        // Templates saved by the Financials Print & Email Templates designer
+        // carry the new settings (showLogo, accentColor, signature toggles…)
+        // inside displayOptions. Route those through the new renderer so the
+        // design-time choices actually drive the printout. Templates without
+        // those keys are legacy header/terms/footer-text templates — fall back
+        // to the existing renderer.
+        const hasNewSettings = (() => {
+            if (!template?.displayOptions) return false;
+            try {
+                const opts = typeof template.displayOptions === 'string'
+                    ? JSON.parse(template.displayOptions)
+                    : template.displayOptions;
+                return opts && typeof opts === 'object' && ('accentColor' in opts || 'showLogo' in opts);
+            } catch { return false; }
+        })();
+
+        if (hasNewSettings) {
+            return buildFinancialVoucherPrintHtml('journal-voucher', { ...jv, lines }, { company, template });
+        }
+        return buildJournalVoucherPrintHtml({ ...jv, lines }, { company, template });
     };
 
     const getCurrentJvPrintPayload = () => {

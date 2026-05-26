@@ -1044,6 +1044,13 @@ const Ledger = () => {
     );
   };
 
+  // Client-side pagination for the two big lists in this page.
+  const LIST_PAGE_SIZE = 30;
+  const [accountsPage, setAccountsPage] = useState(0);
+  useEffect(() => { setAccountsPage(0); }, [searchQuery, filterGroup, filterBranch, showArchived]);
+  const [glPage, setGlPage] = useState(0);
+  useEffect(() => { setGlPage(0); }, [glFilterAccount, glFilterFrom, glFilterTo, glTextSearch]);
+
   if (loading) {
     return (
       <div className="min-h-screen bg-slate-50 flex items-center justify-center">
@@ -1080,13 +1087,7 @@ const Ledger = () => {
     return matchesAccount && matchesFrom && matchesTo && matchesText;
   });
 
-  // Client-side pagination for the two big lists in this page.
-  const LIST_PAGE_SIZE = 30;
-  const [accountsPage, setAccountsPage] = useState(0);
-  useEffect(() => { setAccountsPage(0); }, [searchQuery, filterGroup, filterBranch, showArchived]);
   const pagedAccounts = filteredAccounts.slice(accountsPage * LIST_PAGE_SIZE, (accountsPage + 1) * LIST_PAGE_SIZE);
-  const [glPage, setGlPage] = useState(0);
-  useEffect(() => { setGlPage(0); }, [glFilterAccount, glFilterFrom, glFilterTo, glTextSearch]);
   const pagedGl = filteredGlData.slice(glPage * LIST_PAGE_SIZE, (glPage + 1) * LIST_PAGE_SIZE);
 
   const visibleCoaTree = filterCoaTree(accountTree, coaTreeSearch);
