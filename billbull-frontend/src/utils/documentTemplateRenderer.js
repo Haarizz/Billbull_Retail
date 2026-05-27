@@ -25,8 +25,8 @@ const PURCHASE_TEMPLATE_CATEGORIES = new Set([
     'Cheque'
 ]);
 
-const LEFT_META_LABEL_PATTERNS = /^(P\.O|PO Number|Purchase Order|Account Executive|Salesperson|Sales Person|Prepared By)$/i;
-const HIDDEN_HEADER_LABEL_PATTERNS = /^(Payment Terms?|Status)$/i;
+const LEFT_META_LABEL_PATTERNS = /^(P\.O|PO Number|Purchase Order|Account Executive|Salesperson|Sales Person|Buyer|Prepared By)$/i;
+const HIDDEN_HEADER_LABEL_PATTERNS = /^(Status|Approval Status|QC Status|Posted)$/i;
 
 const DOC_NO_LABELS = {
     'Quotation': 'Quote Number',
@@ -135,6 +135,8 @@ const normaliseFontSize = (value, fallback = 10) => {
     if (!Number.isFinite(parsed)) return fallback;
     return Math.min(13, Math.max(8, parsed));
 };
+
+const resolveTemplateImageUrl = (value) => resolveDocumentImageUrl(value) || '';
 
 const buildTheme = (template = {}) => {
     const settings = getTemplateDesignerSettings(template);
@@ -266,6 +268,12 @@ export const normalizeDocumentCompanyProfile = (companyProfile = {}) => {
         phone: firstNonEmpty(companyProfile.phone, companyProfile.mobile),
         email: firstNonEmpty(companyProfile.email),
         trn: firstNonEmpty(companyProfile.trn, companyProfile.taxId),
+        crn: firstNonEmpty(
+            companyProfile.crn,
+            companyProfile.crNumber,
+            companyProfile.registrationNumber,
+            companyProfile.companyRegistrationNumber
+        ),
         website: firstNonEmpty(companyProfile.website),
         logoUrl: resolveLogoUrl(companyProfile),
         stampUrl: resolveStampUrl(companyProfile),
@@ -284,6 +292,124 @@ const resolveCurrency = (companyProfile = {}, totals = {}, summaryAmount = {}) =
     const documentCurrency = firstNonEmpty(totals.currency, summaryAmount.currency);
     return resolveCurrencyDisplayConfig(documentCurrency || 'AED').label;
 };
+
+const formatAmountInWords = (value, currency) => {
+    const amount = asNumber(value);
+    const whole = Math.floor(amount);
+    const fils = Math.round((amount - whole) * 100);
+    return `${whole.toLocaleString('en-AE')} ${currency} and ${fils} Fils Only`;
+};
+
+const visibleWhen = (settings, keys, fallback = true) => pickSetting(settings, keys, fallback);
+
+const buildCompanyVisibility = (settings = {}) => ({
+    name: visibleWhen(settings, ['showCompanyName'], true),
+    address: visibleWhen(settings, ['showCompanyAddress'], true),
+    phone: visibleWhen(settings, ['showCompanyPhone'], true),
+    email: visibleWhen(settings, ['showCompanyEmail'], true),
+    website: visibleWhen(settings, ['showCompanyWebsite'], true),
+    trn: visibleWhen(settings, ['showTRN', 'showCompanyTaxId'], true),
+    crn: visibleWhen(settings, ['showCRN', 'showCompanyRegNumber'], false)
+});
+
+const buildPartyVisibility = (settings = {}) => ({
+    code: visibleWhen(settings, ['showCustomerCode', 'showVendorCode'], true),
+    address: visibleWhen(settings, ['showBillTo', 'showVendorCard'], true),
+    phone: visibleWhen(settings, ['showCustomerPhone', 'showVendorContact', 'showVendorMobile'], true),
+    email: visibleWhen(settings, ['showCustomerEmail', 'showVendorEmail'], true),
+    taxId: visibleWhen(settings, ['showCustomerTRN', 'showVendorTRN'], true)
+});
+
+const applyDesignerColumnVisibility = (columns = {}, settings = {}) => ({
+    ...columns,
+    showIndex: visibleWhen(settings, ['colNo', 'showLineNumber'], true),
+    image: visibleWhen(settings, ['colProductImage', 'showItemImage'], Boolean(columns.image)),
+    showItemIdentity: visibleWhen(settings, ['colItemCode', 'showItemCode'], true),
+    uom: visibleWhen(settings, ['colUOM', 'showUOM'], Boolean(columns.uom)),
+    description: visibleWhen(settings, ['colDescription', 'showItemDescription'], columns.description !== false),
+    qty: visibleWhen(settings, ['colQty', 'showQty'], columns.qty !== false),
+    unitPrice: visibleWhen(settings, ['colUnitPrice', 'showUnitPrice'], columns.unitPrice !== false),
+    taxableAmount: visibleWhen(settings, ['colTaxableAmount', 'showTaxableAmount'], Boolean(columns.taxableAmount)),
+    discount: visibleWhen(settings, ['colDiscount', 'showDiscount'], Boolean(columns.discount)),
+    discountPercent: visibleWhen(settings, ['colDiscount', 'showDiscountPercent'], Boolean(columns.discountPercent)),
+    taxPercent: visibleWhen(settings, ['colVAT', 'showVATPercent'], Boolean(columns.taxPercent)),
+    tax: visibleWhen(settings, ['colVATAmount', 'showVATAmount'], columns.tax !== false),
+    total: visibleWhen(settings, ['colLineTotal', 'showLineTotal'], columns.total !== false),
+    productId: visibleWhen(settings, ['colItemCode', 'showItemCode'], Boolean(columns.productId)),
+    sku: visibleWhen(settings, ['colSKU', 'showSKU'], Boolean(columns.sku)),
+    barcode: visibleWhen(settings, ['colBarcode', 'showBarcode'], Boolean(columns.barcode)),
+    brand: visibleWhen(settings, ['colBrand', 'showBrand'], Boolean(columns.brand)),
+    batchNumber: visibleWhen(settings, ['colBatchNumber', 'showBatchNo'], Boolean(columns.batchNumber)),
+    location: visibleWhen(settings, ['colBinLocation', 'showBinLocation'], Boolean(columns.location)),
+    lpoQty: visibleWhen(settings, ['showOrderedQty', 'colOrderedQty'], Boolean(columns.lpoQty)),
+    received: visibleWhen(settings, ['showReceivedQty', 'colReceivedQty'], Boolean(columns.received)),
+    accepted: visibleWhen(settings, ['showAcceptedQty', 'colAcceptedQty'], Boolean(columns.accepted)),
+    expiry: visibleWhen(settings, ['showExpiry', 'colExpiry'], Boolean(columns.expiry))
+});
+
+const shouldShowPurchaseMetaRow = (row, settings = {}) => {
+    const label = asText(row?.label).trim().toLowerCase();
+    if (!label) return false;
+
+    if (/^date$|document date|lpo date|grn date|invoice date|voucher date/.test(label)) {
+        return visibleWhen(settings, ['showDocDate', 'showLpoDate', 'showLPODate', 'showGRNDate', 'showInvoiceDate', 'showVoucherDate'], true);
+    }
+    if (/due date|expected delivery/.test(label)) {
+        return visibleWhen(settings, ['showDueDate'], false);
+    }
+    if (/valid until|valid till/.test(label)) {
+        return visibleWhen(settings, ['showValidUntil'], false);
+    }
+    if (/payment terms?/.test(label)) {
+        return visibleWhen(settings, ['showPaymentTerms'], false);
+    }
+    if (/currency/.test(label)) {
+        return visibleWhen(settings, ['showCurrency'], true);
+    }
+    if (/p\.?o\.?|po number|purchase order|reference|source ref|created from|doc ref|vendor invoice|supplier invoice|grn no/.test(label)) {
+        return visibleWhen(settings, ['showPOReference'], true);
+    }
+    if (/warehouse/.test(label)) {
+        return visibleWhen(settings, ['showWarehouseStore', 'showWarehouse'], false);
+    }
+    if (/location|store|branch/.test(label)) {
+        return visibleWhen(settings, ['showLocationStore', 'showBranch'], false);
+    }
+    if (/buyer|account executive|salesperson|sales person|prepared by|received by|checked by/.test(label)) {
+        return visibleWhen(settings, ['showSalesperson', 'showReceivedBy'], true);
+    }
+    if (/delivery terms?/.test(label)) {
+        return visibleWhen(settings, ['showDeliveryTerms'], false);
+    }
+
+    return true;
+};
+
+const PURCHASE_DESIGNER_REFERENCE_ORDER = [
+    /p\.?o\.?|po number|purchase order|reference|source ref|created from|doc ref/,
+    /location|store|branch/,
+    /warehouse/,
+    /account executive|buyer|salesperson|sales person|prepared by|received by|checked by/,
+    /payment terms?/,
+    /currency/,
+    /delivery terms?/
+];
+
+const sortPurchaseDesignerMetaRows = (rows = []) =>
+    rows
+        .map((row, index) => ({ row, index }))
+        .sort((a, b) => {
+            const aLabel = asText(a.row?.label).trim().toLowerCase();
+            const bLabel = asText(b.row?.label).trim().toLowerCase();
+            const aOrder = PURCHASE_DESIGNER_REFERENCE_ORDER.findIndex((pattern) => pattern.test(aLabel));
+            const bOrder = PURCHASE_DESIGNER_REFERENCE_ORDER.findIndex((pattern) => pattern.test(bLabel));
+            const resolvedAOrder = aOrder === -1 ? PURCHASE_DESIGNER_REFERENCE_ORDER.length : aOrder;
+            const resolvedBOrder = bOrder === -1 ? PURCHASE_DESIGNER_REFERENCE_ORDER.length : bOrder;
+
+            if (resolvedAOrder !== resolvedBOrder) return resolvedAOrder - resolvedBOrder;
+            return a.index - b.index;
+        })
+        .map(({ row }) => row);
 
 const resolveCompanyVars = (html, company) => {
     if (!html) return '';
@@ -389,17 +515,19 @@ const createColumnModel = (rawColumns = {}) => {
     // Amount cell shows an inline Discount sub-line when "Discount % (in
     // Taxable Amount col)" is on.
     return [
-        { key: 'index',         label: '#',                               align: 'center', width: '4%',  enabled: true },
-        { key: 'description',   label: 'Product/Services',                align: 'left',   width: c.batchBarcode ? '16%' : '22%', enabled: true },
-        { key: 'details',       label: 'Description',                     align: 'left',   width: c.batchBarcode ? '14%' : '20%', enabled: c.description !== false },
+        { key: 'index',         label: '#',                               align: 'center', width: '4%',  enabled: c.showIndex !== false },
+        { key: 'image',         label: 'Image',                           align: 'center', width: '7%',  enabled: Boolean(c.image) },
+        { key: 'description',   label: 'Product / Services',              align: 'left',   width: c.batchBarcode ? '16%' : '22%', enabled: c.showItemIdentity !== false },
+        { key: 'details',       label: 'Description of Product / Services', align: 'left', width: c.batchBarcode ? '14%' : '24%', enabled: c.description !== false },
+        { key: 'uom',           label: 'UOM',                             align: 'center', width: '6%',  enabled: Boolean(c.uom) },
         { key: 'batchBarcode',  label: 'Batch Barcode',                   align: 'center', width: '22%', enabled: Boolean(c.batchBarcode) },
         { key: 'expiry',        label: 'Expiry',                          align: 'center', width: '8%',  enabled: Boolean(c.expiry) },
         { key: 'qty',           label: 'Qty',                             align: 'right',  width: '6%',  enabled: c.qty !== false },
         { key: 'unitPrice',     label: 'Unit Price',                      align: 'right',  width: '9%',  enabled: c.unitPrice !== false },
         { key: 'taxableAmount', label: 'Taxable Amount',                  align: 'right',  width: '12%', enabled: Boolean(c.taxableAmount) },
         { key: 'discountPercent', label: 'Discount %',                    align: 'center', width: '7%',  enabled: Boolean(c.discountPercent) },
+        { key: 'taxPercent',    label: 'VAT %',                           align: 'center', width: '6%',  enabled: Boolean(c.taxPercent) },
         { key: 'tax',           label: 'VAT Amount',                      align: 'right',  width: '9%',  enabled: c.tax !== false },
-        { key: 'taxPercent',    label: 'Tax %',                           align: 'center', width: '6%',  enabled: Boolean(c.taxPercent) },
         { key: 'total',         label: 'Line Total',                      align: 'right',  width: '9%',  enabled: c.total !== false },
         { key: 'lpoQty',        label: 'LPO Qty',                         align: 'right',  width: '6%',  enabled: Boolean(c.lpoQty) },
         { key: 'received',      label: 'Received',                        align: 'right',  width: '6%',  enabled: Boolean(c.received) },
@@ -432,7 +560,7 @@ const buildItemDetailLines = (item) =>
 // designer (printTemplateConfig column flags). The product name is always
 // shown — it's the column's headline.
 const buildDescriptionCell = (item, displayOptions = {}, columnOptions = {}) => {
-    const showImage = displayOptions.showItemImage && item.image;
+    const showImage = displayOptions.showItemImage && !columnOptions.image && item.image;
     const productName = item.name && item.name !== '-' ? item.name : (item.description.title || '-');
     const code = asText(item.code).trim();
     const sku = asText(item.sku).trim();
@@ -495,13 +623,27 @@ const buildDetailsCell = (item, columnOptions = {}) => {
         lines.forEach((line) => bullets.push(`<li class="desc-bullet">${escapeHtml(line)}</li>`));
     }
 
-    return bullets.length > 0 ? `<ul class="desc-bullets">${bullets.join('')}</ul>` : '';
+    const discountLine = item.discountPercent > 0
+        ? `<div class="desc-discount-line">Discount N/A @ ${formatNumber(item.discountPercent, 0)}%</div>`
+        : '';
+
+    return bullets.length > 0 || discountLine
+        ? `${bullets.length > 0 ? `<ul class="desc-bullets">${bullets.join('')}</ul>` : ''}${discountLine}`
+        : '';
 };
 
 const renderTableCell = (column, item, index, displayOptions = {}, columnOptions = {}) => {
     switch (column.key) {
         case 'index':
             return `<td class="table-cell cell-center cell-index">${index + 1}</td>`;
+        case 'image':
+            return `
+                <td class="table-cell cell-center">
+                    ${item.image
+                        ? `<img src="${escapeHtml(item.image)}" class="item-thumb item-thumb-small" alt="" />`
+                        : `<div class="item-thumb item-thumb-small item-thumb-placeholder"></div>`}
+                </td>
+            `;
         case 'description':
             return `<td class="table-cell cell-description">${buildDescriptionCell(item, displayOptions, columnOptions)}</td>`;
         case 'details':
@@ -562,10 +704,11 @@ const renderTableCell = (column, item, index, displayOptions = {}, columnOptions
         case 'qty':
             return `
                 <td class="table-cell cell-right">
-                    <div>${formatNumber(item.qty, 0)}</div>
-                    ${item.unit ? `<div class="cell-unit">${escapeHtml(item.unit)}</div>` : ''}
+                    <div>${formatNumber(item.qty, 2)}</div>
                 </td>
             `;
+        case 'uom':
+            return `<td class="table-cell cell-center">${escapeHtml(item.unit || '-')}</td>`;
         case 'unitPrice':
             return `<td class="table-cell cell-right">${formatNumber(item.price)}</td>`;
         case 'taxableAmount':
@@ -608,7 +751,7 @@ const renderTableCell = (column, item, index, displayOptions = {}, columnOptions
 };
 
 const buildItemsTable = (layout) => {
-    if (!layout.showItemTable) return '';
+    if (!layout.showItemTable || !layout.columnModel?.length) return '';
 
     const colSpan = layout.columnModel.length;
     const isPickList = layout.category === 'Pick List';
@@ -675,13 +818,22 @@ const buildTotalsTable = (layout) => {
     const balanceDue = asNumber(layout.totals.balanceDue ?? Math.max(asNumber(layout.totals.grandTotal) - amountPaid, 0));
     const currency = renderCurrencySymbol(layout.currency);
 
-    const row = (label, amount, className = '') => `
-        <tr class="${className}">
-            <td class="tot-label">${label}</td>
-            <td class="tot-amount">${currency} ${formatNumber(amount)}</td>
-        </tr>
-    `;
+    const row = (label, amount, className = '') => layout.isPurchaseDesigner
+        ? `
+            <tr class="${className}">
+                <td class="tot-label">${label}</td>
+                <td class="tot-currency">${currency}</td>
+                <td class="tot-amount">${formatNumber(amount)}</td>
+            </tr>
+        `
+        : `
+            <tr class="${className}">
+                <td class="tot-label">${label}</td>
+                <td class="tot-amount">${currency} ${formatNumber(amount)}</td>
+            </tr>
+        `;
     const visibility = {
+        taxable: false,
         subTotal: true,
         discount: true,
         tax: true,
@@ -692,13 +844,22 @@ const buildTotalsTable = (layout) => {
     };
 
     const rows = [
+        visibility.taxable ? row('Taxable Amount', layout.totals.subTotal) : '',
         visibility.subTotal ? row('Sub Total', layout.totals.subTotal) : '',
-        visibility.discount && discountAmount > 0 ? `
-            <tr class="amount-negative">
-                <td class="tot-label">Discount${discountPercent > 0 ? ` (${formatNumber(discountPercent, 0)}%)` : ''}</td>
-                <td class="tot-amount">${currency} - ${formatNumber(discountAmount)}</td>
-            </tr>
-        ` : '',
+        visibility.discount && discountAmount > 0 ? (layout.isPurchaseDesigner
+            ? `
+                <tr class="amount-negative">
+                    <td class="tot-label">Discount${discountPercent > 0 ? ` (${formatNumber(discountPercent, 0)}%)` : ''}</td>
+                    <td class="tot-currency">${currency}</td>
+                    <td class="tot-amount">- ${formatNumber(discountAmount)}</td>
+                </tr>
+            `
+            : `
+                <tr class="amount-negative">
+                    <td class="tot-label">Discount${discountPercent > 0 ? ` (${formatNumber(discountPercent, 0)}%)` : ''}</td>
+                    <td class="tot-amount">${currency} - ${formatNumber(discountAmount)}</td>
+                </tr>
+            `) : '',
         visibility.tax ? row('Total VAT', layout.totals.tax) : '',
         visibility.grandTotal ? row('Total', layout.totals.grandTotal, 'grand-total-row') : '',
         visibility.amountPaid && amountPaid > 0 ? row('Amount Paid', amountPaid) : '',
@@ -735,20 +896,40 @@ const buildPaymentCard = (layout) => {
 };
 
 const buildSummarySection = (layout, renderTarget = 'print') => {
-    const hasNotes = Boolean(layout.notes);
+    const hasNotes = Boolean(layout.showNotesSection !== false && layout.notes);
     const hasTerms = Boolean(layout.displayOptions.showTerms !== false && layout.terms);
     const totalsTable = buildTotalsTable(layout);
+    const showAmountInWords = Boolean(layout.showAmountInWords && layout.highlight?.value);
+    const bankRows = Array.isArray(layout.bankRows) ? layout.bankRows.filter((row) => row?.value) : [];
 
-    if (!hasNotes && !hasTerms && !totalsTable) return '';
+    if (!hasNotes && !hasTerms && !totalsTable && !showAmountInWords && bankRows.length === 0) return '';
 
     const notesHtml = `
+        ${showAmountInWords ? `
+            <div class="amount-words">In Words: ${escapeHtml(formatAmountInWords(layout.highlight.value, layout.currency))}</div>
+        ` : ''}
+        ${bankRows.length > 0 ? `
+            <div class="bank-box">
+                <div class="summary-label summary-label-bank">Bank Details</div>
+                <div class="bank-grid">
+                    ${bankRows.map((row) => `
+                        <div class="bank-row">
+                            <span>${escapeHtml(row.label)}</span>
+                            <strong>${escapeHtml(row.value)}</strong>
+                        </div>
+                    `).join('')}
+                </div>
+            </div>
+        ` : ''}
+        ${hasTerms ? `
+            <div class="terms-box">
+                <div class="summary-label summary-label-terms">Terms &amp; Conditions</div>
+                <div class="notes-copy">${escapeHtml(layout.terms)}</div>
+            </div>
+        ` : ''}
         ${hasNotes ? `
             <div class="summary-label">Notes</div>
             <div class="notes-copy">${escapeHtml(layout.notes)}</div>
-        ` : ''}
-        ${hasTerms ? `
-            <div class="summary-label${hasNotes ? ' summary-label-terms' : ''}">Terms &amp; Conditions</div>
-            <div class="notes-copy">${escapeHtml(layout.terms)}</div>
         ` : ''}
     `;
 
@@ -799,8 +980,18 @@ const buildSignatureBlock = (layout) => {
     `;
 };
 
-const buildWatermark = (status) => {
-    const upperStatus = asText(status).toUpperCase().replace(/\s+/g, '_');
+const buildWatermark = (layout) => {
+    if (layout.showWatermark) {
+        return `
+            <div class="document-watermark">
+                <span>${escapeHtml(layout.watermarkText || 'ORIGINAL')}</span>
+            </div>
+        `;
+    }
+
+    if (layout.hasDesignerWatermarkToggle) return '';
+
+    const upperStatus = asText(layout.status).toUpperCase().replace(/\s+/g, '_');
 
     if (!['DRAFT', 'CANCELLED', 'REJECTED'].includes(upperStatus)) {
         return '';
@@ -820,22 +1011,34 @@ const resolveLayoutDate = (layout) =>
     );
 
 const buildStampBlock = (layout, renderTarget) => {
+    if (layout.showCompanyStamp === false) return '';
+
     const showStamp = renderTarget === 'email'
         ? layout.company.showStampInEmail
         : layout.company.showStampInPrint;
+    const stampUrl = layout.stampUrl || layout.company.stampUrl;
 
-    if (!layout.company.stampUrl || !showStamp) return '';
+    if (!showStamp) return '';
+    if (!stampUrl && !layout.isPurchaseDesigner) return '';
 
     return `
         <div class="stamp-container">
-            <img src="${layout.company.stampUrl}" alt="Company Stamp" />
+            ${stampUrl
+                ? `<img src="${escapeHtml(stampUrl)}" alt="Company Stamp" />`
+                : `<div class="stamp-placeholder"><span>Company<br/>Stamp</span></div>`}
+            <div class="stamp-caption">Official Stamp</div>
         </div>
     `;
 };
 
 const buildPrintDateStamp = (layout, renderTarget) =>
-    renderTarget === 'print'
+    renderTarget === 'print' && layout.showPrintDateStamp !== false
         ? `<div class="print-date-stamp">Printed: ${escapeHtml(new Date().toISOString().slice(0, 10))}</div>`
+        : '';
+
+const buildPageNumbers = (layout, renderTarget) =>
+    renderTarget === 'print' && layout.showPageNumbers
+        ? '<div class="page-number-label">Page 1 of 1</div>'
         : '';
 
 const buildHeaderAddon = (layout) =>
@@ -861,11 +1064,12 @@ const buildGrandTotal = (layout) => {
 
 const buildLogoBlock = (layout) => {
     if (layout.displayOptions.showLogo === false) return '';
+    const logoUrl = layout.logoUrl || layout.company.logoUrl;
 
-    return layout.company.logoUrl
+    return logoUrl
         ? `
             <div class="company-logo">
-                <img src="${layout.company.logoUrl}" alt="Company Logo" />
+                <img src="${escapeHtml(logoUrl)}" alt="Company Logo" />
             </div>
         `
         : `
@@ -880,11 +1084,15 @@ const buildHeader = (layout, renderTarget = 'print') => {
         .filter((row) => !HIDDEN_HEADER_LABEL_PATTERNS.test(asText(row.label).trim()));
     const visibleReferenceRows = (layout.referenceRows || [])
         .filter((row) => !HIDDEN_HEADER_LABEL_PATTERNS.test(asText(row.label).trim()));
-    const leftMetaRows = [
-        ...visibleHeaderRows,
-        ...visibleReferenceRows
-    ].filter((row) => LEFT_META_LABEL_PATTERNS.test(asText(row.label).trim()));
-    const centerMetaRows = visibleReferenceRows.filter((row) => !LEFT_META_LABEL_PATTERNS.test(asText(row.label).trim()));
+    const leftMetaRows = layout.isPurchaseDesigner
+        ? []
+        : [
+            ...visibleHeaderRows,
+            ...visibleReferenceRows
+        ].filter((row) => LEFT_META_LABEL_PATTERNS.test(asText(row.label).trim()));
+    const centerMetaRows = layout.isPurchaseDesigner
+        ? visibleReferenceRows
+        : visibleReferenceRows.filter((row) => !LEFT_META_LABEL_PATTERNS.test(asText(row.label).trim()));
     const centerHeaderRows = visibleHeaderRows.filter((row) => !LEFT_META_LABEL_PATTERNS.test(asText(row.label).trim()));
 
     const centerItems = [
@@ -893,29 +1101,62 @@ const buildHeader = (layout, renderTarget = 'print') => {
         ...centerMetaRows
     ];
 
+    const partyVisibility = {
+        code: false,
+        address: true,
+        phone: true,
+        email: true,
+        taxId: true,
+        ...(layout.partyVisibility || {})
+    };
+    const companyVisibility = {
+        name: true,
+        address: true,
+        phone: true,
+        email: true,
+        website: true,
+        trn: true,
+        crn: false,
+        ...(layout.companyVisibility || {})
+    };
     const customerLines = layout.party ? compactValues(
-        layout.party.address || '',
-        layout.party.taxId ? `${layout.partyTaxLabel || 'TRN'} : ${layout.party.taxId}` : '',
-        layout.party.phone || '',
-        layout.party.email || ''
+        partyVisibility.code && layout.party.code ? `Code: ${layout.party.code}` : '',
+        partyVisibility.address ? layout.party.address || '' : '',
+        partyVisibility.taxId && layout.party.taxId ? `${layout.partyTaxLabel || 'TRN'} : ${layout.party.taxId}` : '',
+        partyVisibility.phone ? layout.party.phone || '' : '',
+        partyVisibility.email ? layout.party.email || '' : ''
+    ) : [];
+    const shipToLines = layout.shipTo ? compactValues(
+        layout.shipTo.name || '',
+        layout.shipTo.address || '',
+        layout.shipTo.phone || '',
+        layout.shipTo.email || ''
     ) : [];
 
     const companyLines = compactValues(
-        layout.company.address,
-        layout.company.email,
-        layout.company.phone,
-        layout.company.trn ? `TRN . ${layout.company.trn}` : '',
-        layout.company.website
+        companyVisibility.address ? layout.company.address : '',
+        companyVisibility.email ? layout.company.email : '',
+        companyVisibility.phone ? layout.company.phone : '',
+        companyVisibility.trn && layout.company.trn ? `TRN . ${layout.company.trn}` : '',
+        companyVisibility.crn && layout.company.crn ? `CR No . ${layout.company.crn}` : '',
+        companyVisibility.website ? layout.company.website : ''
     );
 
     const leftContent = `
         <div class="document-title">${escapeHtml(layout.title)}</div>
 
-        ${layout.displayOptions.showCustomerDetails !== false && layout.party ? `
+        ${layout.displayOptions.showCustomerDetails !== false && partyVisibility.address && layout.party ? `
             <div class="bill-to-block">
                 <div class="bill-to-eyebrow">${escapeHtml(layout.partyLabel)},</div>
                 <div class="bill-to-name">${escapeHtml(layout.party.name || '')}</div>
                 ${customerLines.map((line) => `<div class="bill-to-line">${escapeHtml(line)}</div>`).join('')}
+            </div>
+        ` : ''}
+
+        ${layout.displayOptions.showCustomerDetails !== false && layout.showShipTo && shipToLines.length > 0 ? `
+            <div class="bill-to-block ship-to-block">
+                <div class="bill-to-eyebrow">SHIP TO</div>
+                ${shipToLines.map((line) => `<div class="bill-to-line">${escapeHtml(line)}</div>`).join('')}
             </div>
         ` : ''}
 
@@ -931,20 +1172,23 @@ const buildHeader = (layout, renderTarget = 'print') => {
         ` : ''}
     `;
 
-    const centerContent = centerItems.map((item) => `
+    const centerItemHtml = centerItems.map((item) => `
         <div class="doc-meta-item">
             <div class="doc-meta-label">${escapeHtml(item.label)}</div>
             <div class="doc-meta-value">${escapeHtml(item.value)}</div>
         </div>
     `).join('');
+    const centerContent = layout.isPurchaseDesigner
+        ? `<div class="designer-meta-grid">${centerItemHtml}</div>`
+        : centerItemHtml;
 
     const rightContent = `
         ${buildLogoBlock(layout)}
 
         ${layout.displayOptions.showCompanyDetails !== false ? `
             <div class="company-panel">
-                <div class="company-name">${escapeHtml(layout.company.companyName || '')}</div>
-                ${layout.company.localName && layout.company.localName !== layout.company.companyName
+                ${companyVisibility.name ? `<div class="company-name">${escapeHtml(layout.company.companyName || '')}</div>` : ''}
+                ${companyVisibility.name && layout.company.localName && layout.company.localName !== layout.company.companyName
                     ? `<div class="company-copy company-local-name">${escapeHtml(layout.company.localName)}</div>`
                     : ''}
                 ${companyLines.map((line) => `<div class="company-copy">${escapeHtml(line)}</div>`).join('')}
@@ -977,7 +1221,7 @@ const buildHeader = (layout, renderTarget = 'print') => {
     }
 
     return `
-        <header class="document-header">
+        <header class="document-header${layout.isPurchaseDesigner ? ' document-header-designer' : ''}">
             <div class="header-left">${leftContent}</div>
             <div class="header-center">${centerContent}</div>
             <div class="header-right">${rightContent}</div>
@@ -1050,6 +1294,24 @@ const buildCoreStyles = () => `
         align-items: start;
         margin-bottom: 16px;
     }
+    .document-header-designer {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        gap: 16px;
+        margin-bottom: 18px;
+    }
+    .document-header-designer .header-left {
+        flex: 1 1 0;
+        min-width: 0;
+    }
+    .document-header-designer .header-center {
+        flex: 0 0 292px;
+        align-self: flex-end;
+    }
+    .document-header-designer .header-right {
+        flex: 0 0 170px;
+    }
     .document-title {
         font-size: 20px;
         line-height: 1.2;
@@ -1059,12 +1321,33 @@ const buildCoreStyles = () => `
         white-space: nowrap;
         word-break: keep-all;
     }
+    .document-header-designer .document-title {
+        margin: 0 0 14px;
+        max-width: 120px;
+        white-space: normal;
+        word-break: normal;
+        overflow-wrap: normal;
+        line-height: 1.35;
+    }
     .header-center {
         display: grid;
         gap: 10px;
         padding-top: 48px;
         justify-items: end;
         text-align: right;
+    }
+    .document-header-designer .header-center {
+        display: block;
+        padding-top: 0;
+        padding-bottom: 2px;
+        justify-items: stretch;
+        text-align: left;
+    }
+    .designer-meta-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(118px, 1fr));
+        gap: 10px 20px;
+        align-items: start;
     }
     .header-right {
         display: grid;
@@ -1111,6 +1394,9 @@ const buildCoreStyles = () => `
         max-width: 260px;
         text-align: right;
     }
+    .document-header-designer .company-panel {
+        line-height: 1.55;
+    }
     .company-name,
     .company-local-name {
         font-weight: 700;
@@ -1134,6 +1420,22 @@ const buildCoreStyles = () => `
     .bill-to-name {
         margin-top: 8px;
     }
+    .document-header-designer .bill-to-block {
+        margin-bottom: 12px;
+    }
+    .document-header-designer .bill-to-eyebrow {
+        margin-bottom: 4px;
+        color: #888888;
+        text-transform: uppercase;
+    }
+    .document-header-designer .bill-to-name {
+        margin: 0 0 2px;
+    }
+    .document-header-designer .bill-to-line {
+        color: #444444;
+        line-height: 1.65;
+        white-space: pre-line;
+    }
     .left-meta-block {
         display: grid;
         gap: 12px;
@@ -1143,20 +1445,56 @@ const buildCoreStyles = () => `
         gap: 4px;
         justify-items: end;
     }
+    .document-header-designer .doc-meta-item {
+        justify-items: start;
+        text-align: left;
+        min-width: 0;
+    }
+    .document-header-designer .doc-meta-label {
+        font-size: 8px;
+        line-height: 1.2;
+        color: #999999;
+        font-weight: 500;
+        text-transform: none;
+    }
+    .document-header-designer .doc-meta-value {
+        font-size: 9px;
+        line-height: 1.2;
+        font-weight: 700;
+        word-break: normal;
+        overflow-wrap: normal;
+        white-space: normal;
+    }
     .grand-total-display {
         padding: 16px 0;
         text-align: right;
+    }
+    .document-shell-designer .grand-total-display {
+        display: flex;
+        justify-content: flex-end;
+        margin: 8px 0 14px;
+        padding: 0;
+        border-top: 0;
     }
     .grand-total-label {
         color: #111827;
         font-weight: 700;
         margin-bottom: 4px;
     }
+    .document-shell-designer .grand-total-label {
+        color: #888888;
+        font-weight: 600;
+        margin: 0 0 2px;
+    }
     .grand-total-value {
         color: #000000;
         font-size: 16px;
         font-weight: 700;
         line-height: 1.2;
+    }
+    .document-shell-designer .grand-total-value {
+        font-weight: 800;
+        line-height: 1;
     }
     .layout-addon {
         margin-top: 8px;
@@ -1167,6 +1505,9 @@ const buildCoreStyles = () => `
     .content-stack {
         display: grid;
         gap: 16px;
+    }
+    .document-shell-designer .content-stack {
+        display: block;
     }
     .info-card,
     .signature-card {
@@ -1204,11 +1545,18 @@ const buildCoreStyles = () => `
     .table-section {
         width: 100%;
     }
+    .document-shell-designer .table-section {
+        margin-bottom: 16px;
+    }
     .document-table {
         width: 100%;
         border-collapse: collapse;
         table-layout: fixed;
         border-top: 1px solid #e0e0e0;
+    }
+    .document-shell-designer .document-table {
+        border-top: 0;
+        margin-bottom: 0;
     }
     .document-table thead {
         display: table-row-group;
@@ -1223,6 +1571,12 @@ const buildCoreStyles = () => `
         white-space: nowrap;
         word-break: keep-all;
         overflow-wrap: normal;
+    }
+    .document-shell-designer .document-table thead th {
+        padding: 6px 8px;
+        font-size: 0.944em;
+        text-align: center;
+        border-bottom: 0;
     }
     .document-table thead th.cell-right {
         text-align: right;
@@ -1240,6 +1594,9 @@ const buildCoreStyles = () => `
         border-bottom: 1px solid #e0e0e0;
         word-break: normal;
         overflow-wrap: break-word;
+    }
+    .document-shell-designer .table-cell {
+        padding: 5px 8px;
     }
     .table-empty {
         padding: 16px 8px;
@@ -1297,6 +1654,19 @@ const buildCoreStyles = () => `
         flex: 0 0 64px;
         background: transparent;
     }
+    .item-thumb-small {
+        width: 42px;
+        height: 42px;
+        max-width: 42px;
+        max-height: 42px;
+        flex-basis: 42px;
+    }
+    .item-thumb-placeholder {
+        display: inline-block;
+        border: 1px solid #f5c74266;
+        border-radius: 4px;
+        background: #f5c74222;
+    }
     .description-copy {
         flex: 1 1 auto;
         min-width: 0;
@@ -1322,14 +1692,31 @@ const buildCoreStyles = () => `
         padding-left: 1.1em;
         list-style: disc outside;
     }
+    .document-shell-designer .desc-bullets {
+        padding-left: 0;
+        list-style: none;
+    }
     .desc-bullet {
         color: #111827;
         margin: 0 0 2px 0;
         line-height: 1.35;
     }
+    .document-shell-designer .desc-bullet {
+        color: #444444;
+        line-height: 1.6;
+    }
+    .document-shell-designer .desc-bullet::before {
+        content: "· ";
+    }
     .desc-bullet-short {
         color: #4b5563;
         font-style: italic;
+    }
+    .desc-discount-line {
+        margin-top: 4px;
+        color: #e11d48;
+        font-size: 0.89em;
+        font-weight: 600;
     }
     .summary-section {
         display: flex;
@@ -1337,14 +1724,62 @@ const buildCoreStyles = () => `
         gap: 16px;
         padding-top: 16px;
     }
+    .document-shell-designer .summary-section {
+        display: block;
+        padding-top: 0;
+    }
     .summary-notes {}
     .summary-label {
         color: #9ca3af;
         font-weight: 700;
         margin-bottom: 8px;
     }
+    .amount-words {
+        margin: 0 0 14px;
+        text-align: right;
+        color: #374151;
+    }
+    .bank-box,
+    .terms-box {
+        margin-bottom: 12px;
+        border-radius: 6px;
+        padding: 10px 14px;
+    }
+    .bank-box {
+        border: 1px solid #bae6fd;
+        background: #f0f9ff;
+    }
+    .terms-box {
+        border: 1px solid #fde68a;
+        background: #fffbeb;
+    }
+    .document-shell-designer .terms-box {
+        margin-bottom: 12px;
+    }
+    .summary-label-bank {
+        color: #075985;
+    }
     .summary-label-terms {
-        margin-top: 16px;
+        color: #92400e;
+        margin-top: 0;
+    }
+    .bank-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 2px 24px;
+    }
+    .bank-row {
+        display: flex;
+        justify-content: space-between;
+        gap: 12px;
+    }
+    .bank-row span {
+        color: #64748b;
+    }
+    .bank-row strong {
+        color: #111827;
+        font-weight: 700;
+        text-align: right;
     }
     .notes-copy {
         color: #111827;
@@ -1357,6 +1792,9 @@ const buildCoreStyles = () => `
         display: flex;
         justify-content: flex-end;
     }
+    .document-shell-designer .summary-totals {
+        margin-bottom: 8px;
+    }
     .totals-table {
         width: auto;
         border-collapse: collapse;
@@ -1365,12 +1803,24 @@ const buildCoreStyles = () => `
         padding: 5px 0;
         border: 0;
     }
+    .document-shell-designer .totals-table {
+        min-width: 260px;
+    }
+    .document-shell-designer .totals-table td {
+        padding-top: 3px;
+        padding-bottom: 3px;
+    }
     .tot-label {
         color: #111827;
         font-weight: 700;
         text-align: right;
         padding-right: 12px;
         white-space: nowrap;
+    }
+    .document-shell-designer .tot-label {
+        color: #888888;
+        font-weight: 400;
+        padding-right: 16px;
     }
     .tot-amount {
         color: #111827;
@@ -1379,10 +1829,39 @@ const buildCoreStyles = () => `
         min-width: 80px;
         white-space: nowrap;
     }
+    .document-shell-designer .tot-amount {
+        min-width: 110px;
+    }
+    .tot-currency {
+        color: #111827;
+        text-align: right;
+        font-weight: 700;
+        min-width: 42px;
+        white-space: nowrap;
+        padding-left: 12px !important;
+        padding-right: 10px !important;
+    }
+    .document-shell-designer .tot-currency {
+        min-width: 100px;
+        padding-left: 0 !important;
+        padding-right: 0 !important;
+    }
     .grand-total-row td {
         padding-top: 6px;
         font-weight: 700;
         font-size: 11px;
+    }
+    .document-shell-designer .grand-total-row td {
+        padding-top: 6px;
+        padding-bottom: 6px;
+    }
+    .document-shell-designer .grand-total-row .tot-label,
+    .document-shell-designer .grand-total-row .tot-currency {
+        color: #111827;
+        font-weight: 700;
+    }
+    .document-shell-designer .grand-total-row .tot-amount {
+        font-weight: 800;
     }
     .balance-due-row td {
         font-weight: 700;
@@ -1454,12 +1933,39 @@ const buildCoreStyles = () => `
         text-align: left;
     }
     .stamp-container {
-        text-align: right;
+        text-align: center;
         margin-top: 10px;
+        width: fit-content;
     }
     .stamp-container img {
-        max-width: 120px;
+        width: 90px;
+        height: 90px;
+        object-fit: contain;
         opacity: 0.85;
+    }
+    .stamp-placeholder {
+        width: 90px;
+        height: 90px;
+        border-radius: 50%;
+        border: 2px dashed #f5c742;
+        background: #f5c7420d;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: #b08a00;
+        font-weight: 700;
+        line-height: 1.4;
+    }
+    .stamp-caption {
+        margin-top: 6px;
+        color: #94a3b8;
+        font-size: 7px;
+    }
+    .page-number-label {
+        margin-top: 8px;
+        text-align: right;
+        color: #cbd5e1;
+        font-size: 7px;
     }
     .page-num::before { content: counter(page); }
     .page-total::before { content: counter(pages); }
@@ -1505,6 +2011,7 @@ const buildCoreStyles = () => `
 const buildTemplateThemeStyles = (layout) => {
     const theme = layout.theme || buildTheme();
     const mutedBorder = theme.borderColor;
+    const mutedBorderSoft = theme.borderColor.startsWith('#') ? `${theme.borderColor}18` : theme.borderColor;
     const accentSoft = theme.accentColor.startsWith('#') ? `${theme.accentColor}22` : theme.accentColor;
 
     return `
@@ -1515,21 +2022,60 @@ const buildTemplateThemeStyles = (layout) => {
         }
         .document-title {
             color: ${theme.primaryColor};
-            font-size: ${theme.fontSize + 10}px;
+            font-size: ${theme.fontSize + (layout.isPurchaseDesigner ? 17 : 10)}px;
         }
         .company-name,
         .company-local-name,
         .bill-to-name,
         .doc-meta-value,
         .reference-value,
-        .cell-strong,
+        .cell-strong {
+            color: ${theme.primaryColor};
+        }
         .grand-total-value {
             color: ${theme.primaryColor};
+            font-size: ${theme.fontSize + (layout.isPurchaseDesigner ? 22 : 7)}px;
+        }
+        .document-shell-designer .grand-total-display {
+            border-top: 0;
+        }
+        .document-header-designer .company-name {
+            font-size: ${theme.fontSize + 3}px;
+            font-weight: 700;
+        }
+        .document-header-designer .bill-to-name {
+            font-size: ${theme.fontSize + 1}px;
+            font-weight: 700;
+        }
+        .document-header-designer .doc-meta-value,
+        .document-header-designer .left-meta-value,
+        .document-header-designer .company-copy,
+        .document-header-designer .bill-to-line {
+            font-size: ${theme.fontSize}px;
+        }
+        .document-header-designer .bill-to-eyebrow,
+        .document-header-designer .doc-meta-label {
+            font-size: ${theme.fontSize - 1}px;
+        }
+        .document-header-designer .doc-meta-value {
+            overflow-wrap: normal;
+            word-break: normal;
+        }
+        .document-header-designer .cell-strong {
+            font-size: ${theme.fontSize}px;
         }
         .company-logo-fallback {
             background: ${accentSoft};
-            border: 2px solid ${theme.accentColor};
+            border: ${layout.isPurchaseDesigner ? '3px' : '2px'} solid ${theme.accentColor};
             color: ${theme.accentColor};
+            ${layout.isPurchaseDesigner ? 'width: 72px; height: 72px;' : ''}
+        }
+        .company-logo-fallback span {
+            color: ${theme.accentColor};
+            ${layout.isPurchaseDesigner ? 'font-size: 32px; font-weight: 900;' : ''}
+        }
+        .company-logo img {
+            ${layout.isPurchaseDesigner ? 'max-width: 120px; max-height: 72px;' : ''}
         }
         .document-table,
         .document-table thead th,
@@ -1544,6 +2090,12 @@ const buildTemplateThemeStyles = (layout) => {
             background: ${theme.tableHeaderBg};
             color: ${theme.tableHeaderText};
         }
+        .document-table tbody tr:nth-child(even) {
+            background: ${layout.isPurchaseDesigner ? '#fafafa' : 'transparent'};
+        }
+        .document-shell-designer .table-cell {
+            border-bottom-color: ${mutedBorderSoft};
+        }
         .totals-table .grand-total-row td,
         .totals-table .balance-due-row td {
             background: ${theme.totalRowBg};
@@ -1551,16 +2103,24 @@ const buildTemplateThemeStyles = (layout) => {
         .signature-line {
             border-top-color: ${theme.accentColor};
         }
-        .grand-total-display {
-            border-top: 2px solid ${theme.accentColor};
+        ${layout.isPurchaseDesigner ? '' : `.grand-total-display { border-top: 2px solid ${theme.accentColor}; }`}
+        .stamp-placeholder {
+            border-color: ${theme.accentColor};
+            background: ${accentSoft};
+            color: ${theme.accentColor};
+        }
+        .item-thumb-placeholder {
+            border-color: ${theme.accentColor};
+            background: ${accentSoft};
         }
     `;
 };
 
-const buildPrintStyles = (paperSize = 'A4', orientation = 'Portrait') => {
+const buildPrintStyles = (paperSize = 'A4', orientation = 'Portrait', layout = {}) => {
     const resolvedPaperSize = paperSize || 'A4';
     const resolvedOrientation = orientation || 'Portrait';
     const page = resolvePaperDimensions(resolvedPaperSize, resolvedOrientation);
+    const shellPadding = layout.isPurchaseDesigner ? '28px 32px' : '12mm';
 
     return `
         @page {
@@ -1582,7 +2142,7 @@ const buildPrintStyles = (paperSize = 'A4', orientation = 'Portrait') => {
             height: auto;
             max-width: none;
             margin: 0 auto;
-            padding: 12mm;
+            padding: ${shellPadding};
             border-radius: 0;
             background: #ffffff;
         }
@@ -1604,7 +2164,7 @@ const buildPrintStyles = (paperSize = 'A4', orientation = 'Portrait') => {
                 min-height: ${page.height}mm;
                 height: auto;
                 margin: 0;
-                padding: 12mm;
+                padding: ${shellPadding};
                 border-radius: 0;
                 box-shadow: none;
             }
@@ -1614,11 +2174,35 @@ const buildPrintStyles = (paperSize = 'A4', orientation = 'Portrait') => {
                 grid-template-columns: minmax(max-content, 1.25fr) minmax(140px, 0.85fr) minmax(120px, 0.75fr) !important;
                 gap: 20px !important;
             }
+            .document-header-designer {
+                display: flex !important;
+                justify-content: space-between !important;
+                align-items: flex-start !important;
+                gap: 16px !important;
+                margin-bottom: 18px !important;
+            }
+            .document-header-designer .header-left {
+                flex: 1 1 0 !important;
+                min-width: 0 !important;
+            }
+            .document-header-designer .header-center {
+                flex: 0 0 292px !important;
+                align-self: flex-end !important;
+            }
+            .document-header-designer .header-right {
+                flex: 0 0 170px !important;
+            }
             .signature-grid {
                 grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
             }
             .document-title {
                 margin-bottom: 24px !important;
+            }
+            .document-header-designer .document-title {
+                margin-bottom: 14px !important;
+                max-width: 120px !important;
+                white-space: normal !important;
+                line-height: 1.35 !important;
             }
             .document-table thead {
                 display: table-row-group !important;
@@ -1628,6 +2212,22 @@ const buildPrintStyles = (paperSize = 'A4', orientation = 'Portrait') => {
                 text-align: right !important;
                 justify-items: end !important;
             }
+            .document-header-designer .header-center {
+                display: block !important;
+                padding-top: 0 !important;
+                padding-bottom: 2px !important;
+                text-align: left !important;
+                justify-items: stretch !important;
+            }
+            .document-header-designer .designer-meta-grid {
+                display: grid !important;
+                grid-template-columns: repeat(2, minmax(118px, 1fr)) !important;
+                gap: 10px 20px !important;
+            }
+            .document-header-designer .doc-meta-item {
+                text-align: left !important;
+                justify-items: start !important;
+            }
             .header-right {
                 padding-top: 0 !important;
                 text-align: right !important;
@@ -1635,7 +2235,7 @@ const buildPrintStyles = (paperSize = 'A4', orientation = 'Portrait') => {
                 display: flex !important;
                 flex-direction: column !important;
                 align-items: flex-end !important;
-                gap: 8px !important;
+                gap: 5px !important;
             }
             .company-logo {
                 display: flex !important;
@@ -1786,6 +2386,10 @@ const enrichItems = (items, documentSalesPerson = '', documentLocation = '', cat
 const normalisePurchaseLayout = (template, data, companyProfile, renderTarget) => {
     const company = normalizeDocumentCompanyProfile(companyProfile);
     const designerSettings = getTemplateDesignerSettings(template);
+    const templateLogoUrl = resolveTemplateImageUrl(designerSettings.logoUrl || designerSettings.companyLogoUrl);
+    const templateStampUrl = resolveTemplateImageUrl(designerSettings.stampUrl || designerSettings.stampImage);
+    const companyVisibility = buildCompanyVisibility(designerSettings);
+    const partyVisibility = buildPartyVisibility(designerSettings);
     const theme = buildTheme(template);
     const displayOptions = sanitizeTemplateDisplayOptions(
         template.displayOptions,
@@ -1794,7 +2398,10 @@ const normalisePurchaseLayout = (template, data, companyProfile, renderTarget) =
             showTerms: template.category !== 'Payment Voucher'
         }
     );
-    const columnOptions = sanitizeTemplateColumns(template.columns, getColumnDefaults(template.category, true));
+    const columnOptions = applyDesignerColumnVisibility(
+        sanitizeTemplateColumns(template.columns, getColumnDefaults(template.category, true)),
+        designerSettings
+    );
     const columnModel = createColumnModel(columnOptions);
     const currency = resolveCurrency(company, data.totals || {}, data.summaryAmount || {});
     const headerMeta = Array.isArray(data.headerMeta) ? data.headerMeta.filter((row) => row?.value) : [];
@@ -1827,12 +2434,17 @@ const normalisePurchaseLayout = (template, data, companyProfile, renderTarget) =
     const headerRows = [
         ...(showDate ? [{ label: 'Date', value: data.date || '-' }] : []),
         ...headerMeta.filter((row) => /due date|expected delivery|valid/i.test(asText(row.label)))
-    ].filter((row) => row?.value);
+    ]
+        .filter((row) => row?.value)
+        .filter((row) => shouldShowPurchaseMetaRow(row, designerSettings));
 
-    const referenceRows = [
+    const referenceRows = sortPurchaseDesignerMetaRows([
         ...headerMeta.filter((row) => !/due date|expected delivery|valid/i.test(asText(row.label))),
-        ...references
-    ].filter((row) => row?.value);
+        ...references,
+        visibleWhen(designerSettings, ['showCurrency'], true) ? { label: 'Currency', value: currency } : null
+    ]
+        .filter((row) => row?.value)
+        .filter((row) => shouldShowPurchaseMetaRow(row, designerSettings)));
 
     const items = enrichItems(
         Array.isArray(data.items) ? data.items.map(normaliseItem) : [],
@@ -1856,6 +2468,7 @@ const normalisePurchaseLayout = (template, data, companyProfile, renderTarget) =
         billDiscountAmount: asNumber(data.totals?.billDiscountAmount ?? data.totals?.discountAmount)
     };
     const totalVisibility = {
+        taxable: pickSetting(designerSettings, ['showTaxableTotal'], false),
         subTotal: pickSetting(designerSettings, ['showSubtotal'], true),
         discount: pickSetting(designerSettings, ['showDiscountTotal', 'showDiscount'], true),
         tax: pickSetting(designerSettings, ['showVATTotal', 'showTaxTotal'], true),
@@ -1872,10 +2485,21 @@ const normalisePurchaseLayout = (template, data, companyProfile, renderTarget) =
         status: asText(data.status || ''),
         company,
         currency,
+        isPurchaseDesigner: true,
+        logoUrl: templateLogoUrl || company.logoUrl,
+        stampUrl: templateStampUrl || company.stampUrl,
+        companyVisibility,
+        partyVisibility,
         theme,
         showDocNo,
-        partyLabel: template.category === 'Payment Voucher' ? 'Paid To' : 'Vendor',
+        partyLabel: template.category === 'Payment Voucher'
+            ? 'Paid To'
+            : template.category === 'Local Purchase Order'
+                ? 'Bill To'
+                : 'Vendor',
         party: data.party || null,
+        shipTo: data.shipTo || null,
+        showShipTo: pickSetting(designerSettings, ['showShipTo'], false),
         referenceRows,
         paymentRows: paymentDetails,
         headerRows,
@@ -1887,12 +2511,28 @@ const normalisePurchaseLayout = (template, data, companyProfile, renderTarget) =
         terms: asText(template.termsContent || designerSettings.termsText || designerSettings.termsConditions || ''),
         displayOptions,
         totalVisibility,
+        showNotesSection: pickSetting(designerSettings, ['showNotes', 'showNote'], true),
+        showAmountInWords: pickSetting(designerSettings, ['showAmountInWords'], false),
+        bankRows: pickSetting(designerSettings, ['showBankDetails'], false)
+            ? [
+                { label: 'Bank', value: designerSettings.bankName },
+                { label: 'Account', value: designerSettings.bankAccount },
+                { label: 'IBAN', value: designerSettings.bankIBAN },
+                { label: 'SWIFT / BIC', value: designerSettings.bankSWIFT },
+            ].filter((row) => row.value)
+            : [],
         showItemTable: items.length > 0 && pickSetting(designerSettings, ['showItemsTable', 'showItemTable'], true),
         showTotalsSection: !data.hideTotalsTable && (totals.grandTotal > 0 || totals.amountPaid > 0),
         showHighlight: summaryValue !== undefined && summaryValue !== null && asNumber(summaryValue) > 0 &&
             pickSetting(designerSettings, ['showGrandTotalBanner', 'showSummaryBar', 'showTotalReceivedBold'], true),
         showPaymentDetails: paymentDetails.length > 0,
         showSignatureBlock: pickSetting(designerSettings, ['showSignatures', 'showSignatureStrip', 'showReceivedByLine'], false),
+        showCompanyStamp: pickSetting(designerSettings, ['showCompanyStamp', 'showStamp'], false),
+        showPageNumbers: pickSetting(designerSettings, ['showPageNumbers'], false),
+        showPrintDateStamp: pickSetting(designerSettings, ['showGeneratedBy'], false),
+        showWatermark: pickSetting(designerSettings, ['showWatermark'], false),
+        hasDesignerWatermarkToggle: Object.prototype.hasOwnProperty.call(designerSettings, 'showWatermark'),
+        watermarkText: asText(designerSettings.watermarkText || 'ORIGINAL'),
         highlight: {
             label: summaryLabel,
             value: asNumber(summaryValue)
@@ -2004,9 +2644,13 @@ const buildLayout = (template, data, options = {}, renderTarget = 'print') => {
 
 const buildDocumentHtml = (template, data, options = {}, renderTarget = 'print') => {
     const layout = buildLayout(template, data, options, renderTarget);
+    const shellClasses = [
+        'document-shell',
+        layout.isPurchaseDesigner ? 'document-shell-designer' : ''
+    ].filter(Boolean).join(' ');
     const styles = renderTarget === 'email'
         ? `${buildCoreStyles()}${buildTemplateThemeStyles(layout)}${buildEmailStyles()}`
-        : `${buildCoreStyles()}${buildTemplateThemeStyles(layout)}${buildPrintStyles(template.paperSize || 'A4', template.orientation || 'Portrait')}`;
+        : `${buildCoreStyles()}${buildTemplateThemeStyles(layout)}${buildPrintStyles(template.paperSize || 'A4', template.orientation || 'Portrait', layout)}`;
     
     const documentTitle = generateDocFilename(
         layout.title,
@@ -2026,7 +2670,7 @@ const buildDocumentHtml = (template, data, options = {}, renderTarget = 'print')
             <style>${styles}</style>
         </head>
         <body>
-            <div class="document-shell">
+            <div class="${shellClasses}">
                 ${buildHeader(layout, renderTarget)}
                 ${buildHeaderAddon(layout)}
                 ${buildGrandTotal(layout)}
@@ -2037,10 +2681,11 @@ const buildDocumentHtml = (template, data, options = {}, renderTarget = 'print')
                     ${buildSignatureBlock(layout)}
                     ${buildStampBlock(layout, renderTarget)}
                     ${buildPrintDateStamp(layout, renderTarget)}
+                    ${buildPageNumbers(layout, renderTarget)}
                 </main>
                 ${buildFooterBar(layout, renderTarget, options.billBullLogo)}
                 ${buildFooterAddon(layout)}
-                ${buildWatermark(layout.status)}
+                ${buildWatermark(layout)}
             </div>
         </body>
         </html>

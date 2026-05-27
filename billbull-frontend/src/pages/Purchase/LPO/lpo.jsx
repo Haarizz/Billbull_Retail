@@ -69,7 +69,7 @@ import {
   buildLpoPrintData,
   buildPaymentVoucherPrintData,
   findVendorRecord,
-  normalizePurchaseTemplate
+  resolvePurchasePrintTemplate
 } from '../../../utils/purchasePrintUtils';
 import ExportDropdown from '../../../components/common/ExportDropdown';
 import { exportToExcel, exportToPDF } from '../../../utils/exportUtils';
@@ -2526,15 +2526,18 @@ const LPOList = () => {
 
       const detailedLpo = await getLpoByNumber(lpo.lpoNumber);
 
-      const templates = await getTemplatesByCategory('Local Purchase Order');
+      const [templates, latestVendors] = await Promise.all([
+        getTemplatesByCategory('Local Purchase Order'),
+        getVendors().catch(() => vendors || [])
+      ]);
+      if (Array.isArray(latestVendors) && latestVendors.length > 0) {
+        setVendors(latestVendors);
+      }
 
-      const defaultTemplate = normalizePurchaseTemplate(
-        templates.find(t => t.isDefault) || templates[0],
-        'Local Purchase Order'
-      );
+      const defaultTemplate = resolvePurchasePrintTemplate('Local Purchase Order', templates);
 
       if (defaultTemplate) {
-        const fullVendor = findVendorRecord(vendors, detailedLpo, detailedLpo?.vendorName);
+        const fullVendor = findVendorRecord(latestVendors, detailedLpo, detailedLpo?.vendorName);
         const printData = buildLpoPrintData(detailedLpo, fullVendor, company);
         const html = generatePrintHtml(defaultTemplate, printData, {
           companyProfile: buildDocumentHeaderProfile({
@@ -2720,10 +2723,7 @@ const LPOList = () => {
         return toast.error('No payment vouchers found for this LPO.');
       }
       const templates = await getTemplatesByCategory('Payment Voucher');
-      const template = normalizePurchaseTemplate(
-        templates.find(t => t.isDefault) || templates[0],
-        'Payment Voucher'
-      );
+      const template = resolvePurchasePrintTemplate('Payment Voucher', templates);
 
       const voucher = vouchers[0];
       const fullVendor = findVendorRecord(vendors, row.vendorCode, row.vendorName);

@@ -38,8 +38,10 @@ public class PrintTemplateService {
         if (optionalTemplate.isPresent()) {
             PrintTemplate existingTemplate = optionalTemplate.get();
 
-            // If setting as default, unset others in same category
-            if (templateDetails.isDefault() && !existingTemplate.isDefault()) {
+            // Always clean up sibling defaults when saving a default template.
+            // Older seed data may already contain duplicate defaults, so checking
+            // only the previous state of this row leaves the duplicates behind.
+            if (templateDetails.isDefault()) {
                 unsetOtherDefaults(templateDetails.getCategory(), id);
             }
 

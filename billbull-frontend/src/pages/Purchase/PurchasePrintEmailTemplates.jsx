@@ -232,8 +232,18 @@ const defaultSettingsFor = (typeId, name) => {
 
 const buildRendererDisplayOptions = (settings = {}, typeId) => ({
     showLogo: settings.showLogo ?? settings.showCompanyLogo ?? true,
-    showCompanyDetails: settings.showCompanyName !== false || settings.showCompanyAddress !== false,
-    showCustomerDetails: settings.showBillTo ?? settings.showVendorCard ?? settings.showCustomerName ?? typeId !== "cheque-printing",
+    showCompanyDetails: [
+        settings.showCompanyName,
+        settings.showCompanyAddress,
+        settings.showCompanyPhone,
+        settings.showCompanyEmail,
+        settings.showCompanyWebsite,
+        settings.showTRN,
+        settings.showCRN,
+        settings.showCompanyTaxId,
+        settings.showCompanyRegNumber
+    ].some((value) => value !== false),
+    showCustomerDetails: settings.showBillTo ?? settings.showShipTo ?? settings.showVendorCard ?? settings.showCustomerName ?? typeId !== "cheque-printing",
     showTerms: settings.showTerms ?? settings.showTermsConditions ?? false,
     showItemImage: settings.colProductImage ?? settings.showItemImage ?? false
 });
