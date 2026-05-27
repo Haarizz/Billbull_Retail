@@ -69,6 +69,8 @@ import CompanySettings from "./pages/Settings/CompanySettings";
 import UserRoleConfig from "./pages/Settings/UserRoleConfig";
 import BranchSetup from "./pages/Settings/BranchSetup";
 import EmailSettings from "./pages/Settings/EmailSettings";
+import BranchOutlets from "./pages/Enterprise/BranchOutlets";
+import DataManagement from "./pages/Enterprise/DataManagement";
 import SalesSummaryReport from "./pages/Sales/Reports/SalesSummaryReport";
 import PurchaseSummaryReport from "./pages/Purchase/Reports/PurchaseSummaryReport";
 // import Products from "./pages/Inventory/Product/Products";
@@ -585,8 +587,28 @@ function App() {
                       }
                     />
 
+                    {/* Legacy redirects: Branches and User & Role Config moved into Enterprise Console */}
+                    <Route
+                      path="/settings/branches"
+                      element={<Navigate to="/enterprise/branches" replace />}
+                    />
+
                     <Route
                       path="/settings/roles"
+                      element={<Navigate to="/enterprise/administration" replace />}
+                    />
+
+                    <Route
+                      path="/enterprise/branches"
+                      element={
+                        <ResourceGuard module="userManagement.setup">
+                          <BranchOutlets />
+                        </ResourceGuard>
+                      }
+                    />
+
+                    <Route
+                      path="/enterprise/administration"
                       element={
                         <ResourceGuard module="userManagement.role">
                           <UserRoleConfig />
@@ -595,10 +617,10 @@ function App() {
                     />
 
                     <Route
-                      path="/settings/branches"
+                      path="/enterprise/data-management"
                       element={
                         <ResourceGuard module="userManagement.setup">
-                          <BranchSetup />
+                          <DataManagement />
                         </ResourceGuard>
                       }
                     />

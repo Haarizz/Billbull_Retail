@@ -619,8 +619,18 @@ public class GrnService {
             return currentBranch;
         }
 
-        if (grn.getId() != null && grn.getBranchId() == null) {
-            return null;
+        // UPDATE — branch is locked to the existing value (PDF §3.4). Return a
+        // stub so warehouse validation can match; the saveOrUpdate path leaves
+        // the existing branch snapshot untouched downstream.
+        if (grn.getId() != null) {
+            if (grn.getBranchId() == null) {
+                return null;
+            }
+            Branch stub = new Branch();
+            stub.setId(grn.getBranchId());
+            stub.setName(grn.getBranchName());
+            stub.setCode(grn.getBranchCode());
+            return stub;
         }
 
         return branchAccessService.getRequiredCurrentUserBranch();

@@ -1326,14 +1326,29 @@ public class DeliveryNoteService {
             return branch;
         }
 
-        if (dn.getId() != null && dn.getBranchId() == null) {
-            return null;
+        // UPDATE — branch is locked to the existing value (PDF §3.4 transaction
+        // branch immutability). Return a stub so warehouse validation has an ID
+        // to match against; applyBranchSnapshot ignores it for the update path.
+        if (dn.getId() != null) {
+            if (dn.getBranchId() == null) {
+                return null;
+            }
+            Branch stub = new Branch();
+            stub.setId(dn.getBranchId());
+            return stub;
         }
 
         return branchAccessService.getRequiredCurrentUserBranch();
     }
 
     private void applyBranchSnapshot(DeliveryNote dn, Branch branch) {
+        // UPDATE — if the DN already has a persisted branch, preserve it
+        // (immutability). The existing snapshot on the loaded entity stays intact.
+        if (dn.getId() != null && dn.getBranchId() != null) {
+            return;
+        }
+
+        // CREATE (or legacy update with no branch).
         if (branch == null) {
             dn.setBranchId(null);
             dn.setBranchName(null);

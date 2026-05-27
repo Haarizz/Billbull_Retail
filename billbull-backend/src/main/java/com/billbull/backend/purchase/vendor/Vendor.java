@@ -1,13 +1,18 @@
 package com.billbull.backend.purchase.vendor;
 
 import com.billbull.backend.common.BaseEntity;
+import com.billbull.backend.settings.branch.Branch;
 import jakarta.persistence.*;
 
 import java.math.BigDecimal;
 
 @Entity
-@Table(name = "vendors")
-
+@Table(
+    name = "vendors",
+    indexes = {
+        @Index(name = "idx_vendor_branch", columnList = "branch_id")
+    }
+)
 public class Vendor extends BaseEntity {
 
     // =========================
@@ -18,6 +23,11 @@ public class Vendor extends BaseEntity {
 
     @Column(nullable = false)
     private String name;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "branch_id")
+    @com.fasterxml.jackson.annotation.JsonIgnore
+    private Branch branch;
 
     private String status;        // Active, On Hold, Draft
     private String vendorGroup;   // Local Supplier, International Supplier
@@ -124,6 +134,8 @@ public class Vendor extends BaseEntity {
 	public void setName(String name) {
 		this.name = name;
 	}
+	public Branch getBranch() { return branch; }
+	public void setBranch(Branch branch) { this.branch = branch; }
 	public String getStatus() {
 		return status;
 	}

@@ -35,7 +35,9 @@ import { getBankAccounts } from '../../api/ledgerApi';
 import { getSalesSettings } from '../../api/salesSettingsApi';
 import { getTemplatesByCategory } from '../../api/printTemplateApi';
 import { generatePrintHtml, printHtml } from '../../utils/printGenerator';
+import { buildDocumentHeaderProfile } from '../../utils/branchPrintProfile';
 import { useCompany } from '../../context/CompanyContext';
+import { useBranch } from '../../context/BranchContext';
 import billBullLogo from '../../assets/billBullLogo.png';
 import ExportDropdown from '../../components/common/ExportDropdown';
 import { exportToExcel, exportToPDF } from '../../utils/exportUtils';
@@ -80,6 +82,7 @@ const getOpeningInvoiceOriginalAmount = (invoice = {}) => {
 
 const Payment = () => {
     const { company } = useCompany();
+    const { branches: availableBranches, activeBranch } = useBranch();
     const currency = company?.currency || 'AED';
     const [activeTab, setActiveTab] = useState('list');
     const [isLoading, setIsLoading] = useState(false);
@@ -155,6 +158,13 @@ const Payment = () => {
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [activeTab, listPage]);
 
+    // Refetch when the global Branch Selector changes the active branch.
+    useEffect(() => {
+        const handler = () => fetchPayments();
+        window.addEventListener('billbull:branch-changed', handler);
+        return () => window.removeEventListener('billbull:branch-changed', handler);
+    }, []);
+
     const fetchPayments = async () => {
         setIsLoading(true);
         try {
@@ -174,6 +184,9 @@ const Payment = () => {
                 type: p.paymentType === 'RECEIVED' ? 'Received' : 'Made',
                 customerCode: p.customerCode,
                 customerName: p.customerName,
+                branchId: p.branch?.id ?? null,
+                branchName: p.branch?.name || '',
+                branchCode: p.branch?.code || '',
                 invoiceNo: p.linkedInvoice || '',
                 invoiceAmount: p.invoiceAmount || 0,
                 amount: p.amount || 0, // This is the paid amount for this record
@@ -311,7 +324,14 @@ const Payment = () => {
                 },
             };
 
-            const html = generatePrintHtml(defaultTemplate, printData, { companyProfile: company, billBullLogo });
+            const html = generatePrintHtml(defaultTemplate, printData, {
+                companyProfile: buildDocumentHeaderProfile({
+                    company,
+                    branches: availableBranches || [],
+                    branchId: payment?.branchId ?? activeBranch?.id,
+                }),
+                billBullLogo
+            });
             printHtml(html);
         } catch (err) {
             console.error('Failed to print payment receipt', err);
@@ -796,6 +816,7 @@ const Payment = () => {
                                             <th className="px-4 py-3 font-semibold text-xs uppercase">Payment No</th>
                                             <th className="px-4 py-3 font-semibold text-xs uppercase">Date</th>
                                             <th className="px-4 py-3 font-semibold text-xs uppercase">Customer/Vendor</th>
+                                            <th className="px-4 py-3 font-semibold text-xs uppercase">Branch</th>
                                             <th className="px-4 py-3 font-semibold text-xs uppercase">Invoice/PO</th>
                                             <th className="px-4 py-3 font-semibold text-xs uppercase text-right">Invoice Amount</th>
                                             <th className="px-4 py-3 font-semibold text-xs uppercase text-right">Paid Amount</th>
@@ -813,6 +834,16 @@ const Payment = () => {
                                                 <td className="px-4 py-3">
                                                     <div className="font-medium text-slate-700">{payment.customerName}</div>
                                                     <div className="text-[10px] text-slate-400">{payment.customerCode}</div>
+                                                </td>
+                                                <td className="px-4 py-3 text-slate-600 text-[11px]">
+                                                    {payment.branchName ? (
+                                                        <>
+                                                            <div className="font-medium">{payment.branchName}</div>
+                                                            {payment.branchCode && <div className="text-slate-400">{payment.branchCode}</div>}
+                                                        </>
+                                                    ) : (
+                                                        <span className="text-slate-300">—</span>
+                                                    )}
                                                 </td>
                                                 <td className="px-4 py-3 text-blue-600 font-medium">{payment.invoiceNo}</td>
                                                 <td className="px-4 py-3 text-right text-slate-600"><CurrencyAmount value={payment.invoiceAmount} currency={currency} /></td>

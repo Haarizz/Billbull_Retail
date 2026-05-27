@@ -20,6 +20,7 @@ import { hasRole, logout, getUsernameFromToken } from "../api/auth";
 import { usePermissions } from "../context/PermissionContext";
 import { useCompany } from "../context/CompanyContext";
 import { formatUserDisplayName } from "../utils/displayName";
+import BranchSelector from "../components/common/BranchSelector";
 
 const Sidebar = ({ children }) => {
   // --- STATE ---
@@ -42,6 +43,7 @@ const Sidebar = ({ children }) => {
   const [payrollOpen, setPayrollOpen] = useState(false);
   const [stockOpen, setStockOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [enterpriseOpen, setEnterpriseOpen] = useState(false);
   const location = useLocation();
   const navigate = useNavigate();
 
@@ -74,6 +76,7 @@ const Sidebar = ({ children }) => {
     if (path.startsWith("/tally")) setTallyOpen(true);
     if (path.startsWith("/payroll")) setPayrollOpen(true);
     if (path.startsWith("/settings")) setSettingsOpen(true);
+    if (path.startsWith("/enterprise")) setEnterpriseOpen(true);
   }, [location.pathname, collapsed]);
 
   // Toggle Handler
@@ -228,6 +231,21 @@ const Sidebar = ({ children }) => {
     //   ],
     // },
     {
+      id: "enterprise-group",
+      label: "Enterprise Console",
+      icon: <Building2 size={16} />,
+      isDropdown: true,
+      isOpen: enterpriseOpen,
+      onToggle: () => handleToggle(enterpriseOpen, setEnterpriseOpen),
+      module: "userManagement",
+      roles: ["ADMIN"],
+      subItems: [
+        { path: "/enterprise/branches",        label: "Branch / Outlets",  module: "userManagement.setup", icon: <Building2 size={14} /> },
+        { path: "/enterprise/administration",  label: "Administration",    module: "userManagement.role",  icon: <ShieldCheck size={14} /> },
+        { path: "/enterprise/data-management", label: "Data Management",   module: "userManagement.setup", icon: <FileSpreadsheet size={14} /> },
+      ],
+    },
+    {
       id: "settings-group",
       label: "Settings",
       icon: <Settings size={16} />,
@@ -238,8 +256,6 @@ const Sidebar = ({ children }) => {
       roles: ["ADMIN"],
       subItems: [
         { path: "/settings/company",   label: "Company Profile",    module: "userManagement.setup", icon: <Building2 size={14} /> },
-        { path: "/settings/roles",     label: "User & Role Config", module: "userManagement.role",  icon: <ShieldCheck size={14} /> },
-        { path: "/settings/branches",  label: "Branch Setup",       module: "userManagement.setup", icon: <Warehouse size={14} /> },
         { path: "/settings/email",     label: "Email Settings",     module: "userManagement.setup", icon: <Mail size={14} /> },
       ],
     },
@@ -673,6 +689,9 @@ const Sidebar = ({ children }) => {
             </div>
             <span>BillBull</span>
           </div>
+          <div style={{ marginLeft: 'auto' }}>
+            <BranchSelector />
+          </div>
         </header>
       )}
 
@@ -710,6 +729,11 @@ const Sidebar = ({ children }) => {
               </div>
             )}
           </div>
+          {!collapsed && (
+            <div style={{ marginTop: 12 }}>
+              <BranchSelector />
+            </div>
+          )}
         </div>
 
         {/* NAVIGATION */}

@@ -13,6 +13,7 @@ import com.billbull.backend.financials.audit.FinancialAuditService;
 import com.billbull.backend.financials.period.AccountingPeriodService;
 import com.billbull.backend.financials.chartofaccounts.Account;
 import com.billbull.backend.financials.chartofaccounts.AccountRepository;
+import com.billbull.backend.settings.branch.BranchAccessService;
 
 @Service
 public class JournalEntryService {
@@ -23,6 +24,7 @@ public class JournalEntryService {
     private final AccountRepository accountRepository;
     private final FinancialAuditService auditService;
     private final AccountingPeriodService periodService;
+    private final BranchAccessService branchAccessService;
 
     // Protected Control Accounts (cannot be used in manual JVs)
     private static final Set<String> PROTECTED_ACCOUNT_ROLES = Set.of(
@@ -33,17 +35,20 @@ public class JournalEntryService {
             LedgerService ledgerService,
             AccountRepository accountRepository,
             FinancialAuditService auditService,
-            AccountingPeriodService periodService) {
+            AccountingPeriodService periodService,
+            BranchAccessService branchAccessService) {
         this.journalEntryRepository = journalEntryRepository;
         this.journalVoucherRepository = journalVoucherRepository;
         this.ledgerService = ledgerService;
         this.accountRepository = accountRepository;
         this.auditService = auditService;
         this.periodService = periodService;
+        this.branchAccessService = branchAccessService;
     }
 
     public List<JournalEntry> getAllEntries() {
-        return journalEntryRepository.findAll();
+        return branchAccessService.filterBranchScopedByBranch(
+                journalEntryRepository.findAll(), JournalEntry::getBranch);
     }
 
     public JournalEntry getEntryById(Long id) {
@@ -53,6 +58,7 @@ public class JournalEntryService {
 
     @Transactional
     public JournalVoucher createJournalVoucher(JournalVoucher journalVoucher) {
+        journalVoucher.setBranch(branchAccessService.getRequiredCurrentUserBranch());
         journalVoucher.setEntryType(EntryType.MANUAL);
         // Validate Control Account Protection for Manual JVs
         validateManualEntry(journalVoucher);
@@ -80,6 +86,10 @@ public class JournalEntryService {
     @Transactional
     public JournalVoucher updateJournalVoucher(Long id, JournalVoucher updatedJournalVoucher) {
         JournalVoucher existingJV = (JournalVoucher) getEntryById(id);
+
+        Long existingBranchId = existingJV.getBranch() != null ? existingJV.getBranch().getId() : null;
+        branchAccessService.assertTransactionBranchAccessible(existingBranchId, "Journal Voucher");
+        // Branch is immutable on update — never copy from request body.
 
         if ("Posted".equalsIgnoreCase(existingJV.getStatus())) {
             throw new RuntimeException("Cannot update a Posted journal voucher");

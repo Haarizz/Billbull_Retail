@@ -124,12 +124,12 @@ function Row({ label, checked, onChange }) {
 function Section({ title, children }) {
     const [open, setOpen] = useState(true);
     return (
-        <div className="border rounded-lg overflow-hidden">
-            <button onClick={() => setOpen(!open)} className="w-full flex items-center justify-between px-3 py-2.5 bg-gray-50 hover:bg-gray-100 transition-colors">
+        <div className="rounded-lg overflow-hidden bg-white shadow-[0_1px_3px_rgba(245,199,66,0.08),0_1px_2px_rgba(0,0,0,0.04)] ring-1 ring-[#FDE6A9]/40">
+            <button onClick={() => setOpen(!open)} className="w-full flex items-center justify-between px-3 py-2.5 bg-gradient-to-b from-[#FFF8E7] to-[#FFFCF2] hover:from-[#FDE6A9]/60 hover:to-[#FFF8E7] transition-colors">
                 <span className="text-xs font-semibold text-gray-800 uppercase tracking-wide">{title}</span>
-                <ChevronDown className={`w-3.5 h-3.5 text-gray-500 transition-transform ${open ? "rotate-180" : ""}`} />
+                <ChevronDown className={`w-3.5 h-3.5 text-[#B88A1A] transition-transform ${open ? "rotate-180" : ""}`} />
             </button>
-            {open && <div className="px-3 pb-2 divide-y divide-gray-50">{children}</div>}
+            {open && <div className="px-3 pb-2 pt-1">{children}</div>}
         </div>
     );
 }
@@ -171,7 +171,8 @@ function PaperHeader({ s, title, meta, claimantLabel = "Prepared By", claimantVa
                     )}
                 </div>
             </div>
-            <div style={{ height: 2, background: `linear-gradient(90deg, ${gold}, ${gold}44)`, marginBottom: 16, borderRadius: 1 }} />
+            <div style={{ height: 1, background: `linear-gradient(90deg, transparent, ${gold}, ${gold}55, transparent)`, borderRadius: 1 }} />
+            <div style={{ height: 8, background: `linear-gradient(180deg, ${gold}1f, transparent)`, marginBottom: 14 }} />
         </>
     );
 }
@@ -519,7 +520,8 @@ function ChequePreview({ s }) {
                 )}
             </div>
 
-            <div style={{ height: 2, background: `linear-gradient(90deg, ${gold}, ${gold}44)`, marginBottom: 20, borderRadius: 1 }} />
+            <div style={{ height: 1, background: `linear-gradient(90deg, transparent, ${gold}, ${gold}55, transparent)`, borderRadius: 1 }} />
+            <div style={{ height: 8, background: `linear-gradient(180deg, ${gold}1f, transparent)`, marginBottom: 18 }} />
 
             <div style={{ border: "2px solid #1e3a5f", borderRadius: 10, overflow: "hidden", background: "linear-gradient(135deg, #f0f7ff 0%, #e8f4fd 100%)", marginBottom: 16 }}>
                 <div style={{ background: "#1e3a5f", padding: "8px 20px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
@@ -596,8 +598,8 @@ function SettingsPanel({ s, onChange }) {
     ];
 
     return (
-        <div className="w-80 bg-white border-r flex flex-col overflow-hidden">
-            <div className="border-b flex">
+        <div className="w-80 bg-gradient-to-b from-[#FFFCF2] to-white flex flex-col overflow-hidden shadow-[2px_0_8px_-2px_rgba(245,199,66,0.15)]">
+            <div className="flex bg-white/60 shadow-[0_1px_0_rgba(253,230,169,0.6)]">
                 {tabs.map(tab => (
                     <button
                         key={tab.id}
@@ -619,21 +621,21 @@ function SettingsPanel({ s, onChange }) {
                                 type="text"
                                 value={s.templateName}
                                 onChange={e => set({ templateName: e.target.value })}
-                                className="w-full text-sm border rounded-md px-2.5 py-1.5 focus:outline-none focus:ring-1 focus:ring-[#F5C742]"
+                                className="w-full text-sm bg-[#FFFCF2] ring-1 ring-[#FDE6A9]/60 rounded-md px-2.5 py-1.5 shadow-sm focus:outline-none focus:ring-1 focus:ring-[#F5C742]"
                             />
                         </div>
 
                         <div>
                             <label className="block text-xs font-medium text-gray-700 mb-1">Accent Color</label>
                             <div className="flex items-center gap-2">
-                                <input type="color" value={s.accentColor} onChange={e => set({ accentColor: e.target.value })} className="w-10 h-8 rounded border cursor-pointer" />
-                                <input type="text" value={s.accentColor} onChange={e => set({ accentColor: e.target.value })} className="flex-1 text-xs border rounded-md px-2 py-1.5 font-mono" />
+                                <input type="color" value={s.accentColor} onChange={e => set({ accentColor: e.target.value })} className="w-10 h-8 rounded ring-1 ring-[#FDE6A9] cursor-pointer shadow-sm" />
+                                <input type="text" value={s.accentColor} onChange={e => set({ accentColor: e.target.value })} className="flex-1 text-xs bg-[#FFFCF2] ring-1 ring-[#FDE6A9]/60 rounded-md px-2 py-1.5 font-mono shadow-sm" />
                             </div>
                         </div>
 
                         <div>
                             <label className="block text-xs font-medium text-gray-700 mb-1">Font Family</label>
-                            <select value={s.fontFamily} onChange={e => set({ fontFamily: e.target.value })} className="w-full text-sm border rounded-md px-2.5 py-1.5">
+                            <select value={s.fontFamily} onChange={e => set({ fontFamily: e.target.value })} className="w-full text-sm bg-[#FFFCF2] ring-1 ring-[#FDE6A9]/60 rounded-md px-2.5 py-1.5 shadow-sm">
                                 {["Inter, sans-serif", "Arial, sans-serif", "Georgia, serif", "Times New Roman, serif", "Helvetica, sans-serif"].map(f => (
                                     <option key={f} value={f}>{f.split(",")[0]}</option>
                                 ))}
@@ -647,7 +649,7 @@ function SettingsPanel({ s, onChange }) {
 
                         <div>
                             <label className="block text-xs font-medium text-gray-700 mb-1">Paper Size</label>
-                            <select value={s.paperSize} onChange={e => set({ paperSize: e.target.value })} className="w-full text-sm border rounded-md px-2.5 py-1.5">
+                            <select value={s.paperSize} onChange={e => set({ paperSize: e.target.value })} className="w-full text-sm bg-[#FFFCF2] ring-1 ring-[#FDE6A9]/60 rounded-md px-2.5 py-1.5 shadow-sm">
                                 <option value="A4">A4 (210 × 297 mm)</option>
                                 <option value="A5">A5 (148 × 210 mm)</option>
                                 <option value="Letter">Letter (8.5 × 11 in)</option>
@@ -701,7 +703,7 @@ function SettingsPanel({ s, onChange }) {
                                             value={s.termsText}
                                             onChange={e => set({ termsText: e.target.value })}
                                             rows={3}
-                                            className="w-full text-xs border rounded-md px-2.5 py-1.5 resize-none"
+                                            className="w-full text-xs bg-[#FFFCF2] ring-1 ring-[#FDE6A9]/60 rounded-md px-2.5 py-1.5 resize-none shadow-sm"
                                         />
                                     </div>
                                 )}
@@ -728,7 +730,7 @@ function SettingsPanel({ s, onChange }) {
                                 type="text"
                                 value={s.emailSubject}
                                 onChange={e => set({ emailSubject: e.target.value })}
-                                className="w-full text-sm border rounded-md px-2.5 py-1.5"
+                                className="w-full text-sm bg-[#FFFCF2] ring-1 ring-[#FDE6A9]/60 rounded-md px-2.5 py-1.5 shadow-sm"
                             />
                             <p className="text-xs text-gray-400 mt-1">Use {"{number}"}, {"{company_name}"}, {"{recipient}"}</p>
                         </div>
@@ -738,7 +740,7 @@ function SettingsPanel({ s, onChange }) {
                                 value={s.emailBody}
                                 onChange={e => set({ emailBody: e.target.value })}
                                 rows={8}
-                                className="w-full text-sm border rounded-md px-2.5 py-1.5 resize-none"
+                                className="w-full text-sm bg-[#FFFCF2] ring-1 ring-[#FDE6A9]/60 rounded-md px-2.5 py-1.5 shadow-sm resize-none"
                             />
                         </div>
                     </>
@@ -774,7 +776,7 @@ export default function FinancialVoucherDesigner({ voucherType, templateName, in
 
     return (
         <div className="h-screen flex flex-col bg-gray-50">
-            <div className="bg-white border-b px-6 py-3 flex items-center justify-between flex-shrink-0">
+            <div className="bg-white px-6 py-3 flex items-center justify-between flex-shrink-0 shadow-[0_2px_8px_-2px_rgba(245,199,66,0.18)] relative z-10">
                 <div className="flex items-center gap-3">
                     <button onClick={onClose} className="p-1.5 hover:bg-gray-100 rounded-lg transition-colors">
                         <ArrowLeft className="w-5 h-5 text-gray-600" />

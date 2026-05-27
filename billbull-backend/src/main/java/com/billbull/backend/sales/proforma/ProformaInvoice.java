@@ -9,15 +9,22 @@ import java.util.List;
 
 import com.fasterxml.jackson.annotation.JsonManagedReference;
 import com.billbull.backend.inventory.warehouse.Warehouse;
+import com.billbull.backend.settings.branch.Branch;
 
 
 @Entity
-@Table(name = "proforma_invoices")
+@Table(name = "proforma_invoices", indexes = {
+    @Index(name = "idx_proforma_branch", columnList = "branch_id")
+})
 public class ProformaInvoice {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
+
+    @ManyToOne(fetch = FetchType.EAGER)
+    @JoinColumn(name = "branch_id")
+    private Branch branch;
 
     private String piNumber;
 
@@ -79,6 +86,9 @@ public class ProformaInvoice {
 	public Long getId() {
 		return id;
 	}
+
+	public Branch getBranch() { return branch; }
+	public void setBranch(Branch branch) { this.branch = branch; }
 
 	public String getPiNumber() {
 		return piNumber;

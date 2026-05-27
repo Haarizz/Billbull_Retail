@@ -1,5 +1,6 @@
 package com.billbull.backend.purchase.payment;
 
+import com.billbull.backend.settings.branch.Branch;
 import jakarta.persistence.*;
 import lombok.AllArgsConstructor;
 import lombok.Data;
@@ -9,7 +10,9 @@ import java.math.BigDecimal;
 import java.time.LocalDate;
 
 @Entity
-@Table(name = "payment_vouchers")
+@Table(name = "payment_vouchers", indexes = {
+    @Index(name = "idx_purchase_payment_branch", columnList = "branch_id")
+})
 @Data
 @NoArgsConstructor
 @AllArgsConstructor
@@ -18,6 +21,10 @@ public class PaymentVoucher {
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
+
+    @ManyToOne(fetch = FetchType.EAGER)
+    @JoinColumn(name = "branch_id")
+    private Branch branch;
 
     @Column(name = "voucher_number", unique = true)
     private String voucherNumber;

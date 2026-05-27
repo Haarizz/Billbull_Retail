@@ -45,6 +45,7 @@ import { getAllQuotations, getQuotationById } from '../../api/quotationApi';
 import { getAllSalesOrders, getSalesOrderById } from '../../api/salesorderApi';
 import { getTemplatesByCategory } from '../../api/printTemplateApi';
 import { generatePrintHtml, printHtml } from '../../utils/printGenerator';
+import { buildDocumentHeaderProfile } from '../../utils/branchPrintProfile';
 import { getImageUrl } from '../../utils/urlUtils';
 import { formatDisplayDate } from '../../utils/dateUtils';
 import { pickSalesItemPrice, isPolicyOverridingPackings } from '../../utils/salesPricing';
@@ -112,7 +113,8 @@ import ItemAddOnsModal from '../../components/ItemAddOnsModal';
 
 const ProformaInvoice = () => {
   const { company } = useCompany();
-  const { defaultBranch, defaultBranchName } = useBranch();
+  const { defaultBranch, defaultBranchName, branches: availableBranches, activeBranch } = useBranch();
+  const [loadedPiBranchId, setLoadedPiBranchId] = useState(null);
   const [activeTab, setActiveTab] = useState('list');
   const [piId, setPiId] = useState(null);
   const [reservationWarehouseId, setReservationWarehouseId] = useState(null);
@@ -417,6 +419,14 @@ const ProformaInvoice = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTab, listPage, searchTerm, filterStatus]);
 
+  // Refetch when the global Branch Selector changes the active branch.
+  useEffect(() => {
+    const handler = () => fetchProformasPage();
+    window.addEventListener('billbull:branch-changed', handler);
+    return () => window.removeEventListener('billbull:branch-changed', handler);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const filteredProformas = useMemo(() => {
     let data = [...proformaList];
 
@@ -527,7 +537,14 @@ const ProformaInvoice = () => {
           }
         };
 
-        const html = generatePrintHtml(defaultTemplate, printData, { companyProfile: company, billBullLogo });
+        const html = generatePrintHtml(defaultTemplate, printData, {
+          companyProfile: buildDocumentHeaderProfile({
+            company,
+            branches: availableBranches || [],
+            branchId: loadedPiBranchId ?? activeBranch?.id,
+          }),
+          billBullLogo
+        });
         printHtml(html);
       } else {
         alert("No default template selected for Proforma Invoice. Please configure one in Settings.");
@@ -777,6 +794,7 @@ const ProformaInvoice = () => {
       const latest = await getProformaById(pi.id).catch(() => null);
       const full = latest && latest.id ? latest : pi;
       setPiId(full.id);
+      setLoadedPiBranchId(full.branch?.id ?? null);
 
       setPiNumber(full.piNumber);
       setPiDate(full.piDate);
@@ -1368,6 +1386,7 @@ const ProformaInvoice = () => {
                     <th className="px-4 py-3 cursor-pointer hover:bg-slate-100 transition-colors select-none" onClick={() => handleSort('customerName')}>
                       <div className="flex items-center gap-1">Customer {sortConfig.key === 'customerName' && (sortConfig.direction === 'asc' ? <ArrowUp size={14} /> : <ArrowDown size={14} />)}</div>
                     </th>
+                    <th className="px-4 py-3">Branch</th>
                     <th className="px-4 py-3 text-right cursor-pointer hover:bg-slate-100 transition-colors select-none" onClick={() => handleSort('total')}>
                       <div className="flex items-center justify-end gap-1">Total {sortConfig.key === 'total' && (sortConfig.direction === 'asc' ? <ArrowUp size={14} /> : <ArrowDown size={14} />)}</div>
                     </th>
@@ -1387,13 +1406,23 @@ const ProformaInvoice = () => {
                       <td className="px-4 py-3 text-blue-600 font-medium">{pi.piNumber}</td>
                       <td className="px-4 py-3 text-slate-600">{formatDisplayDate(pi.piDate)}</td>
                       <td className="px-4 py-3 text-slate-700 font-medium">{pi.customerName}</td>
+                      <td className="px-4 py-3 text-slate-600 text-[11px]">
+                        {pi.branch?.name ? (
+                          <>
+                            <div className="font-medium">{pi.branch.name}</div>
+                            {pi.branch.code && <div className="text-slate-400">{pi.branch.code}</div>}
+                          </>
+                        ) : (
+                          <span className="text-slate-300">—</span>
+                        )}
+                      </td>
                       <td className="px-4 py-3 text-right font-bold text-slate-800"><CurrencyAmount value={pi.grandTotal || 0} currency={currency} /></td>
                       <td className="px-4 py-3 text-right">{renderStatusBadge(pi.status)}</td>
                     </tr>
                   ))}
                   {filteredProformas.length === 0 && (
                     <tr>
-                      <td colSpan="6" className="text-center py-12 text-slate-400">
+                      <td colSpan="7" className="text-center py-12 text-slate-400">
                         <div className="flex flex-col items-center gap-2">
                           <div className="w-12 h-12 bg-slate-100 rounded-full flex items-center justify-center">
                             <Search size={20} className="text-slate-400" />

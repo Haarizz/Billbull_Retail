@@ -1,14 +1,21 @@
 package com.billbull.backend.financials.generalledger;
 
+import com.billbull.backend.settings.branch.Branch;
 import jakarta.persistence.*;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 
 @Entity
-@Table(name = "ledger_entries")
+@Table(name = "ledger_entries", indexes = {
+    @Index(name = "idx_ledger_entry_branch", columnList = "branch_id")
+})
 public class LedgerEntry {
     @Id
     private String id;
+
+    @ManyToOne(fetch = FetchType.EAGER)
+    @JoinColumn(name = "branch_id")
+    private Branch branch;
 
     private LocalDate transactionDate;
     private String voucherNo; // Matching reporting requirements
@@ -46,6 +53,9 @@ public class LedgerEntry {
     public void setId(String id) {
         this.id = id;
     }
+
+    public Branch getBranch() { return branch; }
+    public void setBranch(Branch branch) { this.branch = branch; }
 
     public LocalDate getTransactionDate() {
         return transactionDate;

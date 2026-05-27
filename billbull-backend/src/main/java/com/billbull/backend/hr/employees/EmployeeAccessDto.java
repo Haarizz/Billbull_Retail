@@ -23,6 +23,10 @@ public class EmployeeAccessDto {
     private Long branchId;
     private String branchName;
     private String branchCode;
+    /** Additional branches the linked user can switch to (PDF §2.3). */
+    private List<Long> additionalBranchIds;
+    private Long primaryBranchId;
+    private String primaryBranchName;
 
     // --- Getters & Setters ---
 
@@ -69,4 +73,13 @@ public class EmployeeAccessDto {
 
     public String getBranchCode() { return branchCode; }
     public void setBranchCode(String branchCode) { this.branchCode = branchCode; }
+
+    public List<Long> getAdditionalBranchIds() { return additionalBranchIds; }
+    public void setAdditionalBranchIds(List<Long> additionalBranchIds) { this.additionalBranchIds = additionalBranchIds; }
+
+    public Long getPrimaryBranchId() { return primaryBranchId; }
+    public void setPrimaryBranchId(Long primaryBranchId) { this.primaryBranchId = primaryBranchId; }
+
+    public String getPrimaryBranchName() { return primaryBranchName; }
+    public void setPrimaryBranchName(String primaryBranchName) { this.primaryBranchName = primaryBranchName; }
 }

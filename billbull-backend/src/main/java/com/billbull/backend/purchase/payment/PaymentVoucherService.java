@@ -5,6 +5,7 @@ import com.billbull.backend.purchase.invoice.InvoicePayment;
 import com.billbull.backend.purchase.invoice.InvoiceStatus;
 import com.billbull.backend.purchase.invoice.PurchaseInvoice;
 import com.billbull.backend.purchase.invoice.PurchaseInvoiceRepository;
+import com.billbull.backend.settings.branch.BranchAccessService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -29,8 +30,12 @@ public class PaymentVoucherService {
     @Autowired
     private PostingEngineService postingEngineService;
 
+    @Autowired
+    private BranchAccessService branchAccessService;
+
     public List<PaymentVoucher> getAllVouchers() {
-        List<PaymentVoucher> vouchers = new ArrayList<>(repository.findAll());
+        List<PaymentVoucher> vouchers = new ArrayList<>(
+                branchAccessService.filterBranchScopedByBranch(repository.findAll(), PaymentVoucher::getBranch));
         DocumentOrderingUtil.sortByDocumentDateAndNumberDesc(
                 vouchers,
                 PaymentVoucher::getPaymentDate,
@@ -60,6 +65,7 @@ public class PaymentVoucherService {
 
     @Transactional
     public PaymentVoucher createVoucher(PaymentVoucher voucher) {
+        voucher.setBranch(branchAccessService.getRequiredCurrentUserBranch());
         voucher.setStatus(PaymentStatus.PENDING_APPROVAL);
         voucher.setUnallocated(voucher.getAmount());
 

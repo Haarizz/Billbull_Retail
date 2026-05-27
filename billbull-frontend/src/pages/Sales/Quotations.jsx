@@ -93,6 +93,7 @@ import useShortcuts from '../../hooks/useShortcuts';
 import billBullLogo from '../../assets/billBullLogo.png';
 import { getTemplatesByCategory } from '../../api/printTemplateApi';
 import { generatePrintHtml, generateEmailHtml, printHtml } from '../../utils/printGenerator';
+import { buildDocumentHeaderProfile } from '../../utils/branchPrintProfile';
 import { buildEmailBody } from '../../utils/emailImageInliner';
 import { getImageUrl } from '../../utils/urlUtils';
 import { getDefaultProductUnit, resolveUnitAmount } from '../../utils/unitPricing';
@@ -377,7 +378,7 @@ const MobileFloatingActions = ({ status, onSaveDraft, onConfirm, onApprove, onRe
 
 const Quotations = () => {
     const { company } = useCompany();
-    const { defaultBranch, defaultBranchName, formatBranchLocationLabel, isLoading: isBranchLoading } = useBranch();
+    const { defaultBranch, defaultBranchName, formatBranchLocationLabel, isLoading: isBranchLoading, branches: availableBranches, activeBranch } = useBranch();
     const navigate = useNavigate();
     const [activeTab, setActiveTab] = useState('list');
     const [editorMode, setEditorMode] = useState('edit');
@@ -999,6 +1000,16 @@ const Quotations = () => {
         fetchQuotationsList();
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [activeTab, listPage, searchTerm, filterStatus]);
+
+    // Refetch when the global Branch Selector changes the active branch.
+    useEffect(() => {
+        const handler = () => {
+            if (activeTab === 'list') fetchQuotationsList();
+        };
+        window.addEventListener('billbull:branch-changed', handler);
+        return () => window.removeEventListener('billbull:branch-changed', handler);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [activeTab]);
 
     const selectedCustomerData = useMemo(() => {
         return customersList.find(c => `${c.name} - ${c.code}` === customer);
@@ -1681,7 +1692,7 @@ const Quotations = () => {
                 const html = generateEmailHtml(
                     defaultTemplate,
                     buildQuotationDocPayload(),
-                    { companyProfile: company, billBullLogo }
+                    { companyProfile: buildDocumentHeaderProfile({ company, branches: availableBranches || [], branchId: quotationBranch?.id ?? activeBranch?.id }), billBullLogo }
                 );
                 setEmailPreviewHtml(html);
             }
@@ -1716,7 +1727,7 @@ const Quotations = () => {
                         html = generateEmailHtml(
                             defaultTemplate,
                             buildQuotationDocPayload(),
-                            { companyProfile: company, billBullLogo }
+                            { companyProfile: buildDocumentHeaderProfile({ company, branches: availableBranches || [], branchId: quotationBranch?.id ?? activeBranch?.id }), billBullLogo }
                         );
                     }
                 }
@@ -2176,7 +2187,7 @@ const Quotations = () => {
                 meta: { validTill: qtn.validTill, paymentTerm: qtn.paymentTerm, status: qtn.status, notes: qtn.notesToCustomer, reference: '' }
             };
             if (defaultTemplate) {
-                const html = generatePrintHtml(defaultTemplate, printData, { companyProfile: company, billBullLogo });
+                const html = generatePrintHtml(defaultTemplate, printData, { companyProfile: buildDocumentHeaderProfile({ company, branches: availableBranches || [], branchId: quotationBranch?.id ?? activeBranch?.id }), billBullLogo });
                 printHtml(html);
             } else {
                 setIsPrintModalOpen(true);
@@ -2400,7 +2411,7 @@ const Quotations = () => {
             const defaultTemplate = templates.find(t => t.isDefault);
 
             if (defaultTemplate) {
-                const html = generatePrintHtml(defaultTemplate, buildQuotationDocPayload(), { companyProfile: company, billBullLogo });
+                const html = generatePrintHtml(defaultTemplate, buildQuotationDocPayload(), { companyProfile: buildDocumentHeaderProfile({ company, branches: availableBranches || [], branchId: quotationBranch?.id ?? activeBranch?.id }), billBullLogo });
                 printHtml(html);
             } else {
                 setIsPrintModalOpen(true);
@@ -2828,6 +2839,7 @@ const Quotations = () => {
                                                 {sortConfig.key === 'customer' && (sortConfig.direction === 'asc' ? <ArrowUp size={14} /> : <ArrowDown size={14} />)}
                                             </div>
                                         </th>
+                                        <th className="px-4 py-3">Branch</th>
                                         <th
                                             className="px-4 py-3 text-right cursor-pointer hover:bg-slate-100 transition-colors select-none"
                                             onClick={() => handleSort('total')}
@@ -2864,6 +2876,16 @@ const Quotations = () => {
                                                 </td>
                                                 <td className="px-4 py-3 text-slate-600">{formatDisplayDate(qtn.date)}</td>
                                                 <td className="px-4 py-3 text-slate-700 font-medium">{qtn.customer}</td>
+                                                <td className="px-4 py-3 text-slate-600 text-[11px]">
+                                                    {qtn.branchName ? (
+                                                        <>
+                                                            <div className="font-medium">{qtn.branchName}</div>
+                                                            {qtn.branchCode && <div className="text-slate-400">{qtn.branchCode}</div>}
+                                                        </>
+                                                    ) : (
+                                                        <span className="text-slate-300">—</span>
+                                                    )}
+                                                </td>
                                                 <td className="px-4 py-3 text-right font-bold text-slate-800">
                                                     <CurrencyAmount value={qtn.total || 0} {...getDisplayCurrencyProps(qtn.currency)} />
                                                 </td>

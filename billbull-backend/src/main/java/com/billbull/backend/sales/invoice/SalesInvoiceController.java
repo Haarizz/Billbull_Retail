@@ -46,9 +46,11 @@ public class SalesInvoiceController {
 
             SalesInvoice invoice = service.getById(id);
             if (subject == null || subject.isBlank()) {
-                subject = "Sales Invoice " + invoice.getInvoiceNumber() + " from " + emailSender.getFromName();
+                subject = "Sales Invoice " + invoice.getInvoiceNumber() + " from "
+                        + emailSender.getFromNameForBranch(invoice.getBranchId());
             }
-            emailSender.send(toEmail, subject, htmlBody, inlineAttachments);
+            // PDF §7.4 — branch-aware From + reply-to.
+            emailSender.send(toEmail, subject, htmlBody, inlineAttachments, invoice.getBranchId());
             return ResponseEntity.ok(Map.of("message", "Email sent successfully to " + toEmail));
         } catch (IllegalArgumentException e) {
             return ResponseEntity.badRequest().body(e.getMessage());

@@ -9,13 +9,22 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 
+import jakarta.persistence.EntityManager;
+import jakarta.persistence.PersistenceContext;
+
 import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.ApplicationRunner;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
+import com.billbull.backend.financials.chartofaccounts.CostCenter;
+import com.billbull.backend.financials.chartofaccounts.CostCenterRepository;
+import com.billbull.backend.hr.employees.Employee;
+import com.billbull.backend.hr.employees.EmployeeRepository;
 import com.billbull.backend.inventory.warehouse.Warehouse;
 import com.billbull.backend.inventory.warehouse.WarehouseRepository;
+import com.billbull.backend.sales.customerledger.Customer;
+import com.billbull.backend.sales.customerledger.CustomerRepository;
 import com.billbull.backend.sales.invoice.SalesInvoice;
 import com.billbull.backend.sales.invoice.SalesInvoiceItem;
 import com.billbull.backend.sales.invoice.SalesInvoiceRepository;
@@ -29,16 +38,28 @@ public class BranchMigrationRunner implements ApplicationRunner {
     private final UserRepository userRepository;
     private final WarehouseRepository warehouseRepository;
     private final SalesInvoiceRepository salesInvoiceRepository;
+    private final CustomerRepository customerRepository;
+    private final EmployeeRepository employeeRepository;
+    private final CostCenterRepository costCenterRepository;
+
+    @PersistenceContext
+    private EntityManager em;
 
     public BranchMigrationRunner(
             BranchRepository branchRepository,
             UserRepository userRepository,
             WarehouseRepository warehouseRepository,
-            SalesInvoiceRepository salesInvoiceRepository) {
+            SalesInvoiceRepository salesInvoiceRepository,
+            CustomerRepository customerRepository,
+            EmployeeRepository employeeRepository,
+            CostCenterRepository costCenterRepository) {
         this.branchRepository = branchRepository;
         this.userRepository = userRepository;
         this.warehouseRepository = warehouseRepository;
         this.salesInvoiceRepository = salesInvoiceRepository;
+        this.customerRepository = customerRepository;
+        this.employeeRepository = employeeRepository;
+        this.costCenterRepository = costCenterRepository;
     }
 
     @Override
@@ -49,9 +70,114 @@ public class BranchMigrationRunner implements ApplicationRunner {
             return;
         }
 
+        promoteHeadquartersIfMissing(branches);
+
         Map<String, Branch> branchLookup = buildBranchLookup(branches);
+        Branch hqFallback = branchRepository.findByIsHeadquartersTrue().orElse(
+                branches.stream().filter(Branch::isDefault).findFirst().orElse(branches.get(0)));
+
         migrateUsers(branchLookup);
         migrateWarehouses(branchLookup);
+        migrateCustomers(branchLookup, hqFallback);
+        migrateEmployees(branchLookup, hqFallback);
+        migrateCostCenters(branchLookup, hqFallback);
+        backfillTransactionBranches(hqFallback);
+    }
+
+    /**
+     * Bulk-assigns HQ to every transaction row whose new {@code branch_id} FK is null.
+     * Group A entities (Quotation/SalesInvoice/DeliveryNote/Grn/PurchaseInvoice) already
+     * carry a {@code branchId} Long that was written by callers — those rows skip this pass.
+     * Group B entities (SalesOrder, SalesReturn, ProformaInvoice, sales/payments,
+     * Lpo, purchase/payment_vouchers, JournalEntry, Expense, ReceiptVoucher,
+     * ReconciliationSession) have never had a branch field and land on HQ.
+     */
+    private void backfillTransactionBranches(Branch hqFallback) {
+        if (hqFallback == null) {
+            return;
+        }
+        String[] tables = {
+                // Group A — only legacy rows where branchId was never set
+                "sales_quotations", "sales_invoices", "delivery_notes",
+                "grns", "purchase_invoices",
+                // Group B — every existing row
+                "sales_orders", "sales_returns", "proforma_invoices", "sales_payments",
+                "lpos", "payment_vouchers",
+                "journal_entries", "expenses",
+                "sales_receipt_vouchers", "reconciliation_sessions",
+                "ledger_entries"
+        };
+        for (String table : tables) {
+            try {
+                em.createNativeQuery(
+                        "UPDATE " + table + " SET branch_id = ?1 WHERE branch_id IS NULL")
+                        .setParameter(1, hqFallback.getId())
+                        .executeUpdate();
+            } catch (Exception ex) {
+                // Table may not exist yet (fresh DB, feature not used). Don't block startup.
+                System.err.println("[BranchMigrationRunner] Skipped " + table + ": " + ex.getMessage());
+            }
+        }
+    }
+
+    private void migrateCustomers(Map<String, Branch> branchLookup, Branch hqFallback) {
+        List<Customer> rows = customerRepository.findAll().stream()
+                .filter(c -> c.getBranchEntity() == null)
+                .toList();
+        if (rows.isEmpty()) return;
+        for (Customer c : rows) {
+            Branch matched = resolveBranchByLabel(c.getBranch(), branchLookup);
+            c.setBranchEntity(matched != null ? matched : hqFallback);
+        }
+        customerRepository.saveAll(rows);
+    }
+
+    private void migrateEmployees(Map<String, Branch> branchLookup, Branch hqFallback) {
+        List<Employee> rows = employeeRepository.findAll().stream()
+                .filter(e -> e.getBranchEntity() == null)
+                .toList();
+        if (rows.isEmpty()) return;
+        for (Employee e : rows) {
+            Branch matched = resolveBranchByLabel(e.getBranch(), branchLookup);
+            e.setBranchEntity(matched != null ? matched : hqFallback);
+        }
+        employeeRepository.saveAll(rows);
+    }
+
+    private void migrateCostCenters(Map<String, Branch> branchLookup, Branch hqFallback) {
+        List<CostCenter> rows = costCenterRepository.findAll().stream()
+                .filter(cc -> cc.getBranchEntity() == null)
+                .toList();
+        if (rows.isEmpty()) return;
+        for (CostCenter cc : rows) {
+            Branch matched = resolveBranchByLabel(cc.getBranch(), branchLookup);
+            cc.setBranchEntity(matched != null ? matched : hqFallback);
+        }
+        costCenterRepository.saveAll(rows);
+    }
+
+    private void promoteHeadquartersIfMissing(List<Branch> branches) {
+        boolean hasHq = branches.stream().anyMatch(Branch::isHeadquarters);
+        if (hasHq) {
+            return;
+        }
+
+        Branch candidate = branches.stream()
+                .filter(Branch::isDefault)
+                .findFirst()
+                .orElseGet(() -> branches.stream()
+                        .min(java.util.Comparator.comparing(Branch::getId))
+                        .orElse(null));
+
+        if (candidate == null) {
+            return;
+        }
+
+        candidate.setHeadquarters(true);
+        if (candidate.getType() == null) {
+            candidate.setType(BranchType.HEADQUARTERS);
+        }
+        branchRepository.save(candidate);
     }
 
     private void migrateUsers(Map<String, Branch> branchLookup) {

@@ -45,6 +45,9 @@ import { getWarehouses } from '../../../api/warehouseApi';
 import { getPrintTemplates } from '../../../api/printTemplateApi';
 import { exportToExcel, exportToPDF } from '../../../utils/exportUtils';
 import { generateReportPrintHtml, printHtml } from '../../../utils/printGenerator';
+import { buildReportHeaderProfile } from '../../../utils/branchPrintProfile';
+import { useCompany } from '../../../context/CompanyContext';
+import { useBranch } from '../../../context/BranchContext';
 import useReportScrollPreserver from '../../../hooks/useReportScrollPreserver';
 
 const REPORT_GROUPS = [
@@ -152,6 +155,8 @@ const badgeClass = (value) => {
 };
 
 const InventoryReports = () => {
+    const { company } = useCompany();
+    const { branches: availableBranches, activeBranchId, isAllBranches } = useBranch();
     const [activeId, setActiveId] = useState('stock-on-hand');
     const [search, setSearch] = useState('');
     const [payload, setPayload] = useState(null);
@@ -282,12 +287,17 @@ const InventoryReports = () => {
     const handleExportExcel = () => exportToExcel(filteredRows, exportColumns, payload?.title || activeReport.title);
     const handleExportPdf = () => exportToPDF(filteredRows, exportColumns, payload?.title || activeReport.title, payload?.reportId || activeId);
     const handlePrint = async () => {
+        const reportProfile = buildReportHeaderProfile({
+            company,
+            branches: availableBranches || [],
+            activeBranchId: isAllBranches ? null : activeBranchId,
+        });
         try {
             const templates = await getPrintTemplates();
             const defaultTemplate = templates.find(template => template.isDefault) || {};
-            printHtml(generateReportPrintHtml(defaultTemplate, payload?.title || activeReport.title, exportColumns, filteredRows));
+            printHtml(generateReportPrintHtml(defaultTemplate, payload?.title || activeReport.title, exportColumns, filteredRows, reportProfile));
         } catch (error) {
-            printHtml(generateReportPrintHtml({}, payload?.title || activeReport.title, exportColumns, filteredRows));
+            printHtml(generateReportPrintHtml({}, payload?.title || activeReport.title, exportColumns, filteredRows, reportProfile));
         }
     };
 

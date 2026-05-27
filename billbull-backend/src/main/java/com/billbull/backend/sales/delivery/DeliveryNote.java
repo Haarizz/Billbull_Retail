@@ -7,10 +7,12 @@ import java.util.List;
 
 import com.billbull.backend.inventory.warehouse.Warehouse;
 import com.billbull.backend.sales.invoice.SalesInvoice;
+import com.billbull.backend.settings.branch.Branch;
 
 @Entity
 @Table(name = "delivery_notes", indexes = {
-		@Index(name = "idx_dn_linked_invoice", columnList = "sales_invoice_id")
+		@Index(name = "idx_dn_linked_invoice", columnList = "sales_invoice_id"),
+		@Index(name = "idx_dn_branch", columnList = "branch_id")
 })
 public class DeliveryNote {
 
@@ -26,9 +28,16 @@ public class DeliveryNote {
 
 	private String salesOrderNo;
 	private String proformaNo;
+	@Column(name = "branch_id")
 	private Long branchId;
 	private String branchName;
 	private String branchCode;
+
+	/** Navigable view of {@link #branchId}. Read-only — writes go through {@link #setBranchId(Long)}. */
+	@ManyToOne(fetch = FetchType.LAZY)
+	@JoinColumn(name = "branch_id", insertable = false, updatable = false)
+	@com.fasterxml.jackson.annotation.JsonIgnore
+	private Branch branchEntity;
 
 	@ManyToOne(fetch = FetchType.LAZY)
 	@JoinColumn(name = "warehouse_id", nullable = false)
@@ -174,6 +183,8 @@ public class DeliveryNote {
 	public void setBranchCode(String branchCode) {
 		this.branchCode = branchCode;
 	}
+
+	public Branch getBranchEntity() { return branchEntity; }
 
 	public Warehouse getWarehouse() {
 		return warehouse;

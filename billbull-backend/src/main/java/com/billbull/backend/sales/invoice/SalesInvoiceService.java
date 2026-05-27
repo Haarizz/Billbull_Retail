@@ -1463,21 +1463,33 @@ public class SalesInvoiceService {
     }
 
     private Branch resolveBranchForSave(SalesInvoice existing) {
-        if (existing != null && existing.getBranchId() == null) {
-            return null;
+        // Updates: branch is locked to the original. Even an admin who switched the
+        // active branch can't move a saved invoice to a different branch.
+        // Return a lightweight Branch carrying just the existing ID — applyBranchSnapshot
+        // ignores the rich fields for updates, but validateInvoiceWarehouses needs the ID.
+        if (existing != null) {
+            if (existing.getBranchId() == null) {
+                return null;
+            }
+            Branch stub = new Branch();
+            stub.setId(existing.getBranchId());
+            return stub;
         }
         return branchAccessService.getRequiredCurrentUserBranch();
     }
 
     private void applyBranchSnapshot(SalesInvoice invoice, SalesInvoice existing, Branch resolvedBranch) {
-        if (existing != null && existing.getBranchId() == null) {
-            invoice.setBranchId(null);
-            invoice.setBranchName(null);
-            invoice.setBranchCode(null);
+        // UPDATE path — branch is immutable. Always carry forward the existing snapshot,
+        // regardless of what the client sent or which branch the user is now active on.
+        if (existing != null) {
+            invoice.setBranchId(existing.getBranchId());
+            invoice.setBranchName(existing.getBranchName());
+            invoice.setBranchCode(existing.getBranchCode());
             invoice.setBranch(existing.getBranch());
             return;
         }
 
+        // CREATE path — stamp from the session's active branch.
         if (resolvedBranch == null) {
             invoice.setBranchId(null);
             invoice.setBranchName(null);

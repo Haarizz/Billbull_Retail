@@ -614,8 +614,16 @@ public class LpoService {
     }
 
     private Branch resolveBranchForLpo(Lpo lpo) {
-        if (lpo.getId() != null && lpo.getBranchId() == null) {
-            return null;
+        // UPDATE — branch is locked to the existing value (PDF §3.4).
+        if (lpo.getId() != null) {
+            if (lpo.getBranchId() == null) {
+                return null;
+            }
+            Branch stub = new Branch();
+            stub.setId(lpo.getBranchId());
+            stub.setName(lpo.getBranchName());
+            stub.setCode(lpo.getBranchCode());
+            return stub;
         }
         return branchAccessService.getRequiredCurrentUserBranch();
     }

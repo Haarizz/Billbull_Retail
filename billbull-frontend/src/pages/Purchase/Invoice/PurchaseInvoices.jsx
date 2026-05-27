@@ -53,6 +53,7 @@ import { formatDisplayDate } from '../../../utils/dateUtils';
 // Printing Utilities
 import { getTemplatesByCategory } from '../../../api/printTemplateApi';
 import { generatePrintHtml, printHtml } from '../../../utils/printGenerator';
+import { buildDocumentHeaderProfile } from '../../../utils/branchPrintProfile';
 import billBullLogo from '../../../assets/billBullLogo.png';
 import toast from 'react-hot-toast';
 import {
@@ -220,6 +221,9 @@ const mapInvoiceFromApi = (inv) => {
     vendorInvoiceNo,
     vendorInvoiceDate,
     vendorId: inv.vendorId || null, // if exists, else null
+    branchId: inv.branchId ?? null,
+    branchName: inv.branchName || '',
+    branchCode: inv.branchCode || '',
     grnId: inv.grnId,
     lpoId: inv.lpoId,
     source: inv.sourceType || "Direct",
@@ -688,6 +692,7 @@ const InvoiceListView = ({ invoices, filteredInvoices, activeFilter, setActiveFi
                 <th className="px-6 py-3 whitespace-nowrap">Document Date</th>
                 <th className="px-6 py-3 whitespace-nowrap">Invoice Date</th>
                 <th className="px-6 py-3 whitespace-nowrap">Vendor</th>
+                <th className="px-6 py-3 whitespace-nowrap">Branch</th>
                 <th className="px-6 py-3 whitespace-nowrap">Source</th>
                 <th className="px-6 py-3 whitespace-nowrap">Ref No</th>
                 <th className="px-6 py-3 whitespace-nowrap">Warehouse</th>
@@ -706,6 +711,16 @@ const InvoiceListView = ({ invoices, filteredInvoices, activeFilter, setActiveFi
                   <td className="px-6 py-4 text-slate-600"><div className="flex items-center gap-1.5"><Calendar className="h-3 w-3 text-slate-400" /> {row.documentDate || '-'}</div></td>
                   <td className="px-6 py-4 text-slate-600"><div className="flex items-center gap-1.5"><Calendar className="h-3 w-3 text-slate-400" /> {row.vendorInvoiceDate || '-'}</div></td>
                   <td className="px-6 py-4"><div><div className="font-medium text-slate-900">{row.vendor}</div><div className="text-[10px] text-slate-400">{row.vendorInvoiceNo || '-'}</div></div></td>
+                  <td className="px-6 py-4 text-slate-600 text-[11px]">
+                    {row.branchName ? (
+                      <>
+                        <div className="font-medium">{row.branchName}</div>
+                        {row.branchCode && <div className="text-slate-400">{row.branchCode}</div>}
+                      </>
+                    ) : (
+                      <span className="text-slate-300">—</span>
+                    )}
+                  </td>
                   <td className="px-6 py-4"><span className={`text-[10px] px-2 py-0.5 rounded border font-medium ${row.sourceColor}`}>{row.source}</span></td>
                   <td className="px-6 py-4 text-slate-600 font-mono text-[10px]">{row.refNo}</td>
                   <td className="px-6 py-4 text-slate-600 flex items-center gap-1"><LayoutDashboard className="h-3 w-3 text-slate-400" /> {row.warehouse}</td>
@@ -2868,6 +2883,7 @@ const DraftInvoicesView = ({ drafts, onEdit, onDelete }) => {
 
 const PurchaseInvoices = () => {
   const { company } = useCompany();
+  const { branches: availableBranches, activeBranch } = useBranch();
   const navigate = useNavigate();
   const location = useLocation();
   const [activeNavTab, setActiveNavTab] = useState("list");
@@ -2900,6 +2916,13 @@ const PurchaseInvoices = () => {
 
   useEffect(() => {
     loadInvoices();
+  }, []);
+
+  // Refetch when the global Branch Selector changes the active branch.
+  useEffect(() => {
+    const handler = () => loadInvoices();
+    window.addEventListener('billbull:branch-changed', handler);
+    return () => window.removeEventListener('billbull:branch-changed', handler);
   }, []);
 
   // Pre-fill editor when navigated from GRN or LPO "Proceed to Invoice"
@@ -3032,8 +3055,13 @@ const PurchaseInvoices = () => {
       );
       const printData = buildPurchaseInvoicePrintData(printableInvoice, fullVendor, company);
 
+      const piBranchId = printableInvoice?.branchId ?? invoice?.branchId ?? activeBranch?.id;
       const html = generatePrintHtml(defaultTemplate, printData, {
-        companyProfile: company,
+        companyProfile: buildDocumentHeaderProfile({
+          company,
+          branches: availableBranches || [],
+          branchId: piBranchId,
+        }),
         billBullLogo: billBullLogo
       });
 

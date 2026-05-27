@@ -1,11 +1,15 @@
 package com.billbull.backend.hr.employees;
 
+import com.billbull.backend.settings.branch.Branch;
 import jakarta.persistence.*;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 
 @Entity
-@Table(name = "employees")
+@Table(
+    name = "employees",
+    indexes = { @Index(name = "idx_employee_branch", columnList = "branch_id") }
+)
 public class Employee {
 
     // =========================
@@ -52,7 +56,14 @@ public class Employee {
     // =========================
     private String role;
     private String department;
+
+    /** Legacy free-text branch label; kept until all callers migrate to {@link #branchEntity}. */
     private String branch;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "branch_id")
+    @com.fasterxml.jackson.annotation.JsonIgnore
+    private Branch branchEntity;
     private String reportingManager;
     private String workLocation;
     private String employmentType;
@@ -149,6 +160,9 @@ public class Employee {
 
     public String getBranch() { return branch; }
     public void setBranch(String branch) { this.branch = branch; }
+
+    public Branch getBranchEntity() { return branchEntity; }
+    public void setBranchEntity(Branch branchEntity) { this.branchEntity = branchEntity; }
 
     public String getReportingManager() { return reportingManager; }
     public void setReportingManager(String reportingManager) { this.reportingManager = reportingManager; }

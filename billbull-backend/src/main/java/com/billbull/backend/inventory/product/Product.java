@@ -6,6 +6,7 @@ import com.billbull.backend.common.BaseEntity;
 import com.billbull.backend.inventory.brand.Brand;
 import com.billbull.backend.inventory.department.Department;
 import com.billbull.backend.inventory.subdepartment.SubDepartment;
+import com.billbull.backend.settings.branch.Branch;
 import com.fasterxml.jackson.annotation.JsonProperty;
 
 import jakarta.persistence.CascadeType;
@@ -13,6 +14,7 @@ import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
 import jakarta.persistence.Enumerated;
+import jakarta.persistence.FetchType;
 import jakarta.persistence.Index;
 import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
@@ -38,13 +40,20 @@ import jakarta.persistence.UniqueConstraint;
         // Composite: active + name — covers the main list query entirely
         @Index(name = "idx_product_active_name", columnList = "is_active, name"),
         // Speeds up: WHERE status = ...
-        @Index(name = "idx_product_status", columnList = "status")
+        @Index(name = "idx_product_status", columnList = "status"),
+        // Branch ownership — null = company-wide ("All Branches") shared item.
+        @Index(name = "idx_product_branch", columnList = "branch_id")
     }
 )
 public class Product extends BaseEntity {
 
     @Column(nullable = false, length = 50)
     private String code;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "branch_id")
+    @com.fasterxml.jackson.annotation.JsonIgnore
+    private Branch branch;
 
     @Column(nullable = false, length = 150)
     private String name;
@@ -130,6 +139,9 @@ public class Product extends BaseEntity {
     // --- PRODUCT SPECIFIC GETTERS/SETTERS ---
     public String getCode() { return code; }
     public void setCode(String code) { this.code = code; }
+
+    public Branch getBranch() { return branch; }
+    public void setBranch(Branch branch) { this.branch = branch; }
     public String getName() { return name; }
     public void setName(String name) { this.name = name; }
     public String getLocalName() { return localName; }

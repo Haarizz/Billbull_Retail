@@ -1,5 +1,6 @@
 package com.billbull.backend.sales.salesorder;
 
+import com.billbull.backend.settings.branch.Branch;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.annotation.JsonManagedReference;
 import jakarta.persistence.*;
@@ -8,13 +9,19 @@ import java.time.LocalDate;
 import java.util.List;
 
 @Entity
-@Table(name = "sales_orders")
+@Table(name = "sales_orders", indexes = {
+    @Index(name = "idx_sales_order_branch", columnList = "branch_id")
+})
 @JsonIgnoreProperties({ "hibernateLazyInitializer", "handler" })
 public class SalesOrder {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
+
+    @ManyToOne(fetch = FetchType.EAGER)
+    @JoinColumn(name = "branch_id")
+    private Branch branch;
 
     @Column(unique = true)
     private String soNumber;
@@ -90,6 +97,9 @@ public class SalesOrder {
     public void setId(Long id) {
         this.id = id;
     }
+
+    public Branch getBranch() { return branch; }
+    public void setBranch(Branch branch) { this.branch = branch; }
 
     public String getSoNumber() {
         return soNumber;

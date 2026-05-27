@@ -40,6 +40,13 @@ const BankReconciliation = () => {
         fetchData();
     }, []);
 
+    // Refetch when the global Branch Selector changes the active branch.
+    useEffect(() => {
+        const handler = () => fetchData();
+        window.addEventListener('billbull:branch-changed', handler);
+        return () => window.removeEventListener('billbull:branch-changed', handler);
+    }, []);
+
     const getBalanceString = (account) => {
         const raw = account?.balanceAmount;
         const num = Number(raw);

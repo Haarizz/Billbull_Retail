@@ -65,6 +65,7 @@ public class ProformaService {
                 SalesDocumentType.PROFORMA_INVOICE,
                 req.piNumber);
         ProformaInvoice pi = buildEntity(req, new ProformaInvoice());
+        pi.setBranch(branchAccessService.getRequiredCurrentUserBranch());
         return toResponse(repo.save(pi));
     }
 
@@ -75,6 +76,10 @@ public class ProformaService {
         ProformaInvoice pi = repo.findById(id)
                 .orElseThrow(() -> new RuntimeException("Proforma not found"));
 
+        Long existingBranchId = pi.getBranch() != null ? pi.getBranch().getId() : null;
+        branchAccessService.assertTransactionBranchAccessible(existingBranchId, "Proforma Invoice");
+        com.billbull.backend.settings.branch.Branch lockedBranch = pi.getBranch();
+
         if (pi.getStatus() == ProformaStatus.ISSUED) {
             throw new IllegalStateException("Issued Proforma cannot be edited");
         }
@@ -83,6 +88,7 @@ public class ProformaService {
         pi.getItems().clear(); // orphanRemoval handles delete
 
         buildEntity(req, pi);
+        pi.setBranch(lockedBranch);   // branch immutable on update
         pi.setPiNumber(numberingService.resolveNumberForUpdate(
                 SalesDocumentType.PROFORMA_INVOICE,
                 existingPiNumber,
@@ -94,7 +100,8 @@ public class ProformaService {
 
     @Transactional(readOnly = true)
     public List<ProformaResponse> list() {
-        List<ProformaInvoice> proformas = new ArrayList<>(repo.findAll());
+        List<ProformaInvoice> proformas = new ArrayList<>(
+                branchAccessService.filterBranchScopedByBranch(repo.findAll(), ProformaInvoice::getBranch));
         DocumentOrderingUtil.sortByDocumentDateAndNumberDesc(
                 proformas,
                 ProformaInvoice::getPiDate,
