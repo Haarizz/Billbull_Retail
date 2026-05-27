@@ -43,3 +43,21 @@ export const switchBranchSession = async (branchId) => {
     const res = await api.post("/api/session/switch-branch", { branchId });
     return res.data;
 };
+
+export const uploadBranchLogo = async (id, file) => {
+    const formData = new FormData();
+    formData.append("file", file);
+    const res = await api.post(`/api/branches/${id}/logo`, formData, {
+        headers: { "Content-Type": "multipart/form-data" }
+    });
+    return res.data;
+};
+
+export const uploadBranchStamp = async (id, file) => {
+    const formData = new FormData();
+    formData.append("file", file);
+    const res = await api.post(`/api/branches/${id}/stamp`, formData, {
+        headers: { "Content-Type": "multipart/form-data" }
+    });
+    return res.data;
+};

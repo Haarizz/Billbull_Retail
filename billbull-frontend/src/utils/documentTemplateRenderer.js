@@ -140,13 +140,21 @@ const resolveTemplateImageUrl = (value) => resolveDocumentImageUrl(value) || '';
 
 const buildTheme = (template = {}) => {
     const settings = getTemplateDesignerSettings(template);
+    const accent = sanitizeCssColor(settings.accentColor || settings.primaryColor, '#F5C742');
+    let primary = sanitizeCssColor(settings.grandTotalColor || settings.primaryColor || '#111827', '#111827');
+    
+    // If legacy corrupted data made primaryColor equal to accentColor, force it to black
+    if (primary.toLowerCase() === accent.toLowerCase()) {
+        primary = '#111827';
+    }
+
     return {
-        accentColor: sanitizeCssColor(settings.accentColor || settings.primaryColor, '#F5C742'),
-        primaryColor: sanitizeCssColor(settings.primaryColor || settings.grandTotalColor || '#111827', '#111827'),
+        accentColor: accent,
+        primaryColor: primary,
         borderColor: sanitizeCssColor(settings.borderColor, '#e0e0e0'),
-        tableHeaderBg: sanitizeCssColor(settings.tableHeaderBg || settings.tableHeaderColor, '#ffffff'),
+        tableHeaderBg: sanitizeCssColor(settings.tableHeaderBg || settings.tableHeaderColor || '#f8fafc', '#f8fafc'),
         tableHeaderText: sanitizeCssColor(settings.tableHeaderText || settings.tableHeaderTextColor, '#111827'),
-        totalRowBg: sanitizeCssColor(settings.totalRowBg, '#f8fafc'),
+        totalRowBg: sanitizeCssColor(settings.totalRowBg || '#f8fafc', '#f8fafc'),
         fontFamily: sanitizeCssFontFamily(settings.fontFamily),
         fontSize: normaliseFontSize(settings.fontSize),
     };
@@ -154,10 +162,6 @@ const buildTheme = (template = {}) => {
 
 const renderCurrencySymbol = (value) => {
     const currencyConfig = resolveCurrencyDisplayConfig(value);
-    if (currencyConfig.hasImage) {
-        return `<img src="${escapeHtml(UAE_DIRHAM_SYMBOL_IMAGE)}" alt="${escapeHtml(currencyConfig.ariaLabel)}" style="height:0.82em;width:auto;display:inline-block;vertical-align:-0.08em;margin:0 0.12em;" />`;
-    }
-
     return escapeHtml(currencyConfig.label);
 };
 
@@ -515,25 +519,25 @@ const createColumnModel = (rawColumns = {}) => {
     // Amount cell shows an inline Discount sub-line when "Discount % (in
     // Taxable Amount col)" is on.
     return [
-        { key: 'index',         label: '#',                               align: 'center', width: '4%',  enabled: c.showIndex !== false },
-        { key: 'image',         label: 'Image',                           align: 'center', width: '7%',  enabled: Boolean(c.image) },
-        { key: 'description',   label: 'Product / Services',              align: 'left',   width: c.batchBarcode ? '16%' : '22%', enabled: c.showItemIdentity !== false },
-        { key: 'details',       label: 'Description of Product / Services', align: 'left', width: c.batchBarcode ? '14%' : '24%', enabled: c.description !== false },
-        { key: 'uom',           label: 'UOM',                             align: 'center', width: '6%',  enabled: Boolean(c.uom) },
-        { key: 'batchBarcode',  label: 'Batch Barcode',                   align: 'center', width: '22%', enabled: Boolean(c.batchBarcode) },
-        { key: 'expiry',        label: 'Expiry',                          align: 'center', width: '8%',  enabled: Boolean(c.expiry) },
-        { key: 'qty',           label: 'Qty',                             align: 'right',  width: '6%',  enabled: c.qty !== false },
-        { key: 'unitPrice',     label: 'Unit Price',                      align: 'right',  width: '9%',  enabled: c.unitPrice !== false },
-        { key: 'taxableAmount', label: 'Taxable Amount',                  align: 'right',  width: '12%', enabled: Boolean(c.taxableAmount) },
-        { key: 'discountPercent', label: 'Discount %',                    align: 'center', width: '7%',  enabled: Boolean(c.discountPercent) },
-        { key: 'taxPercent',    label: 'VAT %',                           align: 'center', width: '6%',  enabled: Boolean(c.taxPercent) },
-        { key: 'tax',           label: 'VAT Amount',                      align: 'right',  width: '9%',  enabled: c.tax !== false },
-        { key: 'total',         label: 'Line Total',                      align: 'right',  width: '9%',  enabled: c.total !== false },
-        { key: 'lpoQty',        label: 'LPO Qty',                         align: 'right',  width: '6%',  enabled: Boolean(c.lpoQty) },
-        { key: 'received',      label: 'Received',                        align: 'right',  width: '6%',  enabled: Boolean(c.received) },
-        { key: 'accepted',      label: 'Accepted',                        align: 'right',  width: '6%',  enabled: Boolean(c.accepted) },
-        { key: 'receivedBy',    label: 'Received By',                     align: 'left',   width: '10%', enabled: Boolean(c.receivedBy) },
-        { key: 'checkedBy',     label: 'Checked By',                      align: 'left',   width: '10%', enabled: Boolean(c.checkedBy) },
+        { key: 'index', label: '#', align: 'center', width: '4%', enabled: c.showIndex !== false },
+        { key: 'image', label: 'Image', align: 'center', width: '7%', enabled: Boolean(c.image) },
+        { key: 'description', label: 'Product / Services', align: 'left', width: c.batchBarcode ? '16%' : '22%', enabled: c.showItemIdentity !== false },
+        { key: 'details', label: 'Description of Product / Services', align: 'left', width: c.batchBarcode ? '14%' : '24%', enabled: c.description !== false },
+        { key: 'uom', label: 'UOM', align: 'center', width: '6%', enabled: Boolean(c.uom) },
+        { key: 'batchBarcode', label: 'Batch Barcode', align: 'center', width: '22%', enabled: Boolean(c.batchBarcode) },
+        { key: 'expiry', label: 'Expiry', align: 'center', width: '8%', enabled: Boolean(c.expiry) },
+        { key: 'qty', label: 'Qty', align: 'right', width: '6%', enabled: c.qty !== false },
+        { key: 'unitPrice', label: 'Unit Price', align: 'right', width: '9%', enabled: c.unitPrice !== false },
+        { key: 'taxableAmount', label: 'Taxable Amount', align: 'right', width: '12%', enabled: Boolean(c.taxableAmount) },
+        { key: 'discountPercent', label: 'Discount %', align: 'center', width: '7%', enabled: Boolean(c.discountPercent) },
+        { key: 'taxPercent', label: 'VAT %', align: 'center', width: '6%', enabled: Boolean(c.taxPercent) },
+        { key: 'tax', label: 'VAT Amount', align: 'right', width: '9%', enabled: c.tax !== false },
+        { key: 'total', label: 'Line Total', align: 'right', width: '9%', enabled: c.total !== false },
+        { key: 'lpoQty', label: 'LPO Qty', align: 'right', width: '6%', enabled: Boolean(c.lpoQty) },
+        { key: 'received', label: 'Received', align: 'right', width: '6%', enabled: Boolean(c.received) },
+        { key: 'accepted', label: 'Accepted', align: 'right', width: '6%', enabled: Boolean(c.accepted) },
+        { key: 'receivedBy', label: 'Received By', align: 'left', width: '10%', enabled: Boolean(c.receivedBy) },
+        { key: 'checkedBy', label: 'Checked By', align: 'left', width: '10%', enabled: Boolean(c.checkedBy) },
     ].filter((col) => col.enabled);
 };
 
@@ -640,8 +644,8 @@ const renderTableCell = (column, item, index, displayOptions = {}, columnOptions
             return `
                 <td class="table-cell cell-center">
                     ${item.image
-                        ? `<img src="${escapeHtml(item.image)}" class="item-thumb item-thumb-small" alt="" />`
-                        : `<div class="item-thumb item-thumb-small item-thumb-placeholder"></div>`}
+                    ? `<img src="${escapeHtml(item.image)}" class="item-thumb item-thumb-small" alt="" />`
+                    : `<div class="item-thumb item-thumb-small item-thumb-placeholder"></div>`}
                 </td>
             `;
         case 'description':
@@ -716,8 +720,8 @@ const renderTableCell = (column, item, index, displayOptions = {}, columnOptions
                 <td class="table-cell cell-right">
                     <div>${formatNumber(item.taxableAmount)}</div>
                     ${columnOptions.discount && item.discountPercent > 0
-                        ? `<div class="cell-sub">Discount ${formatNumber(item.discountPercent, 0)}%</div><div class="cell-sub">@ ${formatNumber((item.taxableAmount * item.discountPercent) / 100)}</div>`
-                        : ''}
+                    ? `<div class="cell-sub">Discount ${formatNumber(item.discountPercent, 0)}%</div><div class="cell-sub">@ ${formatNumber((item.taxableAmount * item.discountPercent) / 100)}</div>`
+                    : ''}
                 </td>
             `;
         case 'discount':
@@ -801,8 +805,8 @@ const buildItemsTable = (layout) => {
                 </thead>
                 <tbody>
                     ${layout.items.length > 0
-                        ? rows
-                        : `<tr><td class="table-empty" colspan="${layout.columnModel.length}">No items found.</td></tr>`}
+            ? rows
+            : `<tr><td class="table-empty" colspan="${layout.columnModel.length}">No items found.</td></tr>`}
                 </tbody>
             </table>
         </section>
@@ -1024,8 +1028,8 @@ const buildStampBlock = (layout, renderTarget) => {
     return `
         <div class="stamp-container">
             ${stampUrl
-                ? `<img src="${escapeHtml(stampUrl)}" alt="Company Stamp" />`
-                : `<div class="stamp-placeholder"><span>Company<br/>Stamp</span></div>`}
+            ? `<img src="${escapeHtml(stampUrl)}" alt="Company Stamp" />`
+            : `<div class="stamp-placeholder"><span>Company<br/>Stamp</span></div>`}
             <div class="stamp-caption">Official Stamp</div>
         </div>
     `;
@@ -1189,8 +1193,8 @@ const buildHeader = (layout, renderTarget = 'print') => {
             <div class="company-panel">
                 ${companyVisibility.name ? `<div class="company-name">${escapeHtml(layout.company.companyName || '')}</div>` : ''}
                 ${companyVisibility.name && layout.company.localName && layout.company.localName !== layout.company.companyName
-                    ? `<div class="company-copy company-local-name">${escapeHtml(layout.company.localName)}</div>`
-                    : ''}
+                ? `<div class="company-copy company-local-name">${escapeHtml(layout.company.localName)}</div>`
+                : ''}
                 ${companyLines.map((line) => `<div class="company-copy">${escapeHtml(line)}</div>`).join('')}
             </div>
         ` : ''}
@@ -1242,8 +1246,8 @@ const buildFooterBar = (layout, renderTarget, billBullLogo) => {
                 <div class="footer-right">${escapeHtml(layout.title)}</div>
             </div>
             ${billBullLogo
-        ? `<div class="footer-brand"><img src="${billBullLogo}" alt="Powered by BillBull" /></div>`
-        : ''}
+            ? `<div class="footer-brand"><img src="${billBullLogo}" alt="Powered by BillBull" /></div>`
+            : ''}
         </footer>
     `;
 };
@@ -1323,10 +1327,9 @@ const buildCoreStyles = () => `
     }
     .document-header-designer .document-title {
         margin: 0 0 14px;
-        max-width: 120px;
-        white-space: normal;
-        word-break: normal;
-        overflow-wrap: normal;
+        white-space: nowrap;
+        word-break: keep-all;
+        letter-spacing: -0.5px;
         line-height: 1.35;
     }
     .header-center {
@@ -1471,7 +1474,8 @@ const buildCoreStyles = () => `
     }
     .document-shell-designer .grand-total-display {
         display: flex;
-        justify-content: flex-end;
+        flex-direction: column;
+        align-items: flex-end;
         margin: 8px 0 14px;
         padding: 0;
         border-top: 0;
@@ -2150,6 +2154,11 @@ const buildPrintStyles = (paperSize = 'A4', orientation = 'Portrait', layout = {
             position: static;
         }
         @media print {
+            * {
+                -webkit-print-color-adjust: exact !important;
+                print-color-adjust: exact !important;
+                color-adjust: exact !important;
+            }
             html,
             body {
                 width: ${page.width}mm;
@@ -2200,8 +2209,8 @@ const buildPrintStyles = (paperSize = 'A4', orientation = 'Portrait', layout = {
             }
             .document-header-designer .document-title {
                 margin-bottom: 14px !important;
-                max-width: 120px !important;
-                white-space: normal !important;
+                white-space: nowrap !important;
+                word-break: keep-all !important;
                 line-height: 1.35 !important;
             }
             .document-table thead {
@@ -2651,7 +2660,7 @@ const buildDocumentHtml = (template, data, options = {}, renderTarget = 'print')
     const styles = renderTarget === 'email'
         ? `${buildCoreStyles()}${buildTemplateThemeStyles(layout)}${buildEmailStyles()}`
         : `${buildCoreStyles()}${buildTemplateThemeStyles(layout)}${buildPrintStyles(template.paperSize || 'A4', template.orientation || 'Portrait', layout)}`;
-    
+
     const documentTitle = generateDocFilename(
         layout.title,
         layout.docNo,

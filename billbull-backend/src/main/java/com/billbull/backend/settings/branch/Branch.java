@@ -51,6 +51,9 @@ public class Branch {
     @Column(name = "logo_url", length = 500)
     private String logoUrl;
 
+    @Column(name = "stamp_url", length = 500)
+    private String stampUrl;
+
     @Column(name = "sort_order", nullable = false, columnDefinition = "integer not null default 0")
     private int sortOrder = 0;
 
@@ -112,6 +115,9 @@ public class Branch {
 
     public String getLogoUrl() { return logoUrl; }
     public void setLogoUrl(String logoUrl) { this.logoUrl = logoUrl; }
+
+    public String getStampUrl() { return stampUrl; }
+    public void setStampUrl(String stampUrl) { this.stampUrl = stampUrl; }
 
     public int getSortOrder() { return sortOrder; }
     public void setSortOrder(int sortOrder) { this.sortOrder = sortOrder; }

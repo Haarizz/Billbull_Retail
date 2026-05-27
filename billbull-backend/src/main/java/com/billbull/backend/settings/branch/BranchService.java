@@ -11,6 +11,11 @@ import org.springframework.stereotype.Service;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Set;
+import org.springframework.web.multipart.MultipartFile;
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.UUID;
 
 @Service
 @Transactional
@@ -178,6 +183,7 @@ public class BranchService {
         branch.setEmail(normalizeOptional(req.getEmail()));
         branch.setTrnNumber(normalizeOptional(req.getTrnNumber()));
         branch.setLogoUrl(normalizeOptional(req.getLogoUrl()));
+        branch.setStampUrl(normalizeOptional(req.getStampUrl()));
         if (req.getSortOrder() != null) {
             branch.setSortOrder(req.getSortOrder());
         }
@@ -235,5 +241,51 @@ public class BranchService {
         if (duplicate) {
             throw new IllegalStateException("Branch code '" + code.trim() + "' is already in use");
         }
+    }
+
+    private static final String UPLOAD_DIR = System.getProperty("user.dir") + "/uploads/branch";
+
+    public BranchResponse uploadLogo(Long id, MultipartFile file) throws IOException {
+        if (file == null || file.isEmpty()) {
+            throw new IllegalArgumentException("Logo file must not be empty");
+        }
+
+        Branch branch = getEntity(id);
+
+        String original = file.getOriginalFilename();
+        String extension = (original != null && original.contains("."))
+                ? original.substring(original.lastIndexOf("."))
+                : ".png";
+
+        String filename = UUID.randomUUID() + extension;
+        Path dir = Path.of(UPLOAD_DIR);
+        Files.createDirectories(dir);
+        file.transferTo(dir.resolve(filename).toFile());
+
+        String logoPath = "/uploads/branch/" + filename;
+        branch.setLogoUrl(logoPath);
+        return BranchResponse.from(repo.save(branch));
+    }
+
+    public BranchResponse uploadStamp(Long id, MultipartFile file) throws IOException {
+        if (file == null || file.isEmpty()) {
+            throw new IllegalArgumentException("Stamp file must not be empty");
+        }
+
+        Branch branch = getEntity(id);
+
+        String original = file.getOriginalFilename();
+        String extension = (original != null && original.contains("."))
+                ? original.substring(original.lastIndexOf("."))
+                : ".png";
+
+        String filename = UUID.randomUUID() + extension;
+        Path dir = Path.of(UPLOAD_DIR);
+        Files.createDirectories(dir);
+        file.transferTo(dir.resolve(filename).toFile());
+
+        String stampPath = "/uploads/branch/" + filename;
+        branch.setStampUrl(stampPath);
+        return BranchResponse.from(repo.save(branch));
     }
 }

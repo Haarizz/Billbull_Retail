@@ -18,6 +18,7 @@ public class BranchResponse {
     private String email;
     private String trnNumber;
     private String logoUrl;
+    private String stampUrl;
     private int sortOrder;
     private boolean isDefault;
     private boolean isHeadquarters;
@@ -44,6 +45,7 @@ public class BranchResponse {
         r.email = b.getEmail();
         r.trnNumber = b.getTrnNumber();
         r.logoUrl = b.getLogoUrl();
+        r.stampUrl = b.getStampUrl();
         r.sortOrder = b.getSortOrder();
         r.isDefault = b.isDefault();
         r.isHeadquarters = b.isHeadquarters();
@@ -99,6 +101,9 @@ public class BranchResponse {
 
     public String getLogoUrl() { return logoUrl; }
     public void setLogoUrl(String logoUrl) { this.logoUrl = logoUrl; }
+
+    public String getStampUrl() { return stampUrl; }
+    public void setStampUrl(String stampUrl) { this.stampUrl = stampUrl; }
 
     public int getSortOrder() { return sortOrder; }
     public void setSortOrder(int sortOrder) { this.sortOrder = sortOrder; }

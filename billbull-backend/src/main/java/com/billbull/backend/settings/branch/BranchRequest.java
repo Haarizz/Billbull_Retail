@@ -15,6 +15,7 @@ public class BranchRequest {
     private String email;
     private String trnNumber;
     private String logoUrl;
+    private String stampUrl;
     private Integer sortOrder;
     private Boolean isHeadquarters;
     private BranchType type;
@@ -58,6 +59,9 @@ public class BranchRequest {
 
     public String getLogoUrl() { return logoUrl; }
     public void setLogoUrl(String logoUrl) { this.logoUrl = logoUrl; }
+
+    public String getStampUrl() { return stampUrl; }
+    public void setStampUrl(String stampUrl) { this.stampUrl = stampUrl; }
 
     public Integer getSortOrder() { return sortOrder; }
     public void setSortOrder(Integer sortOrder) { this.sortOrder = sortOrder; }
