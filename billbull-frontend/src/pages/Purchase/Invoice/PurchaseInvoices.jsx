@@ -3035,6 +3035,7 @@ const PurchaseInvoices = () => {
     const loadingToast = toast.loading('Preparing print layout...');
     try {
       const templatesPromise = getTemplatesByCategory('Purchase Invoice').catch(() => []);
+      const vendorsPromise = getVendors().catch(() => []);
       let printableInvoice = invoice;
 
       if (invoice?.dbId) {
@@ -3045,10 +3046,10 @@ const PurchaseInvoices = () => {
         }
       }
 
-      const templates = await templatesPromise;
+      const [templates, vendorData] = await Promise.all([templatesPromise, vendorsPromise]);
       const defaultTemplate = resolvePurchasePrintTemplate('Purchase Invoice', templates);
       const fullVendor = findVendorRecord(
-        [],
+        vendorData,
         printableInvoice,
         printableInvoice?.vendorName,
         printableInvoice?.vendor

@@ -2688,7 +2688,10 @@ const GRN = () => {
   const handlePrint = async (grn) => {
     const loadingToast = toast.loading('Preparing print layout...');
     try {
-      const templates = await getTemplatesByCategory('Goods Receipt Note').catch(() => []);
+      const [templates, vendorData] = await Promise.all([
+        getTemplatesByCategory('Goods Receipt Note').catch(() => []),
+        getVendors().catch(() => [])
+      ]);
       const defaultTemplate = resolvePurchasePrintTemplate('Goods Receipt Note', templates);
 
       // Fetch full GRN details if needed
@@ -2701,7 +2704,7 @@ const GRN = () => {
           console.warn('Falling back to GRN data already loaded in the UI for printing.', detailError);
         }
       }
-      const fullVendor = findVendorRecord([], fullGrn, fullGrn?.vendor, fullGrn?.vendorName);
+      const fullVendor = findVendorRecord(vendorData, fullGrn, fullGrn?.vendor, fullGrn?.vendorName);
       const printData = buildGrnPrintData(fullGrn, fullVendor, company);
 
       const grnBranchId = fullGrn?.branchId ?? grn?.branchId ?? activeBranch?.id;

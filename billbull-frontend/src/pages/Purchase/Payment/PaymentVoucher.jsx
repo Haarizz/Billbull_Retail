@@ -37,7 +37,7 @@ import toast from 'react-hot-toast';
 import {
     buildPaymentVoucherPrintData,
     findVendorRecord,
-    normalizePurchaseTemplate
+    resolvePurchasePrintTemplate
 } from '../../../utils/purchasePrintUtils';
 import { formatCurrencyDisplay } from '../../../utils/countryCurrencyOptions';
 import CurrencyAmount, { CurrencySymbol } from '../../../components/CurrencyAmount';
@@ -501,45 +501,26 @@ const PaymentVoucher = () => {
     const handlePrint = async (voucher) => {
         try {
             const loadingToast = toast.loading('Preparing print layout...');
-            const templates = await getTemplatesByCategory('Payment Voucher');
+            const templates = await getTemplatesByCategory('Payment Voucher').catch(() => []);
             toast.dismiss(loadingToast);
 
-            if (!templates || templates.length === 0) {
-                toast.error('No templates found for Payment Voucher');
-                return;
-            }
+            const defaultTemplate = resolvePurchasePrintTemplate('Payment Voucher', templates);
 
-            const defaultTemplate = templates.find(t => t.isDefault) || templates[0];
-
-            // Map to standard print data for Payment Voucher
-            const printData = {
-                title: 'PAYMENT VOUCHER',
-                docNo: voucher.id,
-                date: voucher.date,
-                hideTotalsTable: true,
-                customer: {
-                    name: voucher.vendor || 'Unknown Vendor',
-                    address: '',
-                    trn: ''
-                },
-                items: [],
-                totals: {
-                    subTotal: voucher.amountVal,
-                    tax: 0,
-                    grandTotal: voucher.amountVal,
-                    currency: company?.currencySymbol || company?.currency || 'AED'
-                },
-                summaryAmount: {
-                    label: 'Amount Paid',
-                    value: voucher.amountVal,
-                    currency: company?.currencySymbol || company?.currency || 'AED'
-                },
-                meta: {
-                    status: voucher.status,
+            const fullVendor = findVendorRecord(vendors, voucher, voucher?.vendor, voucher?.vendorId);
+            const printData = buildPaymentVoucherPrintData(
+                {
+                    voucherNumber: voucher.id,
+                    paymentDate: voucher.date,
+                    vendorName: voucher.vendor,
+                    vendorId: voucher.vendorId,
+                    amount: voucher.amountVal,
                     paymentMode: voucher.mode,
-                    reference: voucher.ref
-                }
-            };
+                    referenceNumber: voucher.ref,
+                    status: voucher.rawStatus || voucher.status,
+                },
+                fullVendor,
+                company
+            );
 
             const html = generatePrintHtml(defaultTemplate, printData, {
                 companyProfile: buildDocumentHeaderProfile({
@@ -561,21 +542,17 @@ const PaymentVoucher = () => {
         const loadingToast = toast.loading('Preparing print layout...');
         try {
             const [templates, voucherDetail] = await Promise.all([
-                getTemplatesByCategory('Payment Voucher'),
+                getTemplatesByCategory('Payment Voucher').catch(() => []),
                 getPaymentVoucherById(voucher.dbId)
             ]);
 
-            if (!templates || templates.length === 0) {
-                toast.error('No templates found for Payment Voucher');
-                return;
-            }
-
-            const defaultTemplate = normalizePurchaseTemplate(
-                templates.find(t => t.isDefault) || templates[0],
-                'Payment Voucher'
-            );
+            const defaultTemplate = resolvePurchasePrintTemplate('Payment Voucher', templates);
             const fullVendor = findVendorRecord(vendors, voucherDetail, voucherDetail?.vendorName);
-            const linkedInvoice = purchaseInvoices.find((invoice) => invoice.id === voucherDetail.invoiceId) || null;
+            const linkedInvoice = purchaseInvoices.find((invoice) =>
+                Number(invoice.id ?? invoice.dbId) === Number(voucherDetail.invoiceId) ||
+                Number(invoice.dbId) === Number(voucherDetail.invoiceId) ||
+                String(invoice.invoiceNumber || '') === String(voucherDetail.invoiceId || '')
+            ) || null;
             const printData = buildPaymentVoucherPrintData(
                 voucherDetail,
                 fullVendor,
