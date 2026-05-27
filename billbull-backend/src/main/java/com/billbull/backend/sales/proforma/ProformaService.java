@@ -17,6 +17,8 @@ import com.billbull.backend.inventory.product.ProductMediaRepository;
 import com.billbull.backend.inventory.product.ProductRepository;
 import com.billbull.backend.inventory.warehouse.Warehouse;
 import com.billbull.backend.inventory.warehouse.WarehouseStockService;
+import com.billbull.backend.sales.settings.SalesDocumentNumberingService;
+import com.billbull.backend.sales.settings.SalesDocumentType;
 import com.billbull.backend.settings.branch.Branch;
 import com.billbull.backend.settings.branch.BranchAccessService;
 import com.billbull.backend.util.DocumentOrderingUtil;
@@ -32,6 +34,7 @@ public class ProformaService {
     private final ProductMediaRepository productMediaRepository;
     private final BranchAccessService branchAccessService;
     private final WarehouseStockService warehouseStockService;
+    private final SalesDocumentNumberingService numberingService;
 
     public ProformaService(
             ProformaRepository repo,
@@ -39,18 +42,28 @@ public class ProformaService {
             ProductBarcodeRepository barcodeRepo,
             ProductMediaRepository productMediaRepository,
             BranchAccessService branchAccessService,
-            WarehouseStockService warehouseStockService) {
+            WarehouseStockService warehouseStockService,
+            SalesDocumentNumberingService numberingService) {
         this.repo = repo;
         this.productRepo = productRepo;
         this.barcodeRepo = barcodeRepo;
         this.productMediaRepository = productMediaRepository;
         this.branchAccessService = branchAccessService;
         this.warehouseStockService = warehouseStockService;
+        this.numberingService = numberingService;
+    }
+
+    @Transactional
+    public String generateProformaNumber() {
+        return numberingService.preview(SalesDocumentType.PROFORMA_INVOICE);
     }
 
     /* ================= CREATE ================= */
 
     public ProformaResponse create(ProformaRequest req) {
+        req.piNumber = numberingService.resolveNumberForCreate(
+                SalesDocumentType.PROFORMA_INVOICE,
+                req.piNumber);
         ProformaInvoice pi = buildEntity(req, new ProformaInvoice());
         return toResponse(repo.save(pi));
     }
@@ -66,9 +79,14 @@ public class ProformaService {
             throw new IllegalStateException("Issued Proforma cannot be edited");
         }
 
+        String existingPiNumber = pi.getPiNumber();
         pi.getItems().clear(); // orphanRemoval handles delete
 
         buildEntity(req, pi);
+        pi.setPiNumber(numberingService.resolveNumberForUpdate(
+                SalesDocumentType.PROFORMA_INVOICE,
+                existingPiNumber,
+                req.piNumber));
         return toResponse(repo.save(pi));
     }
 

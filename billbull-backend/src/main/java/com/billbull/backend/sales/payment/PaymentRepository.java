@@ -2,6 +2,7 @@ package com.billbull.backend.sales.payment;
 
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
 import java.time.LocalDate;
@@ -12,6 +13,11 @@ import java.util.Optional;
 public interface PaymentRepository extends JpaRepository<Payment, Long> {
 
     Optional<Payment> findByPaymentNumber(String paymentNumber);
+
+    boolean existsByPaymentNumber(String paymentNumber);
+
+    @Query("SELECT p.paymentNumber FROM Payment p WHERE p.paymentNumber LIKE CONCAT(:prefix, '%')")
+    List<String> findPaymentNumbersByPrefix(@Param("prefix") String prefix);
 
     List<Payment> findByCustomerCode(String customerCode);
 

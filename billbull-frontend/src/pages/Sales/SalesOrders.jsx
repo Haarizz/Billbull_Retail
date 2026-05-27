@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import {
   Printer,
@@ -25,7 +25,8 @@ import {
   Paperclip,
   Save,
   ChevronRight,
-  AlertCircle
+  AlertCircle,
+  Zap
 } from 'lucide-react';
 
 // ✅ API IMPORTS
@@ -35,10 +36,17 @@ import { getAllQuotations } from '../../api/quotationApi';
 import { getAllProformas } from '../../api/proformaApi';
 import {
   getAllSalesOrders,
+  getSalesOrdersPage,
+  getNextSalesOrderNumber,
   saveSalesOrder,
-  uploadSalesOrderAttachment
+  uploadSalesOrderAttachment,
+  getSalesOrderReceiptVouchers
 } from '../../api/salesorderApi';
 import { getTemplatesByCategory } from '../../api/printTemplateApi';
+import { formatDisplayDate } from '../../utils/dateUtils';
+import { pickSalesItemPrice, isPolicyOverridingPackings } from '../../utils/salesPricing';
+import { computeLineTaxTotals, resolveLineTaxRate } from '../../utils/vatMath';
+import { getActiveVatRate } from '../../api/taxApi';
 import { generatePrintHtml, printHtml } from '../../utils/printGenerator';
 import { getImageUrl } from '../../utils/urlUtils';
 import { getDefaultProductUnit, resolveUnitAmount } from '../../utils/unitPricing';
@@ -55,9 +63,14 @@ import ProductSelector from '../../components/ProductSelector';
 import CustomerSelector from '../../components/CustomerSelector';
 import CustomerShippingPanel from '../../components/CustomerShippingPanel';
 import { hydrateCustomerFromSource, resolveCustomer, resolveDefaultShippingAddress } from '../../utils/customerResolution';
+import { isAutoNumberingEnabled } from '../../utils/salesNumbering';
+import { normalizePurchaseTemplate, buildReceiptVoucherPrintData } from '../../utils/purchasePrintUtils';
 
 // ✅ GLOBAL COMPONENTS
 import { ItemDescriptionCell, ItemDescriptionHeader } from '../../components/ItemDescriptionCell';
+// QA-FAST-ENTRY: inline row search input that auto-opens ProductSelector
+import InlineProductSearchCell from '../../components/InlineProductSearchCell';
+import PaginationFooter from '../../components/common/PaginationFooter';
 import ItemAddOnsModal from '../../components/ItemAddOnsModal';
 
 // ✅ STOCK AVAILABILITY MODAL
@@ -79,6 +92,7 @@ import { formatCurrencyDisplay, resolveCurrencyDisplayCode } from '../../utils/c
 // ==========================================
 
 const SALES_ORDER_COLUMNS = [
+  { header: 'S.No.', key: 'sNo', width: 8 },
   { header: 'SO No', key: 'soNumber', width: 15 },
   { header: 'Date', key: 'orderDate', width: 12 },
   { header: 'Customer', key: 'customerName', width: 25 },
@@ -103,7 +117,7 @@ const MobileCard = ({ order, onClick, getStatusBadge, currency }) => (
     <div className="flex justify-between items-start mb-2">
       <div>
         <h4 className="font-bold text-slate-800">{order.soNumber}</h4>
-        <p className="text-xs text-slate-500">{order.orderDate}</p>
+        <p className="text-xs text-slate-500">{formatDisplayDate(order.orderDate)}</p>
       </div>
       {getStatusBadge(order.status)}
     </div>
@@ -141,7 +155,7 @@ const MobileFloatingActions = ({ status, onConfirm, onConvertToDO, onSave, onPri
               Confirm Order
             </button>
           </>
-        ) : (status === 'CONFIRMED' || status === 'PARTIALLY_PAID') ? (
+        ) : (status === 'CONFIRMED' || status === 'PARTIALLY_PAID' || status === 'FULLY_PAID') ? (
           <button onClick={onConvertToDO} className="flex-1 py-3 bg-indigo-600 text-white font-bold rounded-lg text-xs flex items-center justify-center gap-2 active:bg-indigo-700">
             <Truck size={16} /> Convert to Delivery Note
           </button>
@@ -177,6 +191,10 @@ const SalesOrders = () => {
 
   // --- ORDER LIST STATE ---
   const [ordersList, setOrdersList] = useState([]);
+  // Pagination state (server-driven via /api/sales/orders/page)
+  const [listPage, setListPage] = useState(0);
+  const [listPageMeta, setListPageMeta] = useState({ page: 0, size: 30, totalElements: 0, totalPages: 0 });
+  const [isListLoading, setIsListLoading] = useState(false);
   const exportOrdersList = useMemo(() => ordersList.map((order) => ({
     ...order,
     orderTotal: formatCurrencyAmount(order.orderTotal, company),
@@ -194,6 +212,7 @@ const SalesOrders = () => {
 
   // Sales settings (stock check, credit limit policy)
   const [salesSettings, setSalesSettings] = useState(null);
+  const orderAutoNumbering = isAutoNumberingEnabled(salesSettings, 'SALES_ORDER');
 
   // ✅ LIVE STOCK MAP
   const [liveStockMap, setLiveStockMap] = useState({});
@@ -219,7 +238,7 @@ const SalesOrders = () => {
 
 
   // Header Info
-  const [soNumber, setSoNumber] = useState(() => `SO-${Math.floor(100000 + Math.random() * 900000)}`);
+  const [soNumber, setSoNumber] = useState('');
   const [orderDate, setOrderDate] = useState(new Date().toISOString().split('T')[0]);
   const [linkedSourceType, setLinkedSourceType] = useState('');
   const [linkedSourceSearch, setLinkedSourceSearch] = useState('');
@@ -249,9 +268,36 @@ const SalesOrders = () => {
   // ✅ PRODUCT SELECTOR STATE
   const [isProductSelectorOpen, setIsProductSelectorOpen] = useState(false);
 
+  // QA-FAST-ENTRY: inline-row-search → product-selector bridge state
+  const [pendingFastEntrySearch, setPendingFastEntrySearch] = useState('');
+  const [pendingFastEntryRowId, setPendingFastEntryRowId] = useState(null);
+  const inlineSearchRefs = useRef({});
+  const focusNextInlineSearchRef = useRef(null);
+
   // Items
   const [items, setItems] = useState([createBlankOrderItem()]);
+
+  // QA-FAST-ENTRY: focus the freshly-added empty row's inline search input.
+  useEffect(() => {
+    const targetId = focusNextInlineSearchRef.current;
+    if (targetId == null) return;
+    const raf = requestAnimationFrame(() => {
+      const el = inlineSearchRefs.current[targetId];
+      if (el) el.focus();
+      focusNextInlineSearchRef.current = null;
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [items]);
+
   const [billDiscount, setBillDiscount] = useState(0);
+  // VAT mode for line-price interpretation (EXCLUSIVE | INCLUSIVE).
+  const [vatMode, setVatMode] = useState('EXCLUSIVE');
+
+  // Fallback VAT % from Tax Compliance for products without a per-item rate.
+  const [activeVatRate, setActiveVatRate] = useState(null);
+  useEffect(() => {
+    getActiveVatRate().then(setActiveVatRate);
+  }, []);
 
   // ✅ GLOBAL SHORTCUTS
   useShortcuts({
@@ -410,7 +456,13 @@ const SalesOrders = () => {
       const proformaData = proformaResult.status === 'fulfilled' ? proformaResult.value : [];
       const bankAccData = bankAccResult.status === 'fulfilled' ? bankAccResult.value : [];
       setBankAccountOptions(Array.isArray(bankAccData) ? bankAccData : []);
-      if (settingsResult.status === 'fulfilled') setSalesSettings(settingsResult.value);
+      const loadedSettings = settingsResult.status === 'fulfilled' ? settingsResult.value : null;
+      if (loadedSettings) {
+        setSalesSettings(loadedSettings);
+        if (!orderId && isAutoNumberingEnabled(loadedSettings, 'SALES_ORDER')) {
+          getNextSalesOrderNumber().then(setSoNumber).catch(() => setSoNumber(''));
+        }
+      }
 
       let validCustomers = Array.isArray(custData) ? custData : [];
 
@@ -445,13 +497,30 @@ const SalesOrders = () => {
   };
 
   const fetchSalesOrders = async () => {
+    setIsListLoading(true);
     try {
-      const data = await getAllSalesOrders();
-      setOrdersList(Array.isArray(data) ? data : []);
+      const data = await getSalesOrdersPage({ page: listPage, size: 30 });
+      const rows = Array.isArray(data?.content) ? data.content : [];
+      setOrdersList(rows);
+      setListPageMeta({
+        page: data?.page ?? listPage,
+        size: data?.size ?? 30,
+        totalElements: data?.totalElements ?? 0,
+        totalPages: data?.totalPages ?? 0,
+      });
     } catch (err) {
       console.error("Failed to load sales orders", err);
+    } finally {
+      setIsListLoading(false);
     }
   };
+
+  // Refetch when the user pages through the list.
+  useEffect(() => {
+    if (activeTab !== 'list') return;
+    fetchSalesOrders();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab, listPage]);
 
   // --- CALCULATIONS ---
   const calculateTotals = () => {
@@ -507,9 +576,14 @@ const SalesOrders = () => {
 
     const preDiscountAmount = Math.max(0, grossAmount - focDeduction);
     const discountAmount = preDiscountAmount * (discPercent / 100);
-    const taxableAmount = preDiscountAmount - discountAmount;
-    const taxAmount = taxableAmount * (taxPercent / 100);
-    const total = taxableAmount + taxAmount;
+    const netAfterDiscount = preDiscountAmount - discountAmount;
+    // VAT mode drives whether tax is on top (EXCLUSIVE) or extracted out
+    // of the entered price (INCLUSIVE).
+    const { taxableAmount, taxAmount, total } = computeLineTaxTotals({
+      netAfterDiscount,
+      taxPercent,
+      vatMode,
+    });
 
     return {
       ...item,
@@ -518,11 +592,18 @@ const SalesOrders = () => {
       foc: focQty,
       disc: discPercent,
       tax: taxPercent,
+      taxableAmount,
       taxAmt: taxAmount,
       discountAmount,
       total
     };
   };
+
+  // Recompute every line when the VAT mode flips.
+  useEffect(() => {
+    setItems(prev => prev.map(item => calculateRow(item)));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [vatMode]);
 
   const normalizeOrderItem = (item = {}, fallbackId = Date.now() + Math.random()) => {
     const resolvedUnit = item.unit || item.focUnit || 'PCS';
@@ -531,6 +612,11 @@ const SalesOrders = () => {
       soItemId: item.soItemId || null,
       code: item.code || item.itemCode || '',
       name: item.name || item.itemName || item.productName || '',
+      brand: item.brand || item.brandName || '',
+      sku: item.sku || item.productSku || '',
+      shortDesc: item.shortDesc || '',
+      detailedDesc: item.detailedDesc || '',
+      localName: item.localName || item.productLocalName || '',
       barcode: item.barcode || item.itemBarcode || '',
       image: item.primaryImage || item.image || item.thumbnailUrl || item.imageUrl || '',
       desc: item.desc || item.description || '',
@@ -571,26 +657,34 @@ const SalesOrders = () => {
   // ✅ PRODUCT SELECTOR HANDLER
   const handleAddSingleProduct = (product) => {
     const defaultUnit = getDefaultProductUnit(product);
-    const price = resolveUnitAmount({
-      targetUnit: defaultUnit,
-      amountMap: product.unitPrices,
-      unitConversions: product.unitConversions,
-      fallbackAmount: product.retailPrice ?? product.sellingPrice ?? 0
-    });
+    const policy = salesSettings?.salesItemPricePolicy;
+    const policyPrice = pickSalesItemPrice(product, policy);
+    // When the user explicitly opts into Max/Min as the default, that
+    // configured master price wins over any per-packing unitPrice. For the
+    // legacy RETAIL policy we keep the unit-aware behaviour.
+    const price = isPolicyOverridingPackings(policy)
+      ? policyPrice
+      : resolveUnitAmount({
+        targetUnit: defaultUnit,
+        amountMap: product.unitPrices,
+        unitConversions: product.unitConversions,
+        fallbackAmount: policyPrice
+      });
     const cost = parseFloat(product.cost) || 0;
     const disc = parseFloat(product.maxDiscount) || 0;
-    const tax = parseFloat(product.salesTax) || 5;
+    const tax = resolveLineTaxRate(product, activeVatRate);
 
     const rawItem = {
       id: Date.now() + Math.random(),
       code: product.code,
       name: product.name || '',
       brand: product.brandName || product.brand || '',
+      shortDesc: product.shortDesc || '',
       detailedDesc: product.detailedDesc || '',
       barcode: product.barcode || '',
       image: product.primaryImage || product.image || product.thumbnailUrl || product.imageUrl || '',
-      desc: product.description || product.name,
-      remarks: product.description || product.remarks || '',
+      desc: product.name || product.description || '',
+      remarks: product.detailedDesc || product.description || product.remarks || '',
       unit: defaultUnit,
       qty: 1,
       price: price,
@@ -616,28 +710,42 @@ const SalesOrders = () => {
 
     const newItem = calculateRow(rawItem);
 
+    // QA-FAST-ENTRY: replace-in-place when triggered by inline row search.
+    const targetRowId = pendingFastEntryRowId;
     setItems(prev => {
+      if (targetRowId != null) {
+        return prev.map(it => it.id === targetRowId ? { ...newItem, id: targetRowId } : it);
+      }
       // Replace empty placeholder rows when first product is added
       const hasData = prev.some(i => i.code || i.desc);
       return hasData ? [...prev, newItem] : [newItem];
     });
+    const filledItem = { ...newItem, id: targetRowId != null ? targetRowId : newItem.id };
+    setPendingFastEntrySearch('');
+    setPendingFastEntryRowId(null);
 
     setIsProductSelectorOpen(false); // ✅ Close modal after adding
-    setFocusedItem(newItem);
+    setFocusedItem(filledItem);
+    setTimeout(() => {
+      const qtyEl = document.getElementById(`qty-${filledItem.id}`);
+      if (qtyEl) { qtyEl.focus(); qtyEl.select?.(); }
+    }, 100);
   };
 
   const handleFastEntryAdd = (product, qty, price, disc) => {
     if (isLocked) return;
     const defaultUnit = getDefaultProductUnit(product);
     const cost = parseFloat(product.cost) || 0;
-    const tax = parseFloat(product.salesTax) || 5;
+    const tax = resolveLineTaxRate(product, activeVatRate);
     const rawItem = {
       id: Date.now() + Math.random(),
       code: product.code,
       name: product.name || '',
+      shortDesc: product.shortDesc || '',
+      detailedDesc: product.detailedDesc || '',
       barcode: product.barcode || '',
       image: product.primaryImage || product.image || '',
-      desc: product.description || product.name,
+      desc: product.name || product.description || '',
       unit: defaultUnit,
       qty,
       price,
@@ -652,7 +760,7 @@ const SalesOrders = () => {
       tax,
       taxAmt: 0,
       total: 0,
-      remarks: product.description || '',
+      remarks: product.detailedDesc || product.description || '',
       isProductSelected: true,
       // QA-001: SERVICE products never have batches.
       productType: (product.productType || 'STOCK').toUpperCase(),
@@ -747,6 +855,56 @@ const SalesOrders = () => {
     });
   };
 
+  // QA-032: Print the auto-generated Advance Receipt Voucher for this SO
+  // inline using the template pipeline instead of navigating away.
+  const handlePrintAdvanceReceipt = async () => {
+    if (!orderId) {
+      alert('Save the sales order first.');
+      return;
+    }
+    try {
+      const vouchers = await getSalesOrderReceiptVouchers(orderId);
+      if (!vouchers || vouchers.length === 0) {
+        alert('No advance receipt voucher exists for this order yet. Save the order with an advance amount first.');
+        return;
+      }
+      const voucher = vouchers[0];
+      let templates = await getTemplatesByCategory('Receipt Voucher').catch(() => []);
+      if (!templates || templates.length === 0) {
+        templates = await getTemplatesByCategory('Payment Voucher').catch(() => []);
+      }
+      const rawTemplate = (templates && (templates.find(t => t.isDefault) || templates[0])) || null;
+      const template = normalizePurchaseTemplate(
+        { ...(rawTemplate || {}), category: 'Receipt Voucher' },
+        'Receipt Voucher'
+      );
+      const paymentLike = {
+        paymentNumber: voucher.voucherId,
+        paymentDate: voucher.date,
+        customerName: voucher.memberName || selectedCustomer?.name,
+        customerCode: voucher.customerCode || selectedCustomer?.code,
+        amount: voucher.amount,
+        paymentMode: voucher.paymentMode,
+        referenceNumber: voucher.reference,
+        bankName: voucher.bankAccount,
+        chequeDate: voucher.chequeDate,
+        notes: voucher.notes,
+        linkedInvoice: soNumber ? `SO: ${soNumber}` : undefined,
+        status: voucher.status,
+      };
+      const printData = buildReceiptVoucherPrintData(
+        paymentLike,
+        { name: selectedCustomer?.name, code: selectedCustomer?.code },
+        company
+      );
+      const html = generatePrintHtml(template, printData, { companyProfile: company });
+      printHtml(html);
+    } catch (err) {
+      console.error('Failed to print advance receipt', err);
+      alert('Failed to generate print layout.');
+    }
+  };
+
   const handleProceedToInvoice = () => {
     navigate('/sales/invoice', {
       state: {
@@ -760,6 +918,9 @@ const SalesOrders = () => {
           linkedProforma: linkedPi || '',
           billDiscount: Number(billDiscount) || 0,
           shippingAddress: shippingAddress || '',
+          // QA-032: carry the SO advance so the destination invoice can
+          // pre-fill amountCollected and surface the advance to the user.
+          advanceAmount: Number(advanceAmount) || 0,
           items: items
             .filter(i => i.code && i.qty > 0)
             .map(i => ({
@@ -816,12 +977,13 @@ const SalesOrders = () => {
           },
           items: items.filter(i => i.code || i.desc).map(i => ({
             code: i.code,
-            name: i.name || '',
+            name: i.name || i.productName || i.itemName || '',
             desc: i.desc || '',
-            sku: i.sku || '',
+            sku: i.sku || i.productSku || '',
             brand: i.brand || i.brandName || '',
+            shortDesc: i.shortDesc || '',
             detailedDesc: i.detailedDesc || '',
-            localName: i.localName || '',
+            localName: i.localName || i.productLocalName || '',
             barcode: i.barcode || '',
             salesPerson: '',
             location: '',
@@ -832,7 +994,12 @@ const SalesOrders = () => {
             tax: Number(i.tax),
             taxAmt: Number(i.taxAmt || 0),
             total: Number(i.total),
-            image: i.image ? getImageUrl(i.image) : ''
+            image: i.image ? getImageUrl(i.image) : '',
+            // QA-030: include batch picks so the Batch # line / column shows
+            // when the template toggle is on.
+            batchNumber: i.batchNumber || '',
+            batchSelections: Array.isArray(i.batchSelections) ? i.batchSelections : [],
+            expiry: i.expiry || i.expiryDate || ''
           })),
           totals: {
             subTotal,
@@ -889,6 +1056,11 @@ const SalesOrders = () => {
 
   // ✅ FIX 4: INCLUDE ID IN PAYLOAD
   const saveOrUpdateOrder = async (targetStatus = 'DRAFT') => {
+    if (!orderAutoNumbering && !soNumber.trim()) {
+      alert('Please enter a sales order number.');
+      return;
+    }
+
     const sanitizedLinkedQuotation = linkedSourceType === 'quotation' ? linkedQtn.trim() : '';
     const sanitizedLinkedProforma = linkedSourceType === 'proforma' ? linkedPi.trim() : '';
 
@@ -902,6 +1074,7 @@ const SalesOrders = () => {
       linkedQuotation: sanitizedLinkedQuotation,
       linkedProforma: sanitizedLinkedProforma,
       billDiscount: Number(billDiscount) || 0,
+      vatMode,
 
       // Payment & Delivery
       advanceAmount: Number(advanceAmount),
@@ -958,7 +1131,7 @@ const SalesOrders = () => {
         }
       }
       if (stockIssues.length > 0) {
-        alert(`Insufficient stock for the following items:\n\n${stockIssues.join('\n')}\n\nPlease adjust quantities or disable stock check in Sales Settings.`);
+        alert(`Insufficient stock for the following items:\n\n${stockIssues.join('\n')}\n\nPlease adjust quantities or disable stock check in Configure & customize.`);
         return;
       }
     }
@@ -984,6 +1157,7 @@ const SalesOrders = () => {
 
       // Update local state to match saved record
       setOrderId(savedOrder.id); // Ensure subsequent saves are updates
+      setSoNumber(savedOrder.soNumber || soNumber);
       setStatus(savedOrder.status);
       if (Array.isArray(savedOrder.items)) {
         const mappedItems = savedOrder.items.map((item, index) =>
@@ -1053,7 +1227,11 @@ const SalesOrders = () => {
 
   const handleSelectQuotation = (qtn) => {
     if (!orderId) {
-      setSoNumber(`SO-${Math.floor(100000 + Math.random() * 900000)}`);
+      if (orderAutoNumbering) {
+        getNextSalesOrderNumber().then(setSoNumber).catch(() => setSoNumber(''));
+      } else {
+        setSoNumber('');
+      }
     }
     setLinkedSourceType('quotation');
     setLinkedQtn(qtn.qtnNo);
@@ -1085,7 +1263,11 @@ const SalesOrders = () => {
 
   const handleSelectProforma = (proforma) => {
     if (!orderId) {
-      setSoNumber(`SO-${Math.floor(100000 + Math.random() * 900000)}`);
+      if (orderAutoNumbering) {
+        getNextSalesOrderNumber().then(setSoNumber).catch(() => setSoNumber(''));
+      } else {
+        setSoNumber('');
+      }
     }
 
     setLinkedSourceType('proforma');
@@ -1133,6 +1315,7 @@ const SalesOrders = () => {
     setLinkedQtn(order.linkedQuotation || '');
     setLinkedPi(order.linkedProforma || '');
     setLinkedSourceSearch(hasLinkedQuotation ? (order.linkedQuotation || '') : (order.linkedProforma || ''));
+    setVatMode(order.vatMode === 'INCLUSIVE' ? 'INCLUSIVE' : 'EXCLUSIVE');
 
     // Map items back
     if (order.items) {
@@ -1165,7 +1348,11 @@ const SalesOrders = () => {
   const handleCreateNew = () => {
     setOrderId(null); // <--- Reset to null for new creation
 
-    setSoNumber(`SO-${Math.floor(100000 + Math.random() * 900000)}`);
+    if (orderAutoNumbering) {
+      getNextSalesOrderNumber().then(setSoNumber).catch(() => setSoNumber(''));
+    } else {
+      setSoNumber('');
+    }
     setOrderDate(new Date().toISOString().split('T')[0]);
 
     // ✅ Set default customer to Walk-in
@@ -1269,6 +1456,9 @@ const SalesOrders = () => {
     } else if (s === 'PARTIALLY_PAID') {
       styles = "bg-purple-50 border-purple-200 text-purple-700";
       label = "Partially Paid";
+    } else if (s === 'FULLY_PAID') {
+      styles = "bg-emerald-100 border-emerald-300 text-emerald-800";
+      label = "Fully Paid";
     }
 
     return <span className={`px-2 py-0.5 border rounded text-[10px] font-bold ${styles}`}>{label}</span>;
@@ -1287,12 +1477,14 @@ const SalesOrders = () => {
       {/* ✅ PRODUCT SELECTOR MODAL */}
       <ProductSelector
         isOpen={isProductSelectorOpen}
-        onClose={() => setIsProductSelectorOpen(false)}
+        onClose={() => { setIsProductSelectorOpen(false); setPendingFastEntryRowId(null); }}
         onSelect={handleAddSingleProduct}
         onInlineAdd={handleFastEntryAdd}
+        initialSearch={pendingFastEntrySearch}
         title="Select Items from Products / Services"
         actionLabel="Add to Order"
         mode="sales"
+        salesItemPricePolicy={salesSettings?.salesItemPricePolicy}
       />
 
       {/* ✅ STOCK AVAILABILITY MODAL */}
@@ -1390,8 +1582,17 @@ const SalesOrders = () => {
                 </select>
                 {canExport('sales.order') && (
                   <ExportDropdown
-                    onExportExcel={() => exportToExcel(exportOrdersList, SALES_ORDER_COLUMNS, 'Sales_Orders')}
-                    onExportPdf={() => exportToPDF(exportOrdersList, SALES_ORDER_COLUMNS, 'Sales Orders', 'Sales_Orders')}
+                    onExportExcel={() => exportToExcel(
+                      exportOrdersList.map((order, index) => ({ ...order, sNo: index + 1 })),
+                      SALES_ORDER_COLUMNS,
+                      'Sales_Orders'
+                    )}
+                    onExportPdf={() => exportToPDF(
+                      exportOrdersList.map((order, index) => ({ ...order, sNo: index + 1 })),
+                      SALES_ORDER_COLUMNS,
+                      'Sales Orders',
+                      'Sales_Orders'
+                    )}
                   />
                 )}
                 {/* ── VERTICAL: canCreate('sales') ── */}
@@ -1410,6 +1611,7 @@ const SalesOrders = () => {
             <table className="w-full text-xs text-left hidden md:table">
               <thead className="bg-slate-50 text-slate-600 font-semibold border-b border-slate-200">
                 <tr>
+                  <th className="px-4 py-3 text-center text-slate-500 w-16 select-none">S.No.</th>
                   <th className="px-4 py-3">SO No</th>
                   <th className="px-4 py-3">Date</th>
                   <th className="px-4 py-3">Customer</th>
@@ -1424,8 +1626,11 @@ const SalesOrders = () => {
               <tbody className="divide-y divide-slate-50">
                 {ordersList.map((order, idx) => (
                   <tr key={idx} className="hover:bg-slate-50 cursor-pointer" onClick={() => handleLoadOrder(order)}>
+                    <td className="px-4 py-3 text-center text-slate-400 font-mono font-medium">
+                      {idx + 1}
+                    </td>
                     <td className="px-4 py-3 font-medium text-slate-700">{order.soNumber}</td>
-                    <td className="px-4 py-3 text-slate-500">{order.orderDate}</td>
+                    <td className="px-4 py-3 text-slate-500">{formatDisplayDate(order.orderDate)}</td>
                     <td className="px-4 py-3 text-slate-600">{order.customerName}</td>
                     <td className="px-4 py-3 text-slate-500">{order.linkedQuotation || '-'}</td>
                     <td className="px-4 py-3 text-slate-500">{order.linkedProforma || '-'}</td>
@@ -1453,6 +1658,14 @@ const SalesOrders = () => {
               ))}
             </div>
 
+            <PaginationFooter
+              page={listPageMeta.page}
+              size={listPageMeta.size}
+              totalElements={listPageMeta.totalElements}
+              totalPages={listPageMeta.totalPages}
+              loading={isListLoading}
+              onPageChange={setListPage}
+            />
           </div>
         </div>
       )}
@@ -1470,7 +1683,14 @@ const SalesOrders = () => {
               <div className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-4">
                 <div className="flex flex-col">
                   <label className="text-xs font-semibold text-slate-500 mb-1">Sales Order No.</label>
-                  <input type="text" value={soNumber} readOnly className="text-xs p-2 bg-slate-50 border border-slate-200 rounded text-slate-700 font-medium" />
+                  <input
+                    type="text"
+                    value={soNumber}
+                    onChange={(e) => setSoNumber(e.target.value)}
+                    readOnly={isLocked || orderAutoNumbering}
+                    placeholder={orderAutoNumbering ? 'Auto generated' : 'Enter sales order number'}
+                    className="text-xs p-2 border border-slate-200 rounded text-slate-700 font-medium read-only:bg-slate-50 read-only:text-slate-500 focus:outline-none focus:border-yellow-400"
+                  />
                 </div>
                 <div className="flex flex-col">
                   <label className="text-xs font-semibold text-slate-500 mb-1">Order Date</label>
@@ -1560,6 +1780,7 @@ const SalesOrders = () => {
             <CustomerShippingPanel
               selectedCustomer={selectedCustomer}
               onOpenCustomerSearch={() => { if (!hasLinkedDocument && !isLocked) setIsCustomerSearchOpen(true); }}
+              onCustomerUpdated={setSelectedCustomer}
               shippingAddress={shippingAddress}
               onShippingChange={setShippingAddress}
               deliveryType={deliveryType}
@@ -1659,19 +1880,36 @@ const SalesOrders = () => {
               <div className="flex justify-between items-center mb-4 border-b border-slate-100/50 pb-2">
                 <h3 className="text-sm font-bold text-slate-800 flex items-center gap-2">
                   <ShoppingCart size={16} className="text-yellow-500" /> Sales Order Items
+                  <span className="inline-flex items-center gap-1 text-[10px] bg-blue-50 text-blue-700 px-2 py-0.5 rounded-full font-medium border border-blue-200"><Zap size={10} /> Fast Entry</span>
                 </h3>
 
-                {!isLocked && (
-                  <div className="flex gap-2">
-                    {/* ✅ SELECT FROM CATALOG BUTTON */}
+                <div className="flex items-center gap-3">
+                  {/* VAT mode toggle — drives line tax math. */}
+                  <div className="inline-flex rounded-md border border-slate-200 overflow-hidden text-[11px] font-semibold">
+                    <button
+                      type="button"
+                      disabled={isLocked}
+                      onClick={() => setVatMode('EXCLUSIVE')}
+                      className={`px-2.5 py-1 transition-colors ${vatMode === 'EXCLUSIVE' ? 'bg-yellow-400 text-slate-900' : 'bg-white text-slate-500 hover:bg-slate-50'}`}
+                      title="Prices entered exclude VAT — tax added on top"
+                    >VAT Excl.</button>
+                    <button
+                      type="button"
+                      disabled={isLocked}
+                      onClick={() => setVatMode('INCLUSIVE')}
+                      className={`px-2.5 py-1 border-l border-slate-200 transition-colors ${vatMode === 'INCLUSIVE' ? 'bg-yellow-400 text-slate-900' : 'bg-white text-slate-500 hover:bg-slate-50'}`}
+                      title="Prices entered already include VAT — tax extracted out"
+                    >VAT Incl.</button>
+                  </div>
+                  {!isLocked && (
                     <button
                       onClick={() => setIsProductSelectorOpen(true)}
                       className="flex items-center gap-1 px-3 py-1.5 bg-yellow-400 text-slate-900 text-xs font-medium rounded hover:bg-yellow-500"
                     >
                       <Plus size={14} /> Select from Products
                     </button>
-                  </div>
-                )}
+                  )}
+                </div>
               </div>
 
               <div className="overflow-auto max-h-[380px]">
@@ -1712,6 +1950,26 @@ const SalesOrders = () => {
 
                           {/* Item / Description */}
                           <td className="p-2">
+                            {/* QA-FAST-ENTRY: empty rows show inline product-search input */}
+                            {(!item.code && !item.desc) ? (
+                              <InlineProductSearchCell
+                                value={pendingFastEntryRowId === item.id ? pendingFastEntrySearch : ''}
+                                inputRef={(el) => {
+                                  if (el) inlineSearchRefs.current[item.id] = el;
+                                  else delete inlineSearchRefs.current[item.id];
+                                }}
+                                isReadOnly={isLocked}
+                                onChange={(text) => {
+                                  setPendingFastEntryRowId(item.id);
+                                  setPendingFastEntrySearch(text);
+                                }}
+                                onOpenSelector={(text) => {
+                                  setPendingFastEntryRowId(item.id);
+                                  setPendingFastEntrySearch(text);
+                                  setIsProductSelectorOpen(true);
+                                }}
+                              />
+                            ) : (
                             <ItemDescriptionCell
                               item={item}
                               isExpanded={expandedRows[item.id]}
@@ -1726,6 +1984,7 @@ const SalesOrders = () => {
                               onOpenSettings={(item) => setSelectedAddonItem({ ...item })}
                               page="sales_orders"
                             />
+                            )}
                             {item.batchControlled && (
                               <button
                                 type="button"
@@ -1773,6 +2032,12 @@ const SalesOrders = () => {
                                 className="w-full bg-transparent text-center outline-none font-bold text-sm text-slate-800 disabled:opacity-50"
                                 value={item.qty === 0 ? '' : item.qty}
                                 onChange={(e) => handleItemChange(item.id, 'qty', e.target.value)}
+                                onKeyDown={(e) => {
+                                  if (e.key === 'Tab' && !e.shiftKey) {
+                                    const priceEl = document.getElementById(`price-${item.id}`);
+                                    if (priceEl) { e.preventDefault(); priceEl.focus(); priceEl.select?.(); }
+                                  }
+                                }}
                                 placeholder="0"
                               />
                             </div>
@@ -1783,10 +2048,19 @@ const SalesOrders = () => {
                             <div className="rounded-md border border-slate-200 bg-white flex items-center px-2 py-1 w-full max-w-[104px] mx-auto">
                               <input
                                 disabled={isLocked}
+                                id={`price-${item.id}`}
                                 type="number"
                                 className="w-full bg-transparent text-center outline-none font-semibold text-sm text-slate-700 disabled:opacity-50"
                                 value={item.price === 0 ? '' : item.price}
                                 onChange={(e) => handleItemChange(item.id, 'price', e.target.value)}
+                                onKeyDown={(e) => {
+                                  if (e.key === 'Tab' && !e.shiftKey && !isLocked) {
+                                    e.preventDefault();
+                                    const newRow = createBlankOrderItem();
+                                    focusNextInlineSearchRef.current = newRow.id;
+                                    setItems(prev => [...prev, newRow]);
+                                  }
+                                }}
                                 placeholder="0.00"
                               />
                             </div>
@@ -1846,6 +2120,20 @@ const SalesOrders = () => {
                     ))}
                   </tbody>
                 </table>
+              </div>
+              {/* QA-FAST-ENTRY: Quick Entry hint bar */}
+              <div className="mt-2 px-3 py-2 bg-blue-50/30 border border-blue-100/60 rounded-md flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-slate-500">
+                <span className="inline-flex items-center gap-1 text-blue-600 font-semibold"><Zap size={11} /> Quick Entry:</span>
+                <span>Type name →</span>
+                <kbd className="px-1.5 py-0.5 bg-white border border-slate-200 rounded text-[10px] font-mono text-slate-600">Enter</kbd>
+                <span>Select →</span>
+                <kbd className="px-1.5 py-0.5 bg-white border border-slate-200 rounded text-[10px] font-mono text-slate-600">Tab</kbd>
+                <span>Qty →</span>
+                <kbd className="px-1.5 py-0.5 bg-white border border-slate-200 rounded text-[10px] font-mono text-slate-600">Tab</kbd>
+                <span>Price →</span>
+                <kbd className="px-1.5 py-0.5 bg-white border border-slate-200 rounded text-[10px] font-mono text-slate-600">Tab</kbd>
+                <span>New row</span>
+                <span className="ml-auto text-slate-400">Tip: Use ↑↓ arrows to navigate items</span>
               </div>
             </div>
 
@@ -1916,8 +2204,20 @@ const SalesOrders = () => {
                   <span>Order Total</span>
                   <CurrencyAmount value={orderTotal} currency={orderCurrency} />
                 </div>
-                <div className="flex justify-between text-emerald-600 font-medium">
-                  <span>Advance Received</span>
+                <div className="flex justify-between items-center text-emerald-600 font-medium">
+                  <span className="flex items-center gap-2">
+                    Advance Received
+                    {orderId && Number(advanceAmount) > 0 && (
+                      <button
+                        type="button"
+                        onClick={handlePrintAdvanceReceipt}
+                        title="View / print the auto-generated Receipt Voucher for this advance"
+                        className="flex items-center gap-1 text-[10px] font-semibold text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 rounded px-1.5 py-0.5 transition-colors"
+                      >
+                        <Printer size={10} /> Print Receipt
+                      </button>
+                    )}
+                  </span>
                   <CurrencyAmount value={advanceAmount} currency={orderCurrency} />
                 </div>
                 <div className="flex justify-between text-red-600 font-bold text-sm">
@@ -2051,8 +2351,8 @@ const SalesOrders = () => {
                 </>
               )}
 
-              {/* ── Convert to Delivery Note / Proceed to Invoice for CONFIRMED / PARTIALLY_PAID ── */}
-              {(status === 'CONFIRMED' || status === 'PARTIALLY_PAID') && canApprove('sales') && (
+              {/* ── Convert to Delivery Note / Proceed to Invoice for CONFIRMED / PARTIALLY_PAID / FULLY_PAID ── */}
+              {(status === 'CONFIRMED' || status === 'PARTIALLY_PAID' || status === 'FULLY_PAID') && canApprove('sales') && (
                 <>
                   <button onClick={handleConvertToDeliveryNote} className="flex items-center gap-1.5 px-5 py-1.5 bg-gradient-to-r from-indigo-600 to-indigo-500 text-white rounded text-xs font-bold hover:from-indigo-700 hover:to-indigo-600 transition-all shadow-md transform hover:-translate-y-0.5">
                     <Truck size={14} /> Convert to Delivery Note

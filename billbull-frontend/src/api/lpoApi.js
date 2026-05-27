@@ -9,6 +9,13 @@ export const getLpos = async (status) => {
   return res.data;
 };
 
+export const getLposPage = async ({ page = 0, size = 30, search = "", status = "" } = {}) => {
+  const params = { page, size, search };
+  if (status) params.status = status;
+  const res = await api.get("/api/lpos/page", { params });
+  return res.data;
+};
+
 export const getLpoSuggestions = async () => {
   const res = await api.get("/api/lpos/suggestions");
   return res.data;
@@ -50,4 +57,16 @@ export const deleteLpo = async (lpoNumber) => {
 
 export const postLpoStock = async (id) => {
   return api.post(`/api/lpos/${id}/post-stock`);
+};
+
+// ================= ADVANCE PAYMENT =================
+
+export const createLpoAdvancePayment = async (id, payload) => {
+  const res = await api.post(`/api/lpos/${id}/advance-payment`, payload);
+  return res.data;
+};
+
+export const getLpoPaymentVouchers = async (id) => {
+  const res = await api.get(`/api/lpos/${id}/payment-vouchers`);
+  return res.data;
 };

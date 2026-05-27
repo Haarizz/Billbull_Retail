@@ -52,6 +52,16 @@ public class Quotation {
     @Enumerated(EnumType.STRING)
     private QuotationStatus status = QuotationStatus.DRAFT;
 
+    /**
+     * Whether line prices on this quotation are entered VAT-exclusive (tax is
+     * added on top) or VAT-inclusive (tax is extracted out of the price).
+     * Default EXCLUSIVE preserves legacy behaviour for existing rows.
+     */
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false, length = 12, columnDefinition = "varchar(12) default 'EXCLUSIVE'")
+    private com.billbull.backend.sales.common.VatMode vatMode
+            = com.billbull.backend.sales.common.VatMode.EXCLUSIVE;
+
     private BigDecimal subTotal;
     private BigDecimal taxAmount;
     private BigDecimal totalAmount;
@@ -140,6 +150,9 @@ public class Quotation {
 
     public QuotationStatus getStatus() { return status; }
     public void setStatus(QuotationStatus status) { this.status = status; }
+
+    public com.billbull.backend.sales.common.VatMode getVatMode() { return vatMode; }
+    public void setVatMode(com.billbull.backend.sales.common.VatMode vatMode) { this.vatMode = vatMode; }
 
     public BigDecimal getSubTotal() { return subTotal; }
     public void setSubTotal(BigDecimal subTotal) { this.subTotal = subTotal; }

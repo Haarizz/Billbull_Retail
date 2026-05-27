@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from "react";
+import PaginationFooter from "../../../components/common/PaginationFooter";
 import {
   Layers,
   ChevronRight,
@@ -208,6 +209,11 @@ const SubDepartments = () => {
       return 0;
     });
 
+  const LIST_PAGE_SIZE = 30;
+  const [listPage, setListPage] = useState(0);
+  useEffect(() => { setListPage(0); }, [searchTerm, deptFilter, sortBy]);
+  const pagedSubDepartments = filteredData.slice(listPage * LIST_PAGE_SIZE, (listPage + 1) * LIST_PAGE_SIZE);
+
   return (
     <div className="min-h-screen bg-[#F7F7FA] p-4 md:p-6 space-y-6 font-sans text-slate-900">
       {/* Header Section */}
@@ -389,7 +395,7 @@ const SubDepartments = () => {
                   </td>
                 </tr>
               ) : (
-                filteredData.map((item) => (
+                pagedSubDepartments.map((item) => (
                   <tr
                     key={item.id}
                     className="hover:bg-slate-50 hover:border-l-4 hover:border-l-[#F5C742] transition-all border-l-4 border-transparent group"
@@ -465,6 +471,13 @@ const SubDepartments = () => {
               )}
             </tbody>
           </table>
+          <PaginationFooter
+            page={listPage}
+            size={LIST_PAGE_SIZE}
+            totalElements={filteredData.length}
+            totalPages={Math.ceil(filteredData.length / LIST_PAGE_SIZE)}
+            onPageChange={setListPage}
+          />
         </div>
       </div>
 

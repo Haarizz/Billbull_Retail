@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   LayoutDashboard,
@@ -43,17 +43,22 @@ import {
   PackageX,
   MessageSquare,
   GitCommit,
-  Send
+  Send,
+  DollarSign
 } from 'lucide-react';
 
 import { getImageUrl } from "../../../utils/urlUtils";
 import { getDefaultProductUnit, resolveUnitAmount } from "../../../utils/unitPricing";
 import { createDraftFromLpo } from '../../../api/purchaseInvoiceApi';
 import { ItemDescriptionCell, ItemDescriptionHeader } from '../../../components/ItemDescriptionCell';
+// QA-FAST-ENTRY: inline row search input that auto-opens ProductSelector
+import InlineProductSearchCell from '../../../components/InlineProductSearchCell';
+import PaginationFooter from '../../../components/common/PaginationFooter';
 import ItemAddOnsModal from '../../../components/ItemAddOnsModal';
 import StockAvailabilityModal from '../../../components/StockAvailabilityModal';
 import toast from 'react-hot-toast';
 import { useCompany } from '../../../context/CompanyContext';
+import { formatDisplayDate } from '../../../utils/dateUtils';
 
 // Printing Utilities
 import { getTemplatesByCategory } from '../../../api/printTemplateApi';
@@ -61,6 +66,7 @@ import { generatePrintHtml, printHtml } from '../../../utils/printGenerator';
 import billBullLogo from '../../../assets/billBullLogo.png';
 import {
   buildLpoPrintData,
+  buildPaymentVoucherPrintData,
   findVendorRecord,
   normalizePurchaseTemplate
 } from '../../../utils/purchasePrintUtils';
@@ -74,10 +80,13 @@ import CurrencyAmount from '../../../components/CurrencyAmount';
 // ==========================================
 
 const LPO_COLUMNS = [
+  { header: 'S.No.', key: 'sNo', width: 8 },
   { header: 'LPO No.', key: 'lpoNumber', width: 15 },
   { header: 'Vendor', key: 'vendorName', width: 25 },
   { header: 'Date', key: 'date', width: 12 },
   { header: 'Total Value', key: 'totalValue', width: 15 },
+  { header: 'Advance Paid', key: 'advancePaid', width: 15 },
+  { header: 'Balance Due', key: 'balanceDue', width: 15 },
   { header: 'Status', key: 'status', width: 15 },
   { header: 'ETA', key: 'eta', width: 12 },
   { header: 'Received %', key: 'received', width: 12 }
@@ -92,8 +101,11 @@ import {
   updateLpo,
   submitLpoForApproval,
   approveLpo,
-  rejectLpo
+  rejectLpo,
+  createLpoAdvancePayment,
+  getLpoPaymentVouchers
 } from '../../../api/lpoApi';
+import api from '../../../api/axiosConfig';
 import { approvalWorkflowApi } from '../../../api/purchase/approvalWorkflowApi';
 import { getVendors } from '../../../api/vendorsApi';
 import {
@@ -167,11 +179,13 @@ const mapApiToUi = (data) => {
     eta: item.expectedDeliveryDate,
     received: item.receivedPercentage || 0,
     totalValue: item.totalValue,
-    itemCount: item.itemCount || 0, // ✅ NEW
+    advancePaid: item.advancePaid ?? 0,
+    balanceDue: item.balanceDue ?? (item.totalValue ?? 0),
+    itemCount: item.itemCount || 0,
     items: item.items || [],
     statusColor: getStatusColor(item.status),
-    createdFrom: item.createdFrom || 'Manual', // Default to Manual if missing
-    warehouseId: item.warehouseId || null     // ✅ NEW
+    createdFrom: item.createdFrom || 'Manual',
+    warehouseId: item.warehouseId || null
   }));
 };
 
@@ -279,7 +293,7 @@ const MobileCard = ({ row, onView, currencyLabel }) => (
         <h4 className="font-bold text-slate-800 text-sm font-mono">{row.lpoNumber}</h4>
         <div className="text-xs text-slate-500 flex items-center gap-1 mt-1">
           <Calendar size={12} />
-          {row.date ? new Date(row.date).toLocaleDateString('en-CA') : '-'}
+          {formatDisplayDate(row.date)}
         </div>
       </div>
       <span className={`text-[10px] font-bold px-2 py-0.5 rounded border ${row.statusColor}`}>
@@ -309,15 +323,8 @@ const MobileCard = ({ row, onView, currencyLabel }) => (
 // 3. VIEW COMPONENTS
 // ==========================================
 
-const ListView = ({ lpos, processedData, onEdit, onView, onPrint, activeFilter, onApprove, onReject, onStockApprove, onStockReject, onProceedToInvoice, onConvertToGrn, searchQuery, setSearchQuery, sortConfig, requestSort, showFilterPanel, setShowFilterPanel, dateRange, setDateRange, selectedVendor, setSelectedVendor, vendors, currencyLabel }) => {
-  const formatDate = (dateString) => {
-    if (!dateString) return '-';
-    try {
-      return new Date(dateString).toLocaleDateString('en-CA');
-    } catch {
-      return dateString;
-    }
-  };
+const ListView = ({ lpos, processedData, onEdit, onView, onPrint, activeFilter, onApprove, onReject, onStockApprove, onStockReject, onProceedToInvoice, onConvertToGrn, onAdvancePayment, onPrintPaymentVoucher, searchQuery, setSearchQuery, sortConfig, requestSort, showFilterPanel, setShowFilterPanel, dateRange, setDateRange, selectedVendor, setSelectedVendor, vendors, currencyLabel, currentPage }) => {
+  const formatDate = (dateString) => formatDisplayDate(dateString);
 
   return (
     <div className="flex flex-col h-full">
@@ -407,6 +414,7 @@ const ListView = ({ lpos, processedData, onEdit, onView, onPrint, activeFilter, 
 
             <thead className="bg-[#F7F7FA] text-slate-600 font-semibold border-b border-slate-200">
               <tr>
+                <th className="px-3 py-3 text-center text-slate-500 w-12 select-none uppercase font-medium">S.No.</th>
                 <th
                   className="px-4 py-3 whitespace-nowrap font-medium cursor-pointer hover:bg-slate-100 transition-colors"
                   onClick={() => requestSort('lpoNumber')}
@@ -446,6 +454,24 @@ const ListView = ({ lpos, processedData, onEdit, onView, onPrint, activeFilter, 
                   </div>
                 </th>
                 <th
+                  className="px-4 py-3 text-right whitespace-nowrap font-medium cursor-pointer hover:bg-slate-100 transition-colors"
+                  onClick={() => requestSort('advancePaid')}
+                >
+                  <div className="flex items-center justify-end gap-1">
+                    Advance Paid
+                    {sortConfig.key === 'advancePaid' && <span className="text-xs text-slate-400">{sortConfig.direction === 'asc' ? '↑' : '↓'}</span>}
+                  </div>
+                </th>
+                <th
+                  className="px-4 py-3 text-right whitespace-nowrap font-medium cursor-pointer hover:bg-slate-100 transition-colors"
+                  onClick={() => requestSort('balanceDue')}
+                >
+                  <div className="flex items-center justify-end gap-1">
+                    Balance Due
+                    {sortConfig.key === 'balanceDue' && <span className="text-xs text-slate-400">{sortConfig.direction === 'asc' ? '↑' : '↓'}</span>}
+                  </div>
+                </th>
+                <th
                   className="px-4 py-3 whitespace-nowrap font-medium cursor-pointer hover:bg-slate-100 transition-colors"
                   onClick={() => requestSort('status')}
                 >
@@ -462,10 +488,11 @@ const ListView = ({ lpos, processedData, onEdit, onView, onPrint, activeFilter, 
             </thead>
             <tbody className="divide-y divide-slate-100 bg-white">
               {processedData.length === 0 ? (
-                <tr><td colSpan="11" className="text-center py-8 text-slate-400">No records found.</td></tr>
+                <tr><td colSpan="14" className="text-center py-8 text-slate-400">No records found.</td></tr>
               ) : processedData
-                .map((row) => (
+                .map((row, index) => (
                   <tr key={row.lpoNumber} className="hover:bg-slate-50 transition-colors group">
+                    <td className="px-3 py-3 text-center text-slate-400 font-mono font-medium">{index + 1}</td>
                     <td
                       onClick={() => onView(row)} // View by default on click
                       className="px-4 py-3 font-mono font-medium text-[#F5C742] cursor-pointer hover:underline"
@@ -492,6 +519,16 @@ const ListView = ({ lpos, processedData, onEdit, onView, onPrint, activeFilter, 
                     </td>
                     <td className="px-4 py-3 text-right font-bold text-slate-900">
                       <CurrencyAmount value={row.totalValue} currency={currencyLabel} />
+                    </td>
+                    <td className="px-4 py-3 text-right text-slate-700">
+                      {Number(row.advancePaid) > 0
+                        ? <CurrencyAmount value={row.advancePaid} currency={currencyLabel} className="text-emerald-700 font-semibold" />
+                        : <span className="text-slate-300">—</span>}
+                    </td>
+                    <td className="px-4 py-3 text-right text-slate-700">
+                      {Number(row.balanceDue) > 0
+                        ? <CurrencyAmount value={row.balanceDue} currency={currencyLabel} className="text-red-600 font-semibold" />
+                        : <span className="text-emerald-600 font-semibold text-xs">Fully Paid</span>}
                     </td>
                     <td className="px-4 py-3">
                       <span className={`text-[10px] font-semibold px-2.5 py-0.5 rounded border whitespace-nowrap ${row.statusColor}`}>
@@ -591,11 +628,27 @@ const ListView = ({ lpos, processedData, onEdit, onView, onPrint, activeFilter, 
                         </button>
                         <button
                           className="p-1.5 rounded hover:bg-slate-100 text-slate-500 hover:text-slate-900"
-                          title="Print"
+                          title="Print LPO"
                           onClick={() => onPrint(row)}
                         >
                           <Printer className="h-3.5 w-3.5" />
                         </button>
+                        <button
+                          className="p-1.5 rounded hover:bg-amber-100 text-amber-600 hover:text-amber-700 border border-transparent hover:border-amber-200"
+                          title="Advance Payment"
+                          onClick={(e) => { e.stopPropagation(); onAdvancePayment && onAdvancePayment(row); }}
+                        >
+                          <DollarSign className="h-3.5 w-3.5" />
+                        </button>
+                        {Number(row.advancePaid) > 0 && (
+                          <button
+                            className="p-1.5 rounded hover:bg-slate-100 text-slate-500 hover:text-slate-900"
+                            title="Print Payment Voucher"
+                            onClick={(e) => { e.stopPropagation(); onPrintPaymentVoucher && onPrintPaymentVoucher(row); }}
+                          >
+                            <FileDown className="h-3.5 w-3.5" />
+                          </button>
+                        )}
                       </div>
                     </td>
                   </tr>
@@ -703,14 +756,7 @@ const AutoGeneratedView = ({ suggestions, onReview }) => (
 );
 
 const ApprovalQueueView = ({ queue, onApprove, onReject }) => {
-  const formatDate = (dateString) => {
-    if (!dateString) return '-';
-    try {
-      return new Date(dateString).toLocaleDateString('en-CA');
-    } catch {
-      return dateString;
-    }
-  };
+  const formatDate = (dateString) => formatDisplayDate(dateString);
 
   return (
     <div className="animate-in fade-in slide-in-from-bottom-2 duration-300">
@@ -793,14 +839,7 @@ const ApprovalQueueView = ({ queue, onApprove, onReject }) => {
 };
 
 const HistoryView = ({ lpos }) => {
-  const formatDate = (dateString) => {
-    if (!dateString) return '-';
-    try {
-      return new Date(dateString).toLocaleDateString('en-CA');
-    } catch {
-      return dateString;
-    }
-  };
+  const formatDate = (dateString) => formatDisplayDate(dateString);
 
   return (
     <div className="animate-in fade-in slide-in-from-bottom-2 duration-300">
@@ -937,6 +976,24 @@ const EditorView = ({ initialData, vendors, warehouses, onSave, onSubmit, onPrin
   const [isVendorSearchOpen, setIsVendorSearchOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [isProductSelectionOpen, setIsProductSelectionOpen] = useState(false);
+
+  // QA-FAST-ENTRY: inline-row-search → product-selector bridge state
+  const [pendingFastEntrySearch, setPendingFastEntrySearch] = useState('');
+  const [pendingFastEntryRowId, setPendingFastEntryRowId] = useState(null);
+  const inlineSearchRefs = useRef({});
+  const focusNextInlineSearchRef = useRef(null);
+
+  // QA-FAST-ENTRY: focus the freshly-added empty row's inline search input.
+  useEffect(() => {
+    const targetId = focusNextInlineSearchRef.current;
+    if (targetId == null) return;
+    const raf = requestAnimationFrame(() => {
+      const el = inlineSearchRefs.current[targetId];
+      if (el) el.focus();
+      focusNextInlineSearchRef.current = null;
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [formData.items]);
   const [expandedRows, setExpandedRows] = useState({});
   const [selectedAddonItem, setSelectedAddonItem] = useState(null);
   const [selectedStockItem, setSelectedStockItem] = useState(null);
@@ -1111,7 +1168,9 @@ const EditorView = ({ initialData, vendors, warehouses, onSave, onSubmit, onPrin
       productId: product.id,
       code: product.code,
       barcode: product.barcode || '',
-      name: product.description || product.name,
+      name: product.name || product.description || '',
+      shortDesc: product.shortDesc || '',
+      detailedDesc: product.detailedDesc || '',
       uom: defaultUnit,
       lastPrice: cost,
       currentCost: cost, // Using actual cost
@@ -1130,12 +1189,25 @@ const EditorView = ({ initialData, vendors, warehouses, onSave, onSubmit, onPrin
       unitCosts: product.unitCosts || {}
     };
 
-    // If first item is empty, replace it
-    const isFirstItemEmpty = formData.items.length === 1 && !formData.items[0].productId;
-    const updatedItems = isFirstItemEmpty ? [newItem] : [...formData.items, newItem];
+    // QA-FAST-ENTRY: replace-in-place when triggered by inline row search.
+    const targetRowId = pendingFastEntryRowId;
+    let updatedItems;
+    if (targetRowId != null) {
+      updatedItems = formData.items.map(it => it.id === targetRowId ? { ...newItem, id: targetRowId } : it);
+    } else {
+      const isFirstItemEmpty = formData.items.length === 1 && !formData.items[0].productId;
+      updatedItems = isFirstItemEmpty ? [newItem] : [...formData.items, newItem];
+    }
+    const filledItemId = targetRowId != null ? targetRowId : newItem.id;
+    setPendingFastEntrySearch('');
+    setPendingFastEntryRowId(null);
 
     setFormData({ ...formData, items: updatedItems });
     setIsProductSelectionOpen(false);
+    setTimeout(() => {
+      const qtyEl = document.getElementById(`qty-${filledItemId}`);
+      if (qtyEl) { qtyEl.focus(); qtyEl.select?.(); }
+    }, 100);
   };
 
   const handleFastEntryAdd = (product, qty, price, disc) => {
@@ -1146,7 +1218,9 @@ const EditorView = ({ initialData, vendors, warehouses, onSave, onSubmit, onPrin
       productId: product.id,
       code: product.code,
       barcode: product.barcode || '',
-      name: product.description || product.name,
+      name: product.name || product.description || '',
+      shortDesc: product.shortDesc || '',
+      detailedDesc: product.detailedDesc || '',
       uom: defaultUnit,
       lastPrice: price,
       currentCost: price,
@@ -1677,7 +1751,7 @@ const EditorView = ({ initialData, vendors, warehouses, onSave, onSubmit, onPrin
             <div className="px-4 py-3 border-b border-slate-100 flex justify-between items-center">
               <div className="flex items-center gap-2">
                 <ShoppingCart className="h-4 w-4 text-yellow-500" />
-                <h3 className="font-semibold text-sm text-slate-700">LPO Items</h3>
+                <h3 className="font-semibold text-sm text-slate-700 flex items-center gap-2">LPO Items <span className="inline-flex items-center gap-1 text-[10px] bg-blue-50 text-blue-700 px-2 py-0.5 rounded-full font-medium border border-blue-200"><Zap size={10} /> Fast Entry</span></h3>
               </div>
               <div className="flex items-center gap-2">
                 {!isReadOnly && (
@@ -1720,6 +1794,26 @@ const EditorView = ({ initialData, vendors, warehouses, onSave, onSubmit, onPrin
                       <tr className="group hover:bg-slate-50">
                         <td className="p-3 text-center text-slate-400 text-xs font-medium">{index + 1}</td>
                         <td className="p-3">
+                          {/* QA-FAST-ENTRY: empty rows show inline product-search input */}
+                          {(!item.code && !item.name) ? (
+                            <InlineProductSearchCell
+                              value={pendingFastEntryRowId === item.id ? pendingFastEntrySearch : ''}
+                              inputRef={(el) => {
+                                if (el) inlineSearchRefs.current[item.id] = el;
+                                else delete inlineSearchRefs.current[item.id];
+                              }}
+                              isReadOnly={isReadOnly}
+                              onChange={(text) => {
+                                setPendingFastEntryRowId(item.id);
+                                setPendingFastEntrySearch(text);
+                              }}
+                              onOpenSelector={(text) => {
+                                setPendingFastEntryRowId(item.id);
+                                setPendingFastEntrySearch(text);
+                                setIsProductSelectionOpen(true);
+                              }}
+                            />
+                          ) : (
                           <ItemDescriptionCell
                             item={item}
                             isExpanded={expandedRows[item.id]}
@@ -1733,6 +1827,7 @@ const EditorView = ({ initialData, vendors, warehouses, onSave, onSubmit, onPrin
                             isReadOnly={isReadOnly}
                             showTaxDiscount={true}
                           />
+                          )}
                         </td>
                         <td className="p-3 text-center">
                           <select
@@ -1746,10 +1841,17 @@ const EditorView = ({ initialData, vendors, warehouses, onSave, onSubmit, onPrin
                         </td>
                         <td className="p-3">
                           <input
+                            id={`qty-${item.id}`}
                             type="number"
                             min="1"
                             value={item.qty}
                             onChange={(e) => handleItemChange(item.id, 'qty', e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Tab' && !e.shiftKey) {
+                                const priceEl = document.getElementById(`price-${item.id}`);
+                                if (priceEl) { e.preventDefault(); priceEl.focus(); priceEl.select?.(); }
+                              }
+                            }}
                             // Prevent Scroll & Paste
                             onWheel={e => e.target.blur()}
                             onPaste={e => e.preventDefault()}
@@ -1760,11 +1862,20 @@ const EditorView = ({ initialData, vendors, warehouses, onSave, onSubmit, onPrin
                         <td className="p-3">
                           <div className="relative group/price">
                             <input
+                              id={`price-${item.id}`}
                               type="number"
                               min="0"
                               step="0.01"
                               value={item.unitPrice}
                               onChange={(e) => handleItemChange(item.id, 'unitPrice', e.target.value)}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Tab' && !e.shiftKey && !isReadOnly) {
+                                  e.preventDefault();
+                                  const newRow = createBlankLpoItem();
+                                  focusNextInlineSearchRef.current = newRow.id;
+                                  setFormData(prev => ({ ...prev, items: [...prev.items, newRow] }));
+                                }
+                              }}
                               // Prevent Scroll & Paste
                               onWheel={e => e.target.blur()}
                               onPaste={e => e.preventDefault()}
@@ -1812,6 +1923,20 @@ const EditorView = ({ initialData, vendors, warehouses, onSave, onSubmit, onPrin
                   ))}
                 </tbody>
               </table>
+              {/* QA-FAST-ENTRY: Quick Entry hint bar */}
+              <div className="mt-2 px-3 py-2 bg-blue-50/30 border border-blue-100/60 rounded-md flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-slate-500">
+                <span className="inline-flex items-center gap-1 text-blue-600 font-semibold"><Zap size={11} /> Quick Entry:</span>
+                <span>Type name →</span>
+                <kbd className="px-1.5 py-0.5 bg-white border border-slate-200 rounded text-[10px] font-mono text-slate-600">Enter</kbd>
+                <span>Select →</span>
+                <kbd className="px-1.5 py-0.5 bg-white border border-slate-200 rounded text-[10px] font-mono text-slate-600">Tab</kbd>
+                <span>Qty →</span>
+                <kbd className="px-1.5 py-0.5 bg-white border border-slate-200 rounded text-[10px] font-mono text-slate-600">Tab</kbd>
+                <span>Cost →</span>
+                <kbd className="px-1.5 py-0.5 bg-white border border-slate-200 rounded text-[10px] font-mono text-slate-600">Tab</kbd>
+                <span>New row</span>
+                <span className="ml-auto text-slate-400">Tip: Use ↑↓ arrows to navigate items</span>
+              </div>
             </div>
           </div>
         </div>
@@ -2018,7 +2143,7 @@ const EditorView = ({ initialData, vendors, warehouses, onSave, onSubmit, onPrin
                         <span className="text-xs font-semibold text-slate-800">{note.addedBy}</span>
                         <div className="text-right flex-shrink-0">
                           <div className="text-[10px] text-slate-400">{note.addedAt}</div>
-                          {note.date && <div className="text-[10px] font-bold text-[#F5C742]">Follow-up: {note.date}</div>}
+                          {note.date && <div className="text-[10px] font-bold text-[#F5C742]">Follow-up: {formatDisplayDate(note.date)}</div>}
                         </div>
                       </div>
                       <p className="text-xs text-slate-600 break-words">{note.note}</p>
@@ -2176,9 +2301,10 @@ const EditorView = ({ initialData, vendors, warehouses, onSave, onSubmit, onPrin
       {/* Product Selector Modal */}
       <ProductSelector
         isOpen={isProductSelectionOpen}
-        onClose={() => setIsProductSelectionOpen(false)}
+        onClose={() => { setIsProductSelectionOpen(false); setPendingFastEntryRowId(null); }}
         onSelect={handleAddSingleProduct}
         onInlineAdd={handleFastEntryAdd}
+        initialSearch={pendingFastEntrySearch}
         actionLabel="Add to LPO"
         mode="purchase"
       />
@@ -2212,6 +2338,11 @@ const LPOList = () => {
 
   // Master State
   const [lpos, setLpos] = useState([]);
+  // Client-side pagination over the filtered/processed list (backend /page
+  // doesn't support all the filters this page exposes — status tab + date
+  // range + vendor — so we slice processedData here).
+  const [listPage, setListPage] = useState(0);
+  const LIST_PAGE_SIZE = 30;
   const [approvalQueue, setApprovalQueue] = useState([]);
   const [autoSuggestions, setAutoSuggestions] = useState([]);
   const [currentEditorData, setCurrentEditorData] = useState(null);
@@ -2248,6 +2379,19 @@ const LPOList = () => {
     type: null,
     id: null
   });
+
+  // Advance Payment Modal State
+  const [isAdvancePaymentModalOpen, setIsAdvancePaymentModalOpen] = useState(false);
+  const [advancePaymentLpo, setAdvancePaymentLpo] = useState(null);
+  const [advModalDate, setAdvModalDate] = useState(new Date().toISOString().split('T')[0]);
+  const [advModalAmount, setAdvModalAmount] = useState('');
+  const [advModalMode, setAdvModalMode] = useState('Cash');
+  const [advModalBankAccount, setAdvModalBankAccount] = useState('');
+  const [advModalChequeDate, setAdvModalChequeDate] = useState(new Date().toISOString().split('T')[0]);
+  const [advModalRef, setAdvModalRef] = useState('');
+  const [advModalNotes, setAdvModalNotes] = useState('');
+  const [advModalBankOptions, setAdvModalBankOptions] = useState([]);
+  const [advModalSaving, setAdvModalSaving] = useState(false);
 
   // Initialize Data via useEffect
   useEffect(() => {
@@ -2336,7 +2480,7 @@ const LPOList = () => {
         .map(h => ({
           id: `ah-${h.stepOrder}`,
           note: h.remarks,
-          date: h.approvedAt ? new Date(h.approvedAt).toLocaleDateString() : '',
+          date: formatDisplayDate(h.approvedAt, ''),
           addedAt: h.approvedAt ? new Date(h.approvedAt).toLocaleString() : '',
           addedBy: h.approvedBy || h.displayName || `Step ${h.stepOrder}`
         }));
@@ -2495,6 +2639,83 @@ const LPOList = () => {
     navigate('/purchases/grn', { state: { fromLpo: { dbId, lpoNumber } } });
   };
 
+  const handleOpenAdvancePaymentModal = async (row) => {
+    setAdvancePaymentLpo(row);
+    const balance = Number(row.balanceDue ?? row.totalValue ?? 0);
+    setAdvModalAmount(balance > 0 ? balance.toFixed(2) : '');
+    setAdvModalDate(new Date().toISOString().split('T')[0]);
+    setAdvModalMode('Cash');
+    setAdvModalBankAccount('');
+    setAdvModalChequeDate(new Date().toISOString().split('T')[0]);
+    setAdvModalRef('');
+    setAdvModalNotes('');
+    try {
+      const accs = await api.get('/api/ledger/accounts/bank-accounts').then(r => r.data);
+      setAdvModalBankOptions(Array.isArray(accs) ? accs : []);
+    } catch {
+      setAdvModalBankOptions([]);
+    }
+    setIsAdvancePaymentModalOpen(true);
+  };
+
+  const handleCreateAdvancePayment = async () => {
+    if (!advModalAmount || Number(advModalAmount) <= 0) {
+      return toast.error('Please enter a valid amount.');
+    }
+    setAdvModalSaving(true);
+    try {
+      await createLpoAdvancePayment(advancePaymentLpo.dbId, {
+        date: advModalDate,
+        mode: advModalMode,
+        amount: advModalAmount,
+        ref: advModalRef,
+        notes: advModalNotes,
+        bankAccount: advModalBankAccount || undefined,
+        chequeDate: advModalMode === 'Cheque' ? advModalChequeDate : undefined,
+      });
+      toast.success('Advance payment recorded.');
+      setIsAdvancePaymentModalOpen(false);
+      await refreshLpos();
+    } catch (err) {
+      console.error(err);
+      toast.error(err.response?.data?.message || 'Failed to record advance payment.');
+    } finally {
+      setAdvModalSaving(false);
+    }
+  };
+
+  const handlePrintPaymentVoucher = async (row) => {
+    const loadingToast = toast.loading('Loading payment vouchers...');
+    try {
+      const vouchers = await getLpoPaymentVouchers(row.dbId);
+      if (!vouchers || vouchers.length === 0) {
+        toast.dismiss(loadingToast);
+        return toast.error('No payment vouchers found for this LPO.');
+      }
+      const templates = await getTemplatesByCategory('Payment Voucher');
+      const template = normalizePurchaseTemplate(
+        templates.find(t => t.isDefault) || templates[0],
+        'Payment Voucher'
+      );
+
+      const voucher = vouchers[0];
+      const fullVendor = findVendorRecord(vendors, row.vendorCode, row.vendorName);
+      const printData = buildPaymentVoucherPrintData(
+        { ...voucher, lpoId: row.lpoNumber },
+        fullVendor,
+        company,
+        null
+      );
+      const html = generatePrintHtml(template, printData, { companyProfile: company, billBullLogo });
+      printHtml(html);
+    } catch (err) {
+      console.error(err);
+      toast.error('Failed to print payment voucher.');
+    } finally {
+      toast.dismiss(loadingToast);
+    }
+  };
+
   const handleRevertLPO = async (dbId) => {
     try {
       setLoading(true);
@@ -2607,8 +2828,16 @@ const LPOList = () => {
     return data;
   }, [lpos, activeStatusTab, searchQuery, sortConfig, dateRange, selectedVendor]);
 
-  const exportProcessedData = useMemo(() => processedData.map((row) => ({
+  // Reset page when filters change, then slice processedData for the visible page.
+  useEffect(() => { setListPage(0); }, [activeStatusTab, searchQuery, dateRange, selectedVendor]);
+  const pagedProcessedData = useMemo(
+    () => processedData.slice(listPage * LIST_PAGE_SIZE, (listPage + 1) * LIST_PAGE_SIZE),
+    [processedData, listPage]
+  );
+
+  const exportProcessedData = useMemo(() => processedData.map((row, index) => ({
     ...row,
+    sNo: index + 1,
     totalValue: formatCurrencyDisplay(row.totalValue, currencyLabel)
   })), [currencyLabel, processedData]);
 
@@ -2758,8 +2987,9 @@ const LPOList = () => {
             {activeNavTab === 'list' && (
               <ListView
                 lpos={lpos}
-                processedData={processedData}
+                processedData={pagedProcessedData}
                 activeFilter={activeStatusTab}
+                currentPage={0}
                 onEdit={handleEditLPO}
                 onView={handleViewLPO}
                 onApprove={handleApprove}
@@ -2769,6 +2999,8 @@ const LPOList = () => {
                 onProceedToInvoice={handleProceedToInvoice}
                 onConvertToGrn={handleConvertToGrn}
                 onPrint={handlePrintLPO}
+                onAdvancePayment={handleOpenAdvancePaymentModal}
+                onPrintPaymentVoucher={handlePrintPaymentVoucher}
                 searchQuery={searchQuery}
                 setSearchQuery={setSearchQuery}
                 sortConfig={sortConfig}
@@ -2781,6 +3013,16 @@ const LPOList = () => {
                 setSelectedVendor={setSelectedVendor}
                 vendors={vendors}
                 currencyLabel={currencyLabel}
+              />
+            )}
+            {activeNavTab === 'list' && (
+              <PaginationFooter
+                page={listPage}
+                size={LIST_PAGE_SIZE}
+                totalElements={processedData.length}
+                totalPages={Math.ceil(processedData.length / LIST_PAGE_SIZE)}
+                loading={loading}
+                onPageChange={setListPage}
               />
             )}
             {activeNavTab === 'auto' && (
@@ -2879,7 +3121,7 @@ const LPOList = () => {
                             <span className="text-sm font-semibold text-slate-800">{note.addedBy}</span>
                             <div className="text-right">
                               <div className="text-xs text-slate-400">{note.addedAt}</div>
-                              <div className="text-xs font-bold text-[#F5C742]">Follow-up: {note.date}</div>
+                              <div className="text-xs font-bold text-[#F5C742]">Follow-up: {formatDisplayDate(note.date)}</div>
                             </div>
                           </div>
                           <p className="text-sm text-slate-600">{note.note}</p>
@@ -3020,6 +3262,145 @@ const LPOList = () => {
         onClose={() => setConfirmationModal({ ...confirmationModal, isOpen: false })}
         onConfirm={handleConfirmStockAction}
       />
+
+      {/* --- ADVANCE PAYMENT MODAL --- */}
+      {isAdvancePaymentModalOpen && advancePaymentLpo && (
+        <div className="fixed inset-0 z-[110] flex items-center justify-center bg-black/40 backdrop-blur-[1px]">
+          <div className="bg-white w-[500px] rounded-lg shadow-2xl overflow-hidden">
+            {/* Header */}
+            <div className="px-6 py-4 border-b border-slate-100 flex justify-between items-start">
+              <div>
+                <h3 className="text-lg font-bold text-slate-800">Advance Payment</h3>
+                <p className="text-xs text-slate-500 mt-1">
+                  Record advance payment to vendor for LPO <span className="font-mono font-semibold text-slate-700">{advancePaymentLpo.lpoNumber}</span>
+                </p>
+              </div>
+              <button onClick={() => setIsAdvancePaymentModalOpen(false)} className="text-slate-400 hover:text-slate-600">
+                <X size={20} />
+              </button>
+            </div>
+
+            {/* Body */}
+            <div className="p-6 space-y-4">
+              {/* Balance Display */}
+              <div className="flex justify-between items-center text-sm mb-2">
+                <span className="text-slate-500 font-medium">Balance Due</span>
+                <span className="text-red-600 font-bold text-lg">
+                  {currencyLabel} {Number(advancePaymentLpo.balanceDue ?? advancePaymentLpo.totalValue ?? 0).toFixed(2)}
+                </span>
+              </div>
+
+              {/* Payment Date */}
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">Payment Date</label>
+                <input
+                  type="date"
+                  value={advModalDate}
+                  onChange={e => setAdvModalDate(e.target.value)}
+                  className="w-full text-sm p-2 border border-slate-300 rounded focus:border-[#F5C742] focus:ring-1 focus:ring-[#F5C742] outline-none"
+                />
+              </div>
+
+              {/* Payment Mode */}
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">Payment Mode</label>
+                <select
+                  value={advModalMode}
+                  onChange={e => { setAdvModalMode(e.target.value); setAdvModalBankAccount(''); setAdvModalChequeDate(new Date().toISOString().split('T')[0]); }}
+                  className="w-full text-sm p-2 border border-slate-300 rounded focus:border-[#F5C742] focus:ring-1 focus:ring-[#F5C742] outline-none bg-white"
+                >
+                  <option>Cash</option>
+                  <option>Bank Transfer</option>
+                  <option>Cheque</option>
+                  <option>Credit Card</option>
+                </select>
+              </div>
+
+              {/* Bank Account — non-Cash */}
+              {advModalMode !== 'Cash' && (
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">Bank Account</label>
+                  <select
+                    value={advModalBankAccount}
+                    onChange={e => setAdvModalBankAccount(e.target.value)}
+                    className="w-full text-sm p-2 border border-slate-300 rounded focus:border-[#F5C742] focus:ring-1 focus:ring-[#F5C742] outline-none bg-white"
+                  >
+                    <option value="">Select bank account...</option>
+                    {advModalBankOptions.map(acc => (
+                      <option key={acc.id} value={acc.name}>{acc.code} — {acc.name}</option>
+                    ))}
+                  </select>
+                </div>
+              )}
+
+              {/* Cheque Date */}
+              {advModalMode === 'Cheque' && (
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">Cheque Date</label>
+                  <input
+                    type="date"
+                    value={advModalChequeDate}
+                    onChange={e => setAdvModalChequeDate(e.target.value)}
+                    className="w-full text-sm p-2 border border-slate-300 rounded focus:border-[#F5C742] focus:ring-1 focus:ring-[#F5C742] outline-none"
+                  />
+                </div>
+              )}
+
+              {/* Amount */}
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">Amount</label>
+                <input
+                  type="number"
+                  value={advModalAmount}
+                  onChange={e => setAdvModalAmount(e.target.value)}
+                  className="w-full text-sm p-2 border border-slate-300 rounded focus:border-[#F5C742] focus:ring-1 focus:ring-[#F5C742] outline-none"
+                />
+              </div>
+
+              {/* Reference */}
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">Reference / Instrument No</label>
+                <input
+                  type="text"
+                  placeholder="Cheque no, Transaction ID, etc."
+                  value={advModalRef}
+                  onChange={e => setAdvModalRef(e.target.value)}
+                  className="w-full text-sm p-2 border border-slate-300 rounded focus:border-[#F5C742] focus:ring-1 focus:ring-[#F5C742] outline-none"
+                />
+              </div>
+
+              {/* Notes */}
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">Notes</label>
+                <textarea
+                  rows={2}
+                  placeholder="Additional notes..."
+                  value={advModalNotes}
+                  onChange={e => setAdvModalNotes(e.target.value)}
+                  className="w-full text-sm p-2 border border-slate-300 rounded focus:border-[#F5C742] focus:ring-1 focus:ring-[#F5C742] outline-none resize-none"
+                />
+              </div>
+            </div>
+
+            {/* Footer */}
+            <div className="px-6 py-4 bg-slate-50 flex justify-end gap-3 border-t border-slate-100">
+              <button
+                onClick={() => setIsAdvancePaymentModalOpen(false)}
+                className="px-4 py-2 bg-white border border-slate-300 text-slate-700 text-xs font-bold rounded hover:bg-slate-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleCreateAdvancePayment}
+                disabled={advModalSaving}
+                className="px-6 py-2 bg-[#F5C742] text-slate-900 text-xs font-bold rounded hover:bg-yellow-500 shadow-sm flex items-center gap-2 disabled:opacity-50"
+              >
+                <DollarSign size={14} /> {advModalSaving ? 'Saving...' : 'Record Payment'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

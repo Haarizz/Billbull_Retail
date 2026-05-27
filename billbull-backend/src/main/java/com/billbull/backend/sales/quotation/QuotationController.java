@@ -1,7 +1,9 @@
 package com.billbull.backend.sales.quotation;
 
 import java.io.IOException;
+import java.io.UnsupportedEncodingException;
 import java.util.List;
+import java.util.Map;
 
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
@@ -31,13 +33,16 @@ public class QuotationController {
     private final QuotationService service;
     private final AuditLogService auditLogService;
     private final ModulePermissionService permissionService;
+    private final QuotationEmailService emailService;
 
-    public QuotationController(QuotationService service, 
+    public QuotationController(QuotationService service,
                                AuditLogService auditLogService,
-                               ModulePermissionService permissionService) {
+                               ModulePermissionService permissionService,
+                               QuotationEmailService emailService) {
         this.service = service;
         this.auditLogService = auditLogService;
         this.permissionService = permissionService;
+        this.emailService = emailService;
     }
 
     // ---------------- PRODUCTS ----------------
@@ -56,6 +61,17 @@ public class QuotationController {
     public ResponseEntity<List<Quotation>> getAll() {
         permissionService.requireCan(MODULE, "view");
         return ResponseEntity.ok(service.getAllQuotations());
+    }
+
+    @GetMapping("/page")
+    public ResponseEntity<com.billbull.backend.util.PageResponse<Quotation>> getPage(
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "30") int size,
+            @RequestParam(required = false) String search,
+            @RequestParam(required = false) String status) {
+        permissionService.requireCan(MODULE, "view");
+        return ResponseEntity.ok(com.billbull.backend.util.PaginationUtil.paginate(
+                service.getAllQuotations(), page, size, search, status));
     }
 
     @GetMapping("/{id}")
@@ -144,6 +160,43 @@ public class QuotationController {
         } catch (Exception e) {
             return ResponseEntity.internalServerError()
                     .body("Failed to create revision");
+        }
+    }
+
+    // ---------------- SEND EMAIL ----------------
+    @PostMapping("/{id}/send-email")
+    @SuppressWarnings("unchecked")
+    public ResponseEntity<?> sendEmail(
+            @PathVariable Long id,
+            @RequestBody(required = false) Map<String, Object> body) {
+
+        permissionService.requireCan(MODULE, "view");
+
+        String toEmail = body != null ? (String) body.get("toEmail") : null;
+        String subject = body != null ? (String) body.get("subject") : null;
+        // QA-040: frontend pre-renders the email body from the same template
+        // used by Print, then ships it here. If absent we fall back to the
+        // legacy hand-built HTML in QuotationEmailService.
+        String htmlBody = body != null ? (String) body.get("htmlBody") : null;
+        // QA-040: <img> tags in the body reference cid:<id> — the actual
+        // bytes are shipped here as base64 strings + content type, so we
+        // attach them as MIME inline parts. Keeps the body under Gmail's
+        // 102KB cap (data: URIs blow past it instantly).
+        List<Map<String, String>> inlineAttachments = body != null
+                ? (List<Map<String, String>>) body.get("inlineAttachments")
+                : null;
+
+        try {
+            Quotation quotation = service.getQuotationById(id);
+            emailService.sendQuotationEmail(quotation, toEmail, subject, htmlBody, inlineAttachments);
+            return ResponseEntity.ok(Map.of("message", "Email sent successfully to " +
+                    (toEmail != null && !toEmail.isBlank() ? toEmail : quotation.getCustomerEmail())));
+
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body(e.getMessage());
+        } catch (UnsupportedEncodingException | jakarta.mail.MessagingException e) {
+            return ResponseEntity.internalServerError()
+                    .body("Failed to send email: " + e.getMessage());
         }
     }
 }

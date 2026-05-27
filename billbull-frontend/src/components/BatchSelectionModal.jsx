@@ -14,7 +14,9 @@ import {
   saveSalesInvoiceBatchSelection
 } from '../api/salesInvoiceApi';
 
-const formatDate = (value) => value ? String(value).slice(0, 10) : '-';
+import { formatDisplayDate } from '../utils/dateUtils';
+
+const formatDate = (value) => formatDisplayDate(value);
 
 const daysRemaining = (expiryDate) => {
   if (!expiryDate) return null;

@@ -42,9 +42,13 @@ import VendorSelector from "../../../components/VendorSelector";
 import { getImageUrl } from "../../../utils/urlUtils";
 import { getDefaultProductUnit, resolveUnitAmount } from "../../../utils/unitPricing";
 import { ItemDescriptionCell, ItemDescriptionHeader } from '../../../components/ItemDescriptionCell';
+// QA-FAST-ENTRY: inline row search input that auto-opens ProductSelector
+import InlineProductSearchCell from '../../../components/InlineProductSearchCell';
+import PaginationFooter from '../../../components/common/PaginationFooter';
 import ItemAddOnsModal from '../../../components/ItemAddOnsModal'; // BB-026
 import StockAvailabilityModal from '../../../components/StockAvailabilityModal';
 import { useCompany } from '../../../context/CompanyContext';
+import { formatDisplayDate } from '../../../utils/dateUtils';
 
 // Printing Utilities
 import { getTemplatesByCategory } from '../../../api/printTemplateApi';
@@ -67,6 +71,7 @@ import { formatCurrencyDisplay } from '../../../utils/countryCurrencyOptions';
 // ==========================================
 
 const INVOICE_COLUMNS = [
+  { header: 'S.No.', key: 'sNo', width: 8 },
   { header: 'Document No', key: 'id', width: 15 },
   { header: 'Doc Date', key: 'documentDate', width: 12 },
   { header: 'Inv Date', key: 'vendorInvoiceDate', width: 12 },
@@ -525,7 +530,7 @@ const SchedulePaymentModal = ({ invoice, onClose, onConfirm }) => {
 // SUB-COMPONENTS
 // ==========================================
 
-const InvoiceListView = ({ invoices, filteredInvoices, activeFilter, setActiveFilter, searchQuery, setSearchQuery, onView, onPrint, onPay, onRefresh, dateRange, setDateRange, vendorFilter, setVendorFilter }) => {
+const InvoiceListView = ({ invoices, filteredInvoices, activeFilter, setActiveFilter, searchQuery, setSearchQuery, onView, onPrint, onPay, onRefresh, dateRange, setDateRange, vendorFilter, setVendorFilter, currentPage }) => {
   const [showFilters, setShowFilters] = useState(false);
 
   const invoiceStats = useMemo(() => {
@@ -678,6 +683,7 @@ const InvoiceListView = ({ invoices, filteredInvoices, activeFilter, setActiveFi
           <table className="w-full text-xs text-left min-w-[1320px]">
             <thead className="bg-[#F7F7FA] text-slate-500 font-medium border-b border-slate-200">
               <tr>
+                <th className="px-3 py-3 text-center text-slate-500 w-12 select-none uppercase whitespace-nowrap">S.No.</th>
                 <th className="px-6 py-3 whitespace-nowrap">Document No</th>
                 <th className="px-6 py-3 whitespace-nowrap">Document Date</th>
                 <th className="px-6 py-3 whitespace-nowrap">Invoice Date</th>
@@ -693,8 +699,9 @@ const InvoiceListView = ({ invoices, filteredInvoices, activeFilter, setActiveFi
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
-              {filteredInvoices.map((row) => (
+              {filteredInvoices.map((row, index) => (
                 <tr key={row.dbId} className="hover:bg-slate-50 group transition-colors">
+                  <td className="px-3 py-4 text-center text-slate-400 font-mono font-medium whitespace-nowrap">{index + 1}</td>
                   <td onClick={() => onView(row)} className="px-6 py-4 font-mono font-medium text-[#F5C742] cursor-pointer hover:underline">{row.id}</td>
                   <td className="px-6 py-4 text-slate-600"><div className="flex items-center gap-1.5"><Calendar className="h-3 w-3 text-slate-400" /> {row.documentDate || '-'}</div></td>
                   <td className="px-6 py-4 text-slate-600"><div className="flex items-center gap-1.5"><Calendar className="h-3 w-3 text-slate-400" /> {row.vendorInvoiceDate || '-'}</div></td>
@@ -756,6 +763,12 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
 
   // UI State
   const [isProductSelectorOpen, setIsProductSelectorOpen] = useState(false);
+
+  // QA-FAST-ENTRY: inline-row-search → product-selector bridge state
+  const [pendingFastEntrySearch, setPendingFastEntrySearch] = useState('');
+  const [pendingFastEntryRowId, setPendingFastEntryRowId] = useState(null);
+  const inlineSearchRefs = useRef({});
+  const focusNextInlineSearchRef = useRef(null);
   const [selectedAddonItem, setSelectedAddonItem] = useState(null); // BB-026
   const [selectedStockItem, setSelectedStockItem] = useState(null);
   const [isItemStockModalOpen, setIsItemStockModalOpen] = useState(false);
@@ -809,6 +822,18 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
   const [isVendorSearchOpen, setIsVendorSearchOpen] = useState(false);
   const [landedCostItems, setLandedCostItems] = useState([]);
   const [includeFocInAllocation, setIncludeFocInAllocation] = useState(false);
+
+  // QA-FAST-ENTRY: focus the freshly-added empty row's inline search input.
+  useEffect(() => {
+    const targetId = focusNextInlineSearchRef.current;
+    if (targetId == null) return;
+    const raf = requestAnimationFrame(() => {
+      const el = inlineSearchRefs.current[targetId];
+      if (el) el.focus();
+      focusNextInlineSearchRef.current = null;
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [formData.items]);
 
   // ✅ GLOBAL SHORTCUTS
   useShortcuts({
@@ -1377,9 +1402,11 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
       id: Date.now(),
       code: product.code || "SKU-NEW",
       barcode: product.barcode || '',
-      name: product.description || product.name || "New Item",
+      name: product.name || product.description || "New Item",
+      shortDesc: product.shortDesc || '',
+      detailedDesc: product.detailedDesc || '',
       image: product.primaryImage || product.image || product.thumbnailUrl || product.imageUrl || null,
-      remarks: product.description || '',
+      remarks: product.detailedDesc || product.description || '',
       uom: defaultUnit,
       qty: 1,
       cost: resolvedCost,
@@ -1397,8 +1424,26 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
       // Internal Tracking
       productId: product.id
     };
-    setFormData(prev => ({ ...prev, items: [...prev.items, newItem] }));
+    // QA-FAST-ENTRY: replace-in-place when triggered by inline row search;
+    // fall back to append if the target row doesn't exist (e.g. seed row).
+    const targetRowId = pendingFastEntryRowId;
+    let resolvedRowId = newItem.id;
+    setFormData(prev => {
+      const exists = targetRowId != null && prev.items.some(it => it.id === targetRowId);
+      if (exists) {
+        resolvedRowId = targetRowId;
+        return { ...prev, items: prev.items.map(it => it.id === targetRowId ? { ...newItem, id: targetRowId } : it) };
+      }
+      return { ...prev, items: [...prev.items, newItem] };
+    });
+    const filledItemId = resolvedRowId;
+    setPendingFastEntrySearch('');
+    setPendingFastEntryRowId(null);
     setIsProductSelectorOpen(false);
+    setTimeout(() => {
+      const qtyEl = document.getElementById(`qty-${filledItemId}`);
+      if (qtyEl) { qtyEl.focus(); qtyEl.select?.(); }
+    }, 100);
   };
 
   const handleFastEntryAdd = (product, qty, price, disc) => {
@@ -1408,9 +1453,11 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
       id: Date.now(),
       code: product.code || 'SKU-NEW',
       barcode: product.barcode || '',
-      name: product.description || product.name || 'New Item',
+      name: product.name || product.description || 'New Item',
+      shortDesc: product.shortDesc || '',
+      detailedDesc: product.detailedDesc || '',
       image: product.primaryImage || product.image || null,
-      remarks: product.description || '',
+      remarks: product.detailedDesc || product.description || '',
       uom: defaultUnit,
       qty,
       cost: price,
@@ -2051,7 +2098,7 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
             <div className="px-4 py-3 border-b border-slate-100 flex flex-col sm:flex-row sm:justify-between items-start sm:items-center bg-slate-50/50 gap-3">
               <div className="flex items-center gap-2">
                 <LayoutDashboard className="h-4 w-4 text-yellow-500" />
-                <h3 className="font-semibold text-sm text-slate-700">Purchase Invoice Items <span className="bg-slate-100 text-slate-600 text-[10px] px-1.5 py-0.5 rounded-full ml-1 border border-slate-200">{formData.items.length} items</span></h3>
+                <h3 className="font-semibold text-sm text-slate-700 flex items-center gap-2">Purchase Invoice Items <span className="bg-slate-100 text-slate-600 text-[10px] px-1.5 py-0.5 rounded-full ml-1 border border-slate-200">{formData.items.length} items</span> <span className="inline-flex items-center gap-1 text-[10px] bg-blue-50 text-blue-700 px-2 py-0.5 rounded-full font-medium border border-blue-200"><Zap size={10} /> Fast Entry</span></h3>
               </div>
               <div className="flex flex-wrap gap-2 w-full sm:w-auto">
                 <button
@@ -2089,6 +2136,32 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-50">
+                  {formData.items.length === 0 && (
+                    /* QA-FAST-ENTRY: seed row when no items yet */
+                    <tr className="bg-white">
+                      <td className="p-3 text-center text-slate-400 text-xs font-medium">1</td>
+                      <td className="p-3">
+                        <InlineProductSearchCell
+                          value={pendingFastEntryRowId === '__seed__' ? pendingFastEntrySearch : ''}
+                          inputRef={(el) => {
+                            if (el) inlineSearchRefs.current['__seed__'] = el;
+                            else delete inlineSearchRefs.current['__seed__'];
+                          }}
+                          isReadOnly={isFormLocked}
+                          onChange={(text) => {
+                            setPendingFastEntryRowId('__seed__');
+                            setPendingFastEntrySearch(text);
+                          }}
+                          onOpenSelector={(text) => {
+                            setPendingFastEntryRowId('__seed__');
+                            setPendingFastEntrySearch(text);
+                            setIsProductSelectorOpen(true);
+                          }}
+                        />
+                      </td>
+                      <td colSpan={5} className="p-3 text-[11px] text-slate-400">Type above to add an item or click "Select from Products".</td>
+                    </tr>
+                  )}
                   {[...formData.items].reverse().map((item, index) => {
                     const calc = calculateRow(item);
                     return (
@@ -2096,6 +2169,26 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
                         <tr className="hover:bg-slate-50 group">
                           <td className="p-3 text-center text-slate-400 text-xs font-medium">{index + 1}</td>
                           <td className="p-3">
+                            {/* QA-FAST-ENTRY: empty rows show inline product-search input */}
+                            {(!item.code && !item.name) ? (
+                              <InlineProductSearchCell
+                                value={pendingFastEntryRowId === item.id ? pendingFastEntrySearch : ''}
+                                inputRef={(el) => {
+                                  if (el) inlineSearchRefs.current[item.id] = el;
+                                  else delete inlineSearchRefs.current[item.id];
+                                }}
+                                isReadOnly={isFormLocked}
+                                onChange={(text) => {
+                                  setPendingFastEntryRowId(item.id);
+                                  setPendingFastEntrySearch(text);
+                                }}
+                                onOpenSelector={(text) => {
+                                  setPendingFastEntryRowId(item.id);
+                                  setPendingFastEntrySearch(text);
+                                  setIsProductSelectorOpen(true);
+                                }}
+                              />
+                            ) : (
                             <ItemDescriptionCell
                               item={{
                                 ...item,
@@ -2121,6 +2214,7 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
                               isReadOnly={isFormLocked}
                               showTaxDiscount={true}
                             />
+                            )}
                           </td>
                           {/* UOM Dropdown */}
                           <td className="p-3 text-center">
@@ -2135,10 +2229,17 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
                           </td>
                           <td className="p-3 text-center">
                             <input
+                              id={`qty-${item.id}`}
                               type="number"
                               disabled={isFormLocked}
                               value={item.qty}
                               onChange={(e) => handleInputChange(item.id, 'qty', e.target.value)}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Tab' && !e.shiftKey) {
+                                  const priceEl = document.getElementById(`price-${item.id}`);
+                                  if (priceEl) { e.preventDefault(); priceEl.focus(); priceEl.select?.(); }
+                                }
+                              }}
                               // Prevent Scroll & Paste
                               onWheel={e => e.target.blur()}
                               onPaste={e => e.preventDefault()}
@@ -2147,10 +2248,25 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
                           </td>
                           <td className="p-3 text-right">
                             <input
+                              id={`price-${item.id}`}
                               type="number"
                               disabled={isFormLocked}
                               value={item.cost}
                               onChange={(e) => handleInputChange(item.id, 'cost', e.target.value)}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Tab' && !e.shiftKey && !isFormLocked) {
+                                  e.preventDefault();
+                                  const blankRow = {
+                                    id: Date.now() + Math.random(),
+                                    code: '', barcode: '', name: '', shortDesc: '', detailedDesc: '',
+                                    uom: 'PCS', qty: 0, cost: 0, tax: 5, taxAmt: 0, taxAmount: 0,
+                                    disc: 0, discount: 0, foc: 0, focUnit: 'PCS',
+                                    availableUnits: ['PCS'], unitConversions: {}, unitPrices: {}, unitCosts: {}
+                                  };
+                                  focusNextInlineSearchRef.current = blankRow.id;
+                                  setFormData(prev => ({ ...prev, items: [...prev.items, blankRow] }));
+                                }
+                              }}
                               // Prevent Scroll & Paste
                               onWheel={e => e.target.blur()}
                               onPaste={e => e.preventDefault()}
@@ -2196,6 +2312,20 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
                   })}
                 </tbody>
               </table>
+              {/* QA-FAST-ENTRY: Quick Entry hint bar */}
+              <div className="mt-2 px-3 py-2 bg-blue-50/30 border border-blue-100/60 rounded-md flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-slate-500">
+                <span className="inline-flex items-center gap-1 text-blue-600 font-semibold"><Zap size={11} /> Quick Entry:</span>
+                <span>Type name →</span>
+                <kbd className="px-1.5 py-0.5 bg-white border border-slate-200 rounded text-[10px] font-mono text-slate-600">Enter</kbd>
+                <span>Select →</span>
+                <kbd className="px-1.5 py-0.5 bg-white border border-slate-200 rounded text-[10px] font-mono text-slate-600">Tab</kbd>
+                <span>Qty →</span>
+                <kbd className="px-1.5 py-0.5 bg-white border border-slate-200 rounded text-[10px] font-mono text-slate-600">Tab</kbd>
+                <span>Cost →</span>
+                <kbd className="px-1.5 py-0.5 bg-white border border-slate-200 rounded text-[10px] font-mono text-slate-600">Tab</kbd>
+                <span>New row</span>
+                <span className="ml-auto text-slate-400">Tip: Use ↑↓ arrows to navigate items</span>
+              </div>
             </div>
 
             {/* Landed Costs Section */}
@@ -2468,9 +2598,10 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
       </div>
       <ProductSelector
         isOpen={isProductSelectorOpen}
-        onClose={() => setIsProductSelectorOpen(false)}
+        onClose={() => { setIsProductSelectorOpen(false); setPendingFastEntryRowId(null); }}
         onSelect={handleProductSelect}
         onInlineAdd={handleFastEntryAdd}
+        initialSearch={pendingFastEntrySearch}
         actionLabel="Add to Invoice"
         mode="purchase"
       />
@@ -2549,7 +2680,7 @@ const PendingApprovalView = ({ pendingApprovals, onApprove, onView }) => {
                 {pendingApprovals.map((item) => (
                   <tr key={item.dbId} className="hover:bg-slate-50">
                     <td onClick={() => onView(item)} className="p-3 font-mono font-medium text-[#F5C742] cursor-pointer">{item.id}</td>
-                    <td className="p-3 text-slate-600 flex items-center gap-1"><Calendar className="h-3 w-3 text-slate-400" /> {item.date}</td>
+                    <td className="p-3 text-slate-600 flex items-center gap-1"><Calendar className="h-3 w-3 text-slate-400" /> {formatDisplayDate(item.date)}</td>
                     <td className="p-3">
                       <div>
                         <div className="font-medium text-slate-900">{item.vendor}</div>
@@ -2616,14 +2747,14 @@ const PendingPaymentView = ({ pendingPayments, onPay, onView }) => {
               {pendingPayments.map((item) => (
                 <tr key={item.dbId} className="hover:bg-slate-50">
                   <td onClick={() => onView(item)} className="p-3 font-mono font-medium text-[#F5C742] cursor-pointer">{item.id}</td>
-                  <td className="p-3 text-slate-600 flex items-center gap-1"><Calendar className="h-3 w-3 text-slate-400" /> {item.date}</td>
+                  <td className="p-3 text-slate-600 flex items-center gap-1"><Calendar className="h-3 w-3 text-slate-400" /> {formatDisplayDate(item.date)}</td>
                   <td className="p-3">
                     <div>
                       <div className="font-medium text-slate-900">{item.vendor}</div>
                       <div className="text-[10px] text-slate-400">{item.vendorId}</div>
                     </div>
                   </td>
-                  <td className="p-3 text-red-500 flex items-center gap-1"><History className="h-3 w-3" /> {item.dueDate}</td>
+                  <td className="p-3 text-red-500 flex items-center gap-1"><History className="h-3 w-3" /> {formatDisplayDate(item.dueDate)}</td>
                   <td className="p-3 text-right font-medium text-slate-900">{typeof item.total === 'number' ? item.total.toLocaleString() : item.total}</td>
 
                   {/* Paid Amount */}
@@ -2699,7 +2830,7 @@ const DraftInvoicesView = ({ drafts, onEdit, onDelete }) => {
                 {drafts.map((item) => (
                   <tr key={item.dbId} className="hover:bg-slate-50">
                     <td onClick={() => onEdit(item)} className="p-3 font-mono font-medium text-[#F5C742] cursor-pointer hover:underline">{item.id}</td>
-                    <td className="p-3 text-slate-600">{item.date}</td>
+                    <td className="p-3 text-slate-600">{formatDisplayDate(item.date)}</td>
                     <td className="p-3">
                       <div>
                         <div className="font-medium text-slate-900">{item.vendor}</div>
@@ -2749,6 +2880,10 @@ const PurchaseInvoices = () => {
 
   // REAL STATE (No Mocks)
   const [invoices, setInvoices] = useState([]);
+  // Client-side pagination over filtered list (page exposes rich filters beyond
+  // what /page supports — status tabs, date range, vendor).
+  const [listPage, setListPage] = useState(0);
+  const LIST_PAGE_SIZE = 30;
   const [draftInvoices, setDraftInvoices] = useState([]); // Drafts State
   const [pendingApprovals, setPendingApprovals] = useState([]);
   const [pendingPayments, setPendingPayments] = useState([]);
@@ -2953,12 +3088,28 @@ const PurchaseInvoices = () => {
     }).sort(compareInvoiceRows);
   }, [invoices, searchQuery, activeFilter, dateRange, vendorFilter]);
 
+  // Reset page on filter change; slice for visible page.
+  useEffect(() => { setListPage(0); }, [searchQuery, activeFilter, dateRange, vendorFilter]);
+  const pagedFilteredInvoices = useMemo(
+    () => filteredInvoices.slice(listPage * LIST_PAGE_SIZE, (listPage + 1) * LIST_PAGE_SIZE),
+    [filteredInvoices, listPage]
+  );
+
   const handleExportExcel = () => {
-    exportToExcel(filteredInvoices, INVOICE_COLUMNS, 'Purchase_Invoice_List');
+    exportToExcel(
+      filteredInvoices.map((inv, index) => ({ ...inv, sNo: index + 1 })),
+      INVOICE_COLUMNS,
+      'Purchase_Invoice_List'
+    );
   };
 
   const handleExportPdf = () => {
-    exportToPDF(filteredInvoices, INVOICE_COLUMNS, 'Purchase Invoices', 'Purchase_Invoice_List');
+    exportToPDF(
+      filteredInvoices.map((inv, index) => ({ ...inv, sNo: index + 1 })),
+      INVOICE_COLUMNS,
+      'Purchase Invoices',
+      'Purchase_Invoice_List'
+    );
   };
 
   const handleConfirmPayment = async (invoice, paymentMode, bankAccount, chequeDate) => {
@@ -3012,22 +3163,32 @@ const PurchaseInvoices = () => {
   const renderContent = () => {
     switch (activeNavTab) {
       case "list":
-        return <InvoiceListView
-          invoices={invoices}
-          filteredInvoices={filteredInvoices}
-          activeFilter={activeFilter}
-          setActiveFilter={setActiveFilter}
-          searchQuery={searchQuery}
-          setSearchQuery={setSearchQuery}
-          onView={handleView}
-          onPrint={handlePrint}
-          onPay={handleOpenPayment}
-          onRefresh={loadInvoices}
-          dateRange={dateRange}
-          setDateRange={setDateRange}
-          vendorFilter={vendorFilter}
-          setVendorFilter={setVendorFilter}
-        />;
+        return <>
+          <InvoiceListView
+            invoices={invoices}
+            filteredInvoices={pagedFilteredInvoices}
+            activeFilter={activeFilter}
+            setActiveFilter={setActiveFilter}
+            searchQuery={searchQuery}
+            setSearchQuery={setSearchQuery}
+            onView={handleView}
+            onPrint={handlePrint}
+            onPay={handleOpenPayment}
+            onRefresh={loadInvoices}
+            dateRange={dateRange}
+            setDateRange={setDateRange}
+            vendorFilter={vendorFilter}
+            setVendorFilter={setVendorFilter}
+            currentPage={0}
+          />
+          <PaginationFooter
+            page={listPage}
+            size={LIST_PAGE_SIZE}
+            totalElements={filteredInvoices.length}
+            totalPages={Math.ceil(filteredInvoices.length / LIST_PAGE_SIZE)}
+            onPageChange={setListPage}
+          />
+        </>;
       case "editor":
         return <CreateEditView
           onSaveDraft={handleSaveDraft}

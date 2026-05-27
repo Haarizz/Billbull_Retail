@@ -55,6 +55,33 @@ public class TaxService {
         }
     }
 
+    /**
+     * Returns the rate of the first Active VAT-type configuration so that
+     * sales screens can fall back to the registered VAT rate when a product
+     * has no per-item Sales Tax % set. Empty when no Active VAT row exists.
+     *
+     * Matches "VAT" case-insensitively to also accept variants like
+     * "Output VAT" / "Sales VAT" that some tenants register.
+     */
+    public Optional<BigDecimal> getActiveVatRate() {
+        return taxConfigurationRepository.findAll().stream()
+                .filter(cfg -> cfg.getType() != null
+                        && cfg.getType().toUpperCase().contains("VAT"))
+                .filter(cfg -> "Active".equalsIgnoreCase(cfg.getStatus()))
+                .map(TaxConfiguration::getRate)
+                .filter(Objects::nonNull)
+                .map(String::trim)
+                .filter(r -> !r.isEmpty())
+                .map(r -> r.endsWith("%") ? r.substring(0, r.length() - 1).trim() : r)
+                .map(r -> {
+                    try { return new BigDecimal(r); }
+                    catch (NumberFormatException e) { return null; }
+                })
+                .filter(Objects::nonNull)
+                .filter(r -> r.signum() >= 0)
+                .findFirst();
+    }
+
     // --- Configuration Methods ---
 
     public List<TaxConfiguration> getAllConfigs() {

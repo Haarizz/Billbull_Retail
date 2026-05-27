@@ -16,7 +16,15 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.stream.Collectors;
+
+import com.billbull.backend.sales.invoice.SalesInvoice;
+import com.billbull.backend.financials.receiptvoucher.ReceiptVoucher;
+import com.billbull.backend.purchase.invoice.PurchaseInvoice;
+import com.billbull.backend.purchase.payment.PaymentVoucher;
 
 @Service
 public class StatementService {
@@ -118,12 +126,93 @@ public class StatementService {
             entry.setRunningBalance(runningBalance);
         }
 
+        enrichCustomerEntries(combined);
+
         resp.setEntries(combined);
         resp.setTotalDebit(totalDebit);
         resp.setTotalCredit(totalCredit);
         resp.setClosingBalance(runningBalance);
 
         return resp;
+    }
+
+    // QA-018: backfill description + reference per entry by batch-fetching the
+    // underlying SalesInvoice / ReceiptVoucher rows. Done as a post-processing
+    // step so the existing JPQL constructors stay untouched.
+    private void enrichCustomerEntries(List<StatementEntryDTO> entries) {
+        if (entries == null || entries.isEmpty()) return;
+
+        List<String> invoiceNumbers = entries.stream()
+                .filter(e -> "INVOICE".equals(e.getType()))
+                .map(StatementEntryDTO::getDocumentNo)
+                .filter(n -> n != null && !n.isBlank())
+                .distinct()
+                .collect(Collectors.toList());
+        List<String> receiptIds = entries.stream()
+                .filter(e -> e.getType() != null && e.getType().contains("PAYMENT"))
+                .map(StatementEntryDTO::getDocumentNo)
+                .filter(n -> n != null && !n.isBlank())
+                .distinct()
+                .collect(Collectors.toList());
+
+        Map<String, SalesInvoice> invoiceMap = invoiceNumbers.isEmpty()
+                ? new HashMap<>()
+                : salesInvoiceRepository.findByInvoiceNumberIn(invoiceNumbers).stream()
+                        .collect(Collectors.toMap(SalesInvoice::getInvoiceNumber, inv -> inv, (a, b) -> a));
+        Map<String, ReceiptVoucher> receiptMap = receiptIds.isEmpty()
+                ? new HashMap<>()
+                : receiptVoucherRepository.findByVoucherIdIn(receiptIds).stream()
+                        .collect(Collectors.toMap(ReceiptVoucher::getVoucherId, rv -> rv, (a, b) -> a));
+
+        for (StatementEntryDTO entry : entries) {
+            String type = entry.getType() == null ? "" : entry.getType();
+            if (OPENING_BALANCE_TYPE.equals(type)) {
+                if (entry.getDescription() == null) entry.setDescription("Opening Balance");
+                if (entry.getReference() == null) entry.setReference("Brought forward");
+            } else if ("INVOICE".equals(type)) {
+                SalesInvoice inv = invoiceMap.get(entry.getDocumentNo());
+                entry.setDescription("Sales Invoice"
+                        + (inv != null && inv.getCustomerName() != null ? " — " + inv.getCustomerName() : ""));
+                if (inv != null) {
+                    String ref = firstNonBlank(inv.getLinkedSalesOrder(), inv.getLinkedDeliveryNote(),
+                            inv.getLinkedProforma(), inv.getLinkedQuotation());
+                    entry.setReference(ref != null ? ref : "-");
+                } else {
+                    entry.setReference("-");
+                }
+            } else if (type.contains("PAYMENT") || type.contains("RECEIPT")) {
+                ReceiptVoucher rv = receiptMap.get(entry.getDocumentNo());
+                entry.setDescription("Receipt"
+                        + (rv != null && rv.getPaymentMode() != null ? " (" + rv.getPaymentMode() + ")" : ""));
+                if (rv != null) {
+                    entry.setReference(firstNonBlank(rv.getReference(), rv.getNotes(), rv.getPaymentMode(), "-"));
+                } else {
+                    entry.setReference("-");
+                }
+            } else {
+                if (entry.getDescription() == null) entry.setDescription(prettyType(type));
+                if (entry.getReference() == null) entry.setReference("-");
+            }
+        }
+    }
+
+    private String firstNonBlank(String... values) {
+        if (values == null) return null;
+        for (String v : values) {
+            if (v != null && !v.isBlank()) return v;
+        }
+        return null;
+    }
+
+    private String prettyType(String type) {
+        if (type == null || type.isBlank()) return "-";
+        StringBuilder sb = new StringBuilder();
+        for (String part : type.split("_")) {
+            if (part.isBlank()) continue;
+            if (sb.length() > 0) sb.append(' ');
+            sb.append(Character.toUpperCase(part.charAt(0))).append(part.substring(1).toLowerCase());
+        }
+        return sb.toString();
     }
 
     private StatementEntryDTO buildOpeningBalanceEntry(LocalDate startDate, BigDecimal openingBalance,
@@ -227,11 +316,67 @@ public class StatementService {
             entry.setRunningBalance(runningBalance);
         }
 
+        enrichVendorEntries(combined);
+
         resp.setEntries(combined);
         resp.setTotalDebit(totalDebit);
         resp.setTotalCredit(totalCredit);
         resp.setClosingBalance(runningBalance);
 
         return resp;
+    }
+
+    // QA-018: Vendor SoA — analogous to enrichCustomerEntries.
+    private void enrichVendorEntries(List<StatementEntryDTO> entries) {
+        if (entries == null || entries.isEmpty()) return;
+
+        List<String> invoiceNumbers = entries.stream()
+                .filter(e -> "INVOICE".equals(e.getType()))
+                .map(StatementEntryDTO::getDocumentNo)
+                .filter(n -> n != null && !n.isBlank())
+                .distinct()
+                .collect(Collectors.toList());
+        List<String> voucherNumbers = entries.stream()
+                .filter(e -> e.getType() != null && e.getType().contains("PAYMENT"))
+                .map(StatementEntryDTO::getDocumentNo)
+                .filter(n -> n != null && !n.isBlank())
+                .distinct()
+                .collect(Collectors.toList());
+
+        Map<String, PurchaseInvoice> invoiceMap = invoiceNumbers.isEmpty()
+                ? new HashMap<>()
+                : purchaseInvoiceRepository.findByInvoiceNumberIn(invoiceNumbers).stream()
+                        .collect(Collectors.toMap(PurchaseInvoice::getInvoiceNumber, inv -> inv, (a, b) -> a));
+        Map<String, PaymentVoucher> voucherMap = voucherNumbers.isEmpty()
+                ? new HashMap<>()
+                : paymentVoucherRepository.findByVoucherNumberIn(voucherNumbers).stream()
+                        .collect(Collectors.toMap(PaymentVoucher::getVoucherNumber, pv -> pv, (a, b) -> a));
+
+        for (StatementEntryDTO entry : entries) {
+            String type = entry.getType() == null ? "" : entry.getType();
+            if ("INVOICE".equals(type)) {
+                PurchaseInvoice inv = invoiceMap.get(entry.getDocumentNo());
+                entry.setDescription("Purchase Invoice"
+                        + (inv != null && inv.getVendorName() != null ? " — " + inv.getVendorName() : ""));
+                if (inv != null) {
+                    entry.setReference(firstNonBlank(inv.getVendorInvoiceNo(), inv.getReferenceNo(),
+                            inv.getGrnNo(), "-"));
+                } else {
+                    entry.setReference("-");
+                }
+            } else if (type.contains("PAYMENT")) {
+                PaymentVoucher pv = voucherMap.get(entry.getDocumentNo());
+                entry.setDescription("Payment Voucher"
+                        + (pv != null && pv.getPaymentMode() != null ? " (" + pv.getPaymentMode() + ")" : ""));
+                if (pv != null) {
+                    entry.setReference(firstNonBlank(pv.getReferenceNumber(), pv.getNotes(), "-"));
+                } else {
+                    entry.setReference("-");
+                }
+            } else {
+                if (entry.getDescription() == null) entry.setDescription(prettyType(type));
+                if (entry.getReference() == null) entry.setReference("-");
+            }
+        }
     }
 }

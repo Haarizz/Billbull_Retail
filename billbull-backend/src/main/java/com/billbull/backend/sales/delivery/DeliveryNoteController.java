@@ -1,11 +1,14 @@
 package com.billbull.backend.sales.delivery;
 
+import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
 import com.billbull.backend.inventory.batch.BatchSelectionRequest;
+import com.billbull.backend.settings.email.DocumentEmailSender;
 
 import java.util.List;
+import java.util.Map;
 
 @RestController
 @RequestMapping("/api/delivery-notes")
@@ -13,14 +16,57 @@ import java.util.List;
 public class DeliveryNoteController {
 
     private final DeliveryNoteService service;
+    private final DocumentEmailSender emailSender;
 
-    public DeliveryNoteController(DeliveryNoteService service) {
+    public DeliveryNoteController(DeliveryNoteService service, DocumentEmailSender emailSender) {
         this.service = service;
+        this.emailSender = emailSender;
+    }
+
+    // QA-040: send the DN email using the frontend-rendered HTML body.
+    @PostMapping("/{id}/send-email")
+    @SuppressWarnings("unchecked")
+    public ResponseEntity<?> sendEmail(@PathVariable Long id,
+                                       @RequestBody(required = false) Map<String, Object> body) {
+        try {
+            String toEmail = body != null ? (String) body.get("toEmail") : null;
+            String subject = body != null ? (String) body.get("subject") : null;
+            String htmlBody = body != null ? (String) body.get("htmlBody") : null;
+            List<Map<String, String>> inlineAttachments = body != null
+                    ? (List<Map<String, String>>) body.get("inlineAttachments")
+                    : null;
+
+            DeliveryNoteResponse dn = service.get(id);
+            if (subject == null || subject.isBlank()) {
+                String num = dn != null && dn.dnNumber != null ? dn.dnNumber : ("DN-" + id);
+                subject = "Delivery Note " + num + " from " + emailSender.getFromName();
+            }
+            emailSender.send(toEmail, subject, htmlBody, inlineAttachments);
+            return ResponseEntity.ok(Map.of("message", "Email sent successfully to " + toEmail));
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body(e.getMessage());
+        } catch (Exception e) {
+            return ResponseEntity.internalServerError().body("Failed to send email: " + e.getMessage());
+        }
     }
 
     @GetMapping
     public List<DeliveryNoteResponse> list() {
         return service.list();
+    }
+
+    @GetMapping("/page")
+    public com.billbull.backend.util.PageResponse<DeliveryNoteResponse> page(
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "30") int size,
+            @RequestParam(required = false) String search,
+            @RequestParam(required = false) String status) {
+        return com.billbull.backend.util.PaginationUtil.paginate(service.list(), page, size, search, status);
+    }
+
+    @GetMapping("/next-number")
+    public Map<String, String> getNextNumber() {
+        return Map.of("dnNumber", service.generateDeliveryNoteNumber());
     }
 
     @GetMapping("/uninvoiced/{customerCode}")

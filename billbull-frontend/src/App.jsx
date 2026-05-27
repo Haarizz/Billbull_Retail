@@ -53,11 +53,13 @@ import StockTransfer from "./pages/Inventory/StockTransfer/StockTransfer";
 import BankReconciliation from "./pages/Financials/BankReconciliation";
 import BarcodePrinter from "./pages/Inventory/Barcode/BarcodePrinter";
 import ReceiptVoucher from "./pages/Financials/ReceiptVoucher";
+import FinancialsPaymentVoucher from "./pages/Financials/PaymentVoucher";
 import MyProfile from "./MyProfile/MyProfile";
 import Messaging from "./pages/Customer/Messaging";
 import TaxCompliance from "./pages/Financials/TaxCompliance";
 import FinancialReports from "./pages/Financials/FinancialReports";
 import FinancialConfig from "./pages/Financials/FinancialConfig";
+import FinancialsPrintEmailTemplates from "./pages/Financials/FinancialsPrintEmailTemplates";
 import PrintEmailTemplates from "./pages/Sales/PrintEmailTemplates";
 import SalesSettings from "./pages/Sales/SalesSettings";
 import PurchasePrintEmailTemplates from "./pages/Purchase/PurchasePrintEmailTemplates";
@@ -66,6 +68,7 @@ import InventoryReports from "./pages/Inventory/Reports/InventoryReports";
 import CompanySettings from "./pages/Settings/CompanySettings";
 import UserRoleConfig from "./pages/Settings/UserRoleConfig";
 import BranchSetup from "./pages/Settings/BranchSetup";
+import EmailSettings from "./pages/Settings/EmailSettings";
 import SalesSummaryReport from "./pages/Sales/Reports/SalesSummaryReport";
 import PurchaseSummaryReport from "./pages/Purchase/Reports/PurchaseSummaryReport";
 // import Products from "./pages/Inventory/Product/Products";
@@ -407,6 +410,15 @@ function App() {
                     />
 
                     <Route
+                      path="/finance/paymentvoucher"
+                      element={
+                        <ResourceGuard module="finance.voucher">
+                          <FinancialsPaymentVoucher />
+                        </ResourceGuard>
+                      }
+                    />
+
+                    <Route
                       path="/finance/journalvoucher"
                       element={
                         <ResourceGuard module="finance.voucher">
@@ -456,6 +468,15 @@ function App() {
                       element={
                         <ResourceGuard module="finance.tax">
                           <FinancialConfig />
+                        </ResourceGuard>
+                      }
+                    />
+
+                    <Route
+                      path="/finance/templates"
+                      element={
+                        <ResourceGuard module="finance.voucher">
+                          <FinancialsPrintEmailTemplates />
                         </ResourceGuard>
                       }
                     />
@@ -529,6 +550,15 @@ function App() {
                     />
 
                     <Route
+                      path="/sales/reports"
+                      element={
+                        <ResourceGuard module="sales.invoice">
+                          <SalesSummaryReport />
+                        </ResourceGuard>
+                      }
+                    />
+
+                    <Route
                       path="/sales/reports/summary"
                       element={
                         <ResourceGuard module="sales.invoice">
@@ -569,6 +599,15 @@ function App() {
                       element={
                         <ResourceGuard module="userManagement.setup">
                           <BranchSetup />
+                        </ResourceGuard>
+                      }
+                    />
+
+                    <Route
+                      path="/settings/email"
+                      element={
+                        <ResourceGuard module="userManagement.setup">
+                          <EmailSettings />
                         </ResourceGuard>
                       }
                     />

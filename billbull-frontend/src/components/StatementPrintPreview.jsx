@@ -3,6 +3,7 @@ import { getCompanyProfile } from '../api/companyProfileApi';
 import { useCompany } from '../context/CompanyContext';
 import { normalizeDocumentCompanyProfile } from '../utils/documentTemplateRenderer';
 import { resolveCurrencyDisplayCode } from '../utils/countryCurrencyOptions';
+import { formatDisplayDate } from '../utils/dateUtils';
 import { formatStatementEntryType } from '../utils/statementUtils';
 
 const asNumber = (value) => {
@@ -270,7 +271,7 @@ const StatementPrintPreview = ({
     const totalCredit = asNumber(statementData?.totalCredit);
     const closingBalance = asNumber(statementData?.closingBalance);
     const entries = Array.isArray(statementData?.entries) ? statementData.entries : [];
-    const generatedOn = new Date().toLocaleDateString('en-GB');
+    const generatedOn = formatDisplayDate(new Date());
     const closingSuffix = closingBalance >= 0 ? positiveBalanceLabel : negativeBalanceLabel;
     const openingSuffix = openingBalance >= 0 ? positiveBalanceLabel : negativeBalanceLabel;
 
@@ -363,12 +364,14 @@ const StatementPrintPreview = ({
                     <table style={styles.table}>
                         <thead>
                             <tr>
-                                <th style={{ ...styles.th, textAlign: 'left', width: '16%' }}>Date</th>
-                                <th style={{ ...styles.th, textAlign: 'left', width: '14%' }}>Type</th>
-                                <th style={{ ...styles.th, textAlign: 'left', width: '24%' }}>Document No.</th>
-                                <th style={{ ...styles.th, textAlign: 'right', width: '15%' }}>{debitColumnLabel}</th>
-                                <th style={{ ...styles.th, textAlign: 'right', width: '15%' }}>{creditColumnLabel}</th>
-                                <th style={{ ...styles.th, textAlign: 'right', width: '16%' }}>Balance</th>
+                                <th style={{ ...styles.th, textAlign: 'left', width: '11%' }}>Date</th>
+                                <th style={{ ...styles.th, textAlign: 'left', width: '10%' }}>Type</th>
+                                <th style={{ ...styles.th, textAlign: 'left', width: '14%' }}>Document No.</th>
+                                <th style={{ ...styles.th, textAlign: 'left', width: '18%' }}>Description</th>
+                                <th style={{ ...styles.th, textAlign: 'left', width: '13%' }}>Reference</th>
+                                <th style={{ ...styles.th, textAlign: 'right', width: '11%' }}>{debitColumnLabel}</th>
+                                <th style={{ ...styles.th, textAlign: 'right', width: '11%' }}>{creditColumnLabel}</th>
+                                <th style={{ ...styles.th, textAlign: 'right', width: '12%' }}>Balance</th>
                             </tr>
                         </thead>
                         <tbody>
@@ -380,6 +383,8 @@ const StatementPrintPreview = ({
                                             {formatStatementEntryType(entry.type)}
                                         </td>
                                         <td style={{ ...styles.td, textAlign: 'left' }}>{entry.documentNo || '-'}</td>
+                                        <td style={{ ...styles.td, textAlign: 'left' }}>{entry.description || formatStatementEntryType(entry.type)}</td>
+                                        <td style={{ ...styles.td, textAlign: 'left', color: '#64748b' }}>{entry.reference || '-'}</td>
                                         <td style={{ ...styles.td, textAlign: 'right' }}>
                                             {asNumber(entry.debit) > 0
                                                 ? asNumber(entry.debit).toLocaleString('en-AE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
@@ -397,7 +402,7 @@ const StatementPrintPreview = ({
                                 ))
                             ) : (
                                 <tr>
-                                    <td colSpan="6" style={{ ...styles.td, padding: '18px 10px', textAlign: 'center', color: '#94a3b8' }}>
+                                    <td colSpan="8" style={{ ...styles.td, padding: '18px 10px', textAlign: 'center', color: '#94a3b8' }}>
                                         {emptyMessage}
                                     </td>
                                 </tr>
@@ -405,7 +410,7 @@ const StatementPrintPreview = ({
                         </tbody>
                         <tfoot>
                             <tr>
-                                <td colSpan="3" style={{ ...styles.tfootCell, textAlign: 'right' }}>Closing Totals</td>
+                                <td colSpan="5" style={{ ...styles.tfootCell, textAlign: 'right' }}>Closing Totals</td>
                                 <td style={{ ...styles.tfootCell, textAlign: 'right' }}>
                                     {totalDebit.toLocaleString('en-AE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                                 </td>

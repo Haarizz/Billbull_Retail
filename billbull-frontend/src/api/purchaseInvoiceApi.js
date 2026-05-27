@@ -21,6 +21,16 @@ export const getInvoices = async () => {
   }
 };
 
+export const getInvoicesPage = async ({ page = 0, size = 30, search = "", status = "" } = {}) => {
+  try {
+    const response = await api.get(`/api/purchase-invoices/page`, { params: { page, size, search, status } });
+    return response.data;
+  } catch (error) {
+    console.error("Error fetching paged purchase invoices", error);
+    throw error;
+  }
+};
+
 export const getInvoiceById = async (id) => {
   try {
     const response = await api.get(`/api/purchase-invoices/${id}`);

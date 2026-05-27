@@ -32,6 +32,17 @@ public class PaymentController {
         return paymentService.getAllPayments();
     }
 
+    @GetMapping("/page")
+    @PreAuthorize("hasAnyRole('ADMIN','SALES','ACCOUNTANT')")
+    public com.billbull.backend.util.PageResponse<Payment> getPaymentsPage(
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "30") int size,
+            @RequestParam(required = false) String search,
+            @RequestParam(required = false) String status) {
+        return com.billbull.backend.util.PaginationUtil.paginate(
+                paymentService.getAllPayments(), page, size, search, status);
+    }
+
     // ==========================================
     // GET BY ID
     // ==========================================

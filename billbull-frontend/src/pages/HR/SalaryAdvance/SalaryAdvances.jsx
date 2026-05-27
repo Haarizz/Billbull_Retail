@@ -30,6 +30,7 @@ import {
 import { salaryAdvanceApi } from '../../../api/salaryAdvanceApi';
 import { employeesApi } from '../../../api/employeesApi';
 import CurrencyAmount, { CurrencySymbol } from '../../../components/CurrencyAmount';
+import PaginationFooter from '../../../components/common/PaginationFooter';
 
 // --- Configuration ---
 
@@ -720,6 +721,21 @@ const SalaryAdvances = () => {
     return data;
   }, [schedSearchTerm, schedStatusFilter, schedDeptFilter, schedSort, repaymentList]);
 
+  // Client-side pagination for the two tabs.
+  const LIST_PAGE_SIZE = 30;
+  const [reqListPage, setReqListPage] = useState(0);
+  useEffect(() => { setReqListPage(0); }, [reqSearchTerm, reqStatusFilter, reqDeptFilter]);
+  const pagedRequests = useMemo(
+    () => filteredRequests.slice(reqListPage * LIST_PAGE_SIZE, (reqListPage + 1) * LIST_PAGE_SIZE),
+    [filteredRequests, reqListPage]
+  );
+  const [schedListPage, setSchedListPage] = useState(0);
+  useEffect(() => { setSchedListPage(0); }, [schedSearchTerm, schedStatusFilter, schedDeptFilter, schedSort]);
+  const pagedRepayment = useMemo(
+    () => filteredRepaymentData.slice(schedListPage * LIST_PAGE_SIZE, (schedListPage + 1) * LIST_PAGE_SIZE),
+    [filteredRepaymentData, schedListPage]
+  );
+
   // 3. Reports Tab Logic
   const sortedReportData = useMemo(() => {
     let sortableItems = [...dynamicReportDeptData];
@@ -858,7 +874,7 @@ const SalaryAdvances = () => {
                     </thead>
                     <tbody className="divide-y divide-slate-100">
                       {filteredRequests.length > 0 ? (
-                        filteredRequests.map((req) => (
+                        pagedRequests.map((req) => (
                           <tr key={req.id} className="hover:bg-slate-50/50 transition-colors">
                             <td className="px-6 py-4">
                               <div className="font-medium text-slate-900">{req.employeeName}</div>
@@ -908,6 +924,13 @@ const SalaryAdvances = () => {
                       )}
                     </tbody>
                   </table>
+                  <PaginationFooter
+                    page={reqListPage}
+                    size={LIST_PAGE_SIZE}
+                    totalElements={filteredRequests.length}
+                    totalPages={Math.ceil(filteredRequests.length / LIST_PAGE_SIZE)}
+                    onPageChange={setReqListPage}
+                  />
                 </div>
               </div>
             </div>
@@ -936,7 +959,7 @@ const SalaryAdvances = () => {
               </div>
 
               <div className="space-y-4">
-                {filteredRepaymentData.length > 0 ? filteredRepaymentData.map((item) => (
+                {filteredRepaymentData.length > 0 ? pagedRepayment.map((item) => (
                   <div key={item.id} className="bg-white border border-slate-200 rounded-xl p-6 shadow-sm">
                     <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-6">
                       <div>
@@ -1002,6 +1025,13 @@ const SalaryAdvances = () => {
                   <div className="text-center py-12 bg-white border border-slate-200 rounded-xl text-slate-400">No repayment schedules found matching filters.</div>
                 )}
               </div>
+              <PaginationFooter
+                page={schedListPage}
+                size={LIST_PAGE_SIZE}
+                totalElements={filteredRepaymentData.length}
+                totalPages={Math.ceil(filteredRepaymentData.length / LIST_PAGE_SIZE)}
+                onPageChange={setSchedListPage}
+              />
             </div>
           )}
 

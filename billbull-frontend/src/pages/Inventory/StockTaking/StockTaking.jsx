@@ -12,12 +12,15 @@ import {
 import ExportDropdown from '../../../components/common/ExportDropdown';
 import { exportToExcel, exportToPDF } from '../../../utils/exportUtils';
 import CurrencyAmount from '../../../components/CurrencyAmount';
+import PaginationFooter from '../../../components/common/PaginationFooter';
+import { formatDisplayDate } from '../../../utils/dateUtils';
 
 // ==========================================
 // CONFIGURATION
 // ==========================================
 
 const STOCK_TAKING_COLUMNS = [
+    { header: 'S.No.', key: 'sNo', width: 8 },
     { header: 'Session ID', key: 'id', width: 20 },
     { header: 'Warehouse', key: 'warehouse', width: 20 },
     { header: 'Created By', key: 'createdBy', width: 20 },
@@ -632,7 +635,7 @@ const getSessionTimestamp = (session, field) => session?.[`${field}Iso`] || sess
 
 const formatStockTakeDate = (value) => {
     const parsed = parseStockTakeTimestamp(value);
-    return parsed ? parsed.toLocaleDateString() : '-';
+    return parsed ? formatDisplayDate(parsed) : '-';
 };
 
 const formatStockTakeTime = (value, { includeSeconds = false } = {}) => {
@@ -789,6 +792,12 @@ const ListView = ({
             s.warehouse?.toLowerCase().includes(searchTerm.toLowerCase()) ||
             s.createdBy?.toLowerCase().includes(searchTerm.toLowerCase()));
 
+    // Client-side pagination for the sessions table.
+    const LIST_PAGE_SIZE = 30;
+    const [listPage, setListPage] = useState(0);
+    useEffect(() => { setListPage(0); }, [activeTab, searchTerm]);
+    const pagedSessions = filteredSessions.slice(listPage * LIST_PAGE_SIZE, (listPage + 1) * LIST_PAGE_SIZE);
+
     return (
         <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
             {/* Header */}
@@ -816,8 +825,17 @@ const ListView = ({
                         <Plus className="h-3.5 w-3.5" /> New Stock Take
                     </button>
                     <ExportDropdown
-                        onExportExcel={() => exportToExcel(filteredSessions, STOCK_TAKING_COLUMNS, 'StockTaking')}
-                        onExportPdf={() => exportToPDF(filteredSessions, STOCK_TAKING_COLUMNS, 'Stock Taking Sessions', 'StockTaking')}
+                        onExportExcel={() => exportToExcel(
+                            filteredSessions.map((session, index) => ({ ...session, sNo: index + 1 })),
+                            STOCK_TAKING_COLUMNS,
+                            'StockTaking'
+                        )}
+                        onExportPdf={() => exportToPDF(
+                            filteredSessions.map((session, index) => ({ ...session, sNo: index + 1 })),
+                            STOCK_TAKING_COLUMNS,
+                            'Stock Taking Sessions',
+                            'StockTaking'
+                        )}
                     />
                 </div>
             </div>
@@ -857,6 +875,7 @@ const ListView = ({
                     <table className="w-full text-sm">
                         <thead className="bg-[#F8FAFC] border-b border-slate-200">
                             <tr>
+                                <th className="text-center px-4 py-2 font-semibold text-slate-500 w-16 select-none uppercase">S.No.</th>
                                 <th className="text-left px-4 py-2 font-semibold text-slate-600">Session</th>
                                 <th className="text-left px-4 py-2 font-semibold text-slate-600">Warehouse</th>
                                 <th className="text-left px-4 py-2 font-semibold text-slate-600">Created By</th>
@@ -868,8 +887,9 @@ const ListView = ({
                             </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-100">
-                            {filteredSessions.map((session) => (
+                            {pagedSessions.map((session, index) => (
                                 <tr key={session.id} className="hover:bg-slate-50/80 transition-colors group">
+                                    <td className="px-4 py-2 text-center text-slate-400 font-mono font-medium">{index + 1}</td>
                                     <td className="px-4 py-2 whitespace-nowrap">
                                         <div className="space-y-1">
                                             <p className="font-bold text-slate-800 text-[13px]">{session.id}</p>
@@ -991,6 +1011,13 @@ const ListView = ({
                             ))}
                         </tbody>
                     </table>
+                    <PaginationFooter
+                        page={listPage}
+                        size={LIST_PAGE_SIZE}
+                        totalElements={filteredSessions.length}
+                        totalPages={Math.ceil(filteredSessions.length / LIST_PAGE_SIZE)}
+                        onPageChange={setListPage}
+                    />
                 </div>
             </div>
         </div>

@@ -14,6 +14,7 @@ public interface ReceiptVoucherRepository extends JpaRepository<ReceiptVoucher, 
     List<ReceiptVoucher> findAllByOrderByDateDesc();
     List<ReceiptVoucher> findBySalesInvoiceId(Long salesInvoiceId);
     List<ReceiptVoucher> findByOpeningInvoiceId(Long openingInvoiceId);
+    List<ReceiptVoucher> findBySalesOrderIdOrderByDateDesc(Long salesOrderId);
 
     /**
      * Sum of completed receipts for a customer before a given date.
@@ -45,6 +46,9 @@ public interface ReceiptVoucherRepository extends JpaRepository<ReceiptVoucher, 
     /** Returns all receipts whose customer_code is still null — used by the backfill at startup. */
     @Query("SELECT rv FROM ReceiptVoucher rv WHERE rv.customerCode IS NULL")
     List<ReceiptVoucher> findWithoutCustomerCode();
+
+    /** QA-018: batch lookup used by StatementService to populate description/reference. */
+    List<ReceiptVoucher> findByVoucherIdIn(List<String> voucherIds);
 
     /**
      * Highest voucher_id for a given year-prefix (e.g. "RV-2026-"). Used to derive

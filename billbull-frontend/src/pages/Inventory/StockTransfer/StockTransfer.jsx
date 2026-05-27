@@ -5,6 +5,7 @@ import {
     AlertCircle, X, MoreHorizontal, Eye, Edit, Printer, RefreshCw, Copy, Sparkles, Lightbulb, Info, List, ShieldCheck
 } from 'lucide-react';
 import ExportDropdown from '../../../components/common/ExportDropdown';
+import PaginationFooter from '../../../components/common/PaginationFooter';
 import { exportToExcel, exportToPDF } from '../../../utils/exportUtils';
 
 // ==========================================
@@ -12,6 +13,7 @@ import { exportToExcel, exportToPDF } from '../../../utils/exportUtils';
 // ==========================================
 
 const STOCK_TRANSFER_COLUMNS = [
+    { header: 'S.No.', key: 'sNo', width: 8 },
     { header: 'Transfer No', key: 'transferNo', width: 20 },
     { header: 'Date', key: 'transferDate', width: 15 },
     { header: 'From Warehouse', key: 'fromWarehouseName', width: 25 },
@@ -36,6 +38,7 @@ import ProductSelector from '../../../components/ProductSelector';
 import { printHtml } from '../../../utils/printGenerator';
 import { getImageUrl } from '../../../utils/urlUtils';
 import CurrencyAmount from '../../../components/CurrencyAmount';
+import { formatDisplayDate } from '../../../utils/dateUtils';
 
 // ==========================================
 // CONSTANTS
@@ -155,7 +158,7 @@ const ViewTransferModal = ({ isOpen, onClose, data, onPrint }) => {
                                 <StatusBadge status={data.status} />
                             </div>
                             <p className="text-xs text-slate-400 mt-0.5 font-medium flex items-center gap-1.5">
-                                <Calendar size={12} /> {data.transferDate}
+                                <Calendar size={12} /> {formatDisplayDate(data.transferDate)}
                                 <span className="w-1 h-1 bg-slate-300 rounded-full mx-1" />
                                 <User size={12} /> Requested by {data.requestedBy || 'System'}
                             </p>
@@ -395,6 +398,10 @@ const ChecklistItem = ({ checked, label }) => (
 // ==========================================
 
 const TransferHistoryView = ({ data, warehouses, onView, onSend, onPrint }) => {
+    const LIST_PAGE_SIZE = 30;
+    const [listPage, setListPage] = useState(0);
+    useEffect(() => { setListPage(0); }, [data.length]);
+    const pagedData = data.slice(listPage * LIST_PAGE_SIZE, (listPage + 1) * LIST_PAGE_SIZE);
     return (
         <div className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
             <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between">
@@ -404,8 +411,8 @@ const TransferHistoryView = ({ data, warehouses, onView, onSend, onPrint }) => {
                 </div>
                 <div className="flex gap-2">
                     <ExportDropdown
-                        onExportExcel={() => exportToExcel(data, STOCK_TRANSFER_COLUMNS, 'StockTransfers')}
-                        onExportPdf={() => exportToPDF(data, STOCK_TRANSFER_COLUMNS, 'Stock Transfer Records', 'StockTransfers')}
+                        onExportExcel={() => exportToExcel(data.map((row, index) => ({ ...row, sNo: index + 1 })), STOCK_TRANSFER_COLUMNS, 'StockTransfers')}
+                        onExportPdf={() => exportToPDF(data.map((row, index) => ({ ...row, sNo: index + 1 })), STOCK_TRANSFER_COLUMNS, 'Stock Transfer Records', 'StockTransfers')}
                     />
                     <div className="relative">
                         <input type="text" placeholder="Search transfers..." className="h-9 w-64 bg-slate-50 border border-slate-200 rounded-lg px-9 text-xs outline-none focus:bg-white focus:ring-1 focus:ring-[#F5C742] transition-all" />
@@ -418,6 +425,7 @@ const TransferHistoryView = ({ data, warehouses, onView, onSend, onPrint }) => {
                 <table className="w-full text-left">
                     <thead className="bg-slate-50/50 text-slate-500 font-bold uppercase text-[10px] border-b border-slate-100">
                         <tr>
+                            <th className="px-3 py-4 text-center text-slate-500 w-12 select-none">S.No.</th>
                             <th className="px-6 py-4">Transfer No</th>
                             <th className="px-4 py-4">Date</th>
                             <th className="px-4 py-4">Path (From → To)</th>
@@ -427,8 +435,9 @@ const TransferHistoryView = ({ data, warehouses, onView, onSend, onPrint }) => {
                         </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-50">
-                        {data.map((row) => (
+                        {pagedData.map((row, index) => (
                             <tr key={row.id} className="hover:bg-slate-50/80 transition-colors group">
+                                <td className="px-3 py-4 text-center text-slate-400 font-mono font-medium">{index + 1}</td>
                                 <td className="px-6 py-4">
                                     <div className="flex flex-col">
                                         <span className="font-mono font-bold text-slate-800 text-xs">{row.transferNo}</span>
@@ -438,7 +447,7 @@ const TransferHistoryView = ({ data, warehouses, onView, onSend, onPrint }) => {
                                 <td className="px-4 py-4">
                                     <div className="flex items-center gap-2 text-xs text-slate-600 font-medium">
                                         <Calendar size={12} className="text-slate-400" />
-                                        {row.transferDate}
+                                        {formatDisplayDate(row.transferDate)}
                                     </div>
                                 </td>
                                 <td className="px-4 py-4">
@@ -478,6 +487,13 @@ const TransferHistoryView = ({ data, warehouses, onView, onSend, onPrint }) => {
                         ))}
                     </tbody>
                 </table>
+                <PaginationFooter
+                    page={listPage}
+                    size={LIST_PAGE_SIZE}
+                    totalElements={data.length}
+                    totalPages={Math.ceil(data.length / LIST_PAGE_SIZE)}
+                    onPageChange={setListPage}
+                />
             </div>
         </div>
     );
@@ -526,7 +542,7 @@ const ReceiveTransferView = ({ data, onReceive }) => {
                             </div>
                             <div className="flex justify-between text-xs">
                                 <span className="text-slate-500">Sent Date:</span>
-                                <span className="font-bold text-slate-700">{transfer.transferDate}</span>
+                                <span className="font-bold text-slate-700">{formatDisplayDate(transfer.transferDate)}</span>
                             </div>
                         </div>
 

@@ -23,6 +23,8 @@ import com.billbull.backend.inventory.warehouse.Bin;
 import com.billbull.backend.inventory.warehouse.BinRepository;
 import com.billbull.backend.purchase.stockmovement.StockMovementRepository;
 import com.billbull.backend.sales.delivery.DeliveryBatchSelectionResponse;
+import com.billbull.backend.sales.settings.SalesDocumentNumberingService;
+import com.billbull.backend.sales.settings.SalesDocumentType;
 import com.billbull.backend.settings.branch.Branch;
 import com.billbull.backend.settings.branch.BranchAccessService;
 import com.billbull.backend.util.DocumentOrderingUtil;
@@ -41,6 +43,10 @@ public class SalesOrderService {
     private final StockMovementRepository stockMovementRepo;
     private final BinRepository binRepo;
     private final BatchSelectionService batchSelectionService;
+    private final com.billbull.backend.sales.settings.SalesSettingsService salesSettingsService;
+    private final SalesDocumentNumberingService numberingService;
+    private final com.billbull.backend.financials.receiptvoucher.ReceiptVoucherService receiptVoucherService;
+    private final com.billbull.backend.financials.receiptvoucher.ReceiptVoucherRepository receiptVoucherRepository;
 
     public SalesOrderService(
             SalesOrderRepository orderRepo,
@@ -53,7 +59,11 @@ public class SalesOrderService {
             BranchAccessService branchAccessService,
             StockMovementRepository stockMovementRepo,
             BinRepository binRepo,
-            BatchSelectionService batchSelectionService) {
+            BatchSelectionService batchSelectionService,
+            com.billbull.backend.sales.settings.SalesSettingsService salesSettingsService,
+            SalesDocumentNumberingService numberingService,
+            com.billbull.backend.financials.receiptvoucher.ReceiptVoucherService receiptVoucherService,
+            com.billbull.backend.financials.receiptvoucher.ReceiptVoucherRepository receiptVoucherRepository) {
         this.orderRepo = orderRepo;
         this.quotationRepo = quotationRepo;
         this.warehouseStockService = warehouseStockService;
@@ -65,6 +75,22 @@ public class SalesOrderService {
         this.stockMovementRepo = stockMovementRepo;
         this.binRepo = binRepo;
         this.batchSelectionService = batchSelectionService;
+        this.salesSettingsService = salesSettingsService;
+        this.numberingService = numberingService;
+        this.receiptVoucherService = receiptVoucherService;
+        this.receiptVoucherRepository = receiptVoucherRepository;
+    }
+
+    private com.billbull.backend.sales.settings.SalesItemPricePolicy activePricePolicy() {
+        com.billbull.backend.sales.settings.SalesSettings settings = salesSettingsService.getSettings();
+        return settings != null && settings.getSalesItemPricePolicy() != null
+                ? settings.getSalesItemPricePolicy()
+                : com.billbull.backend.sales.settings.SalesItemPricePolicy.RETAIL;
+    }
+
+    @Transactional
+    public String generateSalesOrderNumber() {
+        return numberingService.preview(SalesDocumentType.SALES_ORDER);
     }
 
     // ----------------------------
@@ -76,6 +102,8 @@ public class SalesOrderService {
     })
     @Transactional(rollbackFor = Exception.class)
     public SalesOrder save(SalesOrder order) {
+        SalesOrder existingOrder = order.getId() != null ? orderRepo.findById(order.getId()).orElse(null) : null;
+
         Branch currentBranch = branchAccessService.getRequiredCurrentUserBranch();
         Warehouse reservationWarehouse = resolveReservationWarehouse(order, currentBranch);
         order.setWarehouse(reservationWarehouse);
@@ -86,6 +114,19 @@ public class SalesOrderService {
         if (order.getLinkedQuotation() != null && order.getLinkedProforma() != null) {
             throw new IllegalStateException(
                     "Sales Order can be linked to either a quotation or a PI / Proforma, not both.");
+        }
+
+        if (existingOrder == null) {
+            order.setSoNumber(numberingService.resolveNumberForCreate(
+                    SalesDocumentType.SALES_ORDER,
+                    order.getSoNumber()));
+        } else if (existingOrder.getStatus() == SalesOrderStatus.DRAFT) {
+            order.setSoNumber(numberingService.resolveNumberForUpdate(
+                    SalesDocumentType.SALES_ORDER,
+                    existingOrder.getSoNumber(),
+                    order.getSoNumber()));
+        } else {
+            order.setSoNumber(existingOrder.getSoNumber());
         }
 
         double subTotal = 0;
@@ -166,9 +207,7 @@ public class SalesOrderService {
 
         // ✅ STATUS LOGIC: Maintain reservation until delivery
         // Load current DB status to avoid overwriting finalized states on update
-        SalesOrderStatus currentStatus = (order.getId() != null)
-                ? orderRepo.findById(order.getId()).map(SalesOrder::getStatus).orElse(null)
-                : null;
+        SalesOrderStatus currentStatus = existingOrder != null ? existingOrder.getStatus() : null;
 
         if (order.getId() == null) {
             order.setStatus(requestedStatus == SalesOrderStatus.DRAFT
@@ -191,6 +230,17 @@ public class SalesOrderService {
         }
 
         SalesOrder saved = orderRepo.save(order);
+
+        // QA-032: Auto-create a Receipt Voucher when a Sales Order is saved
+        // with an advance payment. The RV is what the user prints from the SO
+        // (and what the downstream invoice will credit). Skip drafts, only
+        // create once per SO (subsequent edits don't duplicate the receipt).
+        if (saved.getStatus() != SalesOrderStatus.DRAFT
+                && saved.getAdvanceAmount() != null
+                && saved.getAdvanceAmount() > 0
+                && receiptVoucherRepository.findBySalesOrderIdOrderByDateDesc(saved.getId()).isEmpty()) {
+            createAdvanceReceiptForOrder(saved);
+        }
 
         // ✅ MARK LINKED QUOTATION AS CONVERTED and stamp current revision number
         // on the order so we can reconstruct exactly which version was agreed to,
@@ -458,14 +508,33 @@ public class SalesOrderService {
         if (item.getDetailedDesc() == null && product.getDetailedDesc() != null) {
             item.setDetailedDesc(product.getDetailedDesc());
         }
+        // QA-029: hydrate remaining identity fields for print templates.
+        if (item.getProductName() == null) {
+            item.setProductName(product.getName());
+        }
+        if (item.getSku() == null) {
+            item.setSku(product.getSku());
+        }
+        if (item.getShortDesc() == null) {
+            item.setShortDesc(product.getShortDesc());
+        }
+        if (item.getLocalName() == null) {
+            item.setLocalName(product.getLocalName());
+        }
 
-        // Hydrate price: packing-level price first, then product retail price
+        // Hydrate price: packing-level price first, then the product's master
+        // price selected by the configured Sales Item Price Policy
+        // (RETAIL / MAX_SALE / MIN_SALE) — see SalesSettings.
         if (item.getPrice() == null) {
             java.math.BigDecimal packingPrice = lookupPackingValue(product.getId(), item.getUnit(), true);
             if (packingPrice != null) {
                 item.setPrice(packingPrice.doubleValue());
-            } else if (product.getPricing() != null && product.getPricing().getRetailPrice() != null) {
-                item.setPrice(product.getPricing().getRetailPrice().doubleValue());
+            } else if (product.getPricing() != null) {
+                java.math.BigDecimal resolved = com.billbull.backend.sales.settings.SalesPriceResolver
+                        .resolve(product.getPricing(), activePricePolicy());
+                if (resolved != null) {
+                    item.setPrice(resolved.doubleValue());
+                }
             }
         }
 
@@ -615,5 +684,41 @@ public class SalesOrderService {
                                 .setScale(0, RoundingMode.HALF_UP).intValue()
                         : qty)
                 .orElse(qty);
+    }
+
+    /**
+     * QA-032: Generate the auto-Receipt Voucher that pairs with a Sales Order
+     * advance payment. The voucher is what the user prints from the SO and is
+     * what the downstream Sales Invoice credits when the SO is invoiced.
+     */
+    /** QA-032: Receipt Vouchers linked to a Sales Order (advance receipts). */
+    @Transactional(readOnly = true)
+    public List<com.billbull.backend.financials.receiptvoucher.ReceiptVoucher> getReceiptVouchersForOrder(Long orderId) {
+        return receiptVoucherRepository.findBySalesOrderIdOrderByDateDesc(orderId);
+    }
+
+    private void createAdvanceReceiptForOrder(SalesOrder order) {
+        com.billbull.backend.financials.receiptvoucher.ReceiptVoucher rv =
+                new com.billbull.backend.financials.receiptvoucher.ReceiptVoucher();
+        rv.setDate(order.getOrderDate() != null
+                ? order.getOrderDate()
+                : java.time.LocalDate.now());
+        rv.setPaymentMode(
+                order.getPaymentMethod() != null && !order.getPaymentMethod().isBlank()
+                        ? order.getPaymentMethod()
+                        : "Cash");
+        rv.setReference(order.getPaymentReference() != null && !order.getPaymentReference().isBlank()
+                ? order.getPaymentReference()
+                : "Advance against SO: " + order.getSoNumber());
+        rv.setAmount(java.math.BigDecimal.valueOf(order.getAdvanceAmount()));
+        rv.setMemberName(order.getCustomerName() != null
+                ? order.getCustomerName()
+                : "Walk-in Customer");
+        rv.setStatus("Completed");
+        rv.setPurpose(com.billbull.backend.financials.receiptvoucher.ReceiptPurpose.ADVANCE_RECEIVED);
+        rv.setSalesOrderId(order.getId());
+        rv.setCustomerCode(order.getCustomerCode());
+
+        receiptVoucherService.createReceipt(rv, null);
     }
 }

@@ -4,6 +4,18 @@ import { getImageUrl } from '../utils/urlUtils';
 
 const CompanyContext = createContext(null);
 
+const BASE_TITLE = 'BillBull - Retail OS';
+
+/**
+ * Browser tab title format: "BillBull - Retail OS - {Company Name}".
+ * Falls back to the base title when no company name is available (e.g.
+ * before the profile loads or on the login screen).
+ */
+const applyDocumentTitle = (companyName) => {
+    const name = (companyName || '').trim();
+    document.title = name ? `${BASE_TITLE} - ${name}` : BASE_TITLE;
+};
+
 /**
  * Loads the singleton company profile from the backend on mount and makes it
  * available to the entire component tree via useCompany().
@@ -31,6 +43,13 @@ export const CompanyProvider = ({ children }) => {
                 // Components should guard with company?.companyName ?? ''.
             });
     }, []);
+
+    // Keep the browser tab title in sync with the active company. Driven by
+    // state so it correctly resets after logout (setCompany(null)) and updates
+    // when the profile is edited via Settings.
+    useEffect(() => {
+        applyDocumentTitle(company?.companyName);
+    }, [company?.companyName]);
 
     /**
      * Call this after a successful profile update or logo upload so every

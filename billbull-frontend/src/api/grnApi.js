@@ -7,6 +7,11 @@ export const getGrns = async () => {
   return res.data;
 };
 
+export const getGrnsPage = async ({ page = 0, size = 30, search = "", status = "" } = {}) => {
+  const res = await api.get("/api/grns/page", { params: { page, size, search, status } });
+  return res.data;
+};
+
 export const getGrnById = async (id) => {
   const res = await api.get(`/api/grns/${id}`);
   return res.data;

@@ -31,6 +31,16 @@ public class SalesReturnController {
         return salesReturnService.getAllReturns();
     }
 
+    @GetMapping("/page")
+    public com.billbull.backend.util.PageResponse<SalesReturn> getReturnsPage(
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "30") int size,
+            @RequestParam(required = false) String search,
+            @RequestParam(required = false) String status) {
+        return com.billbull.backend.util.PaginationUtil.paginate(
+                salesReturnService.getAllReturns(), page, size, search, status);
+    }
+
     @GetMapping("/{id}")
     public SalesReturn getReturnById(@PathVariable Long id) {
         return salesReturnService.getReturnById(id);

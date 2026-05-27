@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import {
     Printer,
@@ -34,7 +34,8 @@ import {
     ArrowLeft,
     SlidersHorizontal,
     MoreVertical,
-    AlertCircle
+    AlertCircle,
+    Zap
 } from 'lucide-react';
 
 // ✅ API IMPORTS
@@ -43,15 +44,21 @@ import { getAllCustomers } from '../../api/customerledgerApi';
 // ✅ NEW QUOTATION API IMPORTS
 import {
     getAllQuotations,
+    getQuotationsPage,
     saveQuotation,
     updateQuotationStatus,
     createRevision,
     uploadAttachment,
     checkQuotationStock,
     getNextQuotationNo,
-    getItemPriceHistory
+    getItemPriceHistory,
+    sendQuotationEmail
 } from '../../api/quotationApi';
 import { getStockAvailability } from '../../api/stockAvailabilityApi';
+import { formatDisplayDate } from '../../utils/dateUtils';
+import { pickSalesItemPrice, isPolicyOverridingPackings } from '../../utils/salesPricing';
+import { computeLineTaxTotals, resolveLineTaxRate } from '../../utils/vatMath';
+import { getActiveVatRate } from '../../api/taxApi';
 import { getSalesSettings } from '../../api/salesSettingsApi';
 
 // Ensure you have an axios instance or use fetch
@@ -60,6 +67,9 @@ import api from "../../api/axiosConfig";
 // ✅ DYNAMIC UI COMPONENTS
 
 import { ItemDescriptionCell, ItemDescriptionHeader } from '../../components/ItemDescriptionCell';
+// QA-FAST-ENTRY: inline row search input that auto-opens ProductSelector
+import InlineProductSearchCell from '../../components/InlineProductSearchCell';
+import PaginationFooter from '../../components/common/PaginationFooter';
 
 // ✅ PRODUCT SELECTOR — self-fetching, server-side search
 import ProductSelector from '../../components/ProductSelector';
@@ -82,7 +92,8 @@ import useShortcuts from '../../hooks/useShortcuts';
 // ✅ LOGO IMPORTS FOR PRINT
 import billBullLogo from '../../assets/billBullLogo.png';
 import { getTemplatesByCategory } from '../../api/printTemplateApi';
-import { generatePrintHtml, printHtml } from '../../utils/printGenerator';
+import { generatePrintHtml, generateEmailHtml, printHtml } from '../../utils/printGenerator';
+import { buildEmailBody } from '../../utils/emailImageInliner';
 import { getImageUrl } from '../../utils/urlUtils';
 import { getDefaultProductUnit, resolveUnitAmount } from '../../utils/unitPricing';
 import { summarizeSalesItems } from '../../utils/documentSummaryUtils';
@@ -96,12 +107,14 @@ import { useBranch } from '../../context/BranchContext';
 import ExportDropdown from '../../components/common/ExportDropdown';
 import { exportToExcel, exportToPDF } from '../../utils/exportUtils';
 import { generateDocFilename } from '../../utils/filenameUtils';
+import { isAutoNumberingEnabled } from '../../utils/salesNumbering';
 
 // ==========================================
 // 1. CONFIGURATION
 // ==========================================
 
 const QUOTATION_COLUMNS = [
+    { header: 'S.No.', key: 'sNo', width: 8 },
     { header: 'Quotation No', key: 'qtnNo', width: 15 },
     { header: 'Date', key: 'date', width: 12 },
     { header: 'Customer', key: 'customer', width: 25 },
@@ -269,7 +282,7 @@ const MobileCard = ({ qtn, onClick, renderStatusBadge, isExpanded, onToggleExpan
                     </div>
                     <div>
                         <h4 className="font-bold text-slate-800 text-sm">{qtn.qtnNo}</h4>
-                        <span className="text-xs text-slate-500">{qtn.date}</span>
+                        <span className="text-xs text-slate-500">{formatDisplayDate(qtn.date)}</span>
                     </div>
                 </div>
                 {renderStatusBadge(qtn.status)}
@@ -297,7 +310,7 @@ const MobileCard = ({ qtn, onClick, renderStatusBadge, isExpanded, onToggleExpan
                                 <div className="w-1.5 h-1.5 rounded-full bg-blue-300"></div>
                                 {rev.qtnNoDisplay}
                             </div>
-                            <div className="text-slate-500 mt-0.5">{rev.date}</div>
+                            <div className="text-slate-500 mt-0.5">{formatDisplayDate(rev.date)}</div>
                         </div>
                         <div className="text-right flex flex-col items-end gap-1">
                             <CurrencyAmount value={rev.total || 0} {...currencyProps} className="font-bold text-slate-700" />
@@ -377,6 +390,7 @@ const Quotations = () => {
     const [toastType, setToastType] = useState('success');
     const [printOptions, setPrintOptions] = useState({ printWithImages: false });
     const [salesSettings, setSalesSettings] = useState(null);
+    const quotationAutoNumbering = isAutoNumberingEnabled(salesSettings, 'QUOTATION');
 
     // Add state for expandable rows in Quotation Form
     const [expandedRows, setExpandedRows] = useState({});
@@ -406,6 +420,13 @@ const Quotations = () => {
     // --- UI STATES ---
     const [isRevisionsOpen, setIsRevisionsOpen] = useState(false);
     const [isReviseModalOpen, setIsReviseModalOpen] = useState(false);
+    const [isEmailModalOpen, setIsEmailModalOpen] = useState(false);
+    const [emailTo, setEmailTo] = useState('');
+    const [emailSubject, setEmailSubject] = useState('');
+    const [emailSending, setEmailSending] = useState(false);
+    // QA-040: pre-rendered email body (same renderer as Print) so the preview
+    // iframe shows exactly what the customer will receive.
+    const [emailPreviewHtml, setEmailPreviewHtml] = useState('');
     const [activeActionMenu, setActiveActionMenu] = useState(null);
     const [actionMenuPosition, setActionMenuPosition] = useState(null);
     const [isPrintModalOpen, setIsPrintModalOpen] = useState(false);
@@ -418,6 +439,10 @@ const Quotations = () => {
 
     // --- QUOTATION MANAGEMENT STATES ---
     const [quotationsList, setQuotationsList] = useState([]);
+    // Pagination state (server-driven via /api/sales/quotations/page)
+    const [listPage, setListPage] = useState(0);
+    const [listPageMeta, setListPageMeta] = useState({ page: 0, size: 30, totalElements: 0, totalPages: 0 });
+    const [isListLoading, setIsListLoading] = useState(false);
 
     const [editingId, setEditingId] = useState(null);
     const [nextQtnNo, setNextQtnNo] = useState("QTN-NEW");
@@ -439,6 +464,12 @@ const Quotations = () => {
     const [isProductSelectionOpen, setIsProductSelectionOpen] = useState(false);
     const [selectedProductIds, setSelectedProductIds] = useState([]);
 
+    // QA-FAST-ENTRY: inline-row-search → product-selector bridge state
+    const [pendingFastEntrySearch, setPendingFastEntrySearch] = useState('');
+    const [pendingFastEntryRowId, setPendingFastEntryRowId] = useState(null);
+    const inlineSearchRefs = useRef({});
+    const focusNextInlineSearchRef = useRef(null);
+
     // --- DROPDOWN STATES ---
     const [currency, setCurrency] = useState('AED');
     const [isCurrencyOpen, setIsCurrencyOpen] = useState(false);
@@ -455,6 +486,17 @@ const Quotations = () => {
 
     const [paymentTerm, setPaymentTerm] = useState('30 Days');
     const [isPaymentTermOpen, setIsPaymentTermOpen] = useState(false);
+
+    // VAT mode for line-price interpretation. Document-level toggle: when
+    // INCLUSIVE, line prices already contain tax; calculateRow extracts it.
+    const [vatMode, setVatMode] = useState('EXCLUSIVE');
+
+    // Fallback VAT % from the Tax Compliance module's Active VAT row. Used
+    // when a product has no per-item Sales Tax % set.
+    const [activeVatRate, setActiveVatRate] = useState(null);
+    useEffect(() => {
+        getActiveVatRate().then(setActiveVatRate);
+    }, []);
 
     const [deliveryType, setDeliveryType] = useState('Delivery');
     const [isDeliveryTypeOpen, setIsDeliveryTypeOpen] = useState(false);
@@ -559,7 +601,7 @@ const Quotations = () => {
         };
     }, [currencyOptions, currency]);
 
-    const canEditQuotation = (quotationStatus) => !['Approved', 'Invoiced', 'Converted'].includes(quotationStatus);
+    const canEditQuotation = (quotationStatus) => !['Approved', 'Invoiced', 'Converted to SO'].includes(quotationStatus);
     const isViewMode = activeTab === 'create' && editorMode === 'view';
     const canEditCurrentQuotation = canEditQuotation(status);
     const closeActionMenu = () => {
@@ -603,6 +645,18 @@ const Quotations = () => {
     });
 
     // ✅ Fetch price history and live stock whenever focusedRowId changes
+    // QA-FAST-ENTRY: focus the freshly-added empty row's inline search input.
+    useEffect(() => {
+        const targetId = focusNextInlineSearchRef.current;
+        if (targetId == null) return;
+        const raf = requestAnimationFrame(() => {
+            const el = inlineSearchRefs.current[targetId];
+            if (el) el.focus();
+            focusNextInlineSearchRef.current = null;
+        });
+        return () => cancelAnimationFrame(raf);
+    }, [items]);
+
     useEffect(() => {
         if (!focusedRowId) {
             setPriceHistory([]);
@@ -663,10 +717,11 @@ const Quotations = () => {
             sourceInquiryNumber: data.sourceInquiryNumber || '',
             total: data.totalAmount,
             billDiscount: data.billDiscount || 0,
+            vatMode: data.vatMode || 'EXCLUSIVE',
             status: data.status === 'PENDING_APPROVAL' ? 'Pending Approval' :
                 data.status === 'APPROVED' ? 'Approved' :
                     data.status === 'REJECTED' ? 'Rejected' :
-                        data.status === 'CONVERTED' ? 'Converted' :
+                        data.status === 'CONVERTED' ? 'Converted to SO' :
                             data.status === 'INVOICED' ? 'Invoiced' :
                                 data.status === 'EXPIRED' ? 'Expired' : 'Draft',
             currency: data.currency,
@@ -887,9 +942,8 @@ const Quotations = () => {
 
             setCustomersList(validCustomers);
 
-            const qtns = await getAllQuotations();
-            const mappedQtns = qtns.map(mapBackendToFrontend);
-            setQuotationsList(mappedQtns);
+            // List uses paginated endpoint; see fetchQuotationsList + effect below.
+            await fetchQuotationsList();
 
             const nextNo = await getNextQuotationNo();
             setNextQtnNo(nextNo);
@@ -897,6 +951,9 @@ const Quotations = () => {
             try {
                 const settings = await getSalesSettings();
                 setSalesSettings(settings);
+                if (!isAutoNumberingEnabled(settings, 'QUOTATION')) {
+                    setNextQtnNo('');
+                }
             } catch {
                 // settings are optional
             }
@@ -905,6 +962,43 @@ const Quotations = () => {
             console.error("Error loading data:", error);
         }
     };
+
+    // Server-driven paginated fetch for the Quotation list tab. Filters
+    // (search + status) and the current page are pushed to the backend; the
+    // response hydrates both the visible list and the footer meta.
+    const fetchQuotationsList = async () => {
+        setIsListLoading(true);
+        try {
+            const data = await getQuotationsPage({
+                page: listPage,
+                size: 30,
+                search: searchTerm || '',
+                status: filterStatus && filterStatus !== 'All' ? filterStatus : '',
+            });
+            const rows = Array.isArray(data?.content) ? data.content : [];
+            setQuotationsList(rows.map(mapBackendToFrontend));
+            setListPageMeta({
+                page: data?.page ?? listPage,
+                size: data?.size ?? 30,
+                totalElements: data?.totalElements ?? 0,
+                totalPages: data?.totalPages ?? 0,
+            });
+        } catch (err) {
+            console.error('Error fetching quotations page:', err);
+        } finally {
+            setIsListLoading(false);
+        }
+    };
+
+    // Reset to first page whenever filter inputs change.
+    useEffect(() => { setListPage(0); }, [searchTerm, filterStatus]);
+
+    // Refetch whenever the user opens the list tab, changes filters, or pages.
+    useEffect(() => {
+        if (activeTab !== 'list') return;
+        fetchQuotationsList();
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [activeTab, listPage, searchTerm, filterStatus]);
 
     const selectedCustomerData = useMemo(() => {
         return customersList.find(c => `${c.name} - ${c.code}` === customer);
@@ -957,14 +1051,17 @@ const Quotations = () => {
         // 3. Discount Amount
         const discountAmount = preDiscountAmount * (discPercent / 100);
 
-        // 4. Taxable Amount
-        const taxableAmount = preDiscountAmount - discountAmount;
+        // 4. Net after discount — interpretation depends on VAT mode.
+        const netAfterDiscount = preDiscountAmount - discountAmount;
 
-        // 5. Tax Amount
-        const taxAmount = taxableAmount * (taxPercent / 100);
-
-        // 6. Line Total
-        const total = taxableAmount + taxAmount;
+        // 5/6. Taxable, Tax, Line Total — driven by the document VAT mode.
+        // When INCLUSIVE, the entered price already contains tax so tax is
+        // extracted out of the line. When EXCLUSIVE, tax is added on top.
+        const { taxableAmount, taxAmount, total } = computeLineTaxTotals({
+            netAfterDiscount,
+            taxPercent,
+            vatMode,
+        });
 
         return {
             ...item,
@@ -976,6 +1073,13 @@ const Quotations = () => {
             focValue: focDeduction
         };
     };
+
+    // When the document VAT mode flips, every existing line needs its
+    // taxableAmount/taxAmt/total recomputed against the new interpretation.
+    useEffect(() => {
+        setItems(prev => prev.map(item => calculateRow(item)));
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [vatMode]);
 
     const handleItemChange = (id, field, value) => {
         if (isViewMode) return;
@@ -1034,24 +1138,33 @@ const Quotations = () => {
     const handleAddSingleProduct = (product) => {
         if (isViewMode) return;
         const defaultUnit = getDefaultProductUnit(product);
-        const price = resolveUnitAmount({
-            targetUnit: defaultUnit,
-            amountMap: product.unitPrices,
-            unitConversions: product.unitConversions,
-            fallbackAmount: product.retailPrice ?? product.sellingPrice ?? 0
-        });
+        const policy = salesSettings?.salesItemPricePolicy;
+        const policyPrice = pickSalesItemPrice(product, policy);
+        // When the user explicitly opts into Max/Min as the default, that
+        // configured master price should win over any per-packing unitPrice.
+        // For the legacy RETAIL policy we keep the unit-aware behaviour so
+        // packing-level prices continue to apply.
+        const price = isPolicyOverridingPackings(policy)
+            ? policyPrice
+            : resolveUnitAmount({
+                targetUnit: defaultUnit,
+                amountMap: product.unitPrices,
+                unitConversions: product.unitConversions,
+                fallbackAmount: policyPrice
+            });
         const cost = parseFloat(product.cost) || 0;
         const disc = parseFloat(product.maxDiscount) || 0;
-        const tax = parseFloat(product.salesTax) || 5;
+        const tax = resolveLineTaxRate(product, activeVatRate);
         const rawItem = {
             id: Date.now() + Math.random(),
             code: product.code,
             name: product.name || '',
             brand: product.brandName || product.brand || '',
+            shortDesc: product.shortDesc || '',
             detailedDesc: product.detailedDesc || '',
             barcode: product.barcode || '',
             image: product.primaryImage || product.image || '', // ✅ Set Image URL
-            desc: product.description || product.name,
+            desc: product.name || product.description || '',
             unit: defaultUnit,
             qty: 1,
             price: price,
@@ -1066,7 +1179,7 @@ const Quotations = () => {
             tax: tax,
             taxAmt: 0,
             total: 0,
-            remarks: product.description || '',
+            remarks: product.detailedDesc || product.description || '',
             // QA-001: carry product type onto the row so stock checks / availability
             // panel can short-circuit for SERVICE items.
             productType: (product.productType || 'STOCK').toUpperCase(),
@@ -1082,11 +1195,19 @@ const Quotations = () => {
 
         const newItem = calculateRow(rawItem);
 
+        // QA-FAST-ENTRY: replace-in-place when triggered by inline row search.
+        const targetRowId = pendingFastEntryRowId;
         setItems(prev => {
+            if (targetRowId != null) {
+                return prev.map(it => it.id === targetRowId ? { ...newItem, id: targetRowId } : it);
+            }
             // If the first row is empty, replace it
             const isFirstItemEmpty = prev.length === 1 && !prev[0].code && !prev[0].desc;
             return isFirstItemEmpty ? [newItem] : [...prev, newItem];
         });
+        const filledItemId = targetRowId != null ? targetRowId : newItem.id;
+        setPendingFastEntrySearch('');
+        setPendingFastEntryRowId(null);
 
         setToastMessage(`${product.name} added to quotation`);
         setToastType('success');
@@ -1095,8 +1216,12 @@ const Quotations = () => {
 
         // ✅ Close modal and focus Qty
         setIsProductSelectionOpen(false);
-        setFocusedRowId(newItem.id);
+        setFocusedRowId(filledItemId);
         setHighlightedIndex(0);
+        setTimeout(() => {
+            const qtyEl = document.getElementById(`qty-${filledItemId}`);
+            if (qtyEl) { qtyEl.focus(); qtyEl.select?.(); }
+        }, 100);
 
         // Fetch price history + stock immediately on product add (don't wait for row click)
         if (newItem.code) {
@@ -1123,16 +1248,17 @@ const Quotations = () => {
     const handleFastEntryAdd = (product, qty, price, disc) => {
         const defaultUnit = getDefaultProductUnit(product);
         const cost = parseFloat(product.cost) || 0;
-        const tax = parseFloat(product.salesTax) || 5;
+        const tax = resolveLineTaxRate(product, activeVatRate);
         const rawItem = {
             id: Date.now() + Math.random(),
             code: product.code,
             name: product.name || '',
             brand: product.brandName || product.brand || '',
+            shortDesc: product.shortDesc || '',
             detailedDesc: product.detailedDesc || '',
             barcode: product.barcode || '',
             image: product.primaryImage || product.image || '',
-            desc: product.description || product.name,
+            desc: product.name || product.description || '',
             unit: defaultUnit,
             qty,
             price,
@@ -1147,7 +1273,7 @@ const Quotations = () => {
             tax,
             taxAmt: 0,
             total: 0,
-            remarks: product.description || '',
+            remarks: product.detailedDesc || product.description || '',
             productType: (product.productType || 'STOCK').toUpperCase(),
             isProductSelected: true,
         };
@@ -1265,7 +1391,7 @@ const Quotations = () => {
         const activeItems = getSubmittableQuotationItems(items).map(calculateRow);
         return {
             id: editingId,
-            qtnNo: editingId ? getQuotationNo() : null,
+            qtnNo: editingId || !quotationAutoNumbering ? getQuotationNo() : null,
             customer: customer,
             customerCode: selectedCustomerData?.code || inquiryCustomerSnapshot?.code || '',
             customerMobile: selectedCustomerData?.mobile || selectedCustomerData?.phone || inquiryCustomerSnapshot?.mobile || '',
@@ -1289,6 +1415,7 @@ const Quotations = () => {
             taxAmount: totalTax,
             subTotal: subTotal,
             billDiscount: billDiscount,
+            vatMode: vatMode,
             status: targetStatus === 'Pending Approval' ? 'PENDING_APPROVAL' :
                 targetStatus === 'Approved' ? 'APPROVED' :
                     targetStatus === 'Rejected' ? 'REJECTED' : 'DRAFT',
@@ -1318,6 +1445,12 @@ const Quotations = () => {
 
     const handleSaveDraft = async () => {
         if (isViewMode) return;
+        if (!quotationAutoNumbering && !getQuotationNo().trim()) {
+            setToastMessage('Please enter a quotation number.');
+            setToastType('info');
+            setShowToast(true);
+            return;
+        }
         const validationMessage = getQuotationValidationMessage(items);
         if (validationMessage) {
             setToastMessage(validationMessage);
@@ -1331,6 +1464,7 @@ const Quotations = () => {
             const savedQtn = await saveQuotation(payload);
 
             setEditingId(savedQtn.id);
+            setNextQtnNo(savedQtn.qtnNo || getQuotationNo());
             setStatus('Draft');
 
             await refreshData();
@@ -1350,6 +1484,12 @@ const Quotations = () => {
 
     const handleConfirm = async () => {
         if (isViewMode) return;
+        if (!quotationAutoNumbering && !getQuotationNo().trim()) {
+            setToastMessage('Please enter a quotation number.');
+            setToastType('info');
+            setShowToast(true);
+            return;
+        }
         const validationMessage = getQuotationValidationMessage(items);
         if (validationMessage) {
             setToastMessage(validationMessage);
@@ -1408,11 +1548,9 @@ const Quotations = () => {
 
             const savedQtn = await saveQuotation(payload);
 
-            const qtns = await getAllQuotations();
-            const mappedQtns = qtns.map(mapBackendToFrontend);
-            setQuotationsList(mappedQtns);
-
+            // List will refresh via fetchQuotationsList when activeTab switches to 'list'.
             setEditingId(savedQtn.id);
+            setNextQtnNo(savedQtn.qtnNo || getQuotationNo());
             setStatus('Pending Approval');
             setEditorMode('edit');
 
@@ -1526,6 +1664,156 @@ const Quotations = () => {
         }
     };
 
+    const handleOpenEmailModal = async () => {
+        const customerEmail = selectedCustomerData?.email || inquiryCustomerSnapshot?.email || '';
+        setEmailTo(customerEmail);
+        setEmailSubject(`Quotation ${getQuotationNo()} from BillBull ERP`);
+        // QA-040: render the preview using the same template + payload that
+        // Send Email will use. Iframe runs in the same origin so the live
+        // image URLs work here; the version we POST to the backend gets the
+        // images inlined as data URIs (see handleSendEmail).
+        setEmailPreviewHtml('');
+        setIsEmailModalOpen(true);
+        try {
+            const templates = await getTemplatesByCategory('Quotation');
+            const defaultTemplate = templates.find(t => t.isDefault) || templates[0];
+            if (defaultTemplate) {
+                const html = generateEmailHtml(
+                    defaultTemplate,
+                    buildQuotationDocPayload(),
+                    { companyProfile: company, billBullLogo }
+                );
+                setEmailPreviewHtml(html);
+            }
+        } catch (err) {
+            console.warn('Email preview render failed:', err);
+        }
+    };
+
+    const handleSendEmail = async () => {
+        if (!editingId) {
+            setToastMessage('Please save the quotation before sending.');
+            setToastType('info');
+            setShowToast(true);
+            return;
+        }
+        setEmailSending(true);
+        try {
+            // QA-040: render the email body using the same designed template
+            // as Print, then inline every <img> as a data: URI so the
+            // recipient's mail client doesn't try to fetch /uploads/ or
+            // /assets/ paths it can't reach. If anything in the pipeline
+            // fails, we POST an empty htmlBody and the backend falls back
+            // to its legacy hand-built HTML.
+            let htmlBody = '';
+            let inlineAttachments = [];
+            try {
+                let html = emailPreviewHtml;
+                if (!html) {
+                    const templates = await getTemplatesByCategory('Quotation');
+                    const defaultTemplate = templates.find(t => t.isDefault) || templates[0];
+                    if (defaultTemplate) {
+                        html = generateEmailHtml(
+                            defaultTemplate,
+                            buildQuotationDocPayload(),
+                            { companyProfile: company, billBullLogo }
+                        );
+                    }
+                }
+                if (html) {
+                    const built = await buildEmailBody(html);
+                    htmlBody = built.html;
+                    inlineAttachments = built.inlineAttachments;
+                }
+            } catch (renderErr) {
+                console.warn('Email body render/inline failed; backend will use legacy template.', renderErr);
+            }
+
+            await sendQuotationEmail(editingId, { toEmail: emailTo, subject: emailSubject, htmlBody, inlineAttachments });
+            setIsEmailModalOpen(false);
+            setToastMessage(`Email sent successfully to ${emailTo}`);
+            setToastType('success');
+            setShowToast(true);
+            setTimeout(() => setShowToast(false), 4000);
+        } catch (err) {
+            setToastMessage(err.message || 'Failed to send email.');
+            setToastType('error');
+            setShowToast(true);
+        } finally {
+            setEmailSending(false);
+        }
+    };
+
+    const buildEmailPreviewHtml = () => {
+        const qtnNo = getQuotationNo();
+        const fmt = (d) => d ? new Date(d).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : 'N/A';
+        const fmtAmt = (v) => `${currency || ''} ${Number(v || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
+        const rows = items.map((item, i) => `
+            <tr style="background:${i % 2 === 0 ? '#fff' : '#f9f9f9'}">
+                <td style="padding:8px 12px;border-bottom:1px solid #eee">${i + 1}</td>
+                <td style="padding:8px 12px;border-bottom:1px solid #eee">${item.description || item.itemCode || ''}</td>
+                <td style="padding:8px 12px;border-bottom:1px solid #eee;text-align:center">${item.unit || ''}</td>
+                <td style="padding:8px 12px;border-bottom:1px solid #eee;text-align:center">${item.quantity || 0}</td>
+                <td style="padding:8px 12px;border-bottom:1px solid #eee;text-align:right">${fmtAmt(item.price)}</td>
+                <td style="padding:8px 12px;border-bottom:1px solid #eee;text-align:right">${fmtAmt(item.lineTotal || (item.quantity * item.price))}</td>
+            </tr>`).join('');
+
+        const notesSection = notesToCustomer ? `
+            <div style="margin:24px 32px 0;padding:16px;background:#fffbeb;border-left:4px solid #F5C742;border-radius:4px;">
+                <p style="margin:0 0 6px;font-weight:600;color:#555">Notes</p>
+                <p style="margin:0;color:#333;font-size:14px">${notesToCustomer}</p>
+            </div>` : '';
+
+        return `<!DOCTYPE html><html><head><meta charset="UTF-8"></head>
+        <body style="margin:0;padding:16px;background:#f4f4f4;font-family:Arial,sans-serif">
+        <div style="max-width:640px;margin:0 auto;background:#fff;border-radius:8px;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,0.08)">
+            <div style="background:#F5C742;padding:24px 32px">
+                <h1 style="margin:0;font-size:22px;color:#333">Quotation</h1>
+                <p style="margin:6px 0 0;font-size:15px;color:#555;font-weight:600">${qtnNo}</p>
+            </div>
+            <div style="padding:20px 32px;background:#fafafa;border-bottom:1px solid #eee">
+                <table style="width:100%"><tr>
+                    <td style="vertical-align:top">
+                        <p style="margin:0 0 4px;font-size:11px;color:#888">CUSTOMER</p>
+                        <p style="margin:0;font-weight:600;color:#333;font-size:15px">${customer || ''}</p>
+                    </td>
+                    <td style="vertical-align:top;text-align:right">
+                        <p style="margin:0 0 4px;font-size:11px;color:#888">DATE</p>
+                        <p style="margin:0;color:#333;font-size:13px">${fmt(new Date().toISOString())}</p>
+                        <p style="margin:8px 0 4px;font-size:11px;color:#888">VALID TILL</p>
+                        <p style="margin:0;color:#e05252;font-size:13px;font-weight:600">${fmt(validTill)}</p>
+                    </td>
+                </tr></table>
+            </div>
+            <div style="padding:24px 32px">
+                <table style="width:100%;border-collapse:collapse">
+                    <thead><tr style="background:#F5C742">
+                        <th style="padding:9px 12px;text-align:left;font-size:12px">#</th>
+                        <th style="padding:9px 12px;text-align:left;font-size:12px">Item</th>
+                        <th style="padding:9px 12px;text-align:center;font-size:12px">Unit</th>
+                        <th style="padding:9px 12px;text-align:center;font-size:12px">Qty</th>
+                        <th style="padding:9px 12px;text-align:right;font-size:12px">Unit Price</th>
+                        <th style="padding:9px 12px;text-align:right;font-size:12px">Total</th>
+                    </tr></thead>
+                    <tbody>${rows}</tbody>
+                </table>
+                <table style="width:100%;margin-top:16px"><tr>
+                    <td style="width:55%"></td>
+                    <td><table style="width:100%">
+                        <tr><td style="padding:4px 12px;font-size:13px;color:#555">Subtotal</td><td style="padding:4px 12px;text-align:right;font-size:13px;color:#555">${fmtAmt(subTotal)}</td></tr>
+                        <tr><td style="padding:4px 12px;font-size:13px;color:#555">Tax</td><td style="padding:4px 12px;text-align:right;font-size:13px;color:#555">${fmtAmt(totalTax)}</td></tr>
+                        <tr><td style="padding:6px 12px;font-weight:700;font-size:15px;border-top:2px solid #F5C742">Total</td><td style="padding:6px 12px;text-align:right;font-weight:700;font-size:15px;border-top:2px solid #F5C742">${fmtAmt(grandTotal)}</td></tr>
+                    </table></td>
+                </tr></table>
+            </div>
+            ${notesSection}
+            <div style="padding:16px 32px;background:#f4f4f4;border-top:1px solid #eee;text-align:center;margin-top:24px">
+                <p style="margin:0;font-size:11px;color:#999">This quotation was generated by BillBull ERP. Please do not reply to this email.</p>
+            </div>
+        </div></body></html>`;
+    };
+
     const handleRestoreRevision = (revision) => {
         if (window.confirm(`Restore ${revision.qtnNoDisplay}? Current changes will be lost.`)) {
 
@@ -1624,6 +1912,7 @@ const Quotations = () => {
         setShippingAddress(qtn.shippingAddress || '');
         setAttachments(qtn.attachments || []);
         setBillDiscount(qtn.billDiscount || 0);
+        setVatMode(qtn.vatMode === 'INCLUSIVE' ? 'INCLUSIVE' : 'EXCLUSIVE');
         setSourceInquiry(qtn.sourceInquiryId ? {
             id: qtn.sourceInquiryId,
             inquiryNumber: qtn.sourceInquiryNumber || ''
@@ -1863,6 +2152,7 @@ const Quotations = () => {
                     remarks: i.remarks || '',
                     sku: i.sku || i.productSku || '',
                     brand: i.brand || i.brandName || '',
+                    shortDesc: i.shortDesc || '',
                     detailedDesc: i.detailedDesc || '',
                     localName: i.localName || i.productLocalName || '',
                     barcode: i.barcode || '',
@@ -2007,11 +2297,14 @@ const Quotations = () => {
         setSourceInquiry(null);
         setActiveTab('create');
 
-        // Fetch a fresh number just in case others were made while we were idle
-        try {
-            const freshNo = await getNextQuotationNo();
-            setNextQtnNo(freshNo);
-        } catch (e) { /* ignore */ }
+        if (quotationAutoNumbering) {
+            try {
+                const freshNo = await getNextQuotationNo();
+                setNextQtnNo(freshNo);
+            } catch (e) { /* ignore */ }
+        } else {
+            setNextQtnNo('');
+        }
     };
 
     const renderStatusBadge = (currentStatus = status) => {
@@ -2022,8 +2315,8 @@ const Quotations = () => {
                 return <span className="text-xs font-bold text-emerald-600 bg-emerald-50 border border-emerald-100 px-2 py-0.5 rounded-full">Approved</span>;
             case 'Rejected':
                 return <span className="text-xs font-bold text-red-600 bg-red-50 border border-red-100 px-2 py-0.5 rounded-full">Rejected</span>;
-            case 'Converted':
-                return <span className="text-xs font-bold text-blue-600 bg-blue-50 border border-blue-100 px-2 py-0.5 rounded-full">Converted</span>;
+            case 'Converted to SO':
+                return <span className="text-xs font-bold text-blue-600 bg-blue-50 border border-blue-100 px-2 py-0.5 rounded-full">Converted to SO</span>;
             case 'Invoiced':
                 return <span className="text-xs font-bold text-indigo-600 bg-indigo-50 border border-indigo-100 px-2 py-0.5 rounded-full">Invoiced</span>;
             case 'Expired':
@@ -2049,6 +2342,57 @@ const Quotations = () => {
     // =====================================================
     // GENERIC PRINT FUNCTIONALITY
     // =====================================================
+    // QA-040: payload shared by print and email so both honour every column /
+    // header / footer / terms setting from the template designer.
+    const buildQuotationDocPayload = () => ({
+        title: 'QUOTATION',
+        docNo: getQuotationNo(),
+        date: qtnDate,
+        customer: {
+            name: customer,
+            address: selectedCustomerData?.address || '',
+            trn: selectedCustomerData?.trn
+        },
+        items: items.filter(i => i.code || i.desc).map(i => ({
+            code: i.code,
+            name: i.name || i.productName || '',
+            desc: i.desc || '',
+            remarks: i.remarks || '',
+            sku: i.sku || i.productSku || '',
+            brand: i.brand || i.brandName || '',
+            shortDesc: i.shortDesc || '',
+            detailedDesc: i.detailedDesc || '',
+            localName: i.localName || i.productLocalName || '',
+            barcode: i.barcode || '',
+            salesPerson: '',
+            location: quotationBranch?.location || '',
+            unit: i.unit,
+            qty: Number(i.qty),
+            price: Number(i.price),
+            disc: Number(i.disc),
+            tax: Number(i.tax),
+            taxAmt: Number(i.taxAmt || 0),
+            total: Number(i.total),
+            image: i.image || i.imageUrl ? getImageUrl(i.image || i.imageUrl) : ''
+        })),
+        totals: {
+            subTotal,
+            tax: totalTax,
+            grandTotal,
+            currency: displayCurrencyProps.currency,
+            billDiscount,
+            billDiscountAmount
+        },
+        meta: {
+            validTill,
+            paymentTerm,
+            status,
+            notes: notesToCustomer,
+            reference: quotationBranch?.code || '',
+            location: branchLocationDisplay || quotationBranch?.location || ''
+        }
+    });
+
     const handlePrintClick = async () => {
         setIsPrinting(true);
         try {
@@ -2056,55 +2400,7 @@ const Quotations = () => {
             const defaultTemplate = templates.find(t => t.isDefault);
 
             if (defaultTemplate) {
-                const printData = {
-                    title: 'QUOTATION',
-                    docNo: getQuotationNo(),
-                    date: qtnDate,
-                    customer: {
-                        name: customer,
-                        address: selectedCustomerData?.address || '',
-                        trn: selectedCustomerData?.trn
-                    },
-                    items: items.filter(i => i.code || i.desc).map(i => ({
-                        code: i.code,
-                        name: i.name || i.productName || '',
-                        desc: i.desc || '',
-                        remarks: i.remarks || '',
-                        sku: i.sku || i.productSku || '',
-                        brand: i.brand || i.brandName || '',
-                    detailedDesc: i.detailedDesc || '',
-                    localName: i.localName || i.productLocalName || '',
-                        barcode: i.barcode || '',
-                        salesPerson: '',
-                        location: quotationBranch?.location || '',
-                        unit: i.unit,
-                        qty: Number(i.qty),
-                        price: Number(i.price),
-                        disc: Number(i.disc),
-                        tax: Number(i.tax),
-                        taxAmt: Number(i.taxAmt || 0),
-                        total: Number(i.total),
-                        image: i.image || i.imageUrl ? getImageUrl(i.image || i.imageUrl) : ''
-                    })),
-                    totals: {
-                        subTotal,
-                        tax: totalTax,
-                        grandTotal,
-                        currency: displayCurrencyProps.currency,
-                        billDiscount,
-                        billDiscountAmount
-                    },
-                    meta: {
-                        validTill,
-                        paymentTerm,
-                        status,
-                        notes: notesToCustomer,
-                        reference: quotationBranch?.code || '',
-                        location: branchLocationDisplay || quotationBranch?.location || ''
-                    }
-                };
-
-                const html = generatePrintHtml(defaultTemplate, printData, { companyProfile: company, billBullLogo });
+                const html = generatePrintHtml(defaultTemplate, buildQuotationDocPayload(), { companyProfile: company, billBullLogo });
                 printHtml(html);
             } else {
                 setIsPrintModalOpen(true);
@@ -2122,7 +2418,7 @@ const Quotations = () => {
 
         const qtnNo = getQuotationNo();
         const customerName = customer || 'Walk-in Customer';
-        const today = new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+        const today = formatDisplayDate(new Date());
 
         // Template-specific styles
         const templates = {
@@ -2471,7 +2767,7 @@ const Quotations = () => {
                                         <option value="Pending Approval">Pending Approval</option>
                                         <option value="Approved">Approved</option>
                                         <option value="Rejected">Rejected</option>
-                                        <option value="Converted">Converted</option>
+                                        <option value="Converted to SO">Converted to SO</option>
                                         <option value="Invoiced">Invoiced</option>
                                         <option value="Expired">Expired</option>
                                     </select>
@@ -2479,8 +2775,17 @@ const Quotations = () => {
                                 </div>
 
                                 <ExportDropdown
-                                    onExportExcel={() => exportToExcel(filteredQuotations, QUOTATION_COLUMNS, 'Quotations')}
-                                    onExportPdf={() => exportToPDF(filteredQuotations, QUOTATION_COLUMNS, 'Quotations List', 'Quotations')}
+                                    onExportExcel={() => exportToExcel(
+                                        filteredQuotations.map((qtn, index) => ({ ...qtn, sNo: index + 1 })),
+                                        QUOTATION_COLUMNS,
+                                        'Quotations'
+                                    )}
+                                    onExportPdf={() => exportToPDF(
+                                        filteredQuotations.map((qtn, index) => ({ ...qtn, sNo: index + 1 })),
+                                        QUOTATION_COLUMNS,
+                                        'Quotations List',
+                                        'Quotations'
+                                    )}
                                 />
                                 <button onClick={handleCreateNew} className="flex items-center justify-center gap-1 px-4 py-2 bg-yellow-400 text-slate-900 text-sm font-bold rounded-lg hover:bg-yellow-500 transition-colors shadow-sm whitespace-nowrap">
                                     <Plus size={16} /> Create New
@@ -2493,6 +2798,9 @@ const Quotations = () => {
                             <table className="w-full text-sm text-left hidden md:table">
                                 <thead className="bg-slate-50 text-slate-600 border-b border-slate-200/50">
                                     <tr>
+                                        <th className="px-4 py-3 text-center text-slate-500 w-16 select-none">
+                                            S.No.
+                                        </th>
                                         <th
                                             className="px-4 py-3 cursor-pointer hover:bg-slate-100 transition-colors select-none"
                                             onClick={() => handleSort('qtnNo')}
@@ -2534,12 +2842,15 @@ const Quotations = () => {
                                     </tr>
                                 </thead>
                                 <tbody className="divide-y divide-slate-100/30">
-                                    {filteredQuotations.map((qtn) => (
+                                    {filteredQuotations.map((qtn, index) => (
                                         <React.Fragment key={qtn.id}>
                                             <tr
                                                 onClick={() => handleViewQuotation(qtn)}
                                                 className="hover:bg-slate-50 cursor-pointer transition-colors"
                                             >
+                                                <td className="px-4 py-3 text-center text-slate-400 font-mono font-medium">
+                                                    {index + 1}
+                                                </td>
                                                 <td className="px-4 py-3 text-blue-600 font-medium flex items-center gap-2">
                                                     {qtn.revisions && qtn.revisions.length > 0 && (
                                                         <button
@@ -2551,7 +2862,7 @@ const Quotations = () => {
                                                     )}
                                                     {qtn.qtnNo}
                                                 </td>
-                                                <td className="px-4 py-3 text-slate-600">{qtn.date}</td>
+                                                <td className="px-4 py-3 text-slate-600">{formatDisplayDate(qtn.date)}</td>
                                                 <td className="px-4 py-3 text-slate-700 font-medium">{qtn.customer}</td>
                                                 <td className="px-4 py-3 text-right font-bold text-slate-800">
                                                     <CurrencyAmount value={qtn.total || 0} {...getDisplayCurrencyProps(qtn.currency)} />
@@ -2617,7 +2928,7 @@ const Quotations = () => {
                                                                         </button>
                                                                     </>
                                                                 )}
-                                                                {qtn.status === 'Converted' && (
+                                                                {qtn.status === 'Converted to SO' && (
                                                                     <button onClick={(e) => handleListingRevertToApproved(qtn, e)} className="w-full text-left px-4 py-2 hover:bg-orange-50 flex items-center gap-2 text-orange-600 font-semibold">
                                                                         <RotateCcw size={13} /> Revert to Approved
                                                                     </button>
@@ -2667,7 +2978,7 @@ const Quotations = () => {
                                                                 {rev.qtnNoDisplay}
                                                             </div>
                                                         </td>
-                                                        <td className="px-4 py-2 text-slate-500 text-xs">{rev.date}</td>
+                                                        <td className="px-4 py-2 text-slate-500 text-xs">{formatDisplayDate(rev.date)}</td>
                                                         <td className="px-4 py-2 text-slate-500 text-xs italic opacity-70">revised version</td>
                                                         <td className="px-4 py-2 text-right font-bold text-slate-600 text-xs">
                                                             <CurrencyAmount value={rev.total || 0} {...getDisplayCurrencyProps(qtn.currency)} />
@@ -2683,7 +2994,7 @@ const Quotations = () => {
                                     ))}
                                     {filteredQuotations.length === 0 && (
                                         <tr>
-                                            <td colSpan="6" className="text-center py-12 text-slate-400">
+                                            <td colSpan="7" className="text-center py-12 text-slate-400">
                                                 <div className="flex flex-col items-center gap-2">
                                                     <div className="w-12 h-12 bg-slate-100 rounded-full flex items-center justify-center">
                                                         <Search size={20} className="text-slate-400" />
@@ -2715,6 +3026,14 @@ const Quotations = () => {
                                 <div className="text-center py-8 text-slate-400 text-sm">No quotations found.</div>
                             )}
                         </div>
+                        <PaginationFooter
+                            page={listPageMeta.page}
+                            size={listPageMeta.size}
+                            totalElements={listPageMeta.totalElements}
+                            totalPages={listPageMeta.totalPages}
+                            loading={isListLoading}
+                            onPageChange={setListPage}
+                        />
                     </div>
                 )}
 
@@ -2748,7 +3067,14 @@ const Quotations = () => {
                                     <div className="grid grid-cols-2 gap-3">
                                         <div className="flex flex-col col-span-2 sm:col-span-1">
                                             <label className="text-xs font-semibold text-slate-500 mb-1">Quotation No.</label>
-                                            <input type="text" value={getQuotationNo()} readOnly className="text-sm p-1.5 bg-slate-50 border border-slate-200/50 rounded text-slate-700" />
+                                            <input
+                                                type="text"
+                                                value={getQuotationNo()}
+                                                onChange={(e) => setNextQtnNo(e.target.value)}
+                                                readOnly={isViewMode || editingId || quotationAutoNumbering}
+                                                placeholder={quotationAutoNumbering ? 'Auto generated' : 'Enter quotation number'}
+                                                className="text-sm p-1.5 border border-slate-200/50 rounded text-slate-700 read-only:bg-slate-50 read-only:text-slate-500 focus:outline-none focus:border-[#F5C742]"
+                                            />
                                         </div>
                                         <div className="flex flex-col col-span-2 sm:col-span-1">
                                             <label className="text-xs font-semibold text-slate-500 mb-1">Revision</label>
@@ -2858,6 +3184,10 @@ const Quotations = () => {
                                 <CustomerShippingPanel
                                     selectedCustomer={activeCustomerData}
                                     onOpenCustomerSearch={() => setIsCustomerSearchOpen(true)}
+                                    onCustomerUpdated={(updated) => {
+                                        if (!updated?.code) return;
+                                        setCustomersList(prev => prev.map(c => c.code === updated.code ? { ...c, ...updated } : c));
+                                    }}
                                     shippingAddress={shippingAddress}
                                     onShippingChange={setShippingAddress}
                                     deliveryType={deliveryType}
@@ -2941,17 +3271,35 @@ const Quotations = () => {
                                     <div className="flex justify-between items-center mb-4 border-b border-slate-100/50 pb-2">
                                         <h3 className="text-sm font-bold text-slate-800 flex items-center gap-2">
                                             <ShoppingCart size={16} className="text-yellow-500" /> Quotation Items
+                                            <span className="inline-flex items-center gap-1 text-[10px] bg-blue-50 text-blue-700 px-2 py-0.5 rounded-full font-medium border border-blue-200"><Zap size={10} /> Fast Entry</span>
                                         </h3>
-                                        {!isViewMode && (
-                                            <div className="flex gap-2">
+                                        <div className="flex items-center gap-3">
+                                            {/* VAT mode toggle — drives line tax math (inclusive vs exclusive). */}
+                                            <div className="inline-flex rounded-md border border-slate-200 overflow-hidden text-[11px] font-semibold">
+                                                <button
+                                                    type="button"
+                                                    disabled={isViewMode}
+                                                    onClick={() => setVatMode('EXCLUSIVE')}
+                                                    className={`px-2.5 py-1 transition-colors ${vatMode === 'EXCLUSIVE' ? 'bg-yellow-400 text-slate-900' : 'bg-white text-slate-500 hover:bg-slate-50'}`}
+                                                    title="Prices entered exclude VAT — tax added on top"
+                                                >VAT Excl.</button>
+                                                <button
+                                                    type="button"
+                                                    disabled={isViewMode}
+                                                    onClick={() => setVatMode('INCLUSIVE')}
+                                                    className={`px-2.5 py-1 border-l border-slate-200 transition-colors ${vatMode === 'INCLUSIVE' ? 'bg-yellow-400 text-slate-900' : 'bg-white text-slate-500 hover:bg-slate-50'}`}
+                                                    title="Prices entered already include VAT — tax extracted out"
+                                                >VAT Incl.</button>
+                                            </div>
+                                            {!isViewMode && (
                                                 <button
                                                     onClick={() => setIsProductSelectionOpen(true)}
                                                     className="flex items-center gap-1 px-3 py-1.5 bg-yellow-400 text-slate-900 text-xs font-medium rounded hover:bg-yellow-500"
                                                 >
                                                     <Plus size={14} /> Select from Products
                                                 </button>
-                                            </div>
-                                        )}
+                                            )}
+                                        </div>
                                     </div>
 
                                     <div className="overflow-auto max-h-[380px]">
@@ -2992,6 +3340,26 @@ const Quotations = () => {
 
                                                             {/* Item / Description */}
                                                             <td className="p-2">
+                                                                {/* QA-FAST-ENTRY: empty rows show inline product-search input */}
+                                                                {(!item.code && !item.desc) ? (
+                                                                    <InlineProductSearchCell
+                                                                        value={pendingFastEntryRowId === item.id ? pendingFastEntrySearch : ''}
+                                                                        inputRef={(el) => {
+                                                                            if (el) inlineSearchRefs.current[item.id] = el;
+                                                                            else delete inlineSearchRefs.current[item.id];
+                                                                        }}
+                                                                        isReadOnly={isViewMode}
+                                                                        onChange={(text) => {
+                                                                            setPendingFastEntryRowId(item.id);
+                                                                            setPendingFastEntrySearch(text);
+                                                                        }}
+                                                                        onOpenSelector={(text) => {
+                                                                            setPendingFastEntryRowId(item.id);
+                                                                            setPendingFastEntrySearch(text);
+                                                                            setIsProductSelectionOpen(true);
+                                                                        }}
+                                                                    />
+                                                                ) : (
                                                                 <ItemDescriptionCell
                                                                     item={item}
                                                                     isExpanded={expandedRows[item.id]}
@@ -3004,6 +3372,7 @@ const Quotations = () => {
                                                                     isReadOnly={isViewMode}
                                                                     showSettings={Boolean(item.code || item.desc || item.remarks)}
                                                                 />
+                                                                )}
                                                             </td>
 
                                                             {/* Unit */}
@@ -3030,6 +3399,12 @@ const Quotations = () => {
                                                                         className="w-full bg-transparent text-center outline-none font-bold text-sm text-slate-800"
                                                                         value={item.qty === 0 ? '' : item.qty}
                                                                         onChange={(e) => handleItemChange(item.id, 'qty', e.target.value)}
+                                                                        onKeyDown={(e) => {
+                                                                            if (e.key === 'Tab' && !e.shiftKey) {
+                                                                                const priceEl = document.getElementById(`price-${item.id}`);
+                                                                                if (priceEl) { e.preventDefault(); priceEl.focus(); priceEl.select?.(); }
+                                                                            }
+                                                                        }}
                                                                         placeholder="0"
                                                                         disabled={isViewMode}
                                                                     />
@@ -3040,10 +3415,19 @@ const Quotations = () => {
                                                             <td className="p-2 text-center align-middle">
                                                                 <div className="rounded-md border border-slate-200 bg-white flex items-center px-2 py-1 w-full max-w-[104px] mx-auto">
                                                                     <input
+                                                                        id={`price-${item.id}`}
                                                                         type="number"
                                                                         className="w-full bg-transparent text-center outline-none font-semibold text-sm text-slate-700"
                                                                         value={item.price === 0 ? '' : item.price}
                                                                         onChange={(e) => handleItemChange(item.id, 'price', e.target.value)}
+                                                                        onKeyDown={(e) => {
+                                                                            if (e.key === 'Tab' && !e.shiftKey && !isViewMode) {
+                                                                                e.preventDefault();
+                                                                                const newRow = createBlankQuotationItem();
+                                                                                focusNextInlineSearchRef.current = newRow.id;
+                                                                                setItems(prev => [...prev, newRow]);
+                                                                            }
+                                                                        }}
                                                                         placeholder="0.00"
                                                                         disabled={isViewMode}
                                                                     />
@@ -3104,6 +3488,20 @@ const Quotations = () => {
 
                                             </tbody>
                                         </table>
+                                    </div>
+                                    {/* QA-FAST-ENTRY: Quick Entry hint bar */}
+                                    <div className="mt-2 px-3 py-2 bg-blue-50/30 border border-blue-100/60 rounded-md flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-slate-500">
+                                        <span className="inline-flex items-center gap-1 text-blue-600 font-semibold"><Zap size={11} /> Quick Entry:</span>
+                                        <span>Type name →</span>
+                                        <kbd className="px-1.5 py-0.5 bg-white border border-slate-200 rounded text-[10px] font-mono text-slate-600">Enter</kbd>
+                                        <span>Select →</span>
+                                        <kbd className="px-1.5 py-0.5 bg-white border border-slate-200 rounded text-[10px] font-mono text-slate-600">Tab</kbd>
+                                        <span>Qty →</span>
+                                        <kbd className="px-1.5 py-0.5 bg-white border border-slate-200 rounded text-[10px] font-mono text-slate-600">Tab</kbd>
+                                        <span>Price →</span>
+                                        <kbd className="px-1.5 py-0.5 bg-white border border-slate-200 rounded text-[10px] font-mono text-slate-600">Tab</kbd>
+                                        <span>New row</span>
+                                        <span className="ml-auto text-slate-400">Tip: Use ↑↓ arrows to navigate items</span>
                                     </div>
                                 </div>
 
@@ -3375,7 +3773,7 @@ const Quotations = () => {
                                     </>
                                 )}
 
-                                {status === 'Converted' && (
+                                {status === 'Converted to SO' && (
                                     <button
                                         onClick={handleRevertToApproved}
                                         className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-orange-300 text-orange-600 rounded text-xs font-bold hover:bg-orange-50 transition-colors shadow-sm"
@@ -3422,6 +3820,15 @@ const Quotations = () => {
                                         className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 text-white rounded text-xs font-bold hover:bg-blue-700 transition-colors shadow-sm"
                                     >
                                         <Edit size={14} /> Edit Quotation
+                                    </button>
+                                )}
+
+                                {editingId && (
+                                    <button
+                                        onClick={handleOpenEmailModal}
+                                        className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-amber-300 text-amber-700 rounded text-xs font-bold hover:bg-amber-50 transition-colors"
+                                    >
+                                        <Mail size={14} /> Send Email
                                     </button>
                                 )}
 
@@ -3518,7 +3925,7 @@ const Quotations = () => {
                                                     <span className="text-xs font-bold text-slate-700">{rev.qtnNoDisplay}</span>
                                                     <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${rev.status === 'Approved' ? 'bg-emerald-50 text-emerald-600 border border-emerald-100' : 'bg-slate-100 text-slate-500'}`}>{rev.status}</span>
                                                 </div>
-                                                <div className="text-[10px] text-slate-400 mb-2">{rev.date}</div>
+                                                <div className="text-[10px] text-slate-400 mb-2">{formatDisplayDate(rev.date)}</div>
                                                 <p className="text-xs text-slate-600 bg-slate-50 p-2 rounded mb-3">
                                                     <span className="font-semibold">Follow-up:</span> {rev.note}
                                                 </p>
@@ -3592,6 +3999,78 @@ const Quotations = () => {
                     )
                 }
 
+                {/* --- EMAIL MODAL --- */}
+                {isEmailModalOpen && (
+                    <div className="fixed inset-0 z-[110] flex items-center justify-center bg-black/50 p-4">
+                        <div className="bg-white rounded-xl shadow-2xl w-full max-w-3xl flex flex-col max-h-[90vh]">
+
+                            {/* Header */}
+                            <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100">
+                                <div className="flex items-center gap-2">
+                                    <Mail size={18} className="text-amber-500" />
+                                    <h3 className="font-bold text-slate-800 text-base">Send Quotation Email</h3>
+                                </div>
+                                <button onClick={() => setIsEmailModalOpen(false)}>
+                                    <X size={18} className="text-slate-400 hover:text-slate-600" />
+                                </button>
+                            </div>
+
+                            {/* To + Subject fields */}
+                            <div className="px-5 py-4 border-b border-slate-100 space-y-3 bg-slate-50">
+                                <div className="flex items-center gap-3">
+                                    <label className="text-xs font-semibold text-slate-500 w-14 shrink-0">To</label>
+                                    <input
+                                        type="email"
+                                        value={emailTo}
+                                        onChange={(e) => setEmailTo(e.target.value)}
+                                        placeholder="customer@example.com"
+                                        className="flex-1 px-3 py-1.5 border border-slate-200 rounded text-sm focus:outline-none focus:border-amber-400 bg-white"
+                                    />
+                                </div>
+                                <div className="flex items-center gap-3">
+                                    <label className="text-xs font-semibold text-slate-500 w-14 shrink-0">Subject</label>
+                                    <input
+                                        type="text"
+                                        value={emailSubject}
+                                        onChange={(e) => setEmailSubject(e.target.value)}
+                                        className="flex-1 px-3 py-1.5 border border-slate-200 rounded text-sm focus:outline-none focus:border-amber-400 bg-white"
+                                    />
+                                </div>
+                            </div>
+
+                            {/* Email Preview */}
+                            <div className="flex-1 overflow-hidden px-5 py-3">
+                                <p className="text-xs font-semibold text-slate-400 mb-2 uppercase tracking-wide">Email Preview</p>
+                                <iframe
+                                    srcDoc={emailPreviewHtml || '<div style="padding:24px;font-family:Arial;color:#888;font-size:13px">Generating preview…</div>'}
+                                    title="Email Preview"
+                                    className="w-full h-full rounded border border-slate-200"
+                                    style={{ minHeight: '380px' }}
+                                    sandbox="allow-same-origin"
+                                />
+                            </div>
+
+                            {/* Footer */}
+                            <div className="px-5 py-4 border-t border-slate-100 flex justify-end gap-2">
+                                <button
+                                    onClick={() => setIsEmailModalOpen(false)}
+                                    className="px-4 py-2 border border-slate-200 rounded text-xs font-medium text-slate-600 hover:bg-slate-50"
+                                >
+                                    Cancel
+                                </button>
+                                <button
+                                    onClick={handleSendEmail}
+                                    disabled={emailSending || !emailTo.trim()}
+                                    className="flex items-center gap-2 px-5 py-2 bg-amber-500 hover:bg-amber-600 disabled:bg-slate-200 disabled:text-slate-400 text-white rounded text-xs font-bold transition-colors"
+                                >
+                                    <Mail size={13} />
+                                    {emailSending ? 'Sending...' : 'Send Email'}
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                )}
+
                 {/* ✅ STOCK AVAILABILITY MODAL (New) */}
                 <StockAvailabilityModal
                     isOpen={isItemStockModalOpen}
@@ -3602,12 +4081,14 @@ const Quotations = () => {
                 {/* Product Selector Modal — self-fetching, server-side search */}
                 <ProductSelector
                     isOpen={!isViewMode && isProductSelectionOpen}
-                    onClose={() => setIsProductSelectionOpen(false)}
+                    onClose={() => { setIsProductSelectionOpen(false); setPendingFastEntryRowId(null); }}
                     onSelect={handleAddSingleProduct}
                     onInlineAdd={handleFastEntryAdd}
+                    initialSearch={pendingFastEntrySearch}
                     title="Select Items from Products / Services"
                     actionLabel="Add to Quotation"
                     mode="sales"
+                    salesItemPricePolicy={salesSettings?.salesItemPricePolicy}
                 />
 
                 {/* --- PRINT TEMPLATE PICKER MODAL --- */}

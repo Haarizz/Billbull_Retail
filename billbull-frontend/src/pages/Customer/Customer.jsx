@@ -21,6 +21,7 @@ import {
 import { getEmployees } from '../../api/employeeApi';
 import { getProducts, getProductById } from '../../api/productsApi';
 import { getAllCustomers } from '../../api/customerledgerApi';
+import PaginationFooter from '../../components/common/PaginationFooter';
 import ProductSelector from '../../components/ProductSelector';
 import CustomerSelector from '../../components/CustomerSelector';
 import CurrencyAmount from '../../components/CurrencyAmount';
@@ -309,6 +310,9 @@ const AddFollowUpModal = ({ isOpen, onClose, inquiryId, onSaveSuccess }) => {
 
 const InquiryList = ({ data, onAddNew, onView, onDelete, onRefresh, isLoading }) => {
   const [searchTerm, setSearchTerm] = useState("");
+  const [listPage, setListPage] = useState(0);
+  const LIST_PAGE_SIZE = 30;
+  useEffect(() => { setListPage(0); }, [searchTerm]);
 
   const getStatusBadge = (status) => {
     return getInquiryStatusBadgeClass(status);
@@ -355,6 +359,7 @@ const InquiryList = ({ data, onAddNew, onView, onDelete, onRefresh, isLoading })
       formattedId.toLowerCase().includes(searchTerm.toLowerCase()) ||
       String(item.id).includes(searchTerm);
   });
+  const pagedData = filteredData.slice(listPage * LIST_PAGE_SIZE, (listPage + 1) * LIST_PAGE_SIZE);
 
   return (
     <div className="flex-1 flex flex-col h-full bg-[#F7F7FA]">
@@ -455,7 +460,7 @@ const InquiryList = ({ data, onAddNew, onView, onDelete, onRefresh, isLoading })
                     <td colSpan="10" className="px-4 py-8 text-center text-slate-500">No inquiries found.</td>
                   </tr>
                 ) : (
-                  filteredData.map((row) => (
+                  pagedData.map((row) => (
                     <tr key={row.id} className="hover:bg-slate-50 transition-colors">
                       <td className="px-4 py-3 text-center">
                         <span className={`px-2 py-1 text-[10px] font-bold uppercase tracking-wider border rounded ${getPriorityStyle(row.priority)}`}>
@@ -549,6 +554,14 @@ const InquiryList = ({ data, onAddNew, onView, onDelete, onRefresh, isLoading })
                 )}
               </tbody>
             </table>
+            <PaginationFooter
+              page={listPage}
+              size={LIST_PAGE_SIZE}
+              totalElements={filteredData.length}
+              totalPages={Math.ceil(filteredData.length / LIST_PAGE_SIZE)}
+              loading={isLoading}
+              onPageChange={setListPage}
+            />
           </div>
         </div>
       </div>

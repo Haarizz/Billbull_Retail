@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect, useMemo } from 'react';
+import { useLocation } from 'react-router-dom';
 import {
     FileText,
     Plus,
@@ -35,14 +36,22 @@ import {
 } from 'lucide-react';
 
 import { employeesApi } from '../../api/employeesApi';
-import { receiptVoucherApi } from '../../api/receiptVoucherApi';
+import { receiptVoucherApi, sendReceiptVoucherEmail } from '../../api/receiptVoucherApi';
+// QA-040: shared email modal
+import SendDocumentEmailModal from '../../components/SendDocumentEmailModal';
+import { buildReceiptVoucherPrintData } from '../../utils/purchasePrintUtils';
 import { generateDocFilename, generateReportFilename } from '../../utils/filenameUtils';
 import { usePrintDocument } from '../../hooks/usePrintDocument';
+import { getTemplatesByCategory } from '../../api/printTemplateApi';
+import { buildFinancialVoucherPrintHtml } from '../../utils/financialPrintTemplate';
+import { printHtml } from '../../utils/printGenerator';
 import { getImageUrl } from '../../utils/urlUtils';
 import { useBranch } from '../../context/BranchContext';
 import { useCompany } from '../../context/CompanyContext';
 import { exportToExcel, exportToPDF } from '../../utils/exportUtils';
 import { resolveCurrencyDisplayCode } from '../../utils/countryCurrencyOptions';
+import { formatDisplayDate } from '../../utils/dateUtils';
+import PaginationFooter from '../../components/common/PaginationFooter';
 
 // --- HELPER: CUSTOM SELECT ---
 const CustomSelect = ({ placeholder, options, value, onChange }) => {
@@ -95,6 +104,7 @@ const CustomSelect = ({ placeholder, options, value, onChange }) => {
 
 // --- COMPONENT: RECEIPT VOUCHER ---
 const ReceiptVoucher = () => {
+    const location = useLocation();
     const { print } = usePrintDocument();
     const { branchNames, defaultBranchName } = useBranch();
     const { company } = useCompany();
@@ -105,6 +115,8 @@ const ReceiptVoucher = () => {
     // State for the Slide-in Drawer
     const [isDrawerOpen, setIsDrawerOpen] = useState(false);
     const [selectedReceipt, setSelectedReceipt] = useState(null);
+    // QA-040: Send-Email modal state
+    const [isEmailModalOpen, setIsEmailModalOpen] = useState(false);
 
     // --- DATA STATES ---
     const [employees, setEmployees] = useState([]);
@@ -193,7 +205,7 @@ const ReceiptVoucher = () => {
             const formatted = data.map(r => ({
                 id: r.voucherId,
                 dbId: r.id,
-                date: new Date(r.date).toLocaleDateString('en-US'),
+                date: r.date,
                 source: r.category,
                 sourceSub: r.reference,
                 member: r.memberName,
@@ -227,6 +239,24 @@ const ReceiptVoucher = () => {
         fetchReceipts();
     }, []);
 
+    // QA-032: When navigated here from the Sales Order screen with a specific
+    // voucher to view/print, open its detail drawer once the list has loaded.
+    const openVoucherHandled = useRef(false);
+    useEffect(() => {
+        const target = location?.state?.openReceiptVoucherId;
+        if (!target || openVoucherHandled.current) return;
+        if (!receipts || receipts.length === 0) return;
+
+        const match = receipts.find(r => r.id === target);
+        if (!match) return;
+
+        openVoucherHandled.current = true;
+        setSelectedReceipt(match);
+        setIsDrawerOpen(true);
+        // Clear the nav state so back/forward doesn't re-trigger.
+        window.history.replaceState({}, document.title);
+    }, [receipts, location?.state]);
+
     useEffect(() => {
         if (!defaultBranchName) {
             return;
@@ -246,8 +276,6 @@ const ReceiptVoucher = () => {
         const now = new Date();
         const currentMonth = now.getMonth();
         const currentYear = now.getFullYear();
-        const todayStr = now.toLocaleDateString('en-US');
-
         let todayTotal = 0;
         let todayCount = 0;
         let monthTotal = 0;
@@ -487,7 +515,8 @@ const ReceiptVoucher = () => {
         }
     };
 
-    const handlePrint = (receipt) => {
+    const handlePrint = async (receipt) => {
+        setOpenActionId(null);
         const title = generateDocFilename(
             'Receipt Voucher',
             receipt.id,
@@ -495,8 +524,51 @@ const ReceiptVoucher = () => {
             receipt.date,
             currency
         );
+
+        // Try the new Financials designer template first; fall back to
+        // the legacy window.print() of the on-screen layout if none is
+        // configured.
+        try {
+            const templates = await getTemplatesByCategory('Receipt Voucher');
+            const tmpl = templates?.find(t => t.isDefault) || templates?.[0] || null;
+            const hasNewSettings = (() => {
+                if (!tmpl?.displayOptions) return false;
+                try {
+                    const opts = typeof tmpl.displayOptions === 'string'
+                        ? JSON.parse(tmpl.displayOptions)
+                        : tmpl.displayOptions;
+                    return opts && typeof opts === 'object' && ('accentColor' in opts || 'showLogo' in opts);
+                } catch { return false; }
+            })();
+
+            if (hasNewSettings) {
+                const html = buildFinancialVoucherPrintHtml('receipt-voucher', {
+                    voucherNumber: receipt.id || receipt.voucherId,
+                    date: receipt.date,
+                    party: receipt.member || receipt.memberName,
+                    partyCode: receipt.customerCode || '',
+                    amount: receipt.amount,
+                    currency,
+                    mode: receipt.mode || receipt.paymentMode,
+                    bank: receipt.bank || '',
+                    reference: receipt.reference,
+                    chequeRef: receipt.chequeNumber || '',
+                    narration: receipt.notes || '',
+                    branch: receipt.branch,
+                    preparedBy: receipt.preparedBy || '',
+                    linkedInvoice: receipt.source,
+                    invoiceDate: receipt.date,
+                }, { company, template: tmpl });
+                const titled = html.replace(/<title>.*?<\/title>/i, `<title>${title}</title>`);
+                printHtml(titled);
+                return;
+            }
+        } catch (err) {
+            console.warn('Failed to load Receipt Voucher template, falling back to browser print', err);
+        }
+
+        // Legacy fallback — print the on-screen layout.
         print(title);
-        setOpenActionId(null);
     };
 
     const handleDelete = async (id, dbId) => {
@@ -562,10 +634,6 @@ const ReceiptVoucher = () => {
     };
 
     const hasReceiptOnDate = (day) => {
-        const checkDate = new Date(currentDate.getFullYear(), currentDate.getMonth(), day).toLocaleDateString('en-US'); // "1/21/2026"
-        // Need to match the mock data format "1/21/2026" (m/d/yyyy) - basic check 
-        // Mock data is single digit month/day without pad, LocaleString standard behavior varies but often m/d/yyyy.
-        // Let's coerce standard equality
         return receipts.some(r => {
             const rDate = new Date(r.date);
             const cDate = new Date(currentDate.getFullYear(), currentDate.getMonth(), day);
@@ -615,6 +683,14 @@ const ReceiptVoucher = () => {
             return true;
         });
     }, [receipts, filterDate, searchQuery, filterSource, filterStatus, filterPayment, filterBranch, filterDateRange]);
+
+    const LIST_PAGE_SIZE = 30;
+    const [listPage, setListPage] = useState(0);
+    useEffect(() => { setListPage(0); }, [filterDate, searchQuery, filterSource, filterStatus, filterPayment, filterBranch, filterDateRange]);
+    const pagedReceipts = useMemo(
+        () => filteredReceipts.slice(listPage * LIST_PAGE_SIZE, (listPage + 1) * LIST_PAGE_SIZE),
+        [filteredReceipts, listPage]
+    );
 
     const handleExportExcel = () => {
         exportToExcel(filteredReceipts, RECEIPT_COLUMNS, 'Receipt_Vouchers');
@@ -913,7 +989,7 @@ const ReceiptVoucher = () => {
                         <h3 className="text-sm font-bold text-slate-700">Receipt Vouchers</h3>
                         <p className="text-xs text-slate-500">
                             {filterDate
-                                ? `Showing receipts for ${filterDate.toLocaleDateString()}`
+                                ? `Showing receipts for ${formatDisplayDate(filterDate)}`
                                 : `All receipt vouchers and income records (${filteredReceipts.length} receipts)`
                             }
                         </p>
@@ -937,7 +1013,7 @@ const ReceiptVoucher = () => {
                         </thead>
                         <tbody className="divide-y divide-slate-50">
                             {filteredReceipts.length > 0 ? (
-                                filteredReceipts.map((row) => (
+                                pagedReceipts.map((row) => (
                                     <tr key={row.id} className="hover:bg-slate-50 group cursor-pointer" onClick={() => handleViewReceipt(row)}>
                                         <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}><input type="checkbox" className="rounded border-slate-300" /></td>
                                         <td className="px-4 py-3">
@@ -946,7 +1022,7 @@ const ReceiptVoucher = () => {
                                             </span>
                                         </td>
                                         <td className="px-4 py-3 text-slate-500 flex items-center gap-1">
-                                            <CalendarDays size={12} /> {row.date}
+                                            <CalendarDays size={12} /> {formatDisplayDate(row.date)}
                                         </td>
                                         <td className="px-4 py-3">
                                             <div className="flex items-center gap-2">
@@ -1040,6 +1116,13 @@ const ReceiptVoucher = () => {
                             )}
                         </tbody>
                     </table>
+                    <PaginationFooter
+                        page={listPage}
+                        size={LIST_PAGE_SIZE}
+                        totalElements={filteredReceipts.length}
+                        totalPages={Math.ceil(filteredReceipts.length / LIST_PAGE_SIZE)}
+                        onPageChange={setListPage}
+                    />
                 </div>
             </div>
 
@@ -1272,7 +1355,7 @@ const ReceiptVoucher = () => {
                                     </div>
                                     <div>
                                         <p className="text-[10px] text-slate-400 font-bold uppercase">Date</p>
-                                        <p className="text-xs font-medium text-slate-700">{selectedReceipt.date}</p>
+                                        <p className="text-xs font-medium text-slate-700">{formatDisplayDate(selectedReceipt.date)}</p>
                                     </div>
                                     <div>
                                         <p className="text-[10px] text-slate-400 font-bold uppercase">Payer / Employee</p>
@@ -1394,7 +1477,9 @@ const ReceiptVoucher = () => {
                                     className="px-4 py-2 bg-white border border-slate-200 rounded-md text-xs font-bold text-slate-600 hover:bg-slate-100 flex items-center gap-2 transition-colors">
                                     <Printer size={14} /> Print
                                 </button>
-                                <button className="px-4 py-2 bg-white border border-slate-200 rounded-md text-xs font-bold text-slate-600 hover:bg-slate-100 flex items-center gap-2 transition-colors">
+                                <button
+                                    onClick={() => setIsEmailModalOpen(true)}
+                                    className="px-4 py-2 bg-white border border-slate-200 rounded-md text-xs font-bold text-slate-600 hover:bg-slate-100 flex items-center gap-2 transition-colors">
                                     <Mail size={14} /> Email
                                 </button>
                             </div>
@@ -1402,6 +1487,41 @@ const ReceiptVoucher = () => {
                     </div>
                 )}
             </div>
+
+            {/* QA-040: Send Receipt Voucher Email */}
+            <SendDocumentEmailModal
+                isOpen={isEmailModalOpen}
+                onClose={() => setIsEmailModalOpen(false)}
+                category="Receipt Voucher"
+                docId={selectedReceipt?.dbId || selectedReceipt?.id}
+                docNumber={selectedReceipt?.id || selectedReceipt?.voucherId}
+                customerEmail={selectedReceipt?.customerEmail || selectedReceipt?.email || ''}
+                docLabel="Receipt Voucher"
+                companyProfile={company}
+                apiFn={sendReceiptVoucherEmail}
+                buildPayload={() => buildReceiptVoucherPrintData(
+                    {
+                        // Map the financials-page row shape onto what
+                        // buildReceiptVoucherPrintData expects.
+                        id: selectedReceipt?.dbId || selectedReceipt?.id,
+                        paymentNumber: selectedReceipt?.id || selectedReceipt?.voucherId,
+                        paymentDate: selectedReceipt?.date,
+                        amount: selectedReceipt?.amount,
+                        status: selectedReceipt?.status,
+                        customerName: selectedReceipt?.member || selectedReceipt?.memberName,
+                        customerCode: selectedReceipt?.customerCode,
+                        linkedInvoice: selectedReceipt?.source,
+                        referenceNumber: selectedReceipt?.reference,
+                        notes: selectedReceipt?.notes,
+                    },
+                    {
+                        name: selectedReceipt?.member || selectedReceipt?.memberName,
+                        code: selectedReceipt?.customerCode,
+                        email: selectedReceipt?.customerEmail,
+                    },
+                    company
+                )}
+            />
 
         </div>
     );

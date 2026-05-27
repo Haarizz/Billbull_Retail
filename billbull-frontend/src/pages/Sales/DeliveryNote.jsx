@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import {
     Truck,
@@ -30,7 +30,8 @@ import {
     History,
     Eye,
     TrendingUp,
-    ShoppingCart
+    ShoppingCart,
+    Zap
 } from 'lucide-react';
 
 // ==========================================
@@ -46,6 +47,10 @@ import { generateDocFilename } from '../../utils/filenameUtils';
 import { usePrintDocument } from '../../hooks/usePrintDocument';
 import ExportDropdown from '../../components/common/ExportDropdown';
 import { exportToExcel, exportToPDF } from '../../utils/exportUtils';
+import { formatDisplayDate } from '../../utils/dateUtils';
+import { pickSalesItemPrice } from '../../utils/salesPricing';
+import { resolveLineTaxRate } from '../../utils/vatMath';
+import { getActiveVatRate } from '../../api/taxApi';
 import CurrencyAmount from '../../components/CurrencyAmount';
 import BatchSelectionModal from '../../components/BatchSelectionModal';
 import { usePermissions } from '../../context/PermissionContext';
@@ -55,6 +60,7 @@ import { usePermissions } from '../../context/PermissionContext';
 // ==========================================
 
 const DELIVERY_NOTE_COLUMNS = [
+    { header: 'S.No.', key: 'sNo', width: 8 },
     { header: 'DN Number', key: 'dnNo', width: 15 },
     { header: 'Date', key: 'date', width: 12 },
     { header: 'Customer', key: 'customerName', width: 25 },
@@ -79,11 +85,15 @@ import { getItemPriceHistory } from '../../api/salesInvoiceApi'; // âœ… Pric
 // âœ… DELIVERY NOTE API IMPORTS
 import {
     getDeliveryNotes,
+    getDeliveryNotesPage,
+    getNextDeliveryNoteNumber,
     createDeliveryNote,
     updateDeliveryNote,
     advanceDeliveryNoteStatus,
     cancelDeliveryNote
 } from "../../api/deliveryNoteApi";
+import { getSalesSettings } from '../../api/salesSettingsApi';
+import { isAutoNumberingEnabled } from '../../utils/salesNumbering';
 
 // âœ… PRODUCT SELECTOR
 import ProductSelector from '../../components/ProductSelector';
@@ -102,6 +112,9 @@ import useShortcuts from '../../hooks/useShortcuts';
 // âœ… DYNAMIC UI COMPONENTS
 
 import { ItemDescriptionCell, ItemDescriptionHeader } from '../../components/ItemDescriptionCell';
+// QA-FAST-ENTRY: inline row search input that auto-opens ProductSelector
+import InlineProductSearchCell from '../../components/InlineProductSearchCell';
+import PaginationFooter from '../../components/common/PaginationFooter';
 import ItemAddOnsModal from '../../components/ItemAddOnsModal';
 
 const DeliveryNote = () => {
@@ -118,6 +131,10 @@ const DeliveryNote = () => {
 
     // --- DATA LIST STATES ---
     const [deliveryNotesList, setDeliveryNotesList] = useState([]);
+    // Pagination state (server-driven via /api/sales/delivery-notes/page)
+    const [listPage, setListPage] = useState(0);
+    const [listPageMeta, setListPageMeta] = useState({ page: 0, size: 30, totalElements: 0, totalPages: 0 });
+    const [isListLoading, setIsListLoading] = useState(false);
 
     const [searchTerm, setSearchTerm] = useState('');
     const [filterStatus, setFilterStatus] = useState('All');
@@ -258,6 +275,10 @@ const DeliveryNote = () => {
     const [proformasList, setProformasList] = useState([]);
     const [warehousesList, setWarehousesList] = useState([]);
     const [binsList, setBinsList] = useState([]);
+    const [salesSettings, setSalesSettings] = useState(null);
+    const [activeVatRate, setActiveVatRate] = useState(null);
+    useEffect(() => { getActiveVatRate().then(setActiveVatRate); }, []);
+    const deliveryAutoNumbering = isAutoNumberingEnabled(salesSettings, 'DELIVERY_NOTE');
 
     // âœ… NEW STATE: Warehouse Stock Cache (Map: ProductCode -> Qty)
     const [warehouseStockMap, setWarehouseStockMap] = useState({});
@@ -346,6 +367,12 @@ const DeliveryNote = () => {
 
     // âœ… PRODUCT SELECTOR STATE
     const [isProductSelectorOpen, setIsProductSelectorOpen] = useState(false);
+
+    // QA-FAST-ENTRY: inline-row-search → product-selector bridge state
+    const [pendingFastEntrySearch, setPendingFastEntrySearch] = useState('');
+    const [pendingFastEntryRowId, setPendingFastEntryRowId] = useState(null);
+    const inlineSearchRefs = useRef({});
+    const focusNextInlineSearchRef = useRef(null);
 
     // --- SIDEBAR COMPONENTS ---
     const StockSidebarPanel = ({ stock, isLoading, itemCode }) => {
@@ -436,7 +463,7 @@ const DeliveryNote = () => {
                                     <td className="px-4 py-2.5">
                                         <div className="font-bold text-slate-700 truncate w-36 group-hover:text-blue-600 transition-colors" title={h.customerName}>{h.customerName}</div>
                                         <div className="text-[9px] text-slate-400 mt-0.5 flex items-center gap-1.5 font-medium">
-                                            <span className="text-slate-300">#</span>{h.invoiceNo} <span className="text-slate-200">|</span> {h.date}
+                                            <span className="text-slate-300">#</span>{h.invoiceNo} <span className="text-slate-200">|</span> {formatDisplayDate(h.date)}
                                         </div>
                                     </td>
                                     <td className="px-4 py-2.5 text-right font-black text-slate-700">
@@ -781,6 +808,9 @@ const DeliveryNote = () => {
             name: item.name || item.itemName || item.productName || '',
             barcode: item.barcode || item.itemBarcode || '',
             brand: item.brand || item.brandName || '',
+            sku: item.sku || item.productSku || '',
+            localName: item.localName || item.productLocalName || '',
+            shortDesc: item.shortDesc || '',
             detailedDesc: item.detailedDesc || '',
             image: item.primaryImage || item.image || item.thumbnailUrl || item.imageUrl || '',
             desc: item.desc || item.description || '',
@@ -843,8 +873,21 @@ const DeliveryNote = () => {
     // ==========================================
 
     const loadDeliveryNotes = async () => {
+        setIsListLoading(true);
         try {
-            const data = await getDeliveryNotes();
+            const resp = await getDeliveryNotesPage({
+                page: listPage,
+                size: 30,
+                search: searchTerm || '',
+                status: filterStatus && filterStatus !== 'All' ? filterStatus : '',
+            });
+            const data = Array.isArray(resp?.content) ? resp.content : [];
+            setListPageMeta({
+                page: resp?.page ?? listPage,
+                size: resp?.size ?? 30,
+                totalElements: resp?.totalElements ?? 0,
+                totalPages: resp?.totalPages ?? 0,
+            });
 
             const mapped = data.map(dn => ({
                 id: dn.id,
@@ -880,28 +923,52 @@ const DeliveryNote = () => {
             setDeliveryNotesList(mapped);
         } catch (e) {
             console.error("Failed to load delivery notes", e);
+        } finally {
+            setIsListLoading(false);
         }
     };
+
+    // Reset page on filter change; refetch on tab/page/filter change.
+    useEffect(() => { setListPage(0); }, [searchTerm, filterStatus]);
+    useEffect(() => {
+        if (activeTab !== 'list') return;
+        loadDeliveryNotes();
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [activeTab, listPage, searchTerm, filterStatus]);
 
     useEffect(() => {
         loadDeliveryNotes();
     }, []);
 
+    // QA-FAST-ENTRY: focus the freshly-added empty row's inline search input.
+    useEffect(() => {
+        const targetId = focusNextInlineSearchRef.current;
+        if (targetId == null) return;
+        const raf = requestAnimationFrame(() => {
+            const el = inlineSearchRefs.current[targetId];
+            if (el) el.focus();
+            focusNextInlineSearchRef.current = null;
+        });
+        return () => cancelAnimationFrame(raf);
+    }, [items]);
+
     useEffect(() => {
         const fetchMasterData = async () => {
             try {
-                const [custData, soData, siData, whData, piData] = await Promise.all([
+                const [custData, soData, siData, whData, piData, settingsData] = await Promise.all([
                     getAllCustomers(),
                     getAllSalesOrders(),
                     getAllSalesInvoices(),
                     getWarehouses(),
-                    getAllProformas()
+                    getAllProformas(),
+                    getSalesSettings().catch(() => null)
                 ]);
 
                 setCustomersList(Array.isArray(custData) ? custData : []);
                 setSalesOrdersList(Array.isArray(soData) ? soData : []);
                 setSalesInvoicesList(Array.isArray(siData) ? siData : []);
                 setProformasList(Array.isArray(piData) ? piData : []);
+                if (settingsData) setSalesSettings(settingsData);
 
                 const whs = Array.isArray(whData) ? whData : [];
                 setWarehousesList(whs);
@@ -997,7 +1064,11 @@ const DeliveryNote = () => {
 
     const handleCreateNew = () => {
         setCurrentDnId(null);
-        setDnNumber(`DN-${Date.now()}`);
+        if (deliveryAutoNumbering) {
+            getNextDeliveryNoteNumber().then(setDnNumber).catch(() => setDnNumber(''));
+        } else {
+            setDnNumber('');
+        }
         setStatus('DRAFT');
         setAutoGenerated(false);
         setSourceDocumentType('');
@@ -1198,7 +1269,11 @@ const DeliveryNote = () => {
         if (!match) return;
 
         setCurrentDnId(null);
-        setDnNumber(`DN-${Date.now()}`);
+        if (deliveryAutoNumbering) {
+            getNextDeliveryNoteNumber().then(setDnNumber).catch(() => setDnNumber(''));
+        } else {
+            setDnNumber('');
+        }
         setStatus('DRAFT');
         setAutoGenerated(false);
         setDnDate(new Date().toISOString().split('T')[0]);
@@ -1285,9 +1360,11 @@ const DeliveryNote = () => {
             id: Date.now() + Math.random(),
             code: product.code || product.itemCode || '',
             barcode: product.barcode || '',
+            name: product.name || '',
+            shortDesc: product.shortDesc || '',
             detailedDesc: product.detailedDesc || '',
             image: product.primaryImage || product.image || product.thumbnailUrl || product.imageUrl || '',
-            desc: product.description || product.name,
+            desc: product.name || product.description || '',
             unit: product.unitName || product.unit || 'PCS',
             orderedQty: 1,
             prevDelivered: 0,
@@ -1295,23 +1372,44 @@ const DeliveryNote = () => {
             boxes: 1,
             foc: 0,
             focUnit: product.unitName || product.unit || 'PCS',
-            price: Number(product.retailPrice || product.sellingPrice) || 0,
-            tax: Number(product.taxPercent || product.salesTax) || 5,
+            price: pickSalesItemPrice(product, salesSettings?.salesItemPricePolicy),
+            tax: resolveLineTaxRate(product, activeVatRate),
             disc: 0,
             taxAmt: 0,
             margin: 0,
-            remarks: product.description || '',
+            remarks: product.detailedDesc || product.description || '',
             stock: warehouseStockMap[product.code] || 0
         });
 
+        // QA-FAST-ENTRY: if an empty row triggered this, replace it in-place
+        // (preserving its id) instead of appending — so focus chaining stays
+        // on the same row the user typed into. If the target row doesn't exist
+        // (e.g. seed row when items was empty), just append.
+        const targetRowId = pendingFastEntryRowId;
+        let resolvedRowId = newItem.id;
         setItems(prev => {
+            if (targetRowId != null) {
+                const exists = prev.some(it => it.id === targetRowId);
+                if (exists) {
+                    resolvedRowId = targetRowId;
+                    return prev.map(it => it.id === targetRowId ? { ...newItem, id: targetRowId } : it);
+                }
+            }
             const hasData = prev.some(item => item.code || item.desc);
             return hasData ? [...prev, newItem] : [newItem];
         });
+        const filledItem = { ...newItem, id: resolvedRowId };
+        setPendingFastEntrySearch('');
+        setPendingFastEntryRowId(null);
         setIsProductSelectorOpen(false); // âœ… Close modal after adding
         if (newItem.code) {
             fetchItemContext(newItem.code);
         }
+        // QA-FAST-ENTRY: focus Qty input on the filled row.
+        setTimeout(() => {
+            const qtyEl = document.getElementById(`qty-${filledItem.id}`);
+            if (qtyEl) { qtyEl.focus(); qtyEl.select?.(); }
+        }, 100);
     };
     const handleFastEntryAdd = (product, qty, price, disc) => {
         if (isLockedForEdit) return;
@@ -1320,7 +1418,10 @@ const DeliveryNote = () => {
             code: product.code || product.itemCode || '',
             barcode: product.barcode || '',
             image: product.primaryImage || product.image || product.thumbnailUrl || product.imageUrl || '',
-            desc: product.description || product.name,
+            name: product.name || '',
+            shortDesc: product.shortDesc || '',
+            detailedDesc: product.detailedDesc || '',
+            desc: product.name || product.description || '',
             unit: product.unitName || product.unit || 'PCS',
             orderedQty: qty,
             prevDelivered: 0,
@@ -1329,11 +1430,11 @@ const DeliveryNote = () => {
             foc: 0,
             focUnit: product.unitName || product.unit || 'PCS',
             price,
-            tax: Number(product.taxPercent || product.salesTax) || 5,
+            tax: resolveLineTaxRate(product, activeVatRate),
             disc,
             taxAmt: 0,
             margin: 0,
-            remarks: product.description || '',
+            remarks: product.detailedDesc || product.description || '',
             stock: warehouseStockMap[product.code] || 0
         });
 
@@ -1409,6 +1510,11 @@ const DeliveryNote = () => {
     // âœ… 9. BLOCK SAVE IF INVALID
     const handleSave = async (shouldRedirect = true) => {
         if (isLockedForEdit) return null;
+
+        if (!deliveryAutoNumbering && !dnNumber.trim()) {
+            alert("Please enter a delivery note number.");
+            return null;
+        }
 
         if (!selectedCustomer) {
             alert("Please select a customer.");
@@ -1565,10 +1671,6 @@ const DeliveryNote = () => {
             if (defaultTemplate) {
                 const fullCustomer = customersList.find(c => c.code === selectedCustomer?.code);
 
-                const subTotal = items.reduce((sum, i) => sum + (Number(i.taxableAmount) || 0), 0);
-                const totalTax = items.reduce((sum, i) => sum + (Number(i.taxAmt) || 0), 0);
-                const grandTotal = items.reduce((sum, i) => sum + (Number(i.total) || 0), 0);
-
                 const printData = {
                     title: 'DELIVERY NOTE',
                     docNo: dnNumber,
@@ -1584,6 +1686,7 @@ const DeliveryNote = () => {
                         desc: (i.remarks || i.desc || '') + (i.boxes ? ` (${i.boxes} Boxes)` : ''),
                         sku: i.sku || '',
                         brand: i.brand || i.brandName || '',
+                        shortDesc: i.shortDesc || '',
                         detailedDesc: i.detailedDesc || '',
                         localName: i.localName || '',
                         barcode: i.barcode || '',
@@ -1595,17 +1698,26 @@ const DeliveryNote = () => {
                         tax: Number(i.tax) || 0,
                         taxAmt: Number(i.taxAmt) || 0,
                         total: Number(i.total) || 0,
-                        image: i.image ? getImageUrl(i.image) : ''
+                        image: i.image ? getImageUrl(i.image) : '',
+                        // QA-030: thread batch picks through so the print
+                        // template can show the Batch # line when the toggle
+                        // is on (also feeds the Batch # / Batch Barcode cols
+                        // when those columns are enabled).
+                        batchNumber: i.batchNumber || '',
+                        batchSelections: Array.isArray(i.batchSelections) ? i.batchSelections : [],
+                        expiry: i.expiry || i.expiryDate || ''
                     })),
                     totals: {
-                        subTotal,
-                        tax: totalTax,
-                        grandTotal,
                         currency: company?.currencySymbol || company?.currency || 'AED'
                     },
+                    hideTotalsTable: true,
                     meta: {
                         status: status,
-                        reference: `SO: ${linkedSO || '-'} | PI: ${linkedPI || '-'} | SI: ${linkedSI || '-'}`,
+                        // QA-031: explicit linked source documents — renderer
+                        // shows each as a labeled row when its template toggle
+                        // is enabled.
+                        linkedSalesOrder: linkedSO || '',
+                        linkedSalesInvoice: linkedSI || '',
                         location: warehouse || '',
                         notes: `Driver: ${driverName || '-'} | Vehicle: ${vehicleNo || '-'} | Tracking: ${trackingNo || '-'}`
                     }
@@ -1660,6 +1772,8 @@ const DeliveryNote = () => {
                     desc: (i.remarks || i.desc || '') + (i.boxes ? ` (${i.boxes} Boxes)` : ''),
                     sku: i.sku || '',
                     brand: i.brand || i.brandName || '',
+                    shortDesc: i.shortDesc || '',
+                    detailedDesc: i.detailedDesc || '',
                     localName: i.localName || '',
                     barcode: i.barcode || '',
                     location: warehouse || '',
@@ -1670,7 +1784,9 @@ const DeliveryNote = () => {
                 totals: {},
                 meta: {
                     status: status,
-                    reference: `SO: ${linkedSO || '-'} | PI: ${linkedPI || '-'} | SI: ${linkedSI || '-'}`,
+                    // QA-031: explicit source-doc cross-references for Pick List.
+                    linkedSalesOrder: linkedSO || '',
+                    linkedSalesInvoice: linkedSI || '',
                     location: warehouse || '',
                     warehouse: warehouse || '',
                     notes: `Driver: ${driverName || '-'} | Vehicle: ${vehicleNo || '-'} | Tracking: ${trackingNo || '-'}`
@@ -1721,7 +1837,7 @@ const DeliveryNote = () => {
                             <span className="px-1.5 py-0.5 rounded text-[8px] font-bold bg-blue-100 text-blue-700 uppercase tracking-wider">Auto-Gen</span>
                         )}
                     </h4>
-                    <p className="text-xs text-slate-500">{dn.date}</p>
+                    <p className="text-xs text-slate-500">{formatDisplayDate(dn.date)}</p>
                 </div>
                 {renderStatusBadge(dn.status)}
             </div>
@@ -1755,12 +1871,14 @@ const DeliveryNote = () => {
             {/* âœ… PRODUCT SELECTOR MODAL */}
             <ProductSelector
                 isOpen={isProductSelectorOpen}
-                onClose={() => setIsProductSelectorOpen(false)}
+                onClose={() => { setIsProductSelectorOpen(false); setPendingFastEntryRowId(null); }}
                 onSelect={handleAddSingleProduct}
                 onInlineAdd={handleFastEntryAdd}
+                initialSearch={pendingFastEntrySearch}
                 title="Select Items from Products / Services"
                 actionLabel="Add to Delivery Note"
                 mode="sales"
+                salesItemPricePolicy={salesSettings?.salesItemPricePolicy}
             />
 
             {/* âœ… STOCK AVAILABILITY MODAL */}
@@ -1941,8 +2059,17 @@ const DeliveryNote = () => {
                                     </div>
                                 </div>
                                 <ExportDropdown
-                                    onExportExcel={() => exportToExcel(filteredDeliveryNotes, DELIVERY_NOTE_COLUMNS, 'Delivery_Notes')}
-                                    onExportPdf={() => exportToPDF(filteredDeliveryNotes, DELIVERY_NOTE_COLUMNS, 'Delivery Notes', 'Delivery_Notes')}
+                                    onExportExcel={() => exportToExcel(
+                                        filteredDeliveryNotes.map((dn, index) => ({ ...dn, sNo: index + 1 })),
+                                        DELIVERY_NOTE_COLUMNS,
+                                        'Delivery_Notes'
+                                    )}
+                                    onExportPdf={() => exportToPDF(
+                                        filteredDeliveryNotes.map((dn, index) => ({ ...dn, sNo: index + 1 })),
+                                        DELIVERY_NOTE_COLUMNS,
+                                        'Delivery Notes',
+                                        'Delivery_Notes'
+                                    )}
                                 />
                                 <button
                                     onClick={handleCreateNew}
@@ -1957,6 +2084,7 @@ const DeliveryNote = () => {
                                 <table className="w-full text-xs text-left">
                                     <thead className="bg-[#F7F7FA] text-slate-500 font-semibold border-b border-slate-200">
                                         <tr>
+                                            <th className="px-3 py-3 text-center text-slate-500 w-12 select-none">S.No.</th>
                                             <th className="px-4 py-3 cursor-pointer hover:bg-slate-100 select-none" onClick={() => handleSort('dnNo')}>
                                                 <div className="flex items-center gap-1">DN No {sortConfig.key === 'dnNo' && (sortConfig.direction === 'asc' ? <ArrowUp size={12} /> : <ArrowDown size={12} />)}</div>
                                             </th>
@@ -1991,8 +2119,9 @@ const DeliveryNote = () => {
                                         </tr>
                                     </thead>
                                     <tbody className="divide-y divide-slate-100">
-                                        {filteredDeliveryNotes.map((dn) => (
+                                        {filteredDeliveryNotes.map((dn, index) => (
                                             <tr key={dn.id} className="hover:bg-slate-50 cursor-pointer group" onClick={() => handleRowClick(dn)}>
+                                                <td className="px-3 py-3 text-center text-slate-400 font-mono font-medium">{index + 1}</td>
                                                 <td className="px-4 py-3 font-medium text-slate-700">
                                                     <div className="flex items-center gap-2">
                                                         {dn.dnNo}
@@ -2001,7 +2130,7 @@ const DeliveryNote = () => {
                                                         )}
                                                     </div>
                                                 </td>
-                                                <td className="px-4 py-3 text-slate-500">{dn.date}</td>
+                                                <td className="px-4 py-3 text-slate-500">{formatDisplayDate(dn.date)}</td>
                                                 <td className="px-4 py-3 text-slate-600 font-medium">{dn.customerCode} - {dn.customerName}</td>
                                                 <td className="px-4 py-3 text-slate-500">{dn.soNo}</td>
                                                 <td className="px-4 py-3 text-slate-500">{dn.piNo}</td>
@@ -2032,7 +2161,7 @@ const DeliveryNote = () => {
                                         ))}
                                         {filteredDeliveryNotes.length === 0 && (
                                             <tr>
-                                                <td colSpan="12" className="text-center py-8 text-slate-400">No Delivery Notes found.</td>
+                                                <td colSpan="13" className="text-center py-8 text-slate-400">No Delivery Notes found.</td>
                                             </tr>
                                         )}
                                     </tbody>
@@ -2049,6 +2178,14 @@ const DeliveryNote = () => {
                                     ))
                                 )}
                             </div>
+                            <PaginationFooter
+                                page={listPageMeta.page}
+                                size={listPageMeta.size}
+                                totalElements={listPageMeta.totalElements}
+                                totalPages={listPageMeta.totalPages}
+                                loading={isListLoading}
+                                onPageChange={setListPage}
+                            />
                         </div>
                     )}
 
@@ -2084,7 +2221,14 @@ const DeliveryNote = () => {
                                             <div className="flex flex-col space-y-3">
                                                 <div>
                                                     <label className="text-xs font-semibold text-slate-500 mb-1">DN Number</label>
-                                                    <input type="text" value={dnNumber} readOnly className="w-full text-xs p-1.5 bg-slate-50 border border-slate-200/50 rounded text-slate-700 font-bold" />
+                                                    <input
+                                                        type="text"
+                                                        value={dnNumber}
+                                                        onChange={(e) => setDnNumber(e.target.value)}
+                                                        readOnly={isLockedForEdit || deliveryAutoNumbering}
+                                                        placeholder={deliveryAutoNumbering ? 'Auto generated' : 'Enter delivery note number'}
+                                                        className="w-full text-xs p-1.5 border border-slate-200/50 rounded text-slate-700 font-bold read-only:bg-slate-50 read-only:text-slate-500 focus:outline-none focus:border-[#F5C742]"
+                                                    />
                                                 </div>
 
                                                 <div>
@@ -2116,6 +2260,7 @@ const DeliveryNote = () => {
                                     <CustomerShippingPanel
                                         selectedCustomer={selectedCustomer}
                                         onOpenCustomerSearch={() => { if (!isLockedForEdit) setIsCustomerSearchOpen(true); }}
+                                        onCustomerUpdated={setSelectedCustomer}
                                         shippingAddress={shippingAddress}
                                         onShippingChange={setShippingAddress}
                                         isReadOnly={isLockedForEdit}
@@ -2276,7 +2421,7 @@ const DeliveryNote = () => {
                                                                     return isTargetCust && !hasAlreadyDN;
                                                                 }).map(si => (
                                                                     <div key={si.id} onClick={() => handleSelectSI(si)} className="px-3 py-2 text-xs hover:bg-slate-50 cursor-pointer border-b border-slate-50">
-                                                                        <span className="font-bold">{si.invoiceNumber || si.invoiceNo}</span> <span className="text-slate-400">({si.invoiceDate || si.date})</span>
+                                                                        <span className="font-bold">{si.invoiceNumber || si.invoiceNo}</span> <span className="text-slate-400">({formatDisplayDate(si.invoiceDate || si.date)})</span>
                                                                     </div>
                                                                 ))}
                                                                 {salesInvoicesList.filter(si => {
@@ -2339,6 +2484,7 @@ const DeliveryNote = () => {
                                         <div className="flex justify-between items-center mb-4 border-b border-slate-100/50 pb-2">
                                             <h3 className="text-sm font-bold text-slate-800 flex items-center gap-2">
                                                 <ShoppingCart size={16} className="text-yellow-500" /> Delivery Note Items
+                                                <span className="inline-flex items-center gap-1 text-[10px] bg-blue-50 text-blue-700 px-2 py-0.5 rounded-full font-medium border border-blue-200"><Zap size={10} /> Fast Entry</span>
                                             </h3>
                                             <div className="flex items-center gap-2">
                                                 {!hasItemData && (linkedSO || linkedSI) && (
@@ -2358,7 +2504,7 @@ const DeliveryNote = () => {
                                         </div>
 
                                         <div className="overflow-auto max-h-[380px]">
-                                            <table className="w-full text-xs text-left min-w-[940px]">
+                                            <table className="w-full text-xs text-left min-w-[880px]">
                                                 <thead className="sticky top-0 z-10 bg-white border-b border-slate-100/80 text-[11px] font-semibold text-slate-500">
                                                     <tr>
                                                         <th className="p-2 w-8 text-center text-slate-400">#</th>
@@ -2370,10 +2516,10 @@ const DeliveryNote = () => {
                                                             />
                                                         </th>
                                                         <th className="p-2 w-16 text-center">Unit</th>
-                                                        <th className="p-2 w-20 text-center">Qty ordered</th>
-                                                        <th className="p-2 w-24 text-center text-slate-400">Prev. Del</th>
-                                                        <th className="p-2 w-24 text-center">Current Qty</th>
-                                                        <th className="p-2 w-16 text-center">Boxes</th>
+                                                        <th className="p-2 w-20 text-center">Ordered</th>
+                                                        <th className="p-2 w-24 text-center">To Deliver</th>
+                                                        <th className="p-2 w-20 text-center text-slate-400">Picked</th>
+                                                        <th className="p-2 w-28 text-center">Location</th>
                                                         <th className="p-2 w-32 text-center">Bin</th>
                                                         <th className="p-2 w-10 text-center">Actions</th>
                                                     </tr>
@@ -2384,6 +2530,26 @@ const DeliveryNote = () => {
                                                             <tr className={`group hover:bg-slate-50/50 transition-colors bg-white align-middle ${isLockedForEdit ? 'opacity-80' : ''}`}>
                                                                 <td className="p-2 text-center text-slate-400 text-xs font-medium">{index + 1}</td>
                                                                 <td className="p-2">
+                                                                    {/* QA-FAST-ENTRY: empty rows show inline product-search input */}
+                                                                    {(!item.code && !item.desc) ? (
+                                                                        <InlineProductSearchCell
+                                                                            value={pendingFastEntryRowId === item.id ? pendingFastEntrySearch : ''}
+                                                                            inputRef={(el) => {
+                                                                                if (el) inlineSearchRefs.current[item.id] = el;
+                                                                                else delete inlineSearchRefs.current[item.id];
+                                                                            }}
+                                                                            isReadOnly={isLockedForEdit}
+                                                                            onChange={(text) => {
+                                                                                setPendingFastEntryRowId(item.id);
+                                                                                setPendingFastEntrySearch(text);
+                                                                            }}
+                                                                            onOpenSelector={(text) => {
+                                                                                setPendingFastEntryRowId(item.id);
+                                                                                setPendingFastEntrySearch(text);
+                                                                                setIsProductSelectorOpen(true);
+                                                                            }}
+                                                                        />
+                                                                    ) : (
                                                                     <ItemDescriptionCell
                                                                         item={{ ...item, availableQty: warehouseStockMap[item.code] || 0 }}
                                                                         isExpanded={expandedRows[item.id]}
@@ -2402,6 +2568,7 @@ const DeliveryNote = () => {
                                                                         showTaxDiscount={true}
                                                                         page="deliveryNote"
                                                                     />
+                                                                    )}
                                                                 </td>
                                                                 <td className="p-2 text-center align-middle">
                                                                     <div className="rounded-md border border-slate-200 bg-white inline-block px-2 py-1 min-w-[52px]">
@@ -2412,12 +2579,10 @@ const DeliveryNote = () => {
                                                                     <span className="font-bold text-slate-700">{item.orderedQty}</span>
                                                                 </td>
                                                                 <td className="p-2 text-center align-middle">
-                                                                    <span className="text-slate-400">{item.prevDelivered}</span>
-                                                                </td>
-                                                                <td className="p-2 text-center align-middle">
                                                                     <div className="rounded-md border border-slate-200 bg-white flex items-center px-2 py-1 w-full max-w-[92px] mx-auto">
                                                                         <input
                                                                             disabled={isLockedForEdit}
+                                                                            id={`qty-${item.id}`}
                                                                             type="number"
                                                                             className="w-full bg-transparent text-center outline-none font-bold text-sm text-slate-800 disabled:opacity-50"
                                                                             value={item.currentQty}
@@ -2426,19 +2591,43 @@ const DeliveryNote = () => {
                                                                                 stock: warehouseStockMap[item.code] || 0
                                                                             })}
                                                                             onChange={(e) => handleItemChange(item.id, 'currentQty', e.target.value)}
+                                                                            onKeyDown={(e) => {
+                                                                                if (e.key === 'Tab' && !e.shiftKey && !isLockedForEdit) {
+                                                                                    e.preventDefault();
+                                                                                    const newRow = createBlankDeliveryItem();
+                                                                                    focusNextInlineSearchRef.current = newRow.id;
+                                                                                    setItems(prev => [...prev, newRow]);
+                                                                                }
+                                                                            }}
                                                                         />
                                                                     </div>
                                                                 </td>
+                                                                {/* Picked — read-only: shows batch-selected qty or 0 */}
                                                                 <td className="p-2 text-center align-middle">
-                                                                    <div className="rounded-md border border-slate-200 bg-white flex items-center px-2 py-1 w-full max-w-[80px] mx-auto">
-                                                                        <input
-                                                                            disabled={isLockedForEdit}
-                                                                            type="number"
-                                                                            className="w-full bg-transparent text-center outline-none font-semibold text-xs text-slate-700 disabled:opacity-50"
-                                                                            value={item.boxes || ''}
-                                                                            onChange={(e) => handleItemChange(item.id, 'boxes', e.target.value)}
-                                                                        />
-                                                                    </div>
+                                                                    {item.batchControlled ? (
+                                                                        <span className={`font-bold text-sm ${
+                                                                            item.batchSelectedQuantity > 0
+                                                                                ? item.batchSelectedQuantity >= item.currentQty
+                                                                                    ? 'text-emerald-600'
+                                                                                    : 'text-amber-500'
+                                                                                : 'text-slate-300'
+                                                                        }`}>
+                                                                            {item.batchSelectedQuantity || 0}
+                                                                        </span>
+                                                                    ) : (
+                                                                        <span className="text-slate-300 text-xs">—</span>
+                                                                    )}
+                                                                </td>
+                                                                {/* Location — shows the selected bin's location code */}
+                                                                <td className="p-2 text-center align-middle">
+                                                                    <span className="text-xs font-medium text-slate-600">
+                                                                        {item.binId
+                                                                            ? (binsList.find(b => b.id === Number(item.binId))?.locationCode ||
+                                                                               binsList.find(b => b.id === Number(item.binId))?.location ||
+                                                                               warehouse ||
+                                                                               '—')
+                                                                            : (warehouse || '—')}
+                                                                    </span>
                                                                 </td>
                                                                 <td className="p-2 text-center align-middle">
                                                                     <div className="rounded-md border border-slate-200 bg-white px-2 py-1 w-full max-w-[140px] mx-auto">
@@ -2501,20 +2690,129 @@ const DeliveryNote = () => {
                                                             )}
                                                         </React.Fragment>
                                                     )) : (
-                                                        <tr>
-                                                            <td colSpan={9} className="py-12 text-center bg-slate-50/50 border-b border-slate-100 border-dashed rounded-b-lg">
-                                                                <div className="flex flex-col items-center justify-center text-slate-400">
-                                                                    <ShoppingCart size={32} className="mb-3 text-slate-300" />
-                                                                    <span className="text-sm font-semibold text-slate-500">No items added.</span>
-                                                                    <span className="text-xs mt-1 text-slate-400">Link a Sales Order / Sales Invoice or click "Select from Products".</span>
-                                                                </div>
+                                                        /* QA-FAST-ENTRY: seed row when no items yet — lets user type to add */
+                                                        <tr className="bg-white align-middle">
+                                                            <td className="p-2 text-center text-slate-400 text-xs font-medium">1</td>
+                                                            <td className="p-2">
+                                                                <InlineProductSearchCell
+                                                                    value={pendingFastEntryRowId === '__seed__' ? pendingFastEntrySearch : ''}
+                                                                    inputRef={(el) => {
+                                                                        if (el) inlineSearchRefs.current['__seed__'] = el;
+                                                                        else delete inlineSearchRefs.current['__seed__'];
+                                                                    }}
+                                                                    isReadOnly={isLockedForEdit}
+                                                                    onChange={(text) => {
+                                                                        setPendingFastEntryRowId('__seed__');
+                                                                        setPendingFastEntrySearch(text);
+                                                                    }}
+                                                                    onOpenSelector={(text) => {
+                                                                        setPendingFastEntryRowId('__seed__');
+                                                                        setPendingFastEntrySearch(text);
+                                                                        setIsProductSelectorOpen(true);
+                                                                    }}
+                                                                />
+                                                            </td>
+                                                            <td colSpan={7} className="p-2 text-[11px] text-slate-400">
+                                                                Link a Sales Order / Sales Invoice or type above to add an item.
                                                             </td>
                                                         </tr>
                                                     )}
                                                 </tbody>
                                             </table>
+                                            {/* QA-FAST-ENTRY: Quick Entry hint bar */}
+                                            <div className="mt-2 px-3 py-2 bg-blue-50/30 border border-blue-100/60 rounded-md flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-slate-500">
+                                                <span className="inline-flex items-center gap-1 text-blue-600 font-semibold"><Zap size={11} /> Quick Entry:</span>
+                                                <span>Type name →</span>
+                                                <kbd className="px-1.5 py-0.5 bg-white border border-slate-200 rounded text-[10px] font-mono text-slate-600">Enter</kbd>
+                                                <span>Select →</span>
+                                                <kbd className="px-1.5 py-0.5 bg-white border border-slate-200 rounded text-[10px] font-mono text-slate-600">Tab</kbd>
+                                                <span>Qty →</span>
+                                                <kbd className="px-1.5 py-0.5 bg-white border border-slate-200 rounded text-[10px] font-mono text-slate-600">Tab</kbd>
+                                                <span>New row</span>
+                                                <span className="ml-auto text-slate-400">Tip: Use ↑↓ arrows to navigate items</span>
+                                            </div>
                                         </div>
                                     </div>
+
+                                    {/* ── Picking Summary Box — separate card below the items table ── */}
+                                    {hasItemData && (() => {
+                                        const dataItems = items.filter(i => i.code || i.desc);
+
+                                        // Use the same helpers as the Picking tab, keyed to the current DN
+                                        const fullyPicked = dataItems.filter(i => {
+                                            const required = getRequiredPickingQty(i);
+                                            const picked   = getPickedQty(currentDnId, i.id, i);
+                                            return required > 0 && picked >= required;
+                                        }).length;
+
+                                        const partial = dataItems.filter(i => {
+                                            const required = getRequiredPickingQty(i);
+                                            const picked   = getPickedQty(currentDnId, i.id, i);
+                                            return picked > 0 && picked < required;
+                                        }).length;
+
+                                        const notStarted = dataItems.filter(i => {
+                                            const picked = getPickedQty(currentDnId, i.id, i);
+                                            return picked === 0;
+                                        }).length;
+
+                                        const totalRequired = dataItems.reduce((s, i) => s + getRequiredPickingQty(i), 0);
+                                        const totalPicked   = dataItems.reduce((s, i) =>
+                                            s + Math.min(getPickedQty(currentDnId, i.id, i), getRequiredPickingQty(i)), 0
+                                        );
+                                        const progress = totalRequired > 0
+                                            ? Math.min(100, Math.round((totalPicked / totalRequired) * 100))
+                                            : 0;
+
+                                        // Shortage: To Deliver qty exceeds live available stock
+                                        const shortageLines = dataItems.filter(i => {
+                                            const avail = liveStockMap[i.code]?.available ?? (i.stock || 0);
+                                            return avail < (Number(i.currentQty) || 0);
+                                        });
+                                        const shortageUnits = shortageLines.reduce((s, i) => {
+                                            const avail = liveStockMap[i.code]?.available ?? (i.stock || 0);
+                                            return s + Math.max(0, (Number(i.currentQty) || 0) - avail);
+                                        }, 0);
+
+                                        return (
+                                            <div className="rounded-xl border border-slate-200 bg-white shadow-sm overflow-hidden">
+                                                <div className="grid grid-cols-4 divide-x divide-slate-100">
+                                                    {/* Fully Picked */}
+                                                    <div className="flex flex-col items-center justify-center py-5 px-3 gap-1">
+                                                        <span className="text-2xl font-black text-emerald-500">{fullyPicked}</span>
+                                                        <span className="text-[11px] text-slate-500 font-medium text-center">Fully Picked</span>
+                                                    </div>
+                                                    {/* Partial */}
+                                                    <div className="flex flex-col items-center justify-center py-5 px-3 gap-1">
+                                                        <span className="text-2xl font-black text-amber-500">{partial}</span>
+                                                        <span className="text-[11px] text-slate-500 font-medium text-center">Partial</span>
+                                                    </div>
+                                                    {/* Not Started */}
+                                                    <div className="flex flex-col items-center justify-center py-5 px-3 gap-1">
+                                                        <span className="text-2xl font-black text-slate-400">{notStarted}</span>
+                                                        <span className="text-[11px] text-slate-500 font-medium text-center">Not Started</span>
+                                                    </div>
+                                                    {/* Progress */}
+                                                    <div className="flex flex-col items-center justify-center py-5 px-3 gap-1">
+                                                        <span className={`text-2xl font-black ${progress >= 100 ? 'text-emerald-500' : progress > 0 ? 'text-[#F5C742]' : 'text-slate-400'}`}>
+                                                            {progress}%
+                                                        </span>
+                                                        <span className="text-[11px] text-slate-500 font-medium text-center">Progress</span>
+                                                    </div>
+                                                </div>
+
+                                                {/* Shortage warning */}
+                                                {shortageLines.length > 0 && (
+                                                    <div className="border-t border-amber-100 bg-amber-50 px-4 py-2.5 flex items-center gap-2">
+                                                        <AlertTriangle size={13} className="text-amber-500 shrink-0" />
+                                                        <span className="text-[11px] text-amber-700 font-medium">
+                                                            {shortageLines.length} line(s) with shortage — {shortageUnits} unit{shortageUnits !== 1 ? 's' : ''} may need backorder.
+                                                        </span>
+                                                    </div>
+                                                )}
+                                            </div>
+                                        );
+                                    })()}
                                 </div>
 
                                 {/* --- RIGHT COLUMN: SUMMARY & STOCK --- */}
@@ -2751,7 +3049,7 @@ const DeliveryNote = () => {
                                                                 {note.dnNo}
                                                                 <span className="text-[10px] font-bold text-blue-600 bg-blue-50 px-2 py-0.5 rounded border border-blue-100">Picking</span>
                                                             </div>
-                                                            <div className="text-[10px] text-slate-400 mt-1">{note.date}</div>
+                                                            <div className="text-[10px] text-slate-400 mt-1">{formatDisplayDate(note.date)}</div>
                                                         </td>
                                                         <td className="px-4 py-3">
                                                             <div className="font-medium text-slate-700">{note.customerName}</div>
@@ -2898,7 +3196,7 @@ const DeliveryNote = () => {
                                                             {selectedPickingNote.customerName} ({selectedPickingNote.customerCode}){selectedPickingNote.siNo ? ` • ${selectedPickingNote.siNo}` : ''}
                                                         </div>
                                                         <div className="text-xs text-slate-400 mt-1">
-                                                            Warehouse: {selectedPickingNote.warehouse || '-'} • Date: {selectedPickingNote.date}
+                                                            Warehouse: {selectedPickingNote.warehouse || '-'} • Date: {formatDisplayDate(selectedPickingNote.date)}
                                                         </div>
                                                     </div>
 
@@ -3075,7 +3373,7 @@ const DeliveryNote = () => {
                                                     </td>
                                                     <td className="px-4 py-3 text-slate-500">{note.siNo || note.linkedSalesInvoiceNumber || '-'}</td>
                                                     <td className="px-4 py-3">{renderStatusBadge(note.status)}</td>
-                                                    <td className="px-4 py-3 text-slate-500">{note.date}</td>
+                                                    <td className="px-4 py-3 text-slate-500">{formatDisplayDate(note.date)}</td>
                                                     <td className="px-4 py-3 text-right">
                                                         <button
                                                             onClick={() => handleRowClick(note)}

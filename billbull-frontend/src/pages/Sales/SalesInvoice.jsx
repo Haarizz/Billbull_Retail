@@ -31,7 +31,9 @@ import {
     Package,
     TrendingUp,
     History,
-    Zap
+    Zap,
+    Receipt,
+    Download
 } from 'lucide-react';
 
 // ✅ DYNAMIC UI COMPONENTS
@@ -45,6 +47,7 @@ import { getDeliveryNotes, getPickingNotes, getUninvoicedDNsForCustomer } from '
 import { getEmployeeNames } from '../../api/employeeApi';
 import {
     getAllSalesInvoices,
+    getSalesInvoicesPage,
     saveSalesInvoice,
     getNextInvoiceNumber,
     recordInvoicePayment,
@@ -53,7 +56,13 @@ import {
     getCustomerOutstanding
 } from '../../api/salesInvoiceApi';
 import { getSalesSettings } from '../../api/salesSettingsApi';
+import { getSalesPaymentsByInvoice } from '../../api/salesPaymentApi';
+import { receiptVoucherApi } from '../../api/receiptVoucherApi';
 import { getStockAvailability } from '../../api/stockAvailabilityApi';
+import { formatDisplayDate } from '../../utils/dateUtils';
+import { pickSalesItemPrice, isPolicyOverridingPackings } from '../../utils/salesPricing';
+import { computeLineTaxTotals, resolveLineTaxRate } from '../../utils/vatMath';
+import { getActiveVatRate } from '../../api/taxApi';
 import { getWarehouses } from '../../api/warehouseApi';
 import { getTemplatesByCategory } from '../../api/printTemplateApi';
 import { generatePrintHtml, printHtml } from '../../utils/printGenerator';
@@ -69,12 +78,14 @@ import ExportDropdown from '../../components/common/ExportDropdown';
 import { exportToExcel, exportToPDF } from '../../utils/exportUtils';
 import CurrencyAmount, { CurrencySymbol } from '../../components/CurrencyAmount';
 import { formatCurrencyDisplay } from '../../utils/countryCurrencyOptions';
+import { isAutoNumberingEnabled } from '../../utils/salesNumbering';
 
 // ==========================================
 // 1. CONFIGURATION
 // ==========================================
 
 const SALES_INVOICE_COLUMNS = [
+    { header: 'S.No.', key: 'sNo', width: 8 },
     { header: 'Invoice No', key: 'invoiceNumber', width: 15 },
     { header: 'Date', key: 'invoiceDate', width: 12 },
     { header: 'Customer', key: 'customerName', width: 25 },
@@ -116,6 +127,9 @@ import CustomerSelector from '../../components/CustomerSelector';
 import CustomerShippingPanel from '../../components/CustomerShippingPanel';
 import { resolveCustomer, hydrateCustomerFromSource } from '../../utils/customerResolution';
 import { ItemDescriptionCell, ItemDescriptionHeader } from '../../components/ItemDescriptionCell';
+// QA-FAST-ENTRY: inline row search input that auto-opens ProductSelector
+import InlineProductSearchCell from '../../components/InlineProductSearchCell';
+import PaginationFooter from '../../components/common/PaginationFooter';
 
 // ✅ STOCK AVAILABILITY MODAL
 import StockAvailabilityModal from '../../components/StockAvailabilityModal';
@@ -148,7 +162,12 @@ const SalesInvoice = () => {
 
     // --- DATA LIST STATES ---
     const [invoicesList, setInvoicesList] = useState([]);
+    // Pagination state (server-driven via /api/sales/invoices/page)
+    const [listPage, setListPage] = useState(0);
+    const [listPageMeta, setListPageMeta] = useState({ page: 0, size: 30, totalElements: 0, totalPages: 0 });
+    const [isListLoading, setIsListLoading] = useState(false);
     const [salesSettings, setSalesSettings] = useState(null);
+    const invoiceAutoNumbering = isAutoNumberingEnabled(salesSettings, 'SALES_INVOICE');
 
     const [searchTerm, setSearchTerm] = useState('');
     const [filterStatus, setFilterStatus] = useState('All');
@@ -234,7 +253,7 @@ const SalesInvoice = () => {
     const [status, setStatus] = useState('Draft');
     const [salesType, setSalesType] = useState('STANDARD_FLOW'); // Backend mapping
     const [invoiceTypeUI, setInvoiceTypeUI] = useState('Direct Sale'); // UI Dropdown state
-    const [invoiceNo, setInvoiceNo] = useState('INV-2024-0005');
+    const [invoiceNo, setInvoiceNo] = useState('');
     const [invoiceDate, setInvoiceDate] = useState('2026-01-21');
     const [deliveryDate, setDeliveryDate] = useState(''); // Due Date
     const [reference, setReference] = useState('');
@@ -248,6 +267,18 @@ const SalesInvoice = () => {
     const [linkedPI, setLinkedPI] = useState('');
     const [linkedQuotation, setLinkedQuotation] = useState('');
     const [shippingAddress, setShippingAddress] = useState('');
+    // QA-032: advance amount carried from the source Sales Order. Stored
+    // separately from amountCollected so we can show a clear note in the
+    // payment panel and so it's obvious it's not "new" money collected here.
+    const [carriedSoAdvance, setCarriedSoAdvance] = useState(0);
+    // VAT mode for line-price interpretation (EXCLUSIVE | INCLUSIVE).
+    const [vatMode, setVatMode] = useState('EXCLUSIVE');
+
+    // Fallback VAT % from Tax Compliance for products without a per-item rate.
+    const [activeVatRate, setActiveVatRate] = useState(null);
+    useEffect(() => {
+        getActiveVatRate().then(setActiveVatRate);
+    }, []);
 
     // Payment Details
     const [paymentMode, setPaymentMode] = useState('Cash');
@@ -292,6 +323,7 @@ const SalesInvoice = () => {
         desc: i.description || i.desc || '',
         sku: i.sku || '',
         brand: i.brand || i.brandName || '',
+        shortDesc: i.shortDesc || '',
         detailedDesc: i.detailedDesc || '',
         localName: i.localName || '',
         unit: i.unit || 'PCS',
@@ -330,6 +362,12 @@ const SalesInvoice = () => {
     const [selectedAddonItem, setSelectedAddonItem] = useState(null); // BB-026
     const [batchSelectionTarget, setBatchSelectionTarget] = useState(null);
 
+    // QA-FAST-ENTRY: inline-row-search → product-selector bridge state
+    const [pendingFastEntrySearch, setPendingFastEntrySearch] = useState('');
+    const [pendingFastEntryRowId, setPendingFastEntryRowId] = useState(null);
+    const inlineSearchRefs = useRef({});
+    const focusNextInlineSearchRef = useRef(null);
+
     // Payment Calculation State
     const [amountCollected, setAmountCollected] = useState(0);
     const [invoiceBalance, setInvoiceBalance] = useState(null); // server-side remaining balance
@@ -338,6 +376,14 @@ const SalesInvoice = () => {
 
     // ✅ MODAL STATES
     const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
+
+    // QA-038: Receipts modal — shows the history of all receipts (sales
+    // payments + financials receipt vouchers) tied to a given sales invoice,
+    // with per-row Print / Download.
+    const [isReceiptsModalOpen, setIsReceiptsModalOpen] = useState(false);
+    const [receiptsForInvoice, setReceiptsForInvoice] = useState([]);
+    const [receiptsLoading, setReceiptsLoading] = useState(false);
+    const [receiptsInvoiceContext, setReceiptsInvoiceContext] = useState(null);
     const [modalPaymentDate, setModalPaymentDate] = useState(new Date().toISOString().split('T')[0]);
     const [modalPaymentAmount, setModalPaymentAmount] = useState(0);
     const [modalPaymentRef, setModalPaymentRef] = useState('');
@@ -521,7 +567,7 @@ const SalesInvoice = () => {
                                     <td className="px-4 py-2.5">
                                         <div className="font-bold text-slate-700 truncate w-36 group-hover:text-blue-600 transition-colors" title={h.customerName}>{h.customerName}</div>
                                         <div className="text-[9px] text-slate-400 mt-0.5 flex items-center gap-1.5 font-medium">
-                                            <span className="text-slate-300">#</span>{h.invoiceNo} <span className="text-slate-200">|</span> {h.date}
+                                            <span className="text-slate-300">#</span>{h.invoiceNo} <span className="text-slate-200">|</span> {formatDisplayDate(h.date)}
                                         </div>
                                     </td>
                                     <td className="px-4 py-2.5 text-right font-black text-slate-700">
@@ -606,6 +652,18 @@ const SalesInvoice = () => {
         }
     }, [defaultBranch?.name, invoiceId]);
 
+    // QA-FAST-ENTRY: focus the freshly-added empty row's inline search input.
+    useEffect(() => {
+        const targetId = focusNextInlineSearchRef.current;
+        if (targetId == null) return;
+        const raf = requestAnimationFrame(() => {
+            const el = inlineSearchRefs.current[targetId];
+            if (el) el.focus();
+            focusNextInlineSearchRef.current = null;
+        });
+        return () => cancelAnimationFrame(raf);
+    }, [items]);
+
     // Pre-fill form from Quotation navigation state
     useEffect(() => {
         const fromQtn = location.state?.fromQuotation;
@@ -642,12 +700,28 @@ const SalesInvoice = () => {
                 cost: 0
             }));
 
-        getNextInvoiceNumber()
-            .then(nextNo => setInvoiceNo(nextNo))
-            .catch(() => { });
+        if (invoiceAutoNumbering) {
+            getNextInvoiceNumber()
+                .then(nextNo => setInvoiceNo(nextNo))
+                .catch(() => { });
+        } else {
+            setInvoiceNo('');
+        }
 
         const resolvedCustomer = matched || { name: fromQtn.customer, code: '', id: null };
         setSelectedCustomer(resolvedCustomer);
+
+        // Pre-fill paths bypass handleSelectCustomer, so the customer's prior
+        // outstanding never gets fetched — "Previous Outstanding" stays at 0
+        // until the user re-picks the customer. Fetch it here too. (mirrors
+        // the fromSalesOrder fix.)
+        if (resolvedCustomer?.code) {
+            getCustomerOutstanding(resolvedCustomer.code)
+                .then(d => setCustomerOutstanding(d?.outstanding || 0))
+                .catch(() => setCustomerOutstanding(0));
+        } else {
+            setCustomerOutstanding(0);
+        }
 
         // Resolve shipping address: prefer passed-through → customer master
         if (fromQtn.shippingAddress) {
@@ -717,9 +791,13 @@ const SalesInvoice = () => {
                 binId: i.binId || null,
             }));
 
-        getNextInvoiceNumber()
-            .then(nextNo => setInvoiceNo(nextNo))
-            .catch(() => { });
+        if (invoiceAutoNumbering) {
+            getNextInvoiceNumber()
+                .then(nextNo => setInvoiceNo(nextNo))
+                .catch(() => { });
+        } else {
+            setInvoiceNo('');
+        }
 
         const resolvedCustomer = matched || { name: fromSO.customer, code: fromSO.customerCode || '', id: null };
         setSelectedCustomer(resolvedCustomer);
@@ -758,6 +836,17 @@ const SalesInvoice = () => {
         setStatus('Draft');
         setActiveTab('create');
 
+        // QA-032: pre-fill any advance already paid on the source Sales Order
+        // into amountCollected so it surfaces as already-paid against this
+        // invoice. carriedSoAdvance is kept separately so the payment panel
+        // can show a note explaining where the pre-fill came from. The user
+        // can still override the amount before saving.
+        const carriedAdvance = Number(fromSO.advanceAmount);
+        if (Number.isFinite(carriedAdvance) && carriedAdvance > 0) {
+            setAmountCollected(carriedAdvance);
+            setCarriedSoAdvance(carriedAdvance);
+        }
+
         window.history.replaceState({}, document.title);
     }, [customersList, location.state]);
 
@@ -774,9 +863,13 @@ const SalesInvoice = () => {
 
         fromDNHandled.current = true;
 
-        getNextInvoiceNumber()
-            .then(nextNo => setInvoiceNo(nextNo))
-            .catch(() => { });
+        if (invoiceAutoNumbering) {
+            getNextInvoiceNumber()
+                .then(nextNo => setInvoiceNo(nextNo))
+                .catch(() => { });
+        } else {
+            setInvoiceNo('');
+        }
 
         setInvoiceTypeUI('Against Delivery Note');
         setSalesType('STANDARD_FLOW');
@@ -791,15 +884,41 @@ const SalesInvoice = () => {
         window.history.replaceState({}, document.title);
     }, [customersList, deliveryNotesList, location.state]);
 
-    // Fetch invoices separately for refresh
+    // Fetch invoices separately for refresh — uses paginated /page endpoint
+    // so the list tab only loads the currently visible page.
     const fetchInvoices = async () => {
+        setIsListLoading(true);
         try {
-            const data = await getAllSalesInvoices();
-            setInvoicesList(Array.isArray(data) ? data : []);
+            const data = await getSalesInvoicesPage({
+                page: listPage,
+                size: 30,
+                search: searchTerm || '',
+                status: filterStatus && filterStatus !== 'All' ? filterStatus : '',
+            });
+            const rows = Array.isArray(data?.content) ? data.content : [];
+            setInvoicesList(rows);
+            setListPageMeta({
+                page: data?.page ?? listPage,
+                size: data?.size ?? 30,
+                totalElements: data?.totalElements ?? 0,
+                totalPages: data?.totalPages ?? 0,
+            });
         } catch (err) {
             console.error("Failed to fetch invoices", err);
+        } finally {
+            setIsListLoading(false);
         }
     };
+
+    // Reset to page 0 when filters change.
+    useEffect(() => { setListPage(0); }, [searchTerm, filterStatus, filterPayMode]);
+
+    // Refetch on list tab + page + filter change.
+    useEffect(() => {
+        if (activeTab !== 'list') return;
+        fetchInvoices();
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [activeTab, listPage, searchTerm, filterStatus]);
 
     const verifyPickingNoteAfterSave = async (savedInvoice) => {
         if (!savedInvoice?.id) {
@@ -888,10 +1007,10 @@ const SalesInvoice = () => {
         setInvoiceId(null); // Reset ID for new creation
         setPickingNoteVerification(null);
         try {
-            const nextNumber = await getNextInvoiceNumber();
+            const nextNumber = invoiceAutoNumbering ? await getNextInvoiceNumber() : '';
             setInvoiceNo(nextNumber);
         } catch (err) {
-            setInvoiceNo(`INV-${new Date().getFullYear()}-${Math.floor(1000 + Math.random() * 9000)}`);
+            setInvoiceNo('');
         }
         setStatus('Draft');
         setSalesType(type);
@@ -907,6 +1026,7 @@ const SalesInvoice = () => {
         setLinkedDN('');
         setLinkedPI('');
         setLinkedQuotation('');
+        setVatMode('EXCLUSIVE');
         setIsGeneratedFromDN(false);
         setPaymentMode('Cash');
         setPaymentTerms('Immediate');
@@ -1367,9 +1487,14 @@ const SalesInvoice = () => {
 
         const preDiscountAmount = Math.max(0, grossAmount - focDeduction);
         const discountAmount = preDiscountAmount * (discPercent / 100);
-        const taxableAmount = preDiscountAmount - discountAmount;
-        const taxAmount = taxableAmount * (taxPercent / 100);
-        const netAmount = taxableAmount + taxAmount;
+        const netAfterDiscount = preDiscountAmount - discountAmount;
+        // VAT mode drives whether tax is added on top (EXCLUSIVE) or
+        // extracted out of the entered price (INCLUSIVE).
+        const { taxableAmount, taxAmount, total: netAmount } = computeLineTaxTotals({
+            netAfterDiscount,
+            taxPercent,
+            vatMode,
+        });
 
         const salesExTax = taxableAmount;
         const totalCost = qty * costVal;
@@ -1389,6 +1514,12 @@ const SalesInvoice = () => {
             gp: gpPercent
         };
     };
+
+    // Recompute every line whenever the document VAT mode flips.
+    useEffect(() => {
+        setItems(prev => prev.map(item => calculateRow(item)));
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [vatMode]);
 
     const handleItemChange = (id, field, value) => {
         if (isReadOnlyInvoice) return;
@@ -1425,17 +1556,27 @@ const SalesInvoice = () => {
         const defaultUnit = getDefaultProductUnit(product);
         // Use explicit null/undefined checks so that a master price of 0 does not
         // fall through to a sellingPrice from a different data path.
-        const rawRetail = product.retailPrice != null ? parseFloat(product.retailPrice) : NaN;
-        const rawSelling = product.sellingPrice != null ? parseFloat(product.sellingPrice) : NaN;
-        const masterPrice = !isNaN(rawRetail) ? rawRetail : (!isNaN(rawSelling) ? rawSelling : 0);
-        const price = resolveUnitAmount({
-            targetUnit: defaultUnit,
-            amountMap: product.unitPrices,
-            unitConversions: product.unitConversions,
-            fallbackAmount: masterPrice
-        });
+        // Master price is driven by the configured Sales Item Price Policy
+        // (RETAIL / MAX_SALE / MIN_SALE) from Sales Settings. The picker
+        // falls back to retail → selling → 0 when the configured field is
+        // missing on this product, so item-add never produces a zero by
+        // surprise.
+        const policy = salesSettings?.salesItemPricePolicy;
+        const masterPrice = pickSalesItemPrice(product, policy);
+        // When the user explicitly opts into Max/Min as the default, the
+        // configured master price wins over per-packing unitPrices. For the
+        // legacy RETAIL policy we keep the unit-aware behaviour so existing
+        // packing-level prices continue to apply.
+        const price = isPolicyOverridingPackings(policy)
+            ? masterPrice
+            : resolveUnitAmount({
+                targetUnit: defaultUnit,
+                amountMap: product.unitPrices,
+                unitConversions: product.unitConversions,
+                fallbackAmount: masterPrice
+            });
         const disc = parseFloat(product.maxDiscount) || 0;
-        const tax = parseFloat(product.salesTax) || 5;
+        const tax = resolveLineTaxRate(product, activeVatRate);
         // Only carry through cost if the master explicitly has a non-null value
         const rawCost = product.cost != null ? parseFloat(product.cost) : NaN;
         const cost = !isNaN(rawCost) ? rawCost : 0;
@@ -1446,9 +1587,10 @@ const SalesInvoice = () => {
             barcode: product.barcode || '',
             image: product.primaryImage || product.image || product.thumbnailUrl || product.imageUrl || '',
             name: product.name || '',
-            desc: product.shortDesc || product.description || '',
+            desc: product.name || product.description || '',
             sku: product.sku || '',
             brand: product.brandName || product.brand || '',
+            shortDesc: product.shortDesc || '',
             detailedDesc: product.detailedDesc || '',
             localName: product.localName || '',
             unit: defaultUnit,
@@ -1468,7 +1610,7 @@ const SalesInvoice = () => {
             net: 0,
             cost: cost,
             gp: 0,
-            remarks: product.description || '',
+            remarks: product.detailedDesc || product.description || '',
             warehouseId: defaultBranch?.defaultWarehouseId || (warehousesList.length > 0 ? warehousesList[0].id : ''),
             // QA-001: SERVICE products can never be batch-controlled (no inventory).
             productType: (product.productType || 'STOCK').toUpperCase(),
@@ -1487,18 +1629,30 @@ const SalesInvoice = () => {
             fetchItemContext(newItem.code);
         }
 
+        // QA-FAST-ENTRY: replace-in-place when triggered by inline row search.
+        const targetRowId = pendingFastEntryRowId;
         setItems(prev => {
+            if (targetRowId != null) {
+                return prev.map(it => it.id === targetRowId ? { ...newItem, id: targetRowId } : it);
+            }
             const hasData = prev.some(i => i.code || i.name);
             return hasData ? [...prev, newItem] : [newItem];
         });
+        const filledItem = { ...newItem, id: targetRowId != null ? targetRowId : newItem.id };
+        setPendingFastEntrySearch('');
+        setPendingFastEntryRowId(null);
 
         setIsProductSelectorOpen(false); // ✅ Close modal after adding
+        setTimeout(() => {
+            const qtyEl = document.getElementById(`qty-${filledItem.id}`);
+            if (qtyEl) { qtyEl.focus(); qtyEl.select?.(); }
+        }, 100);
     };
 
     const handleFastEntryAdd = (product, qty, price, disc) => {
         if (isReadOnlyInvoice) return;
         const defaultUnit = getDefaultProductUnit(product);
-        const tax = parseFloat(product.salesTax) || 5;
+        const tax = resolveLineTaxRate(product, activeVatRate);
         const cost = product.cost != null ? parseFloat(product.cost) : 0;
         const rawItem = {
             id: Date.now() + Math.random(),
@@ -1506,7 +1660,9 @@ const SalesInvoice = () => {
             barcode: product.barcode || '',
             image: product.primaryImage || product.image || '',
             name: product.name || '',
-            desc: product.shortDesc || product.description || '',
+            shortDesc: product.shortDesc || '',
+            detailedDesc: product.detailedDesc || '',
+            desc: product.name || product.description || '',
             unit: defaultUnit,
             qty,
             price,
@@ -1524,7 +1680,7 @@ const SalesInvoice = () => {
             net: 0,
             cost,
             gp: 0,
-            remarks: product.description || '',
+            remarks: product.detailedDesc || product.description || '',
             warehouseId: defaultBranch?.defaultWarehouseId || (warehousesList.length > 0 ? warehousesList[0].id : ''),
             batchControlled: Boolean(product.batchControlled ?? product.isBatch ?? product.batch),
             fefoEnabled: product.fefoEnabled != null ? Boolean(product.fefoEnabled) : true,
@@ -1558,6 +1714,10 @@ const SalesInvoice = () => {
             return;
         }
         if (!selectedCustomer) { alert("Please select a customer"); return; }
+        if (!invoiceAutoNumbering && !invoiceNo.trim()) {
+            alert("Please enter an invoice number.");
+            return;
+        }
 
         // Build payload for backend
         // Resolve invoice-level warehouse ID for fallback on items that have no warehouseId
@@ -1578,6 +1738,7 @@ const SalesInvoice = () => {
             linkedDeliveryNote: linkedDN,
             linkedProforma: linkedPI,
             linkedQuotation: linkedQuotation,
+            vatMode,
 
             paymentMode: paymentMode,
             paymentTerms: paymentTerms,
@@ -1613,6 +1774,7 @@ const SalesInvoice = () => {
                     description: i.desc || '',
                     sku: i.sku || '',
                     brand: i.brand || i.brandName || '',
+                    shortDesc: i.shortDesc || '',
                     detailedDesc: i.detailedDesc || '',
                     localName: i.localName || '',
                     unit: i.unit,
@@ -1656,7 +1818,7 @@ const SalesInvoice = () => {
                 }
             }
             if (stockIssues.length > 0) {
-                alert(`Insufficient stock for the following items:\n\n${stockIssues.join('\n')}\n\nPlease adjust quantities or disable stock check in Sales Settings.`);
+                alert(`Insufficient stock for the following items:\n\n${stockIssues.join('\n')}\n\nPlease adjust quantities or disable stock check in Configure & customize.`);
                 return;
             }
         }
@@ -1672,6 +1834,7 @@ const SalesInvoice = () => {
         try {
             const savedInvoice = await saveSalesInvoice(payload);
             setInvoiceId(savedInvoice.id);
+            setInvoiceNo(savedInvoice.invoiceNumber || invoiceNo);
             setStatus(savedInvoice.status);
             if (Array.isArray(savedInvoice.items)) {
                 setItems(savedInvoice.items.map((i, index) => mapServerInvoiceItem(i, Date.now() + index)));
@@ -1745,6 +1908,7 @@ const SalesInvoice = () => {
         setLinkedDN(invoice.linkedDeliveryNote || '');
         setLinkedPI(invoice.linkedProforma || '');
         setLinkedQuotation(invoice.linkedQuotation || '');
+        setVatMode(invoice.vatMode === 'INCLUSIVE' ? 'INCLUSIVE' : 'EXCLUSIVE');
 
         setPaymentMode(invoice.paymentMode || 'Cash');
         setPaymentTerms(invoice.paymentTerms || 'Immediate');
@@ -1844,6 +2008,167 @@ const SalesInvoice = () => {
     // ✅ PRINT FUNCTIONALITY
     const [isPrinting, setIsPrinting] = useState(false);
 
+    // ------------------------------------------------------------------
+    // QA-038: Receipts history modal — opened from the invoice list row
+    // action. Fetches every receipt tied to this sales invoice from both
+    // sources (sales payments by invoice number, financials receipt vouchers
+    // by salesInvoiceId) and normalizes into a single list. Each row prints
+    // a Receipt Voucher via the existing print template engine, with field
+    // mapping aligned to the receipt voucher layout.
+    // ------------------------------------------------------------------
+    const handleViewReceipts = async (invoice) => {
+        if (!invoice) return;
+        setReceiptsInvoiceContext(invoice);
+        setReceiptsForInvoice([]);
+        setIsReceiptsModalOpen(true);
+        setReceiptsLoading(true);
+        try {
+            const [salesPayments, allReceiptVouchers] = await Promise.all([
+                getSalesPaymentsByInvoice(invoice.invoiceNumber).catch(() => []),
+                receiptVoucherApi.getAll().catch(() => [])
+            ]);
+
+            const paymentRows = (salesPayments || []).map((p) => ({
+                key: `sp-${p.id}`,
+                dbId: p.id,
+                source: 'SALES_PAYMENT',
+                sourceLabel: 'Sales Payment',
+                receiptNumber: p.paymentNumber || `RV-SP-${p.id}`,
+                date: p.paymentDate,
+                customerName: p.customerName || invoice.customerName,
+                amount: Number(p.amount || 0),
+                mode: p.paymentMode || 'Cash',
+                reference: p.referenceNumber || '',
+                bankName: p.bankName || '',
+                status: p.status || 'Completed',
+                notes: p.notes || '',
+                raw: p
+            }));
+
+            const rvRows = (allReceiptVouchers || [])
+                .filter((rv) => Number(rv.salesInvoiceId) === Number(invoice.id))
+                .map((rv) => ({
+                    key: `rv-${rv.id}`,
+                    dbId: rv.id,
+                    source: 'RECEIPT_VOUCHER',
+                    sourceLabel: 'Receipt Voucher',
+                    receiptNumber: rv.voucherId || `RV-${rv.id}`,
+                    date: rv.date,
+                    customerName: rv.memberName || invoice.customerName,
+                    amount: Number(rv.amount || 0),
+                    mode: rv.paymentMode || 'Cash',
+                    reference: rv.reference || '',
+                    bankName: '',
+                    status: rv.status || 'Completed',
+                    notes: rv.notes || '',
+                    purpose: rv.purpose,
+                    raw: rv
+                }));
+
+            const merged = [...paymentRows, ...rvRows].sort((a, b) => {
+                const da = a.date ? new Date(a.date).getTime() : 0;
+                const db = b.date ? new Date(b.date).getTime() : 0;
+                return db - da;
+            });
+            setReceiptsForInvoice(merged);
+        } catch (err) {
+            console.error('Failed to load receipts for invoice', err);
+        } finally {
+            setReceiptsLoading(false);
+        }
+    };
+
+    const buildReceiptVoucherPrintData = (receipt, invoice) => {
+        // Map a normalized receipt row → print data shape understood by
+        // generatePrintHtml. We reuse the Sales Invoice template renderer
+        // (there is no dedicated "Receipt Voucher" template category yet)
+        // but override the title and item-row content so the printed output
+        // reads as a Receipt Voucher.
+        const amount = Number(receipt.amount) || 0;
+        const currencyCode = company?.currencySymbol || company?.currency || 'AED';
+        return {
+            title: 'RECEIPT VOUCHER',
+            docNo: receipt.receiptNumber,
+            date: receipt.date,
+            customer: {
+                name: receipt.customerName || invoice?.customerName || '',
+                address: invoice?.customerAddress || '',
+                trn: invoice?.customerTrn || '',
+                phone: invoice?.customerPhone || ''
+            },
+            items: [{
+                name: 'Receipt Against Invoice',
+                description: {
+                    title: 'Receipt Against Invoice',
+                    details: [
+                        `Invoice: ${invoice?.invoiceNumber || '—'}`,
+                        `Mode: ${receipt.mode || 'Cash'}`,
+                        receipt.reference ? `Ref: ${receipt.reference}` : null,
+                        receipt.bankName ? `Bank: ${receipt.bankName}` : null,
+                        receipt.purpose ? `Purpose: ${receipt.purpose}` : null
+                    ].filter(Boolean)
+                },
+                unit: '',
+                qty: 1,
+                price: amount,
+                taxableAmount: amount,
+                taxAmt: 0,
+                taxPercent: 0,
+                total: amount
+            }],
+            totals: {
+                subTotal: amount,
+                tax: 0,
+                grandTotal: amount,
+                currency: currencyCode,
+                billDiscount: 0,
+                billDiscountAmount: 0
+            },
+            summaryAmount: {
+                label: 'Amount Received',
+                value: amount,
+                currency: currencyCode
+            },
+            meta: {
+                status: receipt.status || 'Completed',
+                paymentMode: receipt.mode || '',
+                reference: receipt.reference || '',
+                notes: receipt.notes || ''
+            }
+        };
+    };
+
+    const handlePrintReceipt = async (receipt) => {
+        try {
+            const templates = await getTemplatesByCategory('Sales Invoice');
+            const defaultTemplate = (templates && templates.find((t) => t.isDefault)) || (templates && templates[0]) || {
+                category: 'Sales Invoice',
+                paperSize: 'A4',
+                orientation: 'Portrait',
+                headerContent: '',
+                footerContent: '',
+                termsContent: '',
+                displayOptions: { showLogo: true, showCompanyDetails: true, showCustomerDetails: true, showTerms: false, showItemImage: false },
+                columns: { qty: false, unitPrice: false, taxableAmount: false, tax: false, discount: false, total: true }
+            };
+
+            const printData = buildReceiptVoucherPrintData(receipt, receiptsInvoiceContext);
+            const html = generatePrintHtml(defaultTemplate, printData, { companyProfile: company, billBullLogo });
+
+            const title = generateDocFilename(
+                'Receipt Voucher',
+                receipt.receiptNumber,
+                receipt.customerName || receiptsInvoiceContext?.customerName || '',
+                receipt.date,
+                company?.currencySymbol || company?.currency || ''
+            );
+            const titledHtml = html.replace(/<title>.*?<\/title>/i, `<title>${title}</title>`);
+            printHtml(titledHtml);
+        } catch (err) {
+            console.error('Failed to print receipt voucher', err);
+        }
+    };
+
     const handlePrintClick = async (invoice = null) => {
         const isListView = invoice && invoice.invoiceNumber;
         const dataToPrint = isListView ? invoice : {
@@ -1900,6 +2225,7 @@ const SalesInvoice = () => {
                         desc: i.description || i.shortDescription || i.desc || '',
                         sku: i.sku || i.productSku || '',
                         brand: i.brand || i.brandName || '',
+                        shortDesc: i.shortDesc || '',
                         detailedDesc: i.detailedDesc || '',
                     localName: i.localName || i.productLocalName || '',
                         barcode: i.barcode || i.itemBarcode || '',
@@ -1914,9 +2240,16 @@ const SalesInvoice = () => {
                         total: Number(i.netAmount || i.net),
                         image: i.image || i.imageUrl ? getImageUrl(i.image || i.imageUrl) : '',
                         batchSelections: Array.isArray(i.batchSelections) ? i.batchSelections : [],
+                        // QA-030: provide both joined (legacy) and singular
+                        // (renderer-compatible) batchNumber fields so the
+                        // Batch # line / column shows on the print.
+                        batchNumber: Array.isArray(i.batchSelections)
+                            ? i.batchSelections.map(batch => batch.batchNumber).filter(Boolean).join(', ')
+                            : (i.batchNumber || ''),
                         batchNumbers: Array.isArray(i.batchSelections)
                             ? i.batchSelections.map(batch => batch.batchNumber).filter(Boolean).join(', ')
-                            : ''
+                            : '',
+                        expiry: i.expiry || i.expiryDate || ''
                     })),
                     totals: {
                         subTotal: resolvedSummary.subTotal,
@@ -1929,7 +2262,12 @@ const SalesInvoice = () => {
                     meta: {
                         status: dataToPrint.status,
                         paymentTerm: dataToPrint.paymentTerms,
-                        reference: `SO: ${dataToPrint.linkedSalesOrder || '-'} | DN: ${dataToPrint.linkedDeliveryNote || '-'}`,
+                        // QA-031: explicit source-doc cross-references — each
+                        // renders as its own labeled row when the template
+                        // toggle is on.
+                        linkedQuotation: dataToPrint.linkedQuotation || '',
+                        linkedSalesOrder: dataToPrint.linkedSalesOrder || '',
+                        linkedDeliveryNote: dataToPrint.linkedDeliveryNote || '',
                         location: dataToPrint.branch || '',
                         salesPerson: dataToPrint.salesperson || '',
                         notes: dataToPrint.notes || ''
@@ -1998,7 +2336,7 @@ const SalesInvoice = () => {
                         {inv.invoiceNumber}
                         {renderTypeBadge(inv.salesType)}
                     </h4>
-                    <div className="text-xs text-slate-500">{inv.invoiceDate}</div>
+                    <div className="text-xs text-slate-500">{formatDisplayDate(inv.invoiceDate)}</div>
                 </div>
                 {renderListStatus(inv.status)}
             </div>
@@ -2027,12 +2365,14 @@ const SalesInvoice = () => {
             {/* ✅ PRODUCT SELECTOR MODAL */}
             <ProductSelector
                 isOpen={isProductSelectorOpen}
-                onClose={() => setIsProductSelectorOpen(false)}
+                onClose={() => { setIsProductSelectorOpen(false); setPendingFastEntryRowId(null); }}
                 onSelect={handleAddSingleProduct}
                 onInlineAdd={handleFastEntryAdd}
+                initialSearch={pendingFastEntrySearch}
                 title="Select Items from Products / Services"
                 actionLabel="Add to Invoice"
                 mode="sales"
+                salesItemPricePolicy={salesSettings?.salesItemPricePolicy}
             />
 
             {/* ✅ STOCK AVAILABILITY MODAL */}
@@ -2197,8 +2537,17 @@ const SalesInvoice = () => {
                                 {activeTab === 'list' && (
                                     <>
                                         <ExportDropdown
-                                            onExportExcel={() => exportToExcel(filteredInvoices, SALES_INVOICE_COLUMNS, 'Sales_Invoices')}
-                                            onExportPdf={() => exportToPDF(filteredInvoices, SALES_INVOICE_COLUMNS, 'Sales Invoices', 'Sales_Invoices')}
+                                            onExportExcel={() => exportToExcel(
+                                                filteredInvoices.map((inv, index) => ({ ...inv, sNo: index + 1 })),
+                                                SALES_INVOICE_COLUMNS,
+                                                'Sales_Invoices'
+                                            )}
+                                            onExportPdf={() => exportToPDF(
+                                                filteredInvoices.map((inv, index) => ({ ...inv, sNo: index + 1 })),
+                                                SALES_INVOICE_COLUMNS,
+                                                'Sales Invoices',
+                                                'Sales_Invoices'
+                                            )}
                                         />
                                         <button
                                             onClick={() => handleCreateNew('STANDARD_FLOW')}
@@ -2267,6 +2616,7 @@ const SalesInvoice = () => {
                                 <table className="w-full text-xs text-left">
                                     <thead className="bg-[#F7F7FA] text-slate-500 font-semibold border-b border-slate-200">
                                         <tr>
+                                            <th className="px-4 py-3 text-center text-slate-500 w-16 select-none">S.No.</th>
                                             <th className="px-4 py-3 cursor-pointer hover:bg-slate-100 select-none" onClick={() => handleSort('invoiceNumber')}>
                                                 <div className="flex items-center gap-1">Invoice No {sortConfig.key === 'invoiceNumber' && (sortConfig.direction === 'asc' ? <ArrowUp size={12} /> : <ArrowDown size={12} />)}</div>
                                             </th>
@@ -2292,15 +2642,18 @@ const SalesInvoice = () => {
                                         </tr>
                                     </thead>
                                     <tbody className="divide-y divide-slate-100">
-                                        {filteredInvoices.map((inv) => (
+                                        {filteredInvoices.map((inv, index) => (
                                             <tr key={inv.id} className="hover:bg-slate-50 cursor-pointer group" onClick={() => handleLoadInvoice(inv)}>
+                                                <td className="px-4 py-3 text-center text-slate-400 font-mono font-medium">
+                                                    {index + 1}
+                                                </td>
                                                 <td className="px-4 py-3 font-medium text-slate-700">
                                                     <div className="flex items-center">
                                                         {inv.invoiceNumber}
                                                         {renderTypeBadge(inv.salesType)}
                                                     </div>
                                                 </td>
-                                                <td className="px-4 py-3 text-slate-500">{inv.invoiceDate}</td>
+                                                <td className="px-4 py-3 text-slate-500">{formatDisplayDate(inv.invoiceDate)}</td>
                                                 <td className="px-4 py-3">
                                                     <div className="font-medium text-slate-700">{inv.customerName}</div>
                                                     <div className="text-[10px] text-slate-400">{inv.customerCode}</div>
@@ -2333,6 +2686,11 @@ const SalesInvoice = () => {
                                                         <button onClick={() => handleLoadInvoice(inv)} className="p-1 hover:bg-slate-200 rounded text-slate-500"><Edit size={14} /></button>
                                                         <button onClick={() => handlePrintClick(inv)} disabled={isPrinting} className="p-1 hover:bg-slate-200 rounded text-slate-500 disabled:opacity-50"><Printer size={14} /></button>
                                                         <button
+                                                            onClick={() => handleViewReceipts(inv)}
+                                                            className="p-1 hover:bg-indigo-100 rounded text-indigo-600"
+                                                            title="Receipts"
+                                                        ><Receipt size={14} /></button>
+                                                        <button
                                                             onClick={() => {
                                                                 handleLoadInvoice(inv);
                                                                 const bal = inv.balance != null ? inv.balance : Math.max((inv.netTotal || 0) - (inv.amountPaid || 0), 0);
@@ -2349,7 +2707,7 @@ const SalesInvoice = () => {
                                         ))}
                                         {filteredInvoices.length === 0 && (
                                             <tr>
-                                                <td colSpan="10" className="text-center py-8 text-slate-400">No Invoices found.</td>
+                                                <td colSpan="11" className="text-center py-8 text-slate-400">No Invoices found.</td>
                                             </tr>
                                         )}
                                     </tbody>
@@ -2365,6 +2723,14 @@ const SalesInvoice = () => {
                                     <div className="text-center py-8 text-slate-400 italic">No Invoices found.</div>
                                 )}
                             </div>
+                            <PaginationFooter
+                                page={listPageMeta.page}
+                                size={listPageMeta.size}
+                                totalElements={listPageMeta.totalElements}
+                                totalPages={listPageMeta.totalPages}
+                                loading={isListLoading}
+                                onPageChange={setListPage}
+                            />
                         </div>
                     )}
 
@@ -2453,7 +2819,14 @@ const SalesInvoice = () => {
 
                                             <div>
                                                 <label className="block text-xs font-bold text-slate-700 mb-1">Invoice Number</label>
-                                                <input type="text" value={invoiceNo} readOnly className="w-full text-xs p-2 bg-slate-50 border border-slate-200 rounded text-slate-700 font-bold" />
+                                                <input
+                                                    type="text"
+                                                    value={invoiceNo}
+                                                    onChange={e => setInvoiceNo(e.target.value)}
+                                                    readOnly={isReadOnlyInvoice || invoiceAutoNumbering}
+                                                    placeholder={invoiceAutoNumbering ? 'Auto generated' : 'Enter invoice number'}
+                                                    className="w-full text-xs p-2 border border-slate-200 rounded text-slate-700 font-bold read-only:bg-slate-50 read-only:text-slate-500 focus:border-[#F5C742] outline-none"
+                                                />
                                             </div>
 
                                             <div>
@@ -2575,6 +2948,7 @@ const SalesInvoice = () => {
                                     <CustomerShippingPanel
                                         selectedCustomer={selectedCustomer}
                                         onOpenCustomerSearch={() => { if (!isGeneratedFromDN && !isReadOnlyInvoice) setIsCustomerSearchOpen(true); }}
+                                        onCustomerUpdated={setSelectedCustomer}
                                         shippingAddress={shippingAddress}
                                         onShippingChange={setShippingAddress}
                                         isReadOnly={isReadOnlyInvoice}
@@ -2627,8 +3001,27 @@ const SalesInvoice = () => {
                                     {/* 4. INVOICE ITEMS */}
                                     <div className="bg-white p-5 rounded-lg border border-slate-200 shadow-sm">
                                         <div className="flex justify-between items-center mb-2">
-                                            <h3 className="text-[13px] font-bold text-slate-700">Invoice Items {isGeneratedFromDN && <span className="ml-2 text-[10px] bg-purple-100 text-purple-700 px-2 py-0.5 rounded font-medium border border-purple-200">Generated from DNs</span>}</h3>
+                                            <h3 className="text-[13px] font-bold text-slate-700 flex items-center gap-2">Invoice Items {isGeneratedFromDN && <span className="ml-2 text-[10px] bg-purple-100 text-purple-700 px-2 py-0.5 rounded font-medium border border-purple-200">Generated from DNs</span>}
+                                                <span className="inline-flex items-center gap-1 text-[10px] bg-blue-50 text-blue-700 px-2 py-0.5 rounded-full font-medium border border-blue-200"><Zap size={10} /> Fast Entry</span>
+                                            </h3>
                                             <div className="flex items-center gap-2">
+                                                {/* VAT mode toggle — drives line tax math. */}
+                                                <div className="inline-flex rounded-md border border-slate-200 overflow-hidden text-[11px] font-semibold">
+                                                    <button
+                                                        type="button"
+                                                        disabled={isReadOnlyInvoice}
+                                                        onClick={() => setVatMode('EXCLUSIVE')}
+                                                        className={`px-2.5 py-1 transition-colors ${vatMode === 'EXCLUSIVE' ? 'bg-yellow-400 text-slate-900' : 'bg-white text-slate-500 hover:bg-slate-50'}`}
+                                                        title="Prices entered exclude VAT — tax added on top"
+                                                    >VAT Excl.</button>
+                                                    <button
+                                                        type="button"
+                                                        disabled={isReadOnlyInvoice}
+                                                        onClick={() => setVatMode('INCLUSIVE')}
+                                                        className={`px-2.5 py-1 border-l border-slate-200 transition-colors ${vatMode === 'INCLUSIVE' ? 'bg-yellow-400 text-slate-900' : 'bg-white text-slate-500 hover:bg-slate-50'}`}
+                                                        title="Prices entered already include VAT — tax extracted out"
+                                                    >VAT Incl.</button>
+                                                </div>
                                                 {/* ✅ SELECT FROM CATALOG BUTTON */}
                                                 {!isGeneratedFromDN && !isReadOnlyInvoice && (
                                                     <>
@@ -2676,6 +3069,26 @@ const SalesInvoice = () => {
                                                                     {/* Item / Description */}
                                                                     <td className="px-3 py-2">
 
+                                                                        {/* QA-FAST-ENTRY: empty rows show inline product-search input */}
+                                                                        {(!item.code && !item.name && !item.desc) ? (
+                                                                            <InlineProductSearchCell
+                                                                                value={pendingFastEntryRowId === item.id ? pendingFastEntrySearch : ''}
+                                                                                inputRef={(el) => {
+                                                                                    if (el) inlineSearchRefs.current[item.id] = el;
+                                                                                    else delete inlineSearchRefs.current[item.id];
+                                                                                }}
+                                                                                isReadOnly={isReadOnlyInvoice || isGeneratedFromDN}
+                                                                                onChange={(text) => {
+                                                                                    setPendingFastEntryRowId(item.id);
+                                                                                    setPendingFastEntrySearch(text);
+                                                                                }}
+                                                                                onOpenSelector={(text) => {
+                                                                                    setPendingFastEntryRowId(item.id);
+                                                                                    setPendingFastEntrySearch(text);
+                                                                                    setIsProductSelectorOpen(true);
+                                                                                }}
+                                                                            />
+                                                                        ) : (
                                                                         <ItemDescriptionCell
                                                                             item={item}
                                                                             isExpanded={expandedRows[item.id]}
@@ -2691,6 +3104,7 @@ const SalesInvoice = () => {
                                                                             isReadOnly={isReadOnlyInvoice}
                                                                             page="salesInvoice"
                                                                         />
+                                                                        )}
                                                                         {item.batchControlled && (
                                                                             <button
                                                                                 type="button"
@@ -2758,6 +3172,12 @@ const SalesInvoice = () => {
                                                                             className={`w-full bg-transparent border-b border-transparent hover:border-slate-200 focus:border-yellow-400/50 text-center outline-none font-semibold text-xs transition-colors py-1 ${(isGeneratedFromDN || isReadOnlyInvoice) ? 'text-slate-400 cursor-not-allowed' : 'text-slate-700'}`}
                                                                             value={item.qty === 0 ? '' : item.qty}
                                                                             onChange={(e) => handleItemChange(item.id, 'qty', e.target.value)}
+                                                                            onKeyDown={(e) => {
+                                                                                if (e.key === 'Tab' && !e.shiftKey) {
+                                                                                    const priceEl = document.getElementById(`price-${item.id}`);
+                                                                                    if (priceEl) { e.preventDefault(); priceEl.focus(); priceEl.select?.(); }
+                                                                                }
+                                                                            }}
                                                                             placeholder="0"
                                                                         />
 
@@ -2809,10 +3229,19 @@ const SalesInvoice = () => {
 
                                                                         <input
                                                                             disabled={isGeneratedFromDN || isReadOnlyInvoice}
+                                                                            id={`price-${item.id}`}
                                                                             type="number"
                                                                             className={`w-full text-right bg-transparent border-b border-transparent hover:border-slate-200 focus:border-yellow-400/50 outline-none font-semibold text-xs transition-colors py-1 ${(isGeneratedFromDN || isReadOnlyInvoice) ? 'text-slate-400 cursor-not-allowed' : 'text-slate-700'}`}
                                                                             value={item.price === 0 ? '' : item.price}
                                                                             onChange={(e) => handleItemChange(item.id, 'price', e.target.value)}
+                                                                            onKeyDown={(e) => {
+                                                                                if (e.key === 'Tab' && !e.shiftKey && !isReadOnlyInvoice && !isGeneratedFromDN) {
+                                                                                    e.preventDefault();
+                                                                                    const newRow = createBlankInvoiceItem();
+                                                                                    focusNextInlineSearchRef.current = newRow.id;
+                                                                                    setItems(prev => [...prev, newRow]);
+                                                                                }
+                                                                            }}
                                                                             placeholder="0.00"
                                                                         />
 
@@ -2888,6 +3317,20 @@ const SalesInvoice = () => {
                                                     </tbody>
                                                 </table>
                                             </div>
+                                            {/* QA-FAST-ENTRY: Quick Entry hint bar */}
+                                            <div className="mt-2 px-3 py-2 bg-blue-50/30 border border-blue-100/60 rounded-md flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-slate-500">
+                                                <span className="inline-flex items-center gap-1 text-blue-600 font-semibold"><Zap size={11} /> Quick Entry:</span>
+                                                <span>Type name →</span>
+                                                <kbd className="px-1.5 py-0.5 bg-white border border-slate-200 rounded text-[10px] font-mono text-slate-600">Enter</kbd>
+                                                <span>Select →</span>
+                                                <kbd className="px-1.5 py-0.5 bg-white border border-slate-200 rounded text-[10px] font-mono text-slate-600">Tab</kbd>
+                                                <span>Qty →</span>
+                                                <kbd className="px-1.5 py-0.5 bg-white border border-slate-200 rounded text-[10px] font-mono text-slate-600">Tab</kbd>
+                                                <span>Price →</span>
+                                                <kbd className="px-1.5 py-0.5 bg-white border border-slate-200 rounded text-[10px] font-mono text-slate-600">Tab</kbd>
+                                                <span>New row</span>
+                                                <span className="ml-auto text-slate-400">Tip: Use ↑↓ arrows to navigate items</span>
+                                            </div>
                                         </div>
                                     </div>
 
@@ -2953,6 +3396,17 @@ const SalesInvoice = () => {
                                                     <span>This Invoice Amount</span>
                                                     <CurrencyAmount value={netTotal} currency={invoiceCurrency} />
                                                 </div>
+
+                                                {/* QA-032: show the SO advance brought into this invoice so it's
+                                                    obvious where the pre-filled payment came from. */}
+                                                {carriedSoAdvance > 0 && (
+                                                    <div className="flex justify-between text-xs text-emerald-700 bg-emerald-50 border border-emerald-100 rounded px-2 py-1">
+                                                        <span title="Advance already received against the linked Sales Order">
+                                                            Advance from SO {linkedSO ? `(${linkedSO})` : ''}
+                                                        </span>
+                                                        <CurrencyAmount value={carriedSoAdvance} currency={invoiceCurrency} />
+                                                    </div>
+                                                )}
 
                                                 <div className="flex items-center gap-1 text-xs text-emerald-600 font-medium">
                                                     <span>- <CurrencySymbol currency={invoiceCurrency} /></span>
@@ -3067,6 +3521,149 @@ const SalesInvoice = () => {
                     )}
                 </div>
             </main >
+
+            {/* QA-038: RECEIPTS HISTORY MODAL */}
+            {isReceiptsModalOpen && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-[1px]">
+                    <div className="bg-white w-[820px] max-w-[95vw] max-h-[90vh] rounded-lg shadow-2xl overflow-hidden animate-in zoom-in-95 duration-200 flex flex-col">
+                        <div className="px-6 py-4 border-b border-slate-100 flex justify-between items-start">
+                            <div>
+                                <h3 className="text-lg font-bold text-slate-800 flex items-center gap-2">
+                                    <Receipt size={18} className="text-indigo-600" /> Receipts History
+                                </h3>
+                                <p className="text-xs text-slate-500 mt-1">
+                                    All receipts recorded against invoice{' '}
+                                    <span className="font-bold text-slate-700">{receiptsInvoiceContext?.invoiceNumber}</span>
+                                    {receiptsInvoiceContext?.customerName ? ` — ${receiptsInvoiceContext.customerName}` : ''}
+                                </p>
+                            </div>
+                            <button onClick={() => setIsReceiptsModalOpen(false)} className="text-slate-400 hover:text-slate-600">
+                                <X size={20} />
+                            </button>
+                        </div>
+
+                        <div className="px-6 py-3 grid grid-cols-3 gap-4 bg-slate-50 border-b border-slate-100">
+                            <div className="text-xs">
+                                <p className="text-[10px] font-bold uppercase text-slate-400">Invoice Total</p>
+                                <p className="font-bold text-slate-700">
+                                    <CurrencyAmount value={receiptsInvoiceContext?.invoiceTotal || 0} currency={invoiceCurrency} />
+                                </p>
+                            </div>
+                            <div className="text-xs">
+                                <p className="text-[10px] font-bold uppercase text-slate-400">Receipts Total</p>
+                                <p className="font-bold text-emerald-600">
+                                    <CurrencyAmount
+                                        value={receiptsForInvoice.reduce((s, r) => s + Number(r.amount || 0), 0)}
+                                        currency={invoiceCurrency}
+                                    />
+                                </p>
+                            </div>
+                            <div className="text-xs">
+                                <p className="text-[10px] font-bold uppercase text-slate-400">Balance</p>
+                                <p className="font-bold text-red-500">
+                                    <CurrencyAmount
+                                        value={Math.max(
+                                            Number(receiptsInvoiceContext?.invoiceTotal || 0) -
+                                                receiptsForInvoice.reduce((s, r) => s + Number(r.amount || 0), 0),
+                                            0
+                                        )}
+                                        currency={invoiceCurrency}
+                                    />
+                                </p>
+                            </div>
+                        </div>
+
+                        <div className="flex-1 overflow-y-auto">
+                            <table className="w-full text-left text-xs">
+                                <thead className="bg-slate-50 text-slate-600 font-semibold border-b border-slate-200 sticky top-0">
+                                    <tr>
+                                        <th className="px-4 py-3">Receipt No</th>
+                                        <th className="px-4 py-3">Date</th>
+                                        <th className="px-4 py-3">Source</th>
+                                        <th className="px-4 py-3 text-right">Amount</th>
+                                        <th className="px-4 py-3">Mode</th>
+                                        <th className="px-4 py-3">Reference</th>
+                                        <th className="px-4 py-3">Status</th>
+                                        <th className="px-4 py-3 text-center">Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody className="divide-y divide-slate-100">
+                                    {receiptsLoading ? (
+                                        <tr>
+                                            <td colSpan="8" className="px-4 py-10 text-center text-slate-400 italic">
+                                                Loading receipts…
+                                            </td>
+                                        </tr>
+                                    ) : receiptsForInvoice.length === 0 ? (
+                                        <tr>
+                                            <td colSpan="8" className="px-4 py-10 text-center text-slate-400 italic">
+                                                No receipts recorded for this invoice yet.
+                                            </td>
+                                        </tr>
+                                    ) : (
+                                        receiptsForInvoice.map((r) => (
+                                            <tr key={r.key} className="hover:bg-slate-50">
+                                                <td className="px-4 py-3">
+                                                    <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-indigo-50 text-indigo-700 rounded border border-indigo-100 font-mono font-medium text-[10px]">
+                                                        <FileText size={10} /> {r.receiptNumber}
+                                                    </span>
+                                                </td>
+                                                <td className="px-4 py-3 text-slate-500">{r.date ? formatDisplayDate(r.date) : '—'}</td>
+                                                <td className="px-4 py-3">
+                                                    <span className={`px-2 py-0.5 rounded text-[10px] font-bold border w-fit ${
+                                                        r.source === 'SALES_PAYMENT'
+                                                            ? 'bg-emerald-50 text-emerald-700 border-emerald-100'
+                                                            : 'bg-indigo-50 text-indigo-700 border-indigo-100'
+                                                    }`}>
+                                                        {r.sourceLabel}
+                                                    </span>
+                                                </td>
+                                                <td className="px-4 py-3 text-right font-bold text-emerald-600">
+                                                    <CurrencyAmount value={r.amount} currency={invoiceCurrency} />
+                                                </td>
+                                                <td className="px-4 py-3 text-slate-600">{r.mode}</td>
+                                                <td className="px-4 py-3 text-slate-500">{r.reference || '—'}</td>
+                                                <td className="px-4 py-3">
+                                                    <span className="px-2 py-0.5 rounded-full text-[10px] font-bold border bg-emerald-50 text-emerald-700 border-emerald-100">
+                                                        {r.status}
+                                                    </span>
+                                                </td>
+                                                <td className="px-4 py-3 text-center">
+                                                    <div className="flex justify-center gap-1">
+                                                        <button
+                                                            onClick={() => handlePrintReceipt(r)}
+                                                            className="p-1.5 border border-slate-200 rounded hover:bg-slate-100 text-slate-500"
+                                                            title="Print Receipt Voucher"
+                                                        >
+                                                            <Printer size={14} />
+                                                        </button>
+                                                        <button
+                                                            onClick={() => handlePrintReceipt(r)}
+                                                            className="p-1.5 border border-slate-200 rounded hover:bg-slate-100 text-slate-500"
+                                                            title="Download (Save as PDF)"
+                                                        >
+                                                            <Download size={14} />
+                                                        </button>
+                                                    </div>
+                                                </td>
+                                            </tr>
+                                        ))
+                                    )}
+                                </tbody>
+                            </table>
+                        </div>
+
+                        <div className="px-6 py-3 bg-slate-50 border-t border-slate-100 flex justify-end">
+                            <button
+                                onClick={() => setIsReceiptsModalOpen(false)}
+                                className="px-4 py-2 bg-white border border-slate-200 rounded-md text-xs font-bold text-slate-600 hover:bg-slate-100"
+                            >
+                                Close
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
 
             {/* ✅ ADDED PAYMENT MODAL */}
             {

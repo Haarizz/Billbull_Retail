@@ -33,7 +33,8 @@ const DOC_NO_LABELS = {
     'Goods Receipt Note': 'GRN Number',
     'Purchase Invoice': 'Invoice Number',
     'Payment Voucher': 'Voucher Number',
-    'Pick List': 'Pick List Number'
+    'Pick List': 'Pick List Number',
+    'Receipt Voucher': 'Receipt Number'
 };
 
 const DOCUMENT_TITLE_LABELS = {
@@ -47,7 +48,8 @@ const DOCUMENT_TITLE_LABELS = {
     'Goods Receipt Note': 'Goods Receipt Note',
     'Purchase Invoice': 'Purchase Invoice',
     'Payment Voucher': 'Payment Voucher',
-    'Pick List': 'Pick List'
+    'Pick List': 'Pick List',
+    'Receipt Voucher': 'Receipt Voucher'
 };
 
 const PAPER_DIMENSIONS_MM = {
@@ -279,8 +281,9 @@ const normaliseItem = (item = {}) => {
         barcode: item.barcode || item.itemBarcode || '',
         brand: item.brand || item.brandName || item.brand_name || '',
         detailedDesc: item.detailedDesc || item.detailedDescription || item.detailed_desc || '',
+        shortDesc: item.shortDesc || item.shortDescription || item.short_desc || '',
         localName: item.localName || item.arabicName || '',
-        name: item.name || item.item || description.title || '-',
+        name: item.name || item.productName || item.item || description.title || '-',
         description,
         image: resolveDocumentImageUrl(item.image || item.imageUrl || ''),
         unit: item.unit || item.uom || '',
@@ -295,6 +298,11 @@ const normaliseItem = (item = {}) => {
         batchSelections: Array.isArray(item.batchSelections) ? item.batchSelections : [],
         batchNumber: item.batchNumber || '',
         expiry: item.expiry || item.expiryDate || '',
+        lpoQty: asNumber(item.lpoQty ?? item.lpo_qty ?? 0),
+        received: asNumber(item.received ?? item.receivedQty ?? item.received_qty ?? 0),
+        accepted: asNumber(item.accepted ?? item.acceptedQty ?? item.accepted_qty ?? 0),
+        receivedBy: item.receivedBy || item.received_by || '',
+        checkedBy: item.checkedBy || item.checked_by || '',
         total
     };
 };
@@ -312,18 +320,16 @@ const getColumnDefaults = (category, isPurchaseDocument) =>
 
 const createColumnModel = (rawColumns = {}) => {
     const c = rawColumns;
+    // QA-029: Product/Services cell stacks Item Code / SKU / Barcode / Brand /
+    // Batch # / Arabic Name based on the ITEM IDENTITY checkboxes (no separate
+    // columns for those). Discount % / Tax % render as standalone columns
+    // only when their "(separate column)" checkbox is toggled. The Taxable
+    // Amount cell shows an inline Discount sub-line when "Discount % (in
+    // Taxable Amount col)" is on.
     return [
         { key: 'index',         label: '#',                               align: 'center', width: '4%',  enabled: true },
-        { key: 'location',      label: 'Location',                        align: 'left',   width: '8%',  enabled: Boolean(c.location) },
-        { key: 'productId',     label: 'Item Code',                       align: 'left',   width: '9%',  enabled: Boolean(c.productId) },
-        { key: 'sku',           label: 'SKU',                             align: 'left',   width: '8%',  enabled: Boolean(c.sku) },
-        { key: 'barcode',       label: 'Barcode',                         align: 'left',   width: '12%', enabled: Boolean(c.barcode) },
-        { key: 'brand',         label: 'Brand',                           align: 'left',   width: '9%',  enabled: Boolean(c.brand) },
-        { key: 'detailedDesc',  label: 'Detailed Description',            align: 'left',   width: '18%', enabled: Boolean(c.detailedDesc) },
-        { key: 'arabicName',    label: 'Arabic Name',                     align: 'left',   width: '10%', enabled: Boolean(c.arabicName) },
         { key: 'description',   label: 'Product/Services',                align: 'left',   width: c.batchBarcode ? '16%' : '22%', enabled: true },
-        { key: 'details',       label: 'Description of Product/Services', align: 'left',   width: c.batchBarcode ? '14%' : '20%', enabled: c.description !== false },
-        { key: 'batchNumber',   label: 'Batch #',                         align: 'left',   width: '12%', enabled: Boolean(c.batchNumber) },
+        { key: 'details',       label: 'Description',                     align: 'left',   width: c.batchBarcode ? '14%' : '20%', enabled: c.description !== false },
         { key: 'batchBarcode',  label: 'Batch Barcode',                   align: 'center', width: '22%', enabled: Boolean(c.batchBarcode) },
         { key: 'expiry',        label: 'Expiry',                          align: 'center', width: '8%',  enabled: Boolean(c.expiry) },
         { key: 'qty',           label: 'Qty',                             align: 'right',  width: '6%',  enabled: c.qty !== false },
@@ -358,26 +364,76 @@ const buildItemDetailLines = (item) =>
         return true;
     });
 
-const buildDescriptionCell = (item, displayOptions = {}) => {
+// QA-029: Product/Services column shows the product identity stacked.
+// Each meta line (Item Code / SKU / Brand / Barcode / Batch # / Arabic Name)
+// only renders when the matching checkbox is enabled in the template
+// designer (printTemplateConfig column flags). The product name is always
+// shown — it's the column's headline.
+const buildDescriptionCell = (item, displayOptions = {}, columnOptions = {}) => {
     const showImage = displayOptions.showItemImage && item.image;
-    const metadataLines = [];
+    const productName = item.name && item.name !== '-' ? item.name : (item.description.title || '-');
+    const code = asText(item.code).trim();
+    const sku = asText(item.sku).trim();
+    const brand = asText(item.brand).trim();
+    const barcode = asText(item.barcode).trim();
+    const localName = asText(item.localName).trim();
+
+    const batchNumbers = [];
+    if (asText(item.batchNumber).trim()) batchNumbers.push(asText(item.batchNumber).trim());
+    if (Array.isArray(item.batchSelections)) {
+        for (const sel of item.batchSelections) {
+            const bn = asText(sel?.batchNumber).trim();
+            if (bn && !batchNumbers.includes(bn)) batchNumbers.push(bn);
+        }
+    }
+
+    const metaLines = [];
+    if (columnOptions.productId && code) metaLines.push(code);
+    if (columnOptions.sku && sku && sku.toLowerCase() !== code.toLowerCase()) metaLines.push(`SKU: ${sku}`);
+    if (columnOptions.brand && brand) metaLines.push(brand);
+    if (columnOptions.barcode && barcode) metaLines.push(`Barcode: ${barcode}`);
+    if (columnOptions.batchNumber && batchNumbers.length) metaLines.push(`Batch: ${batchNumbers.join(', ')}`);
+    if (columnOptions.arabicName && localName) metaLines.push(localName);
 
     return `
         <div class="description-wrap">
             ${showImage ? `<img src="${escapeHtml(item.image)}" class="item-thumb" alt="" />` : ''}
             <div class="description-copy">
-                <div class="description-title">${escapeHtml(item.description.title || item.name || '-')}</div>
-                ${metadataLines.map((line) => `<div class="description-line">${escapeHtml(line)}</div>`).join('')}
+                <div class="description-title">${escapeHtml(productName)}</div>
+                ${metaLines.map((line) => `<div class="description-meta">${escapeHtml(line)}</div>`).join('')}
             </div>
         </div>
     `;
 };
 
-const buildDetailsCell = (item) => {
-    const lines = buildItemDetailLines(item);
-    return lines.length > 0
-        ? lines.map((line) => `<div class="desc-detail-line">${escapeHtml(line)}</div>`).join('')
-        : '';
+// QA-029: Description column = short desc (italic bullet) + detailed desc
+// rendered line-by-line as bullets. The "Detailed Description" checkbox in
+// the template designer gates the detailed bullets; short desc always shows
+// when present.
+const buildDetailsCell = (item, columnOptions = {}) => {
+    const shortDesc = asText(item.shortDesc).trim();
+    const detailedDesc = asText(item.detailedDesc).trim();
+    const bullets = [];
+
+    if (shortDesc) {
+        bullets.push(`<li class="desc-bullet desc-bullet-short">${escapeHtml(shortDesc)}</li>`);
+    }
+    if (columnOptions.detailedDesc !== false && detailedDesc) {
+        detailedDesc
+            .split(/\r?\n/)
+            .map((line) => line.trim())
+            .filter(Boolean)
+            .forEach((line) => {
+                bullets.push(`<li class="desc-bullet">${escapeHtml(line)}</li>`);
+            });
+    }
+
+    if (bullets.length === 0) {
+        const lines = buildItemDetailLines(item);
+        lines.forEach((line) => bullets.push(`<li class="desc-bullet">${escapeHtml(line)}</li>`));
+    }
+
+    return bullets.length > 0 ? `<ul class="desc-bullets">${bullets.join('')}</ul>` : '';
 };
 
 const renderTableCell = (column, item, index, displayOptions = {}, columnOptions = {}) => {
@@ -385,9 +441,9 @@ const renderTableCell = (column, item, index, displayOptions = {}, columnOptions
         case 'index':
             return `<td class="table-cell cell-center cell-index">${index + 1}</td>`;
         case 'description':
-            return `<td class="table-cell cell-description">${buildDescriptionCell(item, displayOptions)}</td>`;
+            return `<td class="table-cell cell-description">${buildDescriptionCell(item, displayOptions, columnOptions)}</td>`;
         case 'details':
-            return `<td class="table-cell cell-details">${buildDetailsCell(item)}</td>`;
+            return `<td class="table-cell cell-details">${buildDetailsCell(item, columnOptions)}</td>`;
         case 'productId':
             return `<td class="table-cell cell-code">${escapeHtml(item.code || '-')}</td>`;
         case 'sku':
@@ -601,28 +657,53 @@ const buildPaymentCard = (layout) => {
     `;
 };
 
-const buildSummarySection = (layout) => {
+const buildSummarySection = (layout, renderTarget = 'print') => {
     const hasNotes = Boolean(layout.notes);
     const hasTerms = Boolean(layout.displayOptions.showTerms !== false && layout.terms);
     const totalsTable = buildTotalsTable(layout);
 
     if (!hasNotes && !hasTerms && !totalsTable) return '';
 
+    const notesHtml = `
+        ${hasNotes ? `
+            <div class="summary-label">Notes</div>
+            <div class="notes-copy">${escapeHtml(layout.notes)}</div>
+        ` : ''}
+        ${hasTerms ? `
+            <div class="summary-label${hasNotes ? ' summary-label-terms' : ''}">Terms &amp; Conditions</div>
+            <div class="notes-copy">${escapeHtml(layout.terms)}</div>
+        ` : ''}
+    `;
+
+    // QA-040: Email mirrors the Print layout — totals stacked on the
+    // right at the top, then Notes + Terms below on the left full-width.
+    // Two rows of a presentation table since Gmail/Outlook flatten any
+    // CSS flex/grid we'd otherwise use.
+    if (renderTarget === 'email') {
+        return `
+            <table class="summary-section-table" role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="border-collapse:collapse;margin-top:16px;">
+                ${totalsTable ? `
+                    <tr>
+                        <td align="right" style="text-align:right;padding-bottom:12px;">
+                            ${totalsTable}
+                        </td>
+                    </tr>
+                ` : ''}
+                ${(hasNotes || hasTerms) ? `
+                    <tr>
+                        <td align="left" style="text-align:left;padding-top:4px;">
+                            ${notesHtml}
+                        </td>
+                    </tr>
+                ` : ''}
+            </table>
+        `;
+    }
+
     return `
         <section class="summary-section">
             ${totalsTable ? `<div class="summary-totals">${totalsTable}</div>` : ''}
-            ${(hasNotes || hasTerms) ? `
-                <div class="summary-notes">
-                    ${hasNotes ? `
-                        <div class="summary-label">Notes</div>
-                        <div class="notes-copy">${escapeHtml(layout.notes)}</div>
-                    ` : ''}
-                    ${hasTerms ? `
-                        <div class="summary-label${hasNotes ? ' summary-label-terms' : ''}">Terms &amp; Conditions</div>
-                        <div class="notes-copy">${escapeHtml(layout.terms)}</div>
-                    ` : ''}
-                </div>
-            ` : ''}
+            ${(hasNotes || hasTerms) ? `<div class="summary-notes">${notesHtml}</div>` : ''}
         </section>
     `;
 };
@@ -717,7 +798,7 @@ const buildLogoBlock = (layout) => {
         `;
 };
 
-const buildHeader = (layout) => {
+const buildHeader = (layout, renderTarget = 'print') => {
     const visibleHeaderRows = (layout.headerRows || [])
         .filter((row) => !HIDDEN_HEADER_LABEL_PATTERNS.test(asText(row.label).trim()));
     const visibleReferenceRows = (layout.referenceRows || [])
@@ -750,53 +831,79 @@ const buildHeader = (layout) => {
         layout.company.website
     );
 
-    return `
-        <header class="document-header">
-            <div class="header-left">
-                <div class="document-title">${escapeHtml(layout.title)}</div>
+    const leftContent = `
+        <div class="document-title">${escapeHtml(layout.title)}</div>
 
-                ${layout.displayOptions.showCustomerDetails !== false && layout.party ? `
-                    <div class="bill-to-block">
-                        <div class="bill-to-eyebrow">${escapeHtml(layout.partyLabel)},</div>
-                        <div class="bill-to-name">${escapeHtml(layout.party.name || '')}</div>
-                        ${customerLines.map((line) => `<div class="bill-to-line">${escapeHtml(line)}</div>`).join('')}
-                    </div>
-                ` : ''}
-
-                ${leftMetaRows.length > 0 ? `
-                    <div class="left-meta-block">
-                        ${leftMetaRows.map((row) => `
-                            <div class="left-meta-item">
-                                <div class="left-meta-label">${escapeHtml(row.label)}</div>
-                                <div class="left-meta-value">${escapeHtml(row.value)}</div>
-                            </div>
-                        `).join('')}
-                    </div>
-                ` : ''}
+        ${layout.displayOptions.showCustomerDetails !== false && layout.party ? `
+            <div class="bill-to-block">
+                <div class="bill-to-eyebrow">${escapeHtml(layout.partyLabel)},</div>
+                <div class="bill-to-name">${escapeHtml(layout.party.name || '')}</div>
+                ${customerLines.map((line) => `<div class="bill-to-line">${escapeHtml(line)}</div>`).join('')}
             </div>
+        ` : ''}
 
-            <div class="header-center">
-                ${centerItems.map((item) => `
-                    <div class="doc-meta-item">
-                        <div class="doc-meta-label">${escapeHtml(item.label)}</div>
-                        <div class="doc-meta-value">${escapeHtml(item.value)}</div>
+        ${leftMetaRows.length > 0 ? `
+            <div class="left-meta-block">
+                ${leftMetaRows.map((row) => `
+                    <div class="left-meta-item">
+                        <div class="left-meta-label">${escapeHtml(row.label)}</div>
+                        <div class="left-meta-value">${escapeHtml(row.value)}</div>
                     </div>
                 `).join('')}
             </div>
+        ` : ''}
+    `;
 
-            <div class="header-right">
-                ${buildLogoBlock(layout)}
+    const centerContent = centerItems.map((item) => `
+        <div class="doc-meta-item">
+            <div class="doc-meta-label">${escapeHtml(item.label)}</div>
+            <div class="doc-meta-value">${escapeHtml(item.value)}</div>
+        </div>
+    `).join('');
 
-                ${layout.displayOptions.showCompanyDetails !== false ? `
-                    <div class="company-panel">
-                        <div class="company-name">${escapeHtml(layout.company.companyName || '')}</div>
-                        ${layout.company.localName && layout.company.localName !== layout.company.companyName
-                            ? `<div class="company-copy company-local-name">${escapeHtml(layout.company.localName)}</div>`
-                            : ''}
-                        ${companyLines.map((line) => `<div class="company-copy">${escapeHtml(line)}</div>`).join('')}
-                    </div>
-                ` : ''}
+    const rightContent = `
+        ${buildLogoBlock(layout)}
+
+        ${layout.displayOptions.showCompanyDetails !== false ? `
+            <div class="company-panel">
+                <div class="company-name">${escapeHtml(layout.company.companyName || '')}</div>
+                ${layout.company.localName && layout.company.localName !== layout.company.companyName
+                    ? `<div class="company-copy company-local-name">${escapeHtml(layout.company.localName)}</div>`
+                    : ''}
+                ${companyLines.map((line) => `<div class="company-copy">${escapeHtml(line)}</div>`).join('')}
             </div>
+        ` : ''}
+    `;
+
+    // QA-040: Email clients (Gmail in particular) don't support CSS Grid and
+    // have spotty Flexbox support — they reflow the three header columns
+    // vertically, which is why the recipient sees Bill-To then a blank
+    // middle then logo stacked instead of side-by-side. Emit a real
+    // <table>-based header for the email render target; print mode keeps
+    // the existing semantic <header> with grid styling.
+    if (renderTarget === 'email') {
+        return `
+            <table class="document-header-table" role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="border-collapse:collapse;margin-bottom:16px;">
+                <tr>
+                    <td valign="top" align="left" width="38%" style="vertical-align:top;padding-right:8px;">
+                        ${leftContent}
+                    </td>
+                    <td valign="top" align="right" width="32%" style="vertical-align:top;text-align:right;padding:0 8px;">
+                        ${centerContent}
+                    </td>
+                    <td valign="top" align="right" width="30%" style="vertical-align:top;text-align:right;padding-left:8px;">
+                        ${rightContent}
+                    </td>
+                </tr>
+            </table>
+        `;
+    }
+
+    return `
+        <header class="document-header">
+            <div class="header-left">${leftContent}</div>
+            <div class="header-center">${centerContent}</div>
+            <div class="header-right">${rightContent}</div>
         </header>
     `;
 };
@@ -1036,8 +1143,8 @@ const buildCoreStyles = () => `
         font-weight: 700;
         text-align: left;
         border-bottom: 1px solid #e0e0e0;
-        white-space: normal;
-        word-break: normal;
+        white-space: nowrap;
+        word-break: keep-all;
         overflow-wrap: normal;
     }
     .document-table thead th.cell-right {
@@ -1127,6 +1234,25 @@ const buildCoreStyles = () => `
     .desc-detail-line {
         color: #111827;
         margin-top: 1px;
+    }
+    .description-meta {
+        color: #6b7280;
+        font-size: 0.9em;
+        margin-top: 1px;
+    }
+    .desc-bullets {
+        margin: 0;
+        padding-left: 1.1em;
+        list-style: disc outside;
+    }
+    .desc-bullet {
+        color: #111827;
+        margin: 0 0 2px 0;
+        line-height: 1.35;
+    }
+    .desc-bullet-short {
+        color: #4b5563;
+        font-style: italic;
     }
     .summary-section {
         display: flex;
@@ -1431,17 +1557,56 @@ const buildPrintStyles = (paperSize = 'A4', orientation = 'Portrait') => {
     `;
 };
 
+// QA-040: email mode renders on a soft canvas with breathing room around the
+// content (mirrors the print preview's paper feel), but without a dark
+// outer border. Works equally well in Gmail's reading pane and in the
+// in-app preview iframe.
 const buildEmailStyles = () => `
     body {
-        background: #000000;
+        background: #f5f6f7;
         padding: 24px;
+        margin: 0;
     }
     .document-shell {
+        width: auto;
         max-width: 1000px;
         margin: 0 auto;
-        padding: 24px;
+        padding: 32px;
         border-radius: 8px;
         background: #ffffff;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+    }
+    /* Email clients ignore CSS Grid / Flex on these blocks — force block
+       layout so the right column stacks: logo on top, company address
+       lines below it (mirrors the print layout). */
+    .company-logo,
+    .company-panel,
+    .company-panel * {
+        display: block !important;
+    }
+    .company-logo {
+        text-align: right;
+        margin-left: auto;
+        margin-bottom: 8px;
+    }
+    .company-logo img {
+        display: inline-block !important;
+    }
+    .company-panel {
+        text-align: right;
+        max-width: 260px;
+        margin-left: auto;
+    }
+    /* Force the totals table to sit on the right inside its email cell
+       (juice inlines display:flex which Gmail flattens — without this
+       the totals would slide back to the left of the row). */
+    .totals-table {
+        margin-left: auto !important;
+        width: auto !important;
+    }
+    .totals-table td.tot-label,
+    .totals-table td.tot-amount {
+        padding: 4px 0 4px 16px !important;
     }
 `;
 
@@ -1607,10 +1772,23 @@ const normaliseGenericLayout = (template, data, companyProfile, renderTarget) =>
         billDiscountAmount: asNumber(data.totals?.billDiscountAmount ?? data.totals?.discountAmount)
     };
     const highlightValue = totals.balanceDue > 0 ? totals.balanceDue : totals.grandTotal;
+    // QA-031: pull each linked source-doc number out as its own labeled row
+    // (toggled per template). Fall back to data.meta.reference as a free-text
+    // catch-all when no individual links are passed.
+    const linkedQuotation = firstNonEmpty(data.meta?.linkedQuotation, data.meta?.quotationNo, data.meta?.quotationNumber);
+    const linkedSalesOrder = firstNonEmpty(data.meta?.linkedSalesOrder, data.meta?.salesOrderNo, data.meta?.salesOrderNumber);
+    const linkedSalesInvoice = firstNonEmpty(data.meta?.linkedSalesInvoice, data.meta?.salesInvoiceNo, data.meta?.salesInvoiceNumber, data.meta?.linkedInvoice);
+    const hasExplicitLinks = Boolean(linkedQuotation || linkedSalesOrder || linkedSalesInvoice);
+
     const referenceRows = [
         data.meta?.poNumber ? { label: 'P.O Number', value: data.meta.poNumber } : null,
         columnOptions.salesPerson && documentSalesPerson ? { label: 'Sales Person', value: documentSalesPerson } : null,
-        data.meta?.reference ? { label: 'Reference', value: data.meta.reference } : null,
+        columnOptions.quotationNo && linkedQuotation ? { label: 'Quotation No.', value: linkedQuotation } : null,
+        columnOptions.salesOrderNo && linkedSalesOrder ? { label: 'Sales Order No.', value: linkedSalesOrder } : null,
+        columnOptions.salesInvoiceNo && linkedSalesInvoice ? { label: 'Sales Invoice No.', value: linkedSalesInvoice } : null,
+        // Suppress the catch-all Reference row when explicit links rendered —
+        // avoids the duplicate "SO: X | PI: Y | SI: Z" string we used to jam in.
+        !hasExplicitLinks && data.meta?.reference ? { label: 'Reference', value: data.meta.reference } : null,
         columnOptions.location && documentLocation ? { label: 'Location / Branch', value: documentLocation } : null
     ].filter(Boolean);
 
@@ -1693,13 +1871,13 @@ const buildDocumentHtml = (template, data, options = {}, renderTarget = 'print')
         </head>
         <body>
             <div class="document-shell">
-                ${buildHeader(layout)}
+                ${buildHeader(layout, renderTarget)}
                 ${buildHeaderAddon(layout)}
                 ${buildGrandTotal(layout)}
                 <main class="content-stack">
                     ${buildPaymentCard(layout)}
                     ${buildItemsTable(layout)}
-                    ${buildSummarySection(layout)}
+                    ${buildSummarySection(layout, renderTarget)}
                     ${buildSignatureBlock(layout)}
                     ${buildStampBlock(layout, renderTarget)}
                     ${buildPrintDateStamp(layout, renderTarget)}

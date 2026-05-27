@@ -14,16 +14,19 @@ import {
   File, FileSpreadsheet, Truck, Undo2, CreditCard,
   Printer, Settings, FilePlus, Inbox, BookOpen,
   Receipt, PenTool, TrendingDown, Landmark, Percent,
-  PieChart, Users, Wallet, Banknote, ShieldCheck
+  PieChart, Users, Wallet, Banknote, ShieldCheck, Mail
 } from "lucide-react";
 import { hasRole, logout, getUsernameFromToken } from "../api/auth";
 import { usePermissions } from "../context/PermissionContext";
+import { useCompany } from "../context/CompanyContext";
+import { formatUserDisplayName } from "../utils/displayName";
 
 const Sidebar = ({ children }) => {
   // --- STATE ---
   const [collapsed, setCollapsed] = useState(false);
-  const username = getUsernameFromToken() || "BillBull Admin";
+  const username = formatUserDisplayName(getUsernameFromToken()) || "BillBull Admin";
   const { canView, canAction, permissionsLoaded } = usePermissions();
+  const { setCompany } = useCompany();
   const userEmail = "admin@billbull.app";
 
   const [mobileOpen, setMobileOpen] = useState(false);
@@ -148,8 +151,8 @@ const Sidebar = ({ children }) => {
         { path: "/sales/return",        label: "Sales Return",          module: "sales.invoice",  icon: <Undo2 size={14} /> },
         { path: "/sales/payment",       label: "Payments",              module: "sales.payment",  icon: <CreditCard size={14} /> },
         { path: "/sales/templates",     label: "Print & Email Templates",module: "sales.invoice",  icon: <Printer size={14} /> },
-        { path: "/sales/reports/summary",label: "Sales Summary Report", module: "sales.invoice",  icon: <PieChart size={14} /> },
-        { path: "/sales/settings",      label: "Sales Settings",        module: "sales.invoice",  icon: <Settings size={14} /> },
+        { path: "/sales/reports",        label: "Reports",              module: "sales.invoice",  icon: <PieChart size={14} /> },
+        { path: "/sales/settings",      label: "Configure & customize", module: "sales.invoice",  icon: <Settings size={14} /> },
       ],
     },
     {
@@ -185,12 +188,14 @@ const Sidebar = ({ children }) => {
       subItems: [
         { path: "/finance/ledger",          label: "Ledger",                    module: "finance.ledger",   icon: <BookOpen size={14} /> },
         { path: "/finance/receiptvoucher",  label: "Receipt Voucher",           module: "finance.voucher",  icon: <Receipt size={14} /> },
+        { path: "/finance/paymentvoucher",  label: "Payment Voucher",           module: "finance.voucher",  icon: <Wallet size={14} /> },
         { path: "/finance/journalvoucher",  label: "Journal Voucher",           module: "finance.voucher",  icon: <PenTool size={14} /> },
         { path: "/finance/expenses",        label: "Expenses",                  module: "finance.voucher",  icon: <TrendingDown size={14} /> },
         { path: "/finance/reconciliation",  label: "Bank Reconciliation",       module: "finance.reconcile",icon: <Landmark size={14} /> },
         { path: "/finance/tax",             label: "Tax Dashboard",             module: "finance.tax",      icon: <Percent size={14} /> },
         { path: "/finance/reports",         label: "Reports",                   module: "finance.tax",      icon: <PieChart size={14} /> },
         { path: "/finance/config",          label: "Chart of Accounts & Config",module: "finance.tax",      icon: <Settings size={14} /> },
+        { path: "/finance/templates",       label: "Print & Email Templates",   module: "finance.voucher",  icon: <Printer size={14} /> },
       ],
     },
     {
@@ -235,6 +240,7 @@ const Sidebar = ({ children }) => {
         { path: "/settings/company",   label: "Company Profile",    module: "userManagement.setup", icon: <Building2 size={14} /> },
         { path: "/settings/roles",     label: "User & Role Config", module: "userManagement.role",  icon: <ShieldCheck size={14} /> },
         { path: "/settings/branches",  label: "Branch Setup",       module: "userManagement.setup", icon: <Warehouse size={14} /> },
+        { path: "/settings/email",     label: "Email Settings",     module: "userManagement.setup", icon: <Mail size={14} /> },
       ],
     },
     {
@@ -795,7 +801,7 @@ const Sidebar = ({ children }) => {
             </div>
           </div>
 
-          <button className="logout-btn" onClick={() => { logout(); navigate("/login"); }}>
+          <button className="logout-btn" onClick={() => { logout(); setCompany(null); navigate("/login"); }}>
             <span style={{ display: 'flex' }}><FaSignOutAlt /></span>
             <span className="logout-text">Sign Out</span>
           </button>

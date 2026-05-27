@@ -25,6 +25,7 @@ import {
     Printer
 } from 'lucide-react';
 import { useCompany } from '../../../context/CompanyContext';
+import { formatDisplayDate } from '../../../utils/dateUtils';
 
 // Printing Utilities
 import { getTemplatesByCategory } from '../../../api/printTemplateApi';
@@ -38,6 +39,7 @@ import {
 } from '../../../utils/purchasePrintUtils';
 import { formatCurrencyDisplay } from '../../../utils/countryCurrencyOptions';
 import CurrencyAmount, { CurrencySymbol } from '../../../components/CurrencyAmount';
+import PaginationFooter from '../../../components/common/PaginationFooter';
 
 // ==========================================
 // API IMPORTS
@@ -137,7 +139,7 @@ const AuditModal = ({ isOpen, onClose, voucher, currency = 'AED' }) => {
                         <div className="flex-1 bg-white p-3 rounded border border-slate-200 shadow-sm">
                             <div className="text-[10px] text-slate-400 uppercase font-bold mb-1">Status</div>
                             <div className="font-bold text-slate-800 text-sm">{voucher.status}</div>
-                            <div className="text-[10px] text-slate-400">Date: {voucher.date}</div>
+                            <div className="text-[10px] text-slate-400">Date: {formatDisplayDate(voucher.date)}</div>
                         </div>
                     </div>
 
@@ -152,7 +154,7 @@ const AuditModal = ({ isOpen, onClose, voucher, currency = 'AED' }) => {
                                     </span>
                                     <span className="text-[10px] bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded">Audit</span>
                                 </div>
-                                <div className="text-[10px] text-slate-400 mt-1">System • {voucher.date}</div>
+                                <div className="text-[10px] text-slate-400 mt-1">System • {formatDisplayDate(voucher.date)}</div>
                             </div>
                         </div>
                     </div>
@@ -347,6 +349,9 @@ const PaymentVoucher = () => {
 
     // Data State
     const [vouchers, setVouchers] = useState([]);
+    // Client-side pagination over the active sub-list (mainList/pendingList/historyList).
+    const [listPage, setListPage] = useState(0);
+    const LIST_PAGE_SIZE = 30;
     const [purchaseInvoices, setPurchaseInvoices] = useState([]);
     const [vendors, setVendors] = useState([]);
     const [bankAccounts, setBankAccounts] = useState([]);
@@ -397,7 +402,7 @@ const PaymentVoucher = () => {
             const formatted = rawData.map(v => ({
                 dbId: v.id, // Actual Database ID for API calls
                 id: v.voucherNumber || `ID-${v.id}`, // Display ID (e.g., PV-1234)
-                date: new Date(v.paymentDate).toLocaleDateString('en-US', { month: 'short', day: '2-digit', year: 'numeric' }),
+                date: v.paymentDate,
                 vendor: v.vendorName,
                 vendorId: v.vendorId || "VND-EXT",
                 mode: formatModeString(v.paymentMode),
@@ -746,6 +751,23 @@ const PaymentVoucher = () => {
     const pendingList = vouchers.filter(v => v.rawStatus === 'PENDING_APPROVAL');
     const historyList = vouchers.filter(v => v.rawStatus === 'POSTED' || v.rawStatus === 'REJECTED' || v.rawStatus === 'CLEARED');
 
+    // Reset list page when switching tabs.
+    useEffect(() => { setListPage(0); }, [activeTab]);
+    const activeListForTab = activeTab === 'approval' ? pendingList
+        : activeTab === 'history' ? historyList : mainList;
+    const pagedMainList = useMemo(
+        () => mainList.slice(listPage * LIST_PAGE_SIZE, (listPage + 1) * LIST_PAGE_SIZE),
+        [mainList, listPage]
+    );
+    const pagedPendingList = useMemo(
+        () => pendingList.slice(listPage * LIST_PAGE_SIZE, (listPage + 1) * LIST_PAGE_SIZE),
+        [pendingList, listPage]
+    );
+    const pagedHistoryList = useMemo(
+        () => historyList.slice(listPage * LIST_PAGE_SIZE, (listPage + 1) * LIST_PAGE_SIZE),
+        [historyList, listPage]
+    );
+
     return (
         <div className="min-h-screen bg-[#F7F7FA] font-sans text-slate-900 flex flex-col p-6">
 
@@ -951,11 +973,11 @@ const PaymentVoucher = () => {
                                                                             : `#${inv.invoiceNumber}`}
                                                                     </td>
                                                                     <td className="px-4 py-3 text-slate-500 text-xs">
-                                                                        {inv.invoiceDate ? new Date(inv.invoiceDate).toLocaleDateString() : '-'}
+                                                                        {formatDisplayDate(inv.invoiceDate)}
                                                                     </td>
                                                                     <td className="px-4 py-3 text-xs">
                                                                         <span className={isOverdue ? 'text-red-500 font-bold' : 'text-slate-500'}>
-                                                                            {inv.dueDate ? new Date(inv.dueDate).toLocaleDateString() : 'N/A'}
+                                                                            {formatDisplayDate(inv.dueDate, 'N/A')}
                                                                         </span>
                                                                         {isOverdue && <span className="block text-[9px] text-red-400">Overdue</span>}
                                                                     </td>
@@ -1117,7 +1139,7 @@ const PaymentVoucher = () => {
                                                     </div>
                                                     <div className="flex justify-between items-center mt-1">
                                                         <p className="text-[10px] text-slate-500">{v.id} • {v.mode}</p>
-                                                        <p className="text-[10px] text-slate-400">{v.date}</p>
+                                                        <p className="text-[10px] text-slate-400">{formatDisplayDate(v.date)}</p>
                                                     </div>
                                                 </div>
                                             </div>
@@ -1149,6 +1171,7 @@ const PaymentVoucher = () => {
                                 <table className="w-full text-left text-xs">
                                     <thead className="bg-[#F9FAFB] text-slate-500 font-semibold border-b border-slate-200">
                                         <tr>
+                                            <th className="px-4 py-3 text-center text-slate-500 w-12 select-none uppercase font-medium">S.No.</th>
                                             <th className="px-4 py-3">Voucher No</th>
                                             <th className="px-4 py-3">Date</th>
                                             <th className="px-4 py-3">Vendor</th>
@@ -1163,11 +1186,12 @@ const PaymentVoucher = () => {
                                     </thead>
                                     <tbody className="divide-y divide-slate-100">
                                         {mainList.length === 0 ? (
-                                            <tr><td colSpan="10" className="p-6 text-center text-slate-400">No posted vouchers found.</td></tr>
-                                        ) : mainList.map((row) => (
+                                            <tr><td colSpan="11" className="p-6 text-center text-slate-400">No posted vouchers found.</td></tr>
+                                        ) : pagedMainList.map((row, index) => (
                                             <tr key={row.dbId} className="hover:bg-slate-50 group transition-colors">
+                                                <td className="px-4 py-3 text-center text-slate-400 font-mono font-medium">{index + 1}</td>
                                                 <td className="px-4 py-3 font-mono font-medium text-slate-700">{row.id}</td>
-                                                <td className="px-4 py-3 text-slate-500">{row.date}</td>
+                                                <td className="px-4 py-3 text-slate-500">{formatDisplayDate(row.date)}</td>
                                                 <td className="px-4 py-3">
                                                     <div className="font-medium text-slate-800">{row.vendor}</div>
                                                     <div className="text-[10px] text-slate-400">{row.vendorId}</div>
@@ -1198,6 +1222,13 @@ const PaymentVoucher = () => {
                                         ))}
                                     </tbody>
                                 </table>
+                                <PaginationFooter
+                                    page={listPage}
+                                    size={LIST_PAGE_SIZE}
+                                    totalElements={mainList.length}
+                                    totalPages={Math.ceil(mainList.length / LIST_PAGE_SIZE)}
+                                    onPageChange={setListPage}
+                                />
                             </div>
                         )}
                     </div>
@@ -1221,6 +1252,7 @@ const PaymentVoucher = () => {
                                 <table className="w-full text-left text-xs">
                                     <thead className="bg-[#F9FAFB] text-slate-500 font-semibold border-b border-slate-200">
                                         <tr>
+                                            <th className="px-4 py-3 text-center text-slate-500 w-12 select-none uppercase font-medium">S.No.</th>
                                             <th className="px-4 py-3">Voucher No</th>
                                             <th className="px-4 py-3">Date</th>
                                             <th className="px-4 py-3">Vendor</th>
@@ -1232,11 +1264,12 @@ const PaymentVoucher = () => {
                                     </thead>
                                     <tbody className="divide-y divide-slate-100">
                                         {pendingList.length === 0 ? (
-                                            <tr><td colSpan="7" className="px-4 py-12 text-center text-slate-400">No vouchers pending approval.</td></tr>
-                                        ) : pendingList.map((row) => (
+                                            <tr><td colSpan="8" className="px-4 py-12 text-center text-slate-400">No vouchers pending approval.</td></tr>
+                                        ) : pagedPendingList.map((row, index) => (
                                             <tr key={row.dbId} className="hover:bg-slate-50 group transition-colors">
+                                                <td className="px-4 py-3 text-center text-slate-400 font-mono font-medium">{index + 1}</td>
                                                 <td className="px-4 py-3 font-mono font-medium text-slate-700">{row.id}</td>
-                                                <td className="px-4 py-3 text-slate-500">{row.date}</td>
+                                                <td className="px-4 py-3 text-slate-500">{formatDisplayDate(row.date)}</td>
                                                 <td className="px-4 py-3">
                                                     <div className="font-medium text-slate-800">{row.vendor}</div>
                                                     <div className="text-[10px] text-slate-400">{row.vendorId}</div>
@@ -1270,6 +1303,13 @@ const PaymentVoucher = () => {
                                         ))}
                                     </tbody>
                                 </table>
+                                <PaginationFooter
+                                    page={listPage}
+                                    size={LIST_PAGE_SIZE}
+                                    totalElements={pendingList.length}
+                                    totalPages={Math.ceil(pendingList.length / LIST_PAGE_SIZE)}
+                                    onPageChange={setListPage}
+                                />
                             </div>
                         )}
                     </div>
@@ -1290,6 +1330,7 @@ const PaymentVoucher = () => {
                             <table className="w-full text-left text-xs">
                                 <thead className="bg-[#F9FAFB] text-slate-500 font-semibold border-b border-slate-200">
                                     <tr>
+                                        <th className="px-4 py-3 text-center text-slate-500 w-12 select-none uppercase font-medium">S.No.</th>
                                         <th className="px-4 py-3">Voucher No</th>
                                         <th className="px-4 py-3">Date</th>
                                         <th className="px-4 py-3">Vendor</th>
@@ -1301,11 +1342,12 @@ const PaymentVoucher = () => {
                                 </thead>
                                 <tbody className="divide-y divide-slate-100">
                                     {historyList.length === 0 ? (
-                                        <tr><td colSpan="7" className="p-6 text-center text-slate-400">No history found.</td></tr>
-                                    ) : historyList.map((row) => (
+                                        <tr><td colSpan="8" className="p-6 text-center text-slate-400">No history found.</td></tr>
+                                    ) : pagedHistoryList.map((row, index) => (
                                         <tr key={row.dbId} className="hover:bg-slate-50 transition-colors">
+                                            <td className="px-4 py-3 text-center text-slate-400 font-mono font-medium">{index + 1}</td>
                                             <td className="px-4 py-3 font-mono font-medium text-slate-700">{row.id}</td>
-                                            <td className="px-4 py-3 text-slate-500">{row.date}</td>
+                                            <td className="px-4 py-3 text-slate-500">{formatDisplayDate(row.date)}</td>
                                             <td className="px-4 py-3 text-slate-800">{row.vendor}</td>
                                             <td className="px-4 py-3">
                                                 <div className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded border border-slate-200 bg-slate-50 text-slate-600">
@@ -1328,6 +1370,13 @@ const PaymentVoucher = () => {
                                     ))}
                                 </tbody>
                             </table>
+                            <PaginationFooter
+                                page={listPage}
+                                size={LIST_PAGE_SIZE}
+                                totalElements={historyList.length}
+                                totalPages={Math.ceil(historyList.length / LIST_PAGE_SIZE)}
+                                onPageChange={setListPage}
+                            />
                         </div>
                     </div>
                 )}

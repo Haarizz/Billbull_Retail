@@ -2,11 +2,32 @@ import api from "./axiosConfig";
 
 const BASE_URL = "/api/sales/invoices";
 
+// QA-040: ship a designed-template HTML body + CID inline attachments to the
+// backend, which forwards via JavaMail. htmlBody empty → backend rejects.
+export const sendSalesInvoiceEmail = async (
+  id,
+  { toEmail = "", subject = "", htmlBody = "", inlineAttachments = [] } = {}
+) => {
+  try {
+    const res = await api.post(`${BASE_URL}/${id}/send-email`, {
+      toEmail, subject, htmlBody, inlineAttachments,
+    });
+    return res.data;
+  } catch (err) {
+    throw new Error(err?.response?.data || "Failed to send email");
+  }
+};
+
 // --------------------
 // GET ALL SALES INVOICES
 // --------------------
 export const getAllSalesInvoices = async () => {
     const res = await api.get(BASE_URL);
+    return res.data;
+};
+
+export const getSalesInvoicesPage = async ({ page = 0, size = 30, search = "", status = "" } = {}) => {
+    const res = await api.get(`${BASE_URL}/page`, { params: { page, size, search, status } });
     return res.data;
 };
 

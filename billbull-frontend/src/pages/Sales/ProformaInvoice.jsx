@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   FileText,
   Plus,
@@ -31,7 +31,8 @@ import {
   X,
   Info,
   Paperclip,
-  ShoppingCart as ShoppingCartIcon
+  ShoppingCart as ShoppingCartIcon,
+  Zap
 } from 'lucide-react';
 
 import { useMemo } from 'react';
@@ -45,6 +46,10 @@ import { getAllSalesOrders, getSalesOrderById } from '../../api/salesorderApi';
 import { getTemplatesByCategory } from '../../api/printTemplateApi';
 import { generatePrintHtml, printHtml } from '../../utils/printGenerator';
 import { getImageUrl } from '../../utils/urlUtils';
+import { formatDisplayDate } from '../../utils/dateUtils';
+import { pickSalesItemPrice, isPolicyOverridingPackings } from '../../utils/salesPricing';
+import { resolveLineTaxRate } from '../../utils/vatMath';
+import { getActiveVatRate } from '../../api/taxApi';
 import { getDefaultProductUnit, resolveUnitAmount } from '../../utils/unitPricing';
 import { summarizeSalesItems } from '../../utils/documentSummaryUtils';
 import billBullLogo from '../../assets/billBullLogo.png';
@@ -54,6 +59,8 @@ import { formatCurrencyDisplay } from '../../utils/countryCurrencyOptions';
 // âœ… STEP 2: PROFORMA API IMPORTS
 import {
   getAllProformas,
+  getProformasPage,
+  getNextProformaNumber,
   createProforma,
   updateProforma,
   issueProforma,
@@ -61,6 +68,7 @@ import {
 } from "../../api/proformaApi";
 
 import { receiptVoucherApi } from "../../api/receiptVoucherApi";
+import { getSalesSettings } from '../../api/salesSettingsApi';
 import { useBranch } from "../../context/BranchContext";
 import ExportDropdown from '../../components/common/ExportDropdown';
 import { exportToExcel, exportToPDF } from '../../utils/exportUtils';
@@ -70,6 +78,7 @@ import { exportToExcel, exportToPDF } from '../../utils/exportUtils';
 // ==========================================
 
 const PROFORMA_COLUMNS = [
+  { header: 'S.No.', key: 'sNo', width: 8 },
   { header: 'PI Number', key: 'piNumber', width: 15 },
   { header: 'Date', key: 'piDate', width: 12 },
   { header: 'Customer', key: 'customerName', width: 25 },
@@ -89,12 +98,16 @@ import CustomerShippingPanel from '../../components/CustomerShippingPanel';
 // âœ… STOCK AVAILABILITY MODAL
 import StockAvailabilityModal from '../../components/StockAvailabilityModal';
 import { getStockAvailability } from '../../api/stockAvailabilityApi'; // âœ… NEW API for LIVE STOCK
+import { isAutoNumberingEnabled } from '../../utils/salesNumbering';
 
 // âœ… SHORTCUTS HOOK
 import useShortcuts from '../../hooks/useShortcuts';
 
 // âœ… GLOBAL COMPONENTS
 import { ItemDescriptionCell, ItemDescriptionHeader } from '../../components/ItemDescriptionCell';
+// QA-FAST-ENTRY: inline row search input that auto-opens ProductSelector
+import InlineProductSearchCell from '../../components/InlineProductSearchCell';
+import PaginationFooter from '../../components/common/PaginationFooter';
 import ItemAddOnsModal from '../../components/ItemAddOnsModal';
 
 const ProformaInvoice = () => {
@@ -108,10 +121,18 @@ const ProformaInvoice = () => {
   const [customersList, setCustomersList] = useState([]);
   const [quotationsList, setQuotationsList] = useState([]);
   const [salesOrdersList, setSalesOrdersList] = useState([]);
+  const [salesSettings, setSalesSettings] = useState(null);
+  const [activeVatRate, setActiveVatRate] = useState(null);
+  useEffect(() => { getActiveVatRate().then(setActiveVatRate); }, []);
+  const proformaAutoNumbering = isAutoNumberingEnabled(salesSettings, 'PROFORMA_INVOICE');
 
   // --- PROFORMA LIST STATE ---
   // âŒ STEP 3: REMOVE MOCK DATA & REPLACE WITH EMPTY ARRAY
   const [proformaList, setProformaList] = useState([]);
+  // Pagination state (server-driven via /api/sales/proforma/page)
+  const [listPage, setListPage] = useState(0);
+  const [listPageMeta, setListPageMeta] = useState({ page: 0, size: 30, totalElements: 0, totalPages: 0 });
+  const [isListLoading, setIsListLoading] = useState(false);
 
   // --- FORM STATES ---
   const [status, setStatus] = useState('DRAFT');
@@ -142,6 +163,12 @@ const ProformaInvoice = () => {
 
   // âœ… PRODUCT SELECTOR STATE
   const [isProductSelectorOpen, setIsProductSelectorOpen] = useState(false);
+
+  // QA-FAST-ENTRY: inline-row-search → product-selector bridge state
+  const [pendingFastEntrySearch, setPendingFastEntrySearch] = useState('');
+  const [pendingFastEntryRowId, setPendingFastEntryRowId] = useState(null);
+  const inlineSearchRefs = useRef({});
+  const focusNextInlineSearchRef = useRef(null);
 
   const createBlankProformaItem = () => ({
     id: Date.now() + Math.random(),
@@ -226,6 +253,18 @@ const ProformaInvoice = () => {
     }
   }, [defaultBranch?.defaultWarehouseId, piId]);
 
+  // QA-FAST-ENTRY: focus the freshly-added empty row's inline search input.
+  useEffect(() => {
+    const targetId = focusNextInlineSearchRef.current;
+    if (targetId == null) return;
+    const raf = requestAnimationFrame(() => {
+      const el = inlineSearchRefs.current[targetId];
+      if (el) el.focus();
+      focusNextInlineSearchRef.current = null;
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [items]);
+
   // Item Add-Ons Modal State
   const [selectedAddonItem, setSelectedAddonItem] = useState(null);
 
@@ -300,14 +339,16 @@ const ProformaInvoice = () => {
   useEffect(() => {
     const fetchAllData = async () => {
       try {
-        const [custData, qtnData, soData, piData, bankAccData] = await Promise.all([
+        const [custData, qtnData, soData, piData, bankAccData, settingsData] = await Promise.all([
           getAllCustomers(),
           getAllQuotations(),
           getAllSalesOrders(),
           getAllProformas(),
-          api.get('/api/ledger/accounts/bank-accounts').then(r => r.data).catch(() => [])
+          api.get('/api/ledger/accounts/bank-accounts').then(r => r.data).catch(() => []),
+          getSalesSettings().catch(() => null)
         ]);
         setBankAccountOptions(Array.isArray(bankAccData) ? bankAccData : []);
+        if (settingsData) setSalesSettings(settingsData);
         const customers = Array.isArray(custData) ? custData : [];
         let validCustomers = [...customers];
 
@@ -343,6 +384,38 @@ const ProformaInvoice = () => {
     };
     fetchAllData();
   }, []);
+
+  // Server-paginated fetcher for the Proforma list tab.
+  const fetchProformasPage = async () => {
+    setIsListLoading(true);
+    try {
+      const data = await getProformasPage({
+        page: listPage,
+        size: 30,
+        search: searchTerm || '',
+        status: filterStatus && filterStatus !== 'All' ? filterStatus : '',
+      });
+      const rows = Array.isArray(data?.content) ? data.content : [];
+      setProformaList(rows);
+      setListPageMeta({
+        page: data?.page ?? listPage,
+        size: data?.size ?? 30,
+        totalElements: data?.totalElements ?? 0,
+        totalPages: data?.totalPages ?? 0,
+      });
+    } catch (err) {
+      console.error('Error fetching proforma page:', err);
+    } finally {
+      setIsListLoading(false);
+    }
+  };
+
+  useEffect(() => { setListPage(0); }, [searchTerm, filterStatus]);
+  useEffect(() => {
+    if (activeTab !== 'list') return;
+    fetchProformasPage();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab, listPage, searchTerm, filterStatus]);
 
   const filteredProformas = useMemo(() => {
     let data = [...proformaList];
@@ -422,6 +495,8 @@ const ProformaInvoice = () => {
             name: i.name || '',
             desc: i.desc || '',
             sku: i.sku || '',
+            shortDesc: i.shortDesc || '',
+            detailedDesc: i.detailedDesc || '',
             localName: i.localName || '',
             barcode: i.barcode || '',
             location: defaultBranchName || '',
@@ -516,6 +591,11 @@ const ProformaInvoice = () => {
       id: item.id || fallbackId,
       code: item.code || item.itemCode || '',
       name: item.name || item.itemName || item.productName || '',
+      brand: item.brand || item.brandName || '',
+      sku: item.sku || item.productSku || '',
+      localName: item.localName || item.productLocalName || '',
+      shortDesc: item.shortDesc || '',
+      detailedDesc: item.detailedDesc || '',
       barcode: item.barcode || item.itemBarcode || '',
       image: item.primaryImage || item.image || item.thumbnailUrl || item.imageUrl || '',
       desc: item.desc || item.description || '',
@@ -544,24 +624,32 @@ const ProformaInvoice = () => {
   // âœ… PRODUCT SELECTOR HANDLER
   const handleAddSingleProduct = (product) => {
     const defaultUnit = getDefaultProductUnit(product);
-    const price = resolveUnitAmount({
-      targetUnit: defaultUnit,
-      amountMap: product.unitPrices,
-      unitConversions: product.unitConversions,
-      fallbackAmount: product.retailPrice ?? product.sellingPrice ?? 0
-    });
+    const policy = salesSettings?.salesItemPricePolicy;
+    const policyPrice = pickSalesItemPrice(product, policy);
+    // When MAX_SALE / MIN_SALE is configured, the master price wins over
+    // per-packing unitPrices. RETAIL keeps the legacy unit-aware behaviour.
+    const price = isPolicyOverridingPackings(policy)
+      ? policyPrice
+      : resolveUnitAmount({
+        targetUnit: defaultUnit,
+        amountMap: product.unitPrices,
+        unitConversions: product.unitConversions,
+        fallbackAmount: policyPrice
+      });
     const cost = parseFloat(product.cost) || 0;
     const disc = parseFloat(product.maxDiscount) || 0;
-    const tax = parseFloat(product.salesTax || product.taxPercent) || 5;
+    const tax = resolveLineTaxRate(product, activeVatRate);
 
     const newItem = normalizeProformaItem({
       id: Date.now() + Math.random(),
       code: product.code,
       name: product.name || '',
+      shortDesc: product.shortDesc || '',
+      detailedDesc: product.detailedDesc || '',
       barcode: product.barcode || '',
       image: product.primaryImage || product.image || product.thumbnailUrl || product.imageUrl || '',
-      desc: product.description || product.name,
-      remarks: product.description || product.remarks || '',
+      desc: product.name || product.description || '',
+      remarks: product.detailedDesc || product.description || product.remarks || '',
       unit: defaultUnit,
       qty: 1,
       price,
@@ -577,28 +665,42 @@ const ProformaInvoice = () => {
       total: 0
     });
 
+    // QA-FAST-ENTRY: replace-in-place when triggered by inline search.
+    const targetRowId = pendingFastEntryRowId;
     setItems(prev => {
+      if (targetRowId != null) {
+        return prev.map(it => it.id === targetRowId ? { ...newItem, id: targetRowId } : it);
+      }
       const hasData = prev.some(i => i.code || i.desc);
       return hasData ? [...prev, newItem] : [newItem];
     });
+    const filledItem = { ...newItem, id: targetRowId != null ? targetRowId : newItem.id };
+    setPendingFastEntrySearch('');
+    setPendingFastEntryRowId(null);
 
     setIsProductSelectorOpen(false); // âœ… Close modal after adding
+    setTimeout(() => {
+      const qtyEl = document.getElementById(`qty-${filledItem.id}`);
+      if (qtyEl) { qtyEl.focus(); qtyEl.select?.(); }
+    }, 100);
   };
 
   const handleFastEntryAdd = (product, qty, price, disc) => {
     if (isReadOnly) return;
     const defaultUnit = getDefaultProductUnit(product);
     const cost = parseFloat(product.cost) || 0;
-    const tax = parseFloat(product.salesTax || product.taxPercent) || 5;
+    const tax = resolveLineTaxRate(product, activeVatRate);
 
     const newItem = normalizeProformaItem({
       id: Date.now() + Math.random(),
       code: product.code,
       name: product.name || '',
+      shortDesc: product.shortDesc || '',
+      detailedDesc: product.detailedDesc || '',
       barcode: product.barcode || '',
       image: product.primaryImage || product.image || product.thumbnailUrl || product.imageUrl || '',
-      desc: product.description || product.name,
-      remarks: product.description || product.remarks || '',
+      desc: product.name || product.description || '',
+      remarks: product.detailedDesc || product.description || product.remarks || '',
       unit: defaultUnit,
       qty,
       price,
@@ -719,10 +821,11 @@ const ProformaInvoice = () => {
   };
 
   const handleCreateNew = () => {
-    const now = new Date();
-    const dateStr = now.toISOString().split('T')[0].split('-').join('');
-    const timeStr = now.getHours().toString().padStart(2, '0') + now.getMinutes().toString().padStart(2, '0');
-    setPiNumber(`PI-${dateStr}-${timeStr}`);
+    if (proformaAutoNumbering) {
+      getNextProformaNumber().then(setPiNumber).catch(() => setPiNumber(''));
+    } else {
+      setPiNumber('');
+    }
     setStatus('DRAFT');
     setPiId(null);
     setIsReadOnly(false);
@@ -749,6 +852,11 @@ const ProformaInvoice = () => {
   const handleSaveDraft = async (advanceOverride = null) => {
     setIsSaving(true);
     try {
+      if (!proformaAutoNumbering && !piNumber.trim()) {
+        alert('Please enter a proforma invoice number.');
+        return;
+      }
+
       const validItems = items.filter(i => i.code || i.desc);
 
       const finalAdvance = advanceOverride !== null ? Number(advanceOverride) : Number(advanceAmount);
@@ -787,6 +895,7 @@ const ProformaInvoice = () => {
       const saved = piId ? await updateProforma(piId, payload) : await createProforma(payload);
       const currentPiId = saved?.id || piId;
       setPiId(currentPiId);
+      setPiNumber(saved?.piNumber || piNumber);
       setReservationWarehouseId(saved?.warehouseId || reservationWarehouseId || defaultBranch?.defaultWarehouseId || null);
       setLiveStockMap({});
 
@@ -837,6 +946,9 @@ const ProformaInvoice = () => {
     if (balanceDue > 0.01) {
       return alert(`Cannot Issue PI. Full payment is required. Current Balance Due: ${formatCurrencyDisplay(balanceDue, company)}`);
     }
+    if (!proformaAutoNumbering && !piNumber.trim()) {
+      return alert('Please enter a proforma invoice number.');
+    }
 
     setIsSaving(true);
     try {
@@ -878,6 +990,7 @@ const ProformaInvoice = () => {
         const saved = await createProforma(payload);
         currentId = saved?.id;
         setPiId(currentId);
+        setPiNumber(saved?.piNumber || piNumber);
         setReservationWarehouseId(saved?.warehouseId || reservationWarehouseId || defaultBranch?.defaultWarehouseId || null);
       } else {
         const latest = await getProformaById(currentId);
@@ -1068,7 +1181,7 @@ const ProformaInvoice = () => {
       <div className="flex justify-between items-start mb-2">
         <div>
           <h4 className="font-bold text-slate-800 text-sm">{pi.piNumber}</h4>
-          <span className="text-xs text-slate-500">{pi.piDate}</span>
+          <span className="text-xs text-slate-500">{formatDisplayDate(pi.piDate)}</span>
         </div>
         {renderStatusBadge(pi.status)}
       </div>
@@ -1104,12 +1217,14 @@ const ProformaInvoice = () => {
         {/* --- MODALS --- */}
         <ProductSelector
           isOpen={isProductSelectorOpen}
-          onClose={() => setIsProductSelectorOpen(false)}
+          onClose={() => { setIsProductSelectorOpen(false); setPendingFastEntryRowId(null); }}
           onSelect={handleAddSingleProduct}
           onInlineAdd={handleFastEntryAdd}
+          initialSearch={pendingFastEntrySearch}
           title="Select Items"
           actionLabel="Add to PI"
           mode="sales"
+          salesItemPricePolicy={salesSettings?.salesItemPricePolicy}
         />
         <StockAvailabilityModal
           isOpen={isItemStockModalOpen}
@@ -1218,8 +1333,17 @@ const ProformaInvoice = () => {
                   <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={14} />
                 </div>
                 <ExportDropdown
-                  onExportExcel={() => exportToExcel(filteredProformas, PROFORMA_COLUMNS, 'Proforma_Invoices')}
-                  onExportPdf={() => exportToPDF(filteredProformas, PROFORMA_COLUMNS, 'Proforma Invoices', 'Proforma_Invoices')}
+                  onExportExcel={() => exportToExcel(
+                    filteredProformas.map((pi, index) => ({ ...pi, sNo: index + 1 })),
+                    PROFORMA_COLUMNS,
+                    'Proforma_Invoices'
+                  )}
+                  onExportPdf={() => exportToPDF(
+                    filteredProformas.map((pi, index) => ({ ...pi, sNo: index + 1 })),
+                    PROFORMA_COLUMNS,
+                    'Proforma Invoices',
+                    'Proforma_Invoices'
+                  )}
                 />
                 <button onClick={handleCreateNew} className="flex items-center justify-center gap-1 px-4 py-2 bg-yellow-400 text-slate-900 text-sm font-bold rounded-lg hover:bg-yellow-500 transition-colors shadow-sm whitespace-nowrap">
                   <Plus size={16} /> Create New
@@ -1232,6 +1356,9 @@ const ProformaInvoice = () => {
               <table className="w-full text-sm text-left hidden md:table">
                 <thead className="bg-slate-50 text-slate-600 border-b border-slate-200/50">
                   <tr>
+                    <th className="px-4 py-3 text-center text-slate-500 w-16 select-none">
+                      S.No.
+                    </th>
                     <th className="px-4 py-3 cursor-pointer hover:bg-slate-100 transition-colors select-none" onClick={() => handleSort('piNumber')}>
                       <div className="flex items-center gap-1">PI Number {sortConfig.key === 'piNumber' && (sortConfig.direction === 'asc' ? <ArrowUp size={14} /> : <ArrowDown size={14} />)}</div>
                     </th>
@@ -1248,14 +1375,17 @@ const ProformaInvoice = () => {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100/30">
-                  {filteredProformas.map((pi) => (
+                  {filteredProformas.map((pi, index) => (
                     <tr
                       key={pi.id}
                       onClick={() => handleRowClick(pi)}
                       className="hover:bg-slate-50 cursor-pointer transition-colors"
                     >
+                      <td className="px-4 py-3 text-center text-slate-400 font-mono font-medium">
+                        {index + 1}
+                      </td>
                       <td className="px-4 py-3 text-blue-600 font-medium">{pi.piNumber}</td>
-                      <td className="px-4 py-3 text-slate-600">{pi.piDate}</td>
+                      <td className="px-4 py-3 text-slate-600">{formatDisplayDate(pi.piDate)}</td>
                       <td className="px-4 py-3 text-slate-700 font-medium">{pi.customerName}</td>
                       <td className="px-4 py-3 text-right font-bold text-slate-800"><CurrencyAmount value={pi.grandTotal || 0} currency={currency} /></td>
                       <td className="px-4 py-3 text-right">{renderStatusBadge(pi.status)}</td>
@@ -1263,7 +1393,7 @@ const ProformaInvoice = () => {
                   ))}
                   {filteredProformas.length === 0 && (
                     <tr>
-                      <td colSpan="5" className="text-center py-12 text-slate-400">
+                      <td colSpan="6" className="text-center py-12 text-slate-400">
                         <div className="flex flex-col items-center gap-2">
                           <div className="w-12 h-12 bg-slate-100 rounded-full flex items-center justify-center">
                             <Search size={20} className="text-slate-400" />
@@ -1285,6 +1415,14 @@ const ProformaInvoice = () => {
                 </div>
               ))}
             </div>
+            <PaginationFooter
+              page={listPageMeta.page}
+              size={listPageMeta.size}
+              totalElements={listPageMeta.totalElements}
+              totalPages={listPageMeta.totalPages}
+              loading={isListLoading}
+              onPageChange={setListPage}
+            />
           </div>
         )}
 
@@ -1310,8 +1448,9 @@ const ProformaInvoice = () => {
                           type="text"
                           value={piNumber}
                           onChange={(e) => setPiNumber(e.target.value)}
-                          className="text-sm p-1.5 bg-white border border-slate-300 rounded text-slate-700 focus:border-yellow-400 outline-none"
-                          placeholder="e.g. PI-1001"
+                          readOnly={isReadOnly || proformaAutoNumbering}
+                          className="text-sm p-1.5 bg-white border border-slate-300 rounded text-slate-700 focus:border-yellow-400 outline-none read-only:bg-slate-50 read-only:text-slate-500"
+                          placeholder={proformaAutoNumbering ? 'Auto generated' : 'Enter PI number'}
                         />
                       </div>
                       <div className="flex flex-col col-span-2 sm:col-span-1">
@@ -1465,6 +1604,7 @@ const ProformaInvoice = () => {
                 <CustomerShippingPanel
                     selectedCustomer={selectedCustomer}
                     onOpenCustomerSearch={() => setIsCustomerSearchOpen(true)}
+                    onCustomerUpdated={setSelectedCustomer}
                     shippingAddress={shippingAddress}
                     onShippingChange={setShippingAddress}
                     isReadOnly={isReadOnly}
@@ -1498,6 +1638,7 @@ const ProformaInvoice = () => {
                   <div className="flex justify-between items-center mb-4 border-b border-slate-100/50 pb-2">
                     <h3 className="text-sm font-bold text-slate-800 flex items-center gap-2">
                       <ShoppingCart size={16} className="text-yellow-500" /> Proforma Invoice Items
+                      <span className="inline-flex items-center gap-1 text-[10px] bg-blue-50 text-blue-700 px-2 py-0.5 rounded-full font-medium border border-blue-200"><Zap size={10} /> Fast Entry</span>
                     </h3>
                     {!isReadOnly && (
                       <div className="flex items-center gap-2">
@@ -1549,6 +1690,26 @@ const ProformaInvoice = () => {
                             <tr className={`group hover:bg-slate-50/50 transition-colors bg-white align-middle ${isReadOnly ? 'opacity-80' : ''}`}>
                               <td className="p-2 text-center text-slate-400 text-xs font-medium">{index + 1}</td>
                               <td className="p-2">
+                                {/* QA-FAST-ENTRY: empty rows show inline product-search input */}
+                                {(!item.code && !item.desc) ? (
+                                  <InlineProductSearchCell
+                                    value={pendingFastEntryRowId === item.id ? pendingFastEntrySearch : ''}
+                                    inputRef={(el) => {
+                                      if (el) inlineSearchRefs.current[item.id] = el;
+                                      else delete inlineSearchRefs.current[item.id];
+                                    }}
+                                    isReadOnly={isReadOnly}
+                                    onChange={(text) => {
+                                      setPendingFastEntryRowId(item.id);
+                                      setPendingFastEntrySearch(text);
+                                    }}
+                                    onOpenSelector={(text) => {
+                                      setPendingFastEntryRowId(item.id);
+                                      setPendingFastEntrySearch(text);
+                                      setIsProductSelectorOpen(true);
+                                    }}
+                                  />
+                                ) : (
                                 <ItemDescriptionCell
                                   item={item}
                                   isExpanded={expandedRows[item.id]}
@@ -1566,6 +1727,7 @@ const ProformaInvoice = () => {
                                   isReadOnly={isReadOnly}
                                   page="proforma_invoice"
                                 />
+                                )}
                               </td>
                               <td className="p-2 text-center align-middle">
                                 <div className="rounded-md border border-slate-200 bg-white inline-block px-1 py-1 min-w-[50px]">
@@ -1583,11 +1745,18 @@ const ProformaInvoice = () => {
                                 <div className="rounded-md border border-slate-200 bg-white flex items-center px-2 py-1 w-full max-w-[88px] mx-auto">
                                   <input
                                     disabled={isReadOnly}
+                                    id={`qty-${item.id}`}
                                     type="number"
                                     min="1"
                                     className="w-full bg-transparent text-center outline-none font-bold text-sm text-slate-800 disabled:opacity-50"
                                     value={item.qty === 0 ? '' : item.qty}
                                     onChange={(e) => handleItemChange(item.id, 'qty', e.target.value)}
+                                    onKeyDown={(e) => {
+                                      if (e.key === 'Tab' && !e.shiftKey) {
+                                        const priceEl = document.getElementById(`price-${item.id}`);
+                                        if (priceEl) { e.preventDefault(); priceEl.focus(); priceEl.select?.(); }
+                                      }
+                                    }}
                                     placeholder="0"
                                   />
                                 </div>
@@ -1596,10 +1765,19 @@ const ProformaInvoice = () => {
                                 <div className="rounded-md border border-slate-200 bg-white flex items-center px-2 py-1 w-full max-w-[104px] mx-auto">
                                   <input
                                     disabled={isReadOnly}
+                                    id={`price-${item.id}`}
                                     type="number"
                                     className="w-full bg-transparent text-center outline-none font-semibold text-sm text-slate-700 disabled:opacity-50"
                                     value={item.price === 0 ? '' : item.price}
                                     onChange={(e) => handleItemChange(item.id, 'price', e.target.value)}
+                                    onKeyDown={(e) => {
+                                      if (e.key === 'Tab' && !e.shiftKey && !isReadOnly) {
+                                        e.preventDefault();
+                                        const newRow = createBlankProformaItem();
+                                        focusNextInlineSearchRef.current = newRow.id;
+                                        setItems(prev => [...prev, newRow]);
+                                      }
+                                    }}
                                     placeholder="0.00"
                                   />
                                 </div>
@@ -1646,6 +1824,20 @@ const ProformaInvoice = () => {
                         ))}
                       </tbody>
                     </table>
+                  </div>
+                  {/* QA-FAST-ENTRY: Quick Entry hint bar */}
+                  <div className="mt-2 px-3 py-2 bg-blue-50/30 border border-blue-100/60 rounded-md flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-slate-500">
+                    <span className="inline-flex items-center gap-1 text-blue-600 font-semibold"><Zap size={11} /> Quick Entry:</span>
+                    <span>Type name →</span>
+                    <kbd className="px-1.5 py-0.5 bg-white border border-slate-200 rounded text-[10px] font-mono text-slate-600">Enter</kbd>
+                    <span>Select →</span>
+                    <kbd className="px-1.5 py-0.5 bg-white border border-slate-200 rounded text-[10px] font-mono text-slate-600">Tab</kbd>
+                    <span>Qty →</span>
+                    <kbd className="px-1.5 py-0.5 bg-white border border-slate-200 rounded text-[10px] font-mono text-slate-600">Tab</kbd>
+                    <span>Price →</span>
+                    <kbd className="px-1.5 py-0.5 bg-white border border-slate-200 rounded text-[10px] font-mono text-slate-600">Tab</kbd>
+                    <span>New row</span>
+                    <span className="ml-auto text-slate-400">Tip: Use ↑↓ arrows to navigate items</span>
                   </div>
                 </div>
                 {/* 4. Combined Attachments & Notes */}

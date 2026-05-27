@@ -5,15 +5,23 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import com.billbull.backend.financials.receiptvoucher.ReceiptVoucherRepository;
+import com.billbull.backend.sales.settings.SalesDocumentNumberingService;
+import com.billbull.backend.sales.settings.SalesDocumentType;
+
 import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Objects;
 
 @Service
 public class CustomerService {
 
     @Autowired
     private CustomerRepository repository;
+
+    @Autowired(required = false)
+    private ReceiptVoucherRepository receiptVoucherRepository;
 
     @Autowired
     private com.billbull.backend.sales.quotation.QuotationRepository quotationRepo;
@@ -24,11 +32,21 @@ public class CustomerService {
     @Autowired
     private com.billbull.backend.sales.invoice.SalesInvoiceRepository salesInvoiceRepo;
 
+    @Autowired(required = false)
+    private SalesDocumentNumberingService numberingService;
+
     // =========================
     // GET ALL CUSTOMERS
+    // QA-028: force-initialise savedAddresses while the JPA session is open
+    // so the transaction-page customer picker can render the multi-address
+    // dropdown without an extra detail fetch per row.
     // =========================
+    @Transactional(readOnly = true)
     public List<Customer> getAllCustomers() {
         List<Customer> customers = repository.findAll();
+        for (Customer customer : customers) {
+            customer.getSavedAddresses().size();
+        }
         return customers;
     }
 
@@ -59,6 +77,33 @@ public class CustomerService {
         return dto;
     }
 
+    // =========================
+    // QA-028: ADD SINGLE SHIPPING ADDRESS
+    // Append-only: keeps existing addresses, preserves the existing default
+    // unless the new address is flagged isDefault (in which case the previous
+    // default is demoted).
+    // =========================
+    @Transactional
+    public List<SavedAddress> addSavedAddress(Long customerId, SavedAddress address) {
+        Customer customer = repository.findById(customerId)
+                .orElseThrow(() -> new RuntimeException("Customer not found with id " + customerId));
+
+        if (address.isDefault()) {
+            for (SavedAddress existing : customer.getSavedAddresses()) {
+                existing.setDefault(false);
+            }
+        } else if (customer.getSavedAddresses().isEmpty()) {
+            address.setDefault(true);
+        }
+
+        address.setId(null);
+        address.setCustomer(customer);
+        customer.getSavedAddresses().add(address);
+
+        Customer saved = repository.save(customer);
+        return new ArrayList<>(saved.getSavedAddresses());
+    }
+
     @Transactional
     public List<OpeningInvoice> getOpeningInvoicesByCustomerCode(String customerCode) {
         Customer customer = repository.findByCode(customerCode)
@@ -66,7 +111,38 @@ public class CustomerService {
 
         ensureOpeningInvoiceForBalance(customer);
 
-        return new ArrayList<>(customer.getOpeningInvoices());
+        List<OpeningInvoice> invoices = new ArrayList<>(customer.getOpeningInvoices());
+        if (receiptVoucherRepository != null) {
+            syncOutstandingFromReceipts(invoices);
+        }
+        return invoices;
+    }
+
+    private void syncOutstandingFromReceipts(List<OpeningInvoice> invoices) {
+        for (OpeningInvoice invoice : invoices) {
+            if (invoice.getId() == null) continue;
+            BigDecimal seed = resolveOriginalOpeningBalance(invoice);
+            BigDecimal totalPaid = receiptVoucherRepository.findByOpeningInvoiceId(invoice.getId())
+                    .stream()
+                    .filter(r -> r.getAmount() != null && isCompletedReceiptStatus(r.getStatus()))
+                    .map(r -> r.getAmount())
+                    .reduce(BigDecimal.ZERO, BigDecimal::add);
+            BigDecimal outstanding = seed.subtract(totalPaid).max(BigDecimal.ZERO);
+            if (!Objects.equals(invoice.getOutstanding(), outstanding)) {
+                invoice.setOutstanding(outstanding);
+            }
+        }
+    }
+
+    private BigDecimal resolveOriginalOpeningBalance(OpeningInvoice invoice) {
+        BigDecimal ob = invoice.getOpeningBalanceAmount();
+        if (ob != null && ob.compareTo(BigDecimal.ZERO) > 0) return ob;
+        BigDecimal amt = invoice.getAmount();
+        return amt != null ? amt : BigDecimal.ZERO;
+    }
+
+    private boolean isCompletedReceiptStatus(String status) {
+        return status != null && (status.equalsIgnoreCase("Completed") || status.equalsIgnoreCase("COMPLETED"));
     }
 
     // =========================
@@ -108,7 +184,9 @@ public class CustomerService {
         // -------------------------
 
         // QA-004: auto-generate code when not provided (quick-create from selector)
-        if (customer.getCode() == null || customer.getCode().isBlank()) {
+        if (dto.getId() == null && numberingService != null) {
+            customer.setCode(numberingService.resolveNumberForCreate(SalesDocumentType.CUSTOMER, customer.getCode()));
+        } else if (customer.getCode() == null || customer.getCode().isBlank()) {
             String candidate;
             long seq = repository.count() + 1;
             do {

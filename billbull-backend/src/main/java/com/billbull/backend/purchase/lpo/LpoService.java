@@ -31,6 +31,10 @@ import com.billbull.backend.purchase.invoice.PurchaseInvoice;
 import com.billbull.backend.purchase.invoice.PurchaseInvoiceRepository;
 import com.billbull.backend.purchase.invoice.InvoiceStatus;
 import com.billbull.backend.purchase.invoice.PurchaseInvoiceItem;
+import com.billbull.backend.purchase.payment.PaymentMode;
+import com.billbull.backend.purchase.payment.PaymentStatus;
+import com.billbull.backend.purchase.payment.PaymentVoucher;
+import com.billbull.backend.purchase.payment.PaymentVoucherRepository;
 import com.billbull.backend.purchase.lpo.workflow.*;
 import com.billbull.backend.settings.branch.Branch;
 import com.billbull.backend.settings.branch.BranchAccessService;
@@ -56,6 +60,7 @@ public class LpoService {
     private final ProductMediaRepository productMediaRepository;
     private final ProductBarcodeRepository productBarcodeRepository;
     private final BranchAccessService branchAccessService;
+    private final PaymentVoucherRepository paymentVoucherRepository;
 
     public LpoService(
             LpoRepository repository,
@@ -71,7 +76,8 @@ public class LpoService {
             ApprovalHistoryRepository approvalHistoryRepository,
             ProductMediaRepository productMediaRepository,
             ProductBarcodeRepository productBarcodeRepository,
-            BranchAccessService branchAccessService) {
+            BranchAccessService branchAccessService,
+            PaymentVoucherRepository paymentVoucherRepository) {
         this.repository = repository;
         this.productRepository = productRepository;
         this.warehouseRepository = warehouseRepository;
@@ -86,6 +92,7 @@ public class LpoService {
         this.productMediaRepository = productMediaRepository;
         this.productBarcodeRepository = productBarcodeRepository;
         this.branchAccessService = branchAccessService;
+        this.paymentVoucherRepository = paymentVoucherRepository;
     }
 
     /* ================= CREATE ================= */
@@ -388,6 +395,14 @@ public class LpoService {
         dto.setBranchId(lpo.getBranchId());
         dto.setBranchName(lpo.getBranchName());
         dto.setBranchCode(lpo.getBranchCode());
+
+        BigDecimal advancePaid = paymentVoucherRepository.sumAdvancePaidByLpoId(lpo.getId());
+        if (advancePaid == null) advancePaid = BigDecimal.ZERO;
+        BigDecimal grandTotal = lpo.getGrandTotal() != null ? lpo.getGrandTotal() : BigDecimal.ZERO;
+        BigDecimal balanceDue = grandTotal.subtract(advancePaid).max(BigDecimal.ZERO);
+        dto.setAdvancePaid(advancePaid);
+        dto.setBalanceDue(balanceDue);
+
         return dto;
     }
 
@@ -610,6 +625,45 @@ public class LpoService {
                 .orElseThrow(() -> new RuntimeException("LPO not found"));
         branchAccessService.assertTransactionBranchAccessible(lpo.getBranchId(), "LPO");
         return lpo;
+    }
+
+    /* ================= ADVANCE PAYMENT ================= */
+
+    @Transactional
+    public PaymentVoucher createAdvancePayment(Long lpoId, Map<String, Object> payload) {
+        Lpo lpo = getScopedLpoById(lpoId);
+
+        PaymentVoucher voucher = new PaymentVoucher();
+        voucher.setVendorName(lpo.getVendorName());
+        voucher.setVendorId(lpo.getVendorCode() != null ? lpo.getVendorCode() : "VND-EXT");
+        voucher.setLpoId(lpoId);
+
+        String dateStr = (String) payload.get("date");
+        voucher.setPaymentDate(dateStr != null ? java.time.LocalDate.parse(dateStr) : java.time.LocalDate.now());
+
+        String modeStr = ((String) payload.getOrDefault("mode", "CASH")).toUpperCase().replace(" ", "_");
+        if (modeStr.equals("CREDIT_CARD")) modeStr = "CARD";
+        voucher.setPaymentMode(PaymentMode.valueOf(modeStr));
+
+        voucher.setAmount(new BigDecimal(payload.get("amount").toString()));
+        if (payload.get("ref") != null) voucher.setReferenceNumber(payload.get("ref").toString());
+        if (payload.get("notes") != null) voucher.setNotes(payload.get("notes").toString());
+        if (payload.get("bankAccount") != null) voucher.setBankAccount(payload.get("bankAccount").toString());
+        if (payload.get("chequeDate") != null && !payload.get("chequeDate").toString().isBlank()) {
+            voucher.setChequeDate(java.time.LocalDate.parse(payload.get("chequeDate").toString()));
+        }
+
+        voucher.setStatus(PaymentStatus.PENDING_APPROVAL);
+        voucher.setUnallocated(voucher.getAmount());
+
+        PaymentVoucher saved = paymentVoucherRepository.save(voucher);
+        saved.setVoucherNumber("PV-" + (10000 + saved.getId()));
+        return paymentVoucherRepository.save(saved);
+    }
+
+    public java.util.List<PaymentVoucher> getAdvancePayments(Long lpoId) {
+        getScopedLpoById(lpoId);
+        return paymentVoucherRepository.findByLpoIdOrderByPaymentDateDesc(lpoId);
     }
 
 }

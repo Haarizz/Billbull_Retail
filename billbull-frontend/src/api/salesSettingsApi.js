@@ -14,7 +14,7 @@ export const getSalesSettings = async () => {
 /**
  * PUT /api/sales/settings
  * Saves and returns the updated Sales module settings.
- * @param {Object} settings - { stockCheckRequired: boolean, creditLimitPolicy: string }
+ * @param {Object} settings - { stockCheckRequired, creditLimitPolicy, salesMode, documentNumbering }
  */
 export const saveSalesSettings = async (settings) => {
     const res = await api.put(BASE_URL, settings);

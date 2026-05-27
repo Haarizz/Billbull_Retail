@@ -15,6 +15,7 @@ import {
   exportUnits
 } from "../../../api/unitsApi";
 import HierarchyBuilderModal from './HierarchyBuilderModal';
+import PaginationFooter from '../../../components/common/PaginationFooter';
 
 const Units = () => {
   // --- STATE MANAGEMENT ---
@@ -151,6 +152,11 @@ const Units = () => {
       return 0;
     });
 
+  const LIST_PAGE_SIZE = 30;
+  const [listPage, setListPage] = useState(0);
+  useEffect(() => { setListPage(0); }, [searchTerm, sortBy]);
+  const pagedUnits = filteredData.slice(listPage * LIST_PAGE_SIZE, (listPage + 1) * LIST_PAGE_SIZE);
+
   return (
     <div className="min-h-screen bg-[#F7F7FA] p-4 md:p-6 space-y-6 font-sans text-slate-900">
 
@@ -283,7 +289,7 @@ const Units = () => {
               ) : filteredData.length === 0 ? (
                 <tr><td colSpan="4" className="p-12 text-center text-slate-500">No units found.</td></tr>
               ) : (
-                filteredData.map((unit) => (
+                pagedUnits.map((unit) => (
                   <tr key={unit.id} className="hover:bg-slate-50 hover:border-l-4 hover:border-l-[#F5C742] transition-all border-l-4 border-transparent group">
                     <td className="p-3">
                       <p className="font-medium text-slate-900">{unit.name}</p>
@@ -311,6 +317,13 @@ const Units = () => {
               )}
             </tbody>
           </table>
+          <PaginationFooter
+            page={listPage}
+            size={LIST_PAGE_SIZE}
+            totalElements={filteredData.length}
+            totalPages={Math.ceil(filteredData.length / LIST_PAGE_SIZE)}
+            onPageChange={setListPage}
+          />
         </div>
       </div>
 

@@ -19,6 +19,7 @@ import { getTaxDashboard, getTaxReconciliation } from '../../api/financialReport
 import { exportToExcel, exportToPDF } from '../../utils/exportUtils';
 import toast from 'react-hot-toast'; // Assuming toast is available, otherwise alert fallback
 import CurrencyAmount, { CurrencySymbol } from '../../components/CurrencyAmount';
+import { formatDisplayDate } from '../../utils/dateUtils';
 
 const getTodayInputDate = () => new Date().toISOString().split('T')[0];
 
@@ -353,14 +354,7 @@ export default function TaxCompliance() {
     };
 
     // Convert "yyyy-MM-dd" (HTML date input) → "dd MMM yyyy" (backend format)
-    const fromInputDate = (dateStr) => {
-        if (!dateStr) return '';
-        try {
-            const d = new Date(dateStr);
-            if (isNaN(d.getTime())) return dateStr;
-            return d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
-        } catch (e) { return dateStr; }
-    };
+    const fromInputDate = (dateStr) => formatDisplayDate(dateStr, '');
 
     const handleOpenFilingModal = (filingId, viewOnly = false) => {
         const filing = filingsData.find(f => f.id === filingId);
@@ -877,7 +871,7 @@ export default function TaxCompliance() {
                                                     <tr key={f.id} className="hover:bg-slate-50">
                                                         <td className="py-3 pl-4 font-medium text-slate-800">{f.taxConfiguration?.type || f.type}</td>
                                                         <td className="py-3 text-slate-600">{f.period}</td>
-                                                        <td className="py-3 text-slate-500">{f.dueDate}</td>
+                                                        <td className="py-3 text-slate-500">{formatDisplayDate(f.dueDate)}</td>
                                                         <td className="py-3 text-emerald-600">{f.filedDate}</td>
                                                         <td className="py-3 font-mono font-bold text-right text-slate-800"><CurrencyAmount value={f.amount} /></td>
                                                         <td className="py-3 text-center flex justify-center">{getStatusBadge(f.status)}</td>
@@ -1065,7 +1059,7 @@ export default function TaxCompliance() {
                                                     <tr key={f.id} className="hover:bg-slate-50">
                                                         <td className="py-3 pl-4 font-medium text-slate-800">{f.taxConfiguration?.type || f.type}</td>
                                                         <td className="py-3 text-slate-600">{f.period}</td>
-                                                        <td className="py-3 text-slate-500">{f.dueDate}</td>
+                                                        <td className="py-3 text-slate-500">{formatDisplayDate(f.dueDate)}</td>
                                                         <td className="py-3 text-slate-600 font-medium">{f.filedDate || '-'}</td>
                                                         <td className="py-3 font-mono font-bold text-right text-slate-800"><CurrencyAmount value={f.amount} /></td>
                                                         <td className="py-3 text-center flex justify-center">{getStatusBadge(effectiveStatus(f))}</td>
@@ -1209,7 +1203,7 @@ export default function TaxCompliance() {
                                     </div>
 
                                     <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
-                                        <div><div className="text-[10px] text-slate-500 uppercase font-bold mb-1">Due Date</div><div className="text-xs font-medium text-slate-800">{filing.dueDate}</div></div>
+                                        <div><div className="text-[10px] text-slate-500 uppercase font-bold mb-1">Due Date</div><div className="text-xs font-medium text-slate-800">{formatDisplayDate(filing.dueDate)}</div></div>
                                         <div><div className="text-[10px] text-slate-500 uppercase font-bold mb-1">Amount</div><CurrencyAmount value={filing.amount} className="text-xs font-bold text-yellow-700" /></div>
                                         <div><div className="text-[10px] text-slate-500 uppercase font-bold mb-1">Documents</div><div className="text-xs font-medium text-slate-800">{filing.documents} file(s)</div></div>
                                     </div>

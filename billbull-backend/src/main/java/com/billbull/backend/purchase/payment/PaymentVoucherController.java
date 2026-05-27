@@ -32,6 +32,16 @@ public class PaymentVoucherController {
         return ResponseEntity.ok(service.getAllVouchers());
     }
 
+    @GetMapping("/page")
+    public ResponseEntity<com.billbull.backend.util.PageResponse<PaymentVoucher>> getVouchersPage(
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "30") int size,
+            @RequestParam(required = false) String search,
+            @RequestParam(required = false) String status) {
+        return ResponseEntity.ok(com.billbull.backend.util.PaginationUtil.paginate(
+                service.getAllVouchers(), page, size, search, status));
+    }
+
     // --------------------
     // GET BY ID
     // --------------------

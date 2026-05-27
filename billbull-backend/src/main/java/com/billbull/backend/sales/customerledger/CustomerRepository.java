@@ -10,4 +10,7 @@ public interface CustomerRepository extends JpaRepository<Customer, Long> {
     List<Customer> findByNameContainingIgnoreCaseOrCodeContainingIgnoreCase(String name, String code);
     boolean existsByCode(String code);
     java.util.Optional<Customer> findByCode(String code);
+
+    @org.springframework.data.jpa.repository.Query("SELECT c.code FROM Customer c WHERE c.code LIKE CONCAT(:prefix, '%')")
+    List<String> findCodesByPrefix(@org.springframework.data.repository.query.Param("prefix") String prefix);
 }

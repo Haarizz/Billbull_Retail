@@ -2,11 +2,31 @@ import api from "./axiosConfig";
 
 const BASE_URL = "/api/sales/sales-orders";
 
+// QA-040: send the designed-template SO email.
+export const sendSalesOrderEmail = async (
+  id,
+  { toEmail = "", subject = "", htmlBody = "", inlineAttachments = [] } = {}
+) => {
+  try {
+    const res = await api.post(`${BASE_URL}/${id}/send-email`, {
+      toEmail, subject, htmlBody, inlineAttachments,
+    });
+    return res.data;
+  } catch (err) {
+    throw new Error(err?.response?.data || "Failed to send email");
+  }
+};
+
 // --------------------
 // GET ALL SALES ORDERS
 // --------------------
 export const getAllSalesOrders = async () => {
   const res = await api.get(BASE_URL);
+  return res.data;
+};
+
+export const getSalesOrdersPage = async ({ page = 0, size = 30, search = "", status = "" } = {}) => {
+  const res = await api.get(`${BASE_URL}/page`, { params: { page, size, search, status } });
   return res.data;
 };
 
@@ -16,6 +36,20 @@ export const getAllSalesOrders = async () => {
 export const getSalesOrderById = async (id) => {
   const res = await api.get(`${BASE_URL}/${id}`);
   return res.data;
+};
+
+/**
+ * QA-032: Receipt Vouchers linked to a Sales Order (advance receipts).
+ * Returns an array, ordered newest-first.
+ */
+export const getSalesOrderReceiptVouchers = async (id) => {
+  const res = await api.get(`${BASE_URL}/${id}/receipt-vouchers`);
+  return Array.isArray(res.data) ? res.data : [];
+};
+
+export const getNextSalesOrderNumber = async () => {
+  const res = await api.get(`${BASE_URL}/next-number`);
+  return res.data.soNumber;
 };
 
 // --------------------

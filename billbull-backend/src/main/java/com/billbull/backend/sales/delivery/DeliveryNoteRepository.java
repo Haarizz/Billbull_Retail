@@ -101,6 +101,9 @@ public interface DeliveryNoteRepository extends JpaRepository<DeliveryNote, Long
 
   boolean existsByDnNumber(String dnNumber);
 
+  @Query("SELECT dn.dnNumber FROM DeliveryNote dn WHERE dn.dnNumber LIKE CONCAT(:prefix, '%')")
+  List<String> findDnNumbersByPrefix(@Param("prefix") String prefix);
+
   /**
    * Returns DELIVERED notes where financial posting has not yet occurred.
    * Used by reconciliation to detect accounting gaps (e.g. pre-migration DNs

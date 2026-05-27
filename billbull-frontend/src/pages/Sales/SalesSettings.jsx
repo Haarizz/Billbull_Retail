@@ -1,10 +1,42 @@
 import React, { useState, useEffect } from 'react';
-import { Settings, Package, CreditCard, Save, CheckCircle, AlertTriangle, Ban, Info, Zap } from 'lucide-react';
+import { Settings, Package, CreditCard, Save, CheckCircle, AlertTriangle, Ban, Info, Zap, Tag, Hash } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { getSalesSettings, saveSalesSettings } from '../../api/salesSettingsApi';
 
 // ==========================================
-// SALES SETTINGS PAGE
+const DEFAULT_DOCUMENT_NUMBERING = [
+    { documentType: 'CUSTOMER', label: 'Customer Code', autoNumberingEnabled: true, prefix: 'CUST', nextNumber: 1 },
+    { documentType: 'QUOTATION', label: 'Quotation', autoNumberingEnabled: true, prefix: 'QTN', nextNumber: 1 },
+    { documentType: 'SALES_ORDER', label: 'Sales Order', autoNumberingEnabled: true, prefix: 'SO', nextNumber: 1 },
+    { documentType: 'PROFORMA_INVOICE', label: 'Proforma Invoice', autoNumberingEnabled: true, prefix: 'PI', nextNumber: 1 },
+    { documentType: 'SALES_INVOICE', label: 'Sales Invoice', autoNumberingEnabled: true, prefix: 'INV', nextNumber: 1 },
+    { documentType: 'DELIVERY_NOTE', label: 'Delivery/Picking Note', autoNumberingEnabled: true, prefix: 'DN', nextNumber: 1 },
+    { documentType: 'SALES_RETURN', label: 'Sales Return', autoNumberingEnabled: true, prefix: 'SR', nextNumber: 1 },
+    { documentType: 'SALES_PAYMENT', label: 'Sales Payment', autoNumberingEnabled: true, prefix: 'PAY', nextNumber: 1 },
+];
+
+const buildPreview = (setting) => {
+    const prefix = (setting.prefix || '').trim().toUpperCase().replace(/[^A-Z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'DOC';
+    const nextNumber = Math.max(1, Number(setting.nextNumber) || 1);
+    return `${prefix}-${new Date().getFullYear()}-${String(nextNumber).padStart(4, '0')}`;
+};
+
+const normalizeDocumentNumbering = (incoming = []) => {
+    const byType = new Map((Array.isArray(incoming) ? incoming : []).map(setting => [setting.documentType, setting]));
+    return DEFAULT_DOCUMENT_NUMBERING.map(defaultSetting => {
+        const setting = byType.get(defaultSetting.documentType) || {};
+        return {
+            ...defaultSetting,
+            ...setting,
+            autoNumberingEnabled: setting.autoNumberingEnabled ?? defaultSetting.autoNumberingEnabled,
+            prefix: setting.prefix || defaultSetting.prefix,
+            nextNumber: Math.max(1, Number(setting.nextNumber) || defaultSetting.nextNumber),
+            preview: setting.preview || buildPreview({ ...defaultSetting, ...setting }),
+        };
+    });
+};
+
+// CONFIGURE & CUSTOMIZE PAGE
 // ==========================================
 
 const SalesSettings = () => {
@@ -15,6 +47,11 @@ const SalesSettings = () => {
     const [stockCheckRequired, setStockCheckRequired] = useState(false);
     const [creditLimitPolicy, setCreditLimitPolicy] = useState('NO_IMPACT');
     const [salesMode, setSalesMode] = useState('FAST_SALE');
+    const [salesItemPricePolicy, setSalesItemPricePolicy] = useState('RETAIL');
+    const [documentNumbering, setDocumentNumbering] = useState(DEFAULT_DOCUMENT_NUMBERING.map(setting => ({
+        ...setting,
+        preview: buildPreview(setting),
+    })));
 
     // Load settings on mount
     useEffect(() => {
@@ -24,6 +61,8 @@ const SalesSettings = () => {
                 setStockCheckRequired(data.stockCheckRequired ?? false);
                 setCreditLimitPolicy(data.creditLimitPolicy ?? 'NO_IMPACT');
                 setSalesMode(data.salesMode ?? 'WORKFLOW_DRIVEN');
+                setSalesItemPricePolicy(data.salesItemPricePolicy ?? 'RETAIL');
+                setDocumentNumbering(normalizeDocumentNumbering(data.documentNumbering));
             } catch (err) {
                 console.error('Failed to load sales settings', err);
                 toast.error('Failed to load settings');
@@ -41,8 +80,10 @@ const SalesSettings = () => {
                 stockCheckRequired,
                 creditLimitPolicy,
                 salesMode,
+                salesItemPricePolicy,
+                documentNumbering,
             });
-            toast.success('Sales settings saved successfully');
+            toast.success('Configure & customize saved successfully');
         } catch (err) {
             console.error('Failed to save settings', err);
             toast.error('Failed to save settings');
@@ -82,6 +123,15 @@ const SalesSettings = () => {
         },
     ];
 
+    const updateDocumentNumbering = (documentType, patch) => {
+        setDocumentNumbering(prev => prev.map(setting => {
+            if (setting.documentType !== documentType) return setting;
+            const next = { ...setting, ...patch };
+            next.preview = buildPreview(next);
+            return next;
+        }));
+    };
+
     if (isLoading) {
         return (
             <div className="min-h-screen bg-[#F7F7FA] flex items-center justify-center">
@@ -120,8 +170,8 @@ const SalesSettings = () => {
                             <Settings size={20} className="text-[#1E1E1E]" />
                         </div>
                         <div>
-                            <h1 className="text-xl font-bold text-slate-800">Sales Settings</h1>
-                            <p className="text-xs text-slate-500 mt-0.5">Configure rules that govern the sales module behaviour</p>
+                            <h1 className="text-xl font-bold text-slate-800">Configure &amp; customize</h1>
+                            <p className="text-xs text-slate-500 mt-0.5">Configure rules and numbering for Customers &amp; Sales</p>
                         </div>
                     </div>
                     <button
@@ -139,7 +189,7 @@ const SalesSettings = () => {
                         ) : (
                             <Save size={16} />
                         )}
-                        {isSaving ? 'Saving...' : 'Save Settings'}
+                        {isSaving ? 'Saving...' : 'Save'}
                     </button>
                 </div>
 
@@ -360,6 +410,149 @@ const SalesSettings = () => {
                     </div>
                 </div>
 
+                {/* ==============================
+                    SECTION 4 — DEFAULT ITEM PRICE
+                ============================== */}
+                <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden mb-5">
+                    <div className="flex items-center gap-3 px-6 py-5 border-b border-slate-100">
+                        <div className="w-8 h-8 rounded-lg bg-emerald-50 flex items-center justify-center">
+                            <Tag size={16} className="text-emerald-500" />
+                        </div>
+                        <div>
+                            <h2 className="text-sm font-bold text-slate-800">Default Item Price</h2>
+                            <p className="text-xs text-slate-400 mt-0.5">
+                                Which price from the product master is auto-filled when adding items to a Quotation, Sales Order, or Sales Invoice
+                            </p>
+                        </div>
+                    </div>
+
+                    <div className="px-6 py-5 space-y-3">
+                        {[
+                            {
+                                value: 'RETAIL',
+                                label: 'Retail Price',
+                                description: 'Use the product master’s Retail Price as the default line price. This is the system default.',
+                                activeClass: 'border-emerald-400 bg-emerald-50 ring-1 ring-emerald-400',
+                                dotActive: 'border-emerald-500 bg-emerald-500'
+                            },
+                            {
+                                value: 'MAX_SALE',
+                                label: 'Maximum Sale Price',
+                                description: 'Use the product master’s Maximum Sale Price (ceiling). Falls back to Retail Price if Max is not set on a particular product.',
+                                activeClass: 'border-blue-400 bg-blue-50 ring-1 ring-blue-400',
+                                dotActive: 'border-blue-500 bg-blue-500'
+                            },
+                            {
+                                value: 'MIN_SALE',
+                                label: 'Minimum Sale Price',
+                                description: 'Use the product master’s Minimum Sale Price (floor). Falls back to Retail Price if Min is not set on a particular product.',
+                                activeClass: 'border-amber-400 bg-amber-50 ring-1 ring-amber-400',
+                                dotActive: 'border-amber-500 bg-amber-500'
+                            }
+                        ].map(option => {
+                            const isSelected = salesItemPricePolicy === option.value;
+                            return (
+                                <button
+                                    key={option.value}
+                                    onClick={() => setSalesItemPricePolicy(option.value)}
+                                    className={`w-full text-left border-2 rounded-xl p-4 transition-all duration-200 ${isSelected ? option.activeClass : 'border-slate-200 hover:border-slate-300 bg-white'}`}
+                                >
+                                    <div className="flex items-start gap-3">
+                                        <div className={`mt-0.5 w-4 h-4 rounded-full border-2 shrink-0 flex items-center justify-center transition-all ${isSelected ? option.dotActive : 'border-slate-300'}`}>
+                                            {isSelected && <div className="w-1.5 h-1.5 rounded-full bg-white" />}
+                                        </div>
+                                        <div className="flex-1">
+                                            <div className="flex items-center gap-2 mb-1">
+                                                <span className="text-sm font-bold text-slate-800">{option.label}</span>
+                                                {isSelected && (
+                                                    <span className="text-[9px] font-bold px-2 py-0.5 rounded-full bg-[#F5C742] text-[#1E1E1E] uppercase tracking-wider">Active</span>
+                                                )}
+                                            </div>
+                                            <p className="text-xs text-slate-500 leading-relaxed">{option.description}</p>
+                                        </div>
+                                    </div>
+                                </button>
+                            );
+                        })}
+                    </div>
+
+                    <div className="px-6 pb-5">
+                        <div className="flex items-start gap-2 bg-slate-50 border border-slate-200 rounded-xl px-4 py-3">
+                            <Info size={13} className="text-slate-400 mt-0.5 shrink-0" />
+                            <p className="text-[11px] text-slate-600 leading-relaxed">
+                                Applies only to the <strong>default</strong> price filled in when an item is first added to a document. Users can still edit the price on each line as needed.
+                            </p>
+                        </div>
+                    </div>
+                </div>
+
+                {/* ==============================
+                    SECTION 5 - DOCUMENT NUMBERING
+                ============================== */}
+                <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden mb-5">
+                    <div className="flex items-center gap-3 px-6 py-5 border-b border-slate-100">
+                        <div className="w-8 h-8 rounded-lg bg-emerald-50 flex items-center justify-center">
+                            <Hash size={16} className="text-emerald-500" />
+                        </div>
+                        <div>
+                            <h2 className="text-sm font-bold text-slate-800">Document Numbering</h2>
+                            <p className="text-xs text-slate-400 mt-0.5">Set auto-generation or manual numbering per Customers &amp; Sales document</p>
+                        </div>
+                    </div>
+
+                    <div className="px-6 py-5 space-y-3">
+                        {documentNumbering.map((setting) => (
+                            <div key={setting.documentType} className="border border-slate-200 rounded-xl p-4">
+                                <div className="grid grid-cols-1 lg:grid-cols-[1.2fr_120px_120px_1fr] gap-3 items-center">
+                                    <div>
+                                        <div className="text-sm font-bold text-slate-800">{setting.label}</div>
+                                        <div className="text-[11px] text-slate-500 mt-0.5">
+                                            {setting.autoNumberingEnabled
+                                                ? 'Auto numbering uses the configured prefix and sequence.'
+                                                : 'Manual mode lets users type the full number on entry screens.'}
+                                        </div>
+                                    </div>
+
+                                    <button
+                                        type="button"
+                                        onClick={() => updateDocumentNumbering(setting.documentType, { autoNumberingEnabled: !setting.autoNumberingEnabled })}
+                                        className="toggle-track focus:outline-none"
+                                        style={{ background: setting.autoNumberingEnabled ? '#F5C742' : '#e2e8f0' }}
+                                        aria-label={`Toggle ${setting.label} auto numbering`}
+                                    >
+                                        <div
+                                            className="toggle-thumb"
+                                            style={{ transform: setting.autoNumberingEnabled ? 'translateX(22px)' : 'translateX(0px)' }}
+                                        />
+                                    </button>
+
+                                    <input
+                                        type="text"
+                                        value={setting.prefix}
+                                        onChange={(e) => updateDocumentNumbering(setting.documentType, { prefix: e.target.value.toUpperCase() })}
+                                        className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm font-semibold text-slate-700 focus:outline-none focus:ring-2 focus:ring-[#F5C742]/40"
+                                        placeholder="Prefix"
+                                    />
+
+                                    <div className="grid grid-cols-[100px_1fr] gap-3">
+                                        <input
+                                            type="number"
+                                            min="1"
+                                            value={setting.nextNumber}
+                                            onChange={(e) => updateDocumentNumbering(setting.documentType, { nextNumber: e.target.value })}
+                                            className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm text-slate-700 focus:outline-none focus:ring-2 focus:ring-[#F5C742]/40"
+                                            aria-label={`${setting.label} next number`}
+                                        />
+                                        <div className="bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-xs font-mono text-slate-700 truncate">
+                                            {setting.preview || buildPreview(setting)}
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+                </div>
+
                 {/* ---- BOTTOM SAVE ROW ---- */}
                 <div className="flex justify-end">
                     <button
@@ -377,7 +570,7 @@ const SalesSettings = () => {
                         ) : (
                             <CheckCircle size={16} />
                         )}
-                        {isSaving ? 'Saving...' : 'Save Settings'}
+                        {isSaving ? 'Saving...' : 'Save'}
                     </button>
                 </div>
 

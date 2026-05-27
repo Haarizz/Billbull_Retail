@@ -30,4 +30,12 @@ public interface PaymentVoucherRepository extends JpaRepository<PaymentVoucher, 
     BigDecimal sumPostedAmountByInvoiceIdExcludingVoucher(
             @Param("invoiceId") Long invoiceId,
             @Param("excludeVoucherId") Long excludeVoucherId);
+
+    java.util.List<PaymentVoucher> findByLpoIdOrderByPaymentDateDesc(Long lpoId);
+
+    /** QA-018: batch lookup used by StatementService to populate description/reference. */
+    java.util.List<PaymentVoucher> findByVoucherNumberIn(java.util.List<String> voucherNumbers);
+
+    @Query("SELECT COALESCE(SUM(p.amount), 0) FROM PaymentVoucher p WHERE p.lpoId = :lpoId AND p.status <> 'CANCELLED'")
+    BigDecimal sumAdvancePaidByLpoId(@Param("lpoId") Long lpoId);
 }

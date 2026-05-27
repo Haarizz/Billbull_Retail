@@ -14,6 +14,9 @@ public class StatementEntryDTO {
     private BigDecimal credit;
     private BigDecimal runningBalance;
     private String status;
+    // QA-018: narration + cross-ref shown in Customer/Vendor SoA.
+    private String description;
+    private String reference;
 
     public StatementEntryDTO() {
     }
@@ -115,5 +118,21 @@ public class StatementEntryDTO {
 
     public void setStatus(String status) {
         this.status = status;
+    }
+
+    public String getDescription() {
+        return description;
+    }
+
+    public void setDescription(String description) {
+        this.description = description;
+    }
+
+    public String getReference() {
+        return reference;
+    }
+
+    public void setReference(String reference) {
+        this.reference = reference;
     }
 }

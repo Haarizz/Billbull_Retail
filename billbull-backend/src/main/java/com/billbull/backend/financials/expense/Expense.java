@@ -35,6 +35,23 @@ public class Expense {
     private Double total;
     private String status;
 
+    /**
+     * QA-054: how the expense was paid. One of: Cash, Card, Credit,
+     * Bank Transfer, Online Payment. Drives the auto-pay ledger
+     * preselection in the entry screen and the credit side of the
+     * journal entry posted on Paid.
+     */
+    @Column(name = "payment_mode")
+    private String paymentMode;
+
+    /**
+     * QA-054: GL account id (UUID) of the cash/bank/AP ledger that
+     * funded this expense. When set, the posting engine uses this
+     * account on the credit side instead of the default Bank account.
+     */
+    @Column(name = "payment_account_id")
+    private String paymentAccountId;
+
     @Column(columnDefinition = "TEXT")
     private String notes;
 }

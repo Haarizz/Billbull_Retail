@@ -5,11 +5,14 @@ import {
     PieChart, Briefcase, Trash, Edit, X
 } from 'lucide-react';
 import { getVendors } from '../../api/vendorsApi';
-import { getCostCenters, getAccounts } from '../../api/ledgerApi';
+import { getCostCenters, getAccounts, getBankAccounts, getTransactions } from '../../api/ledgerApi';
 import { fetchExpenses, createExpense, updateExpense, deleteExpense } from '../../api/expensesApi';
 import toast from 'react-hot-toast';
 import { useCompany } from '../../context/CompanyContext';
 import CurrencyAmount, { CurrencySymbol } from '../../components/CurrencyAmount';
+import { formatDisplayDate } from '../../utils/dateUtils';
+import LedgerAccountCreateModal from '../../components/common/LedgerAccountCreateModal';
+import PaginationFooter from '../../components/common/PaginationFooter';
 
 
 const Expenses = () => {
@@ -28,22 +31,52 @@ const Expenses = () => {
     const [costCenters, setCostCenters] = useState([]);
     // BB-034A: GL accounts for expense account ledger selector
     const [glAccounts, setGlAccounts] = useState([]);
+    const [allAccounts, setAllAccounts] = useState([]);
     const [glAccountSearch, setGlAccountSearch] = useState('');
     const [glAccountOpen, setGlAccountOpen] = useState(false);
+    const [isAccountCreateOpen, setIsAccountCreateOpen] = useState(false);
     const glAccountRef = useRef(null);
+
+    const isSelectableExpenseAccount = (account) => {
+        if (!account || account.status === 'archived' || account.isGroup === true) return false;
+        return (account.accountGroup || '').toLowerCase() === 'expenses'
+            || (account.accountType || '').toLowerCase() === 'expense';
+    };
+
+    const loadReferenceData = async () => {
+        const [vendorData, costCenterData, glData] = await Promise.all([
+            getVendors(),
+            getCostCenters(),
+            getAccounts()
+        ]);
+        const accountData = Array.isArray(glData) ? glData : [];
+        setVendors(Array.isArray(vendorData) ? vendorData : []);
+        setCostCenters(Array.isArray(costCenterData) ? costCenterData : []);
+        setAllAccounts(accountData);
+        setGlAccounts(accountData.filter(isSelectableExpenseAccount));
+        return accountData;
+    };
 
     useEffect(() => {
         const fetchData = async () => {
             try {
-                const [vendorData, costCenterData, glData] = await Promise.all([
-                    getVendors(),
-                    getCostCenters(),
-                    getAccounts()
-                ]);
-                setVendors(vendorData);
-                setCostCenters(costCenterData);
-                // Filter to expense-type accounts for the selector
-                setGlAccounts(Array.isArray(glData) ? glData.filter(a => a.status !== 'archived') : []);
+                const [vendorData, costCenterData, glData, bankData] = await Promise.all([
+    getVendors(),
+    getCostCenters(),
+    getAccounts(),
+    getBankAccounts().catch(() => [])
+]);
+
+setVendors(vendorData);
+setCostCenters(costCenterData);
+
+// Filter to expense-type accounts for the selector
+setGlAccounts(Array.isArray(glData) ? glData.filter(a => a.status !== 'archived') : []);
+
+setPayAccounts(Array.isArray(bankData) ? bankData : []);
+
+// Needed by develop branch fallback expense loader
+setAllAccounts(Array.isArray(glData) ? glData : []);
             } catch (error) {
                 console.error("Failed to fetch data", error);
             }
@@ -68,8 +101,16 @@ const Expenses = () => {
         amount: '',
         taxRate: 5,
         status: 'Pending',
+        paymentMode: 'Cash',
+        paymentAccountId: '',
         notes: ''
     });
+
+    // QA-054: cash & bank ledgers loaded from the COA so the user can pick
+    // which account funded the expense. List is filtered by paymentMode in
+    // the dropdown (Cash → cash accounts, others → bank accounts).
+    const [payAccounts, setPayAccounts] = useState([]);
+    const PAYMENT_MODES = ['Cash', 'Card', 'Credit', 'Bank Transfer', 'Online Payment'];
     const [searchTerm, setSearchTerm] = useState('');
     const [filterDate, setFilterDate] = useState('This Month');
     const [filterLocation, setFilterLocation] = useState('All Locations');
@@ -155,6 +196,14 @@ const Expenses = () => {
         });
     }, [expenses, searchTerm, filterLocation, filterCategory, filterCostCenter, filterTax]);
 
+    const LIST_PAGE_SIZE = 30;
+    const [listPage, setListPage] = useState(0);
+    useEffect(() => { setListPage(0); }, [searchTerm, filterLocation, filterCategory, filterCostCenter, filterTax]);
+    const pagedExpenses = useMemo(
+        () => filteredExpenses.slice(listPage * LIST_PAGE_SIZE, (listPage + 1) * LIST_PAGE_SIZE),
+        [filteredExpenses, listPage]
+    );
+
     const stats = useMemo(() => {
         const totalExpenses = filteredExpenses.reduce((sum, item) => sum + (item.total || 0), 0);
         const totalTax = filteredExpenses.reduce((sum, item) => sum + (item.taxAmount || 0), 0);
@@ -222,6 +271,8 @@ const Expenses = () => {
             amount: expense.amount,
             taxRate: expense.taxRate,
             status: expense.status || 'Pending',
+            paymentMode: expense.paymentMode || 'Cash',
+            paymentAccountId: expense.paymentAccountId || '',
             notes: expense.notes
         });
         setGlAccountSearch('');
@@ -258,8 +309,32 @@ const Expenses = () => {
             amount: '',
             taxRate: 5,
             status: 'Pending',
+            paymentMode: 'Cash',
+            paymentAccountId: '',
             notes: ''
         });
+    };
+
+    const handleLedgerAccountCreated = async (createdAccount) => {
+        let account = createdAccount;
+        try {
+            const refreshedAccounts = await loadReferenceData();
+            account = refreshedAccounts.find(item => item.id === createdAccount?.id) || createdAccount;
+        } catch (error) {
+            console.error("Failed to refresh expense ledger accounts", error);
+            if (createdAccount?.id) {
+                setAllAccounts(prev => [...prev, createdAccount]);
+                if (isSelectableExpenseAccount(createdAccount)) {
+                    setGlAccounts(prev => [...prev, createdAccount]);
+                }
+            }
+        }
+
+        if (account?.id) {
+            setNewExpense(prev => ({ ...prev, glAccountId: String(account.id) }));
+            setGlAccountSearch('');
+            setGlAccountOpen(false);
+        }
     };
 
     const StatusBadge = ({ status }) => {
@@ -446,9 +521,9 @@ const Expenses = () => {
                             </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-100">
-                            {filteredExpenses.map((expense) => (
+                            {pagedExpenses.map((expense) => (
                                 <tr key={expense.id} className="hover:bg-slate-50 transition-colors">
-                                    <td className="px-4 py-3 text-xs text-slate-600 whitespace-nowrap">{expense.date}</td>
+                                    <td className="px-4 py-3 text-xs text-slate-600 whitespace-nowrap">{formatDisplayDate(expense.date)}</td>
                                     <td className="px-4 py-3 text-xs font-semibold text-slate-700">{expense.vendor}</td>
                                     <td className="px-4 py-3">
                                         <span className={`px-2 py-0.5 rounded text-[10px] font-semibold ${expense.category === 'Utilities' ? 'bg-blue-50 text-blue-600' :
@@ -458,7 +533,7 @@ const Expenses = () => {
                                             }`}>{expense.category}</span>
                                     </td>
                                     <td className="px-4 py-3 text-xs text-slate-600">
-                                        {(() => { const a = glAccounts.find(acc => String(acc.id) === String(expense.glAccountId)); return a ? <span className="font-mono text-[10px]">{a.code}<span className="font-sans font-normal ml-1 text-slate-500">{a.name}</span></span> : <span className="text-slate-300">—</span>; })()}
+                                        {(() => { const a = allAccounts.find(acc => String(acc.id) === String(expense.glAccountId)); return a ? <span className="font-mono text-[10px]">{a.code}<span className="font-sans font-normal ml-1 text-slate-500">{a.name}</span></span> : <span className="text-slate-300">-</span>; })()}
                                     </td>
                                     <td className="px-4 py-3 text-xs text-slate-600">{expense.costCenter}</td>
                                     <td className="px-4 py-3 text-xs text-slate-600">{expense.location}</td>
@@ -500,6 +575,13 @@ const Expenses = () => {
                             ))}
                         </tbody>
                     </table>
+                    <PaginationFooter
+                        page={listPage}
+                        size={LIST_PAGE_SIZE}
+                        totalElements={filteredExpenses.length}
+                        totalPages={Math.ceil(filteredExpenses.length / LIST_PAGE_SIZE)}
+                        onPageChange={setListPage}
+                    />
                 </div>
             </div>
 
@@ -592,13 +674,23 @@ const Expenses = () => {
 
                             {/* BB-034A: GL Account searchable selector */}
                             <div ref={glAccountRef} className="relative">
-                                <label className="block text-xs font-bold text-slate-500 mb-1">
-                                    Expense Account Ledger <span className="text-red-400">*</span>
-                                </label>
+                                <div className="mb-1 flex items-center justify-between gap-2">
+                                    <label className="block text-xs font-bold text-slate-500">
+                                        Expense Account Ledger <span className="text-red-400">*</span>
+                                    </label>
+                                    <button
+                                        type="button"
+                                        title="Create account ledger"
+                                        onClick={() => { setGlAccountOpen(false); setIsAccountCreateOpen(true); }}
+                                        className="flex h-7 w-7 items-center justify-center rounded border border-slate-200 bg-white text-slate-500 hover:border-emerald-500 hover:text-emerald-700"
+                                    >
+                                        <Plus size={13} />
+                                    </button>
+                                </div>
                                 {newExpense.glAccountId ? (
                                     <div className="w-full px-3 py-2 text-xs border border-emerald-400 rounded-md bg-emerald-50 text-slate-700 font-medium flex items-center justify-between">
                                         <span className="truncate flex-1">
-                                            {(() => { const a = glAccounts.find(acc => String(acc.id) === String(newExpense.glAccountId)); return a ? `${a.code} – ${a.name}` : newExpense.glAccountId; })()}
+                                            {(() => { const a = allAccounts.find(acc => String(acc.id) === String(newExpense.glAccountId)); return a ? `${a.code} - ${a.name}` : newExpense.glAccountId; })()}
                                         </span>
                                         <button
                                             type="button"
@@ -708,6 +800,54 @@ const Expenses = () => {
                                 />
                             </div>
 
+                            {/* QA-054: PAYMENT MODE */}
+                            <div>
+                                <label className="block text-xs font-bold text-slate-500 mb-1">Payment Mode</label>
+                                <select
+                                    className="w-full px-3 py-2 text-xs border border-slate-200 rounded-md focus:outline-none focus:border-emerald-500 text-slate-600 bg-white"
+                                    value={newExpense.paymentMode || ''}
+                                    onChange={(e) => {
+                                        const mode = e.target.value;
+                                        // Reset the pay-account when the mode changes so the user
+                                        // doesn't accidentally keep a bank account selected after
+                                        // switching to Cash (or vice-versa).
+                                        setNewExpense({ ...newExpense, paymentMode: mode, paymentAccountId: '' });
+                                    }}
+                                >
+                                    {PAYMENT_MODES.map(m => <option key={m} value={m}>{m}</option>)}
+                                </select>
+                            </div>
+
+                            {/* QA-054: AUTO-PAY LEDGER */}
+                            <div>
+                                <label className="block text-xs font-bold text-slate-500 mb-1">Pay From Account</label>
+                                <select
+                                    className="w-full px-3 py-2 text-xs border border-slate-200 rounded-md focus:outline-none focus:border-emerald-500 text-slate-600 bg-white"
+                                    value={newExpense.paymentAccountId || ''}
+                                    onChange={(e) => setNewExpense({ ...newExpense, paymentAccountId: e.target.value })}
+                                >
+                                    <option value="">Auto (use default for {newExpense.paymentMode || 'mode'})</option>
+                                    {payAccounts
+                                        // Filter accounts to those that look right for the mode.
+                                        // Cash mode → only Cash-named ledgers; everything else
+                                        // (Card / Bank Transfer / Online Payment / Credit) → all
+                                        // cash & bank-flagged accounts (the bank-accounts endpoint
+                                        // already excludes archived rows for us).
+                                        .filter(acc => {
+                                            if (newExpense.paymentMode === 'Cash') {
+                                                const name = (acc.name || '').toLowerCase();
+                                                return name.includes('cash');
+                                            }
+                                            return true;
+                                        })
+                                        .map(acc => (
+                                            <option key={acc.id} value={acc.id}>
+                                                {acc.code ? `${acc.code} — ` : ''}{acc.name}
+                                            </option>
+                                        ))}
+                                </select>
+                            </div>
+
                             <div className="col-span-2">
                                 <label className="block text-xs font-bold text-slate-500 mb-1">Notes / Description</label>
                                 <textarea
@@ -731,6 +871,15 @@ const Expenses = () => {
                     </div>
                 </div>
             )}
+            <LedgerAccountCreateModal
+                isOpen={isAccountCreateOpen}
+                onClose={() => setIsAccountCreateOpen(false)}
+                onCreated={handleLedgerAccountCreated}
+                existingAccounts={allAccounts}
+                defaultGroup="Expenses"
+                fixedGroup
+                initialName={glAccountSearch}
+            />
         </div>
     );
 };

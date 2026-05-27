@@ -10,6 +10,11 @@ export const getAllQuotations = async () => {
   return res.data;
 };
 
+export const getQuotationsPage = async ({ page = 0, size = 30, search = "", status = "" } = {}) => {
+  const res = await api.get(`${BASE_URL}/page`, { params: { page, size, search, status } });
+  return res.data;
+};
+
 // --------------------
 // GET BY ID
 // --------------------
@@ -149,6 +154,33 @@ export const getItemPriceHistory = async (itemCode) => {
     return res.data;
   } catch (err) {
     const message = err?.response?.data || "Failed to fetch price history";
+    throw new Error(message);
+  }
+};
+
+// --------------------
+// SEND QUOTATION EMAIL
+// toEmail and subject are optional — if omitted, uses customer email & default subject
+// --------------------
+// QA-040: htmlBody is optional. When provided, the backend skips its hand-built
+// Java HTML and uses this exact body — so the email mirrors whatever the user
+// designed in Print & Email Templates (same renderer as Print).
+export const sendQuotationEmail = async (
+  id,
+  { toEmail = "", subject = "", htmlBody = "", inlineAttachments = [] } = {}
+) => {
+  try {
+    const res = await api.post(`${BASE_URL}/${id}/send-email`, {
+      toEmail,
+      subject,
+      htmlBody,
+      inlineAttachments,
+    });
+    return res.data;
+  } catch (err) {
+    const message =
+      err?.response?.data ||
+      "Failed to send email";
     throw new Error(message);
   }
 };

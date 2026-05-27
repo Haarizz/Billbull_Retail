@@ -24,9 +24,21 @@ export const createCustomer = async (payload) => {
   return res.data;
 };
 
+export const getNextCustomerCode = async () => {
+  const res = await api.get(`${BASE_URL}/next-code`);
+  return res.data.customerCode;
+};
+
 // ✅ DELETE customer
 export const deleteCustomer = async (id) => {
   await api.delete(`${BASE_URL}/${id}`);
+};
+
+// ✅ QA-028: append a new shipping address to an existing customer.
+// Returns the full updated list of saved addresses for that customer.
+export const addCustomerSavedAddress = async (customerId, address) => {
+  const res = await api.post(`${BASE_URL}/${customerId}/saved-addresses`, address);
+  return res.data;
 };
 
 // ✅ GET opening invoices for a customer by customer code (QA-002)

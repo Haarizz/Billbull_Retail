@@ -15,13 +15,16 @@ import { exportToExcel, exportToPDF } from '../../../utils/exportUtils';
 import { generateSOAFilename } from '../../../utils/filenameUtils';
 import { usePrintDocument } from '../../../hooks/usePrintDocument';
 import CurrencyAmount from '../../../components/CurrencyAmount';
+import PaginationFooter from '../../../components/common/PaginationFooter';
 import { STATEMENT_EXPORT_COLUMNS, formatStatementEntryType, mapStatementEntriesForExport } from '../../../utils/statementUtils';
+import { formatDisplayDate } from '../../../utils/dateUtils';
 
 // ==========================================
 // 1. MOCK DATA & CONFIGURATION
 // ==========================================
 
 const VENDOR_COLUMNS = [
+  { header: 'S.No.', key: 'sNo', width: 8 },
   { header: 'Code', key: 'code', width: 10 },
   { header: 'Name', key: 'name', width: 25 },
   { header: 'Email', key: 'email', width: 20 },
@@ -548,11 +551,11 @@ const PayInvoices = ({ vendors, initialVendor }) => {
                               : `#${inv.invoiceNumber}`}
                           </td>
                           <td className="px-4 py-3 text-slate-500 text-xs">
-                            {inv.invoiceDate ? new Date(inv.invoiceDate).toLocaleDateString() : '-'}
+                            {formatDisplayDate(inv.invoiceDate)}
                           </td>
                           <td className="px-4 py-3 text-xs">
                             <span className={isOverdue ? "text-red-500 font-bold" : "text-slate-500"}>
-                              {inv.dueDate ? new Date(inv.dueDate).toLocaleDateString() : 'N/A'}
+                              {formatDisplayDate(inv.dueDate, 'N/A')}
                             </span>
                             {isOverdue && <span className="block text-[9px] text-red-400">Overdue</span>}
                           </td>
@@ -769,7 +772,7 @@ const PayInvoices = ({ vendors, initialVendor }) => {
                     </div>
                     <div className="flex justify-between items-center mt-1">
                       <p className="text-[10px] text-slate-500">{payment.voucherNumber || `PV-${payment.id}`} • {payment.paymentMode}</p>
-                      <p className="text-[10px] text-slate-400">{payment.paymentDate ? new Date(payment.paymentDate).toLocaleDateString() : ''}</p>
+                      <p className="text-[10px] text-slate-400">{formatDisplayDate(payment.paymentDate, '')}</p>
                     </div>
                   </div>
                 </div>
@@ -927,7 +930,7 @@ const VendorSoA = ({ vendors }) => {
               <p>Statement Period</p>
               <p className="font-semibold text-slate-800">{startDate} to {endDate}</p>
               <p className="mt-1">Generated On</p>
-              <p className="font-semibold text-slate-800">{new Date().toLocaleDateString()}</p>
+              <p className="font-semibold text-slate-800">{formatDisplayDate(new Date())}</p>
             </div>
           </div>
 
@@ -956,6 +959,8 @@ const VendorSoA = ({ vendors }) => {
                 <tr>
                   <th className="px-4 py-2 text-left font-medium text-gray-500">DATE</th>
                   <th className="px-4 py-2 text-left font-medium text-gray-500">TYPE</th>
+                  <th className="px-4 py-2 text-left font-medium text-gray-500">DOCUMENT NO.</th>
+                  <th className="px-4 py-2 text-left font-medium text-gray-500">DESCRIPTION</th>
                   <th className="px-4 py-2 text-left font-medium text-gray-500">REFERENCE</th>
                   <th className="px-4 py-2 text-right font-medium text-gray-500">DEBIT (PAYMENT)</th>
                   <th className="px-4 py-2 text-right font-medium text-gray-500">CREDIT (INVOICE)</th>
@@ -964,7 +969,7 @@ const VendorSoA = ({ vendors }) => {
               </thead>
               <tbody className="divide-y divide-slate-100">
                 {isLoading ? (
-                  <tr><td colSpan="6" className="p-8 text-center text-slate-500"><Loader2 className="h-6 w-6 animate-spin mx-auto mb-2" />Loading Statement...</td></tr>
+                  <tr><td colSpan="8" className="p-8 text-center text-slate-500"><Loader2 className="h-6 w-6 animate-spin mx-auto mb-2" />Loading Statement...</td></tr>
                 ) : statementData.entries && statementData.entries.length > 0 ? (
                   statementData.entries.map((row, i) => (
                     <tr key={i}>
@@ -976,15 +981,17 @@ const VendorSoA = ({ vendors }) => {
                           }`}>{formatStatementEntryType(row.type)}</span>
                       </td>
                       <td className="px-4 py-3 text-slate-600">{row.documentNo || '-'}</td>
+                      <td className="px-4 py-3 text-slate-600">{row.description || formatStatementEntryType(row.type)}</td>
+                      <td className="px-4 py-3 text-slate-500">{row.reference || '-'}</td>
                       <td className="px-4 py-3 text-right font-medium text-green-600">{row.debit > 0 ? row.debit.toLocaleString(undefined, { minimumFractionDigits: 2 }) : '-'}</td>
                       <td className="px-4 py-3 text-right font-medium text-orange-600">{row.credit > 0 ? row.credit.toLocaleString(undefined, { minimumFractionDigits: 2 }) : '-'}</td>
                       <td className="px-4 py-3 text-right font-bold text-slate-800">{Math.abs(row.runningBalance).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} {row.runningBalance >= 0 ? 'Cr' : 'Dr'}</td>
                     </tr>
                   ))) : (
-                  <tr><td colSpan="6" className="p-8 text-center text-slate-500">No transactions recorded in this period.</td></tr>
+                  <tr><td colSpan="8" className="p-8 text-center text-slate-500">No transactions recorded in this period.</td></tr>
                 )}
                 <tr className="bg-gray-50 font-bold border-t border-slate-200">
-                  <td colSpan="3" className="px-4 py-3 text-right text-slate-700">CLOSING TOTALS:</td>
+                  <td colSpan="5" className="px-4 py-3 text-right text-slate-700">CLOSING TOTALS:</td>
                   <td className="px-4 py-3 text-right text-green-600">{statementData?.totalDebit?.toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
                   <td className="px-4 py-3 text-right text-orange-600">{statementData?.totalCredit?.toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
                   <td className="px-4 py-3 text-right text-purple-700">{statementData?.closingBalance ? Math.abs(statementData.closingBalance).toLocaleString(undefined, { minimumFractionDigits: 2 }) : '0.00'} {statementData?.closingBalance >= 0 ? 'Cr' : 'Dr'}</td>
@@ -1349,7 +1356,7 @@ const CreateVendorWizard = ({ onBack, onSave, initialData }) => {
                     </div>
                     <div className="flex items-center gap-6">
                       <div className="text-right">
-                        {doc.date && <><p className="text-xs text-slate-500">Expiry</p><p className={`text-sm font-medium ${doc.status === 'Expiring Soon' ? 'text-orange-600' : 'text-slate-700'}`}>{doc.date}</p></>}
+                        {doc.date && <><p className="text-xs text-slate-500">Expiry</p><p className={`text-sm font-medium ${doc.status === 'Expiring Soon' ? 'text-orange-600' : 'text-slate-700'}`}>{formatDisplayDate(doc.date)}</p></>}
                       </div>
                       <span className={`px-2 py-1 rounded text-xs font-medium flex items-center gap-1 ${doc.status === 'Valid' ? 'bg-green-100 text-green-700' :
                         doc.status === 'Expiring Soon' ? 'bg-orange-100 text-orange-700' : 'bg-gray-100 text-gray-700'
@@ -1594,6 +1601,12 @@ const VendorListViewWithActions = ({ vendors, loading, onAddNew, onEdit, onDelet
     return matchesSearch && matchesStatus && matchesCategory && matchesGroup && matchesType;
   });
 
+  // Client-side pagination for the vendor list.
+  const LIST_PAGE_SIZE = 30;
+  const [listPage, setListPage] = useState(0);
+  useEffect(() => { setListPage(0); }, [searchTerm, filterStatus, filterCategory, filterGroup, filterType]);
+  const pagedVendors = filteredVendors.slice(listPage * LIST_PAGE_SIZE, (listPage + 1) * LIST_PAGE_SIZE);
+
   const resetFilters = () => {
     setSearchTerm("");
     setFilterStatus("All Status");
@@ -1608,15 +1621,17 @@ const VendorListViewWithActions = ({ vendors, loading, onAddNew, onEdit, onDelet
 
 
   const handleExportExcel = () => {
-    exportToExcel(filteredVendors.map((vendor) => ({
+    exportToExcel(filteredVendors.map((vendor, index) => ({
       ...vendor,
+      sNo: index + 1,
       balance: formatCurrencyDisplay(vendor.balance, currencyLabel)
     })), VENDOR_COLUMNS, 'Vendor_List');
   };
 
   const handleExportPdf = () => {
-    exportToPDF(filteredVendors.map((vendor) => ({
+    exportToPDF(filteredVendors.map((vendor, index) => ({
       ...vendor,
+      sNo: index + 1,
       balance: formatCurrencyDisplay(vendor.balance, currencyLabel)
     })), VENDOR_COLUMNS, 'Vendor List', 'Vendor_List');
   };
@@ -1783,6 +1798,7 @@ const VendorListViewWithActions = ({ vendors, loading, onAddNew, onEdit, onDelet
                 <table className="w-full text-sm">
                   <thead className="bg-gray-50 border-b border-slate-200">
                     <tr>
+                      <th className="px-4 py-3 text-center font-medium text-gray-500 uppercase w-16 select-none">S.No.</th>
                       <th className="px-6 py-3 text-left font-medium text-gray-500 uppercase">Vendor Code</th>
                       <th className="px-6 py-3 text-left font-medium text-gray-500 uppercase">Vendor Name</th>
                       <th className="px-6 py-3 text-left font-medium text-gray-500 uppercase">Category</th>
@@ -1796,12 +1812,13 @@ const VendorListViewWithActions = ({ vendors, loading, onAddNew, onEdit, onDelet
                   </thead>
                   <tbody className="bg-white divide-y divide-slate-100">
                     {loading ? (
-                      <tr><td colSpan="9" className="p-8 text-center text-slate-500"><Loader2 className="h-6 w-6 animate-spin mx-auto mb-2" />Loading Vendors...</td></tr>
-                    ) : filteredVendors.length === 0 ? (
-                      <tr><td colSpan="9" className="p-8 text-center text-slate-500">No vendors found matching criteria.</td></tr>
+                      <tr><td colSpan="10" className="p-8 text-center text-slate-500"><Loader2 className="h-6 w-6 animate-spin mx-auto mb-2" />Loading Vendors...</td></tr>
+                    ) : pagedVendors.length === 0 ? (
+                      <tr><td colSpan="10" className="p-8 text-center text-slate-500">No vendors found matching criteria.</td></tr>
                     ) : (
-                      filteredVendors.map((vendor) => (
+                      pagedVendors.map((vendor, index) => (
                         <tr key={vendor.id} className="hover:bg-slate-50 transition-colors">
+                          <td className="px-4 py-4 text-center text-slate-400 font-mono font-medium">{index + 1}</td>
                           <td className="px-6 py-4 whitespace-nowrap"><div className="flex items-center gap-2"><span className="text-xs bg-gray-100 px-2 py-1 rounded font-mono text-slate-600">{vendor.code || 'N/A'}</span><span className="text-lg">{vendor.flag || '🏳️'}</span></div></td>
                           <td className="px-6 py-4"><div className="flex flex-col"><div className="font-medium text-slate-900 flex items-center gap-2">{vendor.name}{vendor.isPreferred && <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] bg-purple-100 text-purple-700 font-medium"><Star className="h-3 w-3 fill-purple-700" />Preferred</span>}</div><div className="text-xs text-gray-500">{vendor.email}</div></div></td>
                           <td className="px-6 py-4"><span className="text-xs px-2 py-1 rounded font-medium bg-blue-100 text-blue-700">{vendor.category}</span></td>
@@ -1816,6 +1833,13 @@ const VendorListViewWithActions = ({ vendors, loading, onAddNew, onEdit, onDelet
                     )}
                   </tbody>
                 </table>
+                <PaginationFooter
+                  page={listPage}
+                  size={LIST_PAGE_SIZE}
+                  totalElements={filteredVendors.length}
+                  totalPages={Math.ceil(filteredVendors.length / LIST_PAGE_SIZE)}
+                  onPageChange={setListPage}
+                />
               </div>
             </div>
           </div>

@@ -117,6 +117,18 @@ public class PurchaseInvoiceController {
         return ResponseEntity.ok(service.listAll());
     }
 
+    @GetMapping("/page")
+    @PreAuthorize("isAuthenticated()")
+    public ResponseEntity<com.billbull.backend.util.PageResponse<PurchaseInvoiceResponse>> page(
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "30") int size,
+            @RequestParam(required = false) String search,
+            @RequestParam(required = false) String status) {
+        modulePermissionService.requireCanView("purchases");
+        return ResponseEntity.ok(com.billbull.backend.util.PaginationUtil.paginate(
+                service.listAll(), page, size, search, status));
+    }
+
     @GetMapping("/{id}")
     @PreAuthorize("isAuthenticated()")
     public ResponseEntity<PurchaseInvoiceResponse> get(@PathVariable Long id) {

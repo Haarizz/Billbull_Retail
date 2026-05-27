@@ -37,6 +37,9 @@ public class LpoListResponse {
     private String branchName;
     private String branchCode;
 
+    private BigDecimal advancePaid;
+    private BigDecimal balanceDue;
+
     public Long getWarehouseId() {
         return warehouseId;
     }
@@ -212,5 +215,21 @@ public class LpoListResponse {
 
     public void setBranchCode(String branchCode) {
         this.branchCode = branchCode;
+    }
+
+    public BigDecimal getAdvancePaid() {
+        return advancePaid;
+    }
+
+    public void setAdvancePaid(BigDecimal advancePaid) {
+        this.advancePaid = advancePaid;
+    }
+
+    public BigDecimal getBalanceDue() {
+        return balanceDue;
+    }
+
+    public void setBalanceDue(BigDecimal balanceDue) {
+        this.balanceDue = balanceDue;
     }
 }

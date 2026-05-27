@@ -27,10 +27,12 @@ import {
 } from 'lucide-react';
 
 // API Imports
-import { getAllSalesPayments, saveSalesPayment, getNextSalesPaymentNumber, getSalesPaymentStats, deleteSalesPayment } from '../../api/salesPaymentApi';
+import { getAllSalesPayments, getSalesPaymentsPage, saveSalesPayment, getNextSalesPaymentNumber, getSalesPaymentStats, deleteSalesPayment } from '../../api/salesPaymentApi';
+import PaginationFooter from '../../components/common/PaginationFooter';
 import { getAllSalesInvoices } from '../../api/salesInvoiceApi';
 import { getAllCustomers, getOpeningInvoicesByCustomerCode } from '../../api/customerledgerApi';
 import { getBankAccounts } from '../../api/ledgerApi';
+import { getSalesSettings } from '../../api/salesSettingsApi';
 import { getTemplatesByCategory } from '../../api/printTemplateApi';
 import { generatePrintHtml, printHtml } from '../../utils/printGenerator';
 import { useCompany } from '../../context/CompanyContext';
@@ -38,12 +40,15 @@ import billBullLogo from '../../assets/billBullLogo.png';
 import ExportDropdown from '../../components/common/ExportDropdown';
 import { exportToExcel, exportToPDF } from '../../utils/exportUtils';
 import CurrencyAmount, { CurrencySymbol } from '../../components/CurrencyAmount';
+import { formatDisplayDate } from '../../utils/dateUtils';
+import { isAutoNumberingEnabled } from '../../utils/salesNumbering';
 
 // ==========================================
 // 1. CONFIGURATION
 // ==========================================
 
 const PAYMENT_COLUMNS = [
+    { header: 'S.No.', key: 'sNo', width: 8 },
     { header: 'Payment No', key: 'paymentNo', width: 15 },
     { header: 'Date', key: 'date', width: 12 },
     { header: 'Customer', key: 'customerName', width: 25 },
@@ -81,15 +86,20 @@ const Payment = () => {
 
     // --- DATA LIST STATES ---
     const [paymentsList, setPaymentsList] = useState([]);
+    // Pagination state (server-driven via /api/sales/payments/page)
+    const [listPage, setListPage] = useState(0);
+    const [listPageMeta, setListPageMeta] = useState({ page: 0, size: 30, totalElements: 0, totalPages: 0 });
     const [customersList, setCustomersList] = useState([]);
     const [invoicesList, setInvoicesList] = useState([]);
     const [openingInvoices, setOpeningInvoices] = useState([]);
     const [searchQuery, setSearchQuery] = useState('');
     const [statusFilter, setStatusFilter] = useState('All Status');
+    const [salesSettings, setSalesSettings] = useState(null);
+    const paymentAutoNumbering = isAutoNumberingEnabled(salesSettings, 'SALES_PAYMENT');
 
     // --- FORM STATES ---
     const [paymentId, setPaymentId] = useState(null);
-    const [paymentNo, setPaymentNo] = useState('PAY-2026-0001');
+    const [paymentNo, setPaymentNo] = useState('');
     const [paymentDate, setPaymentDate] = useState(new Date().toISOString().split('T')[0]);
     const [paymentType, setPaymentType] = useState('Received'); // Received or Made
     const [paymentMode, setPaymentMode] = useState('Cash');
@@ -134,12 +144,28 @@ const Payment = () => {
         fetchInvoices();
         fetchStats();
         getBankAccounts().then(data => setBankAccounts(Array.isArray(data) ? data : [])).catch(() => {});
+        getSalesSettings().then(setSalesSettings).catch(() => {});
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
+
+    // Refetch payments when the user pages through the list.
+    useEffect(() => {
+        if (activeTab !== 'list') return;
+        fetchPayments();
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [activeTab, listPage]);
 
     const fetchPayments = async () => {
         setIsLoading(true);
         try {
-            const data = await getAllSalesPayments();
+            const resp = await getSalesPaymentsPage({ page: listPage, size: 30 });
+            const data = Array.isArray(resp?.content) ? resp.content : [];
+            setListPageMeta({
+                page: resp?.page ?? listPage,
+                size: resp?.size ?? 30,
+                totalElements: resp?.totalElements ?? 0,
+                totalPages: resp?.totalPages ?? 0,
+            });
             // Map backend fields to frontend format
             const mapped = data.map(p => ({
                 id: p.id,
@@ -299,11 +325,15 @@ const Payment = () => {
     // ==========================================
     const handleCreateNew = async () => {
         setPaymentId(null);
-        try {
-            const nextNum = await getNextSalesPaymentNumber();
-            setPaymentNo(nextNum);
-        } catch (err) {
-            setPaymentNo(`PAY-${new Date().getFullYear()}-${String(paymentsList.length + 1).padStart(4, '0')}`);
+        if (paymentAutoNumbering) {
+            try {
+                const nextNum = await getNextSalesPaymentNumber();
+                setPaymentNo(nextNum);
+            } catch (err) {
+                setPaymentNo('');
+            }
+        } else {
+            setPaymentNo('');
         }
         setPaymentDate(new Date().toISOString().split('T')[0]);
         setPaymentType('Received');
@@ -437,10 +467,18 @@ const Payment = () => {
         if (!selectedCustomer) { alert('Please select a customer'); return; }
         const selectedKeys = Object.keys(selectedInvoices).filter(k => selectedInvoices[k]);
         if (selectedKeys.length === 0) { alert('Please select at least one invoice to settle'); return; }
+        if (!paymentAutoNumbering && !paymentNo.trim()) {
+            alert('Please enter a receipt number.');
+            return;
+        }
+        if (!paymentAutoNumbering && selectedKeys.length > 1) {
+            alert('Manual receipt numbering supports one settlement at a time. Please save one invoice, then enter the next receipt number.');
+            return;
+        }
 
         setIsLoading(true);
         try {
-            let currentPaymentNo = paymentNo;
+            let lastSavedPayment = null;
             for (const invNo of selectedKeys) {
                 const amountToSettle = settleAmounts[invNo] || 0;
                 if (amountToSettle <= 0) continue;
@@ -450,14 +488,9 @@ const Payment = () => {
                 const invTotal = inv ? inv.total : 0;
                 const status = amountToSettle < invBalance ? 'PARTIAL' : 'COMPLETED';
 
-                if (selectedKeys.length > 1) {
-                    try { currentPaymentNo = await getNextSalesPaymentNumber(); }
-                    catch { currentPaymentNo = `PAY-${Date.now()}-${Math.floor(Math.random() * 1000)}`; }
-                }
-
-                await saveSalesPayment({
+                lastSavedPayment = await saveSalesPayment({
                     id: selectedKeys.length === 1 ? paymentId : null,
-                    paymentNumber: currentPaymentNo,
+                    paymentNumber: paymentAutoNumbering ? null : paymentNo.trim(),
                     paymentDate: paymentDate,
                     paymentType: 'RECEIVED',
                     customerCode: selectedCustomer.code,
@@ -473,6 +506,9 @@ const Payment = () => {
                     chequeDate: paymentMode === 'Cheque' ? chequeDate : null,
                     status: status
                 });
+            }
+            if (lastSavedPayment?.paymentNumber) {
+                setPaymentNo(lastSavedPayment.paymentNumber);
             }
 
             alert('Payments saved successfully!');
@@ -729,8 +765,17 @@ const Payment = () => {
                                     </div>
                                     <div className="flex gap-2">
                                         <ExportDropdown
-                                            onExportExcel={() => exportToExcel(filteredPayments, PAYMENT_COLUMNS, 'Sales_Payments')}
-                                            onExportPdf={() => exportToPDF(filteredPayments, PAYMENT_COLUMNS, 'Sales Payments List', 'Sales_Payments')}
+                                            onExportExcel={() => exportToExcel(
+                                                filteredPayments.map((payment, index) => ({ ...payment, sNo: index + 1 })),
+                                                PAYMENT_COLUMNS,
+                                                'Sales_Payments'
+                                            )}
+                                            onExportPdf={() => exportToPDF(
+                                                filteredPayments.map((payment, index) => ({ ...payment, sNo: index + 1 })),
+                                                PAYMENT_COLUMNS,
+                                                'Sales Payments List',
+                                                'Sales_Payments'
+                                            )}
                                         />
                                         <button
                                             onClick={handleCreateNew}
@@ -747,6 +792,7 @@ const Payment = () => {
                                 <table className="w-full text-left text-xs">
                                     <thead className="bg-[#F7F7FA] text-slate-500 border-b border-slate-200 sticky top-0 z-10">
                                         <tr>
+                                            <th className="px-3 py-3 text-center text-slate-500 w-12 select-none uppercase">S.No.</th>
                                             <th className="px-4 py-3 font-semibold text-xs uppercase">Payment No</th>
                                             <th className="px-4 py-3 font-semibold text-xs uppercase">Date</th>
                                             <th className="px-4 py-3 font-semibold text-xs uppercase">Customer/Vendor</th>
@@ -759,10 +805,11 @@ const Payment = () => {
                                         </tr>
                                     </thead>
                                     <tbody className="divide-y divide-slate-100">
-                                        {filteredPayments.map((payment) => (
+                                        {filteredPayments.map((payment, index) => (
                                             <tr key={payment.id} className="hover:bg-slate-50 cursor-pointer group" onClick={() => handleViewPayment(payment)}>
+                                                <td className="px-3 py-3 text-center text-slate-400 font-mono font-medium">{index + 1}</td>
                                                 <td className="px-4 py-3 font-medium text-slate-700">{payment.paymentNo}</td>
-                                                <td className="px-4 py-3 text-slate-500">{payment.date}</td>
+                                                <td className="px-4 py-3 text-slate-500">{formatDisplayDate(payment.date)}</td>
                                                 <td className="px-4 py-3">
                                                     <div className="font-medium text-slate-700">{payment.customerName}</div>
                                                     <div className="text-[10px] text-slate-400">{payment.customerCode}</div>
@@ -795,6 +842,14 @@ const Payment = () => {
                                         )}
                                     </tbody>
                                 </table>
+                                <PaginationFooter
+                                    page={listPageMeta.page}
+                                    size={listPageMeta.size}
+                                    totalElements={listPageMeta.totalElements}
+                                    totalPages={listPageMeta.totalPages}
+                                    loading={isLoading}
+                                    onPageChange={setListPage}
+                                />
                             </div>
                         </div>
                     )}
@@ -887,7 +942,7 @@ const Payment = () => {
                                                                         className="rounded border-slate-300 text-yellow-500 focus:ring-yellow-500 w-4 h-4 cursor-pointer" />
                                                                 </td>
                                                                 <td className="px-4 py-3 font-medium text-slate-700">{inv.invoiceNo}</td>
-                                                                <td className="px-4 py-3 text-slate-500 text-xs">{inv.invoiceDate || '-'}</td>
+                                                                <td className="px-4 py-3 text-slate-500 text-xs">{formatDisplayDate(inv.invoiceDate)}</td>
                                                                 <td className="px-4 py-3 text-xs">
                                                                     <span className={isOverdue ? 'text-red-500 font-bold' : 'text-slate-500'}>{inv.dueDate || '-'}</span>
                                                                     {isOverdue && <span className="block text-[9px] text-red-400">Overdue</span>}
@@ -959,8 +1014,14 @@ const Payment = () => {
                                             <div className="grid grid-cols-2 gap-3">
                                                 <div>
                                                     <label className="block text-xs font-bold text-slate-500 mb-1">Receipt No.</label>
-                                                    <input type="text" value={paymentNo} readOnly
-                                                        className="w-full text-xs bg-slate-50 border border-slate-200 rounded px-3 py-2 text-slate-500" />
+                                                    <input
+                                                        type="text"
+                                                        value={paymentNo}
+                                                        onChange={(e) => setPaymentNo(e.target.value)}
+                                                        readOnly={paymentAutoNumbering}
+                                                        placeholder={paymentAutoNumbering ? 'Auto generated' : 'Enter receipt number'}
+                                                        className="w-full text-xs border border-slate-200 rounded px-3 py-2 text-slate-700 read-only:bg-slate-50 read-only:text-slate-500 focus:outline-none focus:border-[#F5C742]"
+                                                    />
                                                 </div>
                                                 <div>
                                                     <label className="block text-xs font-bold text-slate-500 mb-1">Method</label>
@@ -1046,7 +1107,7 @@ const Payment = () => {
                                                     </div>
                                                     <div className="flex justify-between items-center mt-1">
                                                         <p className="text-[10px] text-slate-500">{p.paymentNo} • {p.mode}</p>
-                                                        <p className="text-[10px] text-slate-400">{p.date}</p>
+                                                        <p className="text-[10px] text-slate-400">{formatDisplayDate(p.date)}</p>
                                                     </div>
                                                 </div>
                                             </div>
@@ -1114,7 +1175,7 @@ const Payment = () => {
                                     </div>
                                     <div>
                                         <p className="text-[10px] text-slate-400 font-bold uppercase">Payment Date</p>
-                                        <p className="text-xs font-medium text-slate-700">{selectedPayment.date}</p>
+                                        <p className="text-xs font-medium text-slate-700">{formatDisplayDate(selectedPayment.date)}</p>
                                     </div>
                                     <div>
                                         <p className="text-[10px] text-slate-400 font-bold uppercase">Payment Mode</p>

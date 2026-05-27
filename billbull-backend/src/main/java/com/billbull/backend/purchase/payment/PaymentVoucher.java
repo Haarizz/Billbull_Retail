@@ -48,8 +48,11 @@ public class PaymentVoucher {
     private PaymentStatus status;
 
     @Column(name = "invoice_id")
-    private Long invoiceId; 
-    
+    private Long invoiceId;
+
+    @Column(name = "lpo_id")
+    private Long lpoId;
+
     @Column(name = "bank_account")
     private String bankAccount;
 
@@ -163,6 +166,14 @@ public class PaymentVoucher {
 
 	public void setInvoiceId(Long invoiceId) {
 		this.invoiceId = invoiceId;
+	}
+
+	public Long getLpoId() {
+		return lpoId;
+	}
+
+	public void setLpoId(Long lpoId) {
+		this.lpoId = lpoId;
 	}
 
 	public String getBankAccount() {

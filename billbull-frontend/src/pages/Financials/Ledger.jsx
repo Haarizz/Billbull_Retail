@@ -42,6 +42,8 @@ import { employeesApi } from '../../api/employeesApi';
 import ExportDropdown from '../../components/common/ExportDropdown';
 import { exportToExcel, exportToPDF } from '../../utils/exportUtils';
 import { resolveCurrencyDisplayCode } from '../../utils/countryCurrencyOptions';
+import { formatDisplayDate } from '../../utils/dateUtils';
+import PaginationFooter from '../../components/common/PaginationFooter';
 
 // ==========================================
 // 1. MOCK DATA & CONFIGURATION
@@ -69,14 +71,43 @@ const GL_COLUMNS = [
 ];
 
 // --- HELPER: CUSTOM SELECT COMPONENT ---
-const CustomSelect = ({ label, placeholder, options, value, onChange }) => {
+const normalizeSelectOption = (option) => {
+  if (option && typeof option === 'object') {
+    const optionValue = option.value ?? option.label ?? '';
+    const optionLabel = option.label ?? optionValue;
+    return {
+      value: optionValue,
+      label: optionLabel,
+      searchText: option.searchText || `${optionValue} ${optionLabel}`
+    };
+  }
+
+  return {
+    value: option,
+    label: option,
+    searchText: String(option || '')
+  };
+};
+
+const CustomSelect = ({ label, placeholder, options = [], value, onChange, searchable = false }) => {
   const [isOpen, setIsOpen] = useState(false);
+  const [searchText, setSearchText] = useState('');
   const dropdownRef = useRef(null);
+  const normalizedOptions = useMemo(() => options.map(normalizeSelectOption), [options]);
+  const selectedOption = normalizedOptions.find((option) => option.value === value);
+  const filteredOptions = useMemo(() => {
+    const query = searchText.trim().toLowerCase();
+    if (!query) return normalizedOptions;
+    return normalizedOptions.filter((option) =>
+      String(option.searchText || option.label || option.value).toLowerCase().includes(query)
+    );
+  }, [normalizedOptions, searchText]);
 
   useEffect(() => {
     const handleClickOutside = (event) => {
       if (dropdownRef.current && !dropdownRef.current.contains(event.target)) {
         setIsOpen(false);
+        setSearchText('');
       }
     };
     document.addEventListener("mousedown", handleClickOutside);
@@ -86,27 +117,46 @@ const CustomSelect = ({ label, placeholder, options, value, onChange }) => {
   return (
     <div className="relative" ref={dropdownRef}>
       <div
-        onClick={() => setIsOpen(!isOpen)}
+        onClick={() => {
+          setIsOpen(!isOpen);
+          setSearchText('');
+        }}
         className="w-full px-3 py-2 text-xs border border-slate-200 rounded-md focus:border-blue-500 bg-white text-slate-600 flex justify-between items-center cursor-pointer"
       >
         <span className={value ? "text-slate-700" : "text-slate-400"}>
-          {value || placeholder}
+          {selectedOption?.label || value || placeholder}
         </span>
         <ChevronDown size={14} className="text-slate-400" />
       </div>
 
       {isOpen && (
         <div className="absolute z-50 mt-1 w-full bg-white border border-slate-200 rounded-md shadow-lg max-h-48 overflow-y-auto">
-          {options.map((option, idx) => (
+          {searchable && (
+            <div className="sticky top-0 bg-white p-2 border-b border-slate-100">
+              <input
+                autoFocus
+                value={searchText}
+                onChange={(event) => setSearchText(event.target.value)}
+                placeholder="Search code or name"
+                className="w-full rounded border border-slate-200 px-2 py-1.5 text-xs text-slate-700 outline-none focus:border-yellow-400"
+                onClick={(event) => event.stopPropagation()}
+              />
+            </div>
+          )}
+          {filteredOptions.length === 0 && (
+            <div className="px-3 py-2 text-xs text-slate-400">No options found</div>
+          )}
+          {filteredOptions.map((option, idx) => (
             <div
-              key={idx}
+              key={`${option.value}-${idx}`}
               onClick={() => {
-                onChange(option);
+                onChange(option.value);
                 setIsOpen(false);
+                setSearchText('');
               }}
               className="px-3 py-2 text-xs cursor-pointer text-slate-600 hover:bg-[#F43F5E] hover:text-white transition-colors"
             >
-              {option}
+              {option.label}
             </div>
           ))}
         </div>
@@ -178,6 +228,39 @@ const Ledger = () => {
     return Array.from(options);
   }, [accounts, branches, costCenters, defaultBranchName]);
   const branchSelectOptions = ['All Branches', ...branchOptions];
+  const costCenterSelectOptions = useMemo(() => [
+    { value: '-', label: '- No Cost Center', searchText: 'none no cost center -' },
+    ...costCenters
+      .filter((costCenter) => costCenter?.code)
+      .sort((left, right) => (left.code || '').localeCompare(right.code || ''))
+      .map((costCenter) => ({
+        value: costCenter.code,
+        label: `${costCenter.code} - ${costCenter.name || 'Unnamed Cost Center'}`,
+        searchText: `${costCenter.code} ${costCenter.name || ''}`
+      }))
+  ], [costCenters]);
+  const costCenterByCode = useMemo(() => {
+    const map = new Map();
+    costCenters.forEach((costCenter) => {
+      if (costCenter?.code) {
+        map.set(costCenter.code, costCenter);
+      }
+    });
+    return map;
+  }, [costCenters]);
+  const formatCostCenterDisplay = (code) => {
+    if (!code || code === '-') return '-';
+    const costCenter = costCenterByCode.get(code);
+    return costCenter ? `${costCenter.code} - ${costCenter.name || 'Unnamed Cost Center'}` : code;
+  };
+  const accountSelectOptions = useMemo(() => accounts
+    .filter((account) => account?.status !== 'archived' && account?.isGroup !== true)
+    .sort((left, right) => (left.code || '').localeCompare(right.code || ''))
+    .map((account) => ({
+      value: account.name,
+      label: `${account.code || '-'} - ${account.name}`,
+      searchText: `${account.code || ''} ${account.name || ''}`
+    })), [accounts]);
 
   // --- COA TREE STATES ---
   const [accountTree, setAccountTree] = useState([]);
@@ -961,6 +1044,13 @@ const Ledger = () => {
     );
   };
 
+  // Client-side pagination for the two big lists in this page.
+  const LIST_PAGE_SIZE = 30;
+  const [accountsPage, setAccountsPage] = useState(0);
+  useEffect(() => { setAccountsPage(0); }, [searchQuery, filterGroup, filterBranch, showArchived]);
+  const [glPage, setGlPage] = useState(0);
+  useEffect(() => { setGlPage(0); }, [glFilterAccount, glFilterFrom, glFilterTo, glTextSearch]);
+
   if (loading) {
     return (
       <div className="min-h-screen bg-slate-50 flex items-center justify-center">
@@ -996,6 +1086,9 @@ const Ledger = () => {
     );
     return matchesAccount && matchesFrom && matchesTo && matchesText;
   });
+
+  const pagedAccounts = filteredAccounts.slice(accountsPage * LIST_PAGE_SIZE, (accountsPage + 1) * LIST_PAGE_SIZE);
+  const pagedGl = filteredGlData.slice(glPage * LIST_PAGE_SIZE, (glPage + 1) * LIST_PAGE_SIZE);
 
   const visibleCoaTree = filterCoaTree(accountTree, coaTreeSearch);
   const coaTreeAnimationCss = `
@@ -1345,7 +1438,7 @@ const glAccountOptions = accounts
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-50">
-                  {filteredAccounts.map((row) => (
+                  {pagedAccounts.map((row) => (
                     <tr key={row.id} className={`hover:bg-slate-50 group cursor-pointer ${row.status === 'archived' ? 'opacity-50 grayscale bg-slate-50' : ''}`}>
                       <td className="px-4 py-3 font-medium text-slate-600">{row.code}</td>
                       <td className="px-4 py-3">
@@ -1375,8 +1468,8 @@ const glAccountOptions = accounts
                       <td className="px-4 py-3">
                         <div className="flex items-center gap-2">
                           <Target size={13} className="text-slate-300" />
-                          <span className="text-slate-600 font-medium font-mono text-[11px] uppercase tracking-wide">
-                            {row.cc}
+                          <span className="text-slate-600 font-medium text-[11px]">
+                            {formatCostCenterDisplay(row.cc)}
                           </span>
                         </div>
                       </td>
@@ -1464,6 +1557,13 @@ const glAccountOptions = accounts
                   ))}
                 </tbody>
               </table>
+              <PaginationFooter
+                page={accountsPage}
+                size={LIST_PAGE_SIZE}
+                totalElements={filteredAccounts.length}
+                totalPages={Math.ceil(filteredAccounts.length / LIST_PAGE_SIZE)}
+                onPageChange={setAccountsPage}
+              />
             </div>
             </>
             )}
@@ -1607,9 +1707,9 @@ const glAccountOptions = accounts
                       </td>
                     </tr>
                   )}
-                  {filteredGlData.map((entry, idx) => (
+                  {pagedGl.map((entry, idx) => (
                     <tr key={entry.id || idx} className="hover:bg-slate-50 group">
-                      <td className="px-4 py-3 font-medium text-slate-700">{entry.date}</td>
+                      <td className="px-4 py-3 font-medium text-slate-700">{formatDisplayDate(entry.date)}</td>
                       <td className="px-4 py-3">
                         <div className="flex items-center gap-2">
                           <div className="w-6 h-6 rounded bg-slate-100 flex items-center justify-center text-[10px] font-bold text-slate-500 border border-slate-200">{entry.type}</div>
@@ -1637,6 +1737,13 @@ const glAccountOptions = accounts
                   ))}
                 </tbody>
               </table>
+              <PaginationFooter
+                page={glPage}
+                size={LIST_PAGE_SIZE}
+                totalElements={filteredGlData.length}
+                totalPages={Math.ceil(filteredGlData.length / LIST_PAGE_SIZE)}
+                onPageChange={setGlPage}
+              />
             </div>
           </div>
         </div>
@@ -1869,7 +1976,7 @@ const glAccountOptions = accounts
                       </tr>
                     ) : filteredTxn.map((entry, idx) => (
                       <tr key={entry.id || idx} className="hover:bg-slate-50">
-                        <td className="px-4 py-3 font-medium text-slate-700">{entry.date}</td>
+                        <td className="px-4 py-3 font-medium text-slate-700">{formatDisplayDate(entry.date)}</td>
                         <td className="px-4 py-3 text-slate-500">{entry.voucher}</td>
                         <td className="px-4 py-3">
                           <div className="font-bold text-slate-700">{entry.accCode}</div>
@@ -1959,8 +2066,8 @@ const glAccountOptions = accounts
                   <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Cost Center</p>
                   <div className="flex items-center gap-2 text-sm font-medium text-slate-700">
                     <Target size={14} className="text-slate-400" />
-                    <span className="font-mono bg-slate-50 border border-slate-200 px-1.5 rounded text-xs">
-                      {selectedAccountForView.cc}
+                    <span className="bg-slate-50 border border-slate-200 px-1.5 rounded text-xs">
+                      {formatCostCenterDisplay(selectedAccountForView.cc)}
                     </span>
                   </div>
                 </div>
@@ -2045,10 +2152,10 @@ const glAccountOptions = accounts
                   <label className="block text-xs font-bold text-slate-600 mb-1">Cost Center</label>
                   <CustomSelect
                     placeholder="Select cost center"
-                    // DYNAMICALLY LOAD COST CENTERS
-                    options={['-', ...costCenters.map(cc => cc.code)]}
+                    options={costCenterSelectOptions}
                     value={selectedCostCenter}
                     onChange={setSelectedCostCenter}
+                    searchable
                   />
                 </div>
 
@@ -2161,9 +2268,10 @@ const glAccountOptions = accounts
                   <label className="block text-xs font-bold text-slate-600 mb-1">Select Account <span className="text-red-500">*</span></label>
                   <CustomSelect
                     placeholder="Choose account"
-                    options={accounts.map(a => a.name)}
+                    options={accountSelectOptions}
                     value={txnAccount}
                     onChange={setTxnAccount}
+                    searchable
                   />
                 </div>
                 <div className="grid grid-cols-2 gap-4">
@@ -2250,7 +2358,7 @@ const glAccountOptions = accounts
                     <tbody className="divide-y divide-slate-50 text-slate-600">
                       {statementData.runningBalanceLogs.map((log, i) => (
                         <tr key={i} className="hover:bg-slate-50">
-                          <td className="px-4 py-3 whitespace-nowrap">{log.date || log.transactionDate}</td>
+                          <td className="px-4 py-3 whitespace-nowrap">{formatDisplayDate(log.date || log.transactionDate)}</td>
                           <td className="px-4 py-3 whitespace-nowrap font-medium">{log.voucherNo || log.reference}</td>
                           <td className="px-4 py-3 whitespace-nowrap text-[10px] uppercase font-bold text-slate-400">{log.type}</td>
                           <td className="px-4 py-3">{log.description || log.particulars}</td>

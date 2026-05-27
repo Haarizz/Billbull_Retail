@@ -1,8 +1,26 @@
 import api from "./axiosConfig";
 
+// QA-040: send the designed-template DN email.
+export const sendDeliveryNoteEmail = async (
+  id,
+  { toEmail = "", subject = "", htmlBody = "", inlineAttachments = [] } = {}
+) => {
+  try {
+    const res = await api.post(`/api/delivery-notes/${id}/send-email`, {
+      toEmail, subject, htmlBody, inlineAttachments,
+    });
+    return res.data;
+  } catch (err) {
+    throw new Error(err?.response?.data || "Failed to send email");
+  }
+};
+
 // LIST
 export const getDeliveryNotes = () =>
   api.get("/api/delivery-notes").then(res => res.data);
+
+export const getDeliveryNotesPage = ({ page = 0, size = 30, search = "", status = "" } = {}) =>
+  api.get("/api/delivery-notes/page", { params: { page, size, search, status } }).then(res => res.data);
 
 export const getPickingNotes = async (deliveryNotes = null) => {
   const notes = deliveryNotes ?? await getDeliveryNotes();
@@ -17,6 +35,9 @@ export const getPickingNotes = async (deliveryNotes = null) => {
 // GET ONE
 export const getDeliveryNoteById = (id) =>
   api.get(`/api/delivery-notes/${id}`).then(res => res.data);
+
+export const getNextDeliveryNoteNumber = () =>
+  api.get("/api/delivery-notes/next-number").then(res => res.data.dnNumber);
 
 // CREATE
 export const createDeliveryNote = (payload) =>
