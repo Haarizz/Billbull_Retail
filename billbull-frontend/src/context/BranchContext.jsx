@@ -25,8 +25,20 @@ const normalizeBranch = (branch) => {
         id: branch.id ?? null,
         name: normalizeText(branch.name),
         code: normalizeText(branch.code),
+        // Address (top-level and structured sub-parts for print header assembly)
         address: normalizeText(branch.address),
+        addressLine2: normalizeText(branch.addressLine2),
+        city: normalizeText(branch.city),
+        state: normalizeText(branch.state),
+        postalCode: normalizeText(branch.postalCode),
+        country: normalizeText(branch.country),
+        // Contact & identity fields used by print/email header (PDF §7.1 / §7.3)
         phone: normalizeText(branch.phone),
+        fax: normalizeText(branch.fax),
+        email: normalizeText(branch.email),
+        trnNumber: normalizeText(branch.trnNumber),
+        logoUrl: normalizeText(branch.logoUrl),
+        sortOrder: typeof branch.sortOrder === 'number' ? branch.sortOrder : 0,
         type: normalizeText(branch.type) || 'BRANCH',
         isDefault: Boolean(branch.isDefault),
         isHeadquarters: Boolean(branch.isHeadquarters),
@@ -62,8 +74,12 @@ const mergeBranchData = (preferred, fallback) => {
         ...(normalizedFallback || {}),
         ...(normalizedPreferred || {}),
         id: normalizedPreferred?.id ?? normalizedFallback?.id ?? null,
-        isDefault: normalizedPreferred?.isDefault ?? normalizedFallback?.isDefault ?? false,
-        isHeadquarters: normalizedPreferred?.isHeadquarters ?? normalizedFallback?.isHeadquarters ?? false,
+        // Use || (not ??) because ?? does not coalesce `false`.
+        // isDefault and isHeadquarters are branch properties set by the API;
+        // the profile branch never carries them, so its `false` must NOT
+        // override the API's `true`.
+        isDefault: normalizedPreferred?.isDefault || normalizedFallback?.isDefault || false,
+        isHeadquarters: normalizedPreferred?.isHeadquarters || normalizedFallback?.isHeadquarters || false,
     };
 };
 
@@ -242,6 +258,12 @@ export const BranchProvider = ({ children }) => {
 
     useEffect(() => {
         load();
+        // BranchProvider mounts above the login route, so it runs before the
+        // JWT exists. Login emits 'billbull:login' so we can re-load with the
+        // newly-issued token (and therefore the user's allowed branch list).
+        const handler = () => load();
+        window.addEventListener('billbull:login', handler);
+        return () => window.removeEventListener('billbull:login', handler);
     }, []);
 
     const switchBranch = useCallback(async (branchId) => {

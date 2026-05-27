@@ -170,19 +170,23 @@ const InventoryReports = () => {
         operational: true
     });
     const [warehousesList, setWarehousesList] = useState([{ id: 'All', name: 'All' }]);
+    const reportCacheRef = useRef(new Map());
+    const reportListRef = useRef(null);
+    const reportBodyRef = useRef(null);
+    const { captureScroll } = useReportScrollPreserver([reportListRef, reportBodyRef]);
+
+    // Seed the initial branch filter from the sidebar's active branch.
+    const initialBranchId = isAllBranches || !activeBranchId ? 'All' : String(activeBranchId);
     const [filters, setFilters] = useState({
         dateFrom: '',
         dateTo: '',
         warehouseId: 'All',
+        branchId: initialBranchId,
         department: 'All',
         brand: 'All',
         searchQuery: '',
         stockCondition: 'Positive only'
     });
-    const reportCacheRef = useRef(new Map());
-    const reportListRef = useRef(null);
-    const reportBodyRef = useRef(null);
-    const { captureScroll } = useReportScrollPreserver([reportListRef, reportBodyRef]);
 
     const activeReport = allReports.find(report => report.id === activeId) || allReports[0];
 
@@ -231,6 +235,13 @@ const InventoryReports = () => {
     useEffect(() => {
         loadWarehouses();
     }, []);
+
+    // Sync branchId filter when the sidebar branch selector changes.
+    useEffect(() => {
+        const nextBranchId = isAllBranches || !activeBranchId ? 'All' : String(activeBranchId);
+        setFilters(prev => prev.branchId === nextBranchId ? prev : { ...prev, branchId: nextBranchId });
+        reportCacheRef.current.clear();
+    }, [activeBranchId, isAllBranches]);
 
     useEffect(() => {
         const groupId = reportGroupId(activeId);

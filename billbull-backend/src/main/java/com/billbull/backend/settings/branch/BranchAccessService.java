@@ -21,9 +21,11 @@ import com.billbull.backend.user.UserRepository;
 public class BranchAccessService {
 
     private final UserRepository userRepository;
+    private final BranchRepository branchRepository;
 
-    public BranchAccessService(UserRepository userRepository) {
+    public BranchAccessService(UserRepository userRepository, BranchRepository branchRepository) {
         this.userRepository = userRepository;
+        this.branchRepository = branchRepository;
     }
 
     public Branch getCurrentUserBranchOrNull() {
@@ -37,6 +39,25 @@ public class BranchAccessService {
     }
 
     public Branch getRequiredCurrentUserBranch() {
+        // If the Branch Selector has narrowed to a specific branch, new
+        // transactions should be stamped with THAT branch — not the user's
+        // primary. Without this, an admin who switched to Dubai and created
+        // an invoice would have it stamped with HQ instead.
+        BranchContextHolder.BranchContext ctx = BranchContextHolder.get();
+        if (ctx != null && ctx.activeBranchId() != null) {
+            Branch primary = getCurrentUserBranchOrNull();
+            if (primary != null && primary.getId() != null
+                    && primary.getId().equals(ctx.activeBranchId())) {
+                return primary; // hydrate with full primary record (warehouse etc.)
+            }
+            // Load the active branch by id (admin switched away from primary,
+            // or multi-branch restricted user switched within their allowed set).
+            return branchRepository.findById(ctx.activeBranchId())
+                    .orElseThrow(() -> new ResponseStatusException(
+                            HttpStatus.BAD_REQUEST,
+                            "Active branch no longer exists. Refresh and try again."));
+        }
+
         Branch branch = getCurrentUserBranchOrNull();
         if (branch == null) {
             throw new ResponseStatusException(
@@ -62,21 +83,28 @@ public class BranchAccessService {
                 .anyMatch(authority -> expected.equals(authority.getAuthority()));
     }
 
+    /**
+     * Access check for a single record (GET-by-id, PUT, DELETE, link-by-FK).
+     * Admins can always touch any branch's records — their power is universal.
+     * Restricted users are confined to their primary + additional branches.
+     *
+     * This is intentionally permissive for admin so that switching the Branch
+     * Selector to Dubai doesn't lock them out of opening an HQ document. The
+     * narrowing happens in {@link #filterBranchScoped} which drives list views.
+     */
     public boolean canAccessTransactionBranch(Long branchId) {
         if (branchId == null) {
-            return true;
+            return true; // legacy rows with no branch
         }
-        // Admins viewing "All Branches" can touch every branch.
-        if (BranchScope.isAllBranches()) {
-            return true;
-        }
-        // Honour the per-request allowed list from JWT first; fall back to the
-        // user's primary branch if no request context (e.g. background jobs).
         BranchContextHolder.BranchContext ctx = BranchContextHolder.get();
-        if (ctx != null && ctx.allowedBranchIds().contains(branchId)) {
-            return true;
+        if (ctx == null) {
+            return Objects.equals(branchId, getCurrentUserBranchId());
         }
-        return Objects.equals(branchId, getCurrentUserBranchId());
+        if (ctx.isAllBranches()) {
+            return true; // admin — universal access
+        }
+        return ctx.allowedBranchIds().contains(branchId)
+                || Objects.equals(branchId, getCurrentUserBranchId());
     }
 
     /**
@@ -155,9 +183,27 @@ public class BranchAccessService {
         }
     }
 
+    /**
+     * Predicate used by list endpoints. Differs from {@link #canAccessTransactionBranch}
+     * by also honouring the active Branch Selector — when admin switches to Dubai,
+     * the list view filters to Dubai even though admin technically has access to all.
+     * Single-record access (assert*) still uses the permissive method.
+     */
+    private boolean matchesActiveListScope(Long rowBranchId) {
+        if (rowBranchId == null) return true; // legacy rows
+        BranchContextHolder.BranchContext ctx = BranchContextHolder.get();
+        Long active = ctx != null ? ctx.activeBranchId() : null;
+        if (active != null) {
+            // PDF §6.3 — Branch Selector narrows the view for everyone, admin included.
+            return Objects.equals(rowBranchId, active);
+        }
+        // No active selector → fall back to base access rule.
+        return canAccessTransactionBranch(rowBranchId);
+    }
+
     public <T> List<T> filterBranchScoped(List<T> items, java.util.function.Function<T, Long> branchIdExtractor) {
         return items.stream()
-                .filter(item -> canAccessTransactionBranch(branchIdExtractor.apply(item)))
+                .filter(item -> matchesActiveListScope(branchIdExtractor.apply(item)))
                 .toList();
     }
 
@@ -170,7 +216,7 @@ public class BranchAccessService {
         return items.stream()
                 .filter(item -> {
                     Branch b = branchExtractor.apply(item);
-                    return canAccessTransactionBranch(b != null ? b.getId() : null);
+                    return matchesActiveListScope(b != null ? b.getId() : null);
                 })
                 .toList();
     }

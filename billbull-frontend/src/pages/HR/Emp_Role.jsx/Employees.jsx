@@ -42,7 +42,8 @@ import {
   UserCheck,
   LayoutList,
   LayoutGrid,
-  Star
+  Star,
+  Building2
 } from 'lucide-react';
 
 // Import the API helpers

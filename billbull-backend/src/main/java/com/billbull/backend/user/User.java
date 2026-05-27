@@ -57,7 +57,7 @@ public class User extends BaseEntity {
      * via {@link com.billbull.backend.settings.branch.BranchAccessService} —
      * they always see every branch.
      */
-    @ManyToMany(fetch = FetchType.LAZY)
+    @ManyToMany(fetch = FetchType.EAGER)
     @JoinTable(
             name = "user_branches",
             joinColumns = @JoinColumn(name = "user_id"),
@@ -66,6 +66,7 @@ public class User extends BaseEntity {
                     @Index(name = "idx_user_branches_user", columnList = "user_id"),
                     @Index(name = "idx_user_branches_branch", columnList = "branch_id")
             })
+    @com.fasterxml.jackson.annotation.JsonIgnore
     private Set<Branch> additionalBranches = new HashSet<>();
 
     @ManyToMany(fetch = FetchType.EAGER)
