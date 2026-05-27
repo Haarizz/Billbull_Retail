@@ -2114,8 +2114,9 @@ const FinancialReports = () => {
     const currency = company?.currency || 'AED';
     const [activeId, setActiveId] = useState('profit-loss-statement');
     const [search, setSearch] = useState('');
-    const [filters, setFilters] = useState(() => defaultFilters());
-    const [appliedFilters, setAppliedFilters] = useState(() => defaultFilters());
+    const initialBranchId = isAllBranches || !activeBranchId ? 'All' : String(activeBranchId);
+    const [filters, setFilters] = useState(() => ({ ...defaultFilters(), branchId: initialBranchId }));
+    const [appliedFilters, setAppliedFilters] = useState(() => ({ ...defaultFilters(), branchId: initialBranchId }));
     const [openGroups, setOpenGroups] = useState(() => Object.fromEntries(REPORT_GROUPS.map(group => [group.id, group.id === 'profit-loss' || group.id === 'balance-sheet' || group.id === 'cash-flow'])));
     const [drawerOpen, setDrawerOpen] = useState(false);
     const [rawData, setRawData] = useState({
@@ -2262,6 +2263,14 @@ const FinancialReports = () => {
     useEffect(() => {
         loadReportData(filters, { force: true });
     }, []);
+
+    // Sync the branch filter with the sidebar branch selector.
+    useEffect(() => {
+        const nextBranchId = isAllBranches || !activeBranchId ? 'All' : String(activeBranchId);
+        setFilters(prev => prev.branchId === nextBranchId ? prev : { ...prev, branchId: nextBranchId });
+        setAppliedFilters(prev => prev.branchId === nextBranchId ? prev : { ...prev, branchId: nextBranchId });
+        cacheRef.current.clear();
+    }, [activeBranchId, isAllBranches]);
 
     const context = useMemo(() => createLiveContext(rawData, reportData, appliedFilters), [rawData, reportData, appliedFilters]);
 

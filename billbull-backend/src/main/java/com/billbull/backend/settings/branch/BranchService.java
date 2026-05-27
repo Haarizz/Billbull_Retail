@@ -3,12 +3,14 @@ package com.billbull.backend.settings.branch;
 import com.billbull.backend.inventory.warehouse.Warehouse;
 import com.billbull.backend.inventory.warehouse.WarehouseRepository;
 import com.billbull.backend.security.AuditLogService;
+import com.billbull.backend.security.BranchContextHolder;
 import jakarta.transaction.Transactional;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.util.Comparator;
 import java.util.List;
+import java.util.Set;
 
 @Service
 @Transactional
@@ -39,7 +41,14 @@ public class BranchService {
     }
 
     public List<BranchResponse> listAll() {
+        // PDF §6.3 — Branch Selector shows only branches the caller can access.
+        // Admin / Super Admin → all. Restricted user → primary + additional (junction).
+        BranchContextHolder.BranchContext ctx = BranchContextHolder.get();
+        boolean isAllBranches = ctx != null && ctx.isAllBranches();
+        Set<Long> allowed = ctx != null ? ctx.allowedBranchIds() : Set.of();
+
         return repo.findAll().stream()
+                .filter(b -> isAllBranches || (b.getId() != null && allowed.contains(b.getId())))
                 .sorted(Comparator
                         .comparingInt(Branch::getSortOrder)
                         .thenComparing(b -> b.getName() == null ? "" : b.getName(), String.CASE_INSENSITIVE_ORDER))

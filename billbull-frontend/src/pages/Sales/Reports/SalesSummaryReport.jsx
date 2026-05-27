@@ -177,10 +177,13 @@ const SalesSummaryReport = () => {
     const [sidebarOpen, setSidebarOpen] = useState(false);
     const [branches, setBranches] = useState([{ id: 'All', name: 'All' }]);
     const [openGroups, setOpenGroups] = useState(() => Object.fromEntries(REPORT_GROUPS.map(group => [group.id, true])));
+    // Derive the initial branch filter from the sidebar's active branch so
+    // that switching to "Dubai Branch" scopes the report data automatically.
+    const initialBranchId = isAllBranches || !activeBranchId ? 'All' : String(activeBranchId);
     const [filters, setFilters] = useState({
         dateFrom: '',
         dateTo: '',
-        branchId: 'All',
+        branchId: initialBranchId,
         salesChannel: 'All',
         salesperson: 'All',
         searchQuery: ''
@@ -249,6 +252,17 @@ const SalesSummaryReport = () => {
     useEffect(() => {
         loadBranches();
     }, []);
+
+    // When the sidebar branch selector changes, update the report's branch
+    // filter to match and clear the cache so re-generate fetches fresh data.
+    useEffect(() => {
+        const nextBranchId = isAllBranches || !activeBranchId ? 'All' : String(activeBranchId);
+        setFilters(prev => {
+            if (prev.branchId === nextBranchId) return prev;
+            return { ...prev, branchId: nextBranchId };
+        });
+        reportCacheRef.current.clear();
+    }, [activeBranchId, isAllBranches]);
 
     useEffect(() => {
         const groupId = reportGroupId(activeId);

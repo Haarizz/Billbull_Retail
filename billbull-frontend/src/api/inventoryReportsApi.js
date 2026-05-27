@@ -6,6 +6,9 @@ export const getInventoryReportData = async (reportId, filters = {}, abortSignal
         if (filters.warehouseId && filters.warehouseId !== 'All') {
             params.warehouseId = filters.warehouseId;
         }
+        if (filters.branchId && filters.branchId !== 'All') {
+            params.branchId = filters.branchId;
+        }
         if (filters.dateFrom) params.dateFrom = filters.dateFrom;
         if (filters.dateTo) params.dateTo = filters.dateTo;
         if (filters.department && filters.department !== 'All') params.department = filters.department;

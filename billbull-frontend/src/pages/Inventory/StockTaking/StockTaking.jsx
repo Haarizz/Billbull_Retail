@@ -937,18 +937,32 @@ const ListView = ({
                                         </div>
                                     </td>
                                     <td className="px-4 py-2">
-                                        {session.total > 0 ? (
+                                        {session.type === 'OPENING_INVENTORY' ? (
+                                            <div className="space-y-1 min-w-[90px]">
+                                                <div className="flex items-center justify-between gap-2">
+                                                    <span className="text-[10px] font-bold text-slate-600">
+                                                        {session.progress} Units Counted
+                                                    </span>
+                                                    <span className="text-[10px] font-bold text-emerald-600">
+                                                        100%
+                                                    </span>
+                                                </div>
+                                                <div className="w-full h-1.5 bg-slate-100 rounded-full overflow-hidden">
+                                                    <div className="h-full bg-emerald-400 rounded-full" style={{ width: '100%' }}></div>
+                                                </div>
+                                            </div>
+                                        ) : session.total > 0 ? (
                                             <div className="space-y-1 min-w-[90px]">
                                                 <div className="flex items-center justify-between gap-2">
                                                     <span className="text-[10px] font-bold text-slate-600">
                                                         {session.progress} / {session.total}
                                                     </span>
                                                     <span className="text-[10px] font-bold text-amber-600">
-                                                        {Math.round((session.progress / session.total) * 100)}%
+                                                        {session.total > 0 ? Math.round((session.progress / session.total) * 100) : (session.progress > 0 ? 100 : 0)}%
                                                     </span>
                                                 </div>
                                                 <div className="w-full h-1.5 bg-slate-100 rounded-full overflow-hidden">
-                                                    <div className="h-full bg-yellow-400 rounded-full transition-all" style={{ width: `${(session.progress / session.total) * 100}%` }}></div>
+                                                    <div className="h-full bg-yellow-400 rounded-full transition-all" style={{ width: `${session.total > 0 ? Math.min((session.progress / session.total) * 100, 100) : (session.progress > 0 ? 100 : 0)}%` }}></div>
                                                 </div>
                                             </div>
                                         ) : (
@@ -2052,13 +2066,8 @@ const StockTaking = () => {
                 const totalQty = countedItems.reduce((sum, item) => sum + (item.variance || 0), 0);
                 const sessionTimestamps = mapSessionTimestamps(s);
 
-                const sessionItemCount = s.items?.length || 0;
-                const isOpening = s.type === 'OPENING_INVENTORY';
-                const warehouseSkuCount = skuCountByWarehouse[s.warehouseId];
-                const total = isOpening
-                    ? sessionItemCount
-                    : (warehouseSkuCount != null ? warehouseSkuCount : sessionItemCount);
-                const progress = Math.min(sessionItemCount, total);
+                const progress = (s.items || []).reduce((sum, item) => sum + (item.countedQty || 0), 0);
+                const total = (s.items || []).reduce((sum, item) => sum + (item.systemQty || 0), 0);
 
                 return {
                     ...s,
@@ -2135,8 +2144,8 @@ const StockTaking = () => {
                 dbId: newSessionRes.id,
                 warehouse: newSessionRes.warehouseName || newSessionRes.warehouse || '',
                 ...sessionTimestamps,
-                progress: newSessionRes.items?.length || 0,
-                total: newSessionRes.items?.length || 0,
+                progress: (newSessionRes.items || []).reduce((sum, item) => sum + (item.countedQty || 0), 0),
+                total: (newSessionRes.items || []).reduce((sum, item) => sum + (item.systemQty || 0), 0),
                 status: 'In Progress',
                 action: 'Continue',
                 // Session starts empty — products are added on-demand via search/scan

@@ -25,10 +25,11 @@ import BranchSelector from "../components/common/BranchSelector";
 const Sidebar = ({ children }) => {
   // --- STATE ---
   const [collapsed, setCollapsed] = useState(false);
-  const username = formatUserDisplayName(getUsernameFromToken()) || "BillBull Admin";
+  const rawUsername = getUsernameFromToken() || "";
+  const username = formatUserDisplayName(rawUsername.includes('@') ? rawUsername.split('@')[0] : rawUsername) || "BillBull Admin";
   const { canView, canAction, permissionsLoaded } = usePermissions();
   const { setCompany } = useCompany();
-  const userEmail = "admin@billbull.app";
+  const userEmail = rawUsername || "admin@billbull.app";
 
   const [mobileOpen, setMobileOpen] = useState(false);
   const [isMobile, setIsMobile] = useState(window.innerWidth <= 1024);
@@ -601,7 +602,7 @@ const Sidebar = ({ children }) => {
     }
 
     .mobile-overlay {
-      position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 40;
+      position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 70;
     }
     
     .close-mobile {
@@ -625,6 +626,7 @@ const Sidebar = ({ children }) => {
         position: fixed; left: 0; top: 0; bottom: 0; 
         transform: translateX(-105%); 
         width: 280px !important; /* Wider on mobile */
+        z-index: 80;
       }
       .sidebar.mobile-open { transform: translateX(0); box-shadow: 10px 0 30px rgba(0,0,0,0.15); }
       .sidebar.collapsed { width: 280px !important; } /* No collapse on mobile */

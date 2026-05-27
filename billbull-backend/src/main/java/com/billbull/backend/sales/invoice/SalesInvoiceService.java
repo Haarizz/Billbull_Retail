@@ -1513,6 +1513,15 @@ public class SalesInvoiceService {
                 continue;
             }
 
+            // Service products have no real inventory — the warehouseId carried on
+            // the line is a frontend default, not a stock location to validate.
+            if (item.getItemCode() != null) {
+                Product product = productRepo.findByCodeAndIsActiveTrue(item.getItemCode()).orElse(null);
+                if (product != null && product.isService()) {
+                    continue;
+                }
+            }
+
             Warehouse warehouse = warehouseRepository.findById(item.getWarehouseId())
                     .orElseThrow(() -> new ResponseStatusException(
                             HttpStatus.BAD_REQUEST,

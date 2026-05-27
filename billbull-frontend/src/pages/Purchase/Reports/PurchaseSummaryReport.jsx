@@ -1956,7 +1956,8 @@ const PurchaseSummaryReport = () => {
     const { branches: availableBranches, activeBranchId, isAllBranches } = useBranch();
     const [activeId, setActiveId] = useState('vendor-master');
     const [search, setSearch] = useState('');
-    const [filters, setFilters] = useState(defaultFilters);
+    const initialBranchFilter = isAllBranches || !activeBranchId ? 'All' : String(activeBranchId);
+    const [filters, setFilters] = useState(() => ({ ...defaultFilters(), branch: initialBranchFilter }));
     const [sources, setSources] = useState({
         vendors: [],
         lpos: [],
@@ -2085,6 +2086,12 @@ const PurchaseSummaryReport = () => {
         didLoadRef.current = true;
         loadLiveData({ quiet: true });
     }, []);
+
+    // Sync the branch filter with the sidebar branch selector.
+    useEffect(() => {
+        const nextBranch = isAllBranches || !activeBranchId ? 'All' : String(activeBranchId);
+        setFilters(prev => prev.branch === nextBranch ? prev : { ...prev, branch: nextBranch });
+    }, [activeBranchId, isAllBranches]);
 
     useEffect(() => {
         const groupId = activeReport.groupId;
