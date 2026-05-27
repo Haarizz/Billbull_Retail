@@ -1,5 +1,6 @@
 package com.billbull.backend.sales.quotation;
 
+import com.billbull.backend.settings.branch.Branch;
 import com.fasterxml.jackson.annotation.JsonManagedReference;
 import jakarta.persistence.*;
 import java.math.BigDecimal;
@@ -8,7 +9,9 @@ import java.util.ArrayList;
 import java.util.List;
 
 @Entity
-@Table(name = "sales_quotations")
+@Table(name = "sales_quotations", indexes = {
+    @Index(name = "idx_quotation_branch", columnList = "branch_id")
+})
 public class Quotation {
 
     @Id
@@ -25,10 +28,17 @@ public class Quotation {
     private LocalDate date;
     private LocalDate validTill;
     private String currency;
+    @Column(name = "branch_id")
     private Long branchId;
     private String branchName;
     private String branchCode;
     private String branchLocation;
+
+    /** Navigable view of {@link #branchId}. Read-only — writes go through {@link #setBranchId(Long)}. */
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "branch_id", insertable = false, updatable = false)
+    @com.fasterxml.jackson.annotation.JsonIgnore
+    private Branch branchEntity;
 
     @Column(name = "source_inquiry_id")
     private Long sourceInquiryId;
@@ -120,6 +130,8 @@ public class Quotation {
 
     public String getBranchCode() { return branchCode; }
     public void setBranchCode(String branchCode) { this.branchCode = branchCode; }
+
+    public Branch getBranchEntity() { return branchEntity; }
 
     public String getBranchLocation() { return branchLocation; }
     public void setBranchLocation(String branchLocation) { this.branchLocation = branchLocation; }

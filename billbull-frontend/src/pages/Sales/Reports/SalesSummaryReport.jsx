@@ -42,6 +42,9 @@ import { getPrintTemplates } from '../../../api/printTemplateApi';
 import { getSalesReportData } from '../../../api/salesReportsApi';
 import { exportToExcel, exportToPDF } from '../../../utils/exportUtils';
 import { generateReportPrintHtml, printHtml } from '../../../utils/printGenerator';
+import { buildReportHeaderProfile } from '../../../utils/branchPrintProfile';
+import { useCompany } from '../../../context/CompanyContext';
+import { useBranch } from '../../../context/BranchContext';
 import useReportScrollPreserver from '../../../hooks/useReportScrollPreserver';
 
 const REPORT_GROUPS = [
@@ -165,6 +168,8 @@ const badgeClass = value => {
 };
 
 const SalesSummaryReport = () => {
+    const { company } = useCompany();
+    const { branches: availableBranches, activeBranchId, isAllBranches } = useBranch();
     const [activeId, setActiveId] = useState('sales-summary');
     const [search, setSearch] = useState('');
     const [payload, setPayload] = useState(null);
@@ -290,12 +295,19 @@ const SalesSummaryReport = () => {
     const handleExportExcel = () => exportToExcel(rows, exportColumns, payload?.title || activeReport.title);
     const handleExportPdf = () => exportToPDF(rows, exportColumns, payload?.title || activeReport.title, payload?.reportId || activeId);
     const handlePrint = async () => {
+        // PDF §7.3: 'All Branches' reports use HQ branding; a specific branch
+        // uses that branch's profile.
+        const reportProfile = buildReportHeaderProfile({
+            company,
+            branches: availableBranches || [],
+            activeBranchId: isAllBranches ? null : activeBranchId,
+        });
         try {
             const templates = await getPrintTemplates();
             const defaultTemplate = templates.find(template => template.isDefault) || {};
-            printHtml(generateReportPrintHtml(defaultTemplate, payload?.title || activeReport.title, exportColumns, rows));
+            printHtml(generateReportPrintHtml(defaultTemplate, payload?.title || activeReport.title, exportColumns, rows, reportProfile));
         } catch (error) {
-            printHtml(generateReportPrintHtml({}, payload?.title || activeReport.title, exportColumns, rows));
+            printHtml(generateReportPrintHtml({}, payload?.title || activeReport.title, exportColumns, rows, reportProfile));
         }
     };
 

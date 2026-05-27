@@ -81,6 +81,7 @@ import useShortcuts from '../../../hooks/useShortcuts';
 // Printing Utilities
 import { getTemplatesByCategory } from '../../../api/printTemplateApi';
 import { generatePrintHtml, printHtml } from '../../../utils/printGenerator';
+import { buildDocumentHeaderProfile } from '../../../utils/branchPrintProfile';
 import billBullLogo from '../../../assets/billBullLogo.png';
 import toast from 'react-hot-toast';
 import {
@@ -199,6 +200,7 @@ const GRNListView = ({ data, onView, onEdit, onDelete, onPost, onPrint, onProcee
                 <th className="px-6 py-3 whitespace-nowrap">GRN No</th>
                 <th className="px-6 py-3 whitespace-nowrap">Date</th>
                 <th className="px-6 py-3 whitespace-nowrap">Vendor</th>
+                <th className="px-6 py-3 whitespace-nowrap">Branch</th>
                 <th className="px-6 py-3 whitespace-nowrap">Linked LPO / DP</th>
                 <th className="px-6 py-3 whitespace-nowrap">Warehouse</th>
                 <th className="px-6 py-3 text-center whitespace-nowrap">Packages</th>
@@ -224,6 +226,16 @@ const GRNListView = ({ data, onView, onEdit, onDelete, onPost, onPrint, onProcee
                   <td className="px-6 py-4 font-medium text-slate-900">
                     {row.vendor}
                     <div className="text-[9px] text-slate-400">V001</div>
+                  </td>
+                  <td className="px-6 py-4 text-slate-600 text-[11px]">
+                    {row.branchName ? (
+                      <>
+                        <div className="font-medium">{row.branchName}</div>
+                        {row.branchCode && <div className="text-slate-400">{row.branchCode}</div>}
+                      </>
+                    ) : (
+                      <span className="text-slate-300">—</span>
+                    )}
                   </td>
                   <td className="px-6 py-4">
                     <span
@@ -2397,6 +2409,7 @@ const EditorView = ({ initialData, onSaveDraft, onSubmitQC, onPost, onPrint, grn
 
 const GRN = () => {
   const { company } = useCompany();
+  const { branches: availableBranches, activeBranch } = useBranch();
   const currencyLabel = resolveCurrencyDisplayCode(company);
   const navigate = useNavigate();
   const location = useLocation();
@@ -2428,6 +2441,13 @@ const GRN = () => {
 
   useEffect(() => {
     fetchGrns();
+  }, []);
+
+  // Refetch when the global Branch Selector changes the active branch.
+  useEffect(() => {
+    const handler = () => fetchGrns();
+    window.addEventListener('billbull:branch-changed', handler);
+    return () => window.removeEventListener('billbull:branch-changed', handler);
   }, []);
 
   useEffect(() => {
@@ -2684,8 +2704,13 @@ const GRN = () => {
       const fullVendor = findVendorRecord([], fullGrn, fullGrn?.vendor, fullGrn?.vendorName);
       const printData = buildGrnPrintData(fullGrn, fullVendor, company);
 
+      const grnBranchId = fullGrn?.branchId ?? grn?.branchId ?? activeBranch?.id;
       const html = generatePrintHtml(defaultTemplate, printData, {
-        companyProfile: company,
+        companyProfile: buildDocumentHeaderProfile({
+          company,
+          branches: availableBranches || [],
+          branchId: grnBranchId,
+        }),
         billBullLogo: billBullLogo
       });
 

@@ -12,6 +12,8 @@ import { journalVoucherApi } from '../../api/journalVoucherApi';
 import { getAuditTrail } from '../../api/auditApi';
 import CurrencyAmount, { CurrencySymbol } from '../../components/CurrencyAmount';
 import { useCompany } from '../../context/CompanyContext';
+import { useBranch } from '../../context/BranchContext';
+import { buildDocumentHeaderProfile } from '../../utils/branchPrintProfile';
 import { printHtml } from '../../utils/printGenerator';
 import { getUsernameFromToken } from '../../api/auth';
 import { formatDisplayDate } from '../../utils/dateUtils';
@@ -129,6 +131,7 @@ const JournalVoucher = () => {
     const currentUserDisplay = formatUserDisplayName(currentUser) || 'System';
     // --- STATE ---
     const { company } = useCompany();
+    const { branches: availableBranches, activeBranch } = useBranch();
     const [viewMode, setViewMode] = useState('list'); // 'list' | 'create' | 'edit'
     const [costCenters, setCostCenters] = useState([]);
     const [fullAccounts, setFullAccounts] = useState([]);
@@ -186,6 +189,13 @@ const JournalVoucher = () => {
         fetchJournalVouchers();
     }, []);
 
+    // Refetch when the global Branch Selector changes the active branch.
+    useEffect(() => {
+        const handler = () => fetchJournalVouchers();
+        window.addEventListener('billbull:branch-changed', handler);
+        return () => window.removeEventListener('billbull:branch-changed', handler);
+    }, []);
+
     const fetchJournalVouchers = async () => {
         setLoading(true);
         try {
@@ -239,6 +249,9 @@ const JournalVoucher = () => {
                 date: jv.date,
                 reference: jv.reference,
                 narration: jv.narration,
+                branchId: jv.branch?.id ?? null,
+                branchName: jv.branch?.name || '',
+                branchCode: jv.branch?.code || '',
                 status: jv.status || 'Posted',
                 preparedBy: formatUserDisplayName(jv.preparedBy || 'System'),
                 postedBy: formatUserDisplayName(jv.postedBy || ''),
@@ -689,10 +702,15 @@ const JournalVoucher = () => {
             } catch { return false; }
         })();
 
+        const branchProfile = buildDocumentHeaderProfile({
+            company,
+            branches: availableBranches || [],
+            branchId: jv?.branchId ?? activeBranch?.id,
+        });
         if (hasNewSettings) {
-            return buildFinancialVoucherPrintHtml('journal-voucher', { ...jv, lines }, { company, template });
+            return buildFinancialVoucherPrintHtml('journal-voucher', { ...jv, lines }, { company: branchProfile, template });
         }
-        return buildJournalVoucherPrintHtml({ ...jv, lines }, { company, template });
+        return buildJournalVoucherPrintHtml({ ...jv, lines }, { company: branchProfile, template });
     };
 
     const getCurrentJvPrintPayload = () => {
@@ -1001,6 +1019,7 @@ const JournalVoucher = () => {
                                         <th className="px-4 py-3">JV No.</th>
                                         <th className="px-4 py-3">Date</th>
                                         <th className="px-4 py-3">Reference</th>
+                                        <th className="px-4 py-3">Branch</th>
                                         <th className="px-4 py-3">Narration</th>
                                         <th className="px-4 py-3 text-right">Debit (<CurrencySymbol />)</th>
                                         <th className="px-4 py-3 text-right">Credit (<CurrencySymbol />)</th>
@@ -1014,6 +1033,16 @@ const JournalVoucher = () => {
                                             <td className="px-4 py-3 font-medium text-slate-700">{row.jvNumber}</td>
                                             <td className="px-4 py-3 text-slate-500">{formatDisplayDate(row.date)}</td>
                                             <td className="px-4 py-3 text-slate-500">{row.reference}</td>
+                                            <td className="px-4 py-3 text-slate-600 text-[11px]">
+                                                {row.branchName ? (
+                                                    <>
+                                                        <div className="font-medium">{row.branchName}</div>
+                                                        {row.branchCode && <div className="text-slate-400">{row.branchCode}</div>}
+                                                    </>
+                                                ) : (
+                                                    <span className="text-slate-300">—</span>
+                                                )}
+                                            </td>
                                             <td className="px-4 py-3 text-slate-600 max-w-xs truncate">{row.narration}</td>
                                             <td className="px-4 py-3 text-right font-bold text-slate-700"><CurrencyAmount value={row.debit} /></td>
                                             <td className="px-4 py-3 text-right font-bold text-slate-700"><CurrencyAmount value={row.credit} /></td>

@@ -24,7 +24,18 @@ public class UserSafeDto {
     private String branchCode;
     private Long defaultWarehouseId;
     private String defaultWarehouseName;
+    private List<BranchRef> additionalBranches;
     private LocalDateTime createdAt;
+
+    public static class BranchRef {
+        private final Long id;
+        private final String name;
+        private final String code;
+        public BranchRef(Long id, String name, String code) { this.id = id; this.name = name; this.code = code; }
+        public Long getId() { return id; }
+        public String getName() { return name; }
+        public String getCode() { return code; }
+    }
 
     public UserSafeDto(User user) {
         this.id = user.getId();
@@ -53,6 +64,14 @@ public class UserSafeDto {
                 this.defaultWarehouseName = user.getBranch().getDefaultWarehouse().getName();
             }
         }
+
+        // PDF §2.3 multi-branch user — surface the extra branches the user can switch to.
+        this.additionalBranches = user.getAdditionalBranches() == null
+                ? java.util.Collections.emptyList()
+                : user.getAdditionalBranches().stream()
+                        .filter(b -> b != null && b.getId() != null)
+                        .map(b -> new BranchRef(b.getId(), b.getName(), b.getCode()))
+                        .collect(Collectors.toList());
     }
 
     // --- Getters only (no setters on DTO) ---
@@ -72,5 +91,6 @@ public class UserSafeDto {
     public String getBranchCode() { return branchCode; }
     public Long getDefaultWarehouseId() { return defaultWarehouseId; }
     public String getDefaultWarehouseName() { return defaultWarehouseName; }
+    public List<BranchRef> getAdditionalBranches() { return additionalBranches; }
     public LocalDateTime getCreatedAt() { return createdAt; }
 }

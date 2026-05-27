@@ -200,6 +200,29 @@ public class UserService {
     }
 
     /**
+     * Assign additional branches the user may switch to (PDF §2.3 multi-branch).
+     * Replaces the existing set in one call — pass the full desired list.
+     * The user's primary {@link User#getBranch()} is not touched.
+     */
+    @Transactional
+    public UserSafeDto assignAdditionalBranches(Long userId, java.util.List<Long> branchIds) {
+        User user = findUserById(userId);
+        Set<Branch> next = new HashSet<>();
+        if (branchIds != null) {
+            for (Long bid : branchIds) {
+                if (bid == null) continue;
+                // Skip the primary branch — it's already implicit.
+                if (user.getBranch() != null && bid.equals(user.getBranch().getId())) continue;
+                Branch b = branchRepository.findById(bid)
+                        .orElseThrow(() -> new IllegalArgumentException("Branch not found: " + bid));
+                next.add(b);
+            }
+        }
+        user.setAdditionalBranches(next);
+        return new UserSafeDto(userRepository.save(user));
+    }
+
+    /**
      * Assign roles to user (prevents privilege escalation and last-admin removal).
      */
     @Transactional

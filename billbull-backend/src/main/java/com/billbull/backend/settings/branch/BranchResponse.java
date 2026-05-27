@@ -8,8 +8,20 @@ public class BranchResponse {
     private String name;
     private String code;
     private String address;
+    private String addressLine2;
+    private String city;
+    private String state;
+    private String country;
+    private String postalCode;
     private String phone;
+    private String fax;
+    private String email;
+    private String trnNumber;
+    private String logoUrl;
+    private int sortOrder;
     private boolean isDefault;
+    private boolean isHeadquarters;
+    private BranchType type;
     private Long defaultWarehouseId;
     private String defaultWarehouseName;
     private String defaultWarehouseBranchName;
@@ -22,8 +34,20 @@ public class BranchResponse {
         r.name = b.getName();
         r.code = b.getCode();
         r.address = b.getAddress();
+        r.addressLine2 = b.getAddressLine2();
+        r.city = b.getCity();
+        r.state = b.getState();
+        r.country = b.getCountry();
+        r.postalCode = b.getPostalCode();
         r.phone = b.getPhone();
+        r.fax = b.getFax();
+        r.email = b.getEmail();
+        r.trnNumber = b.getTrnNumber();
+        r.logoUrl = b.getLogoUrl();
+        r.sortOrder = b.getSortOrder();
         r.isDefault = b.isDefault();
+        r.isHeadquarters = b.isHeadquarters();
+        r.type = b.getType();
         if (b.getDefaultWarehouse() != null) {
             r.defaultWarehouseId = b.getDefaultWarehouse().getId();
             r.defaultWarehouseName = b.getDefaultWarehouse().getName();
@@ -46,12 +70,49 @@ public class BranchResponse {
     public String getAddress() { return address; }
     public void setAddress(String address) { this.address = address; }
 
+    public String getAddressLine2() { return addressLine2; }
+    public void setAddressLine2(String addressLine2) { this.addressLine2 = addressLine2; }
+
+    public String getCity() { return city; }
+    public void setCity(String city) { this.city = city; }
+
+    public String getState() { return state; }
+    public void setState(String state) { this.state = state; }
+
+    public String getCountry() { return country; }
+    public void setCountry(String country) { this.country = country; }
+
+    public String getPostalCode() { return postalCode; }
+    public void setPostalCode(String postalCode) { this.postalCode = postalCode; }
+
     public String getPhone() { return phone; }
     public void setPhone(String phone) { this.phone = phone; }
+
+    public String getFax() { return fax; }
+    public void setFax(String fax) { this.fax = fax; }
+
+    public String getEmail() { return email; }
+    public void setEmail(String email) { this.email = email; }
+
+    public String getTrnNumber() { return trnNumber; }
+    public void setTrnNumber(String trnNumber) { this.trnNumber = trnNumber; }
+
+    public String getLogoUrl() { return logoUrl; }
+    public void setLogoUrl(String logoUrl) { this.logoUrl = logoUrl; }
+
+    public int getSortOrder() { return sortOrder; }
+    public void setSortOrder(int sortOrder) { this.sortOrder = sortOrder; }
 
     @JsonProperty("isDefault")
     public boolean isDefault() { return isDefault; }
     public void setDefault(boolean isDefault) { this.isDefault = isDefault; }
+
+    @JsonProperty("isHeadquarters")
+    public boolean isHeadquarters() { return isHeadquarters; }
+    public void setHeadquarters(boolean isHeadquarters) { this.isHeadquarters = isHeadquarters; }
+
+    public BranchType getType() { return type; }
+    public void setType(BranchType type) { this.type = type; }
 
     public Long getDefaultWarehouseId() { return defaultWarehouseId; }
     public void setDefaultWarehouseId(Long defaultWarehouseId) { this.defaultWarehouseId = defaultWarehouseId; }

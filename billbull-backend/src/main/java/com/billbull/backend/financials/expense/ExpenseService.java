@@ -8,6 +8,7 @@ import org.springframework.stereotype.Service;
 
 import com.billbull.backend.financials.audit.FinancialAuditService;
 import com.billbull.backend.financials.generalledger.postingengine.PostingEngineService;
+import com.billbull.backend.settings.branch.BranchAccessService;
 
 @Service
 public class ExpenseService {
@@ -21,8 +22,12 @@ public class ExpenseService {
     @Autowired
     private FinancialAuditService auditService;
 
+    @Autowired
+    private BranchAccessService branchAccessService;
+
     public List<Expense> getAllExpenses() {
-        return expenseRepository.findAllByOrderByDateDesc();
+        return branchAccessService.filterBranchScopedByBranch(
+                expenseRepository.findAllByOrderByDateDesc(), Expense::getBranch);
     }
 
     public Expense getExpenseById(Long id) {
@@ -30,6 +35,7 @@ public class ExpenseService {
     }
 
     public Expense createExpense(Expense expense) {
+        expense.setBranch(branchAccessService.getRequiredCurrentUserBranch());
         // Recalculate derived fields to ensure consistency
         if (expense.getAmount() != null && expense.getTaxRate() != null) {
             double taxAmount = (expense.getAmount() * expense.getTaxRate()) / 100;
@@ -55,6 +61,10 @@ public class ExpenseService {
         if (expenseOptional.isPresent()) {
             Expense existingExpense = expenseOptional.get();
             String previousStatus = existingExpense.getStatus();
+
+            Long existingBranchId = existingExpense.getBranch() != null ? existingExpense.getBranch().getId() : null;
+            branchAccessService.assertTransactionBranchAccessible(existingBranchId, "Expense");
+            // Branch is immutable on update — never copy from expenseDetails.
 
             existingExpense.setDate(expenseDetails.getDate());
             existingExpense.setVendor(expenseDetails.getVendor());

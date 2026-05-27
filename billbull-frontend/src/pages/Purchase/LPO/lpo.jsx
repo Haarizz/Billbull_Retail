@@ -63,6 +63,7 @@ import { formatDisplayDate } from '../../../utils/dateUtils';
 // Printing Utilities
 import { getTemplatesByCategory } from '../../../api/printTemplateApi';
 import { generatePrintHtml, printHtml } from '../../../utils/printGenerator';
+import { buildDocumentHeaderProfile } from '../../../utils/branchPrintProfile';
 import billBullLogo from '../../../assets/billBullLogo.png';
 import {
   buildLpoPrintData,
@@ -173,6 +174,9 @@ const mapApiToUi = (data) => {
     lpoNumber: item.id,             // string LPO number
     vendorName: item.vendorName,
     vendorCode: item.vendorCode,
+    branchId: item.branchId ?? null,
+    branchName: item.branchName || '',
+    branchCode: item.branchCode || '',
     status: item.status,
     approvedBy: item.approvedBy,
     date: item.date,
@@ -433,6 +437,7 @@ const ListView = ({ lpos, processedData, onEdit, onView, onPrint, activeFilter, 
                     {sortConfig.key === 'vendorName' && <span className="text-xs text-slate-400">{sortConfig.direction === 'asc' ? '↑' : '↓'}</span>}
                   </div>
                 </th>
+                <th className="px-4 py-3 whitespace-nowrap font-medium">Branch</th>
                 <th className="px-4 py-3 whitespace-nowrap font-medium">Created From</th>
                 <th
                   className="px-4 py-3 whitespace-nowrap font-medium cursor-pointer hover:bg-slate-100 transition-colors"
@@ -504,6 +509,16 @@ const ListView = ({ lpos, processedData, onEdit, onView, onPrint, activeFilter, 
                         <div className="font-medium text-slate-900">{row.vendorName || 'No Vendor'}</div>
                         <div className="text-[10px] text-slate-400 font-mono">{row.vendorCode || 'V001'}</div>
                       </div>
+                    </td>
+                    <td className="px-4 py-3 text-slate-600 text-[11px]">
+                      {row.branchName ? (
+                        <>
+                          <div className="font-medium">{row.branchName}</div>
+                          {row.branchCode && <div className="text-slate-400">{row.branchCode}</div>}
+                        </>
+                      ) : (
+                        <span className="text-slate-300">—</span>
+                      )}
                     </td>
                     <td className="px-4 py-3">
                       {getSourceBadge(row.createdFrom)}
@@ -2331,6 +2346,7 @@ const EditorView = ({ initialData, vendors, warehouses, onSave, onSubmit, onPrin
 
 const LPOList = () => {
   const { company } = useCompany();
+  const { branches: availableBranches, activeBranch } = useBranch();
   const currencyLabel = resolveCurrencyDisplayCode(company);
   const navigate = useNavigate();
   const [activeStatusTab, setActiveStatusTab] = useState("All LPOs");
@@ -2396,6 +2412,13 @@ const LPOList = () => {
   // Initialize Data via useEffect
   useEffect(() => {
     loadData();
+  }, []);
+
+  // Refetch when the global Branch Selector changes the active branch.
+  useEffect(() => {
+    const handler = () => loadData();
+    window.addEventListener('billbull:branch-changed', handler);
+    return () => window.removeEventListener('billbull:branch-changed', handler);
   }, []);
 
   const loadData = async () => {
@@ -2514,7 +2537,11 @@ const LPOList = () => {
         const fullVendor = findVendorRecord(vendors, detailedLpo, detailedLpo?.vendorName);
         const printData = buildLpoPrintData(detailedLpo, fullVendor, company);
         const html = generatePrintHtml(defaultTemplate, printData, {
-          companyProfile: company,
+          companyProfile: buildDocumentHeaderProfile({
+            company,
+            branches: availableBranches || [],
+            branchId: detailedLpo?.branchId ?? activeBranch?.id,
+          }),
           billBullLogo
         });
         printHtml(html);
@@ -2706,7 +2733,14 @@ const LPOList = () => {
         company,
         null
       );
-      const html = generatePrintHtml(template, printData, { companyProfile: company, billBullLogo });
+      const html = generatePrintHtml(template, printData, {
+        companyProfile: buildDocumentHeaderProfile({
+          company,
+          branches: availableBranches || [],
+          branchId: voucher?.branch?.id ?? row?.branchId ?? activeBranch?.id,
+        }),
+        billBullLogo
+      });
       printHtml(html);
     } catch (err) {
       console.error(err);

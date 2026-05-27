@@ -25,6 +25,8 @@ import {
     Printer
 } from 'lucide-react';
 import { useCompany } from '../../../context/CompanyContext';
+import { useBranch } from '../../../context/BranchContext';
+import { buildDocumentHeaderProfile } from '../../../utils/branchPrintProfile';
 import { formatDisplayDate } from '../../../utils/dateUtils';
 
 // Printing Utilities
@@ -342,6 +344,7 @@ const CreateVoucherModal = ({ isOpen, onClose, onCreate, purchaseInvoices, curre
 
 const PaymentVoucher = () => {
     const { company } = useCompany();
+    const { branches: availableBranches, activeBranch } = useBranch();
     const currency = company?.currency || 'AED';
     const [activeTab, setActiveTab] = useState("list");
     const [selectedVoucher, setSelectedVoucher] = useState(null);
@@ -378,6 +381,13 @@ const PaymentVoucher = () => {
         fetchData();
     }, []);
 
+    // Refetch when the global Branch Selector changes the active branch.
+    useEffect(() => {
+        const handler = () => fetchData();
+        window.addEventListener('billbull:branch-changed', handler);
+        return () => window.removeEventListener('billbull:branch-changed', handler);
+    }, []);
+
     const fetchData = async () => {
         setLoading(true);
         try {
@@ -405,6 +415,9 @@ const PaymentVoucher = () => {
                 date: v.paymentDate,
                 vendor: v.vendorName,
                 vendorId: v.vendorId || "VND-EXT",
+                branchId: v.branch?.id ?? null,
+                branchName: v.branch?.name || '',
+                branchCode: v.branch?.code || '',
                 mode: formatModeString(v.paymentMode),
                 modeIcon: getIconForMode(v.paymentMode),
                 amountVal: parseFloat(v.amount), // Keep number for stats calculation
@@ -529,7 +542,11 @@ const PaymentVoucher = () => {
             };
 
             const html = generatePrintHtml(defaultTemplate, printData, {
-                companyProfile: company,
+                companyProfile: buildDocumentHeaderProfile({
+                    company,
+                    branches: availableBranches || [],
+                    branchId: voucher.branchId ?? activeBranch?.id,
+                }),
                 billBullLogo
             });
 
@@ -567,7 +584,11 @@ const PaymentVoucher = () => {
             );
 
             const html = generatePrintHtml(defaultTemplate, printData, {
-                companyProfile: company,
+                companyProfile: buildDocumentHeaderProfile({
+                    company,
+                    branches: availableBranches || [],
+                    branchId: voucherDetail?.branch?.id ?? voucher?.branchId ?? activeBranch?.id,
+                }),
                 billBullLogo
             });
 
@@ -1175,6 +1196,7 @@ const PaymentVoucher = () => {
                                             <th className="px-4 py-3">Voucher No</th>
                                             <th className="px-4 py-3">Date</th>
                                             <th className="px-4 py-3">Vendor</th>
+                                            <th className="px-4 py-3">Branch</th>
                                             <th className="px-4 py-3">Payment Mode</th>
                                             <th className="px-4 py-3 text-right">Amount</th>
                                             <th className="px-4 py-3 text-right">Allocated</th>
@@ -1195,6 +1217,16 @@ const PaymentVoucher = () => {
                                                 <td className="px-4 py-3">
                                                     <div className="font-medium text-slate-800">{row.vendor}</div>
                                                     <div className="text-[10px] text-slate-400">{row.vendorId}</div>
+                                                </td>
+                                                <td className="px-4 py-3 text-slate-600 text-[11px]">
+                                                    {row.branchName ? (
+                                                        <>
+                                                            <div className="font-medium">{row.branchName}</div>
+                                                            {row.branchCode && <div className="text-slate-400">{row.branchCode}</div>}
+                                                        </>
+                                                    ) : (
+                                                        <span className="text-slate-300">—</span>
+                                                    )}
                                                 </td>
                                                 <td className="px-4 py-3">
                                                     <div className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded border border-slate-200 bg-slate-50 text-slate-600">

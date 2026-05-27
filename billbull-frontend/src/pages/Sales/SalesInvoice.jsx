@@ -66,6 +66,7 @@ import { getActiveVatRate } from '../../api/taxApi';
 import { getWarehouses } from '../../api/warehouseApi';
 import { getTemplatesByCategory } from '../../api/printTemplateApi';
 import { generatePrintHtml, printHtml } from '../../utils/printGenerator';
+import { buildDocumentHeaderProfile } from '../../utils/branchPrintProfile';
 import { getImageUrl } from '../../utils/urlUtils';
 import { getDefaultProductUnit, resolveUnitAmount } from '../../utils/unitPricing';
 import { summarizeSalesItems } from '../../utils/documentSummaryUtils';
@@ -151,7 +152,7 @@ const SalesInvoice = () => {
     const canManualBatchSelect = canAction('batch_manual_select', 'edit');
     const { print } = usePrintDocument();
     const { company } = useCompany();
-    const { defaultBranch } = useBranch();
+    const { defaultBranch, branches: availableBranches, activeBranch } = useBranch();
     const invoiceCurrency = company?.currency || company?.currencySymbol || 'AED';
     const location = useLocation();
     const fromQuotationHandled = useRef(false);
@@ -919,6 +920,16 @@ const SalesInvoice = () => {
         fetchInvoices();
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [activeTab, listPage, searchTerm, filterStatus]);
+
+    // Refetch when the global Branch Selector changes the active branch.
+    useEffect(() => {
+        const handler = () => {
+            if (activeTab === 'list') fetchInvoices();
+        };
+        window.addEventListener('billbull:branch-changed', handler);
+        return () => window.removeEventListener('billbull:branch-changed', handler);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [activeTab]);
 
     const verifyPickingNoteAfterSave = async (savedInvoice) => {
         if (!savedInvoice?.id) {
@@ -2153,7 +2164,15 @@ const SalesInvoice = () => {
             };
 
             const printData = buildReceiptVoucherPrintData(receipt, receiptsInvoiceContext);
-            const html = generatePrintHtml(defaultTemplate, printData, { companyProfile: company, billBullLogo });
+            // Use the originating invoice's branch so reprints carry the right
+            // header even when an admin is viewing under a different branch.
+            const receiptBranchId = receipt?.branchId ?? receiptsInvoiceContext?.branchId ?? activeBranch?.id;
+            const branchProfile = buildDocumentHeaderProfile({
+                company,
+                branches: availableBranches || [],
+                branchId: receiptBranchId,
+            });
+            const html = generatePrintHtml(defaultTemplate, printData, { companyProfile: branchProfile, billBullLogo });
 
             const title = generateDocFilename(
                 'Receipt Voucher',
@@ -2274,7 +2293,15 @@ const SalesInvoice = () => {
                     }
                 };
 
-                const html = generatePrintHtml(defaultTemplate, printData, { companyProfile: company, billBullLogo });
+                // Resolve the header from the invoice's branch (reprint correctness)
+                // or fall back to the active branch for an in-progress draft.
+                const invoiceBranchId = dataToPrint.branchId ?? activeBranch?.id;
+                const branchProfile = buildDocumentHeaderProfile({
+                    company,
+                    branches: availableBranches || [],
+                    branchId: invoiceBranchId,
+                });
+                const html = generatePrintHtml(defaultTemplate, printData, { companyProfile: branchProfile, billBullLogo });
                 printHtml(html);
             } else {
                 alert("No default template selected. Using browser print.");
@@ -2626,6 +2653,7 @@ const SalesInvoice = () => {
                                             <th className="px-4 py-3 cursor-pointer hover:bg-slate-100 select-none" onClick={() => handleSort('customerName')}>
                                                 <div className="flex items-center gap-1">Customer {sortConfig.key === 'customerName' && (sortConfig.direction === 'asc' ? <ArrowUp size={12} /> : <ArrowDown size={12} />)}</div>
                                             </th>
+                                            <th className="px-4 py-3">Branch</th>
                                             <th className="px-4 py-3">Source Type</th>
                                             <th className="px-4 py-3">Pay Mode</th>
                                             <th className="px-4 py-3 cursor-pointer hover:bg-slate-100 select-none" onClick={() => handleSort('invoiceTotal')}>
@@ -2657,6 +2685,16 @@ const SalesInvoice = () => {
                                                 <td className="px-4 py-3">
                                                     <div className="font-medium text-slate-700">{inv.customerName}</div>
                                                     <div className="text-[10px] text-slate-400">{inv.customerCode}</div>
+                                                </td>
+                                                <td className="px-4 py-3 text-slate-600 text-[11px]">
+                                                    {inv.branchName ? (
+                                                        <>
+                                                            <div className="font-medium">{inv.branchName}</div>
+                                                            {inv.branchCode && <div className="text-slate-400">{inv.branchCode}</div>}
+                                                        </>
+                                                    ) : (
+                                                        <span className="text-slate-300">—</span>
+                                                    )}
                                                 </td>
                                                 <td className="px-4 py-3">
                                                     {(() => {

@@ -40,6 +40,7 @@ import {
 import billBullLogo from '../../assets/billBullLogo.png';
 import { getTemplatesByCategory } from '../../api/printTemplateApi';
 import { generatePrintHtml, printHtml } from '../../utils/printGenerator';
+import { buildDocumentHeaderProfile } from '../../utils/branchPrintProfile';
 import { getImageUrl } from '../../utils/urlUtils';
 import { useCompany } from '../../context/CompanyContext';
 import { useBranch } from '../../context/BranchContext';
@@ -122,12 +123,14 @@ const DeliveryNote = () => {
     const navigate = useNavigate();
     const { print } = usePrintDocument();
     const { company } = useCompany();
-    const { defaultBranch } = useBranch();
+    const { defaultBranch, branches: availableBranches, activeBranch } = useBranch();
     const { canAction } = usePermissions();
     const currency = company?.currency || 'AED';
     const canManualBatchSelect = canAction('batch_manual_select', 'edit');
     const [activeTab, setActiveTab] = useState('list');
     const [currentDnId, setCurrentDnId] = useState(null); // Tracks editing vs creating
+    // Originating branch of the loaded DN — drives print/email header (PDF §7.1).
+    const [loadedDnBranchId, setLoadedDnBranchId] = useState(null);
 
     // --- DATA LIST STATES ---
     const [deliveryNotesList, setDeliveryNotesList] = useState([]);
@@ -895,6 +898,9 @@ const DeliveryNote = () => {
                 date: dn.dnDate,
                 customerCode: dn.customerCode,
                 customerName: dn.customerName,
+                branchId: dn.branchId,
+                branchName: dn.branchName,
+                branchCode: dn.branchCode,
                 soNo: dn.salesOrderNo,
                 piNo: dn.proformaNo || "-",
                 siNo: dn.linkedSalesInvoiceNumber || '',
@@ -939,6 +945,16 @@ const DeliveryNote = () => {
     useEffect(() => {
         loadDeliveryNotes();
     }, []);
+
+    // Refetch when the global Branch Selector changes the active branch.
+    useEffect(() => {
+        const handler = () => {
+            if (activeTab === 'list') loadDeliveryNotes();
+        };
+        window.addEventListener('billbull:branch-changed', handler);
+        return () => window.removeEventListener('billbull:branch-changed', handler);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [activeTab]);
 
     // QA-FAST-ENTRY: focus the freshly-added empty row's inline search input.
     useEffect(() => {
@@ -1064,6 +1080,7 @@ const DeliveryNote = () => {
 
     const handleCreateNew = () => {
         setCurrentDnId(null);
+        setLoadedDnBranchId(null);
         if (deliveryAutoNumbering) {
             getNextDeliveryNoteNumber().then(setDnNumber).catch(() => setDnNumber(''));
         } else {
@@ -1091,6 +1108,7 @@ const DeliveryNote = () => {
 
     const handleRowClick = (dn) => {
         setCurrentDnId(dn.id);
+        setLoadedDnBranchId(dn.branchId ?? null);
 
         setDnNumber(dn.dnNo);
         setDnDate(dn.date);
@@ -1723,7 +1741,7 @@ const DeliveryNote = () => {
                     }
                 };
 
-                const html = generatePrintHtml(defaultTemplate, printData, { companyProfile: company, billBullLogo });
+                const html = generatePrintHtml(defaultTemplate, printData, { companyProfile: buildDocumentHeaderProfile({ company, branches: availableBranches || [], branchId: loadedDnBranchId ?? activeBranch?.id }), billBullLogo });
                 printHtml(html);
             } else {
                 console.warn("No default print template found. Using browser print.");
@@ -1793,7 +1811,7 @@ const DeliveryNote = () => {
                 }
             };
 
-            const html = generatePrintHtml(defaultTemplate, printData, { companyProfile: company, billBullLogo });
+            const html = generatePrintHtml(defaultTemplate, printData, { companyProfile: buildDocumentHeaderProfile({ company, branches: availableBranches || [], branchId: loadedDnBranchId ?? activeBranch?.id }), billBullLogo });
             printHtml(html);
         } catch (error) {
             console.error("Pick List print error:", error);
@@ -2094,6 +2112,7 @@ const DeliveryNote = () => {
                                             <th className="px-4 py-3 cursor-pointer hover:bg-slate-100 select-none" onClick={() => handleSort('customerName')}>
                                                 <div className="flex items-center gap-1">Customer {sortConfig.key === 'customerName' && (sortConfig.direction === 'asc' ? <ArrowUp size={12} /> : <ArrowDown size={12} />)}</div>
                                             </th>
+                                            <th className="px-4 py-3">Branch</th>
                                             <th className="px-4 py-3 cursor-pointer hover:bg-slate-100 select-none" onClick={() => handleSort('soNo')}>
                                                 <div className="flex items-center gap-1">SO No {sortConfig.key === 'soNo' && (sortConfig.direction === 'asc' ? <ArrowUp size={12} /> : <ArrowDown size={12} />)}</div>
                                             </th>
@@ -2132,6 +2151,16 @@ const DeliveryNote = () => {
                                                 </td>
                                                 <td className="px-4 py-3 text-slate-500">{formatDisplayDate(dn.date)}</td>
                                                 <td className="px-4 py-3 text-slate-600 font-medium">{dn.customerCode} - {dn.customerName}</td>
+                                                <td className="px-4 py-3 text-slate-600 text-[11px]">
+                                                    {dn.branchName ? (
+                                                        <>
+                                                            <div className="font-medium">{dn.branchName}</div>
+                                                            {dn.branchCode && <div className="text-slate-400">{dn.branchCode}</div>}
+                                                        </>
+                                                    ) : (
+                                                        <span className="text-slate-300">—</span>
+                                                    )}
+                                                </td>
                                                 <td className="px-4 py-3 text-slate-500">{dn.soNo}</td>
                                                 <td className="px-4 py-3 text-slate-500">{dn.piNo}</td>
                                                 <td className="px-4 py-3 text-slate-500">{dn.warehouse}</td>

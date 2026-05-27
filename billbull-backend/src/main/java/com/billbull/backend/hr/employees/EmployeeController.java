@@ -170,6 +170,17 @@ public class EmployeeController {
                 dto.setBranchId(user.getBranch().getId());
                 dto.setBranchName(user.getBranch().getName());
                 dto.setBranchCode(user.getBranch().getCode());
+                dto.setPrimaryBranchId(user.getBranch().getId());
+                dto.setPrimaryBranchName(user.getBranch().getName());
+            }
+            // PDF §2.3 — surface the additional branches so the UI can pre-check them.
+            if (user.getAdditionalBranches() != null) {
+                dto.setAdditionalBranchIds(
+                    user.getAdditionalBranches().stream()
+                        .filter(b -> b != null && b.getId() != null)
+                        .map(b -> b.getId())
+                        .collect(Collectors.toList())
+                );
             }
         }, () -> {
             dto.setHasLinkedUser(false);

@@ -26,6 +26,7 @@ import com.billbull.backend.sales.invoice.SalesInvoice;
 import com.billbull.backend.sales.invoice.SalesInvoiceRepository;
 import com.billbull.backend.sales.settings.SalesDocumentNumberingService;
 import com.billbull.backend.sales.settings.SalesDocumentType;
+import com.billbull.backend.settings.branch.BranchAccessService;
 import com.billbull.backend.util.DocumentOrderingUtil;
 
 @Service
@@ -49,8 +50,12 @@ public class PaymentService {
     @Autowired
     private SalesDocumentNumberingService numberingService;
 
+    @Autowired
+    private BranchAccessService branchAccessService;
+
     public List<Payment> getAllPayments() {
-        List<Payment> payments = new ArrayList<>(paymentRepository.findAll());
+        List<Payment> payments = new ArrayList<>(
+                branchAccessService.filterBranchScopedByBranch(paymentRepository.findAll(), Payment::getBranch));
         DocumentOrderingUtil.sortByDocumentDateAndNumberDesc(
                 payments,
                 Payment::getPaymentDate,
@@ -96,6 +101,15 @@ public class PaymentService {
             if (payment.getReceiptVoucherRecordId() == null && existingPayment != null) {
                 payment.setReceiptVoucherRecordId(existingPayment.getReceiptVoucherRecordId());
             }
+        }
+
+        // Branch guard + stamp/lock (PDF §3.4).
+        if (existingPayment != null) {
+            Long existingBranchId = existingPayment.getBranch() != null ? existingPayment.getBranch().getId() : null;
+            branchAccessService.assertTransactionBranchAccessible(existingBranchId, "Payment");
+            payment.setBranch(existingPayment.getBranch());
+        } else {
+            payment.setBranch(branchAccessService.getRequiredCurrentUserBranch());
         }
 
         if (payment.getId() == null) {

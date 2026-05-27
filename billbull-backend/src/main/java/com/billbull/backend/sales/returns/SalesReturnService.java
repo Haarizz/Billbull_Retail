@@ -21,6 +21,8 @@ import com.billbull.backend.sales.invoice.SalesInvoiceItem;
 import com.billbull.backend.sales.invoice.SalesInvoiceRepository;
 import com.billbull.backend.sales.settings.SalesDocumentNumberingService;
 import com.billbull.backend.sales.settings.SalesDocumentType;
+import com.billbull.backend.settings.branch.Branch;
+import com.billbull.backend.settings.branch.BranchAccessService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
@@ -79,9 +81,13 @@ public class SalesReturnService {
     @Autowired
     private SalesDocumentNumberingService numberingService;
 
+    @Autowired
+    private BranchAccessService branchAccessService;
+
     @Transactional(readOnly = true)
     public List<SalesReturn> getAllReturns() {
-        List<SalesReturn> returns = new ArrayList<>(salesReturnRepository.findAll());
+        List<SalesReturn> returns = new ArrayList<>(
+                branchAccessService.filterBranchScopedByBranch(salesReturnRepository.findAll(), SalesReturn::getBranch));
         DocumentOrderingUtil.sortByDocumentDateAndNumberDesc(
                 returns,
                 SalesReturn::getReturnDate,
@@ -105,6 +111,15 @@ public class SalesReturnService {
                         org.springframework.http.HttpStatus.BAD_REQUEST,
                         "Approved returns cannot be modified. Create a reversal instead.");
             }
+        }
+
+        // Branch guard + stamp/lock (PDF §3.4).
+        if (existingReturn != null) {
+            Long existingBranchId = existingReturn.getBranch() != null ? existingReturn.getBranch().getId() : null;
+            branchAccessService.assertTransactionBranchAccessible(existingBranchId, "Sales Return");
+            salesReturn.setBranch(existingReturn.getBranch());
+        } else {
+            salesReturn.setBranch(branchAccessService.getRequiredCurrentUserBranch());
         }
 
         if (salesReturn.getId() == null) {

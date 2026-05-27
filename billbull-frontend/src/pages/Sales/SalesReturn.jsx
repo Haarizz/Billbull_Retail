@@ -1,7 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { generatePrintHtml, printHtml } from '../../utils/printGenerator';
+import { buildDocumentHeaderProfile } from '../../utils/branchPrintProfile';
 import { getTemplatesByCategory } from '../../api/printTemplateApi';
 import { useCompany } from '../../context/CompanyContext';
+import { useBranch } from '../../context/BranchContext';
 import billBullLogo from '../../assets/billBullLogo.png';
 import {
    RotateCcw,
@@ -77,6 +79,8 @@ const SALES_RETURN_COLUMNS = [
 const SalesReturn = () => {
    const { print } = usePrintDocument();
    const { company } = useCompany();
+   const { branches: availableBranches, activeBranch } = useBranch();
+   const [loadedReturnBranchId, setLoadedReturnBranchId] = useState(null);
    const currency = company?.currency || 'AED';
    const [activeTab, setActiveTab] = useState('list');
    const [isLoading, setIsLoading] = useState(false);
@@ -136,6 +140,13 @@ const SalesReturn = () => {
       fetchInvoices();
       fetchStats();
       getSalesSettings().then(setSalesSettings).catch(() => {});
+   }, []);
+
+   // Refetch when the global Branch Selector changes the active branch.
+   useEffect(() => {
+      const handler = () => fetchReturns();
+      window.addEventListener('billbull:branch-changed', handler);
+      return () => window.removeEventListener('billbull:branch-changed', handler);
    }, []);
 
    useEffect(() => {
@@ -299,6 +310,7 @@ const SalesReturn = () => {
 
    const handleLoadReturn = (ret) => {
       setReturnId(ret.id);
+      setLoadedReturnBranchId(ret.branch?.id ?? null);
       setReturnNo(ret.returnNumber);
       setReturnDate(ret.returnDate);
       setReturnStatus(ret.status);
@@ -540,7 +552,14 @@ const SalesReturn = () => {
             },
          };
 
-         const html = generatePrintHtml(defaultTemplate, printData, { companyProfile: company, billBullLogo });
+         const html = generatePrintHtml(defaultTemplate, printData, {
+            companyProfile: buildDocumentHeaderProfile({
+               company,
+               branches: availableBranches || [],
+               branchId: loadedReturnBranchId ?? selectedReturn?.branch?.id ?? activeBranch?.id,
+            }),
+            billBullLogo
+         });
          printHtml(html);
       } catch (err) {
          console.error('Failed to print credit note', err);
@@ -724,6 +743,7 @@ const SalesReturn = () => {
                                  <th className="px-4 py-3">Return No</th>
                                  <th className="px-4 py-3">Date</th>
                                  <th className="px-4 py-3">Customer</th>
+                                 <th className="px-4 py-3">Branch</th>
                                  <th className="px-4 py-3">Invoice Ref</th>
                                  <th className="px-4 py-3">Reason</th>
                                  <th className="px-4 py-3 text-right">Credit Amount</th>
@@ -739,6 +759,16 @@ const SalesReturn = () => {
                                     <td className="px-4 py-3">
                                        <div className="font-medium text-slate-700">{ret.customerName}</div>
                                        <div className="text-[10px] text-slate-400">{ret.customerCode}</div>
+                                    </td>
+                                    <td className="px-4 py-3 text-slate-600 text-[11px]">
+                                       {ret.branch?.name ? (
+                                          <>
+                                             <div className="font-medium">{ret.branch.name}</div>
+                                             {ret.branch.code && <div className="text-slate-400">{ret.branch.code}</div>}
+                                          </>
+                                       ) : (
+                                          <span className="text-slate-300">—</span>
+                                       )}
                                     </td>
                                     <td className="px-4 py-3">
                                        <span className="px-2 py-0.5 bg-blue-50 text-blue-600 rounded-md font-medium border border-blue-100">

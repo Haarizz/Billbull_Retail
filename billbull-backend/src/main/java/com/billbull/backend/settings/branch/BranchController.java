@@ -29,6 +29,13 @@ public class BranchController {
         return def != null ? ResponseEntity.ok(def) : ResponseEntity.noContent().build();
     }
 
+    @GetMapping("/headquarters")
+    @PreAuthorize("isAuthenticated()")
+    public ResponseEntity<BranchResponse> getHeadquarters() {
+        BranchResponse hq = service.getHeadquarters();
+        return hq != null ? ResponseEntity.ok(hq) : ResponseEntity.noContent().build();
+    }
+
     @PostMapping
     @PreAuthorize("hasRole('ADMIN')")
     public ResponseEntity<BranchResponse> create(@RequestBody BranchRequest req) {
@@ -45,6 +52,12 @@ public class BranchController {
     @PreAuthorize("hasRole('ADMIN')")
     public ResponseEntity<BranchResponse> setDefault(@PathVariable Long id) {
         return ResponseEntity.ok(service.setDefault(id));
+    }
+
+    @PutMapping("/{id}/headquarters")
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<BranchResponse> setHeadquarters(@PathVariable Long id) {
+        return ResponseEntity.ok(service.setHeadquarters(id));
     }
 
     @DeleteMapping("/{id}")

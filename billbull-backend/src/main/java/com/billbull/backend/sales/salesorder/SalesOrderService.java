@@ -104,6 +104,15 @@ public class SalesOrderService {
     public SalesOrder save(SalesOrder order) {
         SalesOrder existingOrder = order.getId() != null ? orderRepo.findById(order.getId()).orElse(null) : null;
 
+        // Branch guard + stamp/lock (PDF §3.4 transaction immutability).
+        if (existingOrder != null) {
+            Long existingBranchId = existingOrder.getBranch() != null ? existingOrder.getBranch().getId() : null;
+            branchAccessService.assertTransactionBranchAccessible(existingBranchId, "Sales Order");
+            order.setBranch(existingOrder.getBranch());
+        } else {
+            order.setBranch(branchAccessService.getRequiredCurrentUserBranch());
+        }
+
         Branch currentBranch = branchAccessService.getRequiredCurrentUserBranch();
         Warehouse reservationWarehouse = resolveReservationWarehouse(order, currentBranch);
         order.setWarehouse(reservationWarehouse);
@@ -317,7 +326,8 @@ public class SalesOrderService {
     @Transactional(readOnly = true)
     public List<SalesOrder> getAll() {
 
-        List<SalesOrder> orders = new ArrayList<>(orderRepo.findAll());
+        List<SalesOrder> orders = new ArrayList<>(
+                branchAccessService.filterBranchScopedByBranch(orderRepo.findAll(), SalesOrder::getBranch));
         DocumentOrderingUtil.sortByDocumentDateAndNumberDesc(
                 orders,
                 SalesOrder::getOrderDate,

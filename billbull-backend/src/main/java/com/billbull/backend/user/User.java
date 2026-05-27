@@ -50,6 +50,24 @@ public class User extends BaseEntity {
     @JoinColumn(name = "branch_id")
     private Branch branch;
 
+    /**
+     * Extra branches this user can access (PDF §2.3 multi-branch user support).
+     * The primary {@link #branch} stays for "default landing branch"; this set
+     * adds the others a user may switch to. ADMIN/SUPER_ADMIN bypass this set
+     * via {@link com.billbull.backend.settings.branch.BranchAccessService} —
+     * they always see every branch.
+     */
+    @ManyToMany(fetch = FetchType.LAZY)
+    @JoinTable(
+            name = "user_branches",
+            joinColumns = @JoinColumn(name = "user_id"),
+            inverseJoinColumns = @JoinColumn(name = "branch_id"),
+            indexes = {
+                    @Index(name = "idx_user_branches_user", columnList = "user_id"),
+                    @Index(name = "idx_user_branches_branch", columnList = "branch_id")
+            })
+    private Set<Branch> additionalBranches = new HashSet<>();
+
     @ManyToMany(fetch = FetchType.EAGER)
     @JoinTable(name = "user_roles", joinColumns = @JoinColumn(name = "user_id"), inverseJoinColumns = @JoinColumn(name = "role_id"))
     private Set<Role> roles = new HashSet<>();
@@ -158,6 +176,14 @@ public class User extends BaseEntity {
 
     public void setPendingEmployeeActivation(boolean pendingEmployeeActivation) {
         this.pendingEmployeeActivation = pendingEmployeeActivation;
+    }
+
+    public Set<Branch> getAdditionalBranches() {
+        return additionalBranches;
+    }
+
+    public void setAdditionalBranches(Set<Branch> additionalBranches) {
+        this.additionalBranches = additionalBranches != null ? additionalBranches : new HashSet<>();
     }
 
     public Set<Role> getRoles() {

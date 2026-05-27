@@ -1,5 +1,6 @@
 package com.billbull.backend.sales.invoice;
 
+import com.billbull.backend.settings.branch.Branch;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.annotation.JsonManagedReference;
 import jakarta.persistence.*;
@@ -8,7 +9,9 @@ import java.time.LocalDate;
 import java.util.List;
 
 @Entity
-@Table(name = "sales_invoices")
+@Table(name = "sales_invoices", indexes = {
+    @Index(name = "idx_sales_invoice_branch", columnList = "branch_id")
+})
 @JsonIgnoreProperties({ "hibernateLazyInitializer", "handler" })
 public class SalesInvoice {
 
@@ -36,9 +39,16 @@ public class SalesInvoice {
     private String paymentTerms;
     private String salesperson;
     private String branch;
+    @Column(name = "branch_id")
     private Long branchId;
     private String branchName;
     private String branchCode;
+
+    /** Navigable view of {@link #branchId}. Read-only — writes go through {@link #setBranchId(Long)}. */
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "branch_id", insertable = false, updatable = false)
+    @com.fasterxml.jackson.annotation.JsonIgnore
+    private Branch branchEntity;
 
     private Double subTotal;
     private Double taxTotal;
@@ -236,6 +246,8 @@ public class SalesInvoice {
     public void setBranchCode(String branchCode) {
         this.branchCode = branchCode;
     }
+
+    public Branch getBranchEntity() { return branchEntity; }
 
     public Double getSubTotal() {
         return subTotal;

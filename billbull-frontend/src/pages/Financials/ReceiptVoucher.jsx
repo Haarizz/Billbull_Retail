@@ -48,6 +48,7 @@ import { printHtml } from '../../utils/printGenerator';
 import { getImageUrl } from '../../utils/urlUtils';
 import { useBranch } from '../../context/BranchContext';
 import { useCompany } from '../../context/CompanyContext';
+import { buildDocumentHeaderProfile } from '../../utils/branchPrintProfile';
 import { exportToExcel, exportToPDF } from '../../utils/exportUtils';
 import { resolveCurrencyDisplayCode } from '../../utils/countryCurrencyOptions';
 import { formatDisplayDate } from '../../utils/dateUtils';
@@ -106,7 +107,7 @@ const CustomSelect = ({ placeholder, options, value, onChange }) => {
 const ReceiptVoucher = () => {
     const location = useLocation();
     const { print } = usePrintDocument();
-    const { branchNames, defaultBranchName } = useBranch();
+    const { branchNames, defaultBranchName, branches: availableBranches, activeBranch } = useBranch();
     const { company } = useCompany();
     const currency = resolveCurrencyDisplayCode(company || {});
     const [isAddModalOpen, setIsAddModalOpen] = useState(false);
@@ -213,6 +214,9 @@ const ReceiptVoucher = () => {
                 amount: r.amount.toLocaleString(),
                 mode: r.paymentMode,
                 branch: r.branch || '',
+                branchId: r.branchEntity?.id ?? null,
+                branchName: r.branchEntity?.name || '',
+                branchCode: r.branchEntity?.code || '',
                 status: r.status,
                 purpose: r.purpose,
                 notes: r.notes || '',
@@ -237,6 +241,13 @@ const ReceiptVoucher = () => {
 
     useEffect(() => {
         fetchReceipts();
+    }, []);
+
+    // Refetch when the global Branch Selector changes the active branch.
+    useEffect(() => {
+        const handler = () => fetchReceipts();
+        window.addEventListener('billbull:branch-changed', handler);
+        return () => window.removeEventListener('billbull:branch-changed', handler);
     }, []);
 
     // QA-032: When navigated here from the Sales Order screen with a specific
@@ -542,6 +553,11 @@ const ReceiptVoucher = () => {
             })();
 
             if (hasNewSettings) {
+                const branchProfile = buildDocumentHeaderProfile({
+                    company,
+                    branches: availableBranches || [],
+                    branchId: receipt.branchId ?? activeBranch?.id,
+                });
                 const html = buildFinancialVoucherPrintHtml('receipt-voucher', {
                     voucherNumber: receipt.id || receipt.voucherId,
                     date: receipt.date,
@@ -554,11 +570,11 @@ const ReceiptVoucher = () => {
                     reference: receipt.reference,
                     chequeRef: receipt.chequeNumber || '',
                     narration: receipt.notes || '',
-                    branch: receipt.branch,
+                    branch: receipt.branchName || receipt.branch,
                     preparedBy: receipt.preparedBy || '',
                     linkedInvoice: receipt.source,
                     invoiceDate: receipt.date,
-                }, { company, template: tmpl });
+                }, { company: branchProfile, template: tmpl });
                 const titled = html.replace(/<title>.*?<\/title>/i, `<title>${title}</title>`);
                 printHtml(titled);
                 return;
@@ -1005,6 +1021,7 @@ const ReceiptVoucher = () => {
                                 <th className="px-4 py-3">Date</th>
                                 <th className="px-4 py-3">Source Channel</th>
                                 <th className="px-4 py-3">Payer / Employee</th>
+                                <th className="px-4 py-3">Branch</th>
                                 <th className="px-4 py-3 text-right">Amount ({currency})</th>
                                 <th className="px-4 py-3">Payment Mode</th>
                                 <th className="px-4 py-3">Status</th>
@@ -1053,6 +1070,16 @@ const ReceiptVoucher = () => {
                                                     </div>
                                                 </div>
                                             </div>
+                                        </td>
+                                        <td className="px-4 py-3 text-slate-600 text-[11px]">
+                                            {row.branchName ? (
+                                                <>
+                                                    <div className="font-medium">{row.branchName}</div>
+                                                    {row.branchCode && <div className="text-slate-400">{row.branchCode}</div>}
+                                                </>
+                                            ) : (
+                                                <span className="text-slate-300">—</span>
+                                            )}
                                         </td>
                                         <td className="px-4 py-3 text-right font-bold text-emerald-600">{currency} {row.amount}</td>
                                         <td className="px-4 py-3">

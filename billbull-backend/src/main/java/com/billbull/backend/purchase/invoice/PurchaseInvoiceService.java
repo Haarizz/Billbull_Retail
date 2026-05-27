@@ -809,8 +809,18 @@ public class PurchaseInvoiceService {
             return currentBranch;
         }
 
-        if (invoice.getId() != null && invoice.getBranchId() == null) {
-            return null;
+        // UPDATE — branch is locked to the existing value (PDF §3.4). Return a
+        // stub so warehouse validation can match; setBranchId/Name/Code downstream
+        // re-stamp the same values, effectively a no-op.
+        if (invoice.getId() != null) {
+            if (invoice.getBranchId() == null) {
+                return null;
+            }
+            Branch stub = new Branch();
+            stub.setId(invoice.getBranchId());
+            stub.setName(invoice.getBranchName());
+            stub.setCode(invoice.getBranchCode());
+            return stub;
         }
 
         return branchAccessService.getRequiredCurrentUserBranch();

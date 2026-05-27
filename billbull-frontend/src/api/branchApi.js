@@ -10,6 +10,11 @@ export const getDefaultBranch = async () => {
     return res.data;
 };
 
+export const getHeadquartersBranch = async () => {
+    const res = await api.get("/api/branches/headquarters");
+    return res.data;
+};
+
 export const createBranch = async (payload) => {
     const res = await api.post("/api/branches", payload);
     return res.data;
@@ -25,6 +30,16 @@ export const setDefaultBranch = async (id) => {
     return res.data;
 };
 
+export const setHeadquartersBranch = async (id) => {
+    const res = await api.put(`/api/branches/${id}/headquarters`);
+    return res.data;
+};
+
 export const deleteBranch = async (id) => {
     await api.delete(`/api/branches/${id}`);
+};
+
+export const switchBranchSession = async (branchId) => {
+    const res = await api.post("/api/session/switch-branch", { branchId });
+    return res.data;
 };

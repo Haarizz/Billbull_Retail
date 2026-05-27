@@ -33,6 +33,15 @@ export const usersApi = {
     api.post(`/api/users/${id}/roles`, { roleIds, primaryRoleId }).then((r) => r.data),
 
   /**
+   * Assign the additional branches a user may access (PDF §2.3 multi-branch user).
+   * Pass the full desired set every call; the backend replaces the existing list.
+   * The user's primary branch is implicit and never needs to be in this set.
+   * branchIds: number[]
+   */
+  assignBranches: (id, branchIds) =>
+    api.put(`/api/users/${id}/branches`, { branchIds }).then((r) => r.data),
+
+  /**
    * Freeze user (set isActive=false). Returns 409 if last active ADMIN.
    */
   freeze: (id) =>

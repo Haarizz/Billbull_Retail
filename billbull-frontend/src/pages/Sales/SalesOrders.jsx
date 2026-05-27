@@ -54,6 +54,8 @@ import { getStockAvailability } from '../../api/stockAvailabilityApi';
 import { getSalesSettings } from '../../api/salesSettingsApi';
 import billBullLogo from '../../assets/billBullLogo.png';
 import { useCompany } from '../../context/CompanyContext';
+import { useBranch } from '../../context/BranchContext';
+import { buildDocumentHeaderProfile } from '../../utils/branchPrintProfile';
 import { summarizeSalesItems } from '../../utils/documentSummaryUtils';
 
 // ✅ PRODUCT SELECTOR
@@ -171,6 +173,7 @@ const MobileFloatingActions = ({ status, onConfirm, onConvertToDO, onSave, onPri
 
 const SalesOrders = () => {
   const { company } = useCompany();
+  const { branches: availableBranches, activeBranch } = useBranch();
   const currencyLabel = resolveCurrencyLabel(company);
   const orderCurrency = company?.currency || currencyLabel || 'AED';
   const { canCreate, canEdit, canApprove, canExport, canAction } = usePermissions();
@@ -179,6 +182,8 @@ const SalesOrders = () => {
 
   // ✅ FIX 1: ADD ORDER ID STATE
   const [orderId, setOrderId] = useState(null);
+  // Originating branch of the loaded SO — drives print/email header (PDF §7.1).
+  const [loadedSoBranchId, setLoadedSoBranchId] = useState(null);
 
   // --- DATA STATES ---
   const [customersList, setCustomersList] = useState([]);
@@ -521,6 +526,13 @@ const SalesOrders = () => {
     fetchSalesOrders();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTab, listPage]);
+
+  // Refetch when the global Branch Selector changes the active branch.
+  useEffect(() => {
+    const handler = () => fetchSalesOrders();
+    window.addEventListener('billbull:branch-changed', handler);
+    return () => window.removeEventListener('billbull:branch-changed', handler);
+  }, []);
 
   // --- CALCULATIONS ---
   const calculateTotals = () => {
@@ -897,7 +909,13 @@ const SalesOrders = () => {
         { name: selectedCustomer?.name, code: selectedCustomer?.code },
         company
       );
-      const html = generatePrintHtml(template, printData, { companyProfile: company });
+      const html = generatePrintHtml(template, printData, {
+        companyProfile: buildDocumentHeaderProfile({
+          company,
+          branches: availableBranches || [],
+          branchId: loadedSoBranchId ?? activeBranch?.id,
+        }),
+      });
       printHtml(html);
     } catch (err) {
       console.error('Failed to print advance receipt', err);
@@ -1017,7 +1035,14 @@ const SalesOrders = () => {
           }
         };
 
-        const html = generatePrintHtml(defaultTemplate, printData, { companyProfile: company, billBullLogo });
+        const html = generatePrintHtml(defaultTemplate, printData, {
+          companyProfile: buildDocumentHeaderProfile({
+            company,
+            branches: availableBranches || [],
+            branchId: loadedSoBranchId ?? activeBranch?.id,
+          }),
+          billBullLogo
+        });
         printHtml(html);
       } else {
         alert("No default template selected for Sales Order. Please configure one in Settings.");
@@ -1296,6 +1321,7 @@ const SalesOrders = () => {
   // ✅ FIX 2: SET ID WHEN LOADING
   const handleLoadOrder = (order) => {
     setOrderId(order.id); // <--- Capture Backend ID
+    setLoadedSoBranchId(order.branch?.id ?? null);
 
     setSoNumber(order.soNumber);
     setOrderDate(order.orderDate);
@@ -1615,6 +1641,7 @@ const SalesOrders = () => {
                   <th className="px-4 py-3">SO No</th>
                   <th className="px-4 py-3">Date</th>
                   <th className="px-4 py-3">Customer</th>
+                  <th className="px-4 py-3">Branch</th>
                   <th className="px-4 py-3">Quotation</th>
                   <th className="px-4 py-3">PI No</th>
                   <th className="px-4 py-3">Total</th>
@@ -1632,6 +1659,16 @@ const SalesOrders = () => {
                     <td className="px-4 py-3 font-medium text-slate-700">{order.soNumber}</td>
                     <td className="px-4 py-3 text-slate-500">{formatDisplayDate(order.orderDate)}</td>
                     <td className="px-4 py-3 text-slate-600">{order.customerName}</td>
+                    <td className="px-4 py-3 text-slate-600 text-[11px]">
+                      {order.branch?.name ? (
+                        <>
+                          <div className="font-medium">{order.branch.name}</div>
+                          {order.branch.code && <div className="text-slate-400">{order.branch.code}</div>}
+                        </>
+                      ) : (
+                        <span className="text-slate-300">—</span>
+                      )}
+                    </td>
                     <td className="px-4 py-3 text-slate-500">{order.linkedQuotation || '-'}</td>
                     <td className="px-4 py-3 text-slate-500">{order.linkedProforma || '-'}</td>
                     <td className="px-4 py-3 font-medium"><CurrencyAmount value={order.orderTotal} currency={orderCurrency} /></td>

@@ -48,8 +48,10 @@ import { getPrintTemplates } from '../../api/printTemplateApi';
 import CurrencyAmount from '../../components/CurrencyAmount';
 import ExportDropdown from '../../components/common/ExportDropdown';
 import { useCompany } from '../../context/CompanyContext';
+import { useBranch } from '../../context/BranchContext';
 import { exportToExcel, exportToPDF } from '../../utils/exportUtils';
 import { generateReportPrintHtml, printHtml } from '../../utils/printGenerator';
+import { buildReportHeaderProfile } from '../../utils/branchPrintProfile';
 import useReportScrollPreserver from '../../hooks/useReportScrollPreserver';
 
 const REPORT_GROUPS = [
@@ -2108,6 +2110,7 @@ const ReportResult = ({
 
 const FinancialReports = () => {
     const { company } = useCompany();
+    const { branches: availableBranches, activeBranchId, isAllBranches } = useBranch();
     const currency = company?.currency || 'AED';
     const [activeId, setActiveId] = useState('profit-loss-statement');
     const [search, setSearch] = useState('');
@@ -2311,12 +2314,17 @@ const FinancialReports = () => {
 
     const handlePrint = async () => {
         const rows = flattenReportRows(activeReport);
+        const reportProfile = buildReportHeaderProfile({
+            company,
+            branches: availableBranches || [],
+            activeBranchId: isAllBranches ? null : activeBranchId,
+        });
         try {
             const templates = await getPrintTemplates();
             const defaultTemplate = templates.find(template => template.isDefault) || {};
-            printHtml(generateReportPrintHtml(defaultTemplate, activeReport.title, exportColumns, rows));
+            printHtml(generateReportPrintHtml(defaultTemplate, activeReport.title, exportColumns, rows, reportProfile));
         } catch (error) {
-            printHtml(generateReportPrintHtml({}, activeReport.title, exportColumns, rows));
+            printHtml(generateReportPrintHtml({}, activeReport.title, exportColumns, rows, reportProfile));
         }
     };
 

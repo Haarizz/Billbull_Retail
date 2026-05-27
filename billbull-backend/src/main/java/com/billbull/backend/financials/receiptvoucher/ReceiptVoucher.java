@@ -4,19 +4,31 @@ import java.math.BigDecimal;
 import java.time.LocalDate;
 
 import com.billbull.backend.common.BaseEntity;
+import com.billbull.backend.settings.branch.Branch;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
+import jakarta.persistence.FetchType;
+import jakarta.persistence.Index;
+import jakarta.persistence.JoinColumn;
+import jakarta.persistence.ManyToOne;
 import jakarta.persistence.Table;
 
 @Entity
-@Table(name = "sales_receipt_vouchers")
+@Table(name = "sales_receipt_vouchers", indexes = {
+    @Index(name = "idx_receipt_voucher_branch", columnList = "branch_id")
+})
 public class ReceiptVoucher extends BaseEntity {
 
     @Column(unique = true)
     private String voucherId; // e.g., RV-2026-001
 
     private LocalDate date;
+    /** Legacy free-text branch label; kept until callers migrate to {@link #branchEntity}. */
     private String branch;
+
+    @ManyToOne(fetch = FetchType.EAGER)
+    @JoinColumn(name = "branch_id")
+    private Branch branchEntity;
     private String memberName; // Employee or Payer
     private String category; // Income Source
     private BigDecimal amount;
@@ -78,6 +90,9 @@ public class ReceiptVoucher extends BaseEntity {
     public String getBranch() {
         return branch;
     }
+
+    public Branch getBranchEntity() { return branchEntity; }
+    public void setBranchEntity(Branch branchEntity) { this.branchEntity = branchEntity; }
 
     public void setBranch(String branch) {
         this.branch = branch;
