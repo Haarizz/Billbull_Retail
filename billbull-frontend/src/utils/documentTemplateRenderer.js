@@ -3,6 +3,7 @@ import { getImageUrl } from './urlUtils';
 import {
     DEFAULT_TEMPLATE_COLUMNS,
     DEFAULT_TEMPLATE_DISPLAY_OPTIONS,
+    parsePrintTemplateObject,
     sanitizeTemplateColumns,
     sanitizeTemplateDisplayOptions
 } from './printTemplateConfig';
@@ -16,7 +17,12 @@ const PURCHASE_TEMPLATE_CATEGORIES = new Set([
     'Local Purchase Order',
     'Goods Receipt Note',
     'Purchase Invoice',
-    'Payment Voucher'
+    'Payment Voucher',
+    'Goods Return Voucher',
+    'Purchase Return',
+    'Debit Note',
+    'Vendor Statement of Account',
+    'Cheque'
 ]);
 
 const LEFT_META_LABEL_PATTERNS = /^(P\.O|PO Number|Purchase Order|Account Executive|Salesperson|Sales Person|Prepared By)$/i;
@@ -89,6 +95,60 @@ const escapeHtml = (value) =>
         .replace(/>/g, '&gt;')
         .replace(/"/g, '&quot;')
         .replace(/'/g, '&#39;');
+
+const getTemplateDesignerSettings = (template = {}) => {
+    if (template.purchaseDesignerSettings && typeof template.purchaseDesignerSettings === 'object') {
+        return template.purchaseDesignerSettings;
+    }
+
+    const displayOptions = parsePrintTemplateObject(template.displayOptions);
+    const settings = displayOptions.purchaseDesignerSettings || displayOptions.designerSettings;
+    return settings && typeof settings === 'object' ? settings : {};
+};
+
+const isOff = (value) => value === false || value === 'false' || value === 0 || value === '0';
+
+const pickSetting = (settings, keys, fallback = true) => {
+    for (const key of keys) {
+        if (settings[key] !== undefined && settings[key] !== null) {
+            return !isOff(settings[key]);
+        }
+    }
+    return fallback;
+};
+
+const sanitizeCssColor = (value, fallback) => {
+    const text = asText(value).trim();
+    if (/^#[0-9a-fA-F]{3}([0-9a-fA-F]{3})?$/.test(text)) return text;
+    if (/^rgba?\(\s*\d+\s*,\s*\d+\s*,\s*\d+(?:\s*,\s*(?:0|1|0?\.\d+))?\s*\)$/.test(text)) return text;
+    return fallback;
+};
+
+const sanitizeCssFontFamily = (value, fallback = "'Inter', sans-serif") => {
+    const text = asText(value).trim();
+    if (!text) return fallback;
+    return /^[A-Za-z0-9\s"',.-]+$/.test(text) ? text : fallback;
+};
+
+const normaliseFontSize = (value, fallback = 10) => {
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed)) return fallback;
+    return Math.min(13, Math.max(8, parsed));
+};
+
+const buildTheme = (template = {}) => {
+    const settings = getTemplateDesignerSettings(template);
+    return {
+        accentColor: sanitizeCssColor(settings.accentColor || settings.primaryColor, '#F5C742'),
+        primaryColor: sanitizeCssColor(settings.primaryColor || settings.grandTotalColor || '#111827', '#111827'),
+        borderColor: sanitizeCssColor(settings.borderColor, '#e0e0e0'),
+        tableHeaderBg: sanitizeCssColor(settings.tableHeaderBg || settings.tableHeaderColor, '#ffffff'),
+        tableHeaderText: sanitizeCssColor(settings.tableHeaderText || settings.tableHeaderTextColor, '#111827'),
+        totalRowBg: sanitizeCssColor(settings.totalRowBg, '#f8fafc'),
+        fontFamily: sanitizeCssFontFamily(settings.fontFamily),
+        fontSize: normaliseFontSize(settings.fontSize),
+    };
+};
 
 const renderCurrencySymbol = (value) => {
     const currencyConfig = resolveCurrencyDisplayConfig(value);
@@ -307,16 +367,18 @@ const normaliseItem = (item = {}) => {
     };
 };
 
-const getColumnDefaults = (category, isPurchaseDocument) =>
-    isPurchaseDocument
+const getColumnDefaults = (category, isPurchaseDocument) => {
+    const isVoucherLike = ['Payment Voucher', 'Cheque', 'Vendor Statement of Account'].includes(category);
+    return isPurchaseDocument
         ? {
             ...DEFAULT_TEMPLATE_COLUMNS,
-            qty: category !== 'Payment Voucher',
-            unitPrice: category !== 'Payment Voucher',
-            taxableAmount: category !== 'Payment Voucher',
+            qty: !isVoucherLike,
+            unitPrice: !isVoucherLike,
+            taxableAmount: !isVoucherLike,
             tax: category === 'Purchase Invoice'
         }
         : DEFAULT_TEMPLATE_COLUMNS;
+};
 
 const createColumnModel = (rawColumns = {}) => {
     const c = rawColumns;
@@ -619,21 +681,36 @@ const buildTotalsTable = (layout) => {
             <td class="tot-amount">${currency} ${formatNumber(amount)}</td>
         </tr>
     `;
+    const visibility = {
+        subTotal: true,
+        discount: true,
+        tax: true,
+        grandTotal: true,
+        amountPaid: true,
+        balanceDue: true,
+        ...(layout.totalVisibility || {})
+    };
+
+    const rows = [
+        visibility.subTotal ? row('Sub Total', layout.totals.subTotal) : '',
+        visibility.discount && discountAmount > 0 ? `
+            <tr class="amount-negative">
+                <td class="tot-label">Discount${discountPercent > 0 ? ` (${formatNumber(discountPercent, 0)}%)` : ''}</td>
+                <td class="tot-amount">${currency} - ${formatNumber(discountAmount)}</td>
+            </tr>
+        ` : '',
+        visibility.tax ? row('Total VAT', layout.totals.tax) : '',
+        visibility.grandTotal ? row('Total', layout.totals.grandTotal, 'grand-total-row') : '',
+        visibility.amountPaid && amountPaid > 0 ? row('Amount Paid', amountPaid) : '',
+        visibility.balanceDue && amountPaid > 0 ? row('Balance Due', balanceDue, 'balance-due-row') : '',
+    ].filter(Boolean).join('');
+
+    if (!rows) return '';
 
     return `
         <table class="totals-table">
             <tbody>
-                ${row('Sub Total', layout.totals.subTotal)}
-                ${discountAmount > 0 ? `
-                    <tr class="amount-negative">
-                        <td class="tot-label">Discount${discountPercent > 0 ? ` (${formatNumber(discountPercent, 0)}%)` : ''}</td>
-                        <td class="tot-amount">${currency} - ${formatNumber(discountAmount)}</td>
-                    </tr>
-                ` : ''}
-                ${row('Total VAT', layout.totals.tax)}
-                ${row('Total', layout.totals.grandTotal, 'grand-total-row')}
-                ${amountPaid > 0 ? row('Amount Paid', amountPaid) : ''}
-                ${amountPaid > 0 ? row('Balance Due', balanceDue, 'balance-due-row') : ''}
+                ${rows}
             </tbody>
         </table>
     `;
@@ -811,14 +888,14 @@ const buildHeader = (layout, renderTarget = 'print') => {
     const centerHeaderRows = visibleHeaderRows.filter((row) => !LEFT_META_LABEL_PATTERNS.test(asText(row.label).trim()));
 
     const centerItems = [
-        { label: layout.docNoLabel || 'Document Number', value: layout.docNo || '-' },
+        ...(layout.showDocNo === false ? [] : [{ label: layout.docNoLabel || 'Document Number', value: layout.docNo || '-' }]),
         ...centerHeaderRows,
         ...centerMetaRows
     ];
 
     const customerLines = layout.party ? compactValues(
         layout.party.address || '',
-        layout.party.taxId ? `GSTIN : ${layout.party.taxId}` : '',
+        layout.party.taxId ? `${layout.partyTaxLabel || 'TRN'} : ${layout.party.taxId}` : '',
         layout.party.phone || '',
         layout.party.email || ''
     ) : [];
@@ -1425,6 +1502,61 @@ const buildCoreStyles = () => `
     }
 `;
 
+const buildTemplateThemeStyles = (layout) => {
+    const theme = layout.theme || buildTheme();
+    const mutedBorder = theme.borderColor;
+    const accentSoft = theme.accentColor.startsWith('#') ? `${theme.accentColor}22` : theme.accentColor;
+
+    return `
+        .document-shell,
+        .document-shell * {
+            font-family: ${theme.fontFamily};
+            font-size: ${theme.fontSize}px;
+        }
+        .document-title {
+            color: ${theme.primaryColor};
+            font-size: ${theme.fontSize + 10}px;
+        }
+        .company-name,
+        .company-local-name,
+        .bill-to-name,
+        .doc-meta-value,
+        .reference-value,
+        .cell-strong,
+        .grand-total-value {
+            color: ${theme.primaryColor};
+        }
+        .company-logo-fallback {
+            background: ${accentSoft};
+            border: 2px solid ${theme.accentColor};
+            color: ${theme.accentColor};
+        }
+        .document-table,
+        .document-table thead th,
+        .table-cell,
+        .table-empty,
+        .info-card,
+        .signature-card,
+        .totals-table td {
+            border-color: ${mutedBorder};
+        }
+        .document-table thead th {
+            background: ${theme.tableHeaderBg};
+            color: ${theme.tableHeaderText};
+        }
+        .totals-table .grand-total-row td,
+        .totals-table .balance-due-row td {
+            background: ${theme.totalRowBg};
+        }
+        .signature-line {
+            border-top-color: ${theme.accentColor};
+        }
+        .grand-total-display {
+            border-top: 2px solid ${theme.accentColor};
+        }
+    `;
+};
+
 const buildPrintStyles = (paperSize = 'A4', orientation = 'Portrait') => {
     const resolvedPaperSize = paperSize || 'A4';
     const resolvedOrientation = orientation || 'Portrait';
@@ -1653,6 +1785,8 @@ const enrichItems = (items, documentSalesPerson = '', documentLocation = '', cat
 
 const normalisePurchaseLayout = (template, data, companyProfile, renderTarget) => {
     const company = normalizeDocumentCompanyProfile(companyProfile);
+    const designerSettings = getTemplateDesignerSettings(template);
+    const theme = buildTheme(template);
     const displayOptions = sanitizeTemplateDisplayOptions(
         template.displayOptions,
         {
@@ -1679,9 +1813,19 @@ const normalisePurchaseLayout = (template, data, companyProfile, renderTarget) =
         headerMeta.find((row) => /location|warehouse|branch/i.test(asText(row.label)))?.value,
         references.find((row) => /location|warehouse|branch/i.test(asText(row.label)))?.value
     );
+    const showDocNo = pickSetting(
+        designerSettings,
+        ['showDocNumber', 'showInvoiceNumber', 'showGRNNumber', 'showLpoNumber', 'showLPONumber', 'showVoucherNumber', 'showReceiptNumber'],
+        true
+    );
+    const showDate = pickSetting(
+        designerSettings,
+        ['showDocDate', 'showInvoiceDate', 'showGRNDate', 'showLpoDate', 'showLPODate', 'showVoucherDate', 'showReceiptDate'],
+        true
+    );
 
     const headerRows = [
-        { label: 'Date', value: data.date || '-' },
+        ...(showDate ? [{ label: 'Date', value: data.date || '-' }] : []),
         ...headerMeta.filter((row) => /due date|expected delivery|valid/i.test(asText(row.label)))
     ].filter((row) => row?.value);
 
@@ -1711,6 +1855,14 @@ const normalisePurchaseLayout = (template, data, companyProfile, renderTarget) =
         billDiscount: asNumber(data.totals?.billDiscount),
         billDiscountAmount: asNumber(data.totals?.billDiscountAmount ?? data.totals?.discountAmount)
     };
+    const totalVisibility = {
+        subTotal: pickSetting(designerSettings, ['showSubtotal'], true),
+        discount: pickSetting(designerSettings, ['showDiscountTotal', 'showDiscount'], true),
+        tax: pickSetting(designerSettings, ['showVATTotal', 'showTaxTotal'], true),
+        grandTotal: pickSetting(designerSettings, ['showGrandTotal', 'showTotalReturn', 'showTotalReceivedBold'], true),
+        amountPaid: pickSetting(designerSettings, ['showAmountPaid', 'showTotalReceivedBold'], true),
+        balanceDue: pickSetting(designerSettings, ['showBalanceDue', 'showRemainingBalance'], true),
+    };
 
     return {
         title: resolveDocumentTitle(template, data, 'Purchase Document'),
@@ -1720,6 +1872,8 @@ const normalisePurchaseLayout = (template, data, companyProfile, renderTarget) =
         status: asText(data.status || ''),
         company,
         currency,
+        theme,
+        showDocNo,
         partyLabel: template.category === 'Payment Voucher' ? 'Paid To' : 'Vendor',
         party: data.party || null,
         referenceRows,
@@ -1730,13 +1884,15 @@ const normalisePurchaseLayout = (template, data, companyProfile, renderTarget) =
         columnModel,
         totals,
         notes: asText(data.notes || ''),
-        terms: asText(template.termsContent || ''),
+        terms: asText(template.termsContent || designerSettings.termsText || designerSettings.termsConditions || ''),
         displayOptions,
-        showItemTable: items.length > 0,
+        totalVisibility,
+        showItemTable: items.length > 0 && pickSetting(designerSettings, ['showItemsTable', 'showItemTable'], true),
         showTotalsSection: !data.hideTotalsTable && (totals.grandTotal > 0 || totals.amountPaid > 0),
-        showHighlight: summaryValue !== undefined && summaryValue !== null && asNumber(summaryValue) > 0,
+        showHighlight: summaryValue !== undefined && summaryValue !== null && asNumber(summaryValue) > 0 &&
+            pickSetting(designerSettings, ['showGrandTotalBanner', 'showSummaryBar', 'showTotalReceivedBold'], true),
         showPaymentDetails: paymentDetails.length > 0,
-        showSignatureBlock: false,
+        showSignatureBlock: pickSetting(designerSettings, ['showSignatures', 'showSignatureStrip', 'showReceivedByLine'], false),
         highlight: {
             label: summaryLabel,
             value: asNumber(summaryValue)
@@ -1849,8 +2005,8 @@ const buildLayout = (template, data, options = {}, renderTarget = 'print') => {
 const buildDocumentHtml = (template, data, options = {}, renderTarget = 'print') => {
     const layout = buildLayout(template, data, options, renderTarget);
     const styles = renderTarget === 'email'
-        ? `${buildCoreStyles()}${buildEmailStyles()}`
-        : `${buildCoreStyles()}${buildPrintStyles(template.paperSize || 'A4', template.orientation || 'Portrait')}`;
+        ? `${buildCoreStyles()}${buildTemplateThemeStyles(layout)}${buildEmailStyles()}`
+        : `${buildCoreStyles()}${buildTemplateThemeStyles(layout)}${buildPrintStyles(template.paperSize || 'A4', template.orientation || 'Portrait')}`;
     
     const documentTitle = generateDocFilename(
         layout.title,

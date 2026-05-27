@@ -18,6 +18,14 @@ const PURCHASE_TEMPLATE_TERMS = {
 2. Reconciliation: Statement of account must be provided monthly.`,
     "Payment Voucher": `1. This payment voucher confirms the payment made to the vendor.
 2. All details are subject to verification.`,
+    "Purchase Return": `1. Returned goods are subject to vendor confirmation and internal verification.
+2. Related debit notes or adjustments must be reconciled against the vendor account.`,
+    "Debit Note": `1. This debit note is issued for purchase adjustments and vendor account reconciliation.
+2. Supporting purchase return or invoice references must be retained.`,
+    "Goods Return Voucher": `1. Goods returned to the vendor are subject to inspection and final acceptance.
+2. Inventory and account adjustments are posted according to company policy.`,
+    "Vendor Statement of Account": `This is a computer-generated vendor statement and does not require a signature.`,
+    "Cheque": `Cheque layout is used only for authorized payment printing.`,
 };
 
 const TEMPLATE_NAMES = {
@@ -25,6 +33,11 @@ const TEMPLATE_NAMES = {
     "Goods Receipt Note": "Standard GRN",
     "Purchase Invoice": "Standard Purchase Invoice",
     "Payment Voucher": "Standard Payment Voucher",
+    "Goods Return Voucher": "Standard GRV",
+    "Purchase Return": "Standard Purchase Return",
+    "Debit Note": "Standard Debit Note",
+    "Vendor Statement of Account": "Standard Vendor SoA",
+    "Cheque": "Standard Cheque",
 };
 
 const PREVIEW_COMPANY = {
@@ -57,6 +70,11 @@ export const PURCHASE_TEMPLATE_CATEGORIES = [
     "Goods Receipt Note",
     "Purchase Invoice",
     "Payment Voucher",
+    "Goods Return Voucher",
+    "Purchase Return",
+    "Debit Note",
+    "Vendor Statement of Account",
+    "Cheque",
 ];
 
 const toNumber = (value) => {
@@ -72,6 +90,158 @@ const trimValue = (value) => {
 const firstValue = (...values) => values.find((value) => trimValue(value));
 
 const formatMoney = (value, decimals = 2) => toNumber(value).toFixed(decimals);
+
+const hasValue = (value) => value !== null && value !== undefined && value !== "";
+
+const toOptionalNumber = (value) => {
+    if (!hasValue(value)) return null;
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+};
+
+const firstNumber = (...values) => {
+    for (const value of values) {
+        const parsed = toOptionalNumber(value);
+        if (parsed !== null) return parsed;
+    }
+    return null;
+};
+
+const buildLineAmounts = ({
+    qty,
+    unitPrice,
+    netUnitPrice,
+    discountPercent = 0,
+    taxPercent = 0,
+    explicitDiscountAmount,
+    explicitTaxableAmount,
+    explicitTaxAmount,
+    explicitLineTotal,
+    lineTotalIsTaxable = false,
+}) => {
+    const resolvedQty = toNumber(qty);
+    const grossUnitPrice = firstNumber(unitPrice, netUnitPrice) ?? 0;
+    const effectiveUnitPrice = firstNumber(netUnitPrice, unitPrice) ?? 0;
+    const grossAmount = resolvedQty * grossUnitPrice;
+    const effectiveAmount = resolvedQty * effectiveUnitPrice;
+
+    let discountAmount = firstNumber(explicitDiscountAmount);
+    if (discountAmount === null) {
+        discountAmount = grossAmount > effectiveAmount
+            ? grossAmount - effectiveAmount
+            : grossAmount * (toNumber(discountPercent) / 100);
+    }
+
+    let taxableAmount = firstNumber(explicitTaxableAmount);
+    const storedTaxAmount = firstNumber(explicitTaxAmount);
+    const storedLineTotal = firstNumber(explicitLineTotal);
+
+    if (taxableAmount === null && lineTotalIsTaxable && storedLineTotal !== null) {
+        taxableAmount = storedLineTotal;
+    }
+
+    if (taxableAmount === null && storedLineTotal !== null && storedTaxAmount !== null) {
+        taxableAmount = Math.max(0, storedLineTotal - storedTaxAmount);
+    }
+
+    if (taxableAmount === null) {
+        taxableAmount = Math.max(0, effectiveAmount || (grossAmount - discountAmount));
+    }
+
+    const taxAmount = storedTaxAmount !== null
+        ? storedTaxAmount
+        : taxableAmount * (toNumber(taxPercent) / 100);
+
+    const lineTotal = lineTotalIsTaxable || storedLineTotal === null
+        ? taxableAmount + taxAmount
+        : storedLineTotal;
+
+    return {
+        qty: resolvedQty,
+        price: effectiveUnitPrice,
+        grossUnitPrice,
+        discountAmount,
+        taxableAmount,
+        taxAmt: taxAmount,
+        taxPercent: toNumber(taxPercent),
+        total: lineTotal,
+    };
+};
+
+const defined = (value) => value !== undefined && value !== null;
+
+const pickDefined = (...values) => values.find(defined);
+
+const getDesignerSettings = (template) => {
+    if (template?.purchaseDesignerSettings && typeof template.purchaseDesignerSettings === "object") {
+        return template.purchaseDesignerSettings;
+    }
+    const displayOptions = parsePrintTemplateObject(template?.displayOptions);
+    const settings = displayOptions.purchaseDesignerSettings || displayOptions.designerSettings;
+    return settings && typeof settings === "object" ? settings : {};
+};
+
+const displayOptionsFromDesignerSettings = (settings = {}) => {
+    if (!settings || Object.keys(settings).length === 0) return {};
+
+    const companyFields = [
+        settings.showCompanyName,
+        settings.showCompanyAddress,
+        settings.showCompanyPhone,
+        settings.showCompanyEmail,
+        settings.showCompanyWebsite,
+        settings.showCompanyTaxId,
+        settings.showTRN,
+    ].filter(defined);
+
+    return {
+        showLogo: pickDefined(settings.showLogo, settings.showCompanyLogo),
+        showCompanyDetails: companyFields.length ? companyFields.some(Boolean) : undefined,
+        showCustomerDetails: pickDefined(
+            settings.showBillTo,
+            settings.showVendorCard,
+            settings.showVendorName,
+            settings.showCustomerName
+        ),
+        showTerms: pickDefined(settings.showTerms, settings.showTermsConditions),
+        showItemImage: pickDefined(settings.colProductImage, settings.showItemImage),
+    };
+};
+
+const columnsFromDesignerSettings = (settings = {}, category) => {
+    if (!settings || Object.keys(settings).length === 0) return {};
+
+    const isVoucher = category === "Payment Voucher" || category === "Cheque" || category === "Vendor Statement of Account";
+
+    return {
+        productId: pickDefined(settings.colItemCode, settings.showItemCode),
+        sku: pickDefined(settings.colSKU, settings.showSKU),
+        barcode: pickDefined(settings.colBarcode, settings.showBarcode),
+        brand: pickDefined(settings.colBrand, settings.showBrand),
+        detailedDesc: pickDefined(settings.colDescription, settings.showDetailedDescription),
+        arabicName: pickDefined(settings.colArabicName, settings.showArabicName),
+        description: pickDefined(settings.colDescription, settings.showItemDescription, true),
+        qty: pickDefined(settings.colQty, settings.showReceivedQty, settings.showQty, !isVoucher),
+        unitPrice: pickDefined(settings.colUnitPrice, settings.showUnitPrice, !isVoucher),
+        taxableAmount: pickDefined(settings.colTaxableAmount, settings.showTaxableAmount),
+        discount: pickDefined(settings.colDiscount, settings.showDiscount),
+        discountPercent: pickDefined(settings.colDiscount, settings.showDiscountPercent),
+        tax: pickDefined(settings.colVAT, settings.showVATTotal, settings.showVATAmount, category === "Purchase Invoice"),
+        taxPercent: pickDefined(settings.colVAT, settings.showVATPercent),
+        total: pickDefined(settings.colLineTotal, settings.showTotalReturn, settings.showGrandTotal, !isVoucher),
+        lpoQty: pickDefined(settings.showOrderedQty, settings.colOrderedQty),
+        received: pickDefined(settings.showReceivedQty, settings.colReceivedQty),
+        accepted: pickDefined(settings.showAcceptedQty, settings.colAcceptedQty),
+        receivedBy: pickDefined(settings.showReceivedBy, settings.colReceivedBy),
+        checkedBy: pickDefined(settings.showCheckedBy, settings.colCheckedBy),
+        batchNumber: pickDefined(settings.colBatchNumber, settings.showBatchNo),
+        expiry: pickDefined(settings.showExpiry, settings.colExpiry),
+        location: pickDefined(settings.showBinLocation, settings.showLocationStore, settings.showWarehouseStore),
+    };
+};
+
+const dropUndefined = (obj) =>
+    Object.fromEntries(Object.entries(obj).filter(([, value]) => value !== undefined));
 
 const buildDescriptionLines = (item, vendorItemMeta = {}) => {
     const lines = [
@@ -94,7 +264,7 @@ const buildDescriptionLines = (item, vendorItemMeta = {}) => {
 };
 
 export const getPurchaseDefaultDisplayOptions = (category, overrides = {}) => {
-    const isVoucher = category === "Payment Voucher";
+    const isVoucher = category === "Payment Voucher" || category === "Cheque" || category === "Vendor Statement of Account";
     return sanitizeTemplateDisplayOptions(
         {
             ...DEFAULT_TEMPLATE_DISPLAY_OPTIONS,
@@ -111,7 +281,7 @@ export const getPurchaseDefaultDisplayOptions = (category, overrides = {}) => {
 };
 
 export const getPurchaseDefaultColumns = (category, overrides = {}) => {
-    const isVoucher = category === "Payment Voucher";
+    const isVoucher = category === "Payment Voucher" || category === "Cheque" || category === "Vendor Statement of Account";
     return sanitizeTemplateColumns(
         {
             ...DEFAULT_TEMPLATE_COLUMNS,
@@ -140,17 +310,33 @@ export const normalizePurchaseTemplate = (template, category = template?.categor
         };
     }
 
+    const rawDisplayOptions = parsePrintTemplateObject(template?.displayOptions);
+    const rawColumns = parsePrintTemplateObject(template?.columns);
+    const designerSettings = getDesignerSettings(template);
     const displayOptions = getPurchaseDefaultDisplayOptions(
         category,
-        parsePrintTemplateObject(template?.displayOptions)
+        {
+            ...rawDisplayOptions,
+            ...dropUndefined(displayOptionsFromDesignerSettings(designerSettings))
+        }
     );
     const columns = getPurchaseDefaultColumns(
         category,
-        parsePrintTemplateObject(template?.columns)
+        {
+            ...rawColumns,
+            ...dropUndefined(columnsFromDesignerSettings(designerSettings, category))
+        }
     );
 
     return {
         ...template,
+        category,
+        name: template?.name || TEMPLATE_NAMES[category] || `${category} Template`,
+        paperSize: template?.paperSize || designerSettings.paperSize || designerSettings.pageSize || "A4",
+        orientation: template?.orientation || designerSettings.orientation || "Portrait",
+        termsContent: template?.termsContent || designerSettings.termsText || designerSettings.termsConditions || PURCHASE_TEMPLATE_TERMS[category] || "",
+        purchaseDesigner: rawDisplayOptions.purchaseDesigner || designerSettings.purchaseDesigner,
+        purchaseDesignerSettings: designerSettings,
         displayOptions,
         columns,
     };
@@ -282,8 +468,18 @@ export const buildLpoPrintData = (lpo, vendor, companyProfile) => {
         const qty = toNumber(item.quantity ?? item.qty);
         const price = toNumber(item.unitPrice ?? item.price);
         const discountPercent = toNumber(item.discountPercent ?? item.disc);
-        const discountValue = (qty * price * discountPercent) / 100;
-        const lineTotal = toNumber(item.lineTotal || (qty * price) - discountValue);
+        const taxPercent = toNumber(item.purchaseTax ?? item.taxPercent ?? item.tax ?? 0);
+        const amounts = buildLineAmounts({
+            qty,
+            unitPrice: price,
+            discountPercent,
+            taxPercent,
+            explicitDiscountAmount: item.discountAmount,
+            explicitTaxableAmount: item.taxableAmount,
+            explicitTaxAmount: item.taxAmt ?? item.taxAmount,
+            explicitLineTotal: item.lineTotal,
+            lineTotalIsTaxable: true,
+        });
         const description = buildDescriptionLines(
             {
                 name: item.itemName,
@@ -307,30 +503,29 @@ export const buildLpoPrintData = (lpo, vendor, companyProfile) => {
             name: item.itemName || "",
             desc: item.remarks || "",
             unit: item.uom || "PCS",
-            qty,
-            price,
-            taxableAmount: lineTotal,
-            taxAmt: 0,
-            total: lineTotal,
+            qty: amounts.qty,
+            price: amounts.price,
+            taxableAmount: amounts.taxableAmount,
+            discountPercent,
+            discountAmount: amounts.discountAmount,
+            taxAmt: amounts.taxAmt,
+            taxPercent: amounts.taxPercent,
+            total: amounts.total,
             image: item.image || "",
             description,
+            barcode: item.barcode || "",
+            brand: item.brand || item.brandName || "",
+            shortDesc: item.shortDesc || "",
+            detailedDesc: item.detailedDesc || "",
         };
     });
 
     const itemSummary = summarizePurchaseItems(lpo?.items || []);
     const hasItemRows = items.length > 0;
-    const subTotal = hasItemRows
-        ? Math.max(itemSummary.preDiscountSubtotal, toNumber(lpo?.subtotal))
-        : toNumber(lpo?.subtotal);
-    const discountAmount = hasItemRows
-        ? Math.max(itemSummary.discountTotal, toNumber(lpo?.discount))
-        : toNumber(lpo?.discount);
-    const tax = hasItemRows
-        ? Math.max(itemSummary.tax, toNumber(lpo?.tax))
-        : toNumber(lpo?.tax);
-    const grandTotal = hasItemRows
-        ? Math.max(itemSummary.grandTotal, toNumber(lpo?.grandTotal))
-        : toNumber(lpo?.grandTotal || subTotal + tax);
+    const subTotal = toNumber(lpo?.subtotal ?? lpo?.subTotal) || (hasItemRows ? itemSummary.taxableSubtotal : 0);
+    const discountAmount = toNumber(lpo?.discount ?? lpo?.discountTotal) || (hasItemRows ? itemSummary.discountTotal : 0);
+    const tax = toNumber(lpo?.tax ?? lpo?.taxTotal ?? lpo?.taxAmount) || (hasItemRows ? itemSummary.tax : 0);
+    const grandTotal = toNumber(lpo?.grandTotal ?? lpo?.total) || subTotal + tax;
     const totals = buildTotals(
         {
             subTotal,
@@ -370,9 +565,19 @@ export const buildLpoPrintData = (lpo, vendor, companyProfile) => {
 export const buildGrnPrintData = (grn, vendor, companyProfile) => {
     const items = (grn?.items || []).map((rawItem, index) => {
         const item = rawItem || {};
-        const qty = toNumber(item.received ?? item.quantity ?? item.qty);
-        const price = toNumber(item.unitCost ?? item.price);
-        const taxableAmount = toNumber(item.total || qty * price);
+        const qty = toNumber(item.accepted ?? item.acceptedQty ?? item.received ?? item.quantity ?? item.qty);
+        const taxPercent = toNumber(item.purchaseTax ?? item.taxPercent ?? item.tax ?? 0);
+        const amounts = buildLineAmounts({
+            qty,
+            unitPrice: item.unitCost ?? item.price,
+            netUnitPrice: item.netCost,
+            discountPercent: item.discountPercent ?? item.disc,
+            taxPercent,
+            explicitTaxableAmount: item.taxableAmount ?? item.netAmount,
+            explicitTaxAmount: item.taxAmt ?? item.taxAmount,
+            explicitLineTotal: item.total ?? item.lineTotal,
+            lineTotalIsTaxable: true,
+        });
 
         return {
             rowNo: index + 1,
@@ -380,11 +585,14 @@ export const buildGrnPrintData = (grn, vendor, companyProfile) => {
             name: item.name || "",
             desc: item.remarks || "",
             unit: item.uom || item.unit || "PCS",
-            qty,
-            price,
-            taxableAmount,
-            taxAmt: 0,
-            total: taxableAmount,
+            qty: amounts.qty,
+            price: amounts.price,
+            taxableAmount: amounts.taxableAmount,
+            discountPercent: toNumber(item.discountPercent ?? item.disc),
+            discountAmount: amounts.discountAmount,
+            taxAmt: amounts.taxAmt,
+            taxPercent: amounts.taxPercent,
+            total: amounts.total,
             image: item.image || "",
             description: buildDescriptionLines(
                 {
@@ -411,24 +619,28 @@ export const buildGrnPrintData = (grn, vendor, companyProfile) => {
         };
     });
 
-    const subTotal = toNumber(grn?.totalValue || items.reduce((sum, item) => sum + item.total, 0));
+    const subTotal = toNumber(grn?.subtotal ?? grn?.subTotal ?? grn?.taxableAmount) ||
+        items.reduce((sum, item) => sum + item.taxableAmount, 0);
+    const tax = toNumber(grn?.taxAmount ?? grn?.taxTotal ?? grn?.tax) ||
+        items.reduce((sum, item) => sum + item.taxAmt, 0);
+    const grandTotal = toNumber(grn?.grandTotal ?? grn?.totalValue ?? grn?.value) || (subTotal + tax);
     const totals = buildTotals(
         {
             subTotal,
-            tax: 0,
-            grandTotal: subTotal,
+            tax,
+            grandTotal,
         },
         companyProfile,
         vendor
     );
 
-    const location = [grn?.warehouseName, grn?.zoneName, grn?.locatorName, grn?.binName]
+    const location = [grn?.warehouseName || grn?.warehouse, grn?.zoneName, grn?.locatorName, grn?.binName]
         .filter((value) => trimValue(value))
         .join(" / ");
 
     return {
         title: "GOODS RECEIPT NOTE",
-        docNo: firstValue(grn?.grnNo, grn?.id),
+        docNo: firstValue(grn?.grnNo, grn?.idDisplay, grn?.id),
         date: grn?.date || grn?.grnDate,
         status: firstValue(grn?.status, "DRAFT"),
         party: resolveParty(vendor, firstValue(grn?.vendor, grn?.vendorName)),
@@ -438,7 +650,7 @@ export const buildGrnPrintData = (grn, vendor, companyProfile) => {
             { label: "Posted", value: grn?.posted ? "Yes" : "No" },
         ].filter((item) => trimValue(item.value)),
         references: [
-            { label: "Warehouse", value: grn?.warehouseName },
+            { label: "Warehouse", value: grn?.warehouseName || grn?.warehouse },
             { label: "Location", value: location },
             { label: "Source Ref", value: firstValue(grn?.lpoNumber, grn?.lpo, grn?.docRef) },
             { label: "Packages", value: grn?.packageCount != null ? String(grn.packageCount) : null },
@@ -457,51 +669,50 @@ export const buildPurchaseInvoicePrintData = (invoice, vendor, companyProfile) =
     const items = (invoice?.items || []).map((rawItem, index) => {
         const item = rawItem || {};
         const qty = toNumber(item.qty ?? item.quantity);
-        const price = toNumber(item.unitCost ?? item.unitPrice ?? item.price ?? item.cost);
-        const discountAmount = toNumber(item.discountAmount);
-        const taxableAmount = toNumber(
-            item.taxableAmount ??
-            item.netCost ??
-            item.net ??
-            item.amount ??
-            ((qty * price) - discountAmount)
-        );
-        const taxAmt = toNumber(item.taxAmount ?? item.taxAmt);
-        const taxPercent = toNumber(item.taxPercent ?? item.taxRate ?? 0);
-        const lineTotal = toNumber(
-            item.lineTotal ??
-            item.total ??
-            item.amountTotal ??
-            (taxableAmount + taxAmt)
-        );
+        const taxPercent = toNumber(item.taxPercent ?? item.taxRate ?? item.tax ?? 0);
+        const amounts = buildLineAmounts({
+            qty,
+            unitPrice: item.unitCost ?? item.unitPrice ?? item.price ?? item.cost,
+            netUnitPrice: item.netCost,
+            discountPercent: item.discountPercent ?? item.disc ?? item.discount,
+            taxPercent,
+            explicitDiscountAmount: item.discountAmount,
+            explicitTaxableAmount: item.taxableAmount ?? item.net ?? item.amount,
+            explicitTaxAmount: item.taxAmount ?? item.taxAmt,
+            explicitLineTotal: item.lineTotal ?? item.total ?? item.amountTotal,
+        });
 
         return {
             rowNo: index + 1,
-            code: item.itemCode || "",
-            name: item.itemName || "",
+            code: item.itemCode || item.code || "",
+            name: item.itemName || item.name || "",
             desc: item.remarks || "",
             unit: item.uom || "PCS",
-            qty,
-            price,
-            taxableAmount,
-            taxAmt,
-            taxPercent,
-            total: lineTotal,
+            qty: amounts.qty,
+            price: amounts.price,
+            taxableAmount: amounts.taxableAmount,
+            discountPercent: toNumber(item.discountPercent ?? item.disc ?? item.discount),
+            discountAmount: amounts.discountAmount,
+            taxAmt: amounts.taxAmt,
+            taxPercent: amounts.taxPercent,
+            total: amounts.total,
             image: item.image || "",
             description: buildDescriptionLines(
                 {
-                    name: item.itemName,
+                    name: item.itemName || item.name,
                     desc: item.remarks,
                     barcode: item.barcode,
                     image: item.image,
                 },
                 {
-                    code: item.itemCode,
+                    code: item.itemCode || item.code,
                     sku: item.sku,
                     localName: item.localName,
                 }
             ),
             sku: item.sku || "",
+            barcode: item.barcode || "",
+            brand: item.brand || item.brandName || "",
             localName: item.localName || "",
             shortDesc: item.shortDesc || "",
             detailedDesc: item.detailedDesc || "",
@@ -513,18 +724,18 @@ export const buildPurchaseInvoicePrintData = (invoice, vendor, companyProfile) =
     const totals = buildTotals(
         {
             subTotal: hasItemRows
-                ? Math.max(itemSummary.preDiscountSubtotal, toNumber(invoice?.subTotal))
+                ? (toNumber(invoice?.subTotal) || itemSummary.taxableSubtotal)
                 : toNumber(invoice?.subTotal),
             tax: hasItemRows
-                ? Math.max(itemSummary.tax, toNumber(invoice?.taxTotal))
+                ? (toNumber(invoice?.taxTotal) || itemSummary.tax)
                 : toNumber(invoice?.taxTotal),
             grandTotal: hasItemRows
-                ? Math.max(itemSummary.grandTotal, toNumber(invoice?.grandTotal))
+                ? (toNumber(invoice?.grandTotal) || itemSummary.grandTotal)
                 : toNumber(invoice?.grandTotal),
             amountPaid: toNumber(invoice?.amountPaid),
             balanceDue: toNumber(invoice?.balanceDue),
             discountAmount: hasItemRows
-                ? Math.max(itemSummary.discountTotal, toNumber(invoice?.discountTotal))
+                ? (toNumber(invoice?.discountTotal) || itemSummary.discountTotal)
                 : toNumber(invoice?.discountTotal),
         },
         companyProfile,
@@ -537,19 +748,19 @@ export const buildPurchaseInvoicePrintData = (invoice, vendor, companyProfile) =
     return {
         title: "PURCHASE INVOICE",
         docNo: firstValue(invoice?.invoiceNumber, invoice?.id),
-        date: invoice?.invoiceDate || invoice?.date,
+        date: invoice?.invoiceDate || invoice?.documentDate || invoice?.date,
         status: firstValue(invoice?.status, "DRAFT"),
         party: resolveParty(vendor, invoice?.vendorName || invoice?.vendor),
         headerMeta: [
             { label: "Due Date", value: invoice?.dueDate },
             { label: "Vendor Invoice No", value: invoice?.vendorInvoiceNo },
             { label: "Invoice Date", value: invoice?.vendorInvoiceDate },
-            { label: "Source Type", value: invoice?.sourceType },
+            { label: "Source Type", value: invoice?.sourceType || invoice?.source },
         ].filter((item) => trimValue(item.value)),
         references: [
-            { label: "Reference", value: invoice?.referenceNo },
+            { label: "Reference", value: invoice?.referenceNo || invoice?.refNo },
             { label: "GRN No", value: invoice?.grnNo },
-            { label: "Warehouse", value: invoice?.warehouseName },
+            { label: "Warehouse", value: invoice?.warehouseName || invoice?.warehouse },
         ].filter((item) => trimValue(item.value)),
         items,
         totals,

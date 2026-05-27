@@ -106,18 +106,24 @@ export const summarizePurchaseItems = (items = []) => items.reduce((acc, rawItem
     const item = rawItem || {};
     const qty = toNumber(item.qty ?? item.quantity ?? item.received);
     const unitPrice = toNumber(item.unitPrice ?? item.unitCost ?? item.price ?? item.cost);
+    const effectiveUnitPrice = hasValue(item.netCost)
+        ? toNumber(item.netCost)
+        : unitPrice;
     const discountPercent = toNumber(item.disc ?? item.discount ?? item.discountPercent);
     const taxPercent = toNumber(item.tax ?? item.taxPercent ?? item.taxRate ?? item.purchaseTax);
     const sellingUnit = item.uom || item.unit || 'PCS';
 
     const grossAmount = qty * unitPrice;
+    const effectiveAmount = qty * effectiveUnitPrice;
     const focDeduction = getFocDeduction(item, unitPrice, sellingUnit);
     const preDiscountSubtotal = Math.max(0, grossAmount - focDeduction);
     const discountAmount = hasValue(item.discountAmount)
         ? toNumber(item.discountAmount)
-        : preDiscountSubtotal * (discountPercent / 100);
-    const taxableAmount = hasValue(item.taxableAmount ?? item.netCost ?? item.net ?? item.amount)
-        ? toNumber(item.taxableAmount ?? item.netCost ?? item.net ?? item.amount)
+        : Math.max(0, preDiscountSubtotal - effectiveAmount) || preDiscountSubtotal * (discountPercent / 100);
+    const taxableAmount = hasValue(item.taxableAmount ?? item.net ?? item.amount)
+        ? toNumber(item.taxableAmount ?? item.net ?? item.amount)
+        : hasValue(item.netCost)
+            ? effectiveAmount
         : Math.max(0, preDiscountSubtotal - discountAmount);
     const taxAmount = hasValue(item.taxAmt ?? item.taxAmount)
         ? toNumber(item.taxAmt ?? item.taxAmount)
