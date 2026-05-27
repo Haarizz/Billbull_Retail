@@ -26,6 +26,7 @@ import com.billbull.backend.financials.chartofaccounts.Account;
 import com.billbull.backend.financials.chartofaccounts.AccountRepository;
 import com.billbull.backend.financials.generalledger.LedgerEntry;
 import com.billbull.backend.financials.generalledger.LedgerEntryRepository;
+import com.billbull.backend.settings.branch.BranchAccessService;
 
 @ExtendWith(MockitoExtension.class)
 class ReconciliationServiceTest {
@@ -39,11 +40,14 @@ class ReconciliationServiceTest {
     @Mock
     private AccountRepository accountRepository;
 
+    @Mock
+    private BranchAccessService branchAccessService;
+
     private ReconciliationService service;
 
     @BeforeEach
     void setUp() {
-        service = new ReconciliationService(sessionRepository, ledgerEntryRepository, accountRepository);
+        service = new ReconciliationService(sessionRepository, ledgerEntryRepository, accountRepository, branchAccessService);
     }
 
     @Test

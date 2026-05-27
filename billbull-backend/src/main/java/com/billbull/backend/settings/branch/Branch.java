@@ -66,6 +66,7 @@ public class Branch {
 
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "default_warehouse_id")
+    @com.fasterxml.jackson.annotation.JsonIgnore
     private Warehouse defaultWarehouse;
 
     // ===== Getters & Setters =====
