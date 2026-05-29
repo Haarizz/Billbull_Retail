@@ -14,7 +14,8 @@ import {
   File, FileSpreadsheet, Truck, Undo2, CreditCard,
   Printer, Settings, FilePlus, Inbox, BookOpen,
   Receipt, PenTool, TrendingDown, Landmark, Percent,
-  PieChart, Users, Wallet, Banknote, ShieldCheck, Mail
+  PieChart, Users, Wallet, Banknote, ShieldCheck, Mail,
+  UserCircle, TrendingUp
 } from "lucide-react";
 import { hasRole, logout, getUsernameFromToken } from "../api/auth";
 import { usePermissions } from "../context/PermissionContext";
@@ -45,6 +46,7 @@ const Sidebar = ({ children }) => {
   const [stockOpen, setStockOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [enterpriseOpen, setEnterpriseOpen] = useState(false);
+  const [profileOpen, setProfileOpen] = useState(false);
   const location = useLocation();
   const navigate = useNavigate();
 
@@ -78,6 +80,7 @@ const Sidebar = ({ children }) => {
     if (path.startsWith("/payroll")) setPayrollOpen(true);
     if (path.startsWith("/settings")) setSettingsOpen(true);
     if (path.startsWith("/enterprise")) setEnterpriseOpen(true);
+    if (path.startsWith("/myprofile")) setProfileOpen(true);
   }, [location.pathname, collapsed]);
 
   // Toggle Handler
@@ -261,11 +264,19 @@ const Sidebar = ({ children }) => {
       ],
     },
     {
-      path: "/myprofile",
+      id: "profile-group",
       label: "My Profile",
       icon: <FaUser />,
+      isDropdown: true,
+      isOpen: profileOpen,
+      onToggle: () => handleToggle(profileOpen, setProfileOpen),
       module: null, // always visible to any authenticated user
-      roles: ["ADMIN", "SALES", "INVENTORY_MANAGER", "ACCOUNTANT", "HR", "SALES"],
+      roles: ["ADMIN", "SALES", "INVENTORY_MANAGER", "ACCOUNTANT", "HR"],
+      subItems: [
+        { path: "/myprofile/overview", label: "Overview",            icon: <UserCircle size={14} /> },
+        { path: "/myprofile/sales",    label: "My Sales",            icon: <TrendingUp size={14} /> },
+        { path: "/myprofile/tasks",    label: "Tasks & Activities",  icon: <ClipboardList size={14} /> },
+      ],
     },
   ];
 

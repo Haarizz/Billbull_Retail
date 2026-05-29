@@ -403,7 +403,7 @@ const BranchOutlets = () => {
                     </div>
                 </div>
     
-                <div className="p-4 md:p-6 space-y-6 max-w-[1600px] mx-auto">
+                <div className="p-4 md:p-6 space-y-6">
                     <div className="flex bg-white p-1 rounded-full w-fit mb-4 border border-slate-200 shadow-sm">
                         <button onClick={() => setDetailsTab('overview')} className={`px-5 py-1.5 text-sm font-medium rounded-full transition-all ${detailsTab === 'overview' ? 'bg-white text-slate-900 shadow-sm border border-slate-100' : 'text-slate-600 hover:text-slate-900 border border-transparent'}`}>Overview</button>
                         <button onClick={() => setDetailsTab('contact')} className={`px-5 py-1.5 text-sm font-medium rounded-full transition-all ${detailsTab === 'contact' ? 'bg-white text-slate-900 shadow-sm border border-slate-100' : 'text-slate-600 hover:text-slate-900 border border-transparent'}`}>Contact & Address</button>
@@ -575,7 +575,7 @@ const BranchOutlets = () => {
                 </div>
             </div>
 
-            <div className="p-4 md:p-6 space-y-6 max-w-[1600px] mx-auto">
+            <div className="p-4 md:p-6 space-y-6">
                 {/* Stats Row */}
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                     <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex flex-col justify-center">

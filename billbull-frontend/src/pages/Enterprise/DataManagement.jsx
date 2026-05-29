@@ -2,20 +2,22 @@ import React from 'react';
 import { Database, Download, Upload, Calendar } from 'lucide-react';
 
 const DataManagement = () => (
-    <div className="min-h-screen bg-slate-50 p-6">
-        <div className="max-w-5xl mx-auto space-y-6">
-            <div className="flex items-center gap-3">
-                <div className="p-2 bg-yellow-100 rounded-lg">
-                    <Database className="h-5 w-5 text-yellow-600" />
+    <div className="min-h-screen bg-[#F5F7FA]">
+        <header className="border-b border-[#DCE3EB] bg-white px-7 py-5">
+            <div className="flex items-start gap-3">
+                <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-[#FFF6D8] text-[#C98A00]">
+                    <Database className="h-5 w-5" />
                 </div>
                 <div>
-                    <h1 className="text-lg font-bold text-slate-900">Data Management</h1>
-                    <p className="text-xs text-slate-500">Backup, restore, and data maintenance for your tenant</p>
+                    <h1 className="text-2xl font-bold tracking-tight text-slate-950">Data Management</h1>
+                    <p className="mt-1 text-sm text-slate-600">Backup, restore, and data maintenance for your tenant.</p>
                 </div>
             </div>
+        </header>
 
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                <div className="bg-white border border-slate-200 rounded-xl p-6 shadow-sm">
+        <main className="space-y-6 p-7">
+            <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+                <div className="rounded-2xl border border-[#DCE3EB] bg-white p-6 shadow-[0_10px_30px_rgba(15,23,42,0.06)]">
                     <div className="flex items-center gap-2 mb-3">
                         <Download className="h-4 w-4 text-slate-500" />
                         <h2 className="text-sm font-semibold text-slate-800">Data Backup</h2>
@@ -28,7 +30,7 @@ const DataManagement = () => (
                     </span>
                 </div>
 
-                <div className="bg-white border border-slate-200 rounded-xl p-6 shadow-sm">
+                <div className="rounded-2xl border border-[#DCE3EB] bg-white p-6 shadow-[0_10px_30px_rgba(15,23,42,0.06)]">
                     <div className="flex items-center gap-2 mb-3">
                         <Upload className="h-4 w-4 text-slate-500" />
                         <h2 className="text-sm font-semibold text-slate-800">Data Restore</h2>
@@ -41,7 +43,7 @@ const DataManagement = () => (
                     </span>
                 </div>
 
-                <div className="bg-white border border-slate-200 rounded-xl p-6 shadow-sm lg:col-span-2">
+                <div className="rounded-2xl border border-[#DCE3EB] bg-white p-6 shadow-[0_10px_30px_rgba(15,23,42,0.06)] lg:col-span-2">
                     <div className="flex items-center gap-2 mb-3">
                         <Calendar className="h-4 w-4 text-slate-500" />
                         <h2 className="text-sm font-semibold text-slate-800">Retention Policy</h2>
@@ -51,7 +53,7 @@ const DataManagement = () => (
                     </p>
                 </div>
             </div>
-        </div>
+        </main>
     </div>
 );
 

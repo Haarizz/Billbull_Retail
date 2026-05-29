@@ -1,9 +1,23 @@
-import React, { useState, useEffect } from 'react';
-import { Settings, Package, CreditCard, Save, CheckCircle, AlertTriangle, Ban, Info, Zap, Tag, Hash } from 'lucide-react';
+import React, { useEffect, useState } from 'react';
+import {
+    AlertTriangle,
+    ArrowLeft,
+    Ban,
+    Check,
+    CheckCircle,
+    ChevronRight,
+    CreditCard,
+    Hash,
+    Info,
+    Package,
+    Save,
+    Settings,
+    Tag,
+    Zap
+} from 'lucide-react';
 import toast from 'react-hot-toast';
 import { getSalesSettings, saveSalesSettings } from '../../api/salesSettingsApi';
 
-// ==========================================
 const DEFAULT_DOCUMENT_NUMBERING = [
     { documentType: 'CUSTOMER', label: 'Customer Code', autoNumberingEnabled: true, prefix: 'CUST', nextNumber: 1 },
     { documentType: 'QUOTATION', label: 'Quotation', autoNumberingEnabled: true, prefix: 'QTN', nextNumber: 1 },
@@ -12,8 +26,13 @@ const DEFAULT_DOCUMENT_NUMBERING = [
     { documentType: 'SALES_INVOICE', label: 'Sales Invoice', autoNumberingEnabled: true, prefix: 'INV', nextNumber: 1 },
     { documentType: 'DELIVERY_NOTE', label: 'Delivery/Picking Note', autoNumberingEnabled: true, prefix: 'DN', nextNumber: 1 },
     { documentType: 'SALES_RETURN', label: 'Sales Return', autoNumberingEnabled: true, prefix: 'SR', nextNumber: 1 },
-    { documentType: 'SALES_PAYMENT', label: 'Sales Payment', autoNumberingEnabled: true, prefix: 'PAY', nextNumber: 1 },
+    { documentType: 'SALES_PAYMENT', label: 'Sales Payment', autoNumberingEnabled: true, prefix: 'PAY', nextNumber: 1 }
 ];
+
+const PAGE_BG = 'bg-[#F5F7FA]';
+const PANEL = 'rounded-2xl border border-[#DCE3EB] bg-white shadow-[0_10px_30px_rgba(15,23,42,0.06)]';
+const CARD = 'rounded-2xl border border-[#DCE3EB] bg-white shadow-[0_4px_14px_rgba(15,23,42,0.06)] transition hover:-translate-y-0.5 hover:shadow-[0_10px_24px_rgba(15,23,42,0.08)]';
+const INPUT = 'w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-700 outline-none transition focus:border-[#F5C742] focus:ring-4 focus:ring-[#F5C742]/15';
 
 const buildPreview = (setting) => {
     const prefix = (setting.prefix || '').trim().toUpperCase().replace(/[^A-Z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'DOC';
@@ -22,8 +41,8 @@ const buildPreview = (setting) => {
 };
 
 const normalizeDocumentNumbering = (incoming = []) => {
-    const byType = new Map((Array.isArray(incoming) ? incoming : []).map(setting => [setting.documentType, setting]));
-    return DEFAULT_DOCUMENT_NUMBERING.map(defaultSetting => {
+    const byType = new Map((Array.isArray(incoming) ? incoming : []).map((setting) => [setting.documentType, setting]));
+    return DEFAULT_DOCUMENT_NUMBERING.map((defaultSetting) => {
         const setting = byType.get(defaultSetting.documentType) || {};
         return {
             ...defaultSetting,
@@ -31,29 +50,249 @@ const normalizeDocumentNumbering = (incoming = []) => {
             autoNumberingEnabled: setting.autoNumberingEnabled ?? defaultSetting.autoNumberingEnabled,
             prefix: setting.prefix || defaultSetting.prefix,
             nextNumber: Math.max(1, Number(setting.nextNumber) || defaultSetting.nextNumber),
-            preview: setting.preview || buildPreview({ ...defaultSetting, ...setting }),
+            preview: buildPreview({ ...defaultSetting, ...setting })
         };
     });
 };
 
-// CONFIGURE & CUSTOMIZE PAGE
-// ==========================================
+const creditPolicies = [
+    {
+        value: 'NO_IMPACT',
+        label: 'No Impact',
+        description: 'Invoices can be posted freely, even if the customer is over their credit limit.',
+        icon: Info,
+        tint: 'bg-slate-100 text-slate-600'
+    },
+    {
+        value: 'WARNING',
+        label: 'Warning',
+        description: 'Users see a warning if the customer exceeds their credit limit, but posting is still allowed.',
+        icon: AlertTriangle,
+        tint: 'bg-amber-100 text-amber-700'
+    },
+    {
+        value: 'BLOCK',
+        label: 'Block',
+        description: 'Posting is blocked until the outstanding balance is back within the allowed limit.',
+        icon: Ban,
+        tint: 'bg-rose-100 text-rose-700'
+    }
+];
+
+const pricePolicies = [
+    {
+        value: 'RETAIL',
+        label: 'Retail Price',
+        description: 'Uses the product master retail price as the default line price.',
+        tint: 'bg-emerald-100 text-emerald-700'
+    },
+    {
+        value: 'MAX_SALE',
+        label: 'Maximum Sale Price',
+        description: 'Uses the product maximum sale price when available, otherwise falls back to retail.',
+        tint: 'bg-sky-100 text-sky-700'
+    },
+    {
+        value: 'MIN_SALE',
+        label: 'Minimum Sale Price',
+        description: 'Uses the product minimum sale price when available, otherwise falls back to retail.',
+        tint: 'bg-orange-100 text-orange-700'
+    }
+];
+
+const salesModes = [
+    {
+        value: 'WORKFLOW_DRIVEN',
+        label: 'Workflow Driven',
+        description: 'Invoices pass through picking and delivery steps before stock and revenue are finalized.',
+        tint: 'bg-slate-100 text-slate-700'
+    },
+    {
+        value: 'FAST_SALE',
+        label: 'Fast Sale',
+        description: 'Posting the invoice automatically completes picking, dispatch, delivery, and stock deduction.',
+        tint: 'bg-amber-100 text-amber-700'
+    }
+];
+
+const sectionMeta = {
+    stockCheck: {
+        title: 'Stock Check',
+        subtitle: 'Control stock validation before posting',
+        description: 'Choose whether invoice posting should enforce warehouse availability checks.',
+        icon: Package,
+        tint: 'bg-blue-100 text-blue-700'
+    },
+    creditLimit: {
+        title: 'Credit Limit Policy',
+        subtitle: 'Handle overdue or over-limit customers',
+        description: 'Define what the system should do when a customer exceeds their credit limit.',
+        icon: CreditCard,
+        tint: 'bg-violet-100 text-violet-700'
+    },
+    executionMode: {
+        title: 'Sales Execution Mode',
+        subtitle: 'Control how delivery completes',
+        description: 'Pick between a controlled workflow and one-step fast sale processing.',
+        icon: Zap,
+        tint: 'bg-amber-100 text-amber-700'
+    },
+    itemPrice: {
+        title: 'Default Item Price',
+        subtitle: 'Choose the default pricing source',
+        description: 'Set which product price fills in first when users add items to sales documents.',
+        icon: Tag,
+        tint: 'bg-emerald-100 text-emerald-700'
+    },
+    numbering: {
+        title: 'Document Numbering',
+        subtitle: 'Prefixes, sequences, and auto numbering',
+        description: 'Manage numbering behavior for customer and sales documents.',
+        icon: Hash,
+        tint: 'bg-sky-100 text-sky-700'
+    }
+};
+
+function Toggle({ checked, onChange }) {
+    return (
+        <button
+            type="button"
+            onClick={() => onChange(!checked)}
+            className={`relative h-7 w-12 rounded-full transition ${checked ? 'bg-[#F5C742]' : 'bg-slate-200'}`}
+            aria-pressed={checked}
+        >
+            <span
+                className={`absolute top-1 h-5 w-5 rounded-full bg-white shadow-sm transition ${checked ? 'left-6' : 'left-1'}`}
+            />
+        </button>
+    );
+}
+
+function PageHeader({ title, subtitle, detail, onBack, action }) {
+    return (
+        <header className="border-b border-[#DCE3EB] bg-white px-7 py-5">
+            <div className="mb-3 flex flex-wrap items-center gap-1 text-[11px] text-slate-500">
+                <span>Sales</span>
+                <ChevronRight className="h-3 w-3" />
+                <span className={detail ? 'text-slate-500' : 'font-semibold text-slate-900'}>Configure & customize</span>
+                {detail && (
+                    <>
+                        <ChevronRight className="h-3 w-3" />
+                        <span className="font-semibold text-slate-900">{title}</span>
+                    </>
+                )}
+            </div>
+            <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+                <div className="flex items-start gap-3">
+                    {detail && (
+                        <button
+                            type="button"
+                            onClick={onBack}
+                            className="mt-1 flex h-8 w-8 items-center justify-center rounded-lg text-slate-500 hover:bg-slate-100 hover:text-slate-900"
+                        >
+                            <ArrowLeft className="h-5 w-5" />
+                        </button>
+                    )}
+                    <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-[#FFF6D8] text-[#C98A00]">
+                        <Settings className="h-5 w-5" />
+                    </div>
+                    <div>
+                        <h1 className="text-2xl font-bold tracking-tight text-slate-950">{title}</h1>
+                        <p className="mt-1 text-sm text-slate-600">{subtitle}</p>
+                    </div>
+                </div>
+                {action}
+            </div>
+        </header>
+    );
+}
+
+function HubCard({ meta, value, onClick }) {
+    const Icon = meta.icon;
+    return (
+        <button type="button" onClick={onClick} className={`${CARD} p-5 text-left`}>
+            <div className="mb-4 flex items-start justify-between gap-4">
+                <div className={`flex h-10 w-10 items-center justify-center rounded-xl ${meta.tint}`}>
+                    <Icon className="h-5 w-5" />
+                </div>
+                <ChevronRight className="h-4 w-4 text-slate-400" />
+            </div>
+            <h2 className="text-base font-bold text-slate-950">{meta.title}</h2>
+            <p className="mt-1 text-sm text-slate-600">{meta.description}</p>
+            <p className="mt-4 text-xs font-medium text-slate-500">{value}</p>
+        </button>
+    );
+}
+
+function SectionShell({ meta, children, onBack, onSave, isSaving }) {
+    return (
+        <div className={`min-h-screen ${PAGE_BG}`}>
+            <PageHeader
+                title={meta.title}
+                subtitle={meta.subtitle}
+                detail
+                onBack={onBack}
+                action={(
+                    <button
+                        type="button"
+                        onClick={onSave}
+                        disabled={isSaving}
+                        className="inline-flex h-10 items-center gap-2 rounded-xl bg-[#F5C742] px-4 text-sm font-bold text-slate-950 shadow-sm transition hover:bg-[#e7b936] disabled:cursor-not-allowed disabled:bg-slate-200 disabled:text-slate-500"
+                    >
+                        {isSaving ? <div className="h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" /> : <Save className="h-4 w-4" />}
+                        {isSaving ? 'Saving...' : 'Save changes'}
+                    </button>
+                )}
+            />
+            <main className="p-7">
+                <div className={`${PANEL} p-6`}>{children}</div>
+            </main>
+        </div>
+    );
+}
+
+function OptionCard({ active, label, description, badge, icon: Icon, tint, onClick }) {
+    return (
+        <button
+            type="button"
+            onClick={onClick}
+            className={`w-full rounded-2xl border p-4 text-left transition ${
+                active
+                    ? 'border-[#F5C742] bg-[#FFFBEA] shadow-[0_6px_18px_rgba(245,199,66,0.18)]'
+                    : 'border-slate-200 bg-white hover:border-slate-300'
+            }`}
+        >
+            <div className="flex items-start gap-3">
+                <div className={`mt-0.5 flex h-9 w-9 items-center justify-center rounded-xl ${tint}`}>
+                    <Icon className="h-4 w-4" />
+                </div>
+                <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-center gap-2">
+                        <span className="text-sm font-bold text-slate-900">{label}</span>
+                        {badge && <span className="rounded-full bg-[#F5C742] px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-slate-950">{badge}</span>}
+                    </div>
+                    <p className="mt-1 text-sm leading-5 text-slate-600">{description}</p>
+                </div>
+            </div>
+        </button>
+    );
+}
 
 const SalesSettings = () => {
     const [isLoading, setIsLoading] = useState(true);
     const [isSaving, setIsSaving] = useState(false);
+    const [activeScreen, setActiveScreen] = useState('hub');
+    const [showStockCheckModal, setShowStockCheckModal] = useState(false);
 
-    // Settings state
     const [stockCheckRequired, setStockCheckRequired] = useState(false);
     const [creditLimitPolicy, setCreditLimitPolicy] = useState('NO_IMPACT');
     const [salesMode, setSalesMode] = useState('FAST_SALE');
     const [salesItemPricePolicy, setSalesItemPricePolicy] = useState('RETAIL');
-    const [documentNumbering, setDocumentNumbering] = useState(DEFAULT_DOCUMENT_NUMBERING.map(setting => ({
+    const [documentNumbering, setDocumentNumbering] = useState(DEFAULT_DOCUMENT_NUMBERING.map((setting) => ({
         ...setting,
-        preview: buildPreview(setting),
+        preview: buildPreview(setting)
     })));
 
-    // Load settings on mount
     useEffect(() => {
         const load = async () => {
             try {
@@ -73,7 +312,7 @@ const SalesSettings = () => {
         load();
     }, []);
 
-    const handleSave = async () => {
+    const persistSettings = async () => {
         setIsSaving(true);
         try {
             await saveSalesSettings({
@@ -81,7 +320,7 @@ const SalesSettings = () => {
                 creditLimitPolicy,
                 salesMode,
                 salesItemPricePolicy,
-                documentNumbering,
+                documentNumbering
             });
             toast.success('Configure & customize saved successfully');
         } catch (err) {
@@ -92,39 +331,8 @@ const SalesSettings = () => {
         }
     };
 
-    // Credit limit policy options
-    const creditPolicies = [
-        {
-            value: 'NO_IMPACT',
-            label: 'No Impact',
-            description: 'No credit limit check is performed. Invoices can be posted freely regardless of outstanding balance.',
-            icon: <Info size={18} className="text-slate-400" />,
-            color: 'slate',
-            activeClass: 'border-slate-400 bg-slate-50 ring-1 ring-slate-400',
-            inactiveClass: 'border-slate-200 hover:border-slate-300',
-        },
-        {
-            value: 'WARNING',
-            label: 'Warning',
-            description: 'Show a warning banner when the customer\'s outstanding balance exceeds their credit limit. The invoice can still be posted.',
-            icon: <AlertTriangle size={18} className="text-amber-500" />,
-            color: 'amber',
-            activeClass: 'border-amber-400 bg-amber-50 ring-1 ring-amber-400',
-            inactiveClass: 'border-slate-200 hover:border-amber-200',
-        },
-        {
-            value: 'BLOCK',
-            label: 'Block',
-            description: 'Prevent posting the invoice when the customer\'s outstanding balance exceeds their credit limit. Payment must be collected first.',
-            icon: <Ban size={18} className="text-red-500" />,
-            color: 'red',
-            activeClass: 'border-red-400 bg-red-50 ring-1 ring-red-400',
-            inactiveClass: 'border-slate-200 hover:border-red-200',
-        },
-    ];
-
     const updateDocumentNumbering = (documentType, patch) => {
-        setDocumentNumbering(prev => prev.map(setting => {
+        setDocumentNumbering((prev) => prev.map((setting) => {
             if (setting.documentType !== documentType) return setting;
             const next = { ...setting, ...patch };
             next.preview = buildPreview(next);
@@ -134,448 +342,266 @@ const SalesSettings = () => {
 
     if (isLoading) {
         return (
-            <div className="min-h-screen bg-[#F7F7FA] flex items-center justify-center">
+            <div className={`min-h-screen ${PAGE_BG} flex items-center justify-center`}>
                 <div className="text-center">
-                    <div className="animate-spin h-8 w-8 border-3 border-[#F5C742] border-t-transparent rounded-full mx-auto mb-3" />
-                    <p className="text-sm text-slate-500">Loading settings...</p>
+                    <div className="mx-auto mb-3 h-8 w-8 animate-spin rounded-full border-4 border-[#F5C742] border-t-transparent" />
+                    <p className="text-sm text-slate-500">Loading sales settings...</p>
                 </div>
             </div>
         );
     }
 
-    return (
-        <div className="min-h-screen bg-[#F7F7FA]">
-            <style>{`
-                .settings-page { font-family: 'Inter', sans-serif; }
-                .toggle-track {
-                    width: 48px; height: 26px; border-radius: 13px;
-                    transition: background 0.25s; cursor: pointer;
-                    display: flex; align-items: center; padding: 0 3px;
-                    position: relative;
-                }
-                .toggle-thumb {
-                    width: 20px; height: 20px; border-radius: 50%;
-                    background: white; box-shadow: 0 1px 3px rgba(0,0,0,0.2);
-                    transition: transform 0.25s;
-                    position: absolute;
-                }
-            `}</style>
+    const stockCheckSummary = stockCheckRequired ? 'Enabled. Posting will validate stock.' : 'Disabled. Posting ignores stock shortages.';
+    const creditSummary = creditPolicies.find((policy) => policy.value === creditLimitPolicy)?.label || 'No Impact';
+    const modeSummary = salesModes.find((mode) => mode.value === salesMode)?.label || 'Workflow Driven';
+    const priceSummary = pricePolicies.find((policy) => policy.value === salesItemPricePolicy)?.label || 'Retail Price';
+    const numberingSummary = `${documentNumbering.length} document types configured`;
 
-            <div className="settings-page max-w-3xl mx-auto px-6 py-8">
-
-                {/* ---- PAGE HEADER ---- */}
-                <div className="flex items-center justify-between mb-8">
-                    <div className="flex items-center gap-3">
-                        <div className="w-10 h-10 rounded-xl bg-[#F5C742] flex items-center justify-center shadow-sm">
-                            <Settings size={20} className="text-[#1E1E1E]" />
+    const stockCheckModal = showStockCheckModal ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/30 p-4 backdrop-blur-sm">
+            <div className="w-full max-w-2xl rounded-3xl border border-slate-200 bg-white shadow-[0_20px_60px_rgba(15,23,42,0.18)]">
+                <div className="flex items-start justify-between border-b border-slate-100 px-6 py-5">
+                    <div className="flex items-start gap-3">
+                        <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-blue-100 text-blue-700">
+                            <Package className="h-5 w-5" />
                         </div>
                         <div>
-                            <h1 className="text-xl font-bold text-slate-800">Configure &amp; customize</h1>
-                            <p className="text-xs text-slate-500 mt-0.5">Configure rules and numbering for Customers &amp; Sales</p>
+                            <h2 className="text-xl font-bold text-slate-950">Stock Check</h2>
+                            <p className="mt-1 text-sm text-slate-600">Open a focused window to decide whether invoice posting should verify stock first.</p>
                         </div>
                     </div>
                     <button
-                        onClick={handleSave}
-                        disabled={isSaving}
-                        className="flex items-center gap-2 px-5 py-2.5 rounded-xl font-semibold text-sm transition-all shadow-sm"
-                        style={{
-                            background: isSaving ? '#d1d5db' : '#F5C742',
-                            color: isSaving ? '#9ca3af' : '#1E1E1E',
-                            cursor: isSaving ? 'not-allowed' : 'pointer'
-                        }}
+                        type="button"
+                        onClick={() => setShowStockCheckModal(false)}
+                        className="rounded-lg px-3 py-2 text-sm font-medium text-slate-500 hover:bg-slate-100 hover:text-slate-900"
                     >
-                        {isSaving ? (
-                            <div className="animate-spin h-4 w-4 border-2 border-current border-t-transparent rounded-full" />
-                        ) : (
-                            <Save size={16} />
-                        )}
-                        {isSaving ? 'Saving...' : 'Save'}
+                        Close
                     </button>
                 </div>
 
-                {/* ==============================
-                    SECTION 1 — STOCK CHECK
-                ============================== */}
-                <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden mb-5">
-                    {/* Section Header */}
-                    <div className="flex items-center justify-between px-6 py-5 border-b border-slate-100">
-                        <div className="flex items-center gap-3">
-                            <div className="w-8 h-8 rounded-lg bg-blue-50 flex items-center justify-center">
-                                <Package size={16} className="text-blue-500" />
-                            </div>
+                <div className="space-y-5 px-6 py-6">
+                    <div className="flex items-center justify-between rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4">
+                        <div>
+                            <p className="text-sm font-bold text-slate-900">Require Stock Check Before Posting</p>
+                            <p className="mt-1 text-sm text-slate-600">When enabled, the system blocks posting if any item would drive stock negative.</p>
+                        </div>
+                        <Toggle checked={stockCheckRequired} onChange={setStockCheckRequired} />
+                    </div>
+
+                    <div className={`rounded-2xl border px-4 py-4 ${stockCheckRequired ? 'border-amber-200 bg-amber-50' : 'border-slate-200 bg-slate-50'}`}>
+                        <div className="flex items-start gap-3">
+                            {stockCheckRequired ? (
+                                <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />
+                            ) : (
+                                <Info className="mt-0.5 h-4 w-4 shrink-0 text-slate-500" />
+                            )}
                             <div>
-                                <h2 className="text-sm font-bold text-slate-800">Stock Check</h2>
-                                <p className="text-xs text-slate-400 mt-0.5">Control stock validation on invoice posting</p>
-                            </div>
-                        </div>
-                        {/* Toggle */}
-                        <button
-                            onClick={() => setStockCheckRequired(v => !v)}
-                            className="toggle-track focus:outline-none"
-                            style={{ background: stockCheckRequired ? '#F5C742' : '#e2e8f0' }}
-                            aria-label="Toggle stock check"
-                        >
-                            <div
-                                className="toggle-thumb"
-                                style={{ transform: stockCheckRequired ? 'translateX(22px)' : 'translateX(0px)' }}
-                            />
-                        </button>
-                    </div>
-
-                    {/* Setting Detail */}
-                    <div className="px-6 py-5">
-                        <div className="flex items-start gap-4">
-                            <div className="flex-1">
-                                <div className="flex items-center gap-2 mb-1">
-                                    <span className="text-sm font-semibold text-slate-700">
-                                        Require Stock Check Before Posting
-                                    </span>
-                                    <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${stockCheckRequired ? 'bg-green-100 text-green-700' : 'bg-slate-100 text-slate-500'}`}>
-                                        {stockCheckRequired ? 'ENABLED' : 'DISABLED'}
-                                    </span>
-                                </div>
-                                <p className="text-xs text-slate-500 leading-relaxed">
-                                    When enabled, the system will verify that each item on a Sales Invoice has sufficient available
-                                    warehouse stock before allowing the invoice to be posted. If any item is short, the post will
-                                    be rejected with a clear error listing the affected items.
+                                <p className="text-sm font-semibold text-slate-900">{stockCheckRequired ? 'Stock protection is active' : 'Stock protection is inactive'}</p>
+                                <p className="mt-1 text-sm leading-6 text-slate-600">
+                                    {stockCheckRequired
+                                        ? 'Sales Invoices will be blocked at posting if any line item has insufficient stock. This works well for real-time stock-controlled businesses.'
+                                        : 'Sales Invoices can still be posted even if stock is zero or negative. Use this when delivery and stock reconciliation happen elsewhere.'}
                                 </p>
-                                {stockCheckRequired && (
-                                    <div className="mt-3 flex items-start gap-2 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2.5">
-                                        <AlertTriangle size={13} className="text-amber-500 mt-0.5 shrink-0" />
-                                        <p className="text-[11px] text-amber-700 leading-relaxed">
-                                            <strong>Active:</strong> Invoices with insufficient stock will be blocked at posting.
-                                            Ensure warehouse quantities are up to date before processing invoices.
-                                        </p>
-                                    </div>
-                                )}
-                                {!stockCheckRequired && (
-                                    <div className="mt-3 flex items-start gap-2 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2.5">
-                                        <Info size={13} className="text-slate-400 mt-0.5 shrink-0" />
-                                        <p className="text-[11px] text-slate-500 leading-relaxed">
-                                            <strong>Inactive:</strong> Invoices can be posted even if warehouse stock is zero or negative.
-                                            Useful when stock is managed separately via Delivery Notes.
-                                        </p>
-                                    </div>
-                                )}
                             </div>
                         </div>
                     </div>
-                </div>
 
-                {/* ==============================
-                    SECTION 2 — CREDIT LIMIT POLICY
-                ============================== */}
-                <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden mb-5">
-                    {/* Section Header */}
-                    <div className="flex items-center gap-3 px-6 py-5 border-b border-slate-100">
-                        <div className="w-8 h-8 rounded-lg bg-purple-50 flex items-center justify-center">
-                            <CreditCard size={16} className="text-purple-500" />
-                        </div>
-                        <div>
-                            <h2 className="text-sm font-bold text-slate-800">Credit Limit (Due) Policy</h2>
-                            <p className="text-xs text-slate-400 mt-0.5">What happens when a customer's outstanding balance exceeds their credit limit</p>
-                        </div>
-                    </div>
-
-                    {/* Policy Options */}
-                    <div className="px-6 py-5 space-y-3">
-                        {creditPolicies.map((policy) => {
-                            const isSelected = creditLimitPolicy === policy.value;
-                            return (
-                                <button
-                                    key={policy.value}
-                                    onClick={() => setCreditLimitPolicy(policy.value)}
-                                    className={`w-full text-left border-2 rounded-xl p-4 transition-all duration-200 ${isSelected ? policy.activeClass : policy.inactiveClass + ' bg-white'}`}
-                                >
-                                    <div className="flex items-start gap-3">
-                                        {/* Radio dot */}
-                                        <div className={`mt-0.5 w-4 h-4 rounded-full border-2 shrink-0 flex items-center justify-center transition-all ${isSelected ? 'border-current bg-current' : 'border-slate-300'}`}
-                                            style={isSelected ? { borderColor: policy.color === 'slate' ? '#64748b' : policy.color === 'amber' ? '#f59e0b' : '#ef4444' } : {}}>
-                                            {isSelected && <div className="w-1.5 h-1.5 rounded-full bg-white" />}
-                                        </div>
-
-                                        <div className="flex-1">
-                                            <div className="flex items-center gap-2 mb-1">
-                                                {policy.icon}
-                                                <span className="text-sm font-bold text-slate-800">{policy.label}</span>
-                                                {isSelected && (
-                                                    <span className="text-[9px] font-bold px-2 py-0.5 rounded-full bg-[#F5C742] text-[#1E1E1E] uppercase tracking-wider">
-                                                        Active
-                                                    </span>
-                                                )}
-                                            </div>
-                                            <p className="text-xs text-slate-500 leading-relaxed">{policy.description}</p>
-                                        </div>
-                                    </div>
-                                </button>
-                            );
-                        })}
-                    </div>
-
-                    {/* Context note */}
-                    <div className="px-6 pb-5">
-                        <div className="flex items-start gap-2 bg-blue-50 border border-blue-100 rounded-xl px-4 py-3">
-                            <Info size={13} className="text-blue-400 mt-0.5 shrink-0" />
-                            <p className="text-[11px] text-blue-600 leading-relaxed">
-                                The credit limit per customer is set on each Sales Invoice in the "Credit Limit" field.
-                                The policy above controls the system-wide behaviour when that limit is breached.
-                                Customers without a credit limit set (0 or blank) are always unaffected.
-                            </p>
-                        </div>
+                    <div className="rounded-2xl border border-blue-100 bg-blue-50 px-4 py-4 text-sm leading-6 text-blue-800">
+                        Quotations, Sales Orders, Proforma Invoices, Delivery Notes, and Sales Invoices already read these settings. This window updates the same saved module configuration.
                     </div>
                 </div>
 
-                {/* ==============================
-                    SECTION 3 — SALES EXECUTION MODE
-                ============================== */}
-                <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden mb-5">
-                    {/* Section Header */}
-                    <div className="flex items-center gap-3 px-6 py-5 border-b border-slate-100">
-                        <div className="w-8 h-8 rounded-lg bg-amber-50 flex items-center justify-center">
-                            <Zap size={16} className="text-amber-500" />
-                        </div>
-                        <div>
-                            <h2 className="text-sm font-bold text-slate-800">Sales Execution Mode</h2>
-                            <p className="text-xs text-slate-400 mt-0.5">Control how invoices complete the delivery and stock deduction cycle</p>
-                        </div>
-                    </div>
-
-                    {/* Mode Options */}
-                    <div className="px-6 py-5 space-y-3">
-
-                        {/* WORKFLOW_DRIVEN */}
-                        <button
-                            onClick={() => setSalesMode('WORKFLOW_DRIVEN')}
-                            className={`w-full text-left border-2 rounded-xl p-4 transition-all duration-200 ${salesMode === 'WORKFLOW_DRIVEN' ? 'border-slate-400 bg-slate-50 ring-1 ring-slate-400' : 'border-slate-200 hover:border-slate-300 bg-white'}`}
-                        >
-                            <div className="flex items-start gap-3">
-                                <div className={`mt-0.5 w-4 h-4 rounded-full border-2 shrink-0 flex items-center justify-center transition-all ${salesMode === 'WORKFLOW_DRIVEN' ? 'border-slate-500 bg-slate-500' : 'border-slate-300'}`}>
-                                    {salesMode === 'WORKFLOW_DRIVEN' && <div className="w-1.5 h-1.5 rounded-full bg-white" />}
-                                </div>
-                                <div className="flex-1">
-                                    <div className="flex items-center gap-2 mb-1">
-                                        <span className="text-sm font-bold text-slate-800">Workflow Driven</span>
-                                        {salesMode === 'WORKFLOW_DRIVEN' && (
-                                            <span className="text-[9px] font-bold px-2 py-0.5 rounded-full bg-[#F5C742] text-[#1E1E1E] uppercase tracking-wider">Active</span>
-                                        )}
-                                    </div>
-                                    <p className="text-xs text-slate-500 leading-relaxed">
-                                        Full pipeline with manual steps. Sales Invoices auto-generate Draft <strong>Picking Lists</strong>, and warehouse staff complete dispatch manually from the Picking and Delivery Note workflow. Stock is deducted and revenue is recognised only when the Delivery Note is marked Delivered.
-                                    </p>
-                                </div>
-                            </div>
-                        </button>
-
-                        {/* FAST_SALE */}
-                        <button
-                            onClick={() => setSalesMode('FAST_SALE')}
-                            className={`w-full text-left border-2 rounded-xl p-4 transition-all duration-200 ${salesMode === 'FAST_SALE' ? 'border-amber-400 bg-amber-50 ring-1 ring-amber-400' : 'border-slate-200 hover:border-amber-200 bg-white'}`}
-                        >
-                            <div className="flex items-start gap-3">
-                                <div className={`mt-0.5 w-4 h-4 rounded-full border-2 shrink-0 flex items-center justify-center transition-all ${salesMode === 'FAST_SALE' ? 'border-amber-500 bg-amber-500' : 'border-slate-300'}`}>
-                                    {salesMode === 'FAST_SALE' && <div className="w-1.5 h-1.5 rounded-full bg-white" />}
-                                </div>
-                                <div className="flex-1">
-                                    <div className="flex items-center gap-2 mb-1">
-                                        <Zap size={14} className="text-amber-500" />
-                                        <span className="text-sm font-bold text-slate-800">Fast Sale</span>
-                                        {salesMode === 'FAST_SALE' && (
-                                            <span className="text-[9px] font-bold px-2 py-0.5 rounded-full bg-[#F5C742] text-[#1E1E1E] uppercase tracking-wider">Active</span>
-                                        )}
-                                    </div>
-                                    <p className="text-xs text-slate-500 leading-relaxed">
-                                        Instant sale mode. When a Sales Invoice is created and posted, the system automatically creates a <strong>Picking List</strong>, dispatches it, and marks it delivered in one atomic step — deducting stock and recognising revenue immediately.
-                                    </p>
-                                    {salesMode === 'FAST_SALE' && (
-                                        <div className="mt-2 flex items-start gap-2 bg-amber-100 border border-amber-200 rounded-lg px-3 py-2">
-                                            <AlertTriangle size={12} className="text-amber-600 mt-0.5 shrink-0" />
-                                            <p className="text-[11px] text-amber-700 leading-relaxed">
-                                                <strong>Active:</strong> Every new invoice will auto-generate a Picking note and auto-complete delivery on posting. Ensure each line item has a warehouse assigned and sufficient stock. Invoices with missing warehouses or insufficient stock will be blocked.
-                                            </p>
-                                        </div>
-                                    )}
-                                </div>
-                            </div>
-                        </button>
-                    </div>
-
-                    {/* Context note */}
-                    <div className="px-6 pb-5">
-                        <div className="flex items-start gap-2 bg-blue-50 border border-blue-100 rounded-xl px-4 py-3">
-                            <Info size={13} className="text-blue-400 mt-0.5 shrink-0" />
-                            <p className="text-[11px] text-blue-600 leading-relaxed">
-                                Fast Sale applies globally to all new invoices. Invoices linked to a pre-existing Delivery Note (Before-Sale flow) are not affected — their delivery lifecycle is always respected as-is.
-                            </p>
-                        </div>
-                    </div>
-                </div>
-
-                {/* ==============================
-                    SECTION 4 — DEFAULT ITEM PRICE
-                ============================== */}
-                <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden mb-5">
-                    <div className="flex items-center gap-3 px-6 py-5 border-b border-slate-100">
-                        <div className="w-8 h-8 rounded-lg bg-emerald-50 flex items-center justify-center">
-                            <Tag size={16} className="text-emerald-500" />
-                        </div>
-                        <div>
-                            <h2 className="text-sm font-bold text-slate-800">Default Item Price</h2>
-                            <p className="text-xs text-slate-400 mt-0.5">
-                                Which price from the product master is auto-filled when adding items to a Quotation, Sales Order, or Sales Invoice
-                            </p>
-                        </div>
-                    </div>
-
-                    <div className="px-6 py-5 space-y-3">
-                        {[
-                            {
-                                value: 'RETAIL',
-                                label: 'Retail Price',
-                                description: 'Use the product master’s Retail Price as the default line price. This is the system default.',
-                                activeClass: 'border-emerald-400 bg-emerald-50 ring-1 ring-emerald-400',
-                                dotActive: 'border-emerald-500 bg-emerald-500'
-                            },
-                            {
-                                value: 'MAX_SALE',
-                                label: 'Maximum Sale Price',
-                                description: 'Use the product master’s Maximum Sale Price (ceiling). Falls back to Retail Price if Max is not set on a particular product.',
-                                activeClass: 'border-blue-400 bg-blue-50 ring-1 ring-blue-400',
-                                dotActive: 'border-blue-500 bg-blue-500'
-                            },
-                            {
-                                value: 'MIN_SALE',
-                                label: 'Minimum Sale Price',
-                                description: 'Use the product master’s Minimum Sale Price (floor). Falls back to Retail Price if Min is not set on a particular product.',
-                                activeClass: 'border-amber-400 bg-amber-50 ring-1 ring-amber-400',
-                                dotActive: 'border-amber-500 bg-amber-500'
-                            }
-                        ].map(option => {
-                            const isSelected = salesItemPricePolicy === option.value;
-                            return (
-                                <button
-                                    key={option.value}
-                                    onClick={() => setSalesItemPricePolicy(option.value)}
-                                    className={`w-full text-left border-2 rounded-xl p-4 transition-all duration-200 ${isSelected ? option.activeClass : 'border-slate-200 hover:border-slate-300 bg-white'}`}
-                                >
-                                    <div className="flex items-start gap-3">
-                                        <div className={`mt-0.5 w-4 h-4 rounded-full border-2 shrink-0 flex items-center justify-center transition-all ${isSelected ? option.dotActive : 'border-slate-300'}`}>
-                                            {isSelected && <div className="w-1.5 h-1.5 rounded-full bg-white" />}
-                                        </div>
-                                        <div className="flex-1">
-                                            <div className="flex items-center gap-2 mb-1">
-                                                <span className="text-sm font-bold text-slate-800">{option.label}</span>
-                                                {isSelected && (
-                                                    <span className="text-[9px] font-bold px-2 py-0.5 rounded-full bg-[#F5C742] text-[#1E1E1E] uppercase tracking-wider">Active</span>
-                                                )}
-                                            </div>
-                                            <p className="text-xs text-slate-500 leading-relaxed">{option.description}</p>
-                                        </div>
-                                    </div>
-                                </button>
-                            );
-                        })}
-                    </div>
-
-                    <div className="px-6 pb-5">
-                        <div className="flex items-start gap-2 bg-slate-50 border border-slate-200 rounded-xl px-4 py-3">
-                            <Info size={13} className="text-slate-400 mt-0.5 shrink-0" />
-                            <p className="text-[11px] text-slate-600 leading-relaxed">
-                                Applies only to the <strong>default</strong> price filled in when an item is first added to a document. Users can still edit the price on each line as needed.
-                            </p>
-                        </div>
-                    </div>
-                </div>
-
-                {/* ==============================
-                    SECTION 5 - DOCUMENT NUMBERING
-                ============================== */}
-                <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden mb-5">
-                    <div className="flex items-center gap-3 px-6 py-5 border-b border-slate-100">
-                        <div className="w-8 h-8 rounded-lg bg-emerald-50 flex items-center justify-center">
-                            <Hash size={16} className="text-emerald-500" />
-                        </div>
-                        <div>
-                            <h2 className="text-sm font-bold text-slate-800">Document Numbering</h2>
-                            <p className="text-xs text-slate-400 mt-0.5">Set auto-generation or manual numbering per Customers &amp; Sales document</p>
-                        </div>
-                    </div>
-
-                    <div className="px-6 py-5 space-y-3">
-                        {documentNumbering.map((setting) => (
-                            <div key={setting.documentType} className="border border-slate-200 rounded-xl p-4">
-                                <div className="grid grid-cols-1 lg:grid-cols-[1.2fr_120px_120px_1fr] gap-3 items-center">
-                                    <div>
-                                        <div className="text-sm font-bold text-slate-800">{setting.label}</div>
-                                        <div className="text-[11px] text-slate-500 mt-0.5">
-                                            {setting.autoNumberingEnabled
-                                                ? 'Auto numbering uses the configured prefix and sequence.'
-                                                : 'Manual mode lets users type the full number on entry screens.'}
-                                        </div>
-                                    </div>
-
-                                    <button
-                                        type="button"
-                                        onClick={() => updateDocumentNumbering(setting.documentType, { autoNumberingEnabled: !setting.autoNumberingEnabled })}
-                                        className="toggle-track focus:outline-none"
-                                        style={{ background: setting.autoNumberingEnabled ? '#F5C742' : '#e2e8f0' }}
-                                        aria-label={`Toggle ${setting.label} auto numbering`}
-                                    >
-                                        <div
-                                            className="toggle-thumb"
-                                            style={{ transform: setting.autoNumberingEnabled ? 'translateX(22px)' : 'translateX(0px)' }}
-                                        />
-                                    </button>
-
-                                    <input
-                                        type="text"
-                                        value={setting.prefix}
-                                        onChange={(e) => updateDocumentNumbering(setting.documentType, { prefix: e.target.value.toUpperCase() })}
-                                        className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm font-semibold text-slate-700 focus:outline-none focus:ring-2 focus:ring-[#F5C742]/40"
-                                        placeholder="Prefix"
-                                    />
-
-                                    <div className="grid grid-cols-[100px_1fr] gap-3">
-                                        <input
-                                            type="number"
-                                            min="1"
-                                            value={setting.nextNumber}
-                                            onChange={(e) => updateDocumentNumbering(setting.documentType, { nextNumber: e.target.value })}
-                                            className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm text-slate-700 focus:outline-none focus:ring-2 focus:ring-[#F5C742]/40"
-                                            aria-label={`${setting.label} next number`}
-                                        />
-                                        <div className="bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-xs font-mono text-slate-700 truncate">
-                                            {setting.preview || buildPreview(setting)}
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
-                        ))}
-                    </div>
-                </div>
-
-                {/* ---- BOTTOM SAVE ROW ---- */}
-                <div className="flex justify-end">
+                <div className="flex justify-end gap-3 border-t border-slate-100 px-6 py-4">
                     <button
-                        onClick={handleSave}
-                        disabled={isSaving}
-                        className="flex items-center gap-2 px-6 py-3 rounded-xl font-semibold text-sm transition-all shadow-sm"
-                        style={{
-                            background: isSaving ? '#d1d5db' : '#F5C742',
-                            color: isSaving ? '#9ca3af' : '#1E1E1E',
-                            cursor: isSaving ? 'not-allowed' : 'pointer'
-                        }}
+                        type="button"
+                        onClick={() => setShowStockCheckModal(false)}
+                        className="rounded-xl border border-slate-200 px-4 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50"
                     >
-                        {isSaving ? (
-                            <div className="animate-spin h-4 w-4 border-2 border-current border-t-transparent rounded-full" />
-                        ) : (
-                            <CheckCircle size={16} />
-                        )}
+                        Done
+                    </button>
+                    <button
+                        type="button"
+                        onClick={async () => {
+                            await persistSettings();
+                            setShowStockCheckModal(false);
+                        }}
+                        disabled={isSaving}
+                        className="inline-flex items-center gap-2 rounded-xl bg-[#F5C742] px-4 py-2.5 text-sm font-bold text-slate-950 hover:bg-[#e7b936] disabled:cursor-not-allowed disabled:bg-slate-200 disabled:text-slate-500"
+                    >
+                        {isSaving ? <div className="h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" /> : <Save className="h-4 w-4" />}
                         {isSaving ? 'Saving...' : 'Save'}
                     </button>
                 </div>
-
             </div>
         </div>
+    ) : null;
+
+    if (activeScreen === 'hub') {
+        return (
+            <div className={`min-h-screen ${PAGE_BG}`}>
+                <PageHeader
+                    title="Configure & customize"
+                    subtitle="Open each settings area in its own focused screen."
+                    action={(
+                        <button
+                            type="button"
+                            onClick={persistSettings}
+                            disabled={isSaving}
+                            className="inline-flex h-10 items-center gap-2 rounded-xl bg-[#F5C742] px-4 text-sm font-bold text-slate-950 shadow-sm transition hover:bg-[#e7b936] disabled:cursor-not-allowed disabled:bg-slate-200 disabled:text-slate-500"
+                        >
+                            {isSaving ? <div className="h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" /> : <Save className="h-4 w-4" />}
+                            {isSaving ? 'Saving...' : 'Save all'}
+                        </button>
+                    )}
+                />
+
+                <main className="space-y-6 p-7">
+                    <section className="grid grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-3">
+                        <HubCard meta={sectionMeta.stockCheck} value={stockCheckSummary} onClick={() => setShowStockCheckModal(true)} />
+                        <HubCard meta={sectionMeta.creditLimit} value={creditSummary} onClick={() => setActiveScreen('creditLimit')} />
+                        <HubCard meta={sectionMeta.executionMode} value={modeSummary} onClick={() => setActiveScreen('executionMode')} />
+                        <HubCard meta={sectionMeta.itemPrice} value={priceSummary} onClick={() => setActiveScreen('itemPrice')} />
+                        <HubCard meta={sectionMeta.numbering} value={numberingSummary} onClick={() => setActiveScreen('numbering')} />
+                    </section>
+                </main>
+                {stockCheckModal}
+            </div>
+        );
+    }
+
+    if (activeScreen === 'creditLimit') {
+        return (
+            <>
+                <SectionShell meta={sectionMeta.creditLimit} onBack={() => setActiveScreen('hub')} onSave={persistSettings} isSaving={isSaving}>
+                    <div className="space-y-4">
+                        {creditPolicies.map((policy) => (
+                            <OptionCard
+                                key={policy.value}
+                                active={creditLimitPolicy === policy.value}
+                                label={policy.label}
+                                description={policy.description}
+                                badge={creditLimitPolicy === policy.value ? 'Active' : null}
+                                icon={policy.icon}
+                                tint={policy.tint}
+                                onClick={() => setCreditLimitPolicy(policy.value)}
+                            />
+                        ))}
+                    </div>
+
+                    <div className="mt-5 rounded-2xl border border-blue-100 bg-blue-50 px-4 py-4 text-sm leading-6 text-blue-800">
+                        The credit limit itself is stored on the customer or invoice side. This screen only controls what the sales module should do when the limit is crossed.
+                    </div>
+                </SectionShell>
+                {stockCheckModal}
+            </>
+        );
+    }
+
+    if (activeScreen === 'executionMode') {
+        return (
+            <>
+                <SectionShell meta={sectionMeta.executionMode} onBack={() => setActiveScreen('hub')} onSave={persistSettings} isSaving={isSaving}>
+                    <div className="space-y-4">
+                        {salesModes.map((mode) => (
+                            <OptionCard
+                                key={mode.value}
+                                active={salesMode === mode.value}
+                                label={mode.label}
+                                description={mode.description}
+                                badge={salesMode === mode.value ? 'Active' : null}
+                                icon={Zap}
+                                tint={mode.tint}
+                                onClick={() => setSalesMode(mode.value)}
+                            />
+                        ))}
+                    </div>
+
+                    {salesMode === 'FAST_SALE' && (
+                        <div className="mt-5 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-4 text-sm leading-6 text-amber-800">
+                            Fast Sale will auto-complete picking and delivery on posting. This is best when warehouse discipline is strong and stock is always maintained accurately.
+                        </div>
+                    )}
+                </SectionShell>
+                {stockCheckModal}
+            </>
+        );
+    }
+
+    if (activeScreen === 'itemPrice') {
+        return (
+            <>
+                <SectionShell meta={sectionMeta.itemPrice} onBack={() => setActiveScreen('hub')} onSave={persistSettings} isSaving={isSaving}>
+                    <div className="space-y-4">
+                        {pricePolicies.map((policy) => (
+                            <OptionCard
+                                key={policy.value}
+                                active={salesItemPricePolicy === policy.value}
+                                label={policy.label}
+                                description={policy.description}
+                                badge={salesItemPricePolicy === policy.value ? 'Active' : null}
+                                icon={Tag}
+                                tint={policy.tint}
+                                onClick={() => setSalesItemPricePolicy(policy.value)}
+                            />
+                        ))}
+                    </div>
+
+                    <div className="mt-5 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4 text-sm leading-6 text-slate-700">
+                        Users can still edit the price on the document line. This screen controls the default price that appears first when the item is selected.
+                    </div>
+                </SectionShell>
+                {stockCheckModal}
+            </>
+        );
+    }
+
+    return (
+        <>
+            <SectionShell meta={sectionMeta.numbering} onBack={() => setActiveScreen('hub')} onSave={persistSettings} isSaving={isSaving}>
+                <div className="space-y-3">
+                    {documentNumbering.map((setting) => (
+                        <div key={setting.documentType} className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                            <div className="mb-3 flex items-start justify-between gap-4">
+                                <div>
+                                    <h3 className="text-sm font-bold text-slate-900">{setting.label}</h3>
+                                    <p className="mt-1 text-xs leading-5 text-slate-600">
+                                        {setting.autoNumberingEnabled
+                                            ? 'Auto numbering uses the prefix and next sequence value below.'
+                                            : 'Manual mode lets the user type the document number during entry.'}
+                                    </p>
+                                </div>
+                                <Toggle
+                                    checked={setting.autoNumberingEnabled}
+                                    onChange={(nextValue) => updateDocumentNumbering(setting.documentType, { autoNumberingEnabled: nextValue })}
+                                />
+                            </div>
+
+                            <div className="grid grid-cols-1 gap-3 lg:grid-cols-[130px_130px_1fr]">
+                                <input
+                                    type="text"
+                                    value={setting.prefix}
+                                    onChange={(e) => updateDocumentNumbering(setting.documentType, { prefix: e.target.value.toUpperCase() })}
+                                    className={INPUT}
+                                    placeholder="Prefix"
+                                />
+                                <input
+                                    type="number"
+                                    min="1"
+                                    value={setting.nextNumber}
+                                    onChange={(e) => updateDocumentNumbering(setting.documentType, { nextNumber: e.target.value })}
+                                    className={INPUT}
+                                    aria-label={`${setting.label} next number`}
+                                />
+                                <div className="flex items-center rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-xs font-mono text-slate-700">
+                                    {setting.preview || buildPreview(setting)}
+                                </div>
+                            </div>
+                        </div>
+                    ))}
+                </div>
+            </SectionShell>
+            {stockCheckModal}
+        </>
     );
 };
 
