@@ -35,6 +35,9 @@ public class SalesInvoice {
     private String linkedProforma;
     private String linkedQuotation;
 
+    @Column(length = 1000)
+    private String shippingAddress;
+
     private String paymentMode;
     private String paymentTerms;
     private String salesperson;
@@ -189,6 +192,14 @@ public class SalesInvoice {
 
     public void setVatMode(com.billbull.backend.sales.common.VatMode vatMode) {
         this.vatMode = vatMode;
+    }
+
+    public String getShippingAddress() {
+        return shippingAddress;
+    }
+
+    public void setShippingAddress(String shippingAddress) {
+        this.shippingAddress = shippingAddress;
     }
 
     public String getPaymentMode() {

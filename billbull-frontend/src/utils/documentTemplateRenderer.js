@@ -193,6 +193,27 @@ const renderCurrencySymbol = (value) => {
     return escapeHtml(currencyConfig.label);
 };
 
+const renderCurrencySymbolHtml = (value) => {
+    const currencyConfig = resolveCurrencyDisplayConfig(value);
+    if (currencyConfig.hasImage) {
+        return `<img src="${UAE_DIRHAM_SYMBOL_IMAGE}" alt="${escapeHtml(currencyConfig.ariaLabel)}" style="height:0.85em;width:auto;display:inline-block;vertical-align:-0.07em;" />`;
+    }
+    return escapeHtml(currencyConfig.label);
+};
+
+const renderCurrencyCode = (value) => {
+    const currencyConfig = resolveCurrencyDisplayConfig(value);
+    return escapeHtml(currencyConfig.currency || currencyConfig.label);
+};
+
+// Pick currency rendering mode based on template displayOptions.currencyDisplay:
+// 'symbol' (default, legacy) renders the glyph / dirham image; 'code' renders the
+// alphabetic ISO code (AED / USD).
+const renderCurrencyForLayout = (value, displayOptions = {}) =>
+    displayOptions?.currencyDisplay === 'code'
+        ? renderCurrencyCode(value)
+        : renderCurrencySymbolHtml(value);
+
 const formatNumber = (value, decimals = 2) =>
     asNumber(value).toLocaleString('en-AE', {
         minimumFractionDigits: decimals,
@@ -489,7 +510,10 @@ const normaliseItem = (item = {}) => {
     const description = normaliseDescription(item);
     const qty = asNumber(item.qty ?? item.quantity ?? 0);
     const price = asNumber(item.price ?? item.unitPrice ?? item.unitCost ?? 0);
-    const taxableAmount = asNumber(item.taxableAmount ?? (qty * price));
+    const discountPercent = asNumber(item.disc ?? item.discount ?? item.discountPercent ?? 0);
+    const taxableAmount = asNumber(
+        item.taxableAmount ?? (qty * price * (1 - (discountPercent || 0) / 100))
+    );
     const taxAmount = asNumber(item.taxAmt ?? item.taxAmount ?? 0);
     const total = asNumber(item.total ?? item.lineAmount ?? (taxableAmount + taxAmount));
 
@@ -510,7 +534,7 @@ const normaliseItem = (item = {}) => {
         taxableAmount,
         taxAmount,
         taxPercent: asNumber(item.taxPercent ?? item.taxRate ?? item.tax ?? 0),
-        discountPercent: asNumber(item.disc ?? item.discount ?? item.discountPercent ?? 0),
+        discountPercent,
         salesPerson: item.salesPerson || item.salesperson || item.salesPersonName || '',
         location: item.location || item.branch || item.branchName || item.locationName || '',
         batchSelections: Array.isArray(item.batchSelections) ? item.batchSelections : [],
@@ -850,7 +874,7 @@ const buildTotalsTable = (layout) => {
     const discountPercent = asNumber(layout.totals.billDiscount ?? 0);
     const amountPaid = asNumber(layout.totals.amountPaid ?? 0);
     const balanceDue = asNumber(layout.totals.balanceDue ?? Math.max(asNumber(layout.totals.grandTotal) - amountPaid, 0));
-    const currency = renderCurrencySymbol(layout.currency);
+    const currency = renderCurrencyForLayout(layout.currency, layout.displayOptions);
 
     const row = (label, amount, className = '') => layout.isPurchaseDesigner
         ? `
@@ -1105,7 +1129,7 @@ const buildGrandTotal = (layout) => {
     return `
         <div class="grand-total-display">
             <div class="grand-total-label">${escapeHtml(layout.highlight.label || 'Grand Total')}</div>
-            <div class="grand-total-value">${renderCurrencySymbol(layout.currency)} ${formatNumber(layout.highlight.value)}</div>
+            <div class="grand-total-value">${renderCurrencyCode(layout.currency)} ${formatNumber(layout.highlight.value)}</div>
         </div>
     `;
 };
@@ -2626,6 +2650,177 @@ const normalisePurchaseLayout = (template, data, companyProfile, renderTarget, o
     };
 };
 
+const normaliseSalesDesignerLayout = (template, data, companyProfile, renderTarget, options = {}) => {
+    const company = normalizeDocumentCompanyProfile(companyProfile);
+    const designerSettings = getTemplateDesignerSettings(template);
+    const templateLogoUrl = resolveTemplateImageUrl(designerSettings.logoUrl || designerSettings.companyLogoUrl);
+    const templateStampUrl = resolveTemplateImageUrl(designerSettings.stampUrl || designerSettings.stampImage);
+    const companyVisibility = buildCompanyVisibility(designerSettings);
+    const partyVisibility = buildPartyVisibility(designerSettings);
+    const theme = buildTheme(template);
+    const displayOptions = sanitizeTemplateDisplayOptions(template.displayOptions, DEFAULT_TEMPLATE_DISPLAY_OPTIONS);
+    const columnOptions = applyDesignerColumnVisibility(
+        sanitizeTemplateColumns(template.columns, getColumnDefaults(template.category, false)),
+        designerSettings
+    );
+    const columnModel = createColumnModel(columnOptions);
+    const currency = resolveCurrency(company, data.totals || {}, {});
+    const customer = data.customer || {};
+    const documentSalesPerson = firstNonEmpty(
+        data.meta?.salesPerson, data.meta?.salesperson, data.meta?.accountExecutive
+    );
+    const documentLocation = firstNonEmpty(
+        data.meta?.locationStore, data.meta?.location, data.meta?.branch, data.meta?.branchName, data.meta?.warehouse
+    );
+    const items = enrichItems(
+        Array.isArray(data.items) ? data.items.map(normaliseItem) : [],
+        documentSalesPerson,
+        documentLocation,
+        template.category
+    );
+    const totals = {
+        subTotal: asNumber(data.totals?.subTotal),
+        tax: asNumber(data.totals?.tax),
+        grandTotal: asNumber(data.totals?.grandTotal),
+        amountPaid: asNumber(data.totals?.amountPaid),
+        balanceDue: asNumber(data.totals?.balanceDue),
+        billDiscount: asNumber(data.totals?.billDiscount),
+        billDiscountAmount: asNumber(data.totals?.billDiscountAmount ?? data.totals?.discountAmount)
+    };
+    const totalVisibility = {
+        taxable: pickSetting(designerSettings, ['showTaxableTotal'], false),
+        subTotal: pickSetting(designerSettings, ['showSubtotal'], true),
+        discount: pickSetting(designerSettings, ['showDiscountTotal', 'showDiscount'], true),
+        tax: pickSetting(designerSettings, ['showVATTotal', 'showTaxTotal'], true),
+        grandTotal: pickSetting(designerSettings, ['showGrandTotal'], true),
+        amountPaid: pickSetting(designerSettings, ['showAmountPaid'], true),
+        balanceDue: pickSetting(designerSettings, ['showBalanceDue', 'showRemainingBalance'], true),
+    };
+
+    const showDocNo = pickSetting(designerSettings,
+        ['showDocNumber', 'showInvoiceNumber', 'showOrderNumber', 'showQuoteNumber'], true);
+    const showDate = pickSetting(designerSettings,
+        ['showDocDate', 'showInvoiceDate', 'showOrderDate', 'showQuoteDate'], true);
+
+    const headerRows = [
+        showDate ? { label: 'Date', value: data.date || '-' } : null,
+        pickSetting(designerSettings, ['showDueDate'], false) && firstNonEmpty(data.meta?.dueDate, data.meta?.validTill)
+            ? { label: 'Due Date', value: firstNonEmpty(data.meta?.dueDate, data.meta?.validTill) }
+            : null,
+        pickSetting(designerSettings, ['showValidUntil'], false) && data.meta?.validTill
+            ? { label: data.meta?.validTillLabel || 'Valid Until', value: data.meta.validTill }
+            : null,
+    ].filter(Boolean);
+
+    const linkedQuotation = firstNonEmpty(data.meta?.linkedQuotation, data.meta?.quotationNo, data.meta?.quotationNumber);
+    const linkedSalesOrder = firstNonEmpty(data.meta?.linkedSalesOrder, data.meta?.salesOrderNo, data.meta?.salesOrderNumber);
+    const linkedSalesInvoice = firstNonEmpty(data.meta?.linkedSalesInvoice, data.meta?.salesInvoiceNo, data.meta?.salesInvoiceNumber, data.meta?.linkedInvoice);
+    const hasExplicitLinks = Boolean(linkedQuotation || linkedSalesOrder || linkedSalesInvoice);
+
+    const poRefValue = data.meta?.poNumber || (!hasExplicitLinks && data.meta?.reference) || '';
+    const poRefLabel = data.meta?.poNumber ? 'P.O Number' : 'Reference';
+
+    const referenceRows = [
+        pickSetting(designerSettings, ['showPOReference'], true) && poRefValue
+            ? { label: poRefLabel, value: poRefValue } : null,
+        pickSetting(designerSettings, ['showSalesperson', 'showReceivedBy'], true) && documentSalesPerson
+            ? { label: 'Account Executive', value: documentSalesPerson } : null,
+        pickSetting(designerSettings, ['showPaymentTerms'], false) && (data.meta?.paymentTerm || data.meta?.paymentTerms)
+            ? { label: 'Payment Terms', value: data.meta.paymentTerm || data.meta.paymentTerms } : null,
+        pickSetting(designerSettings, ['showDeliveryTerms'], false) && data.meta?.deliveryTerms
+            ? { label: 'Delivery Terms', value: data.meta.deliveryTerms } : null,
+        pickSetting(designerSettings, ['showLocationStore'], false) && firstNonEmpty(data.meta?.locationStore, data.meta?.location)
+            ? { label: 'Location / Store', value: firstNonEmpty(data.meta?.locationStore, data.meta?.location) } : null,
+        pickSetting(designerSettings, ['showWarehouseStore', 'showBranch'], false) && firstNonEmpty(data.meta?.warehouse, data.meta?.branchName)
+            ? { label: 'Warehouse / Store', value: firstNonEmpty(data.meta?.warehouse, data.meta?.branchName) } : null,
+        visibleWhen(designerSettings, ['showCurrency'], false) ? { label: 'Currency', value: currency } : null,
+        columnOptions.quotationNo && linkedQuotation ? { label: 'Quotation No.', value: linkedQuotation } : null,
+        columnOptions.salesOrderNo && linkedSalesOrder ? { label: 'Sales Order No.', value: linkedSalesOrder } : null,
+        columnOptions.salesInvoiceNo && linkedSalesInvoice ? { label: 'Sales Invoice No.', value: linkedSalesInvoice } : null,
+    ].filter(Boolean);
+
+    const summaryValue = totals.balanceDue > 0 ? totals.balanceDue : totals.grandTotal;
+    const shipToAddress = firstNonEmpty(
+        customer.shipToAddress, customer.shippingAddress,
+        data.meta?.shipToAddress, data.meta?.shippingAddress
+    );
+
+    return {
+        title: resolveDocumentTitle(template, data, 'Document'),
+        category: template.category || '',
+        docNo: asText(data.docNo || ''),
+        docNoLabel: DOC_NO_LABELS[template.category] || 'Document Number',
+        status: asText(data.meta?.status || ''),
+        company,
+        currency,
+        isPurchaseDesigner: true,
+        logoUrl: templateLogoUrl || company.logoUrl,
+        stampUrl: templateStampUrl || company.stampUrl,
+        companyVisibility,
+        partyVisibility,
+        theme,
+        showDocNo,
+        partyLabel: asText(data.meta?.partyLabel || 'Bill To'),
+        party: {
+            name: firstNonEmpty(customer.name, customer.customerName, 'Unknown Customer'),
+            code: firstNonEmpty(customer.code, customer.customerCode),
+            address: firstNonEmpty(customer.address, customer.billingAddress),
+            phone: firstNonEmpty(customer.phone, customer.mobile),
+            email: firstNonEmpty(customer.email),
+            taxId: firstNonEmpty(customer.trn, customer.taxId)
+        },
+        shipTo: shipToAddress ? {
+            name: firstNonEmpty(data.meta?.shipToName),
+            address: shipToAddress,
+            phone: firstNonEmpty(data.meta?.shipToPhone),
+            email: firstNonEmpty(data.meta?.shipToEmail),
+        } : null,
+        showShipTo: pickSetting(designerSettings, ['showShipTo'], false),
+        referenceRows,
+        paymentRows: [],
+        headerRows,
+        items,
+        columnOptions,
+        columnModel,
+        totals,
+        totalVisibility,
+        notes: asText(data.meta?.notes || ''),
+        notesLabel: asText(designerSettings.notesLabel || 'Notes'),
+        terms: asText(template.termsContent || designerSettings.termsText || designerSettings.termsConditions || ''),
+        displayOptions,
+        showNotesSection: pickSetting(designerSettings, ['showNotes', 'showNote'], true),
+        showAmountInWords: pickSetting(designerSettings, ['showAmountInWords'], false),
+        bankRows: pickSetting(designerSettings, ['showBankDetails'], false)
+            ? [
+                { label: 'Bank', value: designerSettings.bankName },
+                { label: 'Account', value: designerSettings.bankAccount },
+                { label: 'IBAN', value: designerSettings.bankIBAN },
+                { label: 'SWIFT / BIC', value: designerSettings.bankSWIFT },
+            ].filter((row) => row.value)
+            : [],
+        showItemTable: items.length > 0 && pickSetting(designerSettings, ['showItemsTable', 'showItemTable'], true),
+        showTotalsSection: totals.grandTotal > 0 || totals.amountPaid > 0,
+        showHighlight: summaryValue > 0 && pickSetting(designerSettings, ['showGrandTotalBanner', 'showSummaryBar'], true),
+        showPaymentDetails: false,
+        showSignatureBlock: pickSetting(designerSettings, ['showSignatures', 'showSignatureStrip'], false),
+        showCompanyStamp: pickSetting(designerSettings, ['showCompanyStamp', 'showStamp'], false),
+        showQRCode: pickSetting(designerSettings, ['showQRCode', 'showQR'], false),
+        qrCodeDataUrl: options.qrCodeDataUrl || null,
+        showPageNumbers: pickSetting(designerSettings, ['showPageNumbers'], false),
+        showPrintDateStamp: pickSetting(designerSettings, ['showGeneratedBy'], false),
+        showWatermark: pickSetting(designerSettings, ['showWatermark'], false),
+        hasDesignerWatermarkToggle: Object.prototype.hasOwnProperty.call(designerSettings, 'showWatermark'),
+        watermarkText: asText(designerSettings.watermarkText || 'ORIGINAL'),
+        highlight: {
+            label: totals.balanceDue > 0 ? 'Balance Due' : 'Grand Total',
+            value: asNumber(summaryValue)
+        },
+        headerAddon: resolveCompanyVars(template.headerContent, company),
+        footerAddon: resolveCompanyVars(template.footerContent, company),
+        renderTarget
+    };
+};
+
 const normaliseGenericLayout = (template, data, companyProfile, renderTarget) => {
     const company = normalizeDocumentCompanyProfile(companyProfile);
     const displayOptions = sanitizeTemplateDisplayOptions(template.displayOptions);
@@ -2718,11 +2913,16 @@ const normaliseGenericLayout = (template, data, companyProfile, renderTarget) =>
 
 const buildLayout = (template, data, options = {}, renderTarget = 'print') => {
     const companyProfile = options.companyProfile || {};
-    const shouldUsePurchaseLayout = PURCHASE_TEMPLATE_CATEGORIES.has(template?.category) || hasDesignerLayoutSettings(template) || looksLikePurchasePayload(data);
 
-    return shouldUsePurchaseLayout
-        ? normalisePurchaseLayout(template, data, companyProfile, renderTarget, options)
-        : normaliseGenericLayout(template, data, companyProfile, renderTarget);
+    if (PURCHASE_TEMPLATE_CATEGORIES.has(template?.category) || looksLikePurchasePayload(data)) {
+        return normalisePurchaseLayout(template, data, companyProfile, renderTarget, options);
+    }
+
+    if (hasDesignerLayoutSettings(template)) {
+        return normaliseSalesDesignerLayout(template, data, companyProfile, renderTarget, options);
+    }
+
+    return normaliseGenericLayout(template, data, companyProfile, renderTarget);
 };
 
 const buildDocumentHtml = (template, data, options = {}, renderTarget = 'print') => {

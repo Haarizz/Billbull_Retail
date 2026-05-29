@@ -345,6 +345,7 @@ const getDesignerSettings = (template, meta) => {
         showTermsConditions: displayOptions.showTerms !== false,
         showItemImage: !!displayOptions.showItemImage,
         colProductImage: !!displayOptions.showItemImage,
+        currencyDisplay: displayOptions.currencyDisplay === "code" ? "code" : "symbol",
         colItemCode: !!columns.productId,
         colSKU: !!columns.sku,
         colBarcode: !!columns.barcode,
@@ -401,7 +402,8 @@ const buildRendererDisplayOptions = (settings = {}, typeId) => ({
     ].some((value) => value !== false),
     showCustomerDetails: settings.showBillTo ?? settings.showShipTo ?? settings.showCustomerName ?? typeId !== "receipt",
     showTerms: settings.showTerms ?? settings.showTermsConditions ?? typeId !== "receipt",
-    showItemImage: settings.colProductImage ?? settings.showItemImage ?? false
+    showItemImage: settings.colProductImage ?? settings.showItemImage ?? false,
+    currencyDisplay: settings.currencyDisplay === "code" ? "code" : "symbol"
 });
 
 const buildRendererColumns = (settings = {}, typeId) => {

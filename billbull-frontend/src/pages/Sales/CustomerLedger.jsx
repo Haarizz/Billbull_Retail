@@ -37,7 +37,7 @@ import { usePrintDocument } from '../../hooks/usePrintDocument';
 import { STATEMENT_EXPORT_COLUMNS, formatStatementEntryType, mapStatementEntriesForExport } from '../../utils/statementUtils';
 import { isAutoNumberingEnabled } from '../../utils/salesNumbering';
 import { getTemplatesByCategory } from '../../api/printTemplateApi';
-import { generatePrintHtml, printHtml } from '../../utils/printGenerator';
+import { generatePrintHtmlAsync, printHtml } from '../../utils/printGenerator';
 import { normalizePurchaseTemplate, buildReceiptVoucherPrintData } from '../../utils/purchasePrintUtils';
 // QA-040: shared email modal
 import SendDocumentEmailModal from '../../components/SendDocumentEmailModal';
@@ -1679,7 +1679,7 @@ const ReceiveMoneyView = () => {
                 'Receipt Voucher'
             );
             const printData = buildReceiptVoucherPrintData(lastSavedPayment, selectedCustomer, company);
-            const html = generatePrintHtml(template, printData, { companyProfile: company });
+            const html = await generatePrintHtmlAsync(template, printData, { companyProfile: company });
             printHtml(html);
         } catch (err) {
             console.error('Failed to print receipt', err);

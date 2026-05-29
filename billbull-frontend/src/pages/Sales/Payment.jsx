@@ -34,7 +34,7 @@ import { getAllCustomers, getOpeningInvoicesByCustomerCode } from '../../api/cus
 import { getBankAccounts } from '../../api/ledgerApi';
 import { getSalesSettings } from '../../api/salesSettingsApi';
 import { getTemplatesByCategory } from '../../api/printTemplateApi';
-import { generatePrintHtml, printHtml } from '../../utils/printGenerator';
+import { generatePrintHtmlAsync, printHtml } from '../../utils/printGenerator';
 import { buildDocumentHeaderProfile } from '../../utils/branchPrintProfile';
 import { useCompany } from '../../context/CompanyContext';
 import { useBranch } from '../../context/BranchContext';
@@ -283,6 +283,8 @@ const Payment = () => {
             };
 
             const amount = Number(payment.amount) || 0;
+            const paymentBranchId = payment?.branchId ?? activeBranch?.id;
+            const printBranch = availableBranches?.find(b => b.id === paymentBranchId) || activeBranch || {};
             const printData = {
                 title: 'PAYMENT RECEIPT',
                 docNo: payment.paymentNo,
@@ -290,8 +292,10 @@ const Payment = () => {
                 customer: {
                     name: payment.customerName || '',
                     address: '',
-                    trn: '',
+                    shippingAddress: '',
                     phone: '',
+                    email: '',
+                    trn: '',
                 },
                 items: [{
                     name: 'Payment Received',
@@ -321,10 +325,15 @@ const Payment = () => {
                     paymentTerm: '',
                     validTill: '',
                     notes: payment.notes || '',
+                    location: printBranch.name || '',
+                    locationStore: printBranch.name || printBranch.code || '',
+                    warehouse: printBranch.defaultWarehouseName || '',
+                    deliveryTerms: '',
+                    salesPerson: '',
                 },
             };
 
-            const html = generatePrintHtml(defaultTemplate, printData, {
+            const html = await generatePrintHtmlAsync(defaultTemplate, printData, {
                 companyProfile: buildDocumentHeaderProfile({
                     company,
                     branches: availableBranches || [],

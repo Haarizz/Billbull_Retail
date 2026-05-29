@@ -44,7 +44,7 @@ import { getAllCustomers } from '../../api/customerledgerApi';
 import { getAllQuotations, getQuotationById } from '../../api/quotationApi';
 import { getAllSalesOrders, getSalesOrderById } from '../../api/salesorderApi';
 import { getTemplatesByCategory } from '../../api/printTemplateApi';
-import { generatePrintHtml, printHtml } from '../../utils/printGenerator';
+import { generatePrintHtmlAsync, printHtml } from '../../utils/printGenerator';
 import { buildDocumentHeaderProfile } from '../../utils/branchPrintProfile';
 import { getImageUrl } from '../../utils/urlUtils';
 import { formatDisplayDate } from '../../utils/dateUtils';
@@ -490,6 +490,8 @@ const ProformaInvoice = () => {
 
       if (defaultTemplate) {
         const fullCustomer = customersList.find(c => c.code === selectedCustomer?.code);
+        const piBranchId = loadedPiBranchId ?? activeBranch?.id;
+        const printBranch = availableBranches?.find(b => b.id === piBranchId) || defaultBranch || {};
 
         const printData = {
           title: 'PROFORMA INVOICE',
@@ -498,17 +500,23 @@ const ProformaInvoice = () => {
           customer: {
             name: selectedCustomer?.name || '',
             address: fullCustomer?.address || fullCustomer?.billingAddress || '',
+            shippingAddress: shippingAddress || '',
+            phone: fullCustomer?.mobile || fullCustomer?.phone || '',
+            email: fullCustomer?.email || '',
             trn: selectedCustomer?.trn || fullCustomer?.trn
           },
           items: items.filter(i => i.code || i.desc).map(i => ({
             code: i.code,
             name: i.name || '',
             desc: i.desc || '',
-            sku: i.sku || '',
+            sku: i.sku || i.productSku || '',
+            brand: i.brand || i.brandName || '',
             shortDesc: i.shortDesc || '',
             detailedDesc: i.detailedDesc || '',
             localName: i.localName || '',
             barcode: i.barcode || '',
+            batchNumber: i.batchNumber || '',
+            batchSelections: Array.isArray(i.batchSelections) ? i.batchSelections : [],
             location: defaultBranchName || '',
             unit: i.unit,
             qty: Number(i.qty),
@@ -533,11 +541,15 @@ const ProformaInvoice = () => {
             status,
             notes: paymentNotes,
             reference: `Quote: ${linkedQuote || '-'} | SO: ${linkedSO || '-'}`,
-            location: defaultBranchName || ''
+            location: printBranch.name || defaultBranchName || '',
+            locationStore: printBranch.name || printBranch.code || '',
+            warehouse: printBranch.defaultWarehouseName || '',
+            deliveryTerms: '',
+            salesPerson: ''
           }
         };
 
-        const html = generatePrintHtml(defaultTemplate, printData, {
+        const html = await generatePrintHtmlAsync(defaultTemplate, printData, {
           companyProfile: buildDocumentHeaderProfile({
             company,
             branches: availableBranches || [],
@@ -661,6 +673,9 @@ const ProformaInvoice = () => {
       id: Date.now() + Math.random(),
       code: product.code,
       name: product.name || '',
+      sku: product.sku || product.skuCode || product.productSku || '',
+      brand: product.brandName || product.brand || '',
+      localName: product.localName || product.arabicName || '',
       shortDesc: product.shortDesc || '',
       detailedDesc: product.detailedDesc || '',
       barcode: product.barcode || '',
@@ -712,6 +727,9 @@ const ProformaInvoice = () => {
       id: Date.now() + Math.random(),
       code: product.code,
       name: product.name || '',
+      sku: product.sku || product.skuCode || product.productSku || '',
+      brand: product.brandName || product.brand || '',
+      localName: product.localName || product.arabicName || '',
       shortDesc: product.shortDesc || '',
       detailedDesc: product.detailedDesc || '',
       barcode: product.barcode || '',

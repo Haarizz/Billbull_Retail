@@ -34,7 +34,11 @@ export const DEFAULT_TEMPLATE_DISPLAY_OPTIONS = Object.freeze({
     showCompanyDetails: true,
     showCustomerDetails: true,
     showTerms: true,
-    showItemImage: false
+    showItemImage: false,
+    // Currency display: 'symbol' (e.g. AED dirham glyph / $) or 'code' (e.g. AED / USD).
+    // Default 'symbol' preserves legacy behaviour where amounts render with the
+    // currency symbol image / glyph.
+    currencyDisplay: 'symbol'
 });
 
 export const DEFAULT_TEMPLATE_COLUMNS = Object.freeze({
@@ -88,7 +92,15 @@ export const sanitizeTemplateDisplayOptions = (
         showTerms: options.showTerms !== undefined ? Boolean(options.showTerms) : Boolean(defaults.showTerms),
         showItemImage: options.showItemImage !== undefined
             ? Boolean(options.showItemImage)
-            : Boolean(defaults.showItemImage)
+            : Boolean(defaults.showItemImage),
+        currencyDisplay: (() => {
+            const raw = options.currencyDisplay
+                ?? (options.showCurrencyCode === true ? 'code' : undefined)
+                ?? (options.showCurrencySymbol === false ? 'code' : undefined)
+                ?? defaults.currencyDisplay
+                ?? 'symbol';
+            return raw === 'code' ? 'code' : 'symbol';
+        })()
     };
 };
 

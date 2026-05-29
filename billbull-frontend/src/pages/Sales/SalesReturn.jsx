@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { generatePrintHtml, printHtml } from '../../utils/printGenerator';
+import { generatePrintHtmlAsync, printHtml } from '../../utils/printGenerator';
 import { buildDocumentHeaderProfile } from '../../utils/branchPrintProfile';
 import { getTemplatesByCategory } from '../../api/printTemplateApi';
 import { useCompany } from '../../context/CompanyContext';
@@ -513,6 +513,8 @@ const SalesReturn = () => {
          const taxAmt = Number(ret.taxAmount) || 0;
          const grandTotal = Number(ret.totalAmount) || subTotal + taxAmt;
 
+         const returnBranchId = loadedReturnBranchId ?? ret.branch?.id ?? activeBranch?.id;
+         const printBranch = availableBranches?.find(b => b.id === returnBranchId) || ret.branch || activeBranch || {};
          const printData = {
             title: 'CREDIT NOTE',
             docNo: ret.returnNumber,
@@ -520,8 +522,10 @@ const SalesReturn = () => {
             customer: {
                name: ret.customerName || '',
                address: '',
-               trn: '',
+               shippingAddress: '',
                phone: '',
+               email: '',
+               trn: '',
             },
             items: (ret.items || []).map(item => ({
                name: item.itemName || item.itemCode || '',
@@ -549,10 +553,15 @@ const SalesReturn = () => {
                validTill: '',
                validTillLabel: 'Original Invoice',
                notes: `Original Invoice: ${ret.linkedInvoice || '-'}${ret.reason ? `\nReason: ${ret.reason}` : ''}`,
+               location: printBranch.name || '',
+               locationStore: printBranch.name || printBranch.code || '',
+               warehouse: printBranch.defaultWarehouseName || '',
+               deliveryTerms: '',
+               salesPerson: '',
             },
          };
 
-         const html = generatePrintHtml(defaultTemplate, printData, {
+         const html = await generatePrintHtmlAsync(defaultTemplate, printData, {
             companyProfile: buildDocumentHeaderProfile({
                company,
                branches: availableBranches || [],
