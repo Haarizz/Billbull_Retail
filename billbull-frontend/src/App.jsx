@@ -55,6 +55,8 @@ import BarcodePrinter from "./pages/Inventory/Barcode/BarcodePrinter";
 import ReceiptVoucher from "./pages/Financials/ReceiptVoucher";
 import FinancialsPaymentVoucher from "./pages/Financials/PaymentVoucher";
 import MyProfile from "./MyProfile/MyProfile";
+import MySales from "./MyProfile/MySales";
+import TasksActivities from "./MyProfile/TasksActivities";
 import Messaging from "./pages/Customer/Messaging";
 import TaxCompliance from "./pages/Financials/TaxCompliance";
 import FinancialReports from "./pages/Financials/FinancialReports";
@@ -510,10 +512,10 @@ function App() {
                       }
                     />
 
-                    <Route
-                      path="/myprofile"
-                      element={<MyProfile />}
-                    />
+                    <Route path="/myprofile" element={<Navigate to="/myprofile/overview" replace />} />
+                    <Route path="/myprofile/overview" element={<MyProfile />} />
+                    <Route path="/myprofile/sales" element={<MySales />} />
+                    <Route path="/myprofile/tasks" element={<TasksActivities />} />
 
                     <Route
                       path="/sales/templates"

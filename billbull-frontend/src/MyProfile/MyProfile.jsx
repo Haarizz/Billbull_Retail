@@ -161,10 +161,15 @@ const MyProfile = () => {
 
     return (
         <div className="min-h-screen bg-[#F7F7FA] p-4 lg:p-6 font-sans text-slate-900">
+            {/* Breadcrumb */}
+            <p className="text-xs text-slate-400 mb-2">My Profile &rsaquo; Overview</p>
+
             {/* Header - Compact */}
             <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 mb-5">
                 <div>
-                    <h1 className="text-2xl font-bold text-slate-900 tracking-tight">My Profile</h1>
+                    <h1 className="text-2xl font-bold text-slate-900 tracking-tight flex items-center gap-2">
+                        <UserCircle className="h-6 w-6 text-[#B4860B]" /> My Profile
+                    </h1>
                     <p className="text-xs text-slate-500 mt-0.5">Manage your personal information, targets, performance, and account settings</p>
                 </div>
                 <div className="flex items-center gap-2">
