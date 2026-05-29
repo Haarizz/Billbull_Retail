@@ -97,13 +97,38 @@ const escapeHtml = (value) =>
         .replace(/'/g, '&#39;');
 
 const getTemplateDesignerSettings = (template = {}) => {
+    if (template.salesDesignerSettings && typeof template.salesDesignerSettings === 'object') {
+        return template.salesDesignerSettings;
+    }
+
     if (template.purchaseDesignerSettings && typeof template.purchaseDesignerSettings === 'object') {
         return template.purchaseDesignerSettings;
     }
 
     const displayOptions = parsePrintTemplateObject(template.displayOptions);
-    const settings = displayOptions.purchaseDesignerSettings || displayOptions.designerSettings;
+    const settings = displayOptions.salesDesignerSettings || displayOptions.purchaseDesignerSettings || displayOptions.designerSettings;
     return settings && typeof settings === 'object' ? settings : {};
+};
+
+const hasDesignerLayoutSettings = (template = {}) => {
+    if (
+        (template.salesDesignerSettings && typeof template.salesDesignerSettings === 'object') ||
+        (template.purchaseDesignerSettings && typeof template.purchaseDesignerSettings === 'object')
+    ) {
+        return true;
+    }
+
+    const displayOptions = parsePrintTemplateObject(template.displayOptions);
+    return Boolean(displayOptions.salesDesignerSettings || displayOptions.purchaseDesignerSettings || displayOptions.designerSettings);
+};
+
+const isSalesDesignerTemplate = (template = {}) => {
+    if (template.salesDesignerSettings && typeof template.salesDesignerSettings === 'object') {
+        return true;
+    }
+
+    const displayOptions = parsePrintTemplateObject(template.displayOptions);
+    return Boolean(displayOptions.salesDesignerSettings);
 };
 
 const isOff = (value) => value === false || value === 'false' || value === 0 || value === '0';
@@ -2395,6 +2420,7 @@ const enrichItems = (items, documentSalesPerson = '', documentLocation = '', cat
 const normalisePurchaseLayout = (template, data, companyProfile, renderTarget) => {
     const company = normalizeDocumentCompanyProfile(companyProfile);
     const designerSettings = getTemplateDesignerSettings(template);
+    const isSalesDesigner = isSalesDesignerTemplate(template);
     const templateLogoUrl = resolveTemplateImageUrl(designerSettings.logoUrl || designerSettings.companyLogoUrl);
     const templateStampUrl = resolveTemplateImageUrl(designerSettings.stampUrl || designerSettings.stampImage);
     const companyVisibility = buildCompanyVisibility(designerSettings);
@@ -2501,11 +2527,13 @@ const normalisePurchaseLayout = (template, data, companyProfile, renderTarget) =
         partyVisibility,
         theme,
         showDocNo,
-        partyLabel: template.category === 'Payment Voucher'
-            ? 'Paid To'
-            : template.category === 'Local Purchase Order'
-                ? 'Bill To'
-                : 'Vendor',
+        partyLabel: isSalesDesigner
+            ? (template.category === 'Receipt Voucher' ? 'Received From' : 'Bill To')
+            : template.category === 'Payment Voucher'
+                ? 'Paid To'
+                : template.category === 'Local Purchase Order'
+                    ? 'Bill To'
+                    : 'Vendor',
         party: data.party || null,
         shipTo: data.shipTo || null,
         showShipTo: pickSetting(designerSettings, ['showShipTo'], false),
@@ -2644,7 +2672,7 @@ const normaliseGenericLayout = (template, data, companyProfile, renderTarget) =>
 
 const buildLayout = (template, data, options = {}, renderTarget = 'print') => {
     const companyProfile = options.companyProfile || {};
-    const shouldUsePurchaseLayout = PURCHASE_TEMPLATE_CATEGORIES.has(template?.category) || looksLikePurchasePayload(data);
+    const shouldUsePurchaseLayout = PURCHASE_TEMPLATE_CATEGORIES.has(template?.category) || hasDesignerLayoutSettings(template) || looksLikePurchasePayload(data);
 
     return shouldUsePurchaseLayout
         ? normalisePurchaseLayout(template, data, companyProfile, renderTarget)
