@@ -1,1281 +1,1009 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
-    FaFileAlt,
-    FaFileInvoice,
-    FaTruck,
-    FaClipboardList,
-    FaFileInvoiceDollar,
-    FaReceipt,
-    FaUndo,
-    FaCog,
-    FaDownload,
-    FaUpload,
-    FaLightbulb,
-    FaPlus,
-    FaEdit,
-    FaCopy,
-    FaEye,
-    FaSave,
-    FaCode,
-    FaListUl,
-    FaSlidersH,
-    FaToggleOn,
-    FaAlignLeft,
-    FaTrash,
-    FaArrowLeft,
-    FaExclamationTriangle,
-    FaCheckCircle,
-    FaBarcode
-} from 'react-icons/fa';
-import { getCompanyProfile } from '../../api/companyProfileApi';
-import { getPrintTemplates, createPrintTemplate, updatePrintTemplate, deletePrintTemplate, setDefaultTemplate } from '../../api/printTemplateApi';
-import DocumentPreviewCanvas from '../../components/DocumentPreviewCanvas';
-import { useCompany } from '../../context/CompanyContext';
-import { generateEmailHtml, generatePrintHtml } from '../../utils/printGenerator';
+    ArrowLeft,
+    Barcode,
+    Check,
+    ChevronRight,
+    Copy,
+    Download,
+    Edit,
+    FileText,
+    Mail,
+    Plus,
+    Printer,
+    Receipt,
+    RefreshCw,
+    RotateCcw,
+    Settings,
+    Trash2,
+    Truck,
+    Upload
+} from "lucide-react";
+import toast from "react-hot-toast";
+import {
+    createPrintTemplate,
+    deletePrintTemplate,
+    getPrintTemplates,
+    updatePrintTemplate
+} from "../../api/printTemplateApi";
 import {
     DEFAULT_TEMPLATE_COLUMNS,
     DEFAULT_TEMPLATE_DISPLAY_OPTIONS,
     sanitizeTemplateColumns,
     sanitizeTemplateDisplayOptions
-} from '../../utils/printTemplateConfig';
+} from "../../utils/printTemplateConfig";
+import { DocumentTemplateDesigner } from "../Purchase/Templates/DocumentTemplateDesigner";
+import { GRVTemplateDesigner } from "../Purchase/Templates/GRVTemplateDesigner";
+import { PaymentReceiptDesigner } from "../Purchase/Templates/PaymentReceiptDesigner";
+import {
+    Badge,
+    Button,
+    Card,
+    CardContent
+} from "../Purchase/Templates/PurchaseTemplateUI";
+import { InvoiceOverlayDesigner } from "./Templates/InvoiceOverlayDesigner";
+import { PickListDesigner, defaultPickListSettings } from "./Templates/PickListDesigner";
 
-const PREVIEW_COMPANY = {
-    companyName: "Sample Company LLC",
-    address: "Sample Business Center, Dubai, UAE",
-    email: "sample@company.test",
-    phone: "+971 4 000 0000",
-    trn: "100000000000000",
-    currencySymbol: "AED",
-    logoUrl: null,
-};
-
-const PREVIEW_CUSTOMER = {
-    name: "Sample Customer LLC",
-    address: "Sample Customer Address, Dubai, UAE",
-    trn: "100000000000111",
-    phone: "+971 50 000 0001",
-};
-
-const PREVIEW_ITEMS = [
+const TEMPLATE_TYPES = [
     {
-        name: "Nike Air Max 270 — Black / White",
-        description: { title: "Nike Air Max 270 — Black / White", details: ["Size: UK 9", "Color: Black/White", "SKU: NK-AM270-BW-09"] },
-        unit: "Pair", qty: 3, price: 420, taxableAmount: 1260, taxAmt: 63, taxPercent: 5, total: 1323,
+        id: "quotation",
+        category: "Quotation",
+        label: "Quotation",
+        description: "Customer quotation template",
+        designer: "document",
+        docType: "quotation",
+        icon: FileText
     },
     {
-        name: "Adidas Ultraboost 22",
-        description: { title: "Adidas Ultraboost 22", details: ["Size: UK 10", "Color: Core Black", "SKU: AD-UB22-BK-10"] },
-        unit: "Pair", qty: 2, price: 580, taxableAmount: 1160, taxAmt: 58, taxPercent: 5, total: 1218,
+        id: "sales-order",
+        category: "Sales Order (SO)",
+        label: "Sales Order (SO)",
+        description: "Sales order confirmation template",
+        designer: "document",
+        docType: "sales-order",
+        icon: FileText
     },
     {
-        name: "Puma RS-X Reinvention",
-        description: { title: "Puma RS-X Reinvention", details: ["Size: UK 8", "Color: White/Red"] },
-        unit: "Pair", qty: 1, price: 310, taxableAmount: 310, taxAmt: 15.5, taxPercent: 5, total: 325.5,
+        id: "delivery-note",
+        category: "Delivery Note (DO/DN)",
+        label: "Delivery Note (DN)",
+        description: "Delivery/dispatch note template",
+        designer: "document",
+        docType: "delivery-note",
+        icon: Truck
     },
+    {
+        id: "pick-list",
+        category: "Pick List",
+        label: "Pick List",
+        description: "Warehouse pick list grouped by location, with batch barcodes",
+        designer: "pick-list",
+        icon: Barcode
+    },
+    {
+        id: "proforma-invoice",
+        category: "Proforma Invoice (PI)",
+        label: "Proforma Invoice (PI)",
+        description: "Proforma invoice template",
+        designer: "document",
+        docType: "proforma-invoice",
+        icon: FileText
+    },
+    {
+        id: "sales-invoice",
+        category: "Sales Invoice",
+        label: "Sales Invoice",
+        description: "Final sales invoice template",
+        designer: "document",
+        docType: "sales-invoice",
+        icon: FileText
+    },
+    {
+        id: "receipt",
+        category: "Receipt Voucher",
+        aliases: ["Payment Receipt", "Payment Voucher"],
+        label: "Receipt Voucher",
+        description: "Customer payment receipt voucher template",
+        designer: "payment",
+        icon: Receipt
+    },
+    {
+        id: "credit-note",
+        category: "Sales Return",
+        aliases: ["Credit Note"],
+        label: "Credit Note",
+        description: "Credit note template",
+        designer: "document",
+        docType: "credit-note",
+        icon: RotateCcw
+    },
+    {
+        id: "grv",
+        category: "Goods Return Voucher",
+        label: "Goods Return (GRV)",
+        description: "Goods return voucher template",
+        designer: "grv",
+        icon: RotateCcw
+    }
 ];
 
-const buildPreviewImage = (label, accent, base = '#f8fafc') => {
-    const svg = `
-        <svg xmlns="http://www.w3.org/2000/svg" width="96" height="96" viewBox="0 0 96 96">
-            <rect width="96" height="96" rx="18" fill="${base}"/>
-            <rect x="18" y="18" width="60" height="60" rx="14" fill="${accent}" opacity="0.18"/>
-            <circle cx="48" cy="42" r="14" fill="${accent}" opacity="0.92"/>
-            <path d="M30 66h36" stroke="${accent}" stroke-width="6" stroke-linecap="round"/>
-            <text x="48" y="87" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="10" font-weight="700" fill="#334155">${label}</text>
-        </svg>
-    `;
+const OVERLAY_TYPES = [
+    {
+        id: "sales-invoice-preprinted",
+        category: "Sales Invoice - Pre-printed Form",
+        label: "Pre-printed Form",
+        description: "Upload pre-printed invoice stationery and position data fields for values-only printing",
+        designer: "overlay",
+        mode: "preprinted",
+        parentType: "sales-invoice",
+        icon: FileText
+    },
+    {
+        id: "sales-invoice-letterhead",
+        category: "Sales Invoice - Letterhead Print",
+        label: "Letterhead Print",
+        description: "Upload company letterhead and place invoice fields over the branded page",
+        designer: "overlay",
+        mode: "letterhead",
+        parentType: "sales-invoice",
+        icon: FileText
+    }
+];
 
-    return `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`;
+const ALL_TYPES = [...TEMPLATE_TYPES, ...OVERLAY_TYPES];
+const CATEGORY_SET = new Set(ALL_TYPES.flatMap((type) => [type.category, ...(type.aliases || [])]));
+
+const typeMetaByType = (id) => ALL_TYPES.find((type) => type.id === id);
+const typeMetaByCategory = (category) =>
+    ALL_TYPES.find((type) => type.category === category || (type.aliases || []).includes(category));
+
+const parseSettings = (raw) => {
+    if (!raw) return {};
+    if (typeof raw === "object") return raw;
+    try {
+        return JSON.parse(raw);
+    } catch {
+        return {};
+    }
 };
 
-const getSalesDefaultDisplayOptions = (overrides = {}) =>
-    sanitizeTemplateDisplayOptions(overrides, DEFAULT_TEMPLATE_DISPLAY_OPTIONS);
+const formatDate = (template) => {
+    const raw = template.updatedAt || template.updatedDate || template.modifiedDate || template.createdAt || template.createdDate;
+    if (!raw) return "-";
+    const parsed = new Date(raw);
+    return Number.isNaN(parsed.getTime()) ? String(raw).slice(0, 10) : parsed.toISOString().slice(0, 10);
+};
 
-const getSalesDefaultColumns = (category, overrides = {}) => {
-    const isPickList = category === 'Pick List';
-    const isReceiptVoucher = category === 'Receipt Voucher';
-    const categoryDefaults = {
+const toApiOrientation = (value) => {
+    const raw = String(value || "portrait").toLowerCase();
+    return raw === "landscape" ? "Landscape" : "Portrait";
+};
+
+const categoryDefaultsForColumns = (typeId) => {
+    const isReceipt = typeId === "receipt";
+    const isPickList = typeId === "pick-list";
+    const isDelivery = typeId === "delivery-note";
+    const isOrder = typeId === "sales-order";
+    const isInvoice = typeId === "sales-invoice";
+    const isCredit = typeId === "credit-note";
+    const isGRV = typeId === "grv";
+
+    return {
         ...DEFAULT_TEMPLATE_COLUMNS,
-        // QA-039: Receipt Voucher has no line items; suppress every item-table
-        // column so the renderer only emits the amount + payment summary.
-        discount: !isReceiptVoucher && !['Sales Invoice', 'Delivery Note (DO/DN)', 'Pick List'].includes(category),
-        tax: !isReceiptVoucher && category !== 'Sales Order (SO)' && category !== 'Delivery Note (DO/DN)' && !isPickList,
-        total: !isReceiptVoucher && category !== 'Delivery Note (DO/DN)' && !isPickList,
-        unitPrice: !isReceiptVoucher && category !== 'Delivery Note (DO/DN)' && !isPickList,
-        taxableAmount: !isReceiptVoucher && category !== 'Delivery Note (DO/DN)' && !isPickList,
-        barcode: false,
+        discount: !isReceipt && !isDelivery && !isPickList,
+        tax: !isReceipt && !isOrder && !isDelivery && !isPickList,
+        total: !isReceipt && !isDelivery && !isPickList,
+        unitPrice: !isReceipt && !isDelivery && !isPickList,
+        taxableAmount: isInvoice || isCredit || typeId === "quotation" || typeId === "proforma-invoice",
+        barcode: isPickList,
+        brand: false,
+        taxPercent: isInvoice || isCredit,
         discountPercent: false,
-        taxPercent: false,
-        salesPerson: false,
         location: isPickList,
-        batchNumber: isPickList,
+        batchNumber: isPickList || isGRV,
         batchBarcode: isPickList,
         expiry: isPickList,
-        // QA-031: cross-doc references default on for DN / SI / Pick List so
-        // operations teams see the source paper trail without re-configuring.
-        quotationNo: ['Delivery Note (DO/DN)', 'Sales Invoice', 'Pick List'].includes(category),
-        salesOrderNo: ['Delivery Note (DO/DN)', 'Sales Invoice', 'Pick List'].includes(category),
-        salesInvoiceNo: ['Delivery Note (DO/DN)', 'Pick List'].includes(category)
+        quotationNo: isDelivery || isInvoice || isPickList,
+        salesOrderNo: isDelivery || isInvoice || isPickList,
+        salesInvoiceNo: isDelivery || isPickList
     };
-
-    return sanitizeTemplateColumns(overrides, categoryDefaults);
 };
 
-const normalizeSalesTemplate = (template, category = template?.category) => ({
-    ...template,
-    displayOptions: getSalesDefaultDisplayOptions(template?.displayOptions),
-    columns: getSalesDefaultColumns(category, template?.columns)
-});
+const defaultTermsFor = (typeId) => {
+    switch (typeId) {
+        case "quotation":
+            return "1. This quotation is valid for 30 days from the date of issue.\n2. Prices are subject to change without prior notice.\n3. Delivery is subject to stock availability.";
+        case "sales-order":
+            return "1. This sales order is subject to final stock allocation.\n2. Any cancellation must be approved before dispatch.\n3. Delivery terms apply as agreed with the customer.";
+        case "delivery-note":
+            return "1. Goods received in good condition.\n2. Any discrepancies must be reported within 24 hours.\n3. Please sign and stamp this document on receipt.";
+        case "proforma-invoice":
+            return "1. This proforma invoice is not a final tax invoice.\n2. Goods will be dispatched after payment confirmation.\n3. Prices are valid for 15 days unless otherwise stated.";
+        case "sales-invoice":
+            return "Payment is due within the agreed credit terms. Please use the invoice number as your payment reference.";
+        case "credit-note":
+            return "This credit note is issued against the referenced sales transaction and may be applied against outstanding invoices or carried forward on the customer account.";
+        case "grv":
+            return "Returned goods are held in quarantine pending QC sign-off. Credit will be issued after inspection and approval.";
+        case "receipt":
+            return "Received with thanks the amount stated above. This receipt is valid after cheque or bank-transfer clearance.";
+        case "pick-list":
+            return "Pick the items from the indicated bin or location. Scan batch barcodes where applicable before dispatch.";
+        default:
+            return "Terms and conditions apply.";
+    }
+};
 
-const serializeSalesTemplate = (template) => ({
-    ...template,
-    displayOptions: JSON.stringify(getSalesDefaultDisplayOptions(template?.displayOptions)),
-    columns: JSON.stringify(getSalesDefaultColumns(template?.category, template?.columns))
-});
+const defaultSettingsFor = (typeId, name) => {
+    const meta = typeMetaByType(typeId);
+    const baseName = name || `Default ${meta?.label || "Sales"} Template`;
 
-const buildSalesPreviewData = (category, companyProfile = {}) => {
-    const titles = {
-        "Quotation": "QUOTATION",
-        "Sales Invoice": "SALES INVOICE",
-        "Sales Order (SO)": "SALES ORDER",
-        "Delivery Note (DO/DN)": "DELIVERY NOTE",
-        "Proforma Invoice (PI)": "PROFORMA INVOICE",
-        "Sales Return": "CREDIT NOTE",
-        "Receipt Voucher": "RECEIPT VOUCHER",
-    };
-    const docNos = {
-        "Quotation": "QT-SAMPLE-0001",
-        "Sales Invoice": "INV-SAMPLE-0001",
-        "Sales Order (SO)": "SO-SAMPLE-0001",
-        "Delivery Note (DO/DN)": "DN-SAMPLE-0001",
-        "Proforma Invoice (PI)": "PI-SAMPLE-0001",
-        "Sales Return": "CR-SAMPLE-0001",
-        "Receipt Voucher": "RV-SAMPLE-0001",
-    };
-    const previewCustomer = {
-        code: "CUST-SAMPLE-01",
-        name: "Sample Customer LLC",
-        address: "Sample Customer Address, Dubai, UAE",
-        trn: "100000000000111",
-        phone: "+971 50 000 0001",
-        email: "accounts@samplecustomer.test",
-    };
-    const previewItems = [
-        {
-            code: "ITM-SAMPLE-01",
-            sku: "SAL-SKU-01",
-            barcode: "6912345678901",
-            localName: "منتج مبيعات 01",
-            name: "Product Name Sample 01",
-            description: { title: "Product Name Sample 01", details: ["Color: Sample Black", "Size: Standard", "Sku: SKU-SAMPLE-01"] },
-            image: buildPreviewImage("INV 1", "#2563eb"),
-            unit: "Pcs", qty: 3, price: 420, taxableAmount: 1260, taxAmt: 63, taxPercent: 5, discountPercent: 0,
-            salesPerson: "Demo User", location: "Main Showroom", total: 1323,
-        },
-        {
-            code: "ITM-SAMPLE-02",
-            sku: "SAL-SKU-02",
-            barcode: "6912345678902",
-            localName: "منتج مبيعات 02",
-            name: "Product Name Sample 02",
-            description: { title: "Product Name Sample 02", details: ["Variant: Standard", "Sku: SKU-SAMPLE-02"] },
-            image: buildPreviewImage("INV 2", "#0f766e"),
-            unit: "Pcs", qty: 2, price: 580, taxableAmount: 1160, taxAmt: 58, taxPercent: 5, discountPercent: 10,
-            salesPerson: "Demo User", location: "Main Showroom", total: 1218,
-        },
-        {
-            code: "ITM-SAMPLE-03",
-            sku: "SAL-SKU-03",
-            barcode: "6912345678903",
-            localName: "منتج مبيعات 03",
-            name: "Product Name Sample 03",
-            description: { title: "Product Name Sample 03", details: ["Specification: Demo Item", "Sku: SKU-SAMPLE-03"] },
-            image: buildPreviewImage("INV 3", "#1d4ed8"),
-            unit: "Pcs", qty: 1, price: 310, taxableAmount: 310, taxAmt: 15.5, taxPercent: 5, discountPercent: 0,
-            salesPerson: "Demo User", location: "Warehouse A", total: 325.5,
-        },
-    ];
-    // QA-039: Receipt Voucher preview has no line items — show amount paid
-    // and the linked invoice as a reference. The renderer respects
-    // hideTotalsTable / the summaryAmount highlight to focus on the receipt.
-    if (category === 'Receipt Voucher') {
+    if (typeId === "pick-list") {
+        return defaultPickListSettings(baseName);
+    }
+
+    const isOverlay = meta?.designer === "overlay";
+    const isReceipt = typeId === "receipt";
+    const isPickLike = typeId === "pick-list";
+    const isDelivery = typeId === "delivery-note";
+    const isInvoice = typeId === "sales-invoice" || typeId === "proforma-invoice";
+    const isCredit = typeId === "credit-note";
+
+    if (isOverlay) {
         return {
-            title: titles[category],
-            docNo: docNos[category],
-            date: "2026-04-18",
-            customer: previewCustomer,
-            items: [],
-            totals: {
-                currency: companyProfile?.currencySymbol || companyProfile?.currency || "AED",
-            },
-            hideTotalsTable: true,
-            summaryAmount: {
-                label: "Amount Received",
-                value: 1500,
-            },
-            meta: {
-                status: "COMPLETED",
-                linkedSalesInvoice: "INV-SAMPLE-0001",
-                paymentMode: "Bank Transfer",
-                reference: "TXN-2026-987654",
-                notes: "Received against invoice INV-SAMPLE-0001",
-            },
+            templateName: baseName,
+            mode: meta.mode,
+            paperSize: "A4",
+            orientation: "portrait",
+            printOnlyValues: meta.mode === "preprinted",
+            showGrid: true,
+            gridSize: 5,
+            snapToGrid: true
         };
     }
+
     return {
-        title: titles[category] || category,
-        docNo: docNos[category] || "DOC-SAMPLE-0001",
-        date: "2026-04-18",
-        customer: previewCustomer,
-        items: previewItems,
-        totals: {
-            subTotal: 2730,
-            tax: 136.5,
-            grandTotal: 2866.5,
-            currency: companyProfile?.currencySymbol || companyProfile?.currency || "AED",
-            billDiscount: 0,
-            billDiscountAmount: 0,
-            amountPaid: category === "Sales Invoice" ? 1000 : 0,
-            balanceDue: category === "Sales Invoice" ? 1866.5 : 0,
-        },
-        meta: {
-            status: "POSTED",
-            paymentTerm: "NET 30",
-            validTill: "2026-05-18",
-            validTillLabel: category === "Quotation" ? "Valid Until" : "Due Date",
-            reference: "SO-SAMPLE-0001",
-            location: "DXB-01",
-            salesPerson: "Demo User",
-            poNumber: "PO-SAMPLE-001",
-            accountExecutive: "Mr. Demo User",
-            notes: "Thank you for your business.",
-        },
+        templateName: baseName,
+        docType: meta?.docType,
+        accentColor: "#F5C742",
+        primaryColor: "#F5C742",
+        paperSize: "A4",
+        orientation: "portrait",
+        showLogo: true,
+        showCompanyLogo: true,
+        showCompanyName: true,
+        showCompanyAddress: true,
+        showCompanyPhone: true,
+        showCompanyEmail: true,
+        showTRN: true,
+        showBillTo: !isReceipt,
+        showCustomerName: true,
+        showCustomerCode: true,
+        showCustomerPhone: true,
+        showCustomerEmail: isInvoice || isCredit,
+        showCustomerTRN: isInvoice || isCredit,
+        showShipTo: isDelivery,
+        showTerms: !isReceipt,
+        showTermsConditions: !isReceipt,
+        showBankDetails: isInvoice || isCredit,
+        showQRCode: typeId === "sales-invoice",
+        showGrandTotalBanner: !isDelivery && !isPickLike && !isReceipt,
+        colProductImage: typeId === "quotation" || isInvoice,
+        colItemCode: true,
+        colSKU: false,
+        colBarcode: false,
+        colBrand: false,
+        colDescription: true,
+        colQty: !isReceipt,
+        colUnitPrice: !isReceipt && !isDelivery,
+        colTaxableAmount: isInvoice || isCredit || typeId === "quotation",
+        colDiscount: !isReceipt && !isDelivery,
+        colVAT: isInvoice || isCredit,
+        colVATAmount: isInvoice || isCredit,
+        colLineTotal: !isReceipt && !isDelivery,
+        showSubtotal: !isReceipt && !isDelivery,
+        showDiscountTotal: !isReceipt && !isDelivery,
+        showVATTotal: isInvoice || isCredit,
+        showGrandTotal: !isReceipt && !isDelivery,
+        showAmountInWords: isInvoice || isCredit,
+        termsText: defaultTermsFor(typeId),
+        emailSubject: `${meta?.label || "Sales Document"} #{number} from {company_name}`,
+        emailBody: `Dear {customer_name},\n\nPlease find attached ${meta?.label || "the document"} #{number}.\n\nBest regards,\n{company_name}`
     };
 };
 
-const defaultTemplates = [
-    {
-        category: "Quotation",
-        name: "Standard Quotation",
-        isDefault: true,
-        paperSize: "A4",
-        orientation: "Portrait",
-        headerContent: "",
-        termsContent: `1. Validity: This quotation is valid for 30 days from the date of issue.
-2. Payment Terms: 50% advance payment required to confirm the order. Balance due upon delivery.
-3. Delivery: Delivery will be made within 7-10 business days after order confirmation.
-4. Taxes: All applicable taxes will be charged as per government regulations.
-5. Warranty: Standard manufacturer warranty applies to all products.`,
-        footerContent: "",
-        displayOptions: JSON.stringify(getSalesDefaultDisplayOptions()),
-        columns: JSON.stringify(getSalesDefaultColumns("Quotation"))
-    },
-    {
-        category: "Sales Invoice",
-        name: "Standard Invoice",
-        isDefault: true,
-        paperSize: "A4",
-        orientation: "Portrait",
-        headerContent: "",
-        termsContent: `PAYMENT INSTRUCTION:
-Please transfer the total amount to the registered company bank account.
-Use the invoice number as your payment reference.
-Late payments may be subject to finance charges as per the agreed customer terms.`,
-        footerContent: "",
-        displayOptions: JSON.stringify(getSalesDefaultDisplayOptions()),
-        columns: JSON.stringify(getSalesDefaultColumns("Sales Invoice"))
-    },
-    {
-        category: "Sales Order (SO)",
-        name: "Standard Sales Order",
-        isDefault: true,
-        paperSize: "A4",
-        orientation: "Portrait",
-        headerContent: "",
-        termsContent: `1. Acceptance: This order is subject to acceptance by the seller.
-2. Prices: Prices are subject to change without notice prior to shipment.
-3. Cancellations: Orders cannot be cancelled after 24 hours of placement.`,
-        footerContent: "",
-        displayOptions: JSON.stringify(getSalesDefaultDisplayOptions()),
-        columns: JSON.stringify(getSalesDefaultColumns("Sales Order (SO)"))
-    },
-    {
-        category: "Delivery Note (DO/DN)",
-        name: "Standard Delivery Note",
-        isDefault: true,
-        paperSize: "A4",
-        orientation: "Portrait",
-        headerContent: "",
-        termsContent: `1. Goods received in good condition.
-2. Any discrepancies must be reported within 24 hours of receipt.
-3. Title to goods remains with the seller until full payment is received.`,
-        footerContent: "",
-        displayOptions: JSON.stringify(getSalesDefaultDisplayOptions()),
-        columns: JSON.stringify(getSalesDefaultColumns("Delivery Note (DO/DN)"))
-    },
-    {
-        category: "Pick List",
-        name: "Standard Pick List",
-        isDefault: true,
-        paperSize: "A4",
-        orientation: "Portrait",
-        headerContent: "",
-        termsContent: `Pick the items from the indicated bin/location. Scan each batch barcode to confirm.`,
-        footerContent: "",
-        displayOptions: JSON.stringify(getSalesDefaultDisplayOptions()),
-        columns: JSON.stringify(getSalesDefaultColumns("Pick List"))
-    },
-    {
-        category: "Proforma Invoice (PI)",
-        name: "Standard Proforma Invoice",
-        isDefault: true,
-        paperSize: "A4",
-        orientation: "Portrait",
-        headerContent: "",
-        termsContent: `1. This is a proforma invoice and not a final tax invoice.
-2. Goods will be dispatched only after receipt of 100% advance payment.
-3. Prices are valid for 15 days from the date of this proforma invoice.`,
-        footerContent: "",
-        displayOptions: JSON.stringify(getSalesDefaultDisplayOptions()),
-        columns: JSON.stringify(getSalesDefaultColumns("Proforma Invoice (PI)"))
-    },
-    {
-        // QA-039: customer payment receipt voucher template.
-        category: "Receipt Voucher",
-        name: "Standard Receipt Voucher",
-        isDefault: true,
-        paperSize: "A4",
-        orientation: "Portrait",
-        headerContent: "",
-        termsContent: `Received with thanks the above amount in settlement of the invoice(s) listed.
-This receipt is valid only after the cheque/bank transfer is cleared.`,
-        footerContent: "",
-        displayOptions: JSON.stringify(getSalesDefaultDisplayOptions()),
-        columns: JSON.stringify(getSalesDefaultColumns("Receipt Voucher"))
+const getDesignerSettings = (template, meta) => {
+    const displayOptions = parseSettings(template.displayOptions);
+    const columns = parseSettings(template.columns);
+    const stored = displayOptions.salesDesignerSettings || displayOptions.designerSettings || displayOptions.purchaseDesignerSettings;
+
+    if (stored && typeof stored === "object") {
+        return {
+            ...stored,
+            templateName: stored.templateName || template.name,
+            docType: stored.docType || meta?.docType,
+            mode: stored.mode || meta?.mode,
+            paperSize: stored.paperSize || template.paperSize || "A4",
+            orientation: stored.orientation || String(template.orientation || "portrait").toLowerCase()
+        };
     }
-];
 
-const TemplateCard = ({ title, description, count, icon: Icon, onClick, disabled }) => (
-    <div
-        onClick={!disabled ? onClick : undefined}
-        className={`bg-white p-6 rounded-xl border border-gray-200 shadow-sm transition-shadow group relative ${disabled ? 'opacity-50 cursor-not-allowed bg-gray-50' : 'hover:shadow-md cursor-pointer'
-            }`}
-    >
-        {disabled && (
-            <div className="absolute top-3 right-3 bg-gray-200 text-gray-500 text-[10px] font-bold px-2 py-1 rounded-full">
-                COMING SOON
-            </div>
-        )}
-        <div className="flex justify-between items-start mb-4">
-            <div className={`w-10 h-10 rounded-lg flex items-center justify-center transition-colors ${disabled ? 'bg-gray-100 text-gray-400' : 'bg-yellow-50 text-yellow-600 group-hover:bg-yellow-100'
-                }`}>
-                <Icon size={18} />
-            </div>
-            {!disabled && <span className="text-gray-400 group-hover:text-gray-600 transition-colors">&gt;</span>}
-        </div>
-        <h3 className="font-semibold text-gray-900 mb-1">{title}</h3>
-        <p className="text-sm text-gray-500 mb-4 h-10">{description}</p>
-        <div className="text-xs font-medium text-gray-400">
-            {disabled ? 'Feature unavailable' : `${count} ${count === 1 ? 'template' : 'templates'}`}
-        </div>
-    </div>
-);
-
-const ActionCard = ({ icon: Icon, title, description, colorClass = "text-blue-600 bg-blue-50" }) => (
-    <div className="bg-white p-4 rounded-xl border border-gray-200 shadow-sm flex items-center gap-4 cursor-pointer hover:bg-gray-50 transition-colors">
-        <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${colorClass}`}>
-            <Icon size={18} />
-        </div>
-        <div>
-            <h4 className="font-medium text-sm text-gray-900">{title}</h4>
-            <p className="text-xs text-gray-500">{description}</p>
-        </div>
-    </div>
-);
-
-const ConfirmationModal = ({ isOpen, onClose, onConfirm, title, message }) => {
-    if (!isOpen) return null;
-
-    return (
-        <div className="fixed inset-0 z-50 flex items-center justify-center backdrop-blur-sm bg-black/10">
-            <div className="bg-white rounded-xl shadow-2xl p-6 w-full max-w-md transform transition-all scale-100">
-                <div className="flex items-center gap-3 text-red-600 mb-4">
-                    <div className="w-10 h-10 rounded-full bg-red-100 flex items-center justify-center">
-                        <FaExclamationTriangle size={20} />
-                    </div>
-                    <h3 className="text-lg font-bold">{title}</h3>
-                </div>
-
-                <p className="text-gray-600 mb-6 text-sm leading-relaxed">
-                    {message}
-                </p>
-
-                <div className="flex justify-end gap-3">
-                    <button
-                        onClick={onClose}
-                        className="px-4 py-2 rounded-lg text-gray-700 font-semibold hover:bg-gray-100 transition-colors text-sm"
-                    >
-                        Cancel
-                    </button>
-                    <button
-                        onClick={onConfirm}
-                        className="px-4 py-2 rounded-lg bg-red-600 text-white font-bold hover:bg-red-700 transition-colors shadow-sm text-sm"
-                    >
-                        Delete Template
-                    </button>
-                </div>
-            </div>
-        </div>
-    );
+    return {
+        ...defaultSettingsFor(meta?.id, template.name),
+        templateName: template.name,
+        paperSize: template.paperSize || "A4",
+        orientation: String(template.orientation || "portrait").toLowerCase(),
+        accentColor: displayOptions.accentColor || displayOptions.primaryColor || "#F5C742",
+        primaryColor: displayOptions.primaryColor || displayOptions.accentColor || "#F5C742",
+        showLogo: displayOptions.showLogo !== false,
+        showCompanyLogo: displayOptions.showLogo !== false,
+        showCompanyName: displayOptions.showCompanyDetails !== false,
+        showCompanyAddress: displayOptions.showCompanyDetails !== false,
+        showBillTo: displayOptions.showCustomerDetails !== false,
+        showCustomerName: displayOptions.showCustomerDetails !== false,
+        showTerms: displayOptions.showTerms !== false,
+        showTermsConditions: displayOptions.showTerms !== false,
+        showItemImage: !!displayOptions.showItemImage,
+        colProductImage: !!displayOptions.showItemImage,
+        colItemCode: !!columns.productId,
+        colSKU: !!columns.sku,
+        colBarcode: !!columns.barcode,
+        colBrand: !!columns.brand,
+        colDescription: columns.description !== false,
+        colQty: columns.qty !== false,
+        colUnitPrice: columns.unitPrice !== false,
+        colTaxableAmount: !!columns.taxableAmount,
+        colDiscount: !!columns.discount,
+        colVAT: columns.tax !== false,
+        colVATAmount: !!columns.tax,
+        colLineTotal: columns.total !== false,
+        showBatchNo: !!columns.batchNumber,
+        showExpiry: !!columns.expiry,
+        showWarehouse: !!columns.location,
+        docType: meta?.docType,
+        mode: meta?.mode,
+        termsText: template.termsContent || defaultTermsFor(meta?.id)
+    };
 };
 
-const TemplateDesigner = ({ category, onCancel, onSave, initialData, previewCompany }) => {
-    const baseTemplate = useMemo(
-        () => normalizeSalesTemplate(initialData || { category: category.title }, category.title),
-        [initialData, category.title]
-    );
+const templateToRow = (template) => {
+    const meta = typeMetaByCategory(template.category);
+    if (!meta) return null;
 
-    const [showPreview, setShowPreview] = useState(false);
-
-    const [templateName, setTemplateName] = useState(baseTemplate?.name || `New ${category.title} Template`);
-    const [paperSize, setPaperSize] = useState(baseTemplate?.paperSize || 'A4');
-    const [orientation, setOrientation] = useState(baseTemplate?.orientation || 'Portrait');
-
-    const [headerContent, setHeaderContent] = useState(baseTemplate?.headerContent || '');
-    const [termsContent, setTermsContent] = useState(baseTemplate?.termsContent || '');
-    const [footerContent, setFooterContent] = useState(baseTemplate?.footerContent || '');
-
-    const [displayOptions, setDisplayOptions] = useState(
-        baseTemplate?.displayOptions || getSalesDefaultDisplayOptions()
-    );
-
-    const [columns, setColumns] = useState(
-        baseTemplate?.columns || getSalesDefaultColumns(category.title)
-    );
-
-    const previewHtml = useMemo(() => {
-        const template = normalizeSalesTemplate({
-            category: category.title,
-            paperSize,
-            orientation,
-            headerContent,
-            footerContent,
-            termsContent,
-            displayOptions,
-            columns,
-        }, category.title);
-
-        return generatePrintHtml(template, buildSalesPreviewData(category.title, previewCompany), {
-            companyProfile: previewCompany,
-        });
-    }, [category.title, paperSize, orientation, headerContent, footerContent, termsContent, displayOptions, columns, previewCompany]);
-
-    const previewEmailHtml = useMemo(() => {
-        const template = normalizeSalesTemplate({
-            category: category.title,
-            paperSize,
-            orientation,
-            headerContent,
-            footerContent,
-            termsContent,
-            displayOptions,
-            columns,
-        }, category.title);
-
-        return generateEmailHtml(template, buildSalesPreviewData(category.title, previewCompany), {
-            companyProfile: previewCompany,
-        });
-    }, [category.title, paperSize, orientation, headerContent, footerContent, termsContent, displayOptions, columns, previewCompany]);
-
-    const handleDisplayOptionChange = (key) => {
-        setDisplayOptions(prev => ({ ...prev, [key]: !prev[key] }));
+    const settings = getDesignerSettings(template, meta);
+    return {
+        id: template.id,
+        name: template.name,
+        category: template.category,
+        type: meta.id,
+        isDefault: !!template.isDefault,
+        lastModified: formatDate(template),
+        primaryColor: settings.accentColor || settings.primaryColor || "#F5C742",
+        paperSize: template.paperSize || settings.paperSize || settings.pageSize || "A4",
+        orientation: template.orientation || settings.orientation || "Portrait",
+        settings,
+        raw: template
     };
-
-    const handleColumnChange = (key) => {
-        setColumns(prev => ({ ...prev, [key]: !prev[key] }));
-    };
-
-    const handleSave = () => {
-        const templateData = normalizeSalesTemplate({
-            id: initialData?.id,
-            category: category.title,
-            name: templateName,
-            paperSize,
-            orientation,
-            headerContent,
-            termsContent,
-            footerContent,
-            displayOptions,
-            columns,
-            lastModified: new Date().toISOString().split('T')[0],
-            isDefault: initialData?.isDefault || false
-        }, category.title);
-
-        onSave(templateData);
-    };
-
-    return (
-        <div className="flex flex-col h-full bg-gray-50 text-slate-800 font-sans">
-            {/* Header / Breadcrumbs */}
-            <div className="px-8 py-5 border-b border-gray-200 bg-white">
-                <div className="text-xs text-gray-500 mb-2 font-medium">
-                    Sales &gt; Print & Email Templates &gt; Template Designer
-                </div>
-                <div className="flex justify-between items-center">
-                    <h1 className="text-2xl font-bold text-gray-900 flex items-center gap-2">
-                        <span className="text-yellow-500"><category.icon /></span>
-                        {initialData ? 'Edit' : 'New'} {category.title} Template
-                    </h1>
-                    <div className="flex items-center gap-3">
-                        <button
-                            onClick={() => setShowPreview(!showPreview)}
-                            className={`flex items-center gap-2 border px-4 py-2 rounded-lg text-sm font-bold transition-colors ${showPreview ? 'bg-blue-50 border-blue-200 text-blue-700' : 'bg-white border-gray-300 text-gray-700 hover:bg-gray-50'}`}
-                        >
-                            <FaEye size={14} /> {showPreview ? 'Hide Preview' : 'Preview'}
-                        </button>
-                        <button
-                            onClick={onCancel}
-                            className="flex items-center gap-2 bg-white border border-gray-300 text-gray-700 px-4 py-2 rounded-lg text-sm font-bold hover:bg-gray-50 transition-colors"
-                        >
-                            Cancel
-                        </button>
-                        <button
-                            onClick={handleSave}
-                            className="flex items-center gap-2 bg-yellow-400 hover:bg-yellow-500 text-slate-900 px-4 py-2 rounded-lg text-sm font-bold transition-colors"
-                        >
-                            <FaSave size={14} /> Save Template
-                        </button>
-                    </div>
-                </div>
-            </div>
-
-            {/* Content Area */}
-            <div className="p-8 flex-1 overflow-auto">
-                <div className="flex flex-col lg:flex-row gap-6">
-
-                    {/* LEFT COLUMN */}
-                    <div className="flex-1 space-y-6">
-
-                        {/* Basic Settings */}
-                        <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-6">
-                            <div className="flex items-center gap-2 mb-4 text-yellow-600">
-                                <FaSlidersH />
-                                <h3 className="font-bold text-gray-900 text-sm">Basic Settings</h3>
-                            </div>
-
-                            <div className="space-y-4">
-                                <div>
-                                    <label className="block text-xs font-bold text-gray-700 mb-1">Template Name</label>
-                                    <input
-                                        type="text"
-                                        value={templateName}
-                                        onChange={(e) => setTemplateName(e.target.value)}
-                                        className="w-full text-sm border border-gray-300 rounded-lg p-2.5 focus:outline-none focus:border-yellow-400 focus:ring-1 focus:ring-yellow-400"
-                                    />
-                                </div>
-                                <div>
-                                    <label className="block text-xs font-bold text-gray-700 mb-1">Paper Size</label>
-                                    <select
-                                        value={paperSize}
-                                        onChange={(e) => setPaperSize(e.target.value)}
-                                        className="w-full text-sm border border-gray-300 rounded-lg p-2.5 focus:outline-none focus:border-yellow-400"
-                                    >
-                                        <option>A3</option>
-                                        <option>A4</option>
-                                        <option>A5</option>
-                                        <option>Letter</option>
-                                        <option>Legal</option>
-                                    </select>
-                                </div>
-                                <div>
-                                    <label className="block text-xs font-bold text-gray-700 mb-1">Orientation</label>
-                                    <select
-                                        value={orientation}
-                                        onChange={(e) => setOrientation(e.target.value)}
-                                        className="w-full text-sm border border-gray-300 rounded-lg p-2.5 focus:outline-none focus:border-yellow-400"
-                                    >
-                                        <option>Portrait</option>
-                                        <option>Landscape</option>
-                                    </select>
-                                </div>
-                            </div>
-                        </div>
-
-                        {/* Display Options */}
-                        <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-6">
-                            <div className="flex items-center gap-2 mb-4 text-yellow-600">
-                                <FaToggleOn />
-                                <h3 className="font-bold text-gray-900 text-sm">Display Options</h3>
-                            </div>
-                            <div className="space-y-3">
-                                <label className="flex items-center gap-2 cursor-pointer">
-                                    <input
-                                        type="checkbox"
-                                        checked={displayOptions.showLogo}
-                                        onChange={() => handleDisplayOptionChange('showLogo')}
-                                        className="w-4 h-4 text-yellow-500 rounded border-gray-300 focus:ring-yellow-400"
-                                    />
-                                    <span className="text-sm text-gray-700 font-medium">Show Company Logo</span>
-                                </label>
-                                <label className="flex items-center gap-2 cursor-pointer">
-                                    <input
-                                        type="checkbox"
-                                        checked={displayOptions.showCompanyDetails}
-                                        onChange={() => handleDisplayOptionChange('showCompanyDetails')}
-                                        className="w-4 h-4 text-yellow-500 rounded border-gray-300 focus:ring-yellow-400"
-                                    />
-                                    <span className="text-sm text-gray-700 font-medium">Show Company Details</span>
-                                </label>
-                                <label className="flex items-center gap-2 cursor-pointer">
-                                    <input
-                                        type="checkbox"
-                                        checked={displayOptions.showCustomerDetails}
-                                        onChange={() => handleDisplayOptionChange('showCustomerDetails')}
-                                        className="w-4 h-4 text-yellow-500 rounded border-gray-300 focus:ring-yellow-400"
-                                    />
-                                    <span className="text-sm text-gray-700 font-medium">Show Customer Details</span>
-                                </label>
-                                <label className="flex items-center gap-2 cursor-pointer">
-                                    <input
-                                        type="checkbox"
-                                        checked={displayOptions.showTerms}
-                                        onChange={() => handleDisplayOptionChange('showTerms')}
-                                        className="w-4 h-4 text-yellow-500 rounded border-gray-300 focus:ring-yellow-400"
-                                    />
-                                    <span className="text-sm text-gray-700 font-medium">Show Terms & Conditions</span>
-                                </label>
-                                <label className="flex items-center gap-2 cursor-pointer">
-                                    <input
-                                        type="checkbox"
-                                        checked={displayOptions.showItemImage}
-                                        onChange={() => handleDisplayOptionChange('showItemImage')}
-                                        className="w-4 h-4 text-yellow-500 rounded border-gray-300 focus:ring-yellow-400"
-                                    />
-                                    <span className="text-sm text-gray-700 font-medium">Show Item Images</span>
-                                </label>
-                            </div>
-                        </div>
-
-                        {/* Table Columns */}
-                        <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-6">
-                            <div className="flex items-center gap-2 mb-4 text-yellow-600">
-                                <FaListUl />
-                                <h3 className="font-bold text-gray-900 text-sm">Table Columns</h3>
-                            </div>
-                            <p className="text-xs text-gray-500 mb-3">Select columns to display in the item table:</p>
-                            <div className="space-y-3">
-
-                                <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider pt-1">Item Identity</p>
-                                <label className="flex items-center gap-2 cursor-pointer">
-                                    <input type="checkbox" checked={columns.description !== false} onChange={() => handleColumnChange('description')} className="w-4 h-4 text-yellow-500 rounded border-gray-300 focus:ring-yellow-400" />
-                                    <span className="text-sm text-gray-700 font-medium">Description of Product / Services</span>
-                                </label>
-                                <label className="flex items-center gap-2 cursor-pointer">
-                                    <input type="checkbox" checked={columns.productId} onChange={() => handleColumnChange('productId')} className="w-4 h-4 text-yellow-500 rounded border-gray-300 focus:ring-yellow-400" />
-                                    <span className="text-sm text-gray-700 font-medium">Item Code</span>
-                                </label>
-                                <label className="flex items-center gap-2 cursor-pointer">
-                                    <input type="checkbox" checked={columns.sku} onChange={() => handleColumnChange('sku')} className="w-4 h-4 text-yellow-500 rounded border-gray-300 focus:ring-yellow-400" />
-                                    <span className="text-sm text-gray-700 font-medium">SKU</span>
-                                </label>
-                                <label className="flex items-center gap-2 cursor-pointer">
-                                    <input type="checkbox" checked={columns.barcode} onChange={() => handleColumnChange('barcode')} className="w-4 h-4 text-yellow-500 rounded border-gray-300 focus:ring-yellow-400" />
-                                    <span className="text-sm text-gray-700 font-medium">Item Barcode</span>
-                                </label>
-                                <label className="flex items-center gap-2 cursor-pointer">
-                                    <input type="checkbox" checked={!!columns.brand} onChange={() => handleColumnChange('brand')} className="w-4 h-4 text-yellow-500 rounded border-gray-300 focus:ring-yellow-400" />
-                                    <span className="text-sm text-gray-700 font-medium">Brand</span>
-                                </label>
-                                <label className="flex items-center gap-2 cursor-pointer">
-                                    <input type="checkbox" checked={!!columns.detailedDesc} onChange={() => handleColumnChange('detailedDesc')} className="w-4 h-4 text-yellow-500 rounded border-gray-300 focus:ring-yellow-400" />
-                                    <span className="text-sm text-gray-700 font-medium">Detailed Description</span>
-                                </label>
-                                <label className="flex items-center gap-2 cursor-pointer">
-                                    <input type="checkbox" checked={columns.arabicName} onChange={() => handleColumnChange('arabicName')} className="w-4 h-4 text-yellow-500 rounded border-gray-300 focus:ring-yellow-400" />
-                                    <span className="text-sm text-gray-700 font-medium">Arabic Name</span>
-                                </label>
-
-                                <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider pt-2">Quantities & Pricing</p>
-                                <label className="flex items-center gap-2 cursor-pointer">
-                                    <input type="checkbox" checked={columns.qty} onChange={() => handleColumnChange('qty')} className="w-4 h-4 text-yellow-500 rounded border-gray-300 focus:ring-yellow-400" />
-                                    <span className="text-sm text-gray-700 font-medium">Qty</span>
-                                </label>
-                                <label className="flex items-center gap-2 cursor-pointer">
-                                    <input type="checkbox" checked={columns.unitPrice} onChange={() => handleColumnChange('unitPrice')} className="w-4 h-4 text-yellow-500 rounded border-gray-300 focus:ring-yellow-400" />
-                                    <span className="text-sm text-gray-700 font-medium">Unit Price</span>
-                                </label>
-                                <label className="flex items-center gap-2 cursor-pointer">
-                                    <input type="checkbox" checked={columns.taxableAmount} onChange={() => handleColumnChange('taxableAmount')} className="w-4 h-4 text-yellow-500 rounded border-gray-300 focus:ring-yellow-400" />
-                                    <span className="text-sm text-gray-700 font-medium">Taxable Amount</span>
-                                </label>
-                                <label className="flex items-center gap-2 cursor-pointer">
-                                    <input type="checkbox" checked={columns.total} onChange={() => handleColumnChange('total')} className="w-4 h-4 text-yellow-500 rounded border-gray-300 focus:ring-yellow-400" />
-                                    <span className="text-sm text-gray-700 font-medium">Line Total</span>
-                                </label>
-
-                                <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider pt-2">Discount & Tax</p>
-                                <label className="flex items-center gap-2 cursor-pointer">
-                                    <input type="checkbox" checked={columns.discount} onChange={() => handleColumnChange('discount')} className="w-4 h-4 text-yellow-500 rounded border-gray-300 focus:ring-yellow-400" />
-                                    <span className="text-sm text-gray-700 font-medium">Discount % (in Taxable Amount col)</span>
-                                </label>
-                                <label className="flex items-center gap-2 cursor-pointer">
-                                    <input type="checkbox" checked={columns.discountPercent} onChange={() => handleColumnChange('discountPercent')} className="w-4 h-4 text-yellow-500 rounded border-gray-300 focus:ring-yellow-400" />
-                                    <span className="text-sm text-gray-700 font-medium">Discount % (separate column)</span>
-                                </label>
-                                <label className="flex items-center gap-2 cursor-pointer">
-                                    <input type="checkbox" checked={columns.tax} onChange={() => handleColumnChange('tax')} className="w-4 h-4 text-yellow-500 rounded border-gray-300 focus:ring-yellow-400" />
-                                    <span className="text-sm text-gray-700 font-medium">VAT Amount</span>
-                                </label>
-                                <label className="flex items-center gap-2 cursor-pointer">
-                                    <input type="checkbox" checked={columns.taxPercent} onChange={() => handleColumnChange('taxPercent')} className="w-4 h-4 text-yellow-500 rounded border-gray-300 focus:ring-yellow-400" />
-                                    <span className="text-sm text-gray-700 font-medium">Tax % (separate column)</span>
-                                </label>
-
-                                <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider pt-2">Document / Line Info</p>
-                                <label className="flex items-center gap-2 cursor-pointer">
-                                    <input type="checkbox" checked={columns.salesPerson} onChange={() => handleColumnChange('salesPerson')} className="w-4 h-4 text-yellow-500 rounded border-gray-300 focus:ring-yellow-400" />
-                                    <span className="text-sm text-gray-700 font-medium">Sales Person</span>
-                                </label>
-                                <label className="flex items-center gap-2 cursor-pointer">
-                                    <input type="checkbox" checked={columns.location} onChange={() => handleColumnChange('location')} className="w-4 h-4 text-yellow-500 rounded border-gray-300 focus:ring-yellow-400" />
-                                    <span className="text-sm text-gray-700 font-medium">Location / Branch</span>
-                                </label>
-
-                                {/* QA-031: cross-reference toggles for DN / SI / Pick List header */}
-                                <label className="flex items-center gap-2 cursor-pointer">
-                                    <input type="checkbox" checked={Boolean(columns.quotationNo)} onChange={() => handleColumnChange('quotationNo')} className="w-4 h-4 text-yellow-500 rounded border-gray-300 focus:ring-yellow-400" />
-                                    <span className="text-sm text-gray-700 font-medium">Quotation No.</span>
-                                </label>
-                                <label className="flex items-center gap-2 cursor-pointer">
-                                    <input type="checkbox" checked={Boolean(columns.salesOrderNo)} onChange={() => handleColumnChange('salesOrderNo')} className="w-4 h-4 text-yellow-500 rounded border-gray-300 focus:ring-yellow-400" />
-                                    <span className="text-sm text-gray-700 font-medium">Sales Order No.</span>
-                                </label>
-                                <label className="flex items-center gap-2 cursor-pointer">
-                                    <input type="checkbox" checked={Boolean(columns.salesInvoiceNo)} onChange={() => handleColumnChange('salesInvoiceNo')} className="w-4 h-4 text-yellow-500 rounded border-gray-300 focus:ring-yellow-400" />
-                                    <span className="text-sm text-gray-700 font-medium">Sales Invoice No.</span>
-                                </label>
-
-                                <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider pt-2">Batch & Expiry</p>
-                                <label className="flex items-center gap-2 cursor-pointer">
-                                    <input type="checkbox" checked={Boolean(columns.batchNumber)} onChange={() => handleColumnChange('batchNumber')} className="w-4 h-4 text-yellow-500 rounded border-gray-300 focus:ring-yellow-400" />
-                                    <span className="text-sm text-gray-700 font-medium">Batch Number</span>
-                                </label>
-                                <label className="flex items-center gap-2 cursor-pointer">
-                                    <input type="checkbox" checked={Boolean(columns.batchBarcode)} onChange={() => handleColumnChange('batchBarcode')} className="w-4 h-4 text-yellow-500 rounded border-gray-300 focus:ring-yellow-400" />
-                                    <span className="text-sm text-gray-700 font-medium">Batch Barcode (Code 128)</span>
-                                </label>
-                                <label className="flex items-center gap-2 cursor-pointer">
-                                    <input type="checkbox" checked={Boolean(columns.expiry)} onChange={() => handleColumnChange('expiry')} className="w-4 h-4 text-yellow-500 rounded border-gray-300 focus:ring-yellow-400" />
-                                    <span className="text-sm text-gray-700 font-medium">Expiry Date</span>
-                                </label>
-                            </div>
-                        </div>
-
-                    </div>
-
-                    {/* RIGHT COLUMN */}
-                    <div className="flex-2 space-y-6">
-
-                        <div className="rounded-xl border border-blue-100 bg-blue-50 p-5">
-                            <h3 className="text-sm font-bold text-blue-900">System-Controlled Layout</h3>
-                            <p className="mt-2 text-xs leading-6 text-blue-800">
-                                Document structure is now layout-driven. Date blocks, company details, party cards, item table, totals, and footer stay consistent, while the fields below add supporting content inside those fixed regions.
-                            </p>
-                        </div>
-
-                        {/* Header Section */}
-                        <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-6">
-                            <div className="flex items-center gap-2 mb-2 text-yellow-600">
-                                <FaCode />
-                                <h3 className="font-bold text-gray-900 text-sm">Header Add-on</h3>
-                            </div>
-                            <p className="text-xs text-gray-400 mb-3">Optional HTML rendered inside the system header area. Variables: &#123;company_name&#125;, &#123;company_address&#125;, &#123;logo&#125;</p>
-                            <textarea
-                                value={headerContent}
-                                onChange={(e) => setHeaderContent(e.target.value)}
-                                className="w-full h-32 text-sm border border-gray-300 rounded-lg p-3 font-mono text-slate-600 focus:outline-none focus:border-yellow-400 bg-gray-50"
-                                placeholder="<div>...</div>"
-                            ></textarea>
-                        </div>
-
-                        {/* Terms & Conditions */}
-                        <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-6">
-                            <div className="flex items-center gap-2 mb-2 text-yellow-600">
-                                <FaAlignLeft />
-                                <h3 className="font-bold text-gray-900 text-sm">Terms & Conditions</h3>
-                            </div>
-                            <p className="text-xs text-gray-400 mb-3">Enter terms and conditions</p>
-                            <textarea
-                                value={termsContent}
-                                onChange={(e) => setTermsContent(e.target.value)}
-                                className="w-full h-32 text-sm border border-gray-300 rounded-lg p-3 focus:outline-none focus:border-yellow-400"
-                                placeholder="1. Goods once sold will not be taken back..."
-                            ></textarea>
-                        </div>
-
-                        {/* Footer Section */}
-                        <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-6">
-                            <div className="flex items-center gap-2 mb-2 text-yellow-600">
-                                <FaCode />
-                                <h3 className="font-bold text-gray-900 text-sm">Footer Add-on</h3>
-                            </div>
-                            <p className="text-xs text-gray-400 mb-3">Optional HTML rendered near the standard footer bar. Variables: &#123;page_number&#125;, &#123;total_pages&#125;, &#123;company_phone&#125;, &#123;company_email&#125;</p>
-                            <textarea
-                                value={footerContent}
-                                onChange={(e) => setFooterContent(e.target.value)}
-                                className="w-full h-32 text-sm border border-gray-300 rounded-lg p-3 font-mono text-slate-600 focus:outline-none focus:border-yellow-400 bg-gray-50"
-                                placeholder="<div>...</div>"
-                            ></textarea>
-                        </div>
-
-                        {/* Live Preview Section */}
-                        {showPreview && (
-                            <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-6 animate-in fade-in slide-in-from-bottom-4">
-                                <DocumentPreviewCanvas
-                                    printHtml={previewHtml}
-                                    emailHtml={previewEmailHtml}
-                                    paperSize={paperSize}
-                                    orientation={orientation}
-                                    subtitle="Print preview is rendered on a paper canvas, and email preview uses the same structured layout in a responsive format."
-                                />
-                            </div>
-                        )}
-
-                    </div>
-                </div>
-            </div>
-        </div>
-    );
 };
 
-const TemplateDetailView = ({ category, templates, onBack, onCreate, onEdit, onDuplicate, onDelete, onSetDefault }) => {
-    return (
-        <div className="flex flex-col h-full bg-gray-50 text-slate-800 font-sans">
-            {/* Header / Breadcrumbs */}
-            <div className="px-8 py-5 border-b border-gray-200 bg-white">
-                <div className="text-xs text-gray-500 mb-2 font-medium">
-                    Sales &gt;
-                    <span className="cursor-pointer hover:text-yellow-600" onClick={onBack}> Print & Email Templates </span>
-                    &gt; <span className="text-gray-900">{category.title}</span>
-                </div>
-                <div className="flex justify-between items-center">
-                    <div className="flex items-center gap-4">
-                        <button
-                            onClick={onBack}
-                            className="p-2 rounded-full hover:bg-gray-200 text-gray-600 transition-colors"
-                            title="Go Back"
-                        >
-                            <FaArrowLeft size={16} />
-                        </button>
-                        <h1 className="text-2xl font-bold text-gray-900 flex items-center gap-2">
-                            <span className="text-yellow-500"><category.icon /></span>
-                            {category.title} Templates
-                        </h1>
-                    </div>
-                    <button
-                        onClick={onCreate}
-                        className="flex items-center gap-2 bg-yellow-400 hover:bg-yellow-500 text-slate-900 px-4 py-2 rounded-lg text-sm font-bold transition-colors"
-                    >
-                        <FaPlus size={14} /> Create New Template
-                    </button>
-                </div>
-                <p className="text-gray-500 mt-1 text-sm">{category.description}</p>
-            </div>
+const buildRendererDisplayOptions = (settings = {}, typeId) => ({
+    showLogo: settings.showLogo ?? settings.showCompanyLogo ?? true,
+    showCompanyDetails: [
+        settings.showCompanyName,
+        settings.showCompanyAddress,
+        settings.showCompanyPhone,
+        settings.showCompanyEmail,
+        settings.showCompanyWebsite,
+        settings.showTRN,
+        settings.showCRN,
+        settings.showCompanyTaxId,
+        settings.showCompanyRegNumber
+    ].some((value) => value !== false),
+    showCustomerDetails: settings.showBillTo ?? settings.showShipTo ?? settings.showCustomerName ?? typeId !== "receipt",
+    showTerms: settings.showTerms ?? settings.showTermsConditions ?? typeId !== "receipt",
+    showItemImage: settings.colProductImage ?? settings.showItemImage ?? false
+});
 
-            {/* Content Area */}
-            <div className="p-8 flex-1 overflow-auto">
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                    {templates.length === 0 ? (
-                        <div className="col-span-full text-center py-10 text-gray-500">
-                            <div className="mb-4 bg-gray-100 w-16 h-16 rounded-full flex items-center justify-center mx-auto text-gray-400">
-                                <FaFileAlt size={24} />
-                            </div>
-                            <h3 className="text-lg font-medium text-gray-900">No templates found</h3>
-                            <p className="text-sm">Create a new template to get started.</p>
-                        </div>
-                    ) : (
-                        templates.map(template => (
-                            <div key={template.id} className="bg-white rounded-xl border border-gray-200 shadow-sm p-6 flex flex-col relative group">
-                                <div className="flex justify-between items-start mb-4">
-                                    <div>
-                                        <div className="flex items-center gap-2">
-                                            <h3 className="font-bold text-gray-900 text-lg">{template.name}</h3>
-                                            {template.isDefault && (
-                                                <span className="bg-yellow-400 text-xs font-bold px-2 py-0.5 rounded text-slate-900">Default</span>
-                                            )}
-                                        </div>
-                                        <div className="text-xs text-gray-500 mt-2 space-y-1">
-                                            <p>Last modified: {template.lastModified}</p>
-                                            <p>Paper: {template.paperSize} ({template.orientation})</p>
-                                        </div>
-                                    </div>
-                                    <div className="text-gray-300">
-                                        <FaFileAlt size={40} />
-                                    </div>
-                                </div>
+const buildRendererColumns = (settings = {}, typeId) => {
+    const isVoucherLike = ["receipt", "sales-invoice-preprinted", "sales-invoice-letterhead"].includes(typeId);
+    const defaults = categoryDefaultsForColumns(typeId);
 
-                                <div className="mt-auto flex gap-3 pt-6">
-                                    <button
-                                        onClick={() => onEdit(template)}
-                                        className="flex-1 flex items-center justify-center gap-2 border border-gray-300 rounded-lg py-2 text-sm font-bold text-gray-700 hover:bg-gray-50 transition-colors"
-                                    >
-                                        <FaEdit size={14} /> Edit
-                                    </button>
-                                    {!template.isDefault && (
-                                        <button
-                                            onClick={() => onSetDefault(template)}
-                                            className="w-10 flex items-center justify-center border border-gray-300 rounded-lg py-2 text-gray-600 hover:bg-gray-50 transition-colors"
-                                            title="Set as Default"
-                                        >
-                                            <FaCheckCircle size={14} />
-                                        </button>
-                                    )}
-                                    <button
-                                        onClick={() => onDuplicate(template)}
-                                        className="w-10 flex items-center justify-center border border-gray-300 rounded-lg py-2 text-gray-600 hover:bg-gray-50 transition-colors"
-                                        title="Duplicate"
-                                    >
-                                        <FaCopy size={14} />
-                                    </button>
-                                    <button
-                                        onClick={() => onDelete(template.id)}
-                                        className="w-10 flex items-center justify-center border border-red-200 rounded-lg py-2 text-red-600 hover:bg-red-50 transition-colors"
-                                        title="Delete"
-                                    >
-                                        <FaTrash size={14} />
-                                    </button>
-                                </div>
-                            </div>
-                        ))
-                    )}
-                </div>
-            </div>
-        </div>
-    );
+    return sanitizeTemplateColumns({
+        productId: !!settings.colItemCode,
+        sku: !!settings.colSKU,
+        barcode: !!(settings.colBarcode || settings.showBarcode),
+        brand: !!settings.colBrand,
+        detailedDesc: !!settings.colDescription,
+        description: settings.colDescription !== false && settings.showItemDescription !== false,
+        qty: settings.colQty ?? settings.colQtyRequired ?? settings.showReceivedQty ?? !isVoucherLike,
+        unitPrice: settings.colUnitPrice ?? !isVoucherLike,
+        taxableAmount: !!settings.colTaxableAmount,
+        discount: !!settings.colDiscount,
+        tax: settings.colVAT ?? settings.showVATTotal ?? defaults.tax,
+        taxPercent: !!settings.colVAT,
+        total: settings.colLineTotal ?? settings.showTotalReturn ?? !isVoucherLike,
+        batchNumber: !!(settings.colBatchNumber || settings.colBatch || settings.showBatchNo),
+        batchBarcode: !!settings.colSubBarcode,
+        expiry: !!settings.showExpiry,
+        location: !!(settings.showWarehouse || settings.showBranchOutlet || settings.colBinLocation || settings.colSubBinLocation),
+        quotationNo: !!settings.showQuotationRef || defaults.quotationNo,
+        salesOrderNo: !!settings.showSalesOrderRef || defaults.salesOrderNo,
+        salesInvoiceNo: !!settings.showSalesInvoiceRef || defaults.salesInvoiceNo
+    }, defaults);
 };
 
-const PrintEmailTemplates = () => {
-    const { company } = useCompany();
-    const [selectedCategory, setSelectedCategory] = useState(null);
-    const [isCreating, setIsCreating] = useState(false);
+const buildPayload = ({ typeId, name, isDefault, settings }) => {
+    const meta = typeMetaByType(typeId);
+    const designerSettings = {
+        ...defaultSettingsFor(typeId, name),
+        ...settings,
+        templateName: settings.templateName || name || `Default ${meta.label}`
+    };
+    const displayOptions = sanitizeTemplateDisplayOptions(
+        {
+            ...DEFAULT_TEMPLATE_DISPLAY_OPTIONS,
+            ...buildRendererDisplayOptions(designerSettings, typeId)
+        },
+        DEFAULT_TEMPLATE_DISPLAY_OPTIONS
+    );
+
+    return {
+        category: meta.category,
+        name: designerSettings.templateName || name || `Default ${meta.label}`,
+        isDefault: !!isDefault,
+        paperSize: designerSettings.paperSize || designerSettings.pageSize || "A4",
+        orientation: toApiOrientation(designerSettings.orientation),
+        headerContent: designerSettings.headerContent || "",
+        termsContent: designerSettings.termsText || designerSettings.termsConditions || designerSettings.footerText || defaultTermsFor(typeId),
+        footerContent: designerSettings.footerContent || "",
+        displayOptions: JSON.stringify({
+            ...displayOptions,
+            primaryColor: designerSettings.primaryColor || designerSettings.accentColor || "#F5C742",
+            accentColor: designerSettings.accentColor || designerSettings.primaryColor || "#F5C742",
+            salesDesigner: meta.designer,
+            salesDesignerSettings: designerSettings
+        }),
+        columns: JSON.stringify(buildRendererColumns(designerSettings, typeId))
+    };
+};
+
+const CARD_FRAME = "rounded-xl border border-[#DDE3EA] bg-white shadow-[0_1px_3px_rgba(15,23,42,0.13)]";
+const ICON_TILE = "flex h-9 w-9 items-center justify-center rounded-lg bg-[#FFF8DC] text-[#D99A00]";
+const PAGE_BG = "bg-[#F6F7F9]";
+
+const enforceSingleDefaultPerType = async (rows) => {
+    const byType = rows.reduce((acc, row) => {
+        if (!acc[row.type]) acc[row.type] = [];
+        acc[row.type].push(row);
+        return acc;
+    }, {});
+
+    let changed = false;
+    for (const typeRows of Object.values(byType)) {
+        const defaultRows = typeRows.filter((row) => row.isDefault);
+        if (defaultRows.length <= 1) continue;
+
+        changed = true;
+        for (const row of defaultRows.slice(1)) {
+            await updatePrintTemplate(row.id, buildPayload({
+                typeId: row.type,
+                name: row.name,
+                isDefault: false,
+                settings: row.settings
+            }));
+        }
+    }
+
+    return changed;
+};
+
+export default function PrintEmailTemplates() {
+    const [templates, setTemplates] = useState([]);
+    const [loading, setLoading] = useState(true);
+    const [selectedType, setSelectedType] = useState(null);
+    const [activeDesigner, setActiveDesigner] = useState(null);
+    const [designerSettings, setDesignerSettings] = useState({});
+    const [designerTemplateName, setDesignerTemplateName] = useState("");
     const [editingTemplate, setEditingTemplate] = useState(null);
+    const importInputRef = useRef(null);
 
-    // Delete Modal State
-    const [showDeleteModal, setShowDeleteModal] = useState(false);
-    const [templateToDelete, setTemplateToDelete] = useState(null);
+    const refresh = useCallback(async ({ seedMissing = false } = {}) => {
+        setLoading(true);
+        try {
+            const all = await getPrintTemplates();
+            const rows = (all || [])
+                .filter((template) => CATEGORY_SET.has(template.category))
+                .map(templateToRow)
+                .filter(Boolean);
 
-    // State for all templates loaded from backend
-    const [allTemplates, setAllTemplates] = useState([]);
-    const [previewCompanyProfile, setPreviewCompanyProfile] = useState(company || null);
+            if (await enforceSingleDefaultPerType(rows)) {
+                const refreshed = await getPrintTemplates();
+                setTemplates(
+                    (refreshed || [])
+                        .filter((template) => CATEGORY_SET.has(template.category))
+                        .map(templateToRow)
+                        .filter(Boolean)
+                );
+                return;
+            }
 
-    useEffect(() => {
-        loadTemplates();
+            if (seedMissing) {
+                const missingTypes = TEMPLATE_TYPES.filter(
+                    (type) => !rows.some((row) => row.type === type.id)
+                );
+
+                if (missingTypes.length > 0) {
+                    await Promise.all(missingTypes.map((type) => createPrintTemplate(buildPayload({
+                        typeId: type.id,
+                        name: `Default ${type.label}`,
+                        isDefault: true,
+                        settings: defaultSettingsFor(type.id, `Default ${type.label}`)
+                    }))));
+
+                    const refreshed = await getPrintTemplates();
+                    setTemplates(
+                        (refreshed || [])
+                            .filter((template) => CATEGORY_SET.has(template.category))
+                            .map(templateToRow)
+                            .filter(Boolean)
+                    );
+                    return;
+                }
+            }
+
+            setTemplates(rows);
+        } catch (error) {
+            console.error("Failed to load sales templates", error);
+            toast.error("Failed to load sales templates");
+        } finally {
+            setLoading(false);
+        }
     }, []);
 
     useEffect(() => {
-        if (company) {
-            setPreviewCompanyProfile(company);
-            return;
-        }
+        refresh({ seedMissing: true });
+    }, [refresh]);
 
-        let isActive = true;
-        getCompanyProfile()
-            .then((res) => {
-                if (isActive) {
-                    setPreviewCompanyProfile(res.data || null);
-                }
-            })
-            .catch(() => {});
+    const getTemplatesByType = (typeId) => templates.filter((template) => template.type === typeId);
 
-        return () => {
-            isActive = false;
-        };
-    }, [company]);
+    const openDesigner = (typeId, row = null) => {
+        const meta = typeMetaByType(typeId);
+        const settings = row?.settings && Object.keys(row.settings).length
+            ? row.settings
+            : defaultSettingsFor(typeId, row?.name || `New ${meta.label} Template`);
+        const templateName = row?.name || settings.templateName || `New ${meta.label} Template`;
 
-    const loadTemplates = async () => {
-        try {
-            const data = await getPrintTemplates();
-
-            // Auto-seed if empty
-            if (data.length === 0) {
-                await seedDefaultTemplates();
-                return;
-            }
-
-            // Top-up seed: ensure newly added default categories (e.g. Pick List) exist
-            const existingCategories = new Set(data.map((t) => t.category));
-            const missing = defaultTemplates.filter((t) => !existingCategories.has(t.category));
-            if (missing.length > 0) {
-                for (const template of missing) {
-                    try {
-                        await createPrintTemplate(template);
-                    } catch (e) {
-                        console.warn(`Top-up seed failed for ${template.category}:`, e);
-                    }
-                }
-                const refreshed = await getPrintTemplates();
-                setAllTemplates(refreshed.map((template) => normalizeSalesTemplate(template, template.category)));
-                return;
-            }
-
-            const parsedData = data.map((template) => normalizeSalesTemplate(template, template.category));
-            setAllTemplates(parsedData);
-        } catch (error) {
-            console.error("Error loading templates:", error);
-        }
+        setActiveDesigner(typeId);
+        setDesignerSettings({ ...settings, templateName, docType: settings.docType || meta.docType, mode: settings.mode || meta.mode });
+        setDesignerTemplateName(templateName);
+        setEditingTemplate(row);
     };
 
-    const seedDefaultTemplates = async () => {
-        try {
-            for (const template of defaultTemplates) {
-                await createPrintTemplate(template);
-            }
-            // Reload after seeding
-            const data = await getPrintTemplates();
-            const parsedData = data.map((template) => normalizeSalesTemplate(template, template.category));
-            setAllTemplates(parsedData);
-        } catch (error) {
-            console.error("Error seeding default templates:", error);
-        }
-    };
-
-    const categoryTemplates = [
-        { title: "Quotation", description: "Customer quotation template", icon: FaFileAlt },
-        { title: "Sales Order (SO)", description: "Sales order confirmation template", icon: FaClipboardList },
-        { title: "Delivery Note (DO/DN)", description: "Delivery/dispatch note template", icon: FaTruck },
-        { title: "Pick List", description: "Warehouse pick list grouped by location, with batch barcodes", icon: FaBarcode },
-        { title: "Proforma Invoice (PI)", description: "Proforma invoice template", icon: FaFileAlt },
-        { title: "Sales Invoice", description: "Final sales invoice template", icon: FaFileInvoiceDollar },
-        { title: "Receipt Voucher", description: "Customer payment receipt voucher template", icon: FaReceipt },
-        { title: "Credit Note", description: "Credit note template", icon: FaUndo, disabled: true },
-        { title: "Goods Return Voucher (GRV)", description: "Goods return voucher template", icon: FaUndo, disabled: true }
-    ].map(cat => ({
-        ...cat,
-        count: allTemplates.filter(t => t.category === cat.title).length
-    }));
-
-    const handleCreateNew = () => {
+    const closeDesigner = () => {
+        setActiveDesigner(null);
         setEditingTemplate(null);
-        setIsCreating(true);
+        setDesignerSettings({});
+        setDesignerTemplateName("");
     };
 
-    const handleEdit = (template) => {
-        setEditingTemplate(template);
-        setIsCreating(true);
-    };
-
-    const handleDuplicate = async (template) => {
-        const payload = serializeSalesTemplate({
-            category: template.category,
-            name: `${template.name} - Copy`,
-            isDefault: false,
-            paperSize: template.paperSize,
-            orientation: template.orientation,
-            headerContent: template.headerContent,
-            termsContent: template.termsContent,
-            footerContent: template.footerContent,
-            displayOptions: template.displayOptions,
-            columns: template.columns,
+    const persistSave = async (typeId, settings) => {
+        const payload = buildPayload({
+            typeId,
+            name: settings.templateName || designerTemplateName,
+            isDefault: editingTemplate?.isDefault ?? getTemplatesByType(typeId).length === 0,
+            settings
         });
 
         try {
-            const savedTemplate = await createPrintTemplate(payload);
-            const parsedTemplate = normalizeSalesTemplate(savedTemplate, savedTemplate.category);
-            setAllTemplates(prev => [...prev, parsedTemplate]);
-        } catch (error) {
-            console.error("Error duplicating template:", error);
-            alert("Failed to duplicate template");
-        }
-    };
-
-    const handleDelete = (id) => {
-        setTemplateToDelete(id);
-        setShowDeleteModal(true);
-    };
-
-    const confirmDelete = async () => {
-        if (!templateToDelete) return;
-
-        try {
-            await deletePrintTemplate(templateToDelete);
-            setAllTemplates(prev => prev.filter(t => t.id !== templateToDelete));
-            setShowDeleteModal(false);
-            setTemplateToDelete(null);
-        } catch (error) {
-            console.error("Error deleting template:", error);
-            alert("Failed to delete template");
-        }
-    };
-
-    const handleSaveTemplate = async (templateData) => {
-        try {
-            const normalizedTemplate = normalizeSalesTemplate(templateData, templateData.category);
-            const payload = serializeSalesTemplate(normalizedTemplate);
-
-            let savedTemplate;
-            if (templateData.id && allTemplates.some(t => t.id === templateData.id)) {
-                savedTemplate = await updatePrintTemplate(templateData.id, payload);
-                const parsedTemplate = normalizeSalesTemplate(savedTemplate, savedTemplate.category);
-                setAllTemplates(prev => prev.map(t => t.id === parsedTemplate.id ? parsedTemplate : t));
-
+            if (editingTemplate?.id) {
+                await updatePrintTemplate(editingTemplate.id, payload);
+                toast.success(`${payload.name} updated`);
             } else {
-                const { id, ...createPayload } = payload;
-                savedTemplate = await createPrintTemplate(createPayload);
-                const parsedTemplate = normalizeSalesTemplate(savedTemplate, savedTemplate.category);
-                setAllTemplates(prev => [...prev, parsedTemplate]);
+                await createPrintTemplate(payload);
+                toast.success(`${payload.name} created`);
+            }
+            closeDesigner();
+            await refresh();
+        } catch (error) {
+            console.error("Failed to save sales template", error);
+            toast.error("Failed to save template");
+        }
+    };
+
+    const handleDuplicate = async (row) => {
+        const payload = buildPayload({
+            typeId: row.type,
+            name: `${row.name} (Copy)`,
+            isDefault: false,
+            settings: { ...row.settings, templateName: `${row.name} (Copy)` }
+        });
+
+        try {
+            await createPrintTemplate(payload);
+            toast.success("Template duplicated");
+            await refresh();
+        } catch (error) {
+            console.error("Failed to duplicate sales template", error);
+            toast.error("Failed to duplicate template");
+        }
+    };
+
+    const handleDelete = async (row) => {
+        if (!window.confirm(`Delete "${row.name}"?`)) return;
+
+        try {
+            await deletePrintTemplate(row.id);
+            toast.success("Template deleted");
+            await refresh();
+        } catch (error) {
+            console.error("Failed to delete sales template", error);
+            toast.error("Failed to delete template");
+        }
+    };
+
+    const handleSetDefault = async (row) => {
+        try {
+            const sameType = getTemplatesByType(row.type);
+            for (const template of sameType.filter((template) => template.id !== row.id)) {
+                await updatePrintTemplate(template.id, buildPayload({
+                    typeId: template.type,
+                    name: template.name,
+                    isDefault: false,
+                    settings: template.settings
+                }));
+            }
+            await updatePrintTemplate(row.id, buildPayload({
+                typeId: row.type,
+                name: row.name,
+                isDefault: true,
+                settings: row.settings
+            }));
+            toast.success("Default template updated");
+            await refresh();
+        } catch (error) {
+            console.error("Failed to set sales template default", error);
+            toast.error("Failed to set default template");
+        }
+    };
+
+    const handleExportAll = () => {
+        const anchor = document.createElement("a");
+        anchor.href = `data:application/json;charset=utf-8,${encodeURIComponent(JSON.stringify(templates, null, 2))}`;
+        anchor.download = "sales_print_templates.json";
+        anchor.click();
+        toast.success("Templates exported");
+    };
+
+    const handleImport = async (event) => {
+        const file = event.target.files?.[0];
+        event.target.value = "";
+        if (!file) return;
+
+        try {
+            const content = await file.text();
+            const data = JSON.parse(content);
+            const items = Array.isArray(data) ? data : [data];
+
+            for (const item of items) {
+                const meta = typeMetaByType(item.type) || typeMetaByCategory(item.category);
+                if (!meta) continue;
+                await createPrintTemplate(buildPayload({
+                    typeId: meta.id,
+                    name: item.name || `Imported ${meta.label}`,
+                    isDefault: false,
+                    settings: item.settings || defaultSettingsFor(meta.id, item.name)
+                }));
             }
 
-            setIsCreating(false);
-            setEditingTemplate(null);
+            toast.success("Templates imported");
+            await refresh();
         } catch (error) {
-            console.error("Error saving template:", error);
-            alert("Failed to save template");
+            console.error("Failed to import sales template", error);
+            toast.error("Invalid template file");
         }
     };
 
-    const handleSetDefault = async (template) => {
-        try {
-            const updatedTemplate = await setDefaultTemplate(
-                template.id,
-                serializeSalesTemplate({
-                    ...normalizeSalesTemplate(template, template.category),
-                    isDefault: true
-                })
-            );
+    if (activeDesigner) {
+        const meta = typeMetaByType(activeDesigner);
+        const commonProps = {
+            templateName: designerTemplateName,
+            initialSettings: designerSettings,
+            onClose: closeDesigner,
+            onSave: (settings) => persistSave(activeDesigner, settings)
+        };
 
-            const parsedTemplate = normalizeSalesTemplate(updatedTemplate, updatedTemplate.category);
-
-            setAllTemplates(prev => prev.map(t => {
-                if (t.id === parsedTemplate.id) {
-                    return parsedTemplate;
-                } else if (t.category === parsedTemplate.category) {
-                    return { ...t, isDefault: false };
-                }
-                return t;
-            }));
-
-        } catch (error) {
-            console.error("Error setting default template:", error);
-            alert("Failed to set default template");
+        if (meta.designer === "document") {
+            return <DocumentTemplateDesigner docType={meta.docType} {...commonProps} />;
         }
-    };
-
-    if (isCreating && selectedCategory) {
-        return (
-            <TemplateDesigner
-                category={selectedCategory}
-                initialData={editingTemplate}
-                previewCompany={previewCompanyProfile}
-                onSave={handleSaveTemplate}
-                onCancel={() => { setIsCreating(false); setEditingTemplate(null); }}
-            />
-        );
+        if (meta.designer === "grv") return <GRVTemplateDesigner {...commonProps} />;
+        if (meta.designer === "payment") return <PaymentReceiptDesigner {...commonProps} />;
+        if (meta.designer === "pick-list") return <PickListDesigner {...commonProps} />;
+        if (meta.designer === "overlay") {
+            return <InvoiceOverlayDesigner mode={meta.mode} {...commonProps} />;
+        }
     }
 
-    if (selectedCategory) {
-        const templates = allTemplates.filter(t => t.category === selectedCategory.title);
+    const renderTemplateCard = (row) => {
+        const meta = typeMetaByType(row.type);
+        const Icon = meta?.icon || FileText;
+
         return (
-            <>
-                <TemplateDetailView
-                    category={selectedCategory}
-                    templates={templates}
-                    onBack={() => setSelectedCategory(null)}
-                    onCreate={handleCreateNew}
-                    onEdit={handleEdit}
-                    onDuplicate={handleDuplicate}
-                    onDelete={handleDelete}
-                    onSetDefault={handleSetDefault}
-                />
-                <ConfirmationModal
-                    isOpen={showDeleteModal}
-                    onClose={() => { setShowDeleteModal(false); setTemplateToDelete(null); }}
-                    onConfirm={confirmDelete}
-                    title="Delete Template?"
-                    message="Are you sure you want to delete this template? This action cannot be undone and may affect documents using this template."
-                />
-            </>
+            <Card key={row.id} className={`${CARD_FRAME} overflow-hidden transition hover:border-[#C9D2DD] hover:shadow-[0_6px_18px_rgba(15,23,42,0.10)]`}>
+                <CardContent className="flex min-h-[150px] flex-col p-0">
+                    <div className="flex flex-1 gap-3 p-4">
+                        <div className="flex min-w-0 flex-1 flex-col">
+                            <div className="flex min-w-0 flex-wrap items-center gap-2">
+                                <h3 className="truncate text-sm font-bold text-slate-950">{row.name}</h3>
+                                {row.isDefault && (
+                                    <span className="rounded bg-[#F5C742] px-1.5 py-0.5 text-[10px] font-bold leading-4 text-black">Default</span>
+                                )}
+                            </div>
+                            <div className="mt-2 space-y-0.5 text-[11px] leading-4 text-slate-600">
+                                <p>Last modified: <span className="font-medium text-slate-700">{row.lastModified}</span></p>
+                                <p>Paper: <span className="font-medium text-slate-700">{row.paperSize} ({String(row.orientation || "Portrait")})</span></p>
+                            </div>
+                        </div>
+                        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-slate-200 bg-slate-50 text-slate-300">
+                            <Icon className="h-6 w-6" />
+                        </div>
+                    </div>
+
+                    <div className="flex items-center gap-2 border-t border-[#E5EAF0] bg-white px-4 py-2.5">
+                        <Button size="sm" variant="outline" onClick={() => openDesigner(row.type, row)} className="h-8 flex-1 border-[#CBD5E1] bg-white text-xs font-semibold text-slate-700 hover:bg-slate-50">
+                            <Edit className="h-3 w-3" />
+                            Edit
+                        </Button>
+                        <Button size="icon" variant="outline" onClick={() => handleDuplicate(row)} title="Duplicate" className="h-8 w-8 border-[#CBD5E1] bg-white text-slate-700 hover:bg-slate-50">
+                            <Copy className="h-3 w-3" />
+                        </Button>
+                        <Button size="icon" variant="outline" onClick={() => handleDelete(row)} title="Delete" className="h-8 w-8 border-red-200 bg-white text-red-600 hover:bg-red-50">
+                            <Trash2 className="h-3 w-3" />
+                        </Button>
+                    </div>
+                    <div className="border-t border-[#EEF2F6] bg-white px-4 pb-2.5">
+                        {row.isDefault ? (
+                            <div className="flex h-7 items-center justify-center gap-1.5 rounded-md text-[11px] font-semibold text-[#A16207]">
+                                <Check className="h-3 w-3" />
+                                Current Default
+                            </div>
+                        ) : (
+                            <button
+                                type="button"
+                                onClick={() => handleSetDefault(row)}
+                                className="flex h-7 w-full items-center justify-center gap-1.5 rounded-md text-[11px] font-semibold text-slate-700 hover:bg-[#FFF8DC] hover:text-[#A16207]"
+                            >
+                                <Check className="h-3 w-3" />
+                                Set as Default
+                            </button>
+                        )}
+                    </div>
+                </CardContent>
+            </Card>
+        );
+    };
+
+    const renderOverlayCard = (overlay) => {
+        const overlayTemplates = getTemplatesByType(overlay.id);
+        const isPreprinted = overlay.mode === "preprinted";
+        const Icon = isPreprinted ? Printer : FileText;
+
+        return (
+            <Card key={overlay.id} className={`${CARD_FRAME} overflow-hidden transition hover:border-[#C9D2DD] hover:shadow-[0_6px_18px_rgba(15,23,42,0.10)]`}>
+                <CardContent className="flex min-h-[150px] flex-col p-0">
+                    <div className="flex flex-1 gap-3 p-4">
+                        <div className="min-w-0 flex-1">
+                            <div className="mb-3 flex items-center gap-2">
+                                <div className={ICON_TILE}>
+                                    <Icon className="h-5 w-5" />
+                                </div>
+                                <span className="rounded-full bg-slate-100 px-2 py-1 text-[10px] font-bold uppercase text-slate-500">Overlay</span>
+                            </div>
+                            <h3 className="text-sm font-bold text-slate-950">{overlay.label}</h3>
+                            <p className="mt-1 text-xs leading-4 text-slate-600">{overlay.description}</p>
+                            <p className="mt-3 text-[11px] font-medium text-slate-500">
+                                {overlayTemplates.length} template{overlayTemplates.length === 1 ? "" : "s"}
+                            </p>
+                        </div>
+                    </div>
+
+                    <div className="border-t border-[#E5EAF0] bg-white px-4 py-2.5">
+                        <Button onClick={() => openDesigner(overlay.id)} className="h-8 w-full bg-[#F5C742] text-xs font-bold text-black hover:bg-[#e6b932]">
+                            <Plus className="h-3.5 w-3.5" />
+                            Create {overlay.label}
+                        </Button>
+                    </div>
+                </CardContent>
+            </Card>
+        );
+    };
+
+    const renderTypeCard = (type) => {
+        const Icon = type.icon || FileText;
+        const typeTemplates = getTemplatesByType(type.id);
+
+        return (
+            <button
+                key={type.id}
+                type="button"
+                onClick={() => setSelectedType(type.id)}
+                className={`${CARD_FRAME} group flex min-h-[184px] flex-col p-6 text-left transition hover:-translate-y-0.5 hover:border-[#F5C742] hover:shadow-[0_6px_18px_rgba(15,23,42,0.12)]`}
+            >
+                <div className="mb-4 flex items-start justify-between">
+                    <div className={ICON_TILE}>
+                        <Icon className="h-5 w-5" />
+                    </div>
+                    <ChevronRight className="h-4 w-4 text-slate-400 transition group-hover:text-slate-700" />
+                </div>
+                <h3 className="text-base font-bold text-slate-950">{type.label}</h3>
+                <p className="mt-1 text-sm leading-5 text-slate-600">{type.description}</p>
+                <p className="mt-auto text-xs font-medium text-slate-500">
+                    {typeTemplates.length} template{typeTemplates.length === 1 ? "" : "s"}
+                </p>
+            </button>
+        );
+    };
+
+    const HeaderTitle = ({ children, subtitle, detail = false, action = null }) => (
+        <header className="border-b border-[#DDE3EA] bg-white px-7 py-5">
+            <div className="mb-3 flex flex-wrap items-center gap-1 text-[11px] text-slate-600">
+                <span>Sales</span>
+                <ChevronRight className="h-3 w-3" />
+                <span className={detail ? "text-slate-600" : "font-semibold text-slate-950"}>Print & Email Templates</span>
+                {detail && (
+                    <>
+                        <ChevronRight className="h-3 w-3" />
+                        <span className="font-semibold text-slate-950">{children}</span>
+                    </>
+                )}
+            </div>
+            <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+                <div>
+                    <div className="flex items-center gap-3">
+                        {detail && (
+                            <button
+                                type="button"
+                                onClick={() => setSelectedType(null)}
+                                className="mr-1 flex h-7 w-7 items-center justify-center rounded-md text-slate-600 hover:bg-slate-100 hover:text-slate-950"
+                                aria-label="Back to template types"
+                            >
+                                <ArrowLeft className="h-5 w-5" />
+                            </button>
+                        )}
+                        <div className={ICON_TILE}>
+                            <FileText className="h-5 w-5" />
+                        </div>
+                        <h1 className="text-2xl font-bold tracking-tight text-slate-950">{children}</h1>
+                    </div>
+                    {subtitle && <p className="mt-2 text-sm text-slate-600">{subtitle}</p>}
+                </div>
+                {action}
+            </div>
+        </header>
+    );
+
+    if (selectedType) {
+        const typeTemplates = getTemplatesByType(selectedType);
+        const typeInfo = typeMetaByType(selectedType);
+        const overlayTypes = OVERLAY_TYPES.filter((type) => type.parentType === selectedType);
+
+        return (
+            <div className={`min-h-screen ${PAGE_BG}`}>
+                <HeaderTitle
+                    detail
+                    subtitle={typeInfo.description}
+                    action={(
+                        <Button onClick={() => openDesigner(selectedType)} className="h-9 rounded-md bg-[#F5C742] px-4 font-bold text-black hover:bg-[#e6b932]">
+                            <Plus className="h-4 w-4" />
+                            Create New Template
+                        </Button>
+                    )}
+                >
+                    {typeInfo.label} Templates
+                </HeaderTitle>
+
+                <main className="space-y-7 p-7">
+                    <div className="grid grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
+                        {typeTemplates.map(renderTemplateCard)}
+                        {typeTemplates.length === 0 && (
+                            <Card className={`${CARD_FRAME} border-dashed`}>
+                                <CardContent className="py-14 text-center">
+                                    <FileText className="mx-auto mb-4 h-12 w-12 text-slate-300" />
+                                    <h3 className="mb-2 text-base font-bold text-slate-950">No templates created yet</h3>
+                                    <p className="mb-5 text-sm text-slate-600">Create your first {typeInfo.label.toLowerCase()} template</p>
+                                    <Button onClick={() => openDesigner(selectedType)} className="bg-[#F5C742] font-bold text-black hover:bg-[#e6b932]">
+                                        <Plus className="h-4 w-4" />
+                                        Create Template
+                                    </Button>
+                                </CardContent>
+                            </Card>
+                        )}
+                    </div>
+
+                    {overlayTypes.length > 0 && (
+                        <section className="space-y-4">
+                            <div>
+                                <h2 className="text-sm font-bold uppercase tracking-wide text-slate-950">Additional Print Modes</h2>
+                                <p className="mt-1 text-sm text-slate-600">Create pre-printed and letterhead invoice layouts with the same card style.</p>
+                            </div>
+                            <div className="grid grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
+                                {overlayTypes.map(renderOverlayCard)}
+                            </div>
+                        </section>
+                    )}
+                </main>
+            </div>
         );
     }
 
     return (
-        <div className="flex flex-col h-full bg-gray-50 text-slate-800 font-sans">
-            {/* Header / Breadcrumbs */}
-            <div className="px-8 py-5 border-b border-gray-200 bg-white">
-                <div className="text-xs text-gray-500 mb-2 font-medium">
-                    Sales &gt; <span className="text-gray-900">Print & Email Templates</span>
-                </div>
-                <h1 className="text-2xl font-bold text-gray-900 flex items-center gap-2">
-                    <span className="text-yellow-500"><FaFileAlt /></span>
-                    Print & Email Templates
-                </h1>
-                <p className="text-gray-500 mt-1 text-sm">
-                    Design and customize templates for sales orders, invoices, and other procurement documents
-                </p>
-            </div>
+        <div className={`min-h-screen ${PAGE_BG}`}>
+            <HeaderTitle subtitle="Design and customize templates for sales orders, invoices, and other customer documents">
+                Print & Email Templates
+            </HeaderTitle>
 
-            {/* Content Area */}
-            <div className="p-8 flex-1 overflow-auto">
+            <main className="space-y-7 p-7">
+                <section className="grid grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
+                    {TEMPLATE_TYPES.map(renderTypeCard)}
+                </section>
 
-                {/* Templates Grid */}
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
-                    {categoryTemplates.map((template, index) => (
-                        <TemplateCard
-                            key={index}
-                            {...template}
-                            onClick={() => setSelectedCategory(template)}
-                        />
-                    ))}
-                </div>
-
-                {/* Quick Actions */}
-                <h3 className="text-sm font-bold text-gray-900 mb-4 uppercase tracking-wider">Quick Actions</h3>
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
-                    <ActionCard
-                        icon={FaUpload}
-                        title="Import Template"
-                        description="Upload from file"
-                        colorClass="text-blue-600 bg-blue-50"
-                    />
-                    <ActionCard
-                        icon={FaDownload}
-                        title="Export Templates"
-                        description="Download all templates"
-                        colorClass="text-green-600 bg-green-50"
-                    />
-                    <ActionCard
-                        icon={FaCog}
-                        title="Global Settings"
-                        description="Configure defaults"
-                        colorClass="text-purple-600 bg-purple-50"
-                    />
-                </div>
-
-                {/* Tips Section */}
-                <div className="bg-blue-50 border border-blue-100 rounded-xl p-6">
-                    <div className="flex items-center gap-2 mb-3 text-blue-800 font-semibold">
-                        <FaLightbulb />
-                        <h3 className="text-sm">Email & Print Tips</h3>
+                <section className="space-y-4">
+                    <h2 className="text-sm font-bold uppercase tracking-wide text-slate-950">Quick Actions</h2>
+                    <div className="grid grid-cols-1 gap-5 lg:grid-cols-3">
+                        <button
+                            type="button"
+                            onClick={() => importInputRef.current?.click()}
+                            className={`${CARD_FRAME} flex h-[68px] items-center gap-4 px-4 text-left transition hover:border-blue-300 hover:shadow-[0_4px_14px_rgba(15,23,42,0.1)]`}
+                        >
+                            <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-blue-50 text-blue-600">
+                                <Upload className="h-5 w-5" />
+                            </div>
+                            <div>
+                                <p className="text-sm font-bold text-slate-950">Import Template</p>
+                                <p className="text-xs text-slate-600">Upload from file</p>
+                            </div>
+                        </button>
+                        <button
+                            type="button"
+                            onClick={handleExportAll}
+                            disabled={templates.length === 0}
+                            className={`${CARD_FRAME} flex h-[68px] items-center gap-4 px-4 text-left transition hover:border-green-300 hover:shadow-[0_4px_14px_rgba(15,23,42,0.1)] disabled:cursor-not-allowed disabled:opacity-60`}
+                        >
+                            <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-green-50 text-green-600">
+                                <Download className="h-5 w-5" />
+                            </div>
+                            <div>
+                                <p className="text-sm font-bold text-slate-950">Export Templates</p>
+                                <p className="text-xs text-slate-600">Download all templates</p>
+                            </div>
+                        </button>
+                        <button
+                            type="button"
+                            onClick={() => refresh({ seedMissing: true })}
+                            disabled={loading}
+                            className={`${CARD_FRAME} flex h-[68px] items-center gap-4 px-4 text-left transition hover:border-purple-300 hover:shadow-[0_4px_14px_rgba(15,23,42,0.1)] disabled:cursor-wait disabled:opacity-70`}
+                        >
+                            <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-purple-50 text-purple-600">
+                                {loading ? <RefreshCw className="h-5 w-5 animate-spin" /> : <Settings className="h-5 w-5" />}
+                            </div>
+                            <div>
+                                <p className="text-sm font-bold text-slate-950">Global Settings</p>
+                                <p className="text-xs text-slate-600">Configure defaults</p>
+                            </div>
+                        </button>
+                        <input ref={importInputRef} type="file" accept="application/json,.json" onChange={handleImport} className="hidden" />
                     </div>
-                    <ul className="list-disc list-inside text-sm text-blue-700 space-y-1 ml-1">
-                        <li>Templates are automatically used when emailing or printing documents</li>
-                        <li>Set a default template for each document type for consistent branding</li>
-                        <li>Use HTML/CSS for advanced customization of headers and footers</li>
-                        <li>Preview templates before saving to ensure correct formatting</li>
-                    </ul>
-                </div>
+                </section>
 
-            </div>
-
-            {/* Delete Confirmation Modal */}
-            <ConfirmationModal
-                isOpen={showDeleteModal}
-                onClose={() => { setShowDeleteModal(false); setTemplateToDelete(null); }}
-                onConfirm={confirmDelete}
-                title="Delete Template?"
-                message="Are you sure you want to delete this template? This action cannot be undone and may affect documents using this template."
-            />
+                <section className="rounded-xl border border-blue-200 bg-blue-50 px-5 py-4 text-sm text-blue-900">
+                    <div className="flex items-center gap-2 font-bold">
+                        <Mail className="h-4 w-4" />
+                        Email & Print Tips
+                    </div>
+                    <p className="mt-2 text-blue-800">
+                        Templates are automatically used when emailing or printing sales documents. Set one default per document type for the live sales pages.
+                    </p>
+                </section>
+            </main>
         </div>
     );
-};
-
-export default PrintEmailTemplates;
+}
