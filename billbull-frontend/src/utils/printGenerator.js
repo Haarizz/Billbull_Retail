@@ -32,11 +32,11 @@ const renderCurrencySymbolHtml = (companyProfile = {}) => {
 
 const renderTextWithCurrencySymbols = (value, companyProfile = {}) => {
     const currencySymbolHtml = renderCurrencySymbolHtml(companyProfile);
-    
+
     return (
-    escapeHtml(value)
-        .replace(AMOUNT_BEFORE_AED_PATTERN, `${currencySymbolHtml} $1`)
-        .replace(AED_TOKEN_PATTERN, `$1${currencySymbolHtml}`)
+        escapeHtml(value)
+            .replace(AMOUNT_BEFORE_AED_PATTERN, `${currencySymbolHtml} $1`)
+            .replace(AED_TOKEN_PATTERN, `$1${currencySymbolHtml}`)
     );
 };
 
@@ -47,6 +47,9 @@ export const generateEmailHtml = (template, data, options = {}) =>
     generateDocumentEmailHtml(template, data, options);
 
 const getTemplateDesignerSettingsQuick = (template = {}) => {
+    if (template.salesDesignerSettings && typeof template.salesDesignerSettings === 'object') {
+        return template.salesDesignerSettings;
+    }
     if (template.purchaseDesignerSettings && typeof template.purchaseDesignerSettings === 'object') {
         return template.purchaseDesignerSettings;
     }
@@ -54,7 +57,7 @@ const getTemplateDesignerSettingsQuick = (template = {}) => {
         const displayOptions = typeof template.displayOptions === 'string'
             ? JSON.parse(template.displayOptions)
             : (template.displayOptions || {});
-        return displayOptions.purchaseDesignerSettings || displayOptions.designerSettings || {};
+        return displayOptions.salesDesignerSettings || displayOptions.purchaseDesignerSettings || displayOptions.designerSettings || {};
     } catch {
         return {};
     }
@@ -66,34 +69,45 @@ const buildQrContent = (data, companyName) => {
     const lines = [];
 
     // ── Document identity ──────────────────────────────────────────────
-    if (data.title)  lines.push(`Type: ${data.title}`);
-    if (data.docNo)  lines.push(`Doc No: ${data.docNo}`);
-    if (data.date)   lines.push(`Date: ${data.date}`);
-    if (data.status) lines.push(`Status: ${data.status}`);
+    if (data.title) lines.push(`Type: ${data.title}`);
+    if (data.docNo) lines.push(`Doc No: ${data.docNo}`);
+    if (data.date) lines.push(`Date: ${data.date}`);
+    const docStatus = data.status || data.meta?.status;
+    if (docStatus) lines.push(`Status: ${docStatus}`);
 
     // ── Company (issuer) ───────────────────────────────────────────────
     if (companyName) lines.push(`Company: ${companyName}`);
 
-    // ── Vendor / Party ─────────────────────────────────────────────────
-    const p = data.party;
-    if (p?.name)    lines.push(`Vendor: ${p.name}`);
-    if (p?.code)    lines.push(`Vendor Code: ${p.code}`);
-    if (p?.taxId)   lines.push(`Vendor TRN: ${p.taxId}`);
-    if (p?.phone)   lines.push(`Vendor Phone: ${p.phone}`);
-    if (p?.address) lines.push(`Vendor Address: ${p.address}`);
+    // ── Party (purchase: data.party / sales: data.customer) ───────────
+    const p = data.party || data.customer;
+    const partyLabel = data.party ? 'Vendor' : 'Customer';
+    if (p?.name) lines.push(`${partyLabel}: ${p.name}`);
+    if (p?.code) lines.push(`${partyLabel} Code: ${p.code}`);
+    if (p?.taxId || p?.trn) lines.push(`${partyLabel} TRN: ${p.taxId || p.trn}`);
+    if (p?.phone) lines.push(`${partyLabel} Phone: ${p.phone}`);
+    if (p?.address) lines.push(`${partyLabel} Address: ${p.address}`);
 
-    // ── Header meta (Due Date, Payment Terms, Delivery Terms, etc.) ────
+    // ── Header meta (purchase format) ─────────────────────────────────
     if (Array.isArray(data.headerMeta)) {
         for (const row of data.headerMeta) {
             if (row?.label && row?.value) lines.push(`${row.label}: ${row.value}`);
         }
     }
 
-    // ── References (PO Number, Location, Warehouse, etc.) ─────────────
+    // ── References (purchase format) ──────────────────────────────────
     if (Array.isArray(data.references)) {
         for (const row of data.references) {
             if (row?.label && row?.value) lines.push(`${row.label}: ${row.value}`);
         }
+    }
+
+    // ── Sales meta fields ──────────────────────────────────────────────
+    if (data.meta) {
+        const m = data.meta;
+        if (m.paymentTerm || m.paymentTerms) lines.push(`Payment Terms: ${m.paymentTerm || m.paymentTerms}`);
+        if (m.salesPerson || m.salesperson) lines.push(`Sales Person: ${m.salesPerson || m.salesperson}`);
+        if (m.poNumber) lines.push(`P.O Number: ${m.poNumber}`);
+        if (m.location || m.branch) lines.push(`Location: ${m.location || m.branch}`);
     }
 
     // ── Items summary ──────────────────────────────────────────────────
@@ -102,7 +116,7 @@ const buildQrContent = (data, companyName) => {
         lines.push(`Items: ${items.length}`);
         for (const item of items) {
             const name = item.name || item.description?.title || item.itemName || '';
-            const qty  = item.qty ?? item.quantity ?? '';
+            const qty = item.qty ?? item.quantity ?? '';
             const code = item.code || item.itemCode || '';
             const itemLine = [name, code && `(${code})`, qty && `Qty: ${qty}`].filter(Boolean).join(' ');
             if (itemLine) lines.push(`  - ${itemLine}`);
@@ -112,14 +126,15 @@ const buildQrContent = (data, companyName) => {
     // ── Totals ─────────────────────────────────────────────────────────
     const t = data.totals || {};
     const currency = t.currency || 'AED';
-    if (t.subTotal   != null) lines.push(`Sub Total: ${currency} ${fmt2(t.subTotal)}`);
-    if (t.tax        != null && Number(t.tax) > 0) lines.push(`VAT: ${currency} ${fmt2(t.tax)}`);
+    if (t.subTotal != null) lines.push(`Sub Total: ${currency} ${fmt2(t.subTotal)}`);
+    if (t.tax != null && Number(t.tax) > 0) lines.push(`VAT: ${currency} ${fmt2(t.tax)}`);
     if (t.grandTotal != null) lines.push(`Grand Total: ${currency} ${fmt2(t.grandTotal)}`);
     if (t.amountPaid != null && Number(t.amountPaid) > 0) lines.push(`Amount Paid: ${currency} ${fmt2(t.amountPaid)}`);
     if (t.balanceDue != null && Number(t.balanceDue) > 0) lines.push(`Balance Due: ${currency} ${fmt2(t.balanceDue)}`);
 
-    // ── Notes ──────────────────────────────────────────────────────────
-    if (data.notes) lines.push(`Notes: ${data.notes}`);
+    // ── Notes (purchase: data.notes / sales: data.meta.notes) ─────────
+    const docNotes = data.notes || data.meta?.notes;
+    if (docNotes) lines.push(`Notes: ${docNotes}`);
 
     return lines.join('\n');
 };
@@ -228,10 +243,10 @@ export const generateReportPrintHtml = (_template, reportTitle, columns, data, c
     const rows = data.map((row) => `
         <tr>
             ${columns.map((column) => {
-                const value = row[column.key];
-                const isNumeric = typeof value === 'number';
-                return `<td class="${isNumeric ? 'text-right' : ''}">${value !== null && value !== undefined ? renderTextWithCurrencySymbols(value, companyProfile) : '-'}</td>`;
-            }).join('')}
+        const value = row[column.key];
+        const isNumeric = typeof value === 'number';
+        return `<td class="${isNumeric ? 'text-right' : ''}">${value !== null && value !== undefined ? renderTextWithCurrencySymbols(value, companyProfile) : '-'}</td>`;
+    }).join('')}
         </tr>
     `).join('');
 

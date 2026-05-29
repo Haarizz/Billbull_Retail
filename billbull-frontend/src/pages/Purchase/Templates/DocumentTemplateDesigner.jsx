@@ -95,6 +95,7 @@ function defaultSettings(docType) {
     showSalesperson: !isGRN,
     showPaymentTerms: isInv || docType === "quotation" || docType === "sales-order",
     showCurrency: true,
+    currencyDisplay: "symbol",
     showPOReference: docType !== "quotation",
     showDeliveryTerms: isDN || docType === "sales-order",
     showLocationStore: docType === "quotation" || docType === "sales-order",
@@ -737,6 +738,7 @@ function DocumentTemplateDesigner({ docType, templateName, initialSettings, onCl
               <Row label="Salesperson / Account Exec"><Toggle value={s.showSalesperson} onChange={(v) => upd("showSalesperson", v)} /></Row>
               <Row label="Payment Terms"><Toggle value={s.showPaymentTerms} onChange={(v) => upd("showPaymentTerms", v)} /></Row>
               <Row label="Currency"><Toggle value={s.showCurrency} onChange={(v) => upd("showCurrency", v)} /></Row>
+              <Row label="Show as Currency Code (e.g. AED)"><Toggle value={s.currencyDisplay === "code"} onChange={(v) => upd("currencyDisplay", v ? "code" : "symbol")} /></Row>
               <Row label="PO / Reference"><Toggle value={s.showPOReference} onChange={(v) => upd("showPOReference", v)} /></Row>
               <Row label="Location / Store"><Toggle value={s.showLocationStore} onChange={(v) => upd("showLocationStore", v)} /></Row>
               <Row label="Warehouse / Store"><Toggle value={s.showWarehouseStore} onChange={(v) => upd("showWarehouseStore", v)} /></Row>

@@ -41,7 +41,7 @@ export function Badge({ className = "", variant = "default", ...props }) {
 }
 
 export function Card({ className = "", ...props }) {
-    return <div className={cn("rounded-lg border border-gray-200 bg-white shadow-sm", className)} {...props} />;
+    return <div className={cn("rounded-lg bg-white shadow-md border-0 ring-1 ring-black/5", className)} {...props} />;
 }
 
 export function CardHeader({ className = "", ...props }) {

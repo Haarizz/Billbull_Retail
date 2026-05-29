@@ -45,7 +45,7 @@ import {
     findVendorRecord,
     normalizePurchaseTemplate
 } from '../../utils/purchasePrintUtils';
-import { generatePrintHtml, printHtml } from '../../utils/printGenerator';
+import { generatePrintHtmlAsync, printHtml } from '../../utils/printGenerator';
 import { buildFinancialVoucherPrintHtml } from '../../utils/financialPrintTemplate';
 import billBullLogo from '../../assets/billBullLogo.png';
 import { exportToExcel, exportToPDF } from '../../utils/exportUtils';
@@ -367,7 +367,7 @@ const PaymentVoucher = () => {
                 html = html.replace(/<title>.*?<\/title>/i, `<title>${title}</title>`);
             } else {
                 const template = normalizePurchaseTemplate(rawTemplate, 'Payment Voucher');
-                html = generatePrintHtml(template, printData, { companyProfile: company, billBullLogo });
+                html = await generatePrintHtmlAsync(template, printData, { companyProfile: company, billBullLogo });
                 html = html.replace(/<title>.*?<\/title>/i, `<title>${title}</title>`);
             }
             printHtml(html);

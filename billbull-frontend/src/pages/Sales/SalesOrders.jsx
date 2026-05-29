@@ -47,7 +47,7 @@ import { formatDisplayDate } from '../../utils/dateUtils';
 import { pickSalesItemPrice, isPolicyOverridingPackings } from '../../utils/salesPricing';
 import { computeLineTaxTotals, resolveLineTaxRate } from '../../utils/vatMath';
 import { getActiveVatRate } from '../../api/taxApi';
-import { generatePrintHtml, printHtml } from '../../utils/printGenerator';
+import { generatePrintHtmlAsync, printHtml } from '../../utils/printGenerator';
 import { getImageUrl } from '../../utils/urlUtils';
 import { getDefaultProductUnit, resolveUnitAmount } from '../../utils/unitPricing';
 import { getStockAvailability } from '../../api/stockAvailabilityApi';
@@ -909,7 +909,7 @@ const SalesOrders = () => {
         { name: selectedCustomer?.name, code: selectedCustomer?.code },
         company
       );
-      const html = generatePrintHtml(template, printData, {
+      const html = await generatePrintHtmlAsync(template, printData, {
         companyProfile: buildDocumentHeaderProfile({
           company,
           branches: availableBranches || [],
@@ -991,6 +991,9 @@ const SalesOrders = () => {
           customer: {
             name: selectedCustomer?.name || '',
             address: fullCustomer?.address || fullCustomer?.billingAddress || '',
+            shippingAddress: shippingAddress || '',
+            phone: fullCustomer?.mobile || fullCustomer?.phone || '',
+            email: fullCustomer?.email || '',
             trn: selectedCustomer?.trn || fullCustomer?.trn
           },
           items: items.filter(i => i.code || i.desc).map(i => ({
@@ -1027,15 +1030,24 @@ const SalesOrders = () => {
             billDiscount: Number(billDiscount) || 0,
             billDiscountAmount
           },
-          meta: {
-            paymentTerm: '30 Days',
-            status,
-            notes: customerNotes,
-            reference: linkedQtn || linkedPi || ''
-          }
+          meta: (() => {
+            const printBranchId = loadedSoBranchId ?? activeBranch?.id;
+            const printBranch = availableBranches?.find(b => b.id === printBranchId) || activeBranch || {};
+            return {
+              paymentTerm: '30 Days',
+              status,
+              notes: customerNotes,
+              reference: linkedQtn || linkedPi || '',
+              location: printBranch.name || '',
+              locationStore: printBranch.name || printBranch.code || '',
+              warehouse: printBranch.defaultWarehouseName || '',
+              deliveryTerms: deliveryType || '',
+              salesPerson: ''
+            };
+          })()
         };
 
-        const html = generatePrintHtml(defaultTemplate, printData, {
+        const html = await generatePrintHtmlAsync(defaultTemplate, printData, {
           companyProfile: buildDocumentHeaderProfile({
             company,
             branches: availableBranches || [],

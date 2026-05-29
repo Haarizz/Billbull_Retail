@@ -92,7 +92,7 @@ import useShortcuts from '../../hooks/useShortcuts';
 // ✅ LOGO IMPORTS FOR PRINT
 import billBullLogo from '../../assets/billBullLogo.png';
 import { getTemplatesByCategory } from '../../api/printTemplateApi';
-import { generatePrintHtml, generateEmailHtml, printHtml } from '../../utils/printGenerator';
+import { generatePrintHtmlAsync, generateEmailHtml, printHtml } from '../../utils/printGenerator';
 import { buildDocumentHeaderProfile } from '../../utils/branchPrintProfile';
 import { buildEmailBody } from '../../utils/emailImageInliner';
 import { getImageUrl } from '../../utils/urlUtils';
@@ -1170,6 +1170,7 @@ const Quotations = () => {
             id: Date.now() + Math.random(),
             code: product.code,
             name: product.name || '',
+            sku: product.sku || product.skuCode || product.productSku || '',
             brand: product.brandName || product.brand || '',
             shortDesc: product.shortDesc || '',
             detailedDesc: product.detailedDesc || '',
@@ -1264,6 +1265,7 @@ const Quotations = () => {
             id: Date.now() + Math.random(),
             code: product.code,
             name: product.name || '',
+            sku: product.sku || product.skuCode || product.productSku || '',
             brand: product.brandName || product.brand || '',
             shortDesc: product.shortDesc || '',
             detailedDesc: product.detailedDesc || '',
@@ -2151,11 +2153,19 @@ const Quotations = () => {
             const defaultTemplate = templates.find(t => t.isDefault);
             const resolvedBillDiscount = Number(qtn.billDiscount || 0);
             const resolvedSummary = summarizeSalesItems(qtn.items || [], resolvedBillDiscount);
+            const fullCustomer = customersList.find(c => c.code === qtn.customerCode);
             const printData = {
                 title: 'QUOTATION',
                 docNo: qtn.qtnNo,
                 date: qtn.date,
-                customer: { name: qtn.customer, address: qtn.shippingAddress || '', trn: '' },
+                customer: {
+                    name: qtn.customer,
+                    address: fullCustomer?.address || fullCustomer?.billingAddress || '',
+                    shippingAddress: qtn.shippingAddress || '',
+                    phone: qtn.customerMobile || qtn.customerPhone || fullCustomer?.mobile || fullCustomer?.phone || '',
+                    email: qtn.customerEmail || fullCustomer?.email || '',
+                    trn: fullCustomer?.trn || ''
+                },
                 items: (qtn.items || []).filter(i => i.code || i.desc).map(i => ({
                     code: i.code,
                     name: i.name || i.productName || '',
@@ -2167,6 +2177,8 @@ const Quotations = () => {
                     detailedDesc: i.detailedDesc || '',
                     localName: i.localName || i.productLocalName || '',
                     barcode: i.barcode || '',
+                    batchNumber: i.batchNumber || '',
+                    batchSelections: Array.isArray(i.batchSelections) ? i.batchSelections : [],
                     unit: i.unit,
                     qty: Number(i.qty),
                     price: Number(i.price),
@@ -2184,10 +2196,21 @@ const Quotations = () => {
                     billDiscount: resolvedBillDiscount,
                     billDiscountAmount: resolvedSummary.billDiscountAmount
                 },
-                meta: { validTill: qtn.validTill, paymentTerm: qtn.paymentTerm, status: qtn.status, notes: qtn.notesToCustomer, reference: '' }
+                meta: {
+                    validTill: qtn.validTill,
+                    paymentTerm: qtn.paymentTerms || qtn.paymentTerm,
+                    status: qtn.status,
+                    notes: qtn.notesToCustomer,
+                    reference: qtn.branchCode || '',
+                    location: qtn.branchLocation || qtn.branchName || '',
+                    locationStore: qtn.branchName || qtn.branchCode || '',
+                    warehouse: qtn.branchLocation || '',
+                    deliveryTerms: qtn.deliveryType || '',
+                    salesPerson: ''
+                }
             };
             if (defaultTemplate) {
-                const html = generatePrintHtml(defaultTemplate, printData, { companyProfile: buildDocumentHeaderProfile({ company, branches: availableBranches || [], branchId: quotationBranch?.id ?? activeBranch?.id }), billBullLogo });
+                const html = await generatePrintHtmlAsync(defaultTemplate, printData, { companyProfile: buildDocumentHeaderProfile({ company, branches: availableBranches || [], branchId: qtn.branchId ?? activeBranch?.id }), billBullLogo });
                 printHtml(html);
             } else {
                 setIsPrintModalOpen(true);
@@ -2361,7 +2384,10 @@ const Quotations = () => {
         date: qtnDate,
         customer: {
             name: customer,
-            address: selectedCustomerData?.address || '',
+            address: selectedCustomerData?.address || selectedCustomerData?.billingAddress || '',
+            shippingAddress: shippingAddress || '',
+            phone: selectedCustomerData?.mobile || selectedCustomerData?.phone || '',
+            email: selectedCustomerData?.email || '',
             trn: selectedCustomerData?.trn
         },
         items: items.filter(i => i.code || i.desc).map(i => ({
@@ -2375,6 +2401,8 @@ const Quotations = () => {
             detailedDesc: i.detailedDesc || '',
             localName: i.localName || i.productLocalName || '',
             barcode: i.barcode || '',
+            batchNumber: i.batchNumber || '',
+            batchSelections: Array.isArray(i.batchSelections) ? i.batchSelections : [],
             salesPerson: '',
             location: quotationBranch?.location || '',
             unit: i.unit,
@@ -2400,7 +2428,11 @@ const Quotations = () => {
             status,
             notes: notesToCustomer,
             reference: quotationBranch?.code || '',
-            location: branchLocationDisplay || quotationBranch?.location || ''
+            location: branchLocationDisplay || quotationBranch?.location || '',
+            locationStore: quotationBranch?.name || quotationBranch?.code || '',
+            warehouse: quotationBranch?.location || '',
+            deliveryTerms: deliveryType || '',
+            salesPerson: ''
         }
     });
 
@@ -2411,7 +2443,7 @@ const Quotations = () => {
             const defaultTemplate = templates.find(t => t.isDefault);
 
             if (defaultTemplate) {
-                const html = generatePrintHtml(defaultTemplate, buildQuotationDocPayload(), { companyProfile: buildDocumentHeaderProfile({ company, branches: availableBranches || [], branchId: quotationBranch?.id ?? activeBranch?.id }), billBullLogo });
+                const html = await generatePrintHtmlAsync(defaultTemplate, buildQuotationDocPayload(), { companyProfile: buildDocumentHeaderProfile({ company, branches: availableBranches || [], branchId: quotationBranch?.id ?? activeBranch?.id }), billBullLogo });
                 printHtml(html);
             } else {
                 setIsPrintModalOpen(true);

@@ -31,7 +31,7 @@ import { formatDisplayDate } from '../../../utils/dateUtils';
 
 // Printing Utilities
 import { getTemplatesByCategory } from '../../../api/printTemplateApi';
-import { generatePrintHtml, printHtml } from '../../../utils/printGenerator';
+import { generatePrintHtmlAsync, printHtml } from '../../../utils/printGenerator';
 import billBullLogo from '../../../assets/billBullLogo.png';
 import toast from 'react-hot-toast';
 import {
@@ -522,7 +522,7 @@ const PaymentVoucher = () => {
                 company
             );
 
-            const html = generatePrintHtml(defaultTemplate, printData, {
+            const html = await generatePrintHtmlAsync(defaultTemplate, printData, {
                 companyProfile: buildDocumentHeaderProfile({
                     company,
                     branches: availableBranches || [],
@@ -560,7 +560,7 @@ const PaymentVoucher = () => {
                 linkedInvoice
             );
 
-            const html = generatePrintHtml(defaultTemplate, printData, {
+            const html = await generatePrintHtmlAsync(defaultTemplate, printData, {
                 companyProfile: buildDocumentHeaderProfile({
                     company,
                     branches: availableBranches || [],

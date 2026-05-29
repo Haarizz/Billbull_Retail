@@ -386,10 +386,8 @@ function InvoiceOverlayDesigner({ mode, templateName, initialSettings, onClose, 
 
       <div className="flex-1 overflow-hidden flex">
 
-        {
-    /* ── Left settings panel ── */
-  }
-        <div className="w-[380px] border-r overflow-y-auto flex-shrink-0">
+        { /* ── Left settings panel ── */ }
+        <div className="w-[380px] shadow-[4px_0_24px_rgba(0,0,0,0.08)] bg-white overflow-y-auto flex-shrink-0 relative z-10">
           <ScrollArea className="h-full">
             <div className="p-6">
               <div className="space-y-2 mb-6">
@@ -1265,17 +1263,17 @@ function InvoiceOverlayDesigner({ mode, templateName, initialSettings, onClose, 
       }}
     >
                       {isSelected && <div style={{ position: "absolute", inset: "-3px", border: `2px solid ${CATEGORY_COLORS[field.category]}`, borderRadius: "3px", pointerEvents: "none", zIndex: -1, boxShadow: `0 0 0 3px ${CATEGORY_COLORS[field.category]}30` }} />}
-                      {isTableField ? <div style={{ border: `1.5px dashed ${isSelected ? CATEGORY_COLORS[field.category] : "#b45309"}`, borderRadius: "4px", padding: "6px 8px", background: "rgba(180, 83, 9, 0.05)", minHeight: "50px" }}>
+                      {isTableField ? <div style={{ border: "none", borderRadius: "4px", padding: "6px 8px", background: isSelected ? "rgba(251, 191, 36, 0.12)" : "rgba(251, 191, 36, 0.06)", minHeight: "50px" }}>
                           <div style={{ fontSize: "8px", color: "#b45309", fontWeight: 600, textTransform: "uppercase", letterSpacing: "1px", marginBottom: "4px" }}>Items Table</div>
                           {showSampleValues ? <div style={{ fontSize: "8px", color: "#6b7a8a" }}>
-                              <div style={{ display: "grid", gridTemplateColumns: "3fr 1fr 1fr 1fr", gap: "4px", fontWeight: 600, borderBottom: "1px solid #dde2e8", paddingBottom: "2px", marginBottom: "2px" }}>
+                              <div style={{ display: "grid", gridTemplateColumns: "3fr 1fr 1fr 1fr", gap: "4px", fontWeight: 600, paddingBottom: "2px", marginBottom: "2px" }}>
                                 <span>Description</span><span style={{ textAlign: "right" }}>Qty</span><span style={{ textAlign: "right" }}>Price</span><span style={{ textAlign: "right" }}>Total</span>
                               </div>
                               <div style={{ display: "grid", gridTemplateColumns: "3fr 1fr 1fr 1fr", gap: "4px" }}>
                                 <span>Samsung Galaxy Tab A8</span><span style={{ textAlign: "right" }}>5</span><span style={{ textAlign: "right" }}>500.00</span><span style={{ textAlign: "right" }}>2,500.00</span>
                               </div>
                             </div> : <div style={{ fontSize: "8px", color: "#b45309" }}>Item rows will be printed here</div>}
-                        </div> : isQR ? <div style={{ width: field.width * scale, height: field.width * scale, border: `1.5px dashed ${isSelected ? CATEGORY_COLORS[field.category] : "#6b7a8a"}`, borderRadius: "4px", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", background: "rgba(107, 122, 138, 0.05)", gap: "4px" }}>
+                        </div> : isQR ? <div style={{ width: field.width * scale, height: field.width * scale, border: "none", borderRadius: "4px", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", background: isSelected ? "rgba(156, 163, 175, 0.15)" : "rgba(156, 163, 175, 0.08)", gap: "4px" }}>
                           <div style={{ width: "28px", height: "28px", background: "repeating-conic-gradient(#0f1923 0% 25%, #fff 0% 50%) 0 0 / 5px 5px", borderRadius: "2px" }} />
                           <div style={{ fontSize: "7px", color: "#6b7a8a" }}>QR Code</div>
                         </div> : <div style={{ fontSize: `${field.fontSize}pt`, fontFamily: field.fontFamily, fontWeight: field.bold ? 700 : 400, fontStyle: field.italic ? "italic" : "normal", color: showSampleValues ? field.color : CATEGORY_COLORS[field.category], textAlign: field.align, borderBottom: isSelected ? `1px solid ${CATEGORY_COLORS[field.category]}` : "1px dashed transparent", padding: "1px 2px", whiteSpace: "nowrap", overflow: "hidden", lineHeight: 1.3 }}>

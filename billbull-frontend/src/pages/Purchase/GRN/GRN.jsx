@@ -80,7 +80,7 @@ import useShortcuts from '../../../hooks/useShortcuts';
 
 // Printing Utilities
 import { getTemplatesByCategory } from '../../../api/printTemplateApi';
-import { generatePrintHtml, printHtml } from '../../../utils/printGenerator';
+import { generatePrintHtmlAsync, printHtml } from '../../../utils/printGenerator';
 import { buildDocumentHeaderProfile } from '../../../utils/branchPrintProfile';
 import billBullLogo from '../../../assets/billBullLogo.png';
 import toast from 'react-hot-toast';
@@ -2708,7 +2708,7 @@ const GRN = () => {
       const printData = buildGrnPrintData(fullGrn, fullVendor, company);
 
       const grnBranchId = fullGrn?.branchId ?? grn?.branchId ?? activeBranch?.id;
-      const html = generatePrintHtml(defaultTemplate, printData, {
+      const html = await generatePrintHtmlAsync(defaultTemplate, printData, {
         companyProfile: buildDocumentHeaderProfile({
           company,
           branches: availableBranches || [],

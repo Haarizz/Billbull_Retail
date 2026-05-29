@@ -39,7 +39,7 @@ import {
 // ==========================================
 import billBullLogo from '../../assets/billBullLogo.png';
 import { getTemplatesByCategory } from '../../api/printTemplateApi';
-import { generatePrintHtml, printHtml } from '../../utils/printGenerator';
+import { generatePrintHtmlAsync, printHtml } from '../../utils/printGenerator';
 import { buildDocumentHeaderProfile } from '../../utils/branchPrintProfile';
 import { getImageUrl } from '../../utils/urlUtils';
 import { useCompany } from '../../context/CompanyContext';
@@ -1688,6 +1688,8 @@ const DeliveryNote = () => {
 
             if (defaultTemplate) {
                 const fullCustomer = customersList.find(c => c.code === selectedCustomer?.code);
+                const dnBranchId = loadedDnBranchId ?? activeBranch?.id;
+                const printBranch = availableBranches?.find(b => b.id === dnBranchId) || activeBranch || {};
 
                 const printData = {
                     title: 'DELIVERY NOTE',
@@ -1695,7 +1697,10 @@ const DeliveryNote = () => {
                     date: dnDate,
                     customer: {
                         name: selectedCustomer?.name || '',
-                        address: shippingAddress || fullCustomer?.address || '',
+                        address: fullCustomer?.address || fullCustomer?.billingAddress || '',
+                        shippingAddress: shippingAddress || '',
+                        phone: fullCustomer?.mobile || fullCustomer?.phone || '',
+                        email: fullCustomer?.email || '',
                         trn: selectedCustomer?.trn || fullCustomer?.trn
                     },
                     items: items.map(i => ({
@@ -1737,11 +1742,15 @@ const DeliveryNote = () => {
                         linkedSalesOrder: linkedSO || '',
                         linkedSalesInvoice: linkedSI || '',
                         location: warehouse || '',
+                        locationStore: printBranch.name || '',
+                        warehouse: warehouse || '',
+                        deliveryTerms: '',
+                        salesPerson: '',
                         notes: `Driver: ${driverName || '-'} | Vehicle: ${vehicleNo || '-'} | Tracking: ${trackingNo || '-'}`
                     }
                 };
 
-                const html = generatePrintHtml(defaultTemplate, printData, { companyProfile: buildDocumentHeaderProfile({ company, branches: availableBranches || [], branchId: loadedDnBranchId ?? activeBranch?.id }), billBullLogo });
+                const html = await generatePrintHtmlAsync(defaultTemplate, printData, { companyProfile: buildDocumentHeaderProfile({ company, branches: availableBranches || [], branchId: loadedDnBranchId ?? activeBranch?.id }), billBullLogo });
                 printHtml(html);
             } else {
                 console.warn("No default print template found. Using browser print.");
@@ -1811,7 +1820,7 @@ const DeliveryNote = () => {
                 }
             };
 
-            const html = generatePrintHtml(defaultTemplate, printData, { companyProfile: buildDocumentHeaderProfile({ company, branches: availableBranches || [], branchId: loadedDnBranchId ?? activeBranch?.id }), billBullLogo });
+            const html = await generatePrintHtmlAsync(defaultTemplate, printData, { companyProfile: buildDocumentHeaderProfile({ company, branches: availableBranches || [], branchId: loadedDnBranchId ?? activeBranch?.id }), billBullLogo });
             printHtml(html);
         } catch (error) {
             console.error("Pick List print error:", error);

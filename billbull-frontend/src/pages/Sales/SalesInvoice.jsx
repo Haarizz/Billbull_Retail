@@ -65,7 +65,7 @@ import { computeLineTaxTotals, resolveLineTaxRate } from '../../utils/vatMath';
 import { getActiveVatRate } from '../../api/taxApi';
 import { getWarehouses } from '../../api/warehouseApi';
 import { getTemplatesByCategory } from '../../api/printTemplateApi';
-import { generatePrintHtml, printHtml } from '../../utils/printGenerator';
+import { generatePrintHtmlAsync, printHtml } from '../../utils/printGenerator';
 import { buildDocumentHeaderProfile } from '../../utils/branchPrintProfile';
 import { getImageUrl } from '../../utils/urlUtils';
 import { getDefaultProductUnit, resolveUnitAmount } from '../../utils/unitPricing';
@@ -2172,7 +2172,7 @@ const SalesInvoice = () => {
                 branches: availableBranches || [],
                 branchId: receiptBranchId,
             });
-            const html = generatePrintHtml(defaultTemplate, printData, { companyProfile: branchProfile, billBullLogo });
+            const html = await generatePrintHtmlAsync(defaultTemplate, printData, { companyProfile: branchProfile, billBullLogo });
 
             const title = generateDocFilename(
                 'Receipt Voucher',
@@ -2209,7 +2209,8 @@ const SalesInvoice = () => {
             billDiscountAmount,
             status,
             paymentTerms,
-            salesperson
+            salesperson,
+            shippingAddress,
         };
 
         if (!dataToPrint.items || dataToPrint.items.length === 0) {
@@ -2228,6 +2229,8 @@ const SalesInvoice = () => {
                 // Find Customer details
                 const custCode = dataToPrint.customerCode || (selectedCustomer?.code);
                 const fullCustomer = customersList.find(c => c.code === custCode);
+                const invoiceBranchId = dataToPrint.branchId ?? activeBranch?.id;
+                const printBranch = availableBranches?.find(b => b.id === invoiceBranchId) || activeBranch || {};
 
                 const printData = {
                     title: 'SALES INVOICE',
@@ -2235,7 +2238,10 @@ const SalesInvoice = () => {
                     date: dataToPrint.invoiceDate,
                     customer: {
                         name: dataToPrint.customerName || '',
-                        address: dataToPrint.shippingAddress || shippingAddress || fullCustomer?.address || fullCustomer?.billingAddress || '',
+                        address: fullCustomer?.address || fullCustomer?.billingAddress || '',
+                        shippingAddress: dataToPrint.shippingAddress || shippingAddress || fullCustomer?.shippingAddress || fullCustomer?.defaultShippingAddress || '',
+                        phone: fullCustomer?.mobile || fullCustomer?.phone || '',
+                        email: fullCustomer?.email || '',
                         trn: fullCustomer?.trn
                     },
                     items: (dataToPrint.items || []).map(i => ({
@@ -2281,27 +2287,28 @@ const SalesInvoice = () => {
                     meta: {
                         status: dataToPrint.status,
                         paymentTerm: dataToPrint.paymentTerms,
+                        dueDate: dataToPrint.dueDate || '',
                         // QA-031: explicit source-doc cross-references — each
                         // renders as its own labeled row when the template
                         // toggle is on.
                         linkedQuotation: dataToPrint.linkedQuotation || '',
                         linkedSalesOrder: dataToPrint.linkedSalesOrder || '',
                         linkedDeliveryNote: dataToPrint.linkedDeliveryNote || '',
-                        location: dataToPrint.branch || '',
+                        location: dataToPrint.branch || printBranch.name || '',
+                        locationStore: dataToPrint.branch || printBranch.name || printBranch.code || '',
+                        warehouse: printBranch.defaultWarehouseName || '',
+                        deliveryTerms: dataToPrint.deliveryType || '',
                         salesPerson: dataToPrint.salesperson || '',
                         notes: dataToPrint.notes || ''
                     }
                 };
 
-                // Resolve the header from the invoice's branch (reprint correctness)
-                // or fall back to the active branch for an in-progress draft.
-                const invoiceBranchId = dataToPrint.branchId ?? activeBranch?.id;
                 const branchProfile = buildDocumentHeaderProfile({
                     company,
                     branches: availableBranches || [],
                     branchId: invoiceBranchId,
                 });
-                const html = generatePrintHtml(defaultTemplate, printData, { companyProfile: branchProfile, billBullLogo });
+                const html = await generatePrintHtmlAsync(defaultTemplate, printData, { companyProfile: branchProfile, billBullLogo });
                 printHtml(html);
             } else {
                 alert("No default template selected. Using browser print.");
