@@ -1,3 +1,4 @@
+import QRCode from 'qrcode';
 import {
     generateDocumentEmailHtml,
     generateDocumentPrintHtml
@@ -44,6 +45,106 @@ export const generatePrintHtml = (template, data, options = {}) =>
 
 export const generateEmailHtml = (template, data, options = {}) =>
     generateDocumentEmailHtml(template, data, options);
+
+const getTemplateDesignerSettingsQuick = (template = {}) => {
+    if (template.purchaseDesignerSettings && typeof template.purchaseDesignerSettings === 'object') {
+        return template.purchaseDesignerSettings;
+    }
+    try {
+        const displayOptions = typeof template.displayOptions === 'string'
+            ? JSON.parse(template.displayOptions)
+            : (template.displayOptions || {});
+        return displayOptions.purchaseDesignerSettings || displayOptions.designerSettings || {};
+    } catch {
+        return {};
+    }
+};
+
+const fmt2 = (n) => (Number.isFinite(Number(n)) ? Number(n).toFixed(2) : '0.00');
+
+const buildQrContent = (data, companyName) => {
+    const lines = [];
+
+    // ── Document identity ──────────────────────────────────────────────
+    if (data.title)  lines.push(`Type: ${data.title}`);
+    if (data.docNo)  lines.push(`Doc No: ${data.docNo}`);
+    if (data.date)   lines.push(`Date: ${data.date}`);
+    if (data.status) lines.push(`Status: ${data.status}`);
+
+    // ── Company (issuer) ───────────────────────────────────────────────
+    if (companyName) lines.push(`Company: ${companyName}`);
+
+    // ── Vendor / Party ─────────────────────────────────────────────────
+    const p = data.party;
+    if (p?.name)    lines.push(`Vendor: ${p.name}`);
+    if (p?.code)    lines.push(`Vendor Code: ${p.code}`);
+    if (p?.taxId)   lines.push(`Vendor TRN: ${p.taxId}`);
+    if (p?.phone)   lines.push(`Vendor Phone: ${p.phone}`);
+    if (p?.address) lines.push(`Vendor Address: ${p.address}`);
+
+    // ── Header meta (Due Date, Payment Terms, Delivery Terms, etc.) ────
+    if (Array.isArray(data.headerMeta)) {
+        for (const row of data.headerMeta) {
+            if (row?.label && row?.value) lines.push(`${row.label}: ${row.value}`);
+        }
+    }
+
+    // ── References (PO Number, Location, Warehouse, etc.) ─────────────
+    if (Array.isArray(data.references)) {
+        for (const row of data.references) {
+            if (row?.label && row?.value) lines.push(`${row.label}: ${row.value}`);
+        }
+    }
+
+    // ── Items summary ──────────────────────────────────────────────────
+    const items = Array.isArray(data.items) ? data.items : [];
+    if (items.length > 0) {
+        lines.push(`Items: ${items.length}`);
+        for (const item of items) {
+            const name = item.name || item.description?.title || item.itemName || '';
+            const qty  = item.qty ?? item.quantity ?? '';
+            const code = item.code || item.itemCode || '';
+            const itemLine = [name, code && `(${code})`, qty && `Qty: ${qty}`].filter(Boolean).join(' ');
+            if (itemLine) lines.push(`  - ${itemLine}`);
+        }
+    }
+
+    // ── Totals ─────────────────────────────────────────────────────────
+    const t = data.totals || {};
+    const currency = t.currency || 'AED';
+    if (t.subTotal   != null) lines.push(`Sub Total: ${currency} ${fmt2(t.subTotal)}`);
+    if (t.tax        != null && Number(t.tax) > 0) lines.push(`VAT: ${currency} ${fmt2(t.tax)}`);
+    if (t.grandTotal != null) lines.push(`Grand Total: ${currency} ${fmt2(t.grandTotal)}`);
+    if (t.amountPaid != null && Number(t.amountPaid) > 0) lines.push(`Amount Paid: ${currency} ${fmt2(t.amountPaid)}`);
+    if (t.balanceDue != null && Number(t.balanceDue) > 0) lines.push(`Balance Due: ${currency} ${fmt2(t.balanceDue)}`);
+
+    // ── Notes ──────────────────────────────────────────────────────────
+    if (data.notes) lines.push(`Notes: ${data.notes}`);
+
+    return lines.join('\n');
+};
+
+export const generatePrintHtmlAsync = async (template, data, options = {}) => {
+    const settings = getTemplateDesignerSettingsQuick(template);
+    const showQR = Boolean(settings.showQRCode || settings.showQR);
+
+    if (showQR) {
+        try {
+            const companyName = options.companyProfile?.companyName || options.companyProfile?.name || '';
+            const qrContent = buildQrContent(data, companyName);
+            const qrCodeDataUrl = await QRCode.toDataURL(qrContent, {
+                width: 160,
+                margin: 1,
+                errorCorrectionLevel: 'L'
+            });
+            return generateDocumentPrintHtml(template, data, { ...options, qrCodeDataUrl });
+        } catch (e) {
+            console.warn('QR code generation failed, printing without QR:', e);
+        }
+    }
+
+    return generateDocumentPrintHtml(template, data, options);
+};
 
 export const generateReportPrintHtml = (_template, reportTitle, columns, data, companyProfile = {}) => {
     const generatedAt = new Date().toLocaleString();

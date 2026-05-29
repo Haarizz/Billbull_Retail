@@ -141,16 +141,19 @@ const resolveTemplateImageUrl = (value) => resolveDocumentImageUrl(value) || '';
 const buildTheme = (template = {}) => {
     const settings = getTemplateDesignerSettings(template);
     const accent = sanitizeCssColor(settings.accentColor || settings.primaryColor, '#F5C742');
-    let primary = sanitizeCssColor(settings.grandTotalColor || settings.primaryColor || '#111827', '#111827');
-    
-    // If legacy corrupted data made primaryColor equal to accentColor, force it to black
-    if (primary.toLowerCase() === accent.toLowerCase()) {
-        primary = '#111827';
-    }
+    // primaryColor drives general text (title, company name, bill-to name, meta values).
+    // grandTotalColor is applied only to the grand-total figure — kept separate so
+    // changing the grand total colour doesn't bleed into the rest of the document.
+    const primaryColor = '#111827';
+    const grandTotalColor = sanitizeCssColor(
+        settings.grandTotalColor,
+        sanitizeCssColor(settings.primaryColor, '#111827')
+    );
 
     return {
         accentColor: accent,
-        primaryColor: primary,
+        primaryColor,
+        grandTotalColor,
         borderColor: sanitizeCssColor(settings.borderColor, '#e0e0e0'),
         tableHeaderBg: sanitizeCssColor(settings.tableHeaderBg || settings.tableHeaderColor || '#f8fafc', '#f8fafc'),
         tableHeaderText: sanitizeCssColor(settings.tableHeaderText || settings.tableHeaderTextColor, '#111827'),
@@ -584,10 +587,12 @@ const buildDescriptionCell = (item, displayOptions = {}, columnOptions = {}) => 
     const metaLines = [];
     if (columnOptions.productId && code) metaLines.push(code);
     if (columnOptions.sku && sku && sku.toLowerCase() !== code.toLowerCase()) metaLines.push(`SKU: ${sku}`);
-    if (columnOptions.brand && brand) metaLines.push(brand);
+    if (columnOptions.brand && brand) metaLines.push(`Brand: ${brand}`);
     if (columnOptions.barcode && barcode) metaLines.push(`Barcode: ${barcode}`);
     if (columnOptions.batchNumber && batchNumbers.length) metaLines.push(`Batch: ${batchNumbers.join(', ')}`);
     if (columnOptions.arabicName && localName) metaLines.push(localName);
+    const itemLocation = asText(item.location).trim();
+    if (columnOptions.location && itemLocation) metaLines.push(`Bin: ${itemLocation}`);
 
     return `
         <div class="description-wrap">
@@ -900,13 +905,15 @@ const buildPaymentCard = (layout) => {
 };
 
 const buildSummarySection = (layout, renderTarget = 'print') => {
-    const hasNotes = Boolean(layout.showNotesSection !== false && layout.notes);
+    // Show notes section whenever the toggle is on, even if notes content is empty.
+    const showNotes = layout.showNotesSection !== false;
+    const hasNotes = showNotes;
     const hasTerms = Boolean(layout.displayOptions.showTerms !== false && layout.terms);
     const totalsTable = buildTotalsTable(layout);
     const showAmountInWords = Boolean(layout.showAmountInWords && layout.highlight?.value);
     const bankRows = Array.isArray(layout.bankRows) ? layout.bankRows.filter((row) => row?.value) : [];
 
-    if (!hasNotes && !hasTerms && !totalsTable && !showAmountInWords && bankRows.length === 0) return '';
+    if (!showNotes && !hasTerms && !totalsTable && !showAmountInWords && bankRows.length === 0) return '';
 
     const notesHtml = `
         ${showAmountInWords ? `
@@ -931,9 +938,9 @@ const buildSummarySection = (layout, renderTarget = 'print') => {
                 <div class="notes-copy">${escapeHtml(layout.terms)}</div>
             </div>
         ` : ''}
-        ${hasNotes ? `
-            <div class="summary-label">Notes</div>
-            <div class="notes-copy">${escapeHtml(layout.notes)}</div>
+        ${showNotes ? `
+            <div class="summary-label">${escapeHtml(layout.notesLabel || 'Notes')}</div>
+            <div class="notes-copy">${layout.notes ? escapeHtml(layout.notes) : '<span style="color:#aaa;">&mdash;</span>'}</div>
         ` : ''}
     `;
 
@@ -1014,25 +1021,37 @@ const resolveLayoutDate = (layout) =>
         new Date().toISOString().slice(0, 10)
     );
 
+
 const buildStampBlock = (layout, renderTarget) => {
-    if (layout.showCompanyStamp === false) return '';
+    const showStamp = layout.showCompanyStamp !== false && (
+        renderTarget === 'email' ? layout.company.showStampInEmail : layout.company.showStampInPrint
+    );
+    const showQR = Boolean(layout.showQRCode);
 
-    const showStamp = renderTarget === 'email'
-        ? layout.company.showStampInEmail
-        : layout.company.showStampInPrint;
+    if (!showStamp && !showQR) return '';
+    if (!showStamp && !layout.isPurchaseDesigner && !showQR) return '';
+
     const stampUrl = layout.stampUrl || layout.company.stampUrl;
-
-    if (!showStamp) return '';
-    if (!stampUrl && !layout.isPurchaseDesigner) return '';
-
-    return `
-        <div class="stamp-container">
+    const stampHtml = showStamp
+        ? `<div class="stamp-container">
             ${stampUrl
-            ? `<img src="${escapeHtml(stampUrl)}" alt="Company Stamp" />`
-            : `<div class="stamp-placeholder"><span>Company<br/>Stamp</span></div>`}
+                ? `<img src="${escapeHtml(stampUrl)}" alt="Company Stamp" />`
+                : `<div class="stamp-placeholder"><span>Company<br/>Stamp</span></div>`}
             <div class="stamp-caption">Official Stamp</div>
-        </div>
-    `;
+        </div>`
+        : '';
+
+    const qrDataUrl = showQR ? layout.qrCodeDataUrl : null;
+    const qrHtml = qrDataUrl
+        ? `<div class="qr-container">
+            <img src="${escapeHtml(qrDataUrl)}" width="100" height="100" alt="QR Code" style="display:block;width:100px;height:100px;-webkit-print-color-adjust:exact;print-color-adjust:exact;" />
+            <div class="stamp-caption">Scan to verify</div>
+        </div>`
+        : '';
+
+    if (!stampHtml && !qrHtml) return '';
+
+    return `<div class="stamp-row">${stampHtml}${qrHtml}</div>`;
 };
 
 const buildPrintDateStamp = (layout, renderTarget) =>
@@ -1157,7 +1176,7 @@ const buildHeader = (layout, renderTarget = 'print') => {
             </div>
         ` : ''}
 
-        ${layout.displayOptions.showCustomerDetails !== false && layout.showShipTo && shipToLines.length > 0 ? `
+        ${layout.showShipTo && shipToLines.length > 0 ? `
             <div class="bill-to-block ship-to-block">
                 <div class="bill-to-eyebrow">SHIP TO</div>
                 ${shipToLines.map((line) => `<div class="bill-to-line">${escapeHtml(line)}</div>`).join('')}
@@ -1277,7 +1296,7 @@ const buildCoreStyles = () => `
         padding: 24px;
         border-radius: 8px;
         background: #ffffff;
-        overflow: visible;
+        overflow: hidden;
     }
     .document-shell,
     .document-shell * {
@@ -1915,19 +1934,26 @@ const buildCoreStyles = () => `
         opacity: 0.62;
     }
     .document-watermark {
-        position: fixed;
+        position: absolute;
         inset: 0;
         display: flex;
         align-items: center;
         justify-content: center;
         pointer-events: none;
-        z-index: 0;
+        z-index: 9;
+        overflow: hidden;
     }
     .document-watermark span {
-        transform: rotate(-28deg);
-        color: rgba(17, 24, 39, 0.05);
-        font-weight: 700;
+        transform: rotate(-35deg);
+        opacity: 0.07;
+        color: #111827;
+        font-weight: 900;
+        font-size: 90px;
         line-height: 1;
+        letter-spacing: 8px;
+        white-space: nowrap;
+        -webkit-print-color-adjust: exact;
+        print-color-adjust: exact;
     }
     .print-date-stamp {
         margin-top: 16px;
@@ -1936,9 +1962,14 @@ const buildCoreStyles = () => `
         color: #6b7280;
         text-align: left;
     }
+    .stamp-row {
+        display: flex;
+        align-items: flex-end;
+        gap: 20px;
+        margin-top: 10px;
+    }
     .stamp-container {
         text-align: center;
-        margin-top: 10px;
         width: fit-content;
     }
     .stamp-container img {
@@ -1960,8 +1991,17 @@ const buildCoreStyles = () => `
         font-weight: 700;
         line-height: 1.4;
     }
+    .qr-container {
+        text-align: center;
+        width: fit-content;
+    }
+    .qr-container svg {
+        display: block;
+        -webkit-print-color-adjust: exact;
+        print-color-adjust: exact;
+    }
     .stamp-caption {
-        margin-top: 6px;
+        margin-top: 4px;
         color: #94a3b8;
         font-size: 7px;
     }
@@ -2037,7 +2077,7 @@ const buildTemplateThemeStyles = (layout) => {
             color: ${theme.primaryColor};
         }
         .grand-total-value {
-            color: ${theme.primaryColor};
+            color: ${theme.grandTotalColor || theme.primaryColor};
             font-size: ${theme.fontSize + (layout.isPurchaseDesigner ? 22 : 7)}px;
         }
         .document-shell-designer .grand-total-display {
@@ -2116,6 +2156,9 @@ const buildTemplateThemeStyles = (layout) => {
         .item-thumb-placeholder {
             border-color: ${theme.accentColor};
             background: ${accentSoft};
+        }
+        .document-watermark span {
+            color: ${theme.accentColor};
         }
     `;
 };
@@ -2392,7 +2435,7 @@ const enrichItems = (items, documentSalesPerson = '', documentLocation = '', cat
     return flattened;
 };
 
-const normalisePurchaseLayout = (template, data, companyProfile, renderTarget) => {
+const normalisePurchaseLayout = (template, data, companyProfile, renderTarget, options = {}) => {
     const company = normalizeDocumentCompanyProfile(companyProfile);
     const designerSettings = getTemplateDesignerSettings(template);
     const templateLogoUrl = resolveTemplateImageUrl(designerSettings.logoUrl || designerSettings.companyLogoUrl);
@@ -2521,6 +2564,7 @@ const normalisePurchaseLayout = (template, data, companyProfile, renderTarget) =
         displayOptions,
         totalVisibility,
         showNotesSection: pickSetting(designerSettings, ['showNotes', 'showNote'], true),
+        notesLabel: asText(designerSettings.notesLabel || 'Notes'),
         showAmountInWords: pickSetting(designerSettings, ['showAmountInWords'], false),
         bankRows: pickSetting(designerSettings, ['showBankDetails'], false)
             ? [
@@ -2537,6 +2581,8 @@ const normalisePurchaseLayout = (template, data, companyProfile, renderTarget) =
         showPaymentDetails: paymentDetails.length > 0,
         showSignatureBlock: pickSetting(designerSettings, ['showSignatures', 'showSignatureStrip', 'showReceivedByLine'], false),
         showCompanyStamp: pickSetting(designerSettings, ['showCompanyStamp', 'showStamp'], false),
+        showQRCode: pickSetting(designerSettings, ['showQRCode', 'showQR'], false),
+        qrCodeDataUrl: options.qrCodeDataUrl || null,
         showPageNumbers: pickSetting(designerSettings, ['showPageNumbers'], false),
         showPrintDateStamp: pickSetting(designerSettings, ['showGeneratedBy'], false),
         showWatermark: pickSetting(designerSettings, ['showWatermark'], false),
@@ -2647,7 +2693,7 @@ const buildLayout = (template, data, options = {}, renderTarget = 'print') => {
     const shouldUsePurchaseLayout = PURCHASE_TEMPLATE_CATEGORIES.has(template?.category) || looksLikePurchasePayload(data);
 
     return shouldUsePurchaseLayout
-        ? normalisePurchaseLayout(template, data, companyProfile, renderTarget)
+        ? normalisePurchaseLayout(template, data, companyProfile, renderTarget, options)
         : normaliseGenericLayout(template, data, companyProfile, renderTarget);
 };
 

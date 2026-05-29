@@ -982,6 +982,12 @@ export const buildLpoPrintData = (lpo, vendor, companyProfile) => {
             description,
             barcode: itemBarcode || "",
             brand: item.brand || item.brandName || "",
+            location: firstValue(
+                item.binLocation, item.bin, item.binName,
+                item.locatorName, item.locator,
+                item.zoneName, item.zone,
+                item.warehouseName
+            ) || "",
         };
     });
 
@@ -1059,7 +1065,8 @@ export const buildLpoPrintData = (lpo, vendor, companyProfile) => {
         status: firstValue(lpo?.status, "DRAFT"),
         party: resolveParty(vendor, lpo?.vendorName),
         shipTo: deliveryAddress ? {
-            name: firstValue(lpo?.shipToName, lpo?.warehouseName, lpo?.branchName),
+            // Only use explicit shipToName — warehouse name is already part of deliveryAddress
+            name: firstValue(lpo?.shipToName),
             address: deliveryAddress,
             phone: firstValue(lpo?.shipToPhone, lpo?.deliveryPhone),
             email: firstValue(lpo?.shipToEmail, lpo?.deliveryEmail),
@@ -1274,12 +1281,36 @@ export const buildPurchaseInvoicePrintData = (invoice, vendor, companyProfile) =
     const summaryValue = totals.balanceDue > 0 ? totals.balanceDue : totals.grandTotal;
     const summaryLabel = totals.balanceDue > 0 ? "Balance Due" : "Grand Total";
 
+    const warehouseStore = joinValues(
+        firstValue(invoice?.warehouseName, invoice?.warehouse?.name, typeof invoice?.warehouse === "string" ? invoice.warehouse : ""),
+        firstValue(invoice?.zoneName, invoice?.zone?.name, typeof invoice?.zone === "string" ? invoice.zone : ""),
+        firstValue(invoice?.locatorName, invoice?.locator?.name, typeof invoice?.locator === "string" ? invoice.locator : ""),
+        firstValue(invoice?.binName, invoice?.bin?.name, typeof invoice?.bin === "string" ? invoice.bin : "")
+    );
+    const locationStore = joinValues(
+        firstValue(invoice?.branchName, invoice?.branch?.name, typeof invoice?.branch === "string" ? invoice.branch : ""),
+        firstValue(invoice?.locationName, invoice?.location?.name, typeof invoice?.location === "string" ? invoice.location : "")
+    );
+    const deliveryAddress = firstValue(
+        invoice?.shippingAddress,
+        invoice?.shipToAddress,
+        invoice?.deliveryAddress,
+        warehouseStore,
+        locationStore
+    );
+
     return {
         title: "PURCHASE INVOICE",
         docNo: firstValue(invoice?.invoiceNumber, invoice?.id),
         date: invoice?.invoiceDate || invoice?.documentDate || invoice?.date,
         status: firstValue(invoice?.status, "DRAFT"),
         party: resolveParty(vendor, invoice?.vendorName || invoice?.vendor),
+        shipTo: deliveryAddress ? {
+            name: firstValue(invoice?.shipToName),
+            address: deliveryAddress,
+            phone: firstValue(invoice?.shipToPhone, invoice?.deliveryPhone),
+            email: firstValue(invoice?.shipToEmail, invoice?.deliveryEmail),
+        } : null,
         headerMeta: [
             { label: "Due Date", value: invoice?.dueDate },
             { label: "Vendor Invoice No", value: invoice?.vendorInvoiceNo },
@@ -1289,8 +1320,14 @@ export const buildPurchaseInvoicePrintData = (invoice, vendor, companyProfile) =
         references: [
             { label: "Reference", value: invoice?.referenceNo || invoice?.refNo },
             { label: "GRN No", value: invoice?.grnNo },
-            { label: "Warehouse", value: invoice?.warehouseName || invoice?.warehouse },
+            { label: "Warehouse", value: warehouseStore },
+            { label: "Location", value: locationStore },
         ].filter((item) => trimValue(item.value)),
+        meta: {
+            location: locationStore,
+            warehouse: warehouseStore,
+            branchName: invoice?.branchName,
+        },
         items,
         totals,
         summaryAmount: buildSummaryAmount(summaryLabel, summaryValue, companyProfile, vendor),
