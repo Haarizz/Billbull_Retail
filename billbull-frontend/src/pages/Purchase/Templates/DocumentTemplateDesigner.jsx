@@ -190,8 +190,11 @@ function ClassicPreview({ s }) {
           {s.showBillTo && <div style={{ marginBottom: s.showShipTo ? 12 : 0 }}>
               <p style={{ fontWeight: 700, fontSize: `${f - 0.5}px`, marginBottom: 4, color: "#888", letterSpacing: 0.5, textTransform: "uppercase" }}>Bill To</p>
               <p style={{ fontWeight: 700, fontSize: `${f + 1}px`, marginBottom: 2 }}>{MOCK.customer.name}</p>
+              {s.showCustomerCode && <p style={{ marginTop: 1, color: "#555" }}>Code: {MOCK.customer.code}</p>}
               <p style={{ whiteSpace: "pre-line", lineHeight: 1.65, color: "#444", margin: 0 }}>{MOCK.customer.billAddress}</p>
               {s.showCustomerPhone && <p style={{ marginTop: 3, color: "#555" }}>{MOCK.customer.phone}</p>}
+              {s.showCustomerEmail && <p style={{ margin: 0, color: "#555" }}>{MOCK.customer.email}</p>}
+              {s.showCustomerTRN && <p style={{ margin: 0, color: "#666" }}>TRN: {MOCK.customer.trn}</p>}
             </div>}
           {s.showShipTo && <div>
               <p style={{ fontWeight: 700, fontSize: `${f - 0.5}px`, marginBottom: 4, color: "#888", letterSpacing: 0.5, textTransform: "uppercase" }}>Ship To</p>
@@ -232,12 +235,14 @@ function ClassicPreview({ s }) {
           {s.showLogo && (s.logoUrl ? <img src={s.logoUrl} alt="logo" style={{ height: 72, objectFit: "contain" }} /> : <div style={{ width: 72, height: 72, borderRadius: "50%", background: `${s.accentColor}22`, border: `3px solid ${s.accentColor}`, display: "flex", alignItems: "center", justifyContent: "center" }}>
                   <span style={{ fontSize: 32, fontWeight: 900, color: s.accentColor }}>G</span>
                 </div>)}
-          {s.showCompanyName && <div style={{ textAlign: "right", lineHeight: 1.55 }}>
-              <p style={{ fontWeight: 700, fontSize: `${f + 3}px`, color: "#1a1a2e", margin: 0 }}>{MOCK.company.name}</p>
+          {(s.showCompanyName || s.showCompanyAddress || s.showCompanyPhone || s.showCompanyEmail || s.showCompanyWebsite || s.showTRN || s.showCRN) && <div style={{ textAlign: "right", lineHeight: 1.55 }}>
+              {s.showCompanyName && <p style={{ fontWeight: 700, fontSize: `${f + 3}px`, color: "#1a1a2e", margin: 0 }}>{MOCK.company.name}</p>}
               {s.showCompanyAddress && <p style={{ margin: 0, color: "#555", whiteSpace: "pre-line" }}>{MOCK.company.address}</p>}
               {s.showCompanyPhone && <p style={{ margin: 0 }}>{MOCK.company.phone}</p>}
               {s.showCompanyEmail && <p style={{ margin: 0 }}>{MOCK.company.email}</p>}
+              {s.showCompanyWebsite && <p style={{ margin: 0, color: "#666" }}>{MOCK.company.website}</p>}
               {s.showTRN && <p style={{ margin: 0, color: "#666" }}>TRN · {MOCK.company.trn}</p>}
+              {s.showCRN && <p style={{ margin: 0, color: "#666" }}>CR · {MOCK.company.crn}</p>}
             </div>}
         </div>
       </div>

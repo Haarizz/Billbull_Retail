@@ -52,7 +52,7 @@ import { formatDisplayDate } from '../../../utils/dateUtils';
 
 // Printing Utilities
 import { getTemplatesByCategory } from '../../../api/printTemplateApi';
-import { generatePrintHtml, printHtml } from '../../../utils/printGenerator';
+import { generatePrintHtml, generatePrintHtmlAsync, printHtml } from '../../../utils/printGenerator';
 import { buildDocumentHeaderProfile } from '../../../utils/branchPrintProfile';
 import billBullLogo from '../../../assets/billBullLogo.png';
 import toast from 'react-hot-toast';
@@ -3057,7 +3057,7 @@ const PurchaseInvoices = () => {
       const printData = buildPurchaseInvoicePrintData(printableInvoice, fullVendor, company);
 
       const piBranchId = printableInvoice?.branchId ?? invoice?.branchId ?? activeBranch?.id;
-      const html = generatePrintHtml(defaultTemplate, printData, {
+      const html = await generatePrintHtmlAsync(defaultTemplate, printData, {
         companyProfile: buildDocumentHeaderProfile({
           company,
           branches: availableBranches || [],
