@@ -12,6 +12,7 @@ import {
     resolveCurrencyDisplayConfig,
     UAE_DIRHAM_SYMBOL_IMAGE
 } from './countryCurrencyOptions';
+import { generatePickListHtml } from './pickListPrintTemplate';
 
 const PURCHASE_TEMPLATE_CATEGORIES = new Set([
     'Local Purchase Order',
@@ -2975,8 +2976,16 @@ const buildDocumentHtml = (template, data, options = {}, renderTarget = 'print')
     `;
 };
 
-export const generateDocumentPrintHtml = (template, data, options = {}) =>
-    buildDocumentHtml(template, data, options, 'print');
+export const generateDocumentPrintHtml = (template, data, options = {}) => {
+    if (template?.category === 'Pick List') {
+        return generatePickListHtml(template, data, options);
+    }
+    return buildDocumentHtml(template, data, options, 'print');
+};
 
-export const generateDocumentEmailHtml = (template, data, options = {}) =>
-    buildDocumentHtml(template, data, options, 'email');
+export const generateDocumentEmailHtml = (template, data, options = {}) => {
+    if (template?.category === 'Pick List') {
+        return generatePickListHtml(template, data, options);
+    }
+    return buildDocumentHtml(template, data, options, 'email');
+};

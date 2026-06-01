@@ -400,14 +400,16 @@ export const generatePickListHtml = (template, data, options = {}) => {
     ` : '';
 
     const paper = s.paperSize === 'Letter' ? 'Letter' : 'A4';
+    const pageW = paper === 'Letter' ? '816px' : '794px';
     const styles = `
         @page { size: ${paper} portrait; margin: 12mm; }
+        * { box-sizing: border-box; }
         body {
             margin: 0;
-            padding: 0;
+            padding: 20px 0 40px;
             font-family: ${s.fontFamily || 'Inter, sans-serif'};
             color: #333;
-            background: #fff;
+            background: #e8e8e8;
         }
         .pick-list-doc {
             font-size: ${f}px;
@@ -415,6 +417,21 @@ export const generatePickListHtml = (template, data, options = {}) => {
             color: #333;
             padding: 28px 32px;
             position: relative;
+            max-width: ${pageW};
+            margin: 0 auto;
+            box-shadow: 0 4px 18px rgba(0,0,0,0.18);
+        }
+        @media print {
+            body {
+                background: #fff;
+                padding: 0;
+            }
+            .pick-list-doc {
+                max-width: 100%;
+                margin: 0;
+                box-shadow: none;
+                padding: 0;
+            }
         }
     `;
 
