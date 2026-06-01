@@ -1227,6 +1227,25 @@ export const buildGrnPrintData = (grn, vendor, companyProfile) => {
             lineTotalIsTaxable: true,
         });
 
+        const orderedQty = toNumber(item.lpoQty ?? item.lpo_qty ?? item.orderedQty ?? item.ordered ?? 0);
+        const receivedQty = toNumber(item.received ?? item.receivedQty ?? item.received_qty ?? qty);
+        const acceptedQty = toNumber(item.accepted ?? item.acceptedQty ?? item.accepted_qty ?? qty);
+        const damagedQty = toNumber(
+            item.damaged ?? item.damagedQty ?? item.rejected ?? item.rejectedQty ?? Math.max(receivedQty - acceptedQty, 0)
+        );
+        const batchNumber = firstValue(
+            item.batchNumber, item.batchNo, item.batch,
+            ...(Array.isArray(item.batchSelections) ? item.batchSelections.map((b) => b?.batchNumber) : [])
+        );
+        const expiry = firstValue(
+            item.expiry, item.expiryDate, item.expDate,
+            ...(Array.isArray(item.batchSelections) ? item.batchSelections.map((b) => b?.expiryDate) : [])
+        );
+        const binLocation = firstValue(
+            item.binLocation, item.bin, item.binName, item.binCode,
+            item.locatorName, item.locator, item.location
+        );
+
         return {
             rowNo: index + 1,
             code: item.code || "",
@@ -1256,12 +1275,21 @@ export const buildGrnPrintData = (grn, vendor, companyProfile) => {
                 }
             ),
             sku: item.sku || "",
+            barcode: firstValue(item.barcode, item.itemBarcode) || "",
             localName: item.localName || "",
             shortDesc: item.shortDesc || "",
             detailedDesc: item.detailedDesc || "",
-            lpoQty: toNumber(item.lpoQty ?? item.lpo_qty ?? 0),
-            received: toNumber(item.received ?? item.receivedQty ?? item.received_qty ?? qty),
-            accepted: toNumber(item.accepted ?? item.acceptedQty ?? item.accepted_qty ?? qty),
+            lpoQty: orderedQty,
+            ordered: orderedQty,
+            received: receivedQty,
+            accepted: acceptedQty,
+            damaged: damagedQty,
+            shortage: Math.max(orderedQty - receivedQty, 0),
+            batchNumber: batchNumber || "",
+            expiry: expiry || "",
+            binLocation: binLocation || "",
+            qcStatus: firstValue(item.qcStatus, item.qc, item.inspectionStatus) || "",
+            qcRemarks: firstValue(item.qcRemarks, item.inspectionRemarks, item.remarks) || "",
             receivedBy: item.receivedBy || grn?.receivedBy || '',
             checkedBy: item.checkedBy || grn?.checkedBy || '',
         };
@@ -1286,8 +1314,37 @@ export const buildGrnPrintData = (grn, vendor, companyProfile) => {
         .filter((value) => trimValue(value))
         .join(" / ");
 
+    const warehouseName = firstValue(grn?.warehouseName, grn?.warehouse);
+    const totalOrdered = items.reduce((sum, item) => sum + item.ordered, 0);
+    const totalReceived = items.reduce((sum, item) => sum + item.received, 0);
+    const totalDamaged = items.reduce((sum, item) => sum + item.damaged, 0);
+    const totalPending = items.reduce((sum, item) => sum + item.shortage, 0);
+    const batchNumbers = items.map((item) => item.batchNumber).filter(Boolean);
+    const grnMeta = {
+        branchName: firstValue(grn?.branchName, companyProfile?.branchName),
+        warehouse: warehouseName,
+        location,
+        lpoNumber: firstValue(grn?.lpoNumber, grn?.lpo),
+        supplierInvoice: firstValue(grn?.supplierInvoice, grn?.vendorInvoiceNo, grn?.invoiceNo),
+        deliveryNote: firstValue(grn?.deliveryNote, grn?.dnNumber, grn?.dn),
+        vehicleNo: firstValue(grn?.vehicleNo, grn?.vehicleNumber, grn?.vehicle),
+        receivedBy: firstValue(grn?.receivedBy),
+        checkedBy: firstValue(grn?.checkedBy),
+        qcStatus: firstValue(grn?.qcStatus),
+        posted: Boolean(grn?.posted) || trimValue(grn?.status).toUpperCase() === 'POSTED',
+        packages: grn?.packageCount != null ? String(grn.packageCount) : '',
+        summary: {
+            ordered: totalOrdered,
+            received: totalReceived,
+            pending: totalPending,
+            damaged: totalDamaged,
+        },
+        batchCount: new Set(batchNumbers).size,
+    };
+
     return {
         title: "GOODS RECEIPT NOTE",
+        grnMeta,
         docNo: firstValue(grn?.grnNo, grn?.idDisplay, grn?.id),
         date: grn?.date || grn?.grnDate,
         status: firstValue(grn?.status, "DRAFT"),

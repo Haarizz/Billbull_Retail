@@ -3512,6 +3512,449 @@ const renderVendorStatementHtml = (template = {}, data = {}, options = {}, rende
     `;
 };
 
+// ─────────────────────────────────────────────────────────────────────────
+// Goods Receipt Note — dedicated renderer mirroring the GRN Template Designer
+// preview (GRNTemplateDesigner.jsx > GRNPreview). The generic document layout
+// can't reproduce the gold/dark header, receiving-summary pills, batch/QC
+// tables and inventory-impact cards, so the GRN category renders here instead.
+// ─────────────────────────────────────────────────────────────────────────
+const isGrnDesignerTemplate = (template = {}) => {
+    const settings = getTemplateDesignerSettings(template);
+    return settings.purchaseDesigner === 'grn' || settings.docType === 'grn';
+};
+
+const renderGrnReceiptHtml = (template, data, options = {}, _renderTarget = 'print') => {
+    const s = getTemplateDesignerSettings(template);
+    const company = normalizeDocumentCompanyProfile(options.companyProfile || {});
+    const meta = data.grnMeta || {};
+    const party = data.party || {};
+    const items = Array.isArray(data.items) ? data.items : [];
+    const summary = meta.summary || {};
+
+    const on = (key, fallback = true) => pickSetting(s, [key], fallback);
+    const txt = (v) => escapeHtml(asText(v).trim());
+
+    const fontFamily = sanitizeCssFontFamily(s.fontFamily === 'DM Sans' ? "'DM Sans', sans-serif" : s.fontFamily, "'DM Sans', sans-serif");
+    const fontSizePt = (() => {
+        const n = Number(s.fontSize);
+        return Number.isFinite(n) ? Math.min(13, Math.max(8, n)) : 11;
+    })();
+    const fontColor = sanitizeCssColor(s.fontColor, '#0f1923');
+    const headerBg = sanitizeCssColor(s.headerBackgroundColor || s.accentColor, '#F5C742');
+    const footerBg = sanitizeCssColor(s.footerBackgroundColor, '#0f1923');
+    const tableHeaderColor = sanitizeCssColor(s.tableHeaderColor || s.tableHeaderBg, '#0f1923');
+    const bgColor = sanitizeCssColor(s.backgroundColor, '#FFFFFF');
+    const headerFontSize = (() => {
+        const n = Number(s.headerFontSize);
+        return Number.isFinite(n) ? Math.min(40, Math.max(12, n)) : 22;
+    })();
+
+    const paperSize = (template.paperSize || s.paperSize || 'A4');
+    const orientation = (template.orientation || s.orientation || 'portrait');
+
+    const currencyConfig = resolveCurrencyDisplayConfig(company);
+    const currencyLabel = escapeHtml(currencyConfig.currency || currencyConfig.label || 'AED');
+
+    // ── header logo ──
+    const logoUrl = company.logoUrl;
+    const logoHtml = on('showCompanyLogo')
+        ? (logoUrl
+            ? `<img src="${escapeHtml(logoUrl)}" alt="Logo" style="width:42px;height:42px;border-radius:8px;object-fit:contain;background:rgba(0,0,0,0.06);flex-shrink:0;" />`
+            : `<div style="width:38px;height:38px;background:rgba(0,0,0,0.15);border-radius:8px;display:flex;align-items:center;justify-content:center;flex-shrink:0;font-weight:700;color:#0f1923;">${txt((company.companyName || 'G').charAt(0))}</div>`)
+        : '';
+
+    const companyContact = [
+        on('showCompanyAddress') && company.address ? `<div style="color:rgba(0,0,0,0.75);font-weight:600;">${txt(company.companyName)}</div><div>${txt(company.address)}</div>` : (on('showCompanyName') && company.companyName ? `<div style="color:rgba(0,0,0,0.75);font-weight:600;">${txt(company.companyName)}</div>` : ''),
+        on('showCompanyPhone') && company.phone ? `<div>${txt(company.phone)}</div>` : '',
+        on('showCompanyEmail') && company.email ? `<div>${txt(company.email)}</div>` : '',
+        on('showCompanyWebsite') && company.website ? `<div>${txt(company.website)}</div>` : '',
+        on('showCompanyTaxId', true) && company.trn ? `<div><strong style="color:rgba(0,0,0,0.75);">TRN:</strong> ${txt(company.trn)}</div>` : '',
+        on('showCompanyRegNumber', false) && company.crn ? `<div><strong style="color:rgba(0,0,0,0.75);">Reg:</strong> ${txt(company.crn)}</div>` : '',
+    ].filter(Boolean).join('');
+
+    const headerMetaRow = (label, value) => `
+        <div style="display:flex;justify-content:space-between;font-size:11px;padding:3px 0;border-bottom:1px solid rgba(0,0,0,0.1);color:rgba(0,0,0,0.7);">
+            <span style="color:rgba(0,0,0,0.45);">${escapeHtml(label)}</span>
+            <span style="font-weight:500;font-family:monospace;">${txt(value)}</span>
+        </div>`;
+
+    const headerMetaRows = [
+        on('showGRNNumber') && data.docNo ? headerMetaRow('GRN No', data.docNo) : '',
+        on('showGRNDate') && data.date ? headerMetaRow('GRN Date', formatDocDate(data.date)) : '',
+        on('showBranch') && meta.branchName ? headerMetaRow('Branch', meta.branchName) : '',
+        on('showWarehouse') && meta.warehouse ? headerMetaRow('Warehouse', meta.warehouse) : '',
+    ].filter(Boolean).join('');
+
+    const statusText = asText(data.status).trim();
+    const posted = meta.posted || statusText.toUpperCase() === 'POSTED';
+    const statusBadge = on('showStatusBadge') && statusText ? `
+        <div style="display:inline-flex;align-items:center;gap:5px;background:rgba(0,0,0,0.12);border:1px solid rgba(0,0,0,0.2);color:#0f1923;border-radius:20px;padding:4px 12px;font-size:10.5px;font-weight:500;margin-top:8px;align-self:flex-end;">
+            <span style="width:7px;height:7px;border-radius:50%;background:${posted ? '#0d7a4e' : '#b45309'};display:inline-block;"></span>
+            ${escapeHtml(statusText.replace(/_/g, ' '))}
+        </div>` : '';
+
+    const sectionLabel = (text) => `
+        <div style="font-size:9.5px;font-weight:600;letter-spacing:1.8px;text-transform:uppercase;color:#6b7a8a;margin:20px 0 8px;display:flex;align-items:center;gap:8px;">
+            ${escapeHtml(text)}
+            <span style="flex:1;height:1px;background:#dde2e8;display:block;"></span>
+        </div>`;
+
+    const kv = (k, v, mono = false) => `
+        <div style="display:flex;justify-content:space-between;align-items:baseline;font-size:12px;padding:4px 0;border-bottom:1px solid #dde2e8;gap:8px;">
+            <span style="color:#6b7a8a;white-space:nowrap;flex-shrink:0;">${escapeHtml(k)}</span>
+            <span style="font-weight:500;color:${mono ? '#1040b0' : '#0f1923'};text-align:right;${mono ? 'font-family:monospace;font-size:11px;' : ''}">${txt(v)}</span>
+        </div>`;
+
+    // ── Vendor & Purchase Reference ──
+    const vendorRows = [
+        on('showVendorName') && party.name ? kv('Vendor Name', party.name) : '',
+        on('showVendorCode') && party.code ? kv('Vendor Code', party.code, true) : '',
+        on('showVendorMobile') && party.phone ? kv('Mobile', party.phone, true) : '',
+        on('showVendorContact', false) && party.email ? kv('Email', party.email) : '',
+        on('showVendorTRN') && party.taxId ? kv('TRN', party.taxId, true) : '',
+    ].filter(Boolean).join('');
+
+    const poRows = [
+        on('showLPONumber') && meta.lpoNumber ? kv('LPO No', meta.lpoNumber, true) : '',
+        on('showSupplierInvoice') && meta.supplierInvoice ? kv('Supplier Invoice', meta.supplierInvoice, true) : '',
+        on('showDeliveryNote') && meta.deliveryNote ? kv('Delivery Note', meta.deliveryNote, true) : '',
+        on('showVehicleNo') && meta.vehicleNo ? kv('Vehicle No', meta.vehicleNo, true) : '',
+        on('showReceivedBy') && meta.receivedBy ? kv('Received By', meta.receivedBy) : '',
+    ].filter(Boolean).join('');
+
+    const vendorCard = on('showVendorCard') && vendorRows ? `
+        <div style="background:#f4f6f8;border:1px solid #dde2e8;border-radius:10px;padding:14px 16px;">
+            <div style="font-size:10px;font-weight:600;letter-spacing:1.2px;text-transform:uppercase;color:#1a56db;margin-bottom:10px;">Vendor Details</div>
+            ${vendorRows}
+        </div>` : '';
+    const poCard = on('showPOCard') && poRows ? `
+        <div style="background:#f4f6f8;border:1px solid #dde2e8;border-radius:10px;padding:14px 16px;">
+            <div style="font-size:10px;font-weight:600;letter-spacing:1.2px;text-transform:uppercase;color:#1a56db;margin-bottom:10px;">Purchase Reference</div>
+            ${poRows}
+        </div>` : '';
+    const vendorSection = (vendorCard || poCard) ? `
+        ${sectionLabel('Vendor & Purchase Reference')}
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">${vendorCard}${poCard}</div>` : '';
+
+    // ── Receiving Summary pills ──
+    const pill = (label, value, sub, colors) => `
+        <div style="background:${colors.bg};border:1px solid ${colors.border};border-radius:10px;padding:14px 16px;display:flex;flex-direction:column;align-items:center;gap:3px;">
+            <span style="font-size:9.5px;font-weight:600;letter-spacing:1px;text-transform:uppercase;color:${colors.fg};">${escapeHtml(label)}</span>
+            <span style="font-size:28px;font-weight:600;line-height:1;color:${colors.fg};font-family:monospace;">${formatNumber(value, 0)}</span>
+            <span style="font-size:10px;color:#6b7a8a;">${escapeHtml(sub)}</span>
+        </div>`;
+    const summaryPills = [
+        on('showOrderedQtyPill') && summary.ordered ? pill('Ordered Qty', summary.ordered, 'Total units on LPO', { bg: '#e8f0fe', border: '#93b4f5', fg: '#1a56db' }) : '',
+        on('showReceivedQtyPill') ? pill('Received Qty', summary.received, 'Accepted & entered', { bg: '#e6f7f0', border: '#9de8c8', fg: '#0d7a4e' }) : '',
+        on('showPendingQtyPill') && summary.pending ? pill('Pending Qty', summary.pending, 'Short delivery', { bg: '#fef3c7', border: '#fbbf24', fg: '#b45309' }) : '',
+        on('showDamagedQtyPill') && summary.damaged ? pill('Damaged Qty', summary.damaged, 'Rejected / returned', { bg: '#fde8e8', border: '#f4a0a0', fg: '#be2d2d' }) : '',
+    ].filter(Boolean);
+    const summarySection = on('showSummaryBar') && summaryPills.length ? `
+        ${sectionLabel('Receiving Summary')}
+        <div style="display:grid;grid-template-columns:repeat(${summaryPills.length}, 1fr);gap:10px;">${summaryPills.join('')}</div>` : '';
+
+    // ── Items table (columns gated by toggle + data presence) ──
+    const anyBarcode = items.some((it) => asText(it.barcode).trim());
+    const anyOrdered = items.some((it) => asNumber(it.ordered) > 0);
+    const anyDamaged = items.some((it) => asNumber(it.damaged) > 0);
+    const anyBatch = items.some((it) => asText(it.batchNumber).trim());
+    const anyExpiry = items.some((it) => asText(it.expiry).trim());
+    const anyBin = items.some((it) => asText(it.binLocation).trim());
+
+    const cols = [
+        { key: 'n', show: on('showLineNumber'), th: '#', align: 'center', width: '28px' },
+        { key: 'desc', show: on('showItemDescription'), th: 'Item Description', align: 'left' },
+        { key: 'barcode', show: on('showBarcode') && anyBarcode, th: 'Barcode', align: 'center' },
+        { key: 'ordered', show: on('showOrderedQty') && anyOrdered, th: 'Ordered', align: 'right' },
+        { key: 'received', show: on('showReceivedQty'), th: 'Received', align: 'right' },
+        { key: 'damaged', show: on('showDamagedQty') && anyDamaged, th: 'Damaged', align: 'right' },
+        { key: 'batch', show: on('showBatchNo') && anyBatch, th: 'Batch No', align: 'center' },
+        { key: 'expiry', show: on('showExpiry') && anyExpiry, th: 'Expiry', align: 'center' },
+        { key: 'bin', show: on('showBinLocation') && anyBin, th: 'Bin Loc', align: 'left' },
+    ].filter((c) => c.show);
+
+    const headerAlign = (s.tableHeaderAlign === 'center' || s.tableHeaderAlign === 'right') ? s.tableHeaderAlign : 'left';
+    const itemHeadCells = cols.map((c) => {
+        const align = c.key === 'desc' ? headerAlign : c.align;
+        return `<th style="padding:9px 10px;text-align:${align};font-size:9.5px;font-weight:600;letter-spacing:1px;text-transform:uppercase;${c.width ? `width:${c.width};` : ''}">${escapeHtml(c.th)}</th>`;
+    }).join('');
+
+    const itemRows = items.map((it, i) => {
+        const cellFor = (c) => {
+            switch (c.key) {
+                case 'n':
+                    return `<td style="padding:10px;text-align:center;color:#a0aab4;font-size:10px;">${escapeHtml(String(it.rowNo || i + 1).padStart(2, '0'))}</td>`;
+                case 'desc': {
+                    const idLine = [it.code && `${txt(it.code)}`, it.sku && it.sku !== it.code ? `SKU: ${txt(it.sku)}` : ''].filter(Boolean).join(' · ');
+                    return `<td style="padding:10px;vertical-align:top;">
+                        <div style="font-weight:600;font-size:12px;color:#0f1923;">${txt(it.name) || '-'}</div>
+                        ${idLine ? `<div style="font-family:monospace;font-size:10px;color:#1040b0;margin-top:1px;">${idLine}</div>` : ''}
+                        ${it.desc ? `<div style="font-size:10px;color:#6b7a8a;margin-top:1px;">${txt(it.desc)}</div>` : ''}
+                    </td>`;
+                }
+                case 'barcode':
+                    return `<td style="padding:10px;text-align:center;vertical-align:top;">
+                        ${it.barcode ? `<div style="width:80px;margin:0 auto;">${renderBatchBarcodeSvg(it.barcode, { height: 22 })}</div><div style="font-family:monospace;font-size:9px;color:#6b7a8a;margin-top:2px;">${txt(it.barcode)}</div>` : '-'}
+                    </td>`;
+                case 'ordered':
+                    return `<td style="padding:10px;text-align:right;font-family:monospace;color:#3b4a58;">${formatNumber(it.ordered, 0)}</td>`;
+                case 'received':
+                    return `<td style="padding:10px;text-align:right;font-family:monospace;font-weight:600;color:#0d7a4e;">${formatNumber(it.received, 0)}</td>`;
+                case 'damaged': {
+                    const d = asNumber(it.damaged);
+                    const color = d === 0 ? '#0d7a4e' : d <= 2 ? '#b45309' : '#be2d2d';
+                    return `<td style="padding:10px;text-align:right;font-family:monospace;font-weight:600;color:${color};">${formatNumber(d, 0)}</td>`;
+                }
+                case 'batch':
+                    return `<td style="padding:10px;text-align:center;font-family:monospace;font-size:10.5px;color:#3b4a58;">${txt(it.batchNumber) || '-'}</td>`;
+                case 'expiry':
+                    return `<td style="padding:10px;text-align:center;font-family:monospace;font-size:10.5px;color:#3b4a58;">${it.expiry ? escapeHtml(formatDocDate(it.expiry)) : '-'}</td>`;
+                case 'bin':
+                    return `<td style="padding:10px;font-family:monospace;font-size:10.5px;color:#3b4a58;">${txt(it.binLocation) || '-'}</td>`;
+                default:
+                    return '<td style="padding:10px;">-</td>';
+            }
+        };
+        return `<tr style="background:${i % 2 === 0 ? '#fff' : '#fafbfc'};border-bottom:1px solid #dde2e8;">${cols.map(cellFor).join('')}</tr>`;
+    }).join('');
+
+    const itemsSection = on('showItemsTable') && cols.length ? `
+        ${sectionLabel('Item Details')}
+        <table style="width:100%;border-collapse:collapse;font-size:11.5px;border:1px solid #dde2e8;border-radius:10px;overflow:hidden;">
+            <thead><tr style="background:${tableHeaderColor};color:#fff;">${itemHeadCells}</tr></thead>
+            <tbody>${itemRows || `<tr><td colspan="${cols.length}" style="padding:14px;text-align:center;color:#a0aab4;">No items found.</td></tr>`}</tbody>
+        </table>` : '';
+
+    // ── Batch & Expiry Control ──
+    const batchItems = items.filter((it) => asText(it.batchNumber).trim());
+    const batchSection = on('showBatchTable') && batchItems.length ? `
+        ${sectionLabel('Batch & Expiry Control')}
+        <table style="width:100%;border-collapse:collapse;font-size:11.5px;border:1px solid #9de8c8;border-radius:10px;overflow:hidden;">
+            <thead><tr style="background:#0d7a4e;">${['Item', 'Batch No', 'Qty', 'Expiry Date', 'Status'].map((h) => `<th style="padding:8px 12px;text-align:left;font-size:9px;font-weight:600;letter-spacing:1px;text-transform:uppercase;color:#fff;">${h}</th>`).join('')}</tr></thead>
+            <tbody>${batchItems.map((it, i) => `
+                <tr style="background:${i % 2 === 0 ? '#fff' : '#f0fdf8'};border-bottom:1px solid #c3f0dc;">
+                    <td style="padding:9px 12px;">${txt(it.name)}</td>
+                    <td style="padding:9px 12px;font-family:monospace;font-size:10.5px;">${txt(it.batchNumber)}</td>
+                    <td style="padding:9px 12px;font-family:monospace;font-size:10.5px;">${formatNumber(it.received, 0)}</td>
+                    <td style="padding:9px 12px;font-family:monospace;font-size:10.5px;">${it.expiry ? escapeHtml(formatDocDate(it.expiry)) : '-'}</td>
+                    <td style="padding:9px 12px;"><span style="background:#e6f7f0;color:#0d7a4e;border:1px solid #9de8c8;border-radius:4px;padding:2px 8px;font-size:10px;font-weight:600;">Good</span></td>
+                </tr>`).join('')}</tbody>
+        </table>` : '';
+
+    // ── Damage & Shortage ──
+    const damageItems = items.filter((it) => asNumber(it.shortage) > 0 || asNumber(it.damaged) > 0);
+    const damageSection = on('showDamageTable') && damageItems.length ? `
+        ${sectionLabel('Damage & Shortage Report')}
+        <table style="width:100%;border-collapse:collapse;font-size:11.5px;border:1px solid #f4a0a0;border-radius:10px;overflow:hidden;">
+            <thead><tr style="background:#be2d2d;">${['Item', 'Ordered', 'Received', 'Shortage', 'Damage', 'Notes'].map((h) => `<th style="padding:8px 12px;text-align:left;font-size:9px;font-weight:600;letter-spacing:1px;text-transform:uppercase;color:#fff;">${h}</th>`).join('')}</tr></thead>
+            <tbody>${damageItems.map((it) => `
+                <tr style="border-bottom:1px solid #fcd5d5;">
+                    <td style="padding:9px 12px;">${txt(it.name)}</td>
+                    <td style="padding:9px 12px;">${formatNumber(it.ordered, 0)}</td>
+                    <td style="padding:9px 12px;">${formatNumber(it.received, 0)}</td>
+                    <td style="padding:9px 12px;color:#b45309;font-weight:600;">${formatNumber(it.shortage, 0)}</td>
+                    <td style="padding:9px 12px;color:#be2d2d;font-weight:600;">${formatNumber(it.damaged, 0)}</td>
+                    <td style="padding:9px 12px;color:#3b4a58;font-size:11px;">${txt(it.qcRemarks) || '-'}</td>
+                </tr>`).join('')}</tbody>
+        </table>` : '';
+
+    // ── QC / Inspection ──
+    const qcItems = items.filter((it) => asText(it.qcStatus).trim() || asText(it.checkedBy).trim());
+    const qcBadge = (status) => {
+        const v = asText(status).toLowerCase();
+        const pass = /pass|good|ok|accept|complete/.test(v);
+        return pass
+            ? `<span style="background:#e6f7f0;color:#0d7a4e;border:1px solid #9de8c8;border-radius:4px;padding:2px 8px;font-size:10px;font-weight:600;">${txt(status) || 'Passed'}</span>`
+            : `<span style="background:#fef3c7;color:#b45309;border:1px solid #fbbf24;border-radius:4px;padding:2px 8px;font-size:10px;font-weight:600;">${txt(status) || 'Partial'}</span>`;
+    };
+    const qcSection = on('showQCTable') && qcItems.length ? `
+        ${sectionLabel('QC / Inspection Report')}
+        <table style="width:100%;border-collapse:collapse;font-size:11.5px;border:1px solid #93b4f5;border-radius:10px;overflow:hidden;">
+            <thead><tr style="background:#1a56db;">${['Item', 'QC Status', 'Checked By', 'Remarks'].map((h) => `<th style="padding:8px 12px;text-align:left;font-size:9px;font-weight:600;letter-spacing:1px;text-transform:uppercase;color:#fff;">${h}</th>`).join('')}</tr></thead>
+            <tbody>${qcItems.map((it, i) => `
+                <tr style="background:${i % 2 === 0 ? '#fff' : '#f0f5ff'};border-bottom:1px solid #d0dffb;">
+                    <td style="padding:9px 12px;">${txt(it.name)}</td>
+                    <td style="padding:9px 12px;">${qcBadge(it.qcStatus || meta.qcStatus)}</td>
+                    <td style="padding:9px 12px;">${txt(it.checkedBy) || txt(meta.checkedBy) || '-'}</td>
+                    <td style="padding:9px 12px;font-size:11px;color:#3b4a58;">${txt(it.qcRemarks) || '-'}</td>
+                </tr>`).join('')}</tbody>
+        </table>` : '';
+
+    // ── Valuation (preserve financial totals from the legacy print) ──
+    const totals = data.totals || {};
+    const valuationSection = asNumber(totals.grandTotal) > 0 ? `
+        ${sectionLabel('Valuation Summary')}
+        <table style="width:100%;border-collapse:collapse;font-size:12px;">
+            <tbody>
+                <tr><td style="padding:5px 0;color:#6b7a8a;">Sub Total</td><td style="padding:5px 0;text-align:right;font-family:monospace;">${currencyLabel} ${formatNumber(totals.subTotal)}</td></tr>
+                ${asNumber(totals.tax) > 0 ? `<tr><td style="padding:5px 0;color:#6b7a8a;">Total VAT</td><td style="padding:5px 0;text-align:right;font-family:monospace;">${currencyLabel} ${formatNumber(totals.tax)}</td></tr>` : ''}
+                <tr style="border-top:2px solid #0f1923;"><td style="padding:7px 0;font-weight:700;">Received Value</td><td style="padding:7px 0;text-align:right;font-family:monospace;font-weight:700;font-size:14px;">${currencyLabel} ${formatNumber(totals.grandTotal)}</td></tr>
+            </tbody>
+        </table>` : '';
+
+    // ── Inventory Impact ──
+    const impactCard = (label, value, sub, big) => `
+        <div style="background:#0f1923;border-radius:10px;padding:14px 16px;color:#fff;display:flex;flex-direction:column;gap:4px;">
+            <div style="font-size:9.5px;color:rgba(255,255,255,0.5);letter-spacing:1px;text-transform:uppercase;">${escapeHtml(label)}</div>
+            <div style="font-size:${big ? '22px' : '15px'};font-weight:600;font-family:monospace;color:#6ee7b7;margin-top:${big ? '0' : '4px'};">${value}</div>
+            <div style="font-size:10px;color:rgba(255,255,255,0.45);">${escapeHtml(sub)}</div>
+        </div>`;
+    const impactSection = on('showInventoryImpact') && posted ? `
+        ${sectionLabel('Inventory Impact Summary')}
+        <div style="display:grid;grid-template-columns:repeat(3, 1fr);gap:10px;">
+            ${impactCard('Total Items Received', formatNumber(summary.received, 0), 'Units entered into live stock', true)}
+            ${impactCard('Total Batches Created', String(meta.batchCount || 0), 'Batch records updated in ERP', true)}
+            ${impactCard('Warehouse Updated', txt(meta.warehouse) || '-', meta.location ? txt(meta.location) : 'Stock posted', false)}
+        </div>` : '';
+
+    // ── Notes / Terms ──
+    const notesText = firstNonEmpty(data.notes, s.notesText);
+    const notesSection = on('showNotes') && notesText ? `
+        ${sectionLabel('Warehouse Notes & Remarks')}
+        <div style="background:#f4f6f8;border:1px solid #dde2e8;border-left:4px solid #1a56db;border-radius:0 6px 6px 0;padding:12px 16px;font-size:12px;color:#3b4a58;line-height:1.7;">${txt(notesText)}</div>` : '';
+
+    const termsText = firstNonEmpty(template.termsContent, s.termsConditions);
+    const termsSection = on('showTermsConditions', s.showTerms !== false) && termsText ? `
+        ${sectionLabel('Terms & Conditions')}
+        <div style="background:#f4f6f8;border:1px solid #dde2e8;border-radius:6px;padding:12px 16px;font-size:11px;color:#6b7a8a;white-space:pre-wrap;">${txt(termsText)}</div>` : '';
+
+    // ── Signatures ──
+    const sigs = [
+        on('showPreparedBy') && { role: 'Prepared By', name: meta.receivedBy || '' },
+        on('showWarehouseIncharge') && { role: 'Warehouse Incharge', name: '' },
+        on('showQCOfficer') && { role: 'QC Officer', name: meta.checkedBy || '' },
+        on('showVendorRep') && { role: 'Vendor Delivery', name: '' },
+    ].filter(Boolean);
+    const signatureSection = on('showSignatures') && sigs.length ? `
+        ${sectionLabel('Authorization & Signatures')}
+        <div style="display:grid;grid-template-columns:repeat(${sigs.length}, 1fr);gap:12px;">
+            ${sigs.map((sig) => `
+                <div style="text-align:center;">
+                    <div style="height:56px;border-bottom:2px solid #a0aab4;position:relative;margin-bottom:8px;"></div>
+                    <div style="font-size:10px;font-weight:600;color:#0f1923;text-transform:uppercase;letter-spacing:0.8px;">${escapeHtml(sig.role)}</div>
+                    <div style="font-size:11px;color:#6b7a8a;margin-top:2px;">${txt(sig.name) || '&nbsp;'}</div>
+                </div>`).join('')}
+        </div>` : '';
+
+    // ── QR + Stamp ──
+    const qrDataUrl = on('showQRCode') ? options.qrCodeDataUrl : null;
+    const stampUrl = company.stampUrl;
+    const showStamp = on('showStamp') && company.showStampInPrint !== false;
+    const qrStampSection = (qrDataUrl || showStamp) ? `
+        <div style="display:flex;justify-content:space-between;align-items:flex-end;margin-top:20px;">
+            <div>${qrDataUrl ? `
+                <div style="border:1px solid #dde2e8;padding:8px;display:inline-block;border-radius:6px;text-align:center;">
+                    <img src="${escapeHtml(qrDataUrl)}" width="64" height="64" style="display:block;width:64px;height:64px;-webkit-print-color-adjust:exact;print-color-adjust:exact;" alt="QR" />
+                    <div style="font-size:9px;color:#6b7a8a;margin-top:4px;">Scan to verify</div>
+                </div>` : ''}</div>
+            ${showStamp ? `
+                <div style="display:flex;flex-direction:column;align-items:center;">
+                    ${stampUrl
+                        ? `<img src="${escapeHtml(stampUrl)}" alt="Stamp" style="width:72px;height:72px;object-fit:contain;" />`
+                        : `<div style="width:64px;height:64px;border:2px dashed #a0aab4;border-radius:50%;display:flex;align-items:center;justify-content:center;"><span style="font-size:9px;color:#a0aab4;text-align:center;letter-spacing:0.5px;text-transform:uppercase;">Company<br/>Stamp</span></div>`}
+                    <div style="font-size:9px;color:#a0aab4;margin-top:4px;text-transform:uppercase;letter-spacing:0.5px;">Official Stamp</div>
+                </div>` : ''}
+        </div>` : '';
+
+    // ── Doc footer bar ──
+    const generatedDate = new Date().toISOString().slice(0, 10);
+    const footerSection = on('showDocFooter') ? `
+        <div style="background:${footerBg};padding:12px 24px;display:flex;justify-content:space-between;align-items:center;">
+            <div style="font-size:10px;color:#5a7a96;">
+                <strong style="color:#8ca4bc;font-weight:500;">${txt(data.docNo)}</strong> · ${txt(company.companyName)}<br/>
+                Generated: ${escapeHtml(generatedDate)}
+            </div>
+            <div style="font-size:10px;color:#5a7a96;text-align:right;">
+                <strong style="color:#8ca4bc;font-weight:500;">${txt(meta.warehouse) || txt(meta.branchName) || ''}</strong><br/>
+                ${on('showPageNumbers') ? 'Page 1 of 1 · ' : ''}Confidential — Internal Use Only
+            </div>
+        </div>` : '';
+
+    // ── Watermark ──
+    const watermark = on('showWatermark', false) ? `
+        <div style="position:fixed;inset:0;display:flex;align-items:center;justify-content:center;pointer-events:none;opacity:${Number(s.watermarkOpacity) || 0.1};font-size:72pt;font-weight:bold;color:#cccccc;transform:rotate(-45deg);z-index:0;">${txt(s.watermarkText || 'RECEIVED')}</div>` : '';
+
+    const documentTitle = generateDocFilename(
+        'Goods Receipt Note',
+        data.docNo,
+        party.name,
+        formatDocDate(data.date) || generatedDate,
+        currencyConfig.label
+    );
+
+    const pageSizeCss = `${paperSize} ${String(orientation).toLowerCase() === 'landscape' ? 'landscape' : 'portrait'}`;
+
+    const styles = `
+        @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap');
+        * { box-sizing: border-box; }
+        @page { size: ${pageSizeCss}; margin: 0; }
+        html, body { margin: 0; padding: 0; -webkit-print-color-adjust: exact; print-color-adjust: exact; background: ${bgColor}; }
+        .grn-doc {
+            background: ${bgColor};
+            font-family: ${fontFamily};
+            font-size: ${fontSizePt}pt;
+            color: ${fontColor};
+            line-height: 1.5;
+            width: 100%;
+            max-width: 210mm;
+            margin: 0 auto;
+            position: relative;
+        }
+        table { page-break-inside: auto; }
+        tr, .grn-section { page-break-inside: avoid; }
+        @media print { .grn-doc { box-shadow: none; max-width: 100%; } }
+    `;
+
+    return `<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>${escapeHtml(documentTitle)}</title>
+    <style>${styles}</style>
+</head>
+<body>
+    <div class="grn-doc">
+        ${watermark}
+        <div style="background:${headerBg};display:grid;grid-template-columns:1fr auto;align-items:stretch;position:relative;z-index:1;">
+            <div style="padding:24px 28px;display:flex;flex-direction:column;gap:6px;text-align:${s.companyDetailsAlign || 'left'};">
+                ${logoHtml || on('showCompanyName') ? `<div style="display:flex;align-items:center;gap:10px;margin-bottom:4px;">
+                    ${logoHtml}
+                    ${on('showCompanyName') && company.companyName ? `<div><div style="font-size:${headerFontSize}px;font-weight:600;color:#0f1923;letter-spacing:-0.5px;">${txt(company.companyName)}</div></div>` : ''}
+                </div>` : ''}
+                <div style="font-size:11px;color:rgba(0,0,0,0.6);line-height:1.7;margin-top:4px;">${companyContact}</div>
+            </div>
+            <div style="background:rgba(0,0,0,0.12);padding:24px 28px;display:flex;flex-direction:column;align-items:flex-end;justify-content:space-between;min-width:260px;">
+                <div style="font-size:14px;font-weight:600;color:rgba(0,0,0,0.65);letter-spacing:3px;text-transform:uppercase;text-align:right;line-height:1.3;">
+                    <div style="font-size:9px;letter-spacing:2px;color:rgba(0,0,0,0.45);margin-bottom:2px;">ERP Document</div>
+                    Goods Receipt<br/>Note
+                </div>
+                <div style="width:100%;margin-top:10px;">${headerMetaRows}</div>
+                ${statusBadge}
+            </div>
+        </div>
+
+        <div style="padding:0 24px 24px;position:relative;z-index:1;">
+            <div class="grn-section">${vendorSection}</div>
+            <div class="grn-section">${summarySection}</div>
+            <div class="grn-section">${itemsSection}</div>
+            <div class="grn-section">${batchSection}</div>
+            <div class="grn-section">${damageSection}</div>
+            <div class="grn-section">${qcSection}</div>
+            <div class="grn-section">${valuationSection}</div>
+            <div class="grn-section">${impactSection}</div>
+            <div class="grn-section">${notesSection}</div>
+            <div class="grn-section">${termsSection}</div>
+            <div class="grn-section">${signatureSection}</div>
+            ${qrStampSection}
+        </div>
+
+        ${footerSection}
+    </div>
+</body>
+</html>`;
+};
+
 const buildDocumentHtml = (template, data, options = {}, renderTarget = 'print') => {
     const layout = buildLayout(template, data, options, renderTarget);
     const shellClasses = [
@@ -3569,6 +4012,9 @@ export const generateDocumentPrintHtml = (template, data, options = {}) => {
     if (template?.category === 'Vendor Statement of Account' || template?.category === 'Customer Statement of Account') {
         return renderVendorStatementHtml(template, data, options, 'print');
     }
+    if (template?.category === 'Goods Receipt Note' && isGrnDesignerTemplate(template)) {
+        return renderGrnReceiptHtml(template, data, options, 'print');
+    }
     return buildDocumentHtml(template, data, options, 'print');
 };
 
@@ -3578,6 +4024,9 @@ export const generateDocumentEmailHtml = (template, data, options = {}) => {
     }
     if (template?.category === 'Vendor Statement of Account' || template?.category === 'Customer Statement of Account') {
         return renderVendorStatementHtml(template, data, options, 'email');
+    }
+    if (template?.category === 'Goods Receipt Note' && isGrnDesignerTemplate(template)) {
+        return renderGrnReceiptHtml(template, data, options, 'email');
     }
     return buildDocumentHtml(template, data, options, 'email');
 };

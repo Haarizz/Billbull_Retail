@@ -450,7 +450,7 @@ function GRNTemplateDesigner({ templateName, initialSettings, onClose, onSave })
           </Button>)}
       </div>
     </div>;
-  return <div className="fixed inset-0 bg-background z-50 overflow-hidden flex flex-col">
+  return <div className="fixed inset-0 bg-white z-50 overflow-hidden flex flex-col">
       {
     /* Top bar — identical to quotation designer */
   }
@@ -485,7 +485,7 @@ function GRNTemplateDesigner({ templateName, initialSettings, onClose, onSave })
         {
     /* Settings panel — w-1/2 always, matches quotation */
   }
-        <div className="w-1/2 border-r overflow-y-auto">
+        <div className="w-1/2 border-r overflow-y-auto bg-white">
           <ScrollArea className="h-full">
             <div className="p-6">
               <Tabs defaultValue="typography" className="space-y-4">
