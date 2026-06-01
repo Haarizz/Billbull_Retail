@@ -154,11 +154,12 @@ public class StockTransferService {
         updateTransferTotals(st);
 
         for (StockTransferItem item : st.getItems()) {
-            BigDecimal available = warehouseStockService.getAvailableStock(
-                    st.getFromWarehouse().getId(),
-                    item.getProduct().getId());
+            BigDecimal available = resolveAvailableQty(st.getFromWarehouse().getId(), item);
             if (available.compareTo(BigDecimal.valueOf(item.getQuantity())) < 0) {
-                throw new IllegalStateException("Insufficient stock for product " + item.getProduct().getName());
+                String batchSuffix = item.getBatchNumber() != null ? " (batch " + item.getBatchNumber() + ")" : "";
+                throw new IllegalStateException(
+                        "Insufficient stock for product " + item.getProduct().getName() + batchSuffix
+                        + " — available: " + available.intValue() + ", requested: " + item.getQuantity());
             }
 
             stockMovementRepository.save(buildStockMovement(
@@ -298,7 +299,8 @@ public class StockTransferService {
                 throw new IllegalStateException("Transfer quantity must be greater than zero for " + item.getProduct().getName());
             }
 
-            UnitCostResolution resolution = resolveUnitCost(item.getProduct().getId(), st.getFromWarehouse().getId());
+            UnitCostResolution resolution = resolveUnitCostForBatch(
+                    item.getProduct().getId(), st.getFromWarehouse().getId(), item.getBatchNumber());
             if (resolution.unitCost == null || resolution.unitCost.compareTo(BigDecimal.ZERO) <= 0) {
                 throw new IllegalStateException(
                         "No source cost available for product " + item.getProduct().getCode()
@@ -370,7 +372,30 @@ public class StockTransferService {
         return currency(nvl(st.getTransportCharge()).add(nvl(st.getAdditionalCharges())));
     }
 
+    private BigDecimal resolveAvailableQty(Long warehouseId, StockTransferItem item) {
+        String batchNumber = item.getBatchNumber();
+        if (batchNumber != null && !batchNumber.isBlank()) {
+            BigDecimal batchQty = stockMovementRepository.getOnHandByBatch(
+                    item.getProduct().getId(), warehouseId, batchNumber.trim());
+            return batchQty != null ? batchQty : BigDecimal.ZERO;
+        }
+        return warehouseStockService.getAvailableStock(warehouseId, item.getProduct().getId());
+    }
+
     private UnitCostResolution resolveUnitCost(Long productId, Long warehouseId) {
+        return resolveUnitCostForBatch(productId, warehouseId, null);
+    }
+
+    private UnitCostResolution resolveUnitCostForBatch(Long productId, Long warehouseId, String batchNumber) {
+        // Batch-specific WAC takes priority when a batch is specified
+        if (batchNumber != null && !batchNumber.isBlank()) {
+            BigDecimal batchCost = stockMovementRepository.getWeightedAverageCostByBatch(
+                    productId, warehouseId, batchNumber.trim());
+            if (batchCost != null && batchCost.compareTo(BigDecimal.ZERO) > 0) {
+                return new UnitCostResolution(batchCost.setScale(4, RoundingMode.HALF_UP), "BATCH_WAC");
+            }
+        }
+
         BigDecimal weightedAverageCost = stockMovementRepository.getWeightedAverageCost(productId, warehouseId);
         if (weightedAverageCost != null && weightedAverageCost.compareTo(BigDecimal.ZERO) > 0) {
             return new UnitCostResolution(weightedAverageCost.setScale(4, RoundingMode.HALF_UP), "WEIGHTED_AVG");

@@ -85,3 +85,14 @@ export const getAggregateLocationStock = async (id, filters = {}) => {
   const response = await api.get(url);
   return response.data;
 };
+
+// Returns [{batchNumber, expiryDate, availableQty}] for a product in a warehouse.
+// Optionally scoped to a specific bin. Only batches with qty > 0 are returned.
+export const getProductBatchesInWarehouse = async (warehouseId, productId, binId = null) => {
+  const params = new URLSearchParams();
+  if (binId) params.append("binId", binId);
+  const qs = params.toString();
+  const url = `/api/warehouses/${warehouseId}/stock/product/${productId}/batches${qs ? `?${qs}` : ""}`;
+  const response = await api.get(url);
+  return response.data;
+};

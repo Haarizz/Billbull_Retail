@@ -24,7 +24,7 @@ const STOCK_TRANSFER_COLUMNS = [
 ];
 import {
     getWarehouses, getWarehouseProductStock, getAggregateLocationStock,
-    getWarehouseZones, getZoneLocators, getLocatorBins
+    getWarehouseZones, getZoneLocators, getLocatorBins, getProductBatchesInWarehouse
 } from '../../../api/warehouseApi';
 
 import {
@@ -603,6 +603,8 @@ const CreateTransferView = ({ warehouses, onSubmit }) => {
 
     const [items, setItems] = useState([]);
     const [isProductSelectorOpen, setIsProductSelectorOpen] = useState(false);
+    // batchOptions: { [itemId]: [{batchNumber, expiryDate, availableQty}] }
+    const [batchOptions, setBatchOptions] = useState({});
 
     // Dynamic Location State
     const [fromZones, setFromZones] = useState([]);
@@ -669,6 +671,16 @@ const CreateTransferView = ({ warehouses, onSubmit }) => {
             setFormData(prev => ({ ...prev, toBinId: "" }));
         }
     }, [formData.toLocatorId]);
+
+    const loadBatchesForItem = async (itemId, productId, warehouseId, binId) => {
+        if (!warehouseId || !productId) return;
+        try {
+            const batches = await getProductBatchesInWarehouse(warehouseId, productId, binId || null);
+            setBatchOptions(prev => ({ ...prev, [itemId]: batches || [] }));
+        } catch {
+            setBatchOptions(prev => ({ ...prev, [itemId]: [] }));
+        }
+    };
 
     const loadCostPreview = async (targetItems, warehouseId) => {
         if (!targetItems.length) return [];
@@ -758,11 +770,25 @@ const CreateTransferView = ({ warehouses, onSubmit }) => {
 
         const pricedItems = await loadCostPreview(updatedItems, fromWarehouseId);
         setItems(pricedItems);
+
+        // Refresh batch options for all items when source location changes
+        pricedItems.forEach(item => {
+            if (item.productId) {
+                loadBatchesForItem(item.id, item.productId, fromWarehouseId, fromBinId);
+            }
+        });
     };
 
     const handleAddSingleProduct = async (productData) => {
-        const exists = items.find(item => Number(item.productId) === Number(productData.id));
-        if (exists) {
+        // For non-batched products block true duplicates.
+        // For batched products allow multiple rows — each row gets a different batch.
+        const hasBatches = (batchOptions[
+            items.find(i => Number(i.productId) === Number(productData.id))?.id
+        ] || []).length > 0;
+        const existsWithNoBatch = items.find(
+            item => Number(item.productId) === Number(productData.id) && !item.batchNumber
+        );
+        if (existsWithNoBatch && !hasBatches) {
             toast.error("Product already added to the list");
             return;
         }
@@ -814,6 +840,8 @@ const CreateTransferView = ({ warehouses, onSubmit }) => {
                     costSource: previewItem?.costSource || null,
                     costAvailable: Boolean(previewItem?.costAvailable)
                 }) : i));
+                // Load available batches for this product in the source warehouse
+                loadBatchesForItem(newItem.id, productData.id, formData.fromWarehouseId, formData.fromBinId);
             } catch (e) {
                 setItems(prev => prev.map(i => i.id === newItem.id ? recalculateItemFinancials({
                     ...i,
@@ -835,7 +863,10 @@ const CreateTransferView = ({ warehouses, onSubmit }) => {
             if (i.id === id) {
                 const updated = { ...i, [field]: value };
                 if (field === "quantity" && value > 0) {
-                    updated.status = value <= updated.available ? "Valid" : "Insufficient";
+                    const opts = batchOptions[id] || [];
+                    const selectedBatch = opts.find(b => b.batchNumber === updated.batchNumber);
+                    const cap = selectedBatch ? selectedBatch.availableQty : updated.available;
+                    updated.status = value <= cap ? "Valid" : "Insufficient";
                 }
                 return recalculateItemFinancials(updated);
             }
@@ -1096,22 +1127,66 @@ const CreateTransferView = ({ warehouses, onSubmit }) => {
                                             </div>
                                         </td>
                                         <td className="px-4 py-4">
-                                            <input
-                                                type="text"
-                                                value={item.batchNumber}
-                                                onChange={e => handleItemChange(item.id, "batchNumber", e.target.value)}
-                                                placeholder="L001-2024"
-                                                className="w-full h-8 bg-slate-50 border border-slate-100 rounded px-2 text-[11px] font-mono focus:bg-white transition-all outline-none"
-                                            />
+                                            {(() => {
+                                                const opts = batchOptions[item.id] || [];
+                                                const selected = opts.find(b => b.batchNumber === item.batchNumber);
+                                                return opts.length > 0 ? (
+                                                    <div className="flex flex-col gap-1">
+                                                        <select
+                                                            value={item.batchNumber || ""}
+                                                            onChange={e => {
+                                                                const batch = opts.find(b => b.batchNumber === e.target.value);
+                                                                const batchAvail = batch ? batch.availableQty : item.available;
+                                                                setItems(prev => prev.map(i => {
+                                                                    if (i.id !== item.id) return i;
+                                                                    const updated = { ...i, batchNumber: e.target.value };
+                                                                    updated.status = updated.quantity > 0
+                                                                        ? (updated.quantity <= batchAvail ? "Valid" : "Insufficient")
+                                                                        : "Valid";
+                                                                    return recalculateItemFinancials(updated);
+                                                                }));
+                                                            }}
+                                                            className="w-full h-8 bg-slate-50 border border-slate-100 rounded px-2 text-[11px] font-mono focus:bg-white transition-all outline-none"
+                                                        >
+                                                            <option value="">— select batch —</option>
+                                                            {opts.map(b => (
+                                                                <option key={b.batchNumber} value={b.batchNumber}>
+                                                                    {b.batchNumber} · {b.availableQty} {item.uom || 'pcs'}{b.expiryDate ? ` · exp ${b.expiryDate}` : ''}
+                                                                </option>
+                                                            ))}
+                                                        </select>
+                                                        {selected && (
+                                                            <span className="text-[9px] text-emerald-600 font-medium pl-1">
+                                                                {selected.availableQty} available in batch
+                                                            </span>
+                                                        )}
+                                                    </div>
+                                                ) : (
+                                                    <input
+                                                        type="text"
+                                                        value={item.batchNumber}
+                                                        onChange={e => handleItemChange(item.id, "batchNumber", e.target.value)}
+                                                        placeholder={formData.fromWarehouseId ? "No batches found" : "Select warehouse first"}
+                                                        className="w-full h-8 bg-slate-50 border border-slate-100 rounded px-2 text-[11px] font-mono focus:bg-white transition-all outline-none"
+                                                    />
+                                                );
+                                            })()}
                                         </td>
                                         <td className="px-4 py-4 text-center">
                                             <span className="bg-slate-100 text-slate-600 px-2.5 py-1 rounded text-[10px] font-bold uppercase">{item.uom || '---'}</span>
                                         </td>
                                         <td className="px-4 py-4 text-center">
-                                            <div className="flex flex-col items-center">
-                                                <span className={`text-xs font-bold ${item.available < 10 ? 'text-rose-500' : 'text-slate-700'}`}>{item.available}</span>
-                                                <span className="text-[9px] text-slate-400">Physical</span>
-                                            </div>
+                                            {(() => {
+                                                const opts = batchOptions[item.id] || [];
+                                                const selected = opts.find(b => b.batchNumber === item.batchNumber);
+                                                const displayQty = selected ? selected.availableQty : item.available;
+                                                return (
+                                                    <div className="flex flex-col items-center">
+                                                        <span className={`text-xs font-bold ${displayQty < 10 ? 'text-rose-500' : 'text-slate-700'}`}>{displayQty}</span>
+                                                        <span className="text-[9px] text-slate-400">{selected ? 'Batch' : 'Physical'}</span>
+                                                    </div>
+                                                );
+                                            })()}
                                         </td>
                                         <td className="px-4 py-4">
                                             <div className="relative">
