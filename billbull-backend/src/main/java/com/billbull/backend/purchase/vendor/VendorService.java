@@ -53,23 +53,27 @@ public class VendorService {
     // LIST
     // -------------------------
     public List<VendorListResponse> list() {
+        // Batch the three balance aggregates into one grouped query each (keyed by
+        // vendor name) instead of running them per-vendor — turns 3×N queries into
+        // 3 total, which is the difference between ~12s and instant at 300 vendors.
+        java.util.Map<String, BigDecimal> invoicedByName = toAmountMap(invRepo.sumInvoicedGroupedByVendorName());
+        java.util.Map<String, BigDecimal> paidByName = toAmountMap(payRepo.sumPaymentsGroupedByVendorName());
+        java.util.Map<String, BigDecimal> onAccountByName = toAmountMap(payRepo.sumOnAccountPaidGroupedByVendorName());
+
         return repo.findByIsActiveTrue()
                 .stream()
                 .map(v -> {
                     // Compute payable balance live:
                     // openingBalance + totalInvoiced − totalPaid
                     BigDecimal openingBal  = v.getOpeningBalance() != null ? v.getOpeningBalance() : BigDecimal.ZERO;
-                    BigDecimal totalInvoiced = invRepo.sumInvoicedByVendorName(v.getName());
-                    if (totalInvoiced == null) totalInvoiced = BigDecimal.ZERO;
-                    BigDecimal totalPaid = payRepo.sumPaymentsByVendorName(v.getName());
-                    if (totalPaid == null) totalPaid = BigDecimal.ZERO;
+                    BigDecimal totalInvoiced = invoicedByName.getOrDefault(v.getName(), BigDecimal.ZERO);
+                    BigDecimal totalPaid = paidByName.getOrDefault(v.getName(), BigDecimal.ZERO);
                     BigDecimal payableBalance = openingBal.add(totalInvoiced).subtract(totalPaid);
 
                     // Opening balance still owed after netting off on-account (non
                     // invoice-linked) payments — prevents the Payments screen from
                     // showing the OB as unpaid once it has been settled.
-                    BigDecimal onAccountPaid = payRepo.sumOnAccountPaidByVendorName(v.getName());
-                    if (onAccountPaid == null) onAccountPaid = BigDecimal.ZERO;
+                    BigDecimal onAccountPaid = onAccountByName.getOrDefault(v.getName(), BigDecimal.ZERO);
                     BigDecimal openingOutstanding = openingBal.subtract(onAccountPaid);
                     if (openingOutstanding.compareTo(BigDecimal.ZERO) < 0) {
                         openingOutstanding = BigDecimal.ZERO;
@@ -123,6 +127,18 @@ public class VendorService {
                     return r;
                 })
                 .toList();
+    }
+
+    /** Collapse grouped {@code [vendorName, sum]} rows into a name→amount map. */
+    private java.util.Map<String, BigDecimal> toAmountMap(List<Object[]> rows) {
+        java.util.Map<String, BigDecimal> map = new java.util.HashMap<>();
+        if (rows == null) return map;
+        for (Object[] row : rows) {
+            if (row[0] == null) continue;
+            BigDecimal amount = row[1] != null ? new BigDecimal(row[1].toString()) : BigDecimal.ZERO;
+            map.merge((String) row[0], amount, BigDecimal::add);
+        }
+        return map;
     }
 
     // -------------------------

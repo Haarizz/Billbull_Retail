@@ -113,8 +113,19 @@ public class SalesReportDataService {
         SalesDataset data = new SalesDataset();
         data.dateFrom = dateFrom;
         data.dateTo = dateTo;
-        data.products = productRepository.findAllByIsActiveTrue().stream()
-                .collect(Collectors.toMap(Product::getCode, ProductInfo::new, (a, b) -> a, LinkedHashMap::new));
+        // Product lookup via a lightweight projection (code, name, category, dept,
+        // brand) — avoids hydrating 12k Product entities + their eager dept/brand
+        // associations on every report.
+        data.products = new LinkedHashMap<>();
+        for (Object[] row : productRepository.findActiveProductReportBasics()) {
+            String code = (String) row[2];
+            if (code == null || data.products.containsKey(code)) continue;
+            String name = (String) row[3];
+            String category = (String) row[4];
+            String deptName = (String) row[5];
+            String brandName = (String) row[6];
+            data.products.put(code, new ProductInfo(name, deptName, category, brandName));
+        }
         data.customers = customerRepository.findAll().stream()
                 .filter(customer -> matchesSearch(search,
                         customer.getCode(),
@@ -124,27 +135,27 @@ public class SalesReportDataService {
                         customer.getTrn()))
                 .collect(Collectors.toList());
 
-        data.invoices = invoiceRepository.findAllByOrderByInvoiceDateDesc().stream()
+        // Date range is pushed into SQL and line items are fetch-joined, so only
+        // the relevant documents are loaded (no full-table scan, no per-row N+1).
+        // The remaining branch/channel/salesperson/search filters run in Java over
+        // the now-small, date-bounded result set — preserving prior behavior.
+        data.invoices = invoiceRepository.findForReports(dateFrom, dateTo).stream()
                 .filter(invoice -> invoice.getSalesType() != SalesType.POS_SALE)
-                .filter(invoice -> within(invoice.getInvoiceDate(), dateFrom, dateTo))
                 .filter(invoice -> matchesBranch(invoice, branchId))
                 .filter(invoice -> matchesChannel(invoice, salesChannel))
                 .filter(invoice -> matchesSalesperson(invoice.getSalesperson(), salesperson))
                 .filter(invoice -> matchesInvoiceSearch(invoice, search))
                 .collect(Collectors.toList());
 
-        data.returns = returnRepository.findAll().stream()
-                .filter(salesReturn -> within(salesReturn.getReturnDate(), dateFrom, dateTo))
+        data.returns = returnRepository.findForReports(dateFrom, dateTo).stream()
                 .filter(salesReturn -> matchesReturnSearch(salesReturn, search))
                 .collect(Collectors.toList());
 
-        data.orders = orderRepository.findAll().stream()
-                .filter(order -> within(order.getOrderDate(), dateFrom, dateTo))
+        data.orders = orderRepository.findForReports(dateFrom, dateTo).stream()
                 .filter(order -> matchesSearch(search, order.getSoNumber(), order.getCustomerName(), order.getCustomerCode()))
                 .collect(Collectors.toList());
 
-        data.deliveries = deliveryNoteRepository.findAll().stream()
-                .filter(note -> within(note.getDnDate(), dateFrom, dateTo))
+        data.deliveries = deliveryNoteRepository.findForReports(dateFrom, dateTo).stream()
                 .filter(note -> branchId == null || Objects.equals(note.getBranchId(), branchId))
                 .filter(note -> matchesSearch(search, note.getDnNumber(), note.getCustomerName(), note.getCustomerCode(), note.getDriverName(), note.getVehicleNo()))
                 .collect(Collectors.toList());
@@ -1590,6 +1601,13 @@ public class SalesReportDataService {
             this.name = product.getName();
             this.category = product.getDepartment() != null ? product.getDepartment().getName() : fallbackStatic(product.getCategory(), "Uncategorized");
             this.brand = product.getBrand() != null ? product.getBrand().getName() : "Unbranded";
+        }
+
+        /** Built from the {@code findActiveProductReportBasics} projection (no entity hydration). */
+        private ProductInfo(String name, String deptName, String category, String brandName) {
+            this.name = name != null ? name : "";
+            this.category = deptName != null ? deptName : fallbackStatic(category, "Uncategorized");
+            this.brand = brandName != null ? brandName : "Unbranded";
         }
 
         private static ProductInfo empty() {

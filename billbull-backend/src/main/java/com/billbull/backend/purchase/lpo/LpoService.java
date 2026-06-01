@@ -129,6 +129,48 @@ public class LpoService {
         return lpos.stream().map(this::toListDto).toList();
     }
 
+    /**
+     * True database-level paginated list. Filtering, search, branch scope and
+     * ordering are pushed into SQL so only one page of LPOs is loaded and mapped
+     * — the per-row fulfillment/advance-paid queries in {@link #toListDto} now
+     * run for at most {@code size} rows instead of the entire table.
+     */
+    public com.billbull.backend.util.PageResponse<LpoListResponse> listPage(
+            LpoStatus status, String search, LocalDate dateFrom, LocalDate dateTo,
+            String vendor, int page, int size) {
+        int normalizedPage = Math.max(page, 0);
+        int normalizedSize = Math.max(1, Math.min(size, com.billbull.backend.util.PaginationUtil.MAX_PAGE_SIZE));
+        String normalizedSearch = search == null ? "" : search.trim().toLowerCase(java.util.Locale.ROOT);
+        String normalizedVendor = vendor == null ? "" : vendor.trim();
+
+        BranchAccessService.ListScope scope = branchAccessService.currentListScope();
+
+        org.springframework.data.domain.Page<Lpo> pg = repository.searchPage(
+                scope.allBranches(), scope.branchIds(), status, normalizedSearch,
+                dateFrom, dateTo, normalizedVendor,
+                org.springframework.data.domain.PageRequest.of(normalizedPage, normalizedSize));
+
+        List<LpoListResponse> content = pg.getContent().stream().map(this::toListDto).toList();
+        return new com.billbull.backend.util.PageResponse<>(
+                content, normalizedPage, normalizedSize, pg.getTotalElements(), pg.getTotalPages());
+    }
+
+    /** Per-status counts (branch-scoped) for the LPO tab badges. */
+    public Map<String, Long> statusCounts() {
+        BranchAccessService.ListScope scope = branchAccessService.currentListScope();
+        Map<String, Long> counts = new HashMap<>();
+        long total = 0;
+        for (Object[] row : repository.countByStatusScoped(scope.allBranches(), scope.branchIds())) {
+            if (row[0] == null) continue;
+            String statusName = ((LpoStatus) row[0]).name();
+            long count = ((Number) row[1]).longValue();
+            counts.put(statusName, count);
+            total += count;
+        }
+        counts.put("ALL", total);
+        return counts;
+    }
+
     /* ================= GET ================= */
 
     @Transactional

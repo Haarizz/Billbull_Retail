@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useRef } from 'react';
+import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   LayoutDashboard,
@@ -96,6 +96,7 @@ const LPO_COLUMNS = [
 // API Imports
 import {
   getLpos,
+  getLposPage,
   getLpoSuggestions,
   getLpoByNumber,
   createLpo,
@@ -2352,14 +2353,18 @@ const LPOList = () => {
   const [activeStatusTab, setActiveStatusTab] = useState("All LPOs");
   const [activeNavTab, setActiveNavTab] = useState("list");
 
-  // Master State
-  const [lpos, setLpos] = useState([]);
-  // Client-side pagination over the filtered/processed list (backend /page
-  // doesn't support all the filters this page exposes — status tab + date
-  // range + vendor — so we slice processedData here).
-  const [listPage, setListPage] = useState(0);
+  // Server-side pagination state. The list/approval/history tabs each fetch a
+  // single page from the backend (/api/lpos/page) so we never load the whole
+  // table (and never trigger the per-row fulfillment N+1 across all rows).
   const LIST_PAGE_SIZE = 30;
+  const [listPage, setListPage] = useState(0);
+  const [pageData, setPageData] = useState({ content: [], totalElements: 0, totalPages: 0 });
+  const [loadingPage, setLoadingPage] = useState(false);
   const [approvalQueue, setApprovalQueue] = useState([]);
+  const [approvalPage, setApprovalPage] = useState(0);
+  const [approvalMeta, setApprovalMeta] = useState({ totalElements: 0, totalPages: 0 });
+  const [historyPage, setHistoryPage] = useState(0);
+  const [historyData, setHistoryData] = useState({ content: [], totalElements: 0, totalPages: 0 });
   const [autoSuggestions, setAutoSuggestions] = useState([]);
   const [currentEditorData, setCurrentEditorData] = useState(null);
   const [vendors, setVendors] = useState([]);
@@ -2425,15 +2430,15 @@ const LPOList = () => {
     try {
       setLoading(true);
 
-      // Load all data in parallel (products removed — ProductSelector fetches server-side)
-      const [lposData, suggestionsData, vendorsData, warehousesData] = await Promise.all([
-        getLpos(null).catch(() => []),
+      // Reference data only — the LPO rows themselves are now fetched a page at
+      // a time by the per-tab effects below. (Products are fetched server-side
+      // by ProductSelector.)
+      const [suggestionsData, vendorsData, warehousesData] = await Promise.all([
         getLpoSuggestions().catch(() => []),
         getVendors().catch(() => []),
         getWarehouses().catch(() => [])
       ]);
 
-      setLpos(mapApiToUi(lposData));
       setAutoSuggestions(suggestionsData);
       setVendors(vendorsData);
       setWarehouses(warehousesData);
@@ -2445,20 +2450,94 @@ const LPOList = () => {
     }
   };
 
-  // Filter approval queue whenever lpos change
+  // Debounce the free-text search so each keystroke doesn't hit the server.
+  const [debouncedSearch, setDebouncedSearch] = useState("");
   useEffect(() => {
-    const pending = lpos.filter(l => l.status === "PENDING_APPROVAL");
-    setApprovalQueue(
-      pending.map(p => ({
-        dbId: p.dbId,                 // ✅ KEEP numeric ID
-        lpoNumber: p.lpoNumber,       // ✅ Business number
+    const t = setTimeout(() => setDebouncedSearch(searchQuery), 350);
+    return () => clearTimeout(t);
+  }, [searchQuery]);
+
+  // Active status tab → backend LpoStatus param ("" = all).
+  const statusParam = useMemo(
+    () => (activeStatusTab === "All LPOs" ? "" : activeStatusTab.toUpperCase().replace(/ /g, "_")),
+    [activeStatusTab]
+  );
+
+  // Reset to the first page whenever a filter changes.
+  useEffect(() => {
+    setListPage(0);
+  }, [statusParam, debouncedSearch, dateRange.from, dateRange.to, selectedVendor]);
+
+  // Fetch one page of the LIST tab from the server.
+  const fetchListPage = useCallback(async () => {
+    setLoadingPage(true);
+    try {
+      const res = await getLposPage({
+        page: listPage,
+        size: LIST_PAGE_SIZE,
+        search: debouncedSearch,
+        status: statusParam,
+        dateFrom: dateRange.from,
+        dateTo: dateRange.to,
+        vendor: selectedVendor,
+      });
+      setPageData({
+        content: mapApiToUi(res.content || []),
+        totalElements: res.totalElements || 0,
+        totalPages: res.totalPages || 0,
+      });
+    } catch (error) {
+      console.error("Failed to load LPO page:", error);
+      setPageData({ content: [], totalElements: 0, totalPages: 0 });
+    } finally {
+      setLoadingPage(false);
+    }
+  }, [listPage, debouncedSearch, statusParam, dateRange.from, dateRange.to, selectedVendor]);
+
+  useEffect(() => {
+    if (activeNavTab === "list") fetchListPage();
+  }, [activeNavTab, fetchListPage]);
+
+  // Approval Queue tab — server-paginated PENDING_APPROVAL rows.
+  const fetchApprovalQueue = useCallback(async () => {
+    try {
+      const res = await getLposPage({ page: approvalPage, size: LIST_PAGE_SIZE, status: "PENDING_APPROVAL" });
+      const rows = mapApiToUi(res.content || []);
+      setApprovalQueue(rows.map(p => ({
+        dbId: p.dbId,
+        lpoNumber: p.lpoNumber,
         vendorName: p.vendorName,
         date: p.date,
         totalValue: p.totalValue,
-        urgency: "Normal"
-      }))
-    );
-  }, [lpos]);
+        urgency: "Normal",
+      })));
+      setApprovalMeta({ totalElements: res.totalElements || 0, totalPages: res.totalPages || 0 });
+    } catch (error) {
+      console.error("Failed to load approval queue:", error);
+    }
+  }, [approvalPage]);
+
+  useEffect(() => {
+    if (activeNavTab === "approval") fetchApprovalQueue();
+  }, [activeNavTab, fetchApprovalQueue]);
+
+  // History tab — server-paginated full history.
+  const fetchHistory = useCallback(async () => {
+    try {
+      const res = await getLposPage({ page: historyPage, size: LIST_PAGE_SIZE });
+      setHistoryData({
+        content: mapApiToUi(res.content || []),
+        totalElements: res.totalElements || 0,
+        totalPages: res.totalPages || 0,
+      });
+    } catch (error) {
+      console.error("Failed to load LPO history:", error);
+    }
+  }, [historyPage]);
+
+  useEffect(() => {
+    if (activeNavTab === "history") fetchHistory();
+  }, [activeNavTab, fetchHistory]);
 
   // --- Handlers ---
 
@@ -2589,8 +2668,9 @@ const LPOList = () => {
 
   const refreshLpos = async () => {
     try {
-      const data = await getLpos(null);
-      setLpos(mapApiToUi(data));
+      await fetchListPage();
+      if (activeNavTab === 'approval') await fetchApprovalQueue();
+      if (activeNavTab === 'history') await fetchHistory();
     } catch (error) {
       console.error('Failed to refresh LPOs:', error);
     }
@@ -2795,92 +2875,68 @@ const LPOList = () => {
 
   // --- ACTUAL EXECUTION HANDLERS (Called by Modal) ---
   const executeStockApprove = async (dbId) => {
-
-
-    // Optimistic update
-    setLpos(prevLpos =>
-      prevLpos.map(lpo =>
+    // Optimistic update of the visible page.
+    setPageData(prev => ({
+      ...prev,
+      content: prev.content.map(lpo =>
         lpo.dbId === dbId ? { ...lpo, status: 'COMPLETED', received: 100 } : lpo
-      )
-    );
+      ),
+    }));
     // await createGRN(dbId); // Hypothetical API call
   };
 
   const executeStockReject = async (dbId) => {
-    // Optimistic update
-    setLpos(prevLpos =>
-      prevLpos.map(lpo =>
+    // Optimistic update of the visible page.
+    setPageData(prev => ({
+      ...prev,
+      content: prev.content.map(lpo =>
         lpo.dbId === dbId ? { ...lpo, status: 'REJECTED' } : lpo
-      )
-    );
+      ),
+    }));
   };
 
-  const processedData = useMemo(() => {
-    let data = [...lpos];
-
-    // 1. Filter by Status
-    if (activeStatusTab !== "All LPOs") {
-      const dbStatus = activeStatusTab.toUpperCase().replace(/ /g, '_');
-      data = data.filter(l => l.status === dbStatus);
-    }
-
-    // 2. Filter by Search Query
-    if (searchQuery) {
-      const lowerQuery = searchQuery.toLowerCase();
-      data = data.filter(l =>
-        (l.lpoNumber && l.lpoNumber.toLowerCase().includes(lowerQuery)) ||
-        (l.vendorName && l.vendorName.toLowerCase().includes(lowerQuery))
-      );
-    }
-
-    // 3. Filter by Date Range
-    if (dateRange.from) {
-      data = data.filter(l => l.date >= dateRange.from);
-    }
-    if (dateRange.to) {
-      data = data.filter(l => l.date <= dateRange.to);
-    }
-
-    // 4. Filter by Vendor
-    if (selectedVendor) {
-      data = data.filter(l => l.vendorName === selectedVendor || l.vendorCode === selectedVendor);
-    }
-
-    // 5. Sort
+  // Client-side sort applied to the current page only (the server already
+  // returns rows ordered by date desc; this lets a column header reorder the
+  // visible page without an extra round-trip).
+  const visibleRows = useMemo(() => {
+    const data = [...pageData.content];
     if (sortConfig && sortConfig.key) {
       data.sort((a, b) => {
-        if (a[sortConfig.key] < b[sortConfig.key]) {
-          return sortConfig.direction === 'asc' ? -1 : 1;
-        }
-        if (a[sortConfig.key] > b[sortConfig.key]) {
-          return sortConfig.direction === 'asc' ? 1 : -1;
-        }
+        if (a[sortConfig.key] < b[sortConfig.key]) return sortConfig.direction === 'asc' ? -1 : 1;
+        if (a[sortConfig.key] > b[sortConfig.key]) return sortConfig.direction === 'asc' ? 1 : -1;
         return 0;
       });
     }
-
     return data;
-  }, [lpos, activeStatusTab, searchQuery, sortConfig, dateRange, selectedVendor]);
+  }, [pageData.content, sortConfig]);
 
-  // Reset page when filters change, then slice processedData for the visible page.
-  useEffect(() => { setListPage(0); }, [activeStatusTab, searchQuery, dateRange, selectedVendor]);
-  const pagedProcessedData = useMemo(
-    () => processedData.slice(listPage * LIST_PAGE_SIZE, (listPage + 1) * LIST_PAGE_SIZE),
-    [processedData, listPage]
-  );
-
-  const exportProcessedData = useMemo(() => processedData.map((row, index) => ({
-    ...row,
-    sNo: index + 1,
-    totalValue: formatCurrencyDisplay(row.totalValue, currencyLabel)
-  })), [currencyLabel, processedData]);
-
-  const handleExportExcel = () => {
-    exportToExcel(exportProcessedData, LPO_COLUMNS, 'LPO_List');
+  // Export pulls the full filtered result set on demand (one heavier request,
+  // only when the user explicitly exports — not on every page view).
+  const buildExportRows = async () => {
+    const all = await getLpos(statusParam || null).catch(() => []);
+    let data = mapApiToUi(all);
+    if (debouncedSearch) {
+      const q = debouncedSearch.toLowerCase();
+      data = data.filter(l =>
+        (l.lpoNumber && l.lpoNumber.toLowerCase().includes(q)) ||
+        (l.vendorName && l.vendorName.toLowerCase().includes(q)));
+    }
+    if (dateRange.from) data = data.filter(l => l.date >= dateRange.from);
+    if (dateRange.to) data = data.filter(l => l.date <= dateRange.to);
+    if (selectedVendor) data = data.filter(l => l.vendorName === selectedVendor || l.vendorCode === selectedVendor);
+    return data.map((row, index) => ({
+      ...row,
+      sNo: index + 1,
+      totalValue: formatCurrencyDisplay(row.totalValue, currencyLabel),
+    }));
   };
 
-  const handleExportPdf = () => {
-    exportToPDF(exportProcessedData, LPO_COLUMNS, 'Local Purchase Orders', 'LPO_List');
+  const handleExportExcel = async () => {
+    exportToExcel(await buildExportRows(), LPO_COLUMNS, 'LPO_List');
+  };
+
+  const handleExportPdf = async () => {
+    exportToPDF(await buildExportRows(), LPO_COLUMNS, 'Local Purchase Orders', 'LPO_List');
   };
 
   return (
@@ -3020,8 +3076,8 @@ const LPOList = () => {
             {/* View Content */}
             {activeNavTab === 'list' && (
               <ListView
-                lpos={lpos}
-                processedData={pagedProcessedData}
+                lpos={pageData.content}
+                processedData={visibleRows}
                 activeFilter={activeStatusTab}
                 currentPage={0}
                 onEdit={handleEditLPO}
@@ -3053,9 +3109,9 @@ const LPOList = () => {
               <PaginationFooter
                 page={listPage}
                 size={LIST_PAGE_SIZE}
-                totalElements={processedData.length}
-                totalPages={Math.ceil(processedData.length / LIST_PAGE_SIZE)}
-                loading={loading}
+                totalElements={pageData.totalElements}
+                totalPages={pageData.totalPages}
+                loading={loadingPage}
                 onPageChange={setListPage}
               />
             )}
@@ -3079,14 +3135,32 @@ const LPOList = () => {
               />
             )}
             {activeNavTab === 'approval' && (
-              <ApprovalQueueView
-                queue={approvalQueue}
-                onApprove={handleApprove}
-                onReject={handleReject}
-              />
+              <>
+                <ApprovalQueueView
+                  queue={approvalQueue}
+                  onApprove={handleApprove}
+                  onReject={handleReject}
+                />
+                <PaginationFooter
+                  page={approvalPage}
+                  size={LIST_PAGE_SIZE}
+                  totalElements={approvalMeta.totalElements}
+                  totalPages={approvalMeta.totalPages}
+                  onPageChange={setApprovalPage}
+                />
+              </>
             )}
             {activeNavTab === 'history' && (
-              <HistoryView lpos={lpos} />
+              <>
+                <HistoryView lpos={historyData.content} />
+                <PaginationFooter
+                  page={historyPage}
+                  size={LIST_PAGE_SIZE}
+                  totalElements={historyData.totalElements}
+                  totalPages={historyData.totalPages}
+                  onPageChange={setHistoryPage}
+                />
+              </>
             )}
 
             {/* BB-023: Follow-Up Tab */}

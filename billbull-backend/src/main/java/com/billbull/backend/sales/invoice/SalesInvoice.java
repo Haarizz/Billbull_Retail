@@ -10,7 +10,9 @@ import java.util.List;
 
 @Entity
 @Table(name = "sales_invoices", indexes = {
-    @Index(name = "idx_sales_invoice_branch", columnList = "branch_id")
+    @Index(name = "idx_sales_invoice_branch", columnList = "branch_id"),
+    // Speeds the date-bounded sales-report loader.
+    @Index(name = "idx_sales_invoice_date", columnList = "invoice_date")
 })
 @JsonIgnoreProperties({ "hibernateLazyInitializer", "handler" })
 public class SalesInvoice {

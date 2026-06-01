@@ -11,7 +11,13 @@ import java.time.LocalDate;
 
 @Entity
 @Table(name = "payment_vouchers", indexes = {
-    @Index(name = "idx_purchase_payment_branch", columnList = "branch_id")
+    @Index(name = "idx_purchase_payment_branch", columnList = "branch_id"),
+    // Supports the paginated list query: branch scope + status filter, ordered by date.
+    @Index(name = "idx_purchase_payment_branch_status_date", columnList = "branch_id, status, payment_date"),
+    @Index(name = "idx_purchase_payment_status", columnList = "status"),
+    @Index(name = "idx_purchase_payment_date", columnList = "payment_date"),
+    // Speeds the per-vendor payment-total aggregates used by the vendor list.
+    @Index(name = "idx_purchase_payment_vendor_name", columnList = "vendor_name")
 })
 @Data
 @NoArgsConstructor

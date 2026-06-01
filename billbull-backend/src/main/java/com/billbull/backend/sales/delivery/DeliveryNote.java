@@ -12,7 +12,9 @@ import com.billbull.backend.settings.branch.Branch;
 @Entity
 @Table(name = "delivery_notes", indexes = {
 		@Index(name = "idx_dn_linked_invoice", columnList = "sales_invoice_id"),
-		@Index(name = "idx_dn_branch", columnList = "branch_id")
+		@Index(name = "idx_dn_branch", columnList = "branch_id"),
+		// Speeds the date-bounded sales-report loader.
+		@Index(name = "idx_dn_date", columnList = "dn_date")
 })
 public class DeliveryNote {
 
