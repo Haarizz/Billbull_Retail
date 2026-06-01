@@ -77,6 +77,24 @@ public interface BatchMasterRepository extends JpaRepository<BatchMaster, Long> 
             @Param("productCode") String productCode,
             @Param("binId") Long binId);
 
+    // Same FEFO ordering as findAvailableForSelection, but across every bin.
+    // Used to auto-resolve a default bin when a document line carries none
+    // (e.g. Direct Sale invoice lines): the first row's bin is the FEFO-preferred one.
+    @Query("""
+            SELECT b
+            FROM BatchMaster b
+            WHERE b.productCode = :productCode
+              AND b.binId IS NOT NULL
+              AND b.status = com.billbull.backend.inventory.batch.BatchStatus.AVAILABLE
+            ORDER BY
+              CASE WHEN b.expiryDate IS NULL THEN 1 ELSE 0 END,
+              b.expiryDate ASC,
+              CASE WHEN b.entryDate IS NULL THEN 1 ELSE 0 END,
+              b.entryDate ASC,
+              b.qtyUnitNo ASC
+            """)
+    List<BatchMaster> findAvailableForSelectionAnyBin(@Param("productCode") String productCode);
+
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("""
             SELECT b

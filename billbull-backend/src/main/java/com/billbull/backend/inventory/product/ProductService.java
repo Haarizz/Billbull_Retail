@@ -581,13 +581,28 @@ public class ProductService {
         List<Product> products = productPage.getContent();
         List<Long> ids = products.stream().map(Product::getId).collect(Collectors.toList());
 
+        // Status totals across the whole filtered set (not just this page) so the
+        // "Active Products" / "Draft Items" cards are correct. Warehouse-filtered
+        // lists are not covered (the products page never sends a warehouse).
+        java.util.Map<String, Long> statusCounts = new java.util.HashMap<>();
+        if (warehouseId == null) {
+            for (Object[] row : productRepo.countByStatusFiltered(trimmedSearch, departmentId, brandId)) {
+                if (row[0] == null) {
+                    continue;
+                }
+                statusCounts.put(row[0].toString(), ((Number) row[1]).longValue());
+            }
+        }
+
         if (ids.isEmpty()) {
-            return java.util.Map.of(
-                    "content", java.util.Collections.emptyList(),
-                    "totalElements", productPage.getTotalElements(),
-                    "totalPages", productPage.getTotalPages(),
-                    "page", page,
-                    "size", size);
+            java.util.Map<String, Object> empty = new java.util.HashMap<>();
+            empty.put("content", java.util.Collections.emptyList());
+            empty.put("totalElements", productPage.getTotalElements());
+            empty.put("totalPages", productPage.getTotalPages());
+            empty.put("page", page);
+            empty.put("size", size);
+            empty.put("statusCounts", statusCounts);
+            return empty;
         }
 
         // Query 2: pricing bulk
@@ -719,12 +734,14 @@ public class ProductService {
             return item;
         }).collect(Collectors.toList());
 
-        return java.util.Map.of(
-                "content", content,
-                "totalElements", productPage.getTotalElements(),
-                "totalPages", productPage.getTotalPages(),
-                "page", page,
-                "size", size);
+        java.util.Map<String, Object> response = new java.util.HashMap<>();
+        response.put("content", content);
+        response.put("totalElements", productPage.getTotalElements());
+        response.put("totalPages", productPage.getTotalPages());
+        response.put("page", page);
+        response.put("size", size);
+        response.put("statusCounts", statusCounts);
+        return response;
     }
 
     @Transactional(readOnly = true)

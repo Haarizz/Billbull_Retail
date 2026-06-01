@@ -120,7 +120,10 @@ const BatchSelectionModal = ({
   }, [isOpen, fefoEnabled, currentSelections, binId, locationCode]);
 
   useEffect(() => {
-    if (!isOpen || readOnly || !itemCode || !activeBinCode || required <= 0) return;
+    // A line bin is no longer required up front: when the document line carries
+    // no bin (e.g. Direct Sale invoices) the backend auto-resolves the
+    // FEFO-preferred bin and returns it, which we adopt below.
+    if (!isOpen || readOnly || !itemCode || required <= 0) return;
 
     let cancelled = false;
     setLoading(true);
@@ -128,7 +131,13 @@ const BatchSelectionModal = ({
 
     getBatchSelectionOptions({ itemCode, locationCode: activeBinCode, binId: activeBinId, requiredQuantity: required })
       .then(data => {
-        if (!cancelled) setOptions(data);
+        if (!cancelled) {
+          setOptions(data);
+          // Adopt the bin the backend resolved so save sends it and the bin
+          // dropdown reflects the active selection.
+          if (data?.binId && !activeBinId) setActiveBinId(data.binId);
+          if (data?.locationCode && !activeBinCode) setActiveBinCode(data.locationCode);
+        }
       })
       .catch(err => {
         if (!cancelled) {

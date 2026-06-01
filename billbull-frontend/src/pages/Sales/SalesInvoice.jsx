@@ -452,13 +452,14 @@ const SalesInvoice = () => {
     const resolveInvoiceTypeUI = ({
         linkedSalesOrder = '',
         linkedDeliveryNote = '',
-        linkedProforma = '',
-        salesType: resolvedSalesType = 'STANDARD_FLOW'
+        linkedProforma = ''
     } = {}) => {
         if (linkedDeliveryNote) return 'Against Delivery Note';
         if (linkedProforma) return 'Against Proforma Invoice';
         if (linkedSalesOrder) return 'Against Sales Order';
-        return resolvedSalesType === 'DIRECT_SALE' ? 'Direct Sale' : 'Direct Sale';
+        // No source document: the dropdown has no "Standard" option, so a
+        // no-link invoice is always a Direct Sale.
+        return 'Direct Sale';
     };
 
     // ✅ GLOBAL SHORTCUTS
@@ -1087,8 +1088,11 @@ const SalesInvoice = () => {
             setInvoiceNo('');
         }
         setStatus('Draft');
-        setSalesType(type);
-        setInvoiceTypeUI(resolveInvoiceTypeUI({ salesType: type }));
+        // Derive salesType from the resolved dropdown type so a blank (no-link)
+        // invoice is a Direct Sale in both the UI and state.
+        const newTypeUI = resolveInvoiceTypeUI({ salesType: type });
+        setInvoiceTypeUI(newTypeUI);
+        setSalesType(newTypeUI === 'Direct Sale' ? 'DIRECT_SALE' : 'STANDARD_FLOW');
         setInvoiceDate(new Date().toISOString().split('T')[0]);
         setDeliveryDate('');
         // BB-027: Default to Walk-In Customer for new invoices
@@ -2001,14 +2005,18 @@ const SalesInvoice = () => {
         setRoundOffManual(false);
         setInvoiceBalance(invoice.balance != null ? invoice.balance : null);
         setStatus(invoice.status || 'Draft');
-        const resolvedSalesType = invoice.salesType || 'STANDARD_FLOW';
-        setSalesType(resolvedSalesType);
-        setInvoiceTypeUI(resolveInvoiceTypeUI({
+        // Keep salesType in sync with the resolved dropdown type: a no-link
+        // invoice has no "Standard" UI option, so it is always a Direct Sale.
+        // Deriving from the UI type avoids the stored-STANDARD_FLOW/shows-Direct-Sale
+        // mismatch that left the batch button disabled.
+        const resolvedTypeUI = resolveInvoiceTypeUI({
             linkedSalesOrder: invoice.linkedSalesOrder || '',
             linkedDeliveryNote: invoice.linkedDeliveryNote || '',
             linkedProforma: invoice.linkedProforma || '',
-            salesType: resolvedSalesType
-        }));
+            salesType: invoice.salesType || 'STANDARD_FLOW'
+        });
+        setInvoiceTypeUI(resolvedTypeUI);
+        setSalesType(resolvedTypeUI === 'Direct Sale' ? 'DIRECT_SALE' : 'STANDARD_FLOW');
         setIsGeneratedFromDN(!!invoice.linkedDeliveryNote && invoice.status !== 'CANCELLED');
 
         // Map items back
