@@ -16,9 +16,14 @@ const VendorSelector = ({
     onVendorCreated
 }) => {
     const [searchQuery, setSearchQuery] = useState('');
+    const [debouncedQuery, setDebouncedQuery] = useState('');
     const [highlightedIndex, setHighlightedIndex] = useState(0);
     const searchInputRef = useRef(null);
     const listRef = useRef(null);
+
+    // Cap rendered rows: rendering thousands of vendors on every keystroke is
+    // what makes selection feel heavy. Filter the full list, paint only MAX_VISIBLE.
+    const MAX_VISIBLE = 50;
 
     // New Vendor Panel
     const [isNewVendorOpen, setIsNewVendorOpen] = useState(false);
@@ -38,10 +43,17 @@ const VendorSelector = ({
     useEffect(() => {
         if (isOpen) {
             setSearchQuery('');
+            setDebouncedQuery('');
             setHighlightedIndex(0);
             setTimeout(() => searchInputRef.current?.focus(), 100);
         }
     }, [isOpen]);
+
+    // Debounce the query so fast typing doesn't re-filter/re-render every keystroke
+    useEffect(() => {
+        const t = setTimeout(() => setDebouncedQuery(searchQuery), 180);
+        return () => clearTimeout(t);
+    }, [searchQuery]);
 
     // Filter vendors
     const filtered = useMemo(() => {
@@ -64,14 +76,17 @@ const VendorSelector = ({
             }, ...list];
         }
 
-        if (!searchQuery.trim()) return list;
-        const q = searchQuery.toLowerCase();
+        if (!debouncedQuery.trim()) return list;
+        const q = debouncedQuery.toLowerCase();
         return list.filter(v =>
             (v.code || '').toLowerCase().includes(q) ||
             (v.name || '').toLowerCase().includes(q) ||
             (v.mobile || v.phone || '').toLowerCase().includes(q)
         );
-    }, [vendors, searchQuery]);
+    }, [vendors, debouncedQuery]);
+
+    // Only the first MAX_VISIBLE matches are rendered/navigable.
+    const visible = useMemo(() => filtered.slice(0, MAX_VISIBLE), [filtered]);
 
     // Keyboard navigation
     useEffect(() => {
@@ -79,20 +94,20 @@ const VendorSelector = ({
         const handleKey = (e) => {
             if (e.key === 'ArrowDown') {
                 e.preventDefault();
-                setHighlightedIndex(prev => Math.min(prev + 1, filtered.length - 1));
+                setHighlightedIndex(prev => Math.min(prev + 1, visible.length - 1));
             } else if (e.key === 'ArrowUp') {
                 e.preventDefault();
                 setHighlightedIndex(prev => Math.max(prev - 1, 0));
-            } else if (e.key === 'Enter' && filtered.length > 0) {
+            } else if (e.key === 'Enter' && visible.length > 0) {
                 e.preventDefault();
-                handleSelect(filtered[highlightedIndex]);
+                handleSelect(visible[highlightedIndex]);
             } else if (e.key === 'Escape') {
                 onClose();
             }
         };
         document.addEventListener('keydown', handleKey);
         return () => document.removeEventListener('keydown', handleKey);
-    }, [isOpen, filtered, highlightedIndex]);
+    }, [isOpen, visible, highlightedIndex]);
 
     // Scroll highlighted into view  
     useEffect(() => {
@@ -213,8 +228,8 @@ const VendorSelector = ({
 
                 {/* Vendor List */}
                 <div ref={listRef} className="flex-1 overflow-y-auto min-h-0 max-h-[50vh]">
-                    {filtered.length > 0 ? (
-                        filtered.map((vend, idx) => {
+                    {visible.length > 0 ? (
+                        visible.map((vend, idx) => {
                             const isSelected = vend.code === selectedCode;
                             const isHighlighted = idx === highlightedIndex;
 
@@ -272,7 +287,10 @@ const VendorSelector = ({
 
                 {/* Footer */}
                 <div className="px-5 py-3 border-t border-slate-100 bg-slate-50 rounded-b-xl flex justify-between items-center">
-                    <span className="text-xs text-slate-400">{filtered.length} vendor{filtered.length !== 1 ? 's' : ''} found</span>
+                    <span className="text-xs text-slate-400">
+                        {filtered.length} vendor{filtered.length !== 1 ? 's' : ''} found
+                        {filtered.length > MAX_VISIBLE ? ` — showing first ${MAX_VISIBLE}, refine search` : ''}
+                    </span>
                     <button
                         onClick={() => setIsNewVendorOpen(true)}
                         className="flex items-center gap-1 px-3 py-1.5 bg-yellow-400 text-slate-800 text-xs font-bold rounded-md hover:bg-yellow-500 transition-colors"
