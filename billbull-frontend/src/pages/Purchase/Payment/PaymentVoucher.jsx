@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import {
     LayoutDashboard,
     Search,
@@ -48,7 +48,8 @@ import PaginationFooter from '../../../components/common/PaginationFooter';
 // ==========================================
 import { getPostedInvoicesForPayment } from '../../../api/purchaseInvoiceApi';
 import {
-    getPaymentVouchers,
+    getPaymentVouchersPage,
+    getPaymentVoucherStats,
     getPaymentVoucherById,
     createPaymentVoucher,
     updateVoucherStatus
@@ -350,11 +351,14 @@ const PaymentVoucher = () => {
     const [selectedVoucher, setSelectedVoucher] = useState(null);
     const [isCreateOpen, setCreateOpen] = useState(false);
 
-    // Data State
+    // Data State — `vouchers` now holds ONE server page for the active tab.
     const [vouchers, setVouchers] = useState([]);
-    // Client-side pagination over the active sub-list (mainList/pendingList/historyList).
     const [listPage, setListPage] = useState(0);
+    const [pageMeta, setPageMeta] = useState({ totalElements: 0, totalPages: 0 });
     const LIST_PAGE_SIZE = 30;
+    const [searchTerm, setSearchTerm] = useState("");
+    const [debouncedSearch, setDebouncedSearch] = useState("");
+    const [statsData, setStatsData] = useState({});
     const [purchaseInvoices, setPurchaseInvoices] = useState([]);
     const [vendors, setVendors] = useState([]);
     const [bankAccounts, setBankAccounts] = useState([]);
@@ -388,69 +392,107 @@ const PaymentVoucher = () => {
         return () => window.removeEventListener('billbull:branch-changed', handler);
     }, []);
 
-    const fetchData = async () => {
+    // Map a backend voucher entity to the row shape the table expects.
+    const mapVoucher = useCallback((v) => ({
+        dbId: v.id, // Actual Database ID for API calls
+        id: v.voucherNumber || `ID-${v.id}`, // Display ID (e.g., PV-1234)
+        date: v.paymentDate,
+        vendor: v.vendorName,
+        vendorId: v.vendorId || "VND-EXT",
+        branchId: v.branch?.id ?? null,
+        branchName: v.branch?.name || '',
+        branchCode: v.branch?.code || '',
+        mode: formatModeString(v.paymentMode),
+        modeIcon: getIconForMode(v.paymentMode),
+        amountVal: parseFloat(v.amount),
+        allocatedVal: parseFloat(v.allocated || 0),
+        unallocatedVal: parseFloat(v.unallocated || 0),
+        amount: formatCurrency(v.amount, company),
+        allocated: formatCurrency(v.allocated, company),
+        unallocated: formatCurrency(v.unallocated, company),
+        ref: v.referenceNumber || "—",
+        status: formatStatusString(v.status),
+        statusColor: getStatusColor(v.status),
+        rawStatus: v.status // Keep raw enum for filtering
+    }), [company]);
+
+    // The active tab maps to a server-side status filter so each page is
+    // fetched pre-filtered (no client-side splitting of a full dataset).
+    const statusForTab = (tab) =>
+        tab === 'approval' ? 'PENDING_APPROVAL'
+        : tab === 'history' ? 'POSTED,REJECTED,CLEARED'
+        : 'POSTED,CLEARED';
+
+    // Fetch one server page for the active list tab.
+    const fetchVouchers = useCallback(async () => {
+        if (!['list', 'approval', 'history'].includes(activeTab)) return;
         setLoading(true);
         try {
-            // 1. Fetch Invoices for dropdown (specifically POSTED ones)
-            const invRes = await getPostedInvoicesForPayment();
-            const allInvoices = Array.isArray(invRes) ? invRes : (invRes.data || []);
-            setPurchaseInvoices(allInvoices);
-
-            // 1b. Fetch vendors
-            const vendorRes = await getVendors();
-            setVendors(Array.isArray(vendorRes) ? vendorRes : (vendorRes.data || []));
-
-            // 1c. Fetch bank accounts
-            const bankRes = await getBankAccounts();
-            setBankAccounts(Array.isArray(bankRes) ? bankRes : []);
-
-            // 2. Fetch Vouchers for table (from paymentApi)
-            const voucherRes = await getPaymentVouchers();
-            const rawData = Array.isArray(voucherRes) ? voucherRes : (voucherRes.data || []);
-
-            // Map to frontend format
-            const formatted = rawData.map(v => ({
-                dbId: v.id, // Actual Database ID for API calls
-                id: v.voucherNumber || `ID-${v.id}`, // Display ID (e.g., PV-1234)
-                date: v.paymentDate,
-                vendor: v.vendorName,
-                vendorId: v.vendorId || "VND-EXT",
-                branchId: v.branch?.id ?? null,
-                branchName: v.branch?.name || '',
-                branchCode: v.branch?.code || '',
-                mode: formatModeString(v.paymentMode),
-                modeIcon: getIconForMode(v.paymentMode),
-                amountVal: parseFloat(v.amount), // Keep number for stats calculation
-                allocatedVal: parseFloat(v.allocated || 0),
-                unallocatedVal: parseFloat(v.unallocated || 0),
-                amount: formatCurrency(v.amount, company),
-                allocated: formatCurrency(v.allocated, company),
-                unallocated: formatCurrency(v.unallocated, company),
-                ref: v.referenceNumber || "—",
-                status: formatStatusString(v.status),
-                statusColor: getStatusColor(v.status),
-                rawStatus: v.status // Keep raw enum for filtering
-            }));
-
-            setVouchers(formatted);
+            const res = await getPaymentVouchersPage({
+                page: listPage,
+                size: LIST_PAGE_SIZE,
+                search: debouncedSearch,
+                status: statusForTab(activeTab),
+            });
+            setVouchers((res.content || []).map(mapVoucher));
+            setPageMeta({ totalElements: res.totalElements || 0, totalPages: res.totalPages || 0 });
         } catch (error) {
-            console.error("Error loading data:", error);
+            console.error("Error loading vouchers:", error);
+            setVouchers([]);
+            setPageMeta({ totalElements: 0, totalPages: 0 });
         } finally {
             setLoading(false);
         }
+    }, [activeTab, listPage, debouncedSearch, mapVoucher]);
+
+    // Server-side payment stats for the summary cards.
+    const fetchStats = useCallback(async () => {
+        try {
+            setStatsData(await getPaymentVoucherStats());
+        } catch (error) {
+            console.error("Error loading payment stats:", error);
+        }
+    }, []);
+
+    const fetchData = async () => {
+        try {
+            // Reference data for the create/pay modals (loaded once).
+            const invRes = await getPostedInvoicesForPayment();
+            setPurchaseInvoices(Array.isArray(invRes) ? invRes : (invRes.data || []));
+
+            const vendorRes = await getVendors();
+            setVendors(Array.isArray(vendorRes) ? vendorRes : (vendorRes.data || []));
+
+            const bankRes = await getBankAccounts();
+            setBankAccounts(Array.isArray(bankRes) ? bankRes : []);
+        } catch (error) {
+            console.error("Error loading reference data:", error);
+        }
+        // Page rows + stats are fetched server-side.
+        await Promise.all([fetchVouchers(), fetchStats()]);
     };
 
-    // Dynamic Stats Calculation
+    // Debounce free-text search.
+    useEffect(() => {
+        const t = setTimeout(() => setDebouncedSearch(searchTerm), 350);
+        return () => clearTimeout(t);
+    }, [searchTerm]);
+
+    // Reset to first page on tab/search change.
+    useEffect(() => { setListPage(0); }, [activeTab, debouncedSearch]);
+
+    // Re-fetch the current page whenever tab / search / page changes.
+    useEffect(() => { fetchVouchers(); }, [fetchVouchers]);
+
+    // Stats come from the server aggregate (/api/vouchers/stats) so they cover
+    // ALL posted/cleared vouchers, not just the currently-loaded page.
     const stats = useMemo(() => {
-        const postedVouchers = vouchers.filter(v => v.rawStatus === 'POSTED' || v.rawStatus === 'CLEARED');
-        const totalPaid = postedVouchers.reduce((sum, v) => sum + v.amountVal, 0);
-
-        const calcTotal = (filterFn) => postedVouchers.filter(filterFn).reduce((sum, v) => sum + v.amountVal, 0);
-
-        const byCash = calcTotal(v => v.mode === 'Cash');
-        const byBank = calcTotal(v => v.mode === 'Bank Transfer');
-        const byCheque = calcTotal(v => v.mode === 'Cheque');
-        const byCard = calcTotal(v => v.mode === 'Card');
+        const num = (key) => parseFloat(statsData?.[key] || 0);
+        const totalPaid = num('TOTAL');
+        const byCash = num('CASH');
+        const byBank = num('BANK_TRANSFER');
+        const byCheque = num('CHEQUE');
+        const byCard = num('CARD');
 
         return [
             { label: "Total Paid", value: <CurrencyAmount value={totalPaid} currency={currency} />, sub: "Posted & Cleared vouchers", color: "bg-emerald-500", icon: Wallet },
@@ -459,7 +501,7 @@ const PaymentVoucher = () => {
             { label: "By Cheque", value: <CurrencyAmount value={byCheque} currency={currency} />, sub: "Cleared & Posted Cheques", color: "bg-purple-600", icon: FileCheck },
             { label: "By Card", value: <CurrencyAmount value={byCard} currency={currency} />, sub: `${totalPaid ? ((byCard / totalPaid) * 100).toFixed(1) : 0}% of total`, color: "bg-pink-500", icon: CreditCard },
         ];
-    }, [vouchers, currency]);
+    }, [statsData, currency]);
 
     // Actions
     const handleCreateVoucher = async (data) => {
@@ -749,27 +791,11 @@ const PaymentVoucher = () => {
         }
     };
 
-    // Filters
-    const mainList = vouchers.filter(v => v.rawStatus !== 'PENDING_APPROVAL' && v.rawStatus !== 'REJECTED');
-    const pendingList = vouchers.filter(v => v.rawStatus === 'PENDING_APPROVAL');
-    const historyList = vouchers.filter(v => v.rawStatus === 'POSTED' || v.rawStatus === 'REJECTED' || v.rawStatus === 'CLEARED');
-
-    // Reset list page when switching tabs.
-    useEffect(() => { setListPage(0); }, [activeTab]);
-    const activeListForTab = activeTab === 'approval' ? pendingList
-        : activeTab === 'history' ? historyList : mainList;
-    const pagedMainList = useMemo(
-        () => mainList.slice(listPage * LIST_PAGE_SIZE, (listPage + 1) * LIST_PAGE_SIZE),
-        [mainList, listPage]
-    );
-    const pagedPendingList = useMemo(
-        () => pendingList.slice(listPage * LIST_PAGE_SIZE, (listPage + 1) * LIST_PAGE_SIZE),
-        [pendingList, listPage]
-    );
-    const pagedHistoryList = useMemo(
-        () => historyList.slice(listPage * LIST_PAGE_SIZE, (listPage + 1) * LIST_PAGE_SIZE),
-        [historyList, listPage]
-    );
+    // `vouchers` already holds exactly the server page for the active tab, so
+    // each tab simply renders it directly (no client-side filtering/slicing).
+    const pagedMainList = vouchers;
+    const pagedPendingList = vouchers;
+    const pagedHistoryList = vouchers;
 
     return (
         <div className="min-h-screen bg-[#F7F7FA] font-sans text-slate-900 flex flex-col p-6">
@@ -836,6 +862,8 @@ const PaymentVoucher = () => {
                             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
                             <input
                                 type="text"
+                                value={searchTerm}
+                                onChange={(e) => setSearchTerm(e.target.value)}
                                 placeholder="Search voucher no / vendor / ref..."
                                 className="w-full pl-10 pr-4 h-10 border border-slate-200 rounded-lg text-sm text-slate-600 focus:outline-none focus:ring-1 focus:ring-[#F5C742] placeholder:text-slate-400"
                             />
@@ -1189,7 +1217,7 @@ const PaymentVoucher = () => {
                                         </tr>
                                     </thead>
                                     <tbody className="divide-y divide-slate-100">
-                                        {mainList.length === 0 ? (
+                                        {pagedMainList.length === 0 ? (
                                             <tr><td colSpan="11" className="p-6 text-center text-slate-400">No posted vouchers found.</td></tr>
                                         ) : pagedMainList.map((row, index) => (
                                             <tr key={row.dbId} className="hover:bg-slate-50 group transition-colors">
@@ -1239,8 +1267,9 @@ const PaymentVoucher = () => {
                                 <PaginationFooter
                                     page={listPage}
                                     size={LIST_PAGE_SIZE}
-                                    totalElements={mainList.length}
-                                    totalPages={Math.ceil(mainList.length / LIST_PAGE_SIZE)}
+                                    totalElements={pageMeta.totalElements}
+                                    totalPages={pageMeta.totalPages}
+                                    loading={loading}
                                     onPageChange={setListPage}
                                 />
                             </div>
@@ -1277,7 +1306,7 @@ const PaymentVoucher = () => {
                                         </tr>
                                     </thead>
                                     <tbody className="divide-y divide-slate-100">
-                                        {pendingList.length === 0 ? (
+                                        {pagedPendingList.length === 0 ? (
                                             <tr><td colSpan="8" className="px-4 py-12 text-center text-slate-400">No vouchers pending approval.</td></tr>
                                         ) : pagedPendingList.map((row, index) => (
                                             <tr key={row.dbId} className="hover:bg-slate-50 group transition-colors">
@@ -1320,8 +1349,9 @@ const PaymentVoucher = () => {
                                 <PaginationFooter
                                     page={listPage}
                                     size={LIST_PAGE_SIZE}
-                                    totalElements={pendingList.length}
-                                    totalPages={Math.ceil(pendingList.length / LIST_PAGE_SIZE)}
+                                    totalElements={pageMeta.totalElements}
+                                    totalPages={pageMeta.totalPages}
+                                    loading={loading}
                                     onPageChange={setListPage}
                                 />
                             </div>
@@ -1355,7 +1385,7 @@ const PaymentVoucher = () => {
                                     </tr>
                                 </thead>
                                 <tbody className="divide-y divide-slate-100">
-                                    {historyList.length === 0 ? (
+                                    {pagedHistoryList.length === 0 ? (
                                         <tr><td colSpan="8" className="p-6 text-center text-slate-400">No history found.</td></tr>
                                     ) : pagedHistoryList.map((row, index) => (
                                         <tr key={row.dbId} className="hover:bg-slate-50 transition-colors">
@@ -1387,8 +1417,9 @@ const PaymentVoucher = () => {
                             <PaginationFooter
                                 page={listPage}
                                 size={LIST_PAGE_SIZE}
-                                totalElements={historyList.length}
-                                totalPages={Math.ceil(historyList.length / LIST_PAGE_SIZE)}
+                                totalElements={pageMeta.totalElements}
+                                totalPages={pageMeta.totalPages}
+                                loading={loading}
                                 onPageChange={setListPage}
                             />
                         </div>

@@ -45,9 +45,17 @@ public class LpoController {
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "30") int size,
             @RequestParam(required = false) String search,
-            @RequestParam(required = false) LpoStatus status) {
-        return ResponseEntity.ok(com.billbull.backend.util.PaginationUtil.paginate(
-                service.list(status), page, size, search, null));
+            @RequestParam(required = false) LpoStatus status,
+            @RequestParam(required = false) @org.springframework.format.annotation.DateTimeFormat(iso = org.springframework.format.annotation.DateTimeFormat.ISO.DATE) java.time.LocalDate dateFrom,
+            @RequestParam(required = false) @org.springframework.format.annotation.DateTimeFormat(iso = org.springframework.format.annotation.DateTimeFormat.ISO.DATE) java.time.LocalDate dateTo,
+            @RequestParam(required = false) String vendor) {
+        return ResponseEntity.ok(service.listPage(status, search, dateFrom, dateTo, vendor, page, size));
+    }
+
+    @GetMapping("/counts")
+    @PreAuthorize("hasAnyRole('ADMIN','INVENTORY_MANAGER','ACCOUNTANT')")
+    public ResponseEntity<Map<String, Long>> counts() {
+        return ResponseEntity.ok(service.statusCounts());
     }
 
     /* READ SINGLE */

@@ -17,7 +17,11 @@ import jakarta.persistence.*;
 
 @Entity
 @Table(name = "lpos", indexes = {
-	@Index(name = "idx_lpo_branch", columnList = "branch_id")
+	@Index(name = "idx_lpo_branch", columnList = "branch_id"),
+	// Supports the paginated list query: branch scope + status filter, ordered by date.
+	@Index(name = "idx_lpo_branch_status_date", columnList = "branch_id, status, lpo_date"),
+	@Index(name = "idx_lpo_status", columnList = "status"),
+	@Index(name = "idx_lpo_date", columnList = "lpo_date")
 })
 public class Lpo extends BaseEntity {
 

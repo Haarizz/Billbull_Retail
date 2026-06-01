@@ -116,4 +116,11 @@ public interface DeliveryNoteRepository extends JpaRepository<DeliveryNote, Long
 
   @Query("SELECT COUNT(dn) > 0 FROM DeliveryNote dn WHERE dn.salesOrderNo = :soNo AND dn.status <> com.billbull.backend.sales.delivery.DeliveryNoteStatus.CANCELLED")
   boolean existsActiveBySalesOrderNo(@Param("soNo") String soNo);
+
+  /** Sales-report loader: date-bounded delivery notes (header fields only — reports don't read DN items). */
+  @Query("SELECT dn FROM DeliveryNote dn "
+          + "WHERE (:dateFrom IS NULL OR dn.dnDate >= :dateFrom) "
+          + "AND (:dateTo IS NULL OR dn.dnDate <= :dateTo)")
+  List<DeliveryNote> findForReports(@Param("dateFrom") java.time.LocalDate dateFrom,
+          @Param("dateTo") java.time.LocalDate dateTo);
 }

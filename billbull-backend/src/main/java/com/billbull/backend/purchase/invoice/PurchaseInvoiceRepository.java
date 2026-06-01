@@ -32,6 +32,10 @@ public interface PurchaseInvoiceRepository
         @org.springframework.data.jpa.repository.Query("SELECT COALESCE(SUM(i.grandTotal), 0) FROM PurchaseInvoice i WHERE i.vendorName = :vendorName AND i.status <> 'CANCELLED'")
         java.math.BigDecimal sumInvoicedByVendorName(@org.springframework.data.repository.query.Param("vendorName") String vendorName);
 
+        /** Batched variant of {@link #sumInvoicedByVendorName}: one grouped query for all vendors. Rows: [vendorName, sum]. */
+        @org.springframework.data.jpa.repository.Query("SELECT i.vendorName, COALESCE(SUM(i.grandTotal), 0) FROM PurchaseInvoice i WHERE i.status <> 'CANCELLED' GROUP BY i.vendorName")
+        java.util.List<Object[]> sumInvoicedGroupedByVendorName();
+
         @org.springframework.data.jpa.repository.Query("SELECT new com.billbull.backend.financials.statement.StatementEntryDTO(s.invoiceDate, s.invoiceNumber, 'INVOICE', CAST(0 AS big_decimal), s.grandTotal, CAST(s.status AS string)) FROM PurchaseInvoice s WHERE s.vendorName = :vendorName AND s.invoiceDate BETWEEN :startDate AND :endDate AND s.status <> 'CANCELLED'")
         List<com.billbull.backend.financials.statement.StatementEntryDTO> findStatementEntries(String vendorName,
                         java.time.LocalDate startDate, java.time.LocalDate endDate);

@@ -19,6 +19,17 @@ public interface SalesInvoiceRepository extends JpaRepository<SalesInvoice, Long
 
         List<SalesInvoice> findAllByOrderByInvoiceDateDesc();
 
+        /**
+         * Sales-report loader: date-bounded invoices with their line items fetched
+         * in a single query (no per-invoice N+1). Pass null dates for no bound.
+         */
+        @Query("SELECT DISTINCT i FROM SalesInvoice i LEFT JOIN FETCH i.items "
+                        + "WHERE (:dateFrom IS NULL OR i.invoiceDate >= :dateFrom) "
+                        + "AND (:dateTo IS NULL OR i.invoiceDate <= :dateTo) "
+                        + "ORDER BY i.invoiceDate DESC")
+        List<SalesInvoice> findForReports(@Param("dateFrom") LocalDate dateFrom,
+                        @Param("dateTo") LocalDate dateTo);
+
         /** QA-018: batch lookup used by StatementService to populate description/reference. */
         List<SalesInvoice> findByInvoiceNumberIn(List<String> invoiceNumbers);
 

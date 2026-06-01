@@ -201,6 +201,51 @@ public class BranchAccessService {
         return canAccessTransactionBranch(rowBranchId);
     }
 
+    /**
+     * SQL-friendly description of the branch scope for the current request, so
+     * list/pagination queries can push branch filtering down into the database
+     * instead of loading everything and filtering in Java via
+     * {@link #filterBranchScoped}.
+     *
+     * <p>{@code allBranches == true} means no branch predicate should be applied.
+     * Otherwise rows must satisfy {@code branchId IN branchIds OR branchId IS NULL}
+     * (legacy null-branch rows are always visible, matching
+     * {@link #matchesActiveListScope}). {@code branchIds} is never empty — a
+     * sentinel {@code -1L} is used when the user has no branches so an SQL
+     * {@code IN ()} is never generated.
+     */
+    public record ListScope(boolean allBranches, java.util.Set<Long> branchIds) {}
+
+    public ListScope currentListScope() {
+        BranchContextHolder.BranchContext ctx = BranchContextHolder.get();
+        Long active = ctx != null ? ctx.activeBranchId() : null;
+        if (active != null) {
+            // Branch Selector narrows the view for everyone, admin included.
+            return scoped(java.util.Set.of(active));
+        }
+        if (ctx != null && ctx.isAllBranches()) {
+            return new ListScope(true, java.util.Set.of(-1L));
+        }
+        if (ctx == null) {
+            Long current = getCurrentUserBranchId();
+            return scoped(current != null ? java.util.Set.of(current) : java.util.Set.of());
+        }
+        // ctx present, not all-branches, no active selector → allowed set + primary.
+        java.util.Set<Long> ids = new java.util.HashSet<>(ctx.allowedBranchIds());
+        Long current = getCurrentUserBranchId();
+        if (current != null) {
+            ids.add(current);
+        }
+        return scoped(ids);
+    }
+
+    private ListScope scoped(java.util.Set<Long> ids) {
+        if (ids == null || ids.isEmpty()) {
+            return new ListScope(false, java.util.Set.of(-1L));
+        }
+        return new ListScope(false, java.util.Set.copyOf(ids));
+    }
+
     public <T> List<T> filterBranchScoped(List<T> items, java.util.function.Function<T, Long> branchIdExtractor) {
         return items.stream()
                 .filter(item -> matchesActiveListScope(branchIdExtractor.apply(item)))

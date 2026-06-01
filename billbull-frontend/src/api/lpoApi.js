@@ -9,10 +9,18 @@ export const getLpos = async (status) => {
   return res.data;
 };
 
-export const getLposPage = async ({ page = 0, size = 30, search = "", status = "" } = {}) => {
+export const getLposPage = async ({ page = 0, size = 30, search = "", status = "", dateFrom = "", dateTo = "", vendor = "" } = {}) => {
   const params = { page, size, search };
   if (status) params.status = status;
+  if (dateFrom) params.dateFrom = dateFrom;
+  if (dateTo) params.dateTo = dateTo;
+  if (vendor) params.vendor = vendor;
   const res = await api.get("/api/lpos/page", { params });
+  return res.data;
+};
+
+export const getLpoStatusCounts = async () => {
+  const res = await api.get("/api/lpos/counts");
   return res.data;
 };
 
