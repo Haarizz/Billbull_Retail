@@ -878,6 +878,8 @@ const buildTotalsTable = (layout) => {
 
     const discountAmount = asNumber(layout.totals.billDiscountAmount ?? layout.totals.discountAmount ?? 0);
     const discountPercent = asNumber(layout.totals.billDiscount ?? 0);
+    const deliveryCharge = asNumber(layout.totals.deliveryCharge ?? 0);
+    const roundOff = asNumber(layout.totals.roundOff ?? 0);
     const amountPaid = asNumber(layout.totals.amountPaid ?? 0);
     const balanceDue = asNumber(layout.totals.balanceDue ?? Math.max(asNumber(layout.totals.grandTotal) - amountPaid, 0));
     const currency = renderCurrencyForLayout(layout.currency, layout.displayOptions);
@@ -901,6 +903,8 @@ const buildTotalsTable = (layout) => {
         subTotal: true,
         discount: true,
         tax: true,
+        deliveryCharge: true,
+        roundOff: true,
         grandTotal: true,
         amountPaid: true,
         balanceDue: true,
@@ -925,6 +929,8 @@ const buildTotalsTable = (layout) => {
                 </tr>
             `) : '',
         visibility.tax ? row('Total VAT', layout.totals.tax) : '',
+        visibility.deliveryCharge && deliveryCharge > 0 ? row('Delivery Charge', deliveryCharge) : '',
+        visibility.roundOff && roundOff !== 0 ? row('Round Off', roundOff) : '',
         visibility.grandTotal ? row('Total', layout.totals.grandTotal, 'grand-total-row') : '',
         visibility.amountPaid && amountPaid > 0 ? row('Amount Paid', amountPaid) : '',
         visibility.balanceDue && amountPaid > 0 ? row('Balance Due', balanceDue, 'balance-due-row') : '',
@@ -2573,13 +2579,17 @@ const normalisePurchaseLayout = (template, data, companyProfile, renderTarget, o
         amountPaid: asNumber(data.totals?.amountPaid),
         balanceDue: asNumber(data.totals?.balanceDue),
         billDiscount: asNumber(data.totals?.billDiscount),
-        billDiscountAmount: asNumber(data.totals?.billDiscountAmount ?? data.totals?.discountAmount)
+        billDiscountAmount: asNumber(data.totals?.billDiscountAmount ?? data.totals?.discountAmount),
+        deliveryCharge: asNumber(data.totals?.deliveryCharge),
+        roundOff: asNumber(data.totals?.roundOff)
     };
     const totalVisibility = {
         taxable: pickSetting(designerSettings, ['showTaxableTotal'], false),
         subTotal: pickSetting(designerSettings, ['showSubtotal'], true),
         discount: pickSetting(designerSettings, ['showDiscountTotal', 'showDiscount'], true),
         tax: pickSetting(designerSettings, ['showVATTotal', 'showTaxTotal'], true),
+        deliveryCharge: pickSetting(designerSettings, ['showDeliveryCharge'], true),
+        roundOff: pickSetting(designerSettings, ['showRoundOff'], true),
         grandTotal: pickSetting(designerSettings, ['showGrandTotal', 'showTotalReturn', 'showTotalReceivedBold'], true),
         amountPaid: pickSetting(designerSettings, ['showAmountPaid', 'showTotalReceivedBold'], true),
         balanceDue: pickSetting(designerSettings, ['showBalanceDue', 'showRemainingBalance'], true),
@@ -2691,13 +2701,17 @@ const normaliseSalesDesignerLayout = (template, data, companyProfile, renderTarg
         amountPaid: asNumber(data.totals?.amountPaid),
         balanceDue: asNumber(data.totals?.balanceDue),
         billDiscount: asNumber(data.totals?.billDiscount),
-        billDiscountAmount: asNumber(data.totals?.billDiscountAmount ?? data.totals?.discountAmount)
+        billDiscountAmount: asNumber(data.totals?.billDiscountAmount ?? data.totals?.discountAmount),
+        deliveryCharge: asNumber(data.totals?.deliveryCharge),
+        roundOff: asNumber(data.totals?.roundOff)
     };
     const totalVisibility = {
         taxable: pickSetting(designerSettings, ['showTaxableTotal'], false),
         subTotal: pickSetting(designerSettings, ['showSubtotal'], true),
         discount: pickSetting(designerSettings, ['showDiscountTotal', 'showDiscount'], true),
         tax: pickSetting(designerSettings, ['showVATTotal', 'showTaxTotal'], true),
+        deliveryCharge: pickSetting(designerSettings, ['showDeliveryCharge'], true),
+        roundOff: pickSetting(designerSettings, ['showRoundOff'], true),
         grandTotal: pickSetting(designerSettings, ['showGrandTotal'], true),
         amountPaid: pickSetting(designerSettings, ['showAmountPaid'], true),
         balanceDue: pickSetting(designerSettings, ['showBalanceDue', 'showRemainingBalance'], true),
@@ -2849,7 +2863,9 @@ const normaliseGenericLayout = (template, data, companyProfile, renderTarget) =>
         amountPaid: asNumber(data.totals?.amountPaid),
         balanceDue: asNumber(data.totals?.balanceDue),
         billDiscount: asNumber(data.totals?.billDiscount),
-        billDiscountAmount: asNumber(data.totals?.billDiscountAmount ?? data.totals?.discountAmount)
+        billDiscountAmount: asNumber(data.totals?.billDiscountAmount ?? data.totals?.discountAmount),
+        deliveryCharge: asNumber(data.totals?.deliveryCharge),
+        roundOff: asNumber(data.totals?.roundOff)
     };
     const highlightValue = totals.balanceDue > 0 ? totals.balanceDue : totals.grandTotal;
     // QA-031: pull each linked source-doc number out as its own labeled row

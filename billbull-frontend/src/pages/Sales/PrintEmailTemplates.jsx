@@ -468,10 +468,17 @@ const buildPayload = ({ typeId, name, isDefault, settings }) => {
         DEFAULT_TEMPLATE_DISPLAY_OPTIONS
     );
 
+    const templateType = meta.mode === "preprinted"
+        ? "PREPRINTED"
+        : meta.designer === "overlay"
+            ? "LETTERHEAD"
+            : "FULL";
+
     return {
         category: meta.category,
         name: designerSettings.templateName || name || `Default ${meta.label}`,
         isDefault: !!isDefault,
+        templateType,
         paperSize: designerSettings.paperSize || designerSettings.pageSize || "A4",
         orientation: toApiOrientation(designerSettings.orientation),
         headerContent: designerSettings.headerContent || "",
@@ -608,9 +615,28 @@ export default function PrintEmailTemplates() {
     };
 
     const persistSave = async (typeId, settings) => {
+        const name = (settings.templateName || designerTemplateName || "").trim();
+
+        if (!name) {
+            toast.error("Please give the template a name before saving.");
+            return;
+        }
+
+        // Guard against duplicate pile-up: block saving a NEW template whose name
+        // collides with an existing one of the same type. Editing an existing row
+        // (editingTemplate.id) is always allowed — it updates in place.
+        const nameClash = getTemplatesByType(typeId).find(
+            (t) => t.id !== editingTemplate?.id
+                && (t.name || "").trim().toLowerCase() === name.toLowerCase()
+        );
+        if (nameClash) {
+            toast.error(`A "${name}" template already exists. Rename it, or edit the existing one instead of creating a copy.`);
+            return;
+        }
+
         const payload = buildPayload({
             typeId,
-            name: settings.templateName || designerTemplateName,
+            name,
             isDefault: editingTemplate?.isDefault ?? getTemplatesByType(typeId).length === 0,
             settings
         });
@@ -948,7 +974,10 @@ export default function PrintEmailTemplates() {
                                 <p className="mt-1 text-sm text-slate-600">Create pre-printed and letterhead invoice layouts with the same card style.</p>
                             </div>
                             <div className="grid grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
-                                {overlayTypes.map(renderOverlayCard)}
+                                {overlayTypes.flatMap((overlay) => [
+                                    renderOverlayCard(overlay),
+                                    ...getTemplatesByType(overlay.id).map(renderTemplateCard)
+                                ])}
                             </div>
                         </section>
                     )}

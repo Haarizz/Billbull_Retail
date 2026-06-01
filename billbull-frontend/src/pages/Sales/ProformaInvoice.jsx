@@ -46,6 +46,8 @@ import { getAllSalesOrders, getSalesOrderById } from '../../api/salesorderApi';
 import { getTemplatesByCategory } from '../../api/printTemplateApi';
 import { generatePrintHtmlAsync, printHtml } from '../../utils/printGenerator';
 import { buildDocumentHeaderProfile } from '../../utils/branchPrintProfile';
+import { sendProformaEmail } from '../../api/proformaApi';
+import SendDocumentEmailModal from '../../components/SendDocumentEmailModal';
 import { getImageUrl } from '../../utils/urlUtils';
 import { formatDisplayDate } from '../../utils/dateUtils';
 import { pickSalesItemPrice, isPolicyOverridingPackings } from '../../utils/salesPricing';
@@ -117,6 +119,7 @@ const ProformaInvoice = () => {
   const [loadedPiBranchId, setLoadedPiBranchId] = useState(null);
   const [activeTab, setActiveTab] = useState('list');
   const [piId, setPiId] = useState(null);
+  const [isEmailModalOpen, setIsEmailModalOpen] = useState(false); // QA-040: Send-Email modal
   const [reservationWarehouseId, setReservationWarehouseId] = useState(null);
 
   // --- DATA LIST STATES (Fetched from APIs) ---
@@ -477,6 +480,70 @@ const ProformaInvoice = () => {
   // âœ… PRINT FUNCTIONALITY
   // isPrinting already declared above
 
+  // QA-040: shared payload builder reused by both Print and the Send-Email
+  // modal so the emailed Proforma Invoice mirrors exactly what Print produces.
+  const buildPiPrintData = () => {
+    const fullCustomer = customersList.find(c => c.code === selectedCustomer?.code);
+    const piBranchId = loadedPiBranchId ?? activeBranch?.id;
+    const printBranch = availableBranches?.find(b => b.id === piBranchId) || defaultBranch || {};
+
+    return {
+      title: 'PROFORMA INVOICE',
+      docNo: `${piNumber} (Rev ${version})`,
+      date: piDate,
+      customer: {
+        name: selectedCustomer?.name || '',
+        address: fullCustomer?.address || fullCustomer?.billingAddress || '',
+        shippingAddress: shippingAddress || '',
+        phone: fullCustomer?.mobile || fullCustomer?.phone || '',
+        email: fullCustomer?.email || '',
+        trn: selectedCustomer?.trn || fullCustomer?.trn
+      },
+      items: items.filter(i => i.code || i.desc).map(i => ({
+        code: i.code,
+        name: i.name || '',
+        desc: i.desc || '',
+        sku: i.sku || i.productSku || '',
+        brand: i.brand || i.brandName || '',
+        shortDesc: i.shortDesc || '',
+        detailedDesc: i.detailedDesc || '',
+        localName: i.localName || '',
+        barcode: i.barcode || '',
+        batchNumber: i.batchNumber || '',
+        batchSelections: Array.isArray(i.batchSelections) ? i.batchSelections : [],
+        location: defaultBranchName || '',
+        unit: i.unit,
+        qty: Number(i.qty),
+        price: Number(i.price),
+        disc: Number(i.disc),
+        tax: Number(i.tax),
+        taxAmt: Number(i.taxAmt || 0),
+        total: Number(i.total),
+        image: i.image ? getImageUrl(i.image) : ''
+      })),
+      totals: {
+        subTotal,
+        tax: totalTax,
+        grandTotal,
+        currency: company?.currencySymbol || company?.currency || 'AED',
+        billDiscount: 0,
+        billDiscountAmount: 0
+      },
+      meta: {
+        validTill: validUntil,
+        paymentTerm: paymentMethod,
+        status,
+        notes: paymentNotes,
+        reference: `Quote: ${linkedQuote || '-'} | SO: ${linkedSO || '-'}`,
+        location: printBranch.name || defaultBranchName || '',
+        locationStore: printBranch.name || printBranch.code || '',
+        warehouse: printBranch.defaultWarehouseName || '',
+        deliveryTerms: '',
+        salesPerson: ''
+      }
+    };
+  };
+
   const handlePrintClick = async () => {
     if (items.length === 0) {
       alert("Nothing to print. Add items first.");
@@ -489,65 +556,7 @@ const ProformaInvoice = () => {
       const defaultTemplate = templates.find(t => t.isDefault);
 
       if (defaultTemplate) {
-        const fullCustomer = customersList.find(c => c.code === selectedCustomer?.code);
-        const piBranchId = loadedPiBranchId ?? activeBranch?.id;
-        const printBranch = availableBranches?.find(b => b.id === piBranchId) || defaultBranch || {};
-
-        const printData = {
-          title: 'PROFORMA INVOICE',
-          docNo: `${piNumber} (Rev ${version})`,
-          date: piDate,
-          customer: {
-            name: selectedCustomer?.name || '',
-            address: fullCustomer?.address || fullCustomer?.billingAddress || '',
-            shippingAddress: shippingAddress || '',
-            phone: fullCustomer?.mobile || fullCustomer?.phone || '',
-            email: fullCustomer?.email || '',
-            trn: selectedCustomer?.trn || fullCustomer?.trn
-          },
-          items: items.filter(i => i.code || i.desc).map(i => ({
-            code: i.code,
-            name: i.name || '',
-            desc: i.desc || '',
-            sku: i.sku || i.productSku || '',
-            brand: i.brand || i.brandName || '',
-            shortDesc: i.shortDesc || '',
-            detailedDesc: i.detailedDesc || '',
-            localName: i.localName || '',
-            barcode: i.barcode || '',
-            batchNumber: i.batchNumber || '',
-            batchSelections: Array.isArray(i.batchSelections) ? i.batchSelections : [],
-            location: defaultBranchName || '',
-            unit: i.unit,
-            qty: Number(i.qty),
-            price: Number(i.price),
-            disc: Number(i.disc),
-            tax: Number(i.tax),
-            taxAmt: Number(i.taxAmt || 0),
-            total: Number(i.total),
-            image: i.image ? getImageUrl(i.image) : ''
-          })),
-          totals: {
-            subTotal,
-            tax: totalTax,
-            grandTotal,
-            currency: company?.currencySymbol || company?.currency || 'AED',
-            billDiscount: 0,
-            billDiscountAmount: 0
-          },
-          meta: {
-            validTill: validUntil,
-            paymentTerm: paymentMethod,
-            status,
-            notes: paymentNotes,
-            reference: `Quote: ${linkedQuote || '-'} | SO: ${linkedSO || '-'}`,
-            location: printBranch.name || defaultBranchName || '',
-            locationStore: printBranch.name || printBranch.code || '',
-            warehouse: printBranch.defaultWarehouseName || '',
-            deliveryTerms: '',
-            salesPerson: ''
-          }
-        };
+        const printData = buildPiPrintData();
 
         const html = await generatePrintHtmlAsync(defaultTemplate, printData, {
           companyProfile: buildDocumentHeaderProfile({
@@ -1298,6 +1307,16 @@ const ProformaInvoice = () => {
                 className="flex-1 sm:flex-none h-8 px-3 border border-slate-300 rounded-md bg-white hover:bg-slate-50 text-slate-700 flex items-center justify-center gap-1.5 text-sm font-medium transition-colors disabled:opacity-50"
               >
                 <Printer className="h-4 w-4" /> {isPrinting ? 'Printing...' : 'Print'}
+              </button>
+              <button
+                onClick={() => {
+                  if (!piId) { alert('Please save the Proforma Invoice before sending an email.'); return; }
+                  setIsEmailModalOpen(true);
+                }}
+                disabled={activeTab === 'list'}
+                className="flex-1 sm:flex-none h-8 px-3 border border-slate-300 rounded-md bg-white hover:bg-slate-50 text-slate-700 flex items-center justify-center gap-1.5 text-sm font-medium transition-colors disabled:opacity-50"
+              >
+                <Mail className="h-4 w-4" /> Email
               </button>
               {activeTab === 'list' && (
                 <button
@@ -2251,6 +2270,20 @@ const ProformaInvoice = () => {
           </div>
         </div>
       )}
+
+      {/* QA-040: Send Proforma Invoice Email */}
+      <SendDocumentEmailModal
+        isOpen={isEmailModalOpen}
+        onClose={() => setIsEmailModalOpen(false)}
+        category="Proforma Invoice (PI)"
+        docId={piId}
+        docNumber={piNumber}
+        customerEmail={(customersList.find(c => c.code === selectedCustomer?.code)?.email) || selectedCustomer?.email || ''}
+        docLabel="Proforma Invoice"
+        companyProfile={buildDocumentHeaderProfile({ company, branches: availableBranches || [], branchId: loadedPiBranchId ?? activeBranch?.id })}
+        apiFn={sendProformaEmail}
+        buildPayload={buildPiPrintData}
+      />
 
     </div >
   );

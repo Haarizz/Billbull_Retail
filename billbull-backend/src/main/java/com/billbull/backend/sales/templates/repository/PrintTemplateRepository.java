@@ -10,4 +10,7 @@ import com.billbull.backend.sales.templates.model.PrintTemplate;
 @Repository
 public interface PrintTemplateRepository extends JpaRepository<PrintTemplate, Long> {
     List<PrintTemplate> findByCategory(String category);
+
+    /** All templates whose category begins with the given prefix (e.g. "Sales Invoice"). */
+    List<PrintTemplate> findByCategoryStartingWith(String prefix);
 }

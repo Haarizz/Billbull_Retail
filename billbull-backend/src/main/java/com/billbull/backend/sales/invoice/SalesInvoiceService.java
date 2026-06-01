@@ -247,7 +247,11 @@ public class SalesInvoiceService {
         double billDiscPct = invoice.getBillDiscount() != null ? invoice.getBillDiscount() : 0;
         double billDiscAmt = BigDecimal.valueOf(subTotal * (billDiscPct / 100))
                 .setScale(2, RoundingMode.HALF_UP).doubleValue();
-        double total = BigDecimal.valueOf(subTotal - billDiscAmt + taxTotal).setScale(2, RoundingMode.HALF_UP).doubleValue();
+        // Delivery charge is a flat add (no VAT); round-off is a manual +/- adjustment.
+        double deliveryCharge = invoice.getDeliveryCharge() != null ? invoice.getDeliveryCharge() : 0;
+        double roundOff = invoice.getRoundOff() != null ? invoice.getRoundOff() : 0;
+        double total = BigDecimal.valueOf(subTotal - billDiscAmt + taxTotal + deliveryCharge + roundOff)
+                .setScale(2, RoundingMode.HALF_UP).doubleValue();
         double paid = invoice.getAmountPaid() != null ? invoice.getAmountPaid() : 0;
 
         if (paid < 0) {

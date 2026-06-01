@@ -17,4 +17,11 @@ public interface AccountingPeriodRepository extends JpaRepository<AccountingPeri
      */
     @Query("SELECT COUNT(p) > 0 FROM AccountingPeriod p WHERE p.status = 'Closed' AND :date BETWEEN p.startDate AND p.endDate")
     boolean existsClosedPeriodContainingDate(@Param("date") LocalDate date);
+
+    /**
+     * All periods whose range covers the given date, newest first. Normally a
+     * single period; multiple only if overlapping ranges were configured.
+     */
+    @Query("SELECT p FROM AccountingPeriod p WHERE :date BETWEEN p.startDate AND p.endDate ORDER BY p.startDate DESC")
+    List<AccountingPeriod> findCoveringPeriods(@Param("date") LocalDate date);
 }

@@ -36,6 +36,13 @@ public class PrintTemplateController {
         return printTemplateService.getTemplatesByCategory(category);
     }
 
+    /** All templates in a document family, e.g. base="Sales Invoice" returns
+     *  the standard, letterhead, and pre-printed variants together. */
+    @GetMapping("/family")
+    public List<PrintTemplate> getTemplateFamily(@RequestParam String base) {
+        return printTemplateService.getTemplatesByCategoryPrefix(base);
+    }
+
     @PostMapping
     public PrintTemplate createTemplate(@RequestBody PrintTemplate template) {
         return printTemplateService.createTemplate(template);

@@ -35,6 +35,7 @@ public class Account {
     private Boolean cashFlag = false; // true for cash/bank accounts
     private String taxRole; // "INPUT_TAX", "OUTPUT_TAX", "TAXABLE_SALES"
     private Boolean costCenterRequired = false;
+    private Boolean outletRequired = false; // Outlet dimension mandatory (revenue/COGS) — PDF §4 / Phase 2
     private Boolean controlAccount = false;
     private Boolean allowManualJV = true;
     private String reportGroup; // "CURRENT_ASSETS", "REVENUE", "COGS", etc.
@@ -208,6 +209,14 @@ public class Account {
 
     public void setCostCenterRequired(Boolean costCenterRequired) {
         this.costCenterRequired = costCenterRequired;
+    }
+
+    public Boolean getOutletRequired() {
+        return outletRequired;
+    }
+
+    public void setOutletRequired(Boolean outletRequired) {
+        this.outletRequired = outletRequired;
     }
 
     public Boolean getControlAccount() {

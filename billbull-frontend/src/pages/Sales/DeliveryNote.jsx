@@ -41,6 +41,8 @@ import billBullLogo from '../../assets/billBullLogo.png';
 import { getTemplatesByCategory } from '../../api/printTemplateApi';
 import { generatePrintHtmlAsync, printHtml } from '../../utils/printGenerator';
 import { buildDocumentHeaderProfile } from '../../utils/branchPrintProfile';
+import { sendDeliveryNoteEmail } from '../../api/deliveryNoteApi';
+import SendDocumentEmailModal from '../../components/SendDocumentEmailModal';
 import { getImageUrl } from '../../utils/urlUtils';
 import { useCompany } from '../../context/CompanyContext';
 import { useBranch } from '../../context/BranchContext';
@@ -129,6 +131,7 @@ const DeliveryNote = () => {
     const canManualBatchSelect = canAction('batch_manual_select', 'edit');
     const [activeTab, setActiveTab] = useState('list');
     const [currentDnId, setCurrentDnId] = useState(null); // Tracks editing vs creating
+    const [isEmailModalOpen, setIsEmailModalOpen] = useState(false); // QA-040: Send-Email modal
     // Originating branch of the loaded DN — drives print/email header (PDF §7.1).
     const [loadedDnBranchId, setLoadedDnBranchId] = useState(null);
 
@@ -1671,6 +1674,66 @@ const DeliveryNote = () => {
 
     const [isPrinting, setIsPrinting] = useState(false);
 
+    // QA-040: shared payload builder reused by both Print and the Send-Email
+    // modal so the emailed Delivery Note mirrors exactly what Print produces.
+    const buildDnPrintData = () => {
+        const fullCustomer = customersList.find(c => c.code === selectedCustomer?.code);
+        const dnBranchId = loadedDnBranchId ?? activeBranch?.id;
+        const printBranch = availableBranches?.find(b => b.id === dnBranchId) || activeBranch || {};
+
+        return {
+            title: 'DELIVERY NOTE',
+            docNo: dnNumber,
+            date: dnDate,
+            customer: {
+                name: selectedCustomer?.name || '',
+                address: fullCustomer?.address || fullCustomer?.billingAddress || '',
+                shippingAddress: shippingAddress || '',
+                phone: fullCustomer?.mobile || fullCustomer?.phone || '',
+                email: fullCustomer?.email || '',
+                trn: selectedCustomer?.trn || fullCustomer?.trn
+            },
+            items: items.map(i => ({
+                code: i.code,
+                name: i.name || i.desc || '',
+                desc: (i.remarks || i.desc || '') + (i.boxes ? ` (${i.boxes} Boxes)` : ''),
+                sku: i.sku || '',
+                brand: i.brand || i.brandName || '',
+                shortDesc: i.shortDesc || '',
+                detailedDesc: i.detailedDesc || '',
+                localName: i.localName || '',
+                barcode: i.barcode || '',
+                location: warehouse || '',
+                unit: i.unit,
+                qty: i.currentQty,
+                price: Number(i.price) || 0,
+                disc: Number(i.disc) || 0,
+                tax: Number(i.tax) || 0,
+                taxAmt: Number(i.taxAmt) || 0,
+                total: Number(i.total) || 0,
+                image: i.image ? getImageUrl(i.image) : '',
+                batchNumber: i.batchNumber || '',
+                batchSelections: Array.isArray(i.batchSelections) ? i.batchSelections : [],
+                expiry: i.expiry || i.expiryDate || ''
+            })),
+            totals: {
+                currency: company?.currencySymbol || company?.currency || 'AED'
+            },
+            hideTotalsTable: true,
+            meta: {
+                status: status,
+                linkedSalesOrder: linkedSO || '',
+                linkedSalesInvoice: linkedSI || '',
+                location: warehouse || '',
+                locationStore: printBranch.name || '',
+                warehouse: warehouse || '',
+                deliveryTerms: '',
+                salesPerson: '',
+                notes: `Driver: ${driverName || '-'} | Vehicle: ${vehicleNo || '-'} | Tracking: ${trackingNo || '-'}`
+            }
+        };
+    };
+
     const handlePrint = async () => {
         if (items.length === 0) {
             alert("Nothing to print. Add items first.");
@@ -1687,68 +1750,7 @@ const DeliveryNote = () => {
             const defaultTemplate = templates.find(t => t.isDefault) || templates[0];
 
             if (defaultTemplate) {
-                const fullCustomer = customersList.find(c => c.code === selectedCustomer?.code);
-                const dnBranchId = loadedDnBranchId ?? activeBranch?.id;
-                const printBranch = availableBranches?.find(b => b.id === dnBranchId) || activeBranch || {};
-
-                const printData = {
-                    title: 'DELIVERY NOTE',
-                    docNo: dnNumber,
-                    date: dnDate,
-                    customer: {
-                        name: selectedCustomer?.name || '',
-                        address: fullCustomer?.address || fullCustomer?.billingAddress || '',
-                        shippingAddress: shippingAddress || '',
-                        phone: fullCustomer?.mobile || fullCustomer?.phone || '',
-                        email: fullCustomer?.email || '',
-                        trn: selectedCustomer?.trn || fullCustomer?.trn
-                    },
-                    items: items.map(i => ({
-                        code: i.code,
-                        name: i.name || i.desc || '',
-                        desc: (i.remarks || i.desc || '') + (i.boxes ? ` (${i.boxes} Boxes)` : ''),
-                        sku: i.sku || '',
-                        brand: i.brand || i.brandName || '',
-                        shortDesc: i.shortDesc || '',
-                        detailedDesc: i.detailedDesc || '',
-                        localName: i.localName || '',
-                        barcode: i.barcode || '',
-                        location: warehouse || '',
-                        unit: i.unit,
-                        qty: i.currentQty,
-                        price: Number(i.price) || 0,
-                        disc: Number(i.disc) || 0,
-                        tax: Number(i.tax) || 0,
-                        taxAmt: Number(i.taxAmt) || 0,
-                        total: Number(i.total) || 0,
-                        image: i.image ? getImageUrl(i.image) : '',
-                        // QA-030: thread batch picks through so the print
-                        // template can show the Batch # line when the toggle
-                        // is on (also feeds the Batch # / Batch Barcode cols
-                        // when those columns are enabled).
-                        batchNumber: i.batchNumber || '',
-                        batchSelections: Array.isArray(i.batchSelections) ? i.batchSelections : [],
-                        expiry: i.expiry || i.expiryDate || ''
-                    })),
-                    totals: {
-                        currency: company?.currencySymbol || company?.currency || 'AED'
-                    },
-                    hideTotalsTable: true,
-                    meta: {
-                        status: status,
-                        // QA-031: explicit linked source documents — renderer
-                        // shows each as a labeled row when its template toggle
-                        // is enabled.
-                        linkedSalesOrder: linkedSO || '',
-                        linkedSalesInvoice: linkedSI || '',
-                        location: warehouse || '',
-                        locationStore: printBranch.name || '',
-                        warehouse: warehouse || '',
-                        deliveryTerms: '',
-                        salesPerson: '',
-                        notes: `Driver: ${driverName || '-'} | Vehicle: ${vehicleNo || '-'} | Tracking: ${trackingNo || '-'}`
-                    }
-                };
+                const printData = buildDnPrintData();
 
                 const html = await generatePrintHtmlAsync(defaultTemplate, printData, { companyProfile: buildDocumentHeaderProfile({ company, branches: availableBranches || [], branchId: loadedDnBranchId ?? activeBranch?.id }), billBullLogo });
                 printHtml(html);
@@ -2022,7 +2024,14 @@ const DeliveryNote = () => {
                                 {['Email', 'WhatsApp', 'SMS', 'Print'].map((label) => (
                                     <button
                                         key={label}
-                                        onClick={label === 'Print' ? handlePrint : undefined}
+                                        onClick={
+                                            label === 'Print' ? handlePrint
+                                                : label === 'Email' ? () => {
+                                                    if (!currentDnId) { alert('Please save the Delivery Note before sending an email.'); return; }
+                                                    setIsEmailModalOpen(true);
+                                                }
+                                                : undefined
+                                        }
                                         disabled={label === 'Print' && isPrinting}
                                         className="flex items-center gap-1 px-3 py-1.5 bg-white border border-slate-200 rounded text-xs font-medium text-slate-600 hover:bg-slate-50 shadow-sm disabled:opacity-50"
                                     >
@@ -3662,6 +3671,20 @@ const DeliveryNote = () => {
             </div>
 
         </div>
+
+        {/* QA-040: Send Delivery Note Email */}
+        <SendDocumentEmailModal
+            isOpen={isEmailModalOpen}
+            onClose={() => setIsEmailModalOpen(false)}
+            category="Delivery Note (DO/DN)"
+            docId={currentDnId}
+            docNumber={dnNumber}
+            customerEmail={(customersList.find(c => c.code === selectedCustomer?.code)?.email) || selectedCustomer?.email || ''}
+            docLabel="Delivery Note"
+            companyProfile={buildDocumentHeaderProfile({ company, branches: availableBranches || [], branchId: loadedDnBranchId ?? activeBranch?.id })}
+            apiFn={sendDeliveryNoteEmail}
+            buildPayload={buildDnPrintData}
+        />
 
         </>
     );

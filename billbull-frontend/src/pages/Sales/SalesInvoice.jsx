@@ -53,7 +53,8 @@ import {
     recordInvoicePayment,
     getItemPriceHistory,
     updateInvoiceStatus,
-    getCustomerOutstanding
+    getCustomerOutstanding,
+    sendSalesInvoiceEmail
 } from '../../api/salesInvoiceApi';
 import { getSalesSettings } from '../../api/salesSettingsApi';
 import { getSalesPaymentsByInvoice } from '../../api/salesPaymentApi';
@@ -64,9 +65,11 @@ import { pickSalesItemPrice, isPolicyOverridingPackings } from '../../utils/sale
 import { computeLineTaxTotals, resolveLineTaxRate } from '../../utils/vatMath';
 import { getActiveVatRate } from '../../api/taxApi';
 import { getWarehouses } from '../../api/warehouseApi';
-import { getTemplatesByCategory } from '../../api/printTemplateApi';
+import { getTemplatesByCategory, getTemplateFamily } from '../../api/printTemplateApi';
 import { generatePrintHtmlAsync, printHtml } from '../../utils/printGenerator';
+import { generateOverlayInvoiceHtml } from '../../utils/overlayInvoiceRenderer';
 import { buildDocumentHeaderProfile } from '../../utils/branchPrintProfile';
+import SendDocumentEmailModal from '../../components/SendDocumentEmailModal';
 import { getImageUrl } from '../../utils/urlUtils';
 import { getDefaultProductUnit, resolveUnitAmount } from '../../utils/unitPricing';
 import { summarizeSalesItems } from '../../utils/documentSummaryUtils';
@@ -80,6 +83,35 @@ import { exportToExcel, exportToPDF } from '../../utils/exportUtils';
 import CurrencyAmount, { CurrencySymbol } from '../../components/CurrencyAmount';
 import { formatCurrencyDisplay } from '../../utils/countryCurrencyOptions';
 import { isAutoNumberingEnabled } from '../../utils/salesNumbering';
+
+// Round-off adjustment for an exact total, per the Sales Settings rounding rule.
+// Returns (rounded − exact) so net = exact + roundOff lands on a clean figure.
+const computeRoundOff = (exact, mode = 'NEAREST', precision = 1) => {
+    const step = Number(precision) > 0 ? Number(precision) : 1;
+    if (!mode || mode === 'NONE') return 0;
+    const units = Number(exact) / step;
+    let roundedUnits;
+    if (mode === 'UP') roundedUnits = Math.ceil(units - 1e-9);
+    else if (mode === 'DOWN') roundedUnits = Math.floor(units + 1e-9);
+    else roundedUnits = Math.round(units);
+    return Number((roundedUnits * step - Number(exact)).toFixed(2));
+};
+
+// A template is an overlay (pre-printed / letterhead) template when its
+// templateType says so, or its saved designer settings use the overlay designer.
+const isOverlayInvoiceTemplate = (tpl) => {
+    if (!tpl) return false;
+    const type = String(tpl.templateType || '').toUpperCase();
+    if (type === 'PREPRINTED' || type === 'LETTERHEAD') return true;
+    try {
+        const opts = typeof tpl.displayOptions === 'string'
+            ? JSON.parse(tpl.displayOptions)
+            : (tpl.displayOptions || {});
+        return opts.salesDesigner === 'overlay' || opts?.salesDesignerSettings?.mode === 'preprinted';
+    } catch {
+        return false;
+    }
+};
 
 // ==========================================
 // 1. CONFIGURATION
@@ -249,6 +281,7 @@ const SalesInvoice = () => {
 
     // ✅ Invoice ID for tracking edit vs create
     const [invoiceId, setInvoiceId] = useState(null);
+    const [isEmailModalOpen, setIsEmailModalOpen] = useState(false); // QA-040: Send-Email modal
 
     // --- FORM STATES ---
     const [status, setStatus] = useState('Draft');
@@ -357,6 +390,11 @@ const SalesInvoice = () => {
         { id: 1, code: '', image: '', name: '', unit: 'PCS', qty: 0, price: 0, disc: 0, tax: 5, taxAmt: 0, gross: 0, net: 0, cost: 0, gp: 0 }
     ]);
     const [billDiscount, setBillDiscount] = useState(0);
+    const [deliveryCharge, setDeliveryCharge] = useState(0);
+    // Round Off is auto-computed (nearest ฿1.00) by default; the user can flip
+    // `roundOffManual` on to override the figure by hand for edge cases.
+    const [roundOff, setRoundOff] = useState(0);
+    const [roundOffManual, setRoundOffManual] = useState(false);
 
     // ✅ PRODUCT SELECTOR STATE
     const [isProductSelectorOpen, setIsProductSelectorOpen] = useState(false);
@@ -996,7 +1034,32 @@ const SalesInvoice = () => {
     // ==========================================
     // CALCULATIONS
     // ==========================================
-    const invoiceSummary = useMemo(() => summarizeSalesItems(items, billDiscount), [items, billDiscount]);
+    // Total before round-off, used to derive the automatic rounding adjustment.
+    const preRoundSummary = useMemo(
+        () => summarizeSalesItems(items, billDiscount, { deliveryCharge, roundOff: 0 }),
+        [items, billDiscount, deliveryCharge]
+    );
+    // Auto round-off per the Sales Settings rule (mode + step). Default NEAREST 1.00.
+    const autoRoundOff = useMemo(
+        () => computeRoundOff(preRoundSummary.grandTotal, salesSettings?.roundingMode, salesSettings?.roundingPrecision),
+        [preRoundSummary.grandTotal, salesSettings?.roundingMode, salesSettings?.roundingPrecision]
+    );
+    // Posted/cancelled invoices keep their saved figure (never recompute), so the
+    // displayed net always matches what was posted to the ledger.
+    const effectiveRoundOff = (roundOffManual || isReadOnlyInvoice) ? Number(roundOff) || 0 : autoRoundOff;
+
+    // Keep the underlying roundOff state in sync with the auto value so the saved
+    // payload and print always carry the figure actually shown on screen.
+    useEffect(() => {
+        if (!roundOffManual && !isReadOnlyInvoice && Number(roundOff) !== autoRoundOff) {
+            setRoundOff(autoRoundOff);
+        }
+    }, [autoRoundOff, roundOffManual, isReadOnlyInvoice]); // eslint-disable-line react-hooks/exhaustive-deps
+
+    const invoiceSummary = useMemo(
+        () => summarizeSalesItems(items, billDiscount, { deliveryCharge, roundOff: effectiveRoundOff }),
+        [items, billDiscount, deliveryCharge, effectiveRoundOff]
+    );
     const subTotal = invoiceSummary.grossTotal;
     const taxableSubTotal = invoiceSummary.subTotal;
     const totalDiscount = invoiceSummary.itemDiscountTotal;
@@ -1045,6 +1108,9 @@ const SalesInvoice = () => {
         setBranch(defaultBranch?.name || '');
         setItems([{ id: Date.now(), code: '', name: '', unit: 'PCS', qty: 0, price: 0, disc: 0, tax: 5, taxAmt: 0, gross: 0, net: 0, cost: 0 }]);
         setBillDiscount(0);
+        setDeliveryCharge(0);
+        setRoundOff(0);
+        setRoundOffManual(false);
         setAmountCollected(0);
         setInvoiceBalance(null);
         setCustomerOutstanding(0);
@@ -1759,6 +1825,8 @@ const SalesInvoice = () => {
             amountPaid: Number(amountCollected),
             billDiscount: 0,
             billDiscountAmount: 0,
+            deliveryCharge: Number(deliveryCharge) || 0,
+            roundOff: Number(effectiveRoundOff) || 0,
             totalDiscount: 0,
             subTotal: Number(taxableSubTotal),
             taxableSubTotal: Number(taxableSubTotal),
@@ -1928,6 +1996,9 @@ const SalesInvoice = () => {
 
         setAmountCollected(invoice.amountPaid || 0);
         setBillDiscount(Number(invoice.billDiscount) || 0);
+        setDeliveryCharge(Number(invoice.deliveryCharge) || 0);
+        setRoundOff(Number(invoice.roundOff) || 0);
+        setRoundOffManual(false);
         setInvoiceBalance(invoice.balance != null ? invoice.balance : null);
         setStatus(invoice.status || 'Draft');
         const resolvedSalesType = invoice.salesType || 'STANDARD_FLOW';
@@ -2018,6 +2089,10 @@ const SalesInvoice = () => {
 
     // ✅ PRINT FUNCTIONALITY
     const [isPrinting, setIsPrinting] = useState(false);
+    // Sales Invoice print templates (standard + letterhead + pre-printed) for the
+    // split Print button's dropdown, and which invoice is queued for the menu.
+    const [invoiceTemplates, setInvoiceTemplates] = useState([]);
+    const [printMenuFor, setPrintMenuFor] = useState(null);
 
     // ------------------------------------------------------------------
     // QA-038: Receipts history modal — opened from the invoice list row
@@ -2188,7 +2263,92 @@ const SalesInvoice = () => {
         }
     };
 
-    const handlePrintClick = async (invoice = null) => {
+    // QA-040: build the print payload for the currently-open invoice (form
+    // state). Reused by the Send-Email modal so the emailed Sales Invoice
+    // mirrors what Print produces. Print's own handler keeps its richer
+    // dual-mode (list-row vs form) logic; this covers the form path only.
+    const buildCurrentInvoicePrintData = () => {
+        const custCode = selectedCustomer?.code;
+        const fullCustomer = customersList.find(c => c.code === custCode);
+        const invoiceBranchId = activeBranch?.id;
+        const printBranch = availableBranches?.find(b => b.id === invoiceBranchId) || activeBranch || {};
+        const resolvedBillDiscount = Number(billDiscount) || 0;
+        const resolvedDeliveryCharge = Number(deliveryCharge) || 0;
+        const resolvedRoundOff = Number(effectiveRoundOff) || 0;
+        const resolvedSummary = summarizeSalesItems(items || [], resolvedBillDiscount, {
+            deliveryCharge: resolvedDeliveryCharge,
+            roundOff: resolvedRoundOff
+        });
+
+        return {
+            title: 'SALES INVOICE',
+            docNo: invoiceNo,
+            date: invoiceDate,
+            customer: {
+                name: selectedCustomer?.name || '',
+                address: fullCustomer?.address || fullCustomer?.billingAddress || '',
+                shippingAddress: shippingAddress || fullCustomer?.shippingAddress || fullCustomer?.defaultShippingAddress || '',
+                phone: fullCustomer?.mobile || fullCustomer?.phone || '',
+                email: fullCustomer?.email || '',
+                trn: fullCustomer?.trn
+            },
+            items: (items || []).map(i => ({
+                code: i.itemCode || i.code,
+                name: i.itemName || i.name || '',
+                desc: i.description || i.shortDescription || i.desc || '',
+                sku: i.sku || i.productSku || '',
+                brand: i.brand || i.brandName || '',
+                shortDesc: i.shortDesc || '',
+                detailedDesc: i.detailedDesc || '',
+                localName: i.localName || i.productLocalName || '',
+                barcode: i.barcode || i.itemBarcode || '',
+                salesPerson: salesperson || '',
+                location: branch || '',
+                unit: i.unit,
+                qty: Number(i.quantity || i.qty),
+                price: Number(i.price),
+                disc: Number(i.discount || i.disc),
+                tax: Number(i.taxRate || i.tax),
+                taxAmt: Number(i.taxAmount || i.taxAmt || 0),
+                total: Number(i.netAmount || i.net),
+                image: i.image || i.imageUrl ? getImageUrl(i.image || i.imageUrl) : '',
+                batchSelections: Array.isArray(i.batchSelections) ? i.batchSelections : [],
+                batchNumber: Array.isArray(i.batchSelections)
+                    ? i.batchSelections.map(batch => batch.batchNumber).filter(Boolean).join(', ')
+                    : (i.batchNumber || ''),
+                batchNumbers: Array.isArray(i.batchSelections)
+                    ? i.batchSelections.map(batch => batch.batchNumber).filter(Boolean).join(', ')
+                    : '',
+                expiry: i.expiry || i.expiryDate || ''
+            })),
+            totals: {
+                subTotal: resolvedSummary.subTotal,
+                tax: resolvedSummary.tax,
+                grandTotal: resolvedSummary.grandTotal,
+                currency: company?.currencySymbol || company?.currency || 'AED',
+                billDiscount: resolvedBillDiscount,
+                billDiscountAmount: resolvedSummary.billDiscountAmount,
+                deliveryCharge: resolvedDeliveryCharge,
+                roundOff: resolvedRoundOff
+            },
+            meta: {
+                status,
+                paymentTerm: paymentTerms,
+                dueDate: '',
+                linkedSalesOrder: linkedSO || '',
+                linkedDeliveryNote: linkedDN || '',
+                linkedProforma: linkedPI || '',
+                location: branch || printBranch.name || '',
+                locationStore: branch || printBranch.name || printBranch.code || '',
+                warehouse: printBranch.defaultWarehouseName || '',
+                deliveryTerms: '',
+                salesPerson: salesperson || '',
+                notes: ''
+            }
+        };
+    };
+
+    const handlePrintClick = async (invoice = null, chosenTemplate = null) => {
         const isListView = invoice && invoice.invoiceNumber;
         const dataToPrint = isListView ? invoice : {
             invoiceNumber: invoiceNo,
@@ -2207,6 +2367,8 @@ const SalesInvoice = () => {
             amountPaid: amountCollected,
             billDiscount,
             billDiscountAmount,
+            deliveryCharge,
+            roundOff: effectiveRoundOff,
             status,
             paymentTerms,
             salesperson,
@@ -2220,10 +2382,29 @@ const SalesInvoice = () => {
 
         setIsPrinting(true);
         try {
-            const templates = await getTemplatesByCategory('Sales Invoice');
-            const defaultTemplate = templates.find(t => t.isDefault);
+            // Resolve which template to print with: an explicit choice from the
+            // dropdown, else the last-used one, else the category default, else first.
+            let selectedTemplate = chosenTemplate;
+            if (!selectedTemplate) {
+                const family = await getTemplateFamily('Sales Invoice');
+                const list = Array.isArray(family) ? family : [];
+                if (list.length) setInvoiceTemplates(list);
+                const lastId = sessionStorage.getItem('salesInvoiceTemplateId');
+                selectedTemplate = (lastId && list.find(t => String(t.id) === lastId))
+                    || list.find(t => t.isDefault)
+                    || list[0];
+            }
+            if (selectedTemplate?.id != null) {
+                sessionStorage.setItem('salesInvoiceTemplateId', String(selectedTemplate.id));
+            }
+            const defaultTemplate = selectedTemplate;
             const resolvedBillDiscount = Number(dataToPrint.billDiscount) || 0;
-            const resolvedSummary = summarizeSalesItems(dataToPrint.items || [], resolvedBillDiscount);
+            const resolvedDeliveryCharge = Number(dataToPrint.deliveryCharge) || 0;
+            const resolvedRoundOff = Number(dataToPrint.roundOff) || 0;
+            const resolvedSummary = summarizeSalesItems(dataToPrint.items || [], resolvedBillDiscount, {
+                deliveryCharge: resolvedDeliveryCharge,
+                roundOff: resolvedRoundOff
+            });
 
             if (defaultTemplate) {
                 // Find Customer details
@@ -2282,7 +2463,9 @@ const SalesInvoice = () => {
                         grandTotal: resolvedSummary.grandTotal,
                         currency: dataToPrint.currency || company?.currencySymbol || company?.currency || 'AED',
                         billDiscount: resolvedBillDiscount,
-                        billDiscountAmount: resolvedSummary.billDiscountAmount
+                        billDiscountAmount: resolvedSummary.billDiscountAmount,
+                        deliveryCharge: resolvedDeliveryCharge,
+                        roundOff: resolvedRoundOff
                     },
                     meta: {
                         status: dataToPrint.status,
@@ -2308,7 +2491,9 @@ const SalesInvoice = () => {
                     branches: availableBranches || [],
                     branchId: invoiceBranchId,
                 });
-                const html = await generatePrintHtmlAsync(defaultTemplate, printData, { companyProfile: branchProfile, billBullLogo });
+                const html = isOverlayInvoiceTemplate(defaultTemplate)
+                    ? generateOverlayInvoiceHtml(defaultTemplate, printData, { companyProfile: branchProfile })
+                    : await generatePrintHtmlAsync(defaultTemplate, printData, { companyProfile: branchProfile, billBullLogo });
                 printHtml(html);
             } else {
                 alert("No default template selected. Using browser print.");
@@ -2346,6 +2531,78 @@ const SalesInvoice = () => {
         if (s === 'COMPLETED') return <span className="bg-emerald-100 text-emerald-700 px-2 py-0.5 rounded text-[10px] font-bold">Completed</span>;
         return <span className="bg-slate-100 text-slate-600 px-2 py-0.5 rounded text-[10px] font-bold">{statusVal || 'Draft'}</span>;
     };
+
+    // Lazily load the invoice template family the first time a print menu opens.
+    const openPrintMenu = async (key) => {
+        setPrintMenuFor((prev) => (prev === key ? null : key));
+        if (invoiceTemplates.length === 0) {
+            try {
+                const family = await getTemplateFamily('Sales Invoice');
+                if (Array.isArray(family)) setInvoiceTemplates(family);
+            } catch {
+                /* fall back to one-click default print */
+            }
+        }
+    };
+
+    // Caret + dropdown that lets the user pick a specific print template
+    // (standard / letterhead / pre-printed) next to a one-click Print button.
+    const renderPrintCaret = (menuKey, invoice = null) => (
+        <div className="relative inline-block">
+            <button
+                type="button"
+                disabled={isPrinting}
+                onClick={() => openPrintMenu(menuKey)}
+                title="Choose print template"
+                className="h-8 px-1.5 border border-l-0 border-slate-300 rounded-r-md bg-white hover:bg-slate-50 text-slate-600 flex items-center justify-center disabled:opacity-50"
+            >
+                <ChevronDown className="h-4 w-4" />
+            </button>
+            {printMenuFor === menuKey && (
+                <>
+                    <div className="fixed inset-0 z-40" onClick={() => setPrintMenuFor(null)} />
+                    <div className="absolute right-0 mt-1 w-72 max-h-80 overflow-y-auto bg-white border border-slate-200 rounded-lg shadow-xl z-50 py-1">
+                        <div className="px-3 py-1.5 text-[10px] font-bold text-slate-400 uppercase tracking-wide">Print template</div>
+                        {invoiceTemplates.length === 0 ? (
+                            <div className="px-3 py-2 text-xs text-slate-400">Loading templates…</div>
+                        ) : (
+                            [['FULL', 'Standard'], ['LETTERHEAD', 'Letterhead'], ['PREPRINTED', 'Pre-printed']].map(([groupKey, groupLabel]) => {
+                                const groupTemplates = invoiceTemplates
+                                    .filter((t) => {
+                                        const ty = String(t.templateType || '').toUpperCase();
+                                        const resolved = ['FULL', 'LETTERHEAD', 'PREPRINTED'].includes(ty)
+                                            ? ty
+                                            : (isOverlayInvoiceTemplate(t) ? 'LETTERHEAD' : 'FULL');
+                                        return resolved === groupKey;
+                                    })
+                                    .sort((a, b) => (b.isDefault ? 1 : 0) - (a.isDefault ? 1 : 0));
+                                if (groupTemplates.length === 0) return null;
+                                return (
+                                    <div key={groupKey} className="py-0.5">
+                                        <div className="px-3 pt-1.5 pb-1 text-[9px] font-bold text-[#D99A00] uppercase tracking-wide">{groupLabel}</div>
+                                        {groupTemplates.map((t) => (
+                                            <button
+                                                key={t.id}
+                                                type="button"
+                                                title={t.name}
+                                                onClick={() => { setPrintMenuFor(null); handlePrintClick(invoice, t); }}
+                                                className="w-full text-left px-3 py-2 text-xs hover:bg-[#FFF8E7] flex items-center gap-2"
+                                            >
+                                                {t.isDefault
+                                                    ? <span className="text-[#F5C742] shrink-0">★</span>
+                                                    : <span className="w-2.5 shrink-0" />}
+                                                <span className="truncate text-slate-700">{t.name}</span>
+                                            </button>
+                                        ))}
+                                    </div>
+                                );
+                            })
+                        )}
+                    </div>
+                </>
+            )}
+        </div>
+    );
 
     const resolveSourceType = (inv) => {
         if (inv.linkedDeliveryNote) return { label: 'Against DN', ref: inv.linkedDeliveryNote, color: 'bg-green-100 text-green-700 border-green-200' };
@@ -2555,14 +2812,22 @@ const SalesInvoice = () => {
                                         >
                                             <DollarSign className="h-4 w-4" /> Pay
                                         </button>
+                                        <div className="flex-1 sm:flex-none flex items-stretch">
+                                            <button
+                                                onClick={() => handlePrintClick()}
+                                                disabled={isPrinting}
+                                                className="flex-1 h-8 px-3 border border-slate-300 rounded-l-md bg-white hover:bg-slate-50 text-slate-700 flex items-center justify-center gap-1.5 text-sm font-medium transition-colors disabled:opacity-50"
+                                            >
+                                                <Printer className="h-4 w-4" /> {isPrinting ? 'Printing...' : 'Print'}
+                                            </button>
+                                            {renderPrintCaret('editor-header')}
+                                        </div>
                                         <button
-                                            onClick={() => handlePrintClick()}
-                                            disabled={isPrinting}
-                                            className="flex-1 sm:flex-none h-8 px-3 border border-slate-300 rounded-md bg-white hover:bg-slate-50 text-slate-700 flex items-center justify-center gap-1.5 text-sm font-medium transition-colors disabled:opacity-50"
-                                        >
-                                            <Printer className="h-4 w-4" /> {isPrinting ? 'Printing...' : 'Print'}
-                                        </button>
-                                        <button className="flex-1 sm:flex-none h-8 px-3 border border-slate-300 rounded-md bg-white hover:bg-slate-50 text-slate-700 flex items-center justify-center gap-1.5 text-sm font-medium transition-colors">
+                                            onClick={() => {
+                                                if (!invoiceId) { alert('Please save the Sales Invoice before sending an email.'); return; }
+                                                setIsEmailModalOpen(true);
+                                            }}
+                                            className="flex-1 sm:flex-none h-8 px-3 border border-slate-300 rounded-md bg-white hover:bg-slate-50 text-slate-700 flex items-center justify-center gap-1.5 text-sm font-medium transition-colors">
                                             <Mail className="h-4 w-4" /> Email
                                         </button>
                                     </>
@@ -3425,6 +3690,51 @@ const SalesInvoice = () => {
                                                     <span>Total Tax (VAT)</span>
                                                     <CurrencyAmount value={totalTax} currency={invoiceCurrency} />
                                                 </div>
+                                                <div className="flex justify-between text-xs text-slate-600 items-center">
+                                                    <span>Delivery Charge</span>
+                                                    <span className="flex items-center gap-1">
+                                                        <CurrencySymbol currency={invoiceCurrency} />
+                                                        <input
+                                                            type="number"
+                                                            min="0"
+                                                            step="0.01"
+                                                            disabled={isReadOnlyInvoice}
+                                                            value={deliveryCharge}
+                                                            onChange={(e) => setDeliveryCharge(Number(e.target.value))}
+                                                            className="w-20 text-right border-b border-slate-300 focus:border-yellow-400 outline-none bg-transparent disabled:bg-slate-50 disabled:text-slate-500 disabled:cursor-not-allowed"
+                                                        />
+                                                    </span>
+                                                </div>
+                                                <div className="flex justify-between text-xs text-slate-600 items-center">
+                                                    <span className="flex items-center gap-2">
+                                                        Round Off
+                                                        {!isReadOnlyInvoice && (
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => setRoundOffManual(v => !v)}
+                                                                className="text-[10px] text-slate-400 hover:text-yellow-600 underline decoration-dotted"
+                                                                title={roundOffManual ? 'Switch back to automatic rounding' : 'Enter a manual round-off'}
+                                                            >
+                                                                {roundOffManual ? 'Auto' : 'Edit'}
+                                                            </button>
+                                                        )}
+                                                    </span>
+                                                    <span className="flex items-center gap-1">
+                                                        <CurrencySymbol currency={invoiceCurrency} />
+                                                        {roundOffManual ? (
+                                                            <input
+                                                                type="number"
+                                                                step="0.01"
+                                                                disabled={isReadOnlyInvoice}
+                                                                value={roundOff}
+                                                                onChange={(e) => setRoundOff(Number(e.target.value))}
+                                                                className="w-20 text-right border-b border-slate-300 focus:border-yellow-400 outline-none bg-transparent disabled:bg-slate-50 disabled:text-slate-500 disabled:cursor-not-allowed"
+                                                            />
+                                                        ) : (
+                                                            <span className="w-20 text-right tabular-nums">{effectiveRoundOff.toFixed(2)}</span>
+                                                        )}
+                                                    </span>
+                                                </div>
                                                 <div className="flex justify-between text-base font-bold text-slate-800 border-t border-slate-200 pt-2 my-2">
                                                     <span>Net Invoice Amount</span>
                                                     <CurrencyAmount value={netTotal} currency={invoiceCurrency} />
@@ -3554,10 +3864,18 @@ const SalesInvoice = () => {
                                     <button onClick={() => handleOpenPaymentModal()} className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-slate-300 text-slate-700 rounded text-xs font-bold hover:bg-slate-50 transition-colors shadow-sm">
                                         <DollarSign size={14} /> Pay
                                     </button>
-                                    <button onClick={() => handlePrintClick()} disabled={isPrinting} className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-slate-300 text-slate-700 rounded text-xs font-bold hover:bg-slate-50 transition-colors shadow-sm disabled:opacity-50">
-                                        <Printer size={14} /> {isPrinting ? 'Printing...' : 'Print'}
-                                    </button>
-                                    <button className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-slate-300 text-slate-700 rounded text-xs font-bold hover:bg-slate-50 transition-colors shadow-sm">
+                                    <div className="flex items-stretch">
+                                        <button onClick={() => handlePrintClick()} disabled={isPrinting} className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-slate-300 rounded-l text-xs font-bold hover:bg-slate-50 transition-colors shadow-sm disabled:opacity-50 text-slate-700">
+                                            <Printer size={14} /> {isPrinting ? 'Printing...' : 'Print'}
+                                        </button>
+                                        {renderPrintCaret('editor-footer')}
+                                    </div>
+                                    <button
+                                        onClick={() => {
+                                            if (!invoiceId) { alert('Please save the Sales Invoice before sending an email.'); return; }
+                                            setIsEmailModalOpen(true);
+                                        }}
+                                        className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-slate-300 text-slate-700 rounded text-xs font-bold hover:bg-slate-50 transition-colors shadow-sm">
                                         <Mail size={14} /> Email
                                     </button>
                                 </div>
@@ -3947,6 +4265,20 @@ const SalesInvoice = () => {
                     </div>
                 </div>
             )}
+
+            {/* QA-040: Send Sales Invoice Email */}
+            <SendDocumentEmailModal
+                isOpen={isEmailModalOpen}
+                onClose={() => setIsEmailModalOpen(false)}
+                category="Sales Invoice"
+                docId={invoiceId}
+                docNumber={invoiceNo}
+                customerEmail={(customersList.find(c => c.code === selectedCustomer?.code)?.email) || selectedCustomer?.email || ''}
+                docLabel="Sales Invoice"
+                companyProfile={buildDocumentHeaderProfile({ company, branches: availableBranches || [], branchId: activeBranch?.id })}
+                apiFn={sendSalesInvoiceEmail}
+                buildPayload={buildCurrentInvoicePrintData}
+            />
 
         </div >
     );

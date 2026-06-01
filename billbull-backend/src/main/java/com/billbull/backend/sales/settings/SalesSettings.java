@@ -52,6 +52,18 @@ public class SalesSettings {
     @Column(nullable = false, length = 20, columnDefinition = "varchar(20) default 'RETAIL'")
     private SalesItemPricePolicy salesItemPricePolicy = SalesItemPricePolicy.RETAIL;
 
+    /**
+     * How the Sales Invoice net total is rounded. Default NEAREST with precision
+     * 1.00 snaps the payable total to the nearest whole currency unit.
+     */
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false, length = 10, columnDefinition = "varchar(10) default 'NEAREST'")
+    private SalesRoundingMode roundingMode = SalesRoundingMode.NEAREST;
+
+    /** Rounding step (e.g. 1.00, 0.50, 0.25, 0.05). Ignored when roundingMode is NONE. */
+    @Column(nullable = false, columnDefinition = "double precision default 1.0")
+    private double roundingPrecision = 1.0;
+
     @Transient
     private List<SalesDocumentNumberSetting> documentNumbering = new ArrayList<>();
 
@@ -97,6 +109,22 @@ public class SalesSettings {
 
     public void setSalesItemPricePolicy(SalesItemPricePolicy salesItemPricePolicy) {
         this.salesItemPricePolicy = salesItemPricePolicy;
+    }
+
+    public SalesRoundingMode getRoundingMode() {
+        return roundingMode;
+    }
+
+    public void setRoundingMode(SalesRoundingMode roundingMode) {
+        this.roundingMode = roundingMode;
+    }
+
+    public double getRoundingPrecision() {
+        return roundingPrecision;
+    }
+
+    public void setRoundingPrecision(double roundingPrecision) {
+        this.roundingPrecision = roundingPrecision;
     }
 
     public List<SalesDocumentNumberSetting> getDocumentNumbering() {

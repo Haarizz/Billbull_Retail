@@ -620,16 +620,21 @@ const PaymentVoucher = () => {
                 inv.balanceDue > 0
             );
         const openingBal = parseFloat(vendor.openingBalance || 0);
-        if (openingBal > 0) {
+        // Outstanding OB = opening balance minus on-account payments already posted.
+        // Falls back to the raw opening balance if the API hasn't supplied it.
+        const openingOutstanding = vendor.openingBalanceOutstanding != null
+            ? parseFloat(vendor.openingBalanceOutstanding)
+            : openingBal;
+        if (openingOutstanding > 0) {
             filtered.unshift({
                 id: `OB-${vendor.id || vendor.code}`,
                 invoiceNumber: `OB-${vendor.code || vendor.id}`,
                 invoiceDate: new Date().toISOString(),
                 dueDate: null,
                 grandTotal: openingBal,
-                balanceDue: openingBal,
+                balanceDue: openingOutstanding,
                 status: 'POSTED',
-                paymentStatus: 'UNPAID',
+                paymentStatus: openingOutstanding < openingBal ? 'PARTIALLY_PAID' : 'UNPAID',
                 invoiceType: 'OPENING_BALANCE',
                 vendorName: vendor.name
             });

@@ -14,6 +14,8 @@ public class VendorListResponse {
     private BigDecimal rating;
     private BigDecimal balance;
     private BigDecimal openingBalance;
+    /** Opening balance still unpaid = openingBalance − posted on-account payments. */
+    private BigDecimal openingBalanceOutstanding;
     private String status;
     private Boolean isPreferred;
 
@@ -89,6 +91,8 @@ public class VendorListResponse {
     public void setBalance(BigDecimal balance) { this.balance = balance; }
     public BigDecimal getOpeningBalance() { return openingBalance; }
     public void setOpeningBalance(BigDecimal openingBalance) { this.openingBalance = openingBalance; }
+    public BigDecimal getOpeningBalanceOutstanding() { return openingBalanceOutstanding; }
+    public void setOpeningBalanceOutstanding(BigDecimal openingBalanceOutstanding) { this.openingBalanceOutstanding = openingBalanceOutstanding; }
     public String getStatus() { return status; }
     public void setStatus(String status) { this.status = status; }
     public Boolean getIsPreferred() { return isPreferred; }

@@ -12,6 +12,16 @@ export const getTemplatesByCategory = async (category) => {
     return res.data;
 };
 
+/**
+ * All templates in a document family, e.g. base "Sales Invoice" returns the
+ * standard, letterhead, and pre-printed variants together. Used by the print
+ * picker so the user can choose any variant at print time.
+ */
+export const getTemplateFamily = async (base) => {
+    const res = await api.get(`/api/templates/family?base=${encodeURIComponent(base)}`);
+    return res.data;
+};
+
 export const createPrintTemplate = async (payload) => {
     const res = await api.post("/api/templates", payload);
     return res.data;

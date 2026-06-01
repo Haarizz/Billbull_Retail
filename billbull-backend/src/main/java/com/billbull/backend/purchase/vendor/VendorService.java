@@ -65,6 +65,16 @@ public class VendorService {
                     if (totalPaid == null) totalPaid = BigDecimal.ZERO;
                     BigDecimal payableBalance = openingBal.add(totalInvoiced).subtract(totalPaid);
 
+                    // Opening balance still owed after netting off on-account (non
+                    // invoice-linked) payments — prevents the Payments screen from
+                    // showing the OB as unpaid once it has been settled.
+                    BigDecimal onAccountPaid = payRepo.sumOnAccountPaidByVendorName(v.getName());
+                    if (onAccountPaid == null) onAccountPaid = BigDecimal.ZERO;
+                    BigDecimal openingOutstanding = openingBal.subtract(onAccountPaid);
+                    if (openingOutstanding.compareTo(BigDecimal.ZERO) < 0) {
+                        openingOutstanding = BigDecimal.ZERO;
+                    }
+
                     VendorListResponse r = new VendorListResponse(
                             v.getId(),
                             v.getCode(),
@@ -89,6 +99,7 @@ public class VendorService {
                     r.setPayPref(v.getPayPref());
                     r.setOpeningBalanceDate(v.getOpeningBalanceDate());
                     r.setOpeningBalanceNotes(v.getOpeningBalanceNotes());
+                    r.setOpeningBalanceOutstanding(openingOutstanding);
                     r.setNickname(v.getNickname());
                     r.setTaxId(v.getTaxId());
                     r.setWebsite(v.getWebsite());
