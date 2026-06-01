@@ -61,6 +61,12 @@ public class SalesInvoice {
     private Double balance;
     private Double billDiscount;
 
+    /** Flat delivery/shipping charge added to the invoice total (no VAT applied). */
+    private Double deliveryCharge;
+
+    /** Manual rounding adjustment (+/-) applied to the invoice total. */
+    private Double roundOff;
+
     /**
      * Customer's credit limit (copied from Customer record at invoice creation, or
      * entered manually). Used by the credit-limit enforcement policy in Sales
@@ -306,6 +312,22 @@ public class SalesInvoice {
 
     public void setBillDiscount(Double billDiscount) {
         this.billDiscount = billDiscount;
+    }
+
+    public Double getDeliveryCharge() {
+        return deliveryCharge;
+    }
+
+    public void setDeliveryCharge(Double deliveryCharge) {
+        this.deliveryCharge = deliveryCharge;
+    }
+
+    public Double getRoundOff() {
+        return roundOff;
+    }
+
+    public void setRoundOff(Double roundOff) {
+        this.roundOff = roundOff;
     }
 
     public Double getCreditLimit() {

@@ -56,6 +56,8 @@ import billBullLogo from '../../assets/billBullLogo.png';
 import { useCompany } from '../../context/CompanyContext';
 import { useBranch } from '../../context/BranchContext';
 import { buildDocumentHeaderProfile } from '../../utils/branchPrintProfile';
+import { sendSalesOrderEmail } from '../../api/salesorderApi';
+import SendDocumentEmailModal from '../../components/SendDocumentEmailModal';
 import { summarizeSalesItems } from '../../utils/documentSummaryUtils';
 
 // ✅ PRODUCT SELECTOR
@@ -182,6 +184,7 @@ const SalesOrders = () => {
 
   // ✅ FIX 1: ADD ORDER ID STATE
   const [orderId, setOrderId] = useState(null);
+  const [isEmailModalOpen, setIsEmailModalOpen] = useState(false); // QA-040: Send-Email modal
   // Originating branch of the loaded SO — drives print/email header (PDF §7.1).
   const [loadedSoBranchId, setLoadedSoBranchId] = useState(null);
 
@@ -975,6 +978,73 @@ const SalesOrders = () => {
   // ✅ PRINT FUNCTIONALITY
   const [isPrinting, setIsPrinting] = useState(false);
 
+  // QA-040: shared payload builder reused by both Print and the Send-Email
+  // modal so the emailed Sales Order mirrors exactly what Print produces.
+  const buildSoPrintData = () => {
+    const fullCustomer = customersList.find(c => c.code === selectedCustomer?.code);
+
+    return {
+      title: 'SALES ORDER',
+      docNo: soNumber,
+      date: orderDate,
+      customer: {
+        name: selectedCustomer?.name || '',
+        address: fullCustomer?.address || fullCustomer?.billingAddress || '',
+        shippingAddress: shippingAddress || '',
+        phone: fullCustomer?.mobile || fullCustomer?.phone || '',
+        email: fullCustomer?.email || '',
+        trn: selectedCustomer?.trn || fullCustomer?.trn
+      },
+      items: items.filter(i => i.code || i.desc).map(i => ({
+        code: i.code,
+        name: i.name || i.productName || i.itemName || '',
+        desc: i.desc || '',
+        sku: i.sku || i.productSku || '',
+        brand: i.brand || i.brandName || '',
+        shortDesc: i.shortDesc || '',
+        detailedDesc: i.detailedDesc || '',
+        localName: i.localName || i.productLocalName || '',
+        barcode: i.barcode || '',
+        salesPerson: '',
+        location: '',
+        unit: i.unit,
+        qty: Number(i.qty),
+        price: Number(i.price),
+        disc: Number(i.disc),
+        tax: Number(i.tax),
+        taxAmt: Number(i.taxAmt || 0),
+        total: Number(i.total),
+        image: i.image ? getImageUrl(i.image) : '',
+        batchNumber: i.batchNumber || '',
+        batchSelections: Array.isArray(i.batchSelections) ? i.batchSelections : [],
+        expiry: i.expiry || i.expiryDate || ''
+      })),
+      totals: {
+        subTotal,
+        tax: totalTax,
+        grandTotal: orderTotal,
+        currency: company?.currencySymbol || company?.currency || 'AED',
+        billDiscount: Number(billDiscount) || 0,
+        billDiscountAmount
+      },
+      meta: (() => {
+        const printBranchId = loadedSoBranchId ?? activeBranch?.id;
+        const printBranch = availableBranches?.find(b => b.id === printBranchId) || activeBranch || {};
+        return {
+          paymentTerm: '30 Days',
+          status,
+          notes: customerNotes,
+          reference: linkedQtn || linkedPi || '',
+          location: printBranch.name || '',
+          locationStore: printBranch.name || printBranch.code || '',
+          warehouse: printBranch.defaultWarehouseName || '',
+          deliveryTerms: deliveryType || '',
+          salesPerson: ''
+        };
+      })()
+    };
+  };
+
   const handlePrintClick = async () => {
     setIsPrinting(true);
     try {
@@ -982,70 +1052,7 @@ const SalesOrders = () => {
       const defaultTemplate = templates.find(t => t.isDefault);
 
       if (defaultTemplate) {
-        const fullCustomer = customersList.find(c => c.code === selectedCustomer?.code);
-
-        const printData = {
-          title: 'SALES ORDER',
-          docNo: soNumber,
-          date: orderDate,
-          customer: {
-            name: selectedCustomer?.name || '',
-            address: fullCustomer?.address || fullCustomer?.billingAddress || '',
-            shippingAddress: shippingAddress || '',
-            phone: fullCustomer?.mobile || fullCustomer?.phone || '',
-            email: fullCustomer?.email || '',
-            trn: selectedCustomer?.trn || fullCustomer?.trn
-          },
-          items: items.filter(i => i.code || i.desc).map(i => ({
-            code: i.code,
-            name: i.name || i.productName || i.itemName || '',
-            desc: i.desc || '',
-            sku: i.sku || i.productSku || '',
-            brand: i.brand || i.brandName || '',
-            shortDesc: i.shortDesc || '',
-            detailedDesc: i.detailedDesc || '',
-            localName: i.localName || i.productLocalName || '',
-            barcode: i.barcode || '',
-            salesPerson: '',
-            location: '',
-            unit: i.unit,
-            qty: Number(i.qty),
-            price: Number(i.price),
-            disc: Number(i.disc),
-            tax: Number(i.tax),
-            taxAmt: Number(i.taxAmt || 0),
-            total: Number(i.total),
-            image: i.image ? getImageUrl(i.image) : '',
-            // QA-030: include batch picks so the Batch # line / column shows
-            // when the template toggle is on.
-            batchNumber: i.batchNumber || '',
-            batchSelections: Array.isArray(i.batchSelections) ? i.batchSelections : [],
-            expiry: i.expiry || i.expiryDate || ''
-          })),
-          totals: {
-            subTotal,
-            tax: totalTax,
-            grandTotal: orderTotal,
-            currency: company?.currencySymbol || company?.currency || 'AED',
-            billDiscount: Number(billDiscount) || 0,
-            billDiscountAmount
-          },
-          meta: (() => {
-            const printBranchId = loadedSoBranchId ?? activeBranch?.id;
-            const printBranch = availableBranches?.find(b => b.id === printBranchId) || activeBranch || {};
-            return {
-              paymentTerm: '30 Days',
-              status,
-              notes: customerNotes,
-              reference: linkedQtn || linkedPi || '',
-              location: printBranch.name || '',
-              locationStore: printBranch.name || printBranch.code || '',
-              warehouse: printBranch.defaultWarehouseName || '',
-              deliveryTerms: deliveryType || '',
-              salesPerson: ''
-            };
-          })()
-        };
+        const printData = buildSoPrintData();
 
         const html = await generatePrintHtmlAsync(defaultTemplate, printData, {
           companyProfile: buildDocumentHeaderProfile({
@@ -1571,7 +1578,14 @@ const SalesOrders = () => {
         {canExport('sales.order') && (
           <div className="flex flex-wrap gap-2">
             {['Email', 'WhatsApp', 'SMS', 'Print'].map((label) => (
-              <button key={label} onClick={label === 'Print' ? handlePrintClick : undefined} disabled={label === 'Print' && isPrinting} className="flex items-center gap-1 px-3 py-1.5 bg-white border border-slate-200 rounded text-xs font-medium text-slate-600 hover:bg-slate-50 shadow-sm disabled:opacity-50">
+              <button key={label} onClick={
+                label === 'Print' ? handlePrintClick
+                  : label === 'Email' ? () => {
+                    if (!orderId) { alert('Please save the Sales Order before sending an email.'); return; }
+                    setIsEmailModalOpen(true);
+                  }
+                  : undefined
+              } disabled={label === 'Print' && isPrinting} className="flex items-center gap-1 px-3 py-1.5 bg-white border border-slate-200 rounded text-xs font-medium text-slate-600 hover:bg-slate-50 shadow-sm disabled:opacity-50">
                 {label === 'Email' && <Mail size={14} />}
                 {label === 'WhatsApp' && <MessageCircle size={14} />}
                 {label === 'SMS' && <Smartphone size={14} />}
@@ -2383,6 +2397,15 @@ const SalesOrders = () => {
                 </button>
               )}
 
+              {canExport('sales') && (
+                <button onClick={() => {
+                  if (!orderId) { alert('Please save the Sales Order before sending an email.'); return; }
+                  setIsEmailModalOpen(true);
+                }} className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-slate-300 text-slate-700 rounded text-xs font-bold hover:bg-slate-50 transition-colors shadow-sm">
+                  <Mail size={14} /> Email
+                </button>
+              )}
+
               {status === 'DRAFT' && (
                 <>
                   {/* ── VERTICAL: canEdit('sales') for Save Draft ── */}
@@ -2566,6 +2589,20 @@ const SalesOrders = () => {
           </div>
         </div>
       )}
+
+      {/* QA-040: Send Sales Order Email */}
+      <SendDocumentEmailModal
+        isOpen={isEmailModalOpen}
+        onClose={() => setIsEmailModalOpen(false)}
+        category="Sales Order (SO)"
+        docId={orderId}
+        docNumber={soNumber}
+        customerEmail={(customersList.find(c => c.code === selectedCustomer?.code)?.email) || selectedCustomer?.email || ''}
+        docLabel="Sales Order"
+        companyProfile={buildDocumentHeaderProfile({ company, branches: availableBranches || [], branchId: loadedSoBranchId ?? activeBranch?.id })}
+        apiFn={sendSalesOrderEmail}
+        buildPayload={buildSoPrintData}
+      />
     </div>
   );
 };

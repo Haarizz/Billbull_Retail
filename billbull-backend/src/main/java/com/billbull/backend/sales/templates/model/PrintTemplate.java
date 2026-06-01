@@ -25,6 +25,15 @@ public class PrintTemplate extends BaseEntity {
     @Column(name = "is_default")
     private boolean isDefault;
 
+    /**
+     * Rendering family for the template: FULL (structured letterhead HTML),
+     * LETTERHEAD (overlay onto pre-printed letterhead), or PREPRINTED (values
+     * only, printed onto pre-printed stationery). Drives which renderer the
+     * print pipeline uses. Defaults to FULL for legacy rows.
+     */
+    @Column(name = "template_type")
+    private String templateType;
+
     @Column(name = "paper_size")
     private String paperSize;
 

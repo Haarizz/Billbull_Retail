@@ -68,8 +68,10 @@ public class SystemAccountSeeder implements ApplicationRunner {
             new AccountSeed("SYS-2107", "2107", "Deferred Revenue",    "Liabilities", "Liability", "Cr", "BS", false, "2100"),
             new AccountSeed("SYS-4101", "4101", "Sales Revenue",       "Income",      "Income",    "Cr", "PL", false, "4100"),
             new AccountSeed("SYS-4102", "4102", "Sales Returns",       "Income",      "Income",    "Dr", "PL", false, "4100"),
+            new AccountSeed("SYS-4103", "4103", "Delivery Income",     "Income",      "Income",    "Cr", "PL", false, "4100"),
             new AccountSeed("SYS-5101", "5101", "Cost of Goods Sold",  "Expenses",    "Expense",   "Dr", "PL", false, "5100"),
-            new AccountSeed("SYS-5403", "5403", "General Expense",     "Expenses",    "Expense",   "Dr", "PL", false, "5400")
+            new AccountSeed("SYS-5403", "5403", "General Expense",     "Expenses",    "Expense",   "Dr", "PL", false, "5400"),
+            new AccountSeed("SYS-5999", "5999", "Rounding Adjustment", "Expenses",    "Expense",   "Dr", "PL", false, "5400")
         );
 
         int seeded = 0;

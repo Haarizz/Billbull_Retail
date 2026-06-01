@@ -24,7 +24,7 @@ const getFocDeduction = (item = {}, unitPrice = 0, sellingUnit = 'PCS') => {
     return unitPrice * focInSellingUnit;
 };
 
-export const summarizeSalesItems = (items = [], billDiscountPercent = 0) => {
+export const summarizeSalesItems = (items = [], billDiscountPercent = 0, extras = {}) => {
     const summary = items.reduce((acc, rawItem) => {
         const item = rawItem || {};
         const qty = toNumber(item.qty ?? item.quantity);
@@ -89,16 +89,22 @@ export const summarizeSalesItems = (items = [], billDiscountPercent = 0) => {
 
     const billDiscountPercentValue = toNumber(billDiscountPercent);
     const billDiscountAmount = summary.subTotal * (billDiscountPercentValue / 100);
-    
+
     // ✅ ERP FIX: Apply tax AFTER bill discount
     // We can proportionally reduce the total tax by the same percentage as the bill discount
     const finalTax = summary.tax * (1 - billDiscountPercentValue / 100);
+
+    // Delivery charge is a flat add (no VAT); round-off is a manual +/- adjustment.
+    const deliveryCharge = toNumber(extras.deliveryCharge);
+    const roundOff = toNumber(extras.roundOff);
 
     return {
         ...summary,
         billDiscountAmount,
         tax: finalTax, // Overwrite with discounted tax
-        grandTotal: summary.subTotal - billDiscountAmount + finalTax,
+        deliveryCharge,
+        roundOff,
+        grandTotal: summary.subTotal - billDiscountAmount + finalTax + deliveryCharge + roundOff,
     };
 };
 

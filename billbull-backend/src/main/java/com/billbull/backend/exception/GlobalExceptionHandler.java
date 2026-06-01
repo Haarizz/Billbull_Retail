@@ -8,12 +8,28 @@ import org.springframework.security.access.AccessDeniedException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 
+import com.billbull.backend.financials.generalledger.postingengine.PostingException;
+
 import java.util.Map;
 
 @RestControllerAdvice
 public class GlobalExceptionHandler {
 
     private static final Logger log = LoggerFactory.getLogger(GlobalExceptionHandler.class);
+
+    /**
+     * Posting gateway rejections → 422 with the stable error {@code code} so the
+     * frontend can branch on it (e.g. PERIOD_LOCKED, UNBALANCED_ENTRY).
+     */
+    @ExceptionHandler(PostingException.class)
+    public ResponseEntity<Map<String, String>> handlePosting(PostingException ex) {
+        log.warn("PostingException [{}]: {}", ex.getCode(), ex.getMessage());
+        return ResponseEntity
+                .unprocessableEntity()
+                .body(Map.of(
+                        "code", ex.getCode().name(),
+                        "message", ex.getMessage() != null ? ex.getMessage() : ex.getCode().name()));
+    }
 
     @ExceptionHandler(RuntimeException.class)
     public ResponseEntity<Map<String, String>> handleRuntime(RuntimeException ex) {

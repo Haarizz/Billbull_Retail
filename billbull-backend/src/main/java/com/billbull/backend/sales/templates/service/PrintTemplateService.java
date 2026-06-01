@@ -26,6 +26,32 @@ public class PrintTemplateService {
         return printTemplateRepository.findByCategory(category);
     }
 
+    /**
+     * Returns every template in a document family (e.g. all "Sales Invoice*"
+     * categories: standard, letterhead, and pre-printed). Used by the print
+     * picker so the user can choose any variant at print time. Backfills a
+     * derived {@code templateType} for legacy rows that predate the column.
+     */
+    public List<PrintTemplate> getTemplatesByCategoryPrefix(String prefix) {
+        List<PrintTemplate> templates = printTemplateRepository.findByCategoryStartingWith(prefix);
+        templates.forEach(this::ensureTemplateType);
+        return templates;
+    }
+
+    private void ensureTemplateType(PrintTemplate t) {
+        if (t.getTemplateType() != null && !t.getTemplateType().isBlank()) {
+            return;
+        }
+        String cat = t.getCategory() != null ? t.getCategory().toLowerCase() : "";
+        if (cat.contains("pre-printed") || cat.contains("preprinted")) {
+            t.setTemplateType("PREPRINTED");
+        } else if (cat.contains("letterhead")) {
+            t.setTemplateType("LETTERHEAD");
+        } else {
+            t.setTemplateType("FULL");
+        }
+    }
+
     public PrintTemplate createTemplate(PrintTemplate template) {
         if (template.isDefault()) {
             unsetOtherDefaults(template.getCategory(), null);
@@ -55,6 +81,7 @@ public class PrintTemplateService {
             existingTemplate.setFooterContent(templateDetails.getFooterContent());
             existingTemplate.setDisplayOptions(templateDetails.getDisplayOptions());
             existingTemplate.setColumns(templateDetails.getColumns());
+            existingTemplate.setTemplateType(templateDetails.getTemplateType());
 
             return printTemplateRepository.save(existingTemplate);
         } else {

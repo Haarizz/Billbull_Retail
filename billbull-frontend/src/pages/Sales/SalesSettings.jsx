@@ -115,6 +115,40 @@ const salesModes = [
     }
 ];
 
+const roundingModes = [
+    {
+        value: 'NONE',
+        label: 'No Rounding',
+        description: 'Invoice totals keep their exact value, including fractional amounts.',
+        tint: 'bg-slate-100 text-slate-700'
+    },
+    {
+        value: 'NEAREST',
+        label: 'Nearest',
+        description: 'Snap the total to the closest rounding step (e.g. 716.40 → 716.00).',
+        tint: 'bg-emerald-100 text-emerald-700'
+    },
+    {
+        value: 'UP',
+        label: 'Always Round Up',
+        description: 'Round the total up to the next step (e.g. 716.10 → 717.00).',
+        tint: 'bg-sky-100 text-sky-700'
+    },
+    {
+        value: 'DOWN',
+        label: 'Always Round Down',
+        description: 'Round the total down to the previous step (e.g. 716.90 → 716.00).',
+        tint: 'bg-orange-100 text-orange-700'
+    }
+];
+
+const roundingPrecisions = [
+    { value: 1, label: '1.00' },
+    { value: 0.5, label: '0.50' },
+    { value: 0.25, label: '0.25' },
+    { value: 0.05, label: '0.05' }
+];
+
 const sectionMeta = {
     stockCheck: {
         title: 'Stock Check',
@@ -150,6 +184,13 @@ const sectionMeta = {
         description: 'Manage numbering behavior for customer and sales documents.',
         icon: Hash,
         tint: 'bg-sky-100 text-sky-700'
+    },
+    rounding: {
+        title: 'Invoice Rounding',
+        subtitle: 'Round-off rule for invoice totals',
+        description: 'Choose how the sales invoice net total is rounded and the rounding step.',
+        icon: Settings,
+        tint: 'bg-rose-100 text-rose-700'
     }
 };
 
@@ -288,6 +329,8 @@ const SalesSettings = () => {
     const [creditLimitPolicy, setCreditLimitPolicy] = useState('NO_IMPACT');
     const [salesMode, setSalesMode] = useState('FAST_SALE');
     const [salesItemPricePolicy, setSalesItemPricePolicy] = useState('RETAIL');
+    const [roundingMode, setRoundingMode] = useState('NEAREST');
+    const [roundingPrecision, setRoundingPrecision] = useState(1);
     const [documentNumbering, setDocumentNumbering] = useState(DEFAULT_DOCUMENT_NUMBERING.map((setting) => ({
         ...setting,
         preview: buildPreview(setting)
@@ -301,6 +344,8 @@ const SalesSettings = () => {
                 setCreditLimitPolicy(data.creditLimitPolicy ?? 'NO_IMPACT');
                 setSalesMode(data.salesMode ?? 'WORKFLOW_DRIVEN');
                 setSalesItemPricePolicy(data.salesItemPricePolicy ?? 'RETAIL');
+                setRoundingMode(data.roundingMode ?? 'NEAREST');
+                setRoundingPrecision(Number(data.roundingPrecision) > 0 ? Number(data.roundingPrecision) : 1);
                 setDocumentNumbering(normalizeDocumentNumbering(data.documentNumbering));
             } catch (err) {
                 console.error('Failed to load sales settings', err);
@@ -320,6 +365,8 @@ const SalesSettings = () => {
                 creditLimitPolicy,
                 salesMode,
                 salesItemPricePolicy,
+                roundingMode,
+                roundingPrecision,
                 documentNumbering
             });
             toast.success('Configure & customize saved successfully');
@@ -356,6 +403,9 @@ const SalesSettings = () => {
     const modeSummary = salesModes.find((mode) => mode.value === salesMode)?.label || 'Workflow Driven';
     const priceSummary = pricePolicies.find((policy) => policy.value === salesItemPricePolicy)?.label || 'Retail Price';
     const numberingSummary = `${documentNumbering.length} document types configured`;
+    const roundingSummary = roundingMode === 'NONE'
+        ? 'No rounding'
+        : `${roundingModes.find((mode) => mode.value === roundingMode)?.label || 'Nearest'} · step ${Number(roundingPrecision).toFixed(2)}`;
 
     const stockCheckModal = showStockCheckModal ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/30 p-4 backdrop-blur-sm">
@@ -461,6 +511,7 @@ const SalesSettings = () => {
                         <HubCard meta={sectionMeta.creditLimit} value={creditSummary} onClick={() => setActiveScreen('creditLimit')} />
                         <HubCard meta={sectionMeta.executionMode} value={modeSummary} onClick={() => setActiveScreen('executionMode')} />
                         <HubCard meta={sectionMeta.itemPrice} value={priceSummary} onClick={() => setActiveScreen('itemPrice')} />
+                        <HubCard meta={sectionMeta.rounding} value={roundingSummary} onClick={() => setActiveScreen('rounding')} />
                         <HubCard meta={sectionMeta.numbering} value={numberingSummary} onClick={() => setActiveScreen('numbering')} />
                     </section>
                 </main>
@@ -548,6 +599,59 @@ const SalesSettings = () => {
 
                     <div className="mt-5 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4 text-sm leading-6 text-slate-700">
                         Users can still edit the price on the document line. This screen controls the default price that appears first when the item is selected.
+                    </div>
+                </SectionShell>
+                {stockCheckModal}
+            </>
+        );
+    }
+
+    if (activeScreen === 'rounding') {
+        return (
+            <>
+                <SectionShell meta={sectionMeta.rounding} onBack={() => setActiveScreen('hub')} onSave={persistSettings} isSaving={isSaving}>
+                    <div className="space-y-4">
+                        {roundingModes.map((mode) => (
+                            <OptionCard
+                                key={mode.value}
+                                active={roundingMode === mode.value}
+                                label={mode.label}
+                                description={mode.description}
+                                badge={roundingMode === mode.value ? 'Active' : null}
+                                icon={Settings}
+                                tint={mode.tint}
+                                onClick={() => setRoundingMode(mode.value)}
+                            />
+                        ))}
+                    </div>
+
+                    {roundingMode !== 'NONE' && (
+                        <div className="mt-5 rounded-2xl border border-slate-200 bg-white px-4 py-4">
+                            <h3 className="text-sm font-bold text-slate-900">Rounding step</h3>
+                            <p className="mt-1 text-xs leading-5 text-slate-600">
+                                The total is rounded to a multiple of this amount.
+                            </p>
+                            <div className="mt-3 flex flex-wrap gap-2">
+                                {roundingPrecisions.map((step) => (
+                                    <button
+                                        key={step.value}
+                                        type="button"
+                                        onClick={() => setRoundingPrecision(step.value)}
+                                        className={`rounded-xl border px-4 py-2 text-sm font-semibold transition ${
+                                            roundingPrecision === step.value
+                                                ? 'border-[#F5C742] bg-[#FFF8E7] text-slate-900'
+                                                : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300'
+                                        }`}
+                                    >
+                                        {step.label}
+                                    </button>
+                                ))}
+                            </div>
+                        </div>
+                    )}
+
+                    <div className="mt-5 rounded-2xl border border-rose-100 bg-rose-50 px-4 py-4 text-sm leading-6 text-rose-800">
+                        The rounding difference is posted to the Rounding Adjustment account (5999) so revenue stays exact. Cashiers can still override the round-off by hand on an individual invoice.
                     </div>
                 </SectionShell>
                 {stockCheckModal}

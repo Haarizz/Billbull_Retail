@@ -19,6 +19,14 @@ public interface PaymentVoucherRepository extends JpaRepository<PaymentVoucher, 
     @org.springframework.data.jpa.repository.Query("SELECT COALESCE(SUM(p.amount), 0) FROM PaymentVoucher p WHERE p.vendorName = :vendorName AND p.status <> 'CANCELLED'")
     java.math.BigDecimal sumPaymentsByVendorName(@org.springframework.data.repository.query.Param("vendorName") String vendorName);
 
+    /**
+     * Sum of posted on-account payments for a vendor — vouchers not linked to any
+     * purchase invoice ({@code invoiceId IS NULL}). These settle the vendor's
+     * opening balance, so they must be netted off when showing what OB remains.
+     */
+    @Query("SELECT COALESCE(SUM(p.amount), 0) FROM PaymentVoucher p WHERE p.vendorName = :vendorName AND p.invoiceId IS NULL AND p.status IN (com.billbull.backend.purchase.payment.PaymentStatus.POSTED, com.billbull.backend.purchase.payment.PaymentStatus.CLEARED)")
+    BigDecimal sumOnAccountPaidByVendorName(@Param("vendorName") String vendorName);
+
     @org.springframework.data.jpa.repository.Query("SELECT new com.billbull.backend.financials.statement.StatementEntryDTO(p.paymentDate, p.voucherNumber, 'PAYMENT_MADE', p.amount, CAST(0 AS big_decimal), CAST(p.status AS string)) FROM PaymentVoucher p WHERE p.vendorName = :vendorName AND p.paymentDate BETWEEN :startDate AND :endDate AND p.status <> 'CANCELLED'")
     java.util.List<com.billbull.backend.financials.statement.StatementEntryDTO> findStatementEntries(String vendorName,
             java.time.LocalDate startDate, java.time.LocalDate endDate);

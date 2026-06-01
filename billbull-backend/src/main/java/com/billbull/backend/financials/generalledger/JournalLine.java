@@ -3,6 +3,7 @@ package com.billbull.backend.financials.generalledger;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 
+import com.billbull.backend.settings.branch.Branch;
 import com.fasterxml.jackson.annotation.JsonIgnore;
 
 import jakarta.persistence.Column;
@@ -11,12 +12,15 @@ import jakarta.persistence.FetchType;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
+import jakarta.persistence.Index;
 import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
 import jakarta.persistence.Table;
 
 @Entity
-@Table(name = "journal_lines")
+@Table(name = "journal_lines", indexes = {
+    @Index(name = "idx_journal_line_branch", columnList = "branch_id")
+})
 public class JournalLine {
 
     @Id
@@ -27,6 +31,15 @@ public class JournalLine {
     @JoinColumn(name = "journal_entry_id", nullable = false)
     @JsonIgnore
     private JournalEntry journalEntry;
+
+    /**
+     * Per-line branch dimension (PDF §4). Mandatory target; currently enforced
+     * warn-only by {@code DimensionMatrixService} and backfilled from the header
+     * branch when not set explicitly.
+     */
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "branch_id")
+    private Branch branch;
 
     @Column(nullable = false)
     private String account; // Display name (kept for backward compatibility)
@@ -83,6 +96,14 @@ public class JournalLine {
 
     public void setJournalEntry(JournalEntry journalEntry) {
         this.journalEntry = journalEntry;
+    }
+
+    public Branch getBranch() {
+        return branch;
+    }
+
+    public void setBranch(Branch branch) {
+        this.branch = branch;
     }
 
     public String getAccount() {
