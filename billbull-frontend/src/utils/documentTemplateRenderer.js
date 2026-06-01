@@ -22,6 +22,7 @@ const PURCHASE_TEMPLATE_CATEGORIES = new Set([
     'Goods Return Voucher',
     'Purchase Return',
     'Debit Note',
+    'Customer Statement of Account',
     'Vendor Statement of Account',
     'Cheque'
 ]);
@@ -40,6 +41,8 @@ const DOC_NO_LABELS = {
     'Goods Receipt Note': 'GRN Number',
     'Purchase Invoice': 'Invoice Number',
     'Payment Voucher': 'Voucher Number',
+    'Customer Statement of Account': 'Statement No.',
+    'Vendor Statement of Account': 'Statement No.',
     'Pick List': 'Pick List Number',
     'Receipt Voucher': 'Receipt Number'
 };
@@ -55,6 +58,8 @@ const DOCUMENT_TITLE_LABELS = {
     'Goods Receipt Note': 'Goods Receipt Note',
     'Purchase Invoice': 'Purchase Invoice',
     'Payment Voucher': 'Payment Voucher',
+    'Customer Statement of Account': 'Customer Statement of Account',
+    'Vendor Statement of Account': 'Vendor Statement of Account',
     'Pick List': 'Pick List',
     'Receipt Voucher': 'Receipt Voucher'
 };
@@ -551,7 +556,7 @@ const normaliseItem = (item = {}) => {
 };
 
 const getColumnDefaults = (category, isPurchaseDocument) => {
-    const isVoucherLike = ['Payment Voucher', 'Cheque', 'Vendor Statement of Account'].includes(category);
+    const isVoucherLike = ['Payment Voucher', 'Cheque', 'Customer Statement of Account', 'Vendor Statement of Account'].includes(category);
     return isPurchaseDocument
         ? {
             ...DEFAULT_TEMPLATE_COLUMNS,
@@ -2926,6 +2931,571 @@ const buildLayout = (template, data, options = {}, renderTarget = 'print') => {
     return normaliseGenericLayout(template, data, companyProfile, renderTarget);
 };
 
+const titleCaseStatementType = (type) => {
+    const text = asText(type).trim();
+    if (!text) return '-';
+
+    return text
+        .toLowerCase()
+        .split('_')
+        .filter(Boolean)
+        .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+        .join(' ');
+};
+
+const normalizeStatementRows = (data = {}) => {
+    const rows = Array.isArray(data.statementRows)
+        ? data.statementRows
+        : Array.isArray(data.statement?.entries)
+            ? data.statement.entries
+            : Array.isArray(data.entries)
+                ? data.entries
+                : [];
+
+    return rows.map((row, index) => {
+        const type = firstNonEmpty(row.type, row.entryType);
+        return {
+            rowNo: row.rowNo || index + 1,
+            date: firstNonEmpty(row.date, row.transactionDate),
+            type,
+            typeLabel: firstNonEmpty(row.typeLabel, titleCaseStatementType(type)),
+            documentNo: firstNonEmpty(row.documentNo, row.docNo),
+            description: firstNonEmpty(row.description, titleCaseStatementType(type)),
+            reference: firstNonEmpty(row.reference, row.ref),
+            debit: asNumber(row.debit),
+            credit: asNumber(row.credit),
+            balance: asNumber(row.balance ?? row.runningBalance),
+            status: firstNonEmpty(row.status),
+        };
+    });
+};
+
+const isStatementRowVisible = (row, settings = {}, statementKind = 'vendor') => {
+    const type = `${row.type || ''} ${row.typeLabel || ''} ${row.description || ''}`.toLowerCase();
+    const isOpening = /opening/.test(type);
+    const isPdc = /pdc|post[-\s]?dated|cheque|check/.test(type);
+
+    if (isOpening) return pickSetting(settings, ['showOpeningBalance'], true);
+    if (isPdc) return pickSetting(settings, ['showPDC', 'showPdc'], true);
+
+    if (statementKind === 'customer') {
+        const isSale = /invoice|sale|sales|debit/.test(type) || (row.debit > 0 && row.credit === 0);
+        const isReceipt = /payment|receipt|voucher|credit/.test(type) || (row.credit > 0 && row.debit === 0);
+
+        if (isSale) return pickSetting(settings, ['showSales', 'showPurchases'], true);
+        if (isReceipt) return pickSetting(settings, ['showReceipts', 'showPayments'], true);
+        return true;
+    }
+
+    const isPurchase = /invoice|purchase|bill|grn|goods receipt|lpo/.test(type) || (row.credit > 0 && row.debit === 0);
+    const isPayment = /payment|receipt|voucher/.test(type) || (row.debit > 0 && row.credit === 0);
+
+    if (isPurchase) return pickSetting(settings, ['showPurchases'], true);
+    if (isPayment) return pickSetting(settings, ['showPayments'], true);
+
+    return true;
+};
+
+const renderVendorStatementHtml = (template = {}, data = {}, options = {}, renderTarget = 'print') => {
+    const isCustomerStatement = template?.category === 'Customer Statement of Account' || data.statementKind === 'customer';
+    const partyLabel = isCustomerStatement ? 'Customer' : 'Vendor';
+    const documentLabel = isCustomerStatement ? 'Customer Statement of Account' : 'Vendor Statement of Account';
+    const company = normalizeDocumentCompanyProfile(options.companyProfile || {});
+    const settings = getTemplateDesignerSettings(template);
+    const displayOptions = sanitizeTemplateDisplayOptions(template.displayOptions, DEFAULT_TEMPLATE_DISPLAY_OPTIONS);
+    const paperSize = ['A3', 'A4', 'A5', 'Letter', 'Legal'].includes(firstNonEmpty(settings.paperSize, settings.pageSize, template.paperSize))
+        ? firstNonEmpty(settings.paperSize, settings.pageSize, template.paperSize)
+        : 'A4';
+    const orientation = /landscape/i.test(firstNonEmpty(settings.orientation, template.orientation))
+        ? 'landscape'
+        : 'portrait';
+    const rawMargins = settings.margins && typeof settings.margins === 'object' ? settings.margins : {};
+    const marginValue = (side, fallback) => {
+        const parsed = Number(rawMargins[side]);
+        return Number.isFinite(parsed) ? Math.max(4, Math.min(40, parsed)) : fallback;
+    };
+    const margins = {
+        top: marginValue('top', 14),
+        right: marginValue('right', 12),
+        bottom: marginValue('bottom', 14),
+        left: marginValue('left', 12),
+    };
+    const accentColor = sanitizeCssColor(settings.accentColor || settings.primaryColor, '#F5C742');
+    const headerBg = sanitizeCssColor(settings.headerBg || settings.headerBackgroundColor, '#1e293b');
+    const borderColor = sanitizeCssColor(settings.borderColor, '#dbe2ea');
+    const fontFamily = sanitizeCssFontFamily(settings.fontFamily, "'Inter', Arial, sans-serif");
+    const baseFontSize = Math.min(16, Math.max(11, Number(settings.fontSize) || 13));
+    const showBorder = pickSetting(settings, ['showBorder'], true);
+    const showLogo = pickSetting(settings, ['showLogo', 'showCompanyLogo'], true);
+    const showQuickSummary = pickSetting(settings, ['showQuickSummary'], true);
+    const showOpeningBalance = pickSetting(settings, ['showOpeningBalance'], true);
+    const showPurchases = pickSetting(settings, ['showPurchases', 'showSales'], true);
+    const showPayments = pickSetting(settings, ['showPayments', 'showReceipts'], true);
+    const showClosingBalance = pickSetting(settings, ['showClosingBalance'], true);
+    const companyVisibility = buildCompanyVisibility(settings);
+    const partyVisibility = buildPartyVisibility(settings);
+    const logoUrl = showLogo
+        ? (resolveTemplateImageUrl(settings.logoUrl || settings.companyLogoUrl) || company.logoUrl)
+        : '';
+    const party = data.party || {};
+    const statement = data.statement || {};
+    const rows = normalizeStatementRows(data).filter((row) => isStatementRowVisible(row, settings, isCustomerStatement ? 'customer' : 'vendor'));
+    const currency = resolveCurrency(company, data.totals || {}, data.summaryAmount || {});
+    const currencyHtml = renderCurrencyForLayout(currency, displayOptions);
+    const openingBalance = asNumber(statement.openingBalance ?? data.totals?.openingBalance);
+    const totalDebit = asNumber(statement.totalDebit ?? data.totals?.totalDebit ?? data.totals?.amountPaid);
+    const totalCredit = asNumber(statement.totalCredit ?? data.totals?.totalCredit ?? data.totals?.subTotal);
+    const closingBalance = asNumber(statement.closingBalance ?? data.totals?.closingBalance ?? data.totals?.balanceDue);
+    const positiveLabel = firstNonEmpty(data.positiveBalanceLabel, 'Cr');
+    const negativeLabel = firstNonEmpty(data.negativeBalanceLabel, 'Dr');
+    const startDate = firstNonEmpty(statement.startDate, data.startDate);
+    const endDate = firstNonEmpty(statement.endDate, data.endDate);
+    const generatedOn = firstNonEmpty(statement.generatedOn, data.date, formatDocDate(new Date()));
+    const periodText = [startDate, endDate].filter(Boolean).join(' to ') || '-';
+    const footerText = firstNonEmpty(
+        template.termsContent,
+        settings.footerText,
+        isCustomerStatement
+            ? 'This is a computer-generated customer statement and does not require a signature.'
+            : 'This is a computer-generated vendor statement and does not require a signature.'
+    );
+
+    const formatAmountHtml = (value, includeCurrency = false, emptyDash = true) => {
+        const amount = asNumber(value);
+        if (emptyDash && amount === 0) return '-';
+        return `${includeCurrency ? `${currencyHtml} ` : ''}${formatNumber(Math.abs(amount))}`;
+    };
+    const formatBalanceHtml = (value) => {
+        const amount = asNumber(value);
+        return `${currencyHtml} ${formatNumber(Math.abs(amount))} ${amount >= 0 ? positiveLabel : negativeLabel}`;
+    };
+    const companyLines = [
+        companyVisibility.address && company.address,
+        companyVisibility.phone && company.phone ? `Phone: ${company.phone}` : '',
+        companyVisibility.email && company.email ? `Email: ${company.email}` : '',
+        companyVisibility.website && company.website,
+        companyVisibility.trn && company.trn ? `TRN: ${company.trn}` : '',
+        companyVisibility.crn && company.crn ? `CRN: ${company.crn}` : '',
+    ].filter(Boolean);
+    const partyLines = [
+        partyVisibility.code && party.code ? `Code: ${party.code}` : '',
+        partyVisibility.address && party.address,
+        partyVisibility.phone && party.phone ? `Phone: ${party.phone}` : '',
+        partyVisibility.email && party.email ? `Email: ${party.email}` : '',
+        partyVisibility.taxId && party.taxId ? `TRN / Tax ID: ${party.taxId}` : '',
+    ].filter(Boolean);
+    const summaryCards = [
+        showOpeningBalance ? { label: 'Opening Balance', value: openingBalance, suffix: openingBalance >= 0 ? positiveLabel : negativeLabel } : null,
+        isCustomerStatement
+            ? (showPurchases ? { label: data.debitSummaryLabel || 'Total Sales', value: totalDebit } : null)
+            : (showPurchases ? { label: data.creditSummaryLabel || 'Total Purchases', value: totalCredit } : null),
+        isCustomerStatement
+            ? (showPayments ? { label: data.creditSummaryLabel || 'Total Receipts', value: totalCredit } : null)
+            : (showPayments ? { label: data.debitSummaryLabel || 'Total Payments', value: totalDebit } : null),
+        showClosingBalance ? { label: 'Closing Balance', value: closingBalance, suffix: closingBalance >= 0 ? positiveLabel : negativeLabel, strong: true } : null,
+    ].filter(Boolean);
+    const documentTitle = generateDocFilename(
+        documentLabel,
+        data.docNo,
+        party.name,
+        endDate || generatedOn,
+        currency
+    );
+    const pageCss = renderTarget === 'print'
+        ? `@page { size: ${paperSize} ${orientation}; margin: ${margins.top}mm ${margins.right}mm ${margins.bottom}mm ${margins.left}mm; }`
+        : '';
+
+    const styles = `
+        ${pageCss}
+        * {
+            box-sizing: border-box;
+            -webkit-print-color-adjust: exact;
+            print-color-adjust: exact;
+        }
+        body {
+            margin: 0;
+            background: #ffffff;
+            color: #0f172a;
+            font-family: ${fontFamily};
+            font-size: ${baseFontSize}px;
+            line-height: 1.45;
+        }
+        .soa-shell {
+            width: 100%;
+            max-width: ${renderTarget === 'email' ? '860px' : 'none'};
+            margin: 0 auto;
+            background: #ffffff;
+            border: ${showBorder ? `1px solid ${borderColor}` : '0'};
+            overflow: hidden;
+        }
+        .soa-header {
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) minmax(240px, 0.9fr);
+            gap: 24px;
+            align-items: start;
+            padding: 24px 28px;
+            background: ${headerBg};
+            color: #ffffff;
+        }
+        .company-logo {
+            display: block;
+            max-width: 142px;
+            max-height: 58px;
+            object-fit: contain;
+            margin-bottom: 12px;
+            background: #ffffff;
+            border-radius: 6px;
+            padding: 4px;
+        }
+        .company-name {
+            font-size: ${Math.max(16, baseFontSize + 4)}px;
+            font-weight: 800;
+            margin-bottom: 7px;
+        }
+        .company-line,
+        .statement-meta {
+            color: rgba(255, 255, 255, 0.82);
+            font-size: ${Math.max(10, baseFontSize - 2)}px;
+        }
+        .title-block {
+            text-align: right;
+        }
+        .statement-title {
+            margin: 0 0 12px;
+            font-size: ${Math.max(22, baseFontSize + 11)}px;
+            line-height: 1.1;
+            letter-spacing: 0;
+            font-weight: 800;
+            text-transform: uppercase;
+        }
+        .statement-pill {
+            display: inline-block;
+            margin-bottom: 10px;
+            border-radius: 999px;
+            background: ${accentColor};
+            color: #111827;
+            padding: 5px 11px;
+            font-weight: 800;
+            font-size: ${Math.max(10, baseFontSize - 3)}px;
+            text-transform: uppercase;
+        }
+        .content {
+            padding: 24px 28px 22px;
+        }
+        .info-grid {
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) 260px;
+            gap: 18px;
+            margin-bottom: 18px;
+        }
+        .info-card {
+            border: 1px solid ${borderColor};
+            border-radius: 8px;
+            padding: 14px 16px;
+            background: #ffffff;
+        }
+        .card-label {
+            color: #64748b;
+            font-size: ${Math.max(9, baseFontSize - 3)}px;
+            font-weight: 800;
+            letter-spacing: 0.12em;
+            text-transform: uppercase;
+            margin-bottom: 8px;
+        }
+        .vendor-name {
+            font-size: ${Math.max(15, baseFontSize + 2)}px;
+            font-weight: 800;
+            color: #111827;
+            margin-bottom: 5px;
+        }
+        .muted-line {
+            color: #475569;
+            font-size: ${Math.max(10, baseFontSize - 1)}px;
+            margin-top: 3px;
+        }
+        .balance-value {
+            color: #111827;
+            font-size: ${Math.max(19, baseFontSize + 7)}px;
+            font-weight: 900;
+            margin-top: 2px;
+        }
+        .summary-grid {
+            display: grid;
+            grid-template-columns: repeat(${Math.max(1, summaryCards.length)}, minmax(0, 1fr));
+            border: 1px solid ${borderColor};
+            border-radius: 8px;
+            overflow: hidden;
+            margin-bottom: 18px;
+        }
+        .summary-cell {
+            padding: 12px 14px;
+            border-left: 1px solid ${borderColor};
+            background: #ffffff;
+        }
+        .summary-cell:first-child { border-left: 0; }
+        .summary-label {
+            color: #64748b;
+            font-size: ${Math.max(9, baseFontSize - 3)}px;
+            font-weight: 800;
+            letter-spacing: 0.1em;
+            text-transform: uppercase;
+        }
+        .summary-value {
+            margin-top: 6px;
+            color: #111827;
+            font-size: ${Math.max(16, baseFontSize + 4)}px;
+            font-weight: 850;
+        }
+        .summary-value.strong {
+            color: ${accentColor};
+        }
+        .summary-suffix {
+            margin-top: 2px;
+            color: #64748b;
+            font-size: ${Math.max(9, baseFontSize - 3)}px;
+            font-weight: 800;
+            text-transform: uppercase;
+        }
+        .soa-table {
+            width: 100%;
+            border-collapse: collapse;
+            table-layout: fixed;
+            font-size: ${Math.max(8, baseFontSize - 4)}px;
+        }
+        .soa-table th {
+            background: ${accentColor};
+            color: #111827;
+            border: 1px solid ${borderColor};
+            padding: 6px 5px;
+            font-size: ${Math.max(7, baseFontSize - 5)}px;
+            font-weight: 850;
+            text-transform: uppercase;
+            text-align: left;
+            line-height: 1.18;
+            overflow-wrap: normal;
+            word-break: normal;
+        }
+        .soa-table td {
+            border: 1px solid ${borderColor};
+            padding: 6px 5px;
+            color: #334155;
+            vertical-align: top;
+            line-height: 1.22;
+            overflow-wrap: anywhere;
+            word-break: normal;
+        }
+        .soa-table .num,
+        .soa-table .amount {
+            text-align: right;
+            white-space: nowrap;
+        }
+        .soa-table .date-cell,
+        .soa-table .doc-cell {
+            white-space: nowrap;
+            overflow-wrap: normal;
+        }
+        .soa-table .debit { color: ${isCustomerStatement ? '#dc2626' : '#15803d'}; }
+        .soa-table .credit { color: ${isCustomerStatement ? '#15803d' : '#c2410c'}; }
+        .soa-table .balance { color: #111827; font-weight: 800; }
+        .type-badge {
+            display: block;
+            border-radius: 4px;
+            background: transparent;
+            color: #334155;
+            padding: 0;
+            font-size: ${Math.max(7, baseFontSize - 5)}px;
+            font-weight: 800;
+            line-height: 1.15;
+            text-transform: none;
+            overflow-wrap: normal;
+            word-break: normal;
+        }
+        .closing-row td {
+            background: #f8fafc;
+            font-weight: 850;
+            color: #111827;
+        }
+        .empty-row td {
+            padding: 18px 10px;
+            text-align: center;
+            color: #94a3b8;
+        }
+        .footer-note {
+            margin-top: 18px;
+            border-top: 1px solid ${borderColor};
+            padding-top: 12px;
+            text-align: center;
+            color: #64748b;
+            font-size: ${Math.max(10, baseFontSize - 2)}px;
+        }
+        .billbull-footer {
+            margin-top: 8px;
+            text-align: center;
+            color: #94a3b8;
+            font-size: ${Math.max(9, baseFontSize - 3)}px;
+        }
+        .billbull-footer img {
+            max-height: 18px;
+            width: auto;
+            vertical-align: middle;
+        }
+        @media print {
+            html, body {
+                overflow: visible !important;
+                height: auto !important;
+            }
+            .soa-shell {
+                border: ${showBorder ? `1px solid ${borderColor}` : '0'};
+                break-inside: auto;
+            }
+            .soa-header {
+                grid-template-columns: minmax(0, 1fr) minmax(240px, 0.9fr) !important;
+            }
+            .info-grid {
+                grid-template-columns: minmax(0, 1fr) 260px !important;
+            }
+            .summary-grid {
+                grid-template-columns: repeat(${Math.max(1, summaryCards.length)}, minmax(0, 1fr)) !important;
+            }
+            .title-block {
+                text-align: right !important;
+            }
+            .info-card,
+            .summary-grid,
+            tr {
+                break-inside: avoid;
+            }
+        }
+        @media screen and (max-width: 760px) {
+            .soa-header,
+            .info-grid,
+            .summary-grid {
+                grid-template-columns: 1fr;
+            }
+            .title-block {
+                text-align: left;
+            }
+        }
+    `;
+
+    return `
+        <!DOCTYPE html>
+        <html lang="en">
+        <head>
+            <meta charset="UTF-8" />
+            <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+            <title>${escapeHtml(documentTitle)}</title>
+            <style>${styles}</style>
+        </head>
+        <body>
+            <div class="soa-shell">
+                <header class="soa-header">
+                    <div>
+                        ${logoUrl ? `<img class="company-logo" src="${escapeHtml(logoUrl)}" alt="${escapeHtml(company.companyName || 'Company Logo')}" />` : ''}
+                        ${companyVisibility.name ? `<div class="company-name">${escapeHtml(company.companyName || 'Company')}</div>` : ''}
+                        ${companyLines.map((line) => `<div class="company-line">${escapeHtml(line)}</div>`).join('')}
+                    </div>
+                    <div class="title-block">
+                        <div class="statement-pill">${escapeHtml(data.status || 'Generated')}</div>
+                        <h1 class="statement-title">Statement of Account</h1>
+                        <div class="statement-meta"><strong>Period:</strong> ${escapeHtml(periodText)}</div>
+                        <div class="statement-meta"><strong>Generated:</strong> ${escapeHtml(generatedOn)}</div>
+                        ${data.docNo ? `<div class="statement-meta"><strong>Statement No:</strong> ${escapeHtml(data.docNo)}</div>` : ''}
+                    </div>
+                </header>
+
+                <main class="content">
+                    <section class="info-grid">
+                        <div class="info-card">
+                            <div class="card-label">${escapeHtml(partyLabel)}</div>
+                            <div class="vendor-name">${escapeHtml(party.name || statement.accountName || partyLabel)}</div>
+                            ${partyLines.map((line) => `<div class="muted-line">${escapeHtml(line)}</div>`).join('')}
+                        </div>
+                        <div class="info-card">
+                            <div class="card-label">Balance Summary</div>
+                            <div class="balance-value">${formatBalanceHtml(closingBalance)}</div>
+                            <div class="muted-line">Currency: ${currencyHtml}</div>
+                        </div>
+                    </section>
+
+                    ${showQuickSummary && summaryCards.length > 0 ? `
+                        <section class="summary-grid">
+                            ${summaryCards.map((card) => `
+                                <div class="summary-cell">
+                                    <div class="summary-label">${escapeHtml(card.label)}</div>
+                                    <div class="summary-value ${card.strong ? 'strong' : ''}">${formatAmountHtml(card.value, true, false)}</div>
+                                    ${card.suffix ? `<div class="summary-suffix">${escapeHtml(card.suffix)}</div>` : ''}
+                                </div>
+                            `).join('')}
+                        </section>
+                    ` : ''}
+
+                    <section>
+                        <table class="soa-table">
+                            <colgroup>
+                                <col style="width:9%;" />
+                                <col style="width:9%;" />
+                                <col style="width:13%;" />
+                                <col style="width:22%;" />
+                                <col style="width:13%;" />
+                                <col style="width:11%;" />
+                                <col style="width:10%;" />
+                                <col style="width:13%;" />
+                            </colgroup>
+                            <thead>
+                                <tr>
+                                    <th>Date</th>
+                                    <th>Type</th>
+                                    <th>Document No.</th>
+                                    <th>Description</th>
+                                    <th>Reference</th>
+                                    <th style="text-align:right;">${escapeHtml(data.debitColumnLabel || 'Debit')}</th>
+                                    <th style="text-align:right;">${escapeHtml(data.creditColumnLabel || 'Credit')}</th>
+                                    <th style="text-align:right;">Balance</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                ${rows.length > 0 ? rows.map((row) => `
+                                    <tr>
+                                        <td class="date-cell">${escapeHtml(formatDocDate(row.date) || '-')}</td>
+                                        <td><span class="type-badge">${escapeHtml(row.typeLabel || '-')}</span></td>
+                                        <td class="doc-cell">${escapeHtml(row.documentNo || '-')}</td>
+                                        <td>${escapeHtml(row.description || '-')}</td>
+                                        <td>${escapeHtml(row.reference || '-')}</td>
+                                        <td class="amount debit">${formatAmountHtml(row.debit)}</td>
+                                        <td class="amount credit">${formatAmountHtml(row.credit)}</td>
+                                        <td class="amount balance">${formatBalanceHtml(row.balance)}</td>
+                                    </tr>
+                                `).join('') : `
+                                    <tr class="empty-row">
+                                        <td colspan="8">No transactions recorded in this period.</td>
+                                    </tr>
+                                `}
+                                ${showClosingBalance ? `
+                                    <tr class="closing-row">
+                                        <td colspan="5" class="num">Closing Totals</td>
+                                        <td class="amount debit">${formatAmountHtml(totalDebit, false, false)}</td>
+                                        <td class="amount credit">${formatAmountHtml(totalCredit, false, false)}</td>
+                                        <td class="amount balance">${formatBalanceHtml(closingBalance)}</td>
+                                    </tr>
+                                ` : ''}
+                            </tbody>
+                        </table>
+                    </section>
+
+                    <div class="footer-note">${escapeHtml(footerText)}</div>
+                    <div class="billbull-footer">
+                        ${options.billBullLogo
+                            ? `<img src="${escapeHtml(options.billBullLogo)}" alt="BillBull" />`
+                            : 'Generated by BillBull ERP'}
+                    </div>
+                </main>
+            </div>
+        </body>
+        </html>
+    `;
+};
+
 const buildDocumentHtml = (template, data, options = {}, renderTarget = 'print') => {
     const layout = buildLayout(template, data, options, renderTarget);
     const shellClasses = [
@@ -2980,12 +3550,18 @@ export const generateDocumentPrintHtml = (template, data, options = {}) => {
     if (template?.category === 'Pick List') {
         return generatePickListHtml(template, data, options);
     }
+    if (template?.category === 'Vendor Statement of Account' || template?.category === 'Customer Statement of Account') {
+        return renderVendorStatementHtml(template, data, options, 'print');
+    }
     return buildDocumentHtml(template, data, options, 'print');
 };
 
 export const generateDocumentEmailHtml = (template, data, options = {}) => {
     if (template?.category === 'Pick List') {
         return generatePickListHtml(template, data, options);
+    }
+    if (template?.category === 'Vendor Statement of Account' || template?.category === 'Customer Statement of Account') {
+        return renderVendorStatementHtml(template, data, options, 'email');
     }
     return buildDocumentHtml(template, data, options, 'email');
 };

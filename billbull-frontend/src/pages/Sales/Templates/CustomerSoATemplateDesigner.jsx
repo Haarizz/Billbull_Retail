@@ -12,7 +12,7 @@ import toast from "react-hot-toast";
 import DocumentPreviewCanvas from "../../../components/DocumentPreviewCanvas";
 import { generateEmailHtml, generatePrintHtml } from "../../../utils/printGenerator";
 import {
-  buildVendorSoaPrintData,
+  buildCustomerSoaPrintData,
   normalizePurchaseTemplate
 } from "../../../utils/purchasePrintUtils";
 
@@ -27,60 +27,60 @@ const sampleCompany = {
   logoUrl: null
 };
 
-const sampleVendor = {
-  name: "Test Supplier LLC",
-  code: "VEN-1779252566321",
-  address: "Industrial Area, Sharjah, UAE",
+const sampleCustomer = {
+  name: "Test Customer LLC",
+  code: "CUS-1779252566321",
+  address: "Business Bay, Dubai, UAE",
   contact: "+971 50 123 4567",
-  email: "accounts@test-supplier.test",
+  email: "accounts@test-customer.test",
   trn: "100123456789000"
 };
 
 const sampleStatement = {
-  accountCode: "VEN-1779252566321",
-  accountName: "Test Supplier LLC",
+  accountCode: "CUS-1779252566321",
+  accountName: "Test Customer LLC",
   openingBalance: 1000,
-  totalDebit: 1990,
-  totalCredit: 0,
-  closingBalance: -990,
+  totalDebit: 990,
+  totalCredit: 150,
+  closingBalance: 1840,
   entries: [
     {
       transactionDate: "2026-05-20",
-      type: "PAYMENT_MADE",
-      documentNo: "PV-10001",
-      description: "Payment Voucher (BANK_TRANSFER)",
-      reference: "Opening Balance Payment",
+      type: "OPENING_BALANCE",
+      documentNo: "OB-10001",
+      description: "Opening Balance",
+      reference: "Opening balance",
       debit: 1000,
       credit: 0,
-      runningBalance: 0
+      runningBalance: 1000
     },
     {
       transactionDate: "2026-05-21",
-      type: "PAYMENT_MADE",
-      documentNo: "PV-10002",
-      description: "Payment Voucher (CASH)",
+      type: "INVOICE",
+      documentNo: "SI-10002",
+      description: "Sales Invoice",
       reference: "-",
-      debit: 840,
+      debit: 990,
       credit: 0,
-      runningBalance: -840
+      runningBalance: 1990
     },
     {
-      transactionDate: "2026-05-21",
-      type: "PAYMENT_MADE",
-      documentNo: "PV-10003",
-      description: "Payment Voucher (CASH)",
+      transactionDate: "2026-05-22",
+      type: "PAYMENT_RECEIVED",
+      documentNo: "RV-10003",
+      description: "Receipt Voucher (CASH)",
       reference: "-",
-      debit: 150,
-      credit: 0,
-      runningBalance: -990
+      debit: 0,
+      credit: 150,
+      runningBalance: 1840
     }
   ]
 };
 
-export const defaultVendorSoaTemplateSettings = (name = "Default Vendor Statement of Account") => ({
+export const defaultCustomerSoaTemplateSettings = (name = "Default Customer Statement of Account") => ({
   templateName: name,
-  purchaseDesigner: "soa",
-  docType: "vendor-soa",
+  salesDesigner: "soa",
+  docType: "customer-soa",
   accentColor: "#F5C742",
   primaryColor: "#F5C742",
   headerBg: "#1e293b",
@@ -99,37 +99,37 @@ export const defaultVendorSoaTemplateSettings = (name = "Default Vendor Statemen
   showCompanyWebsite: true,
   showTRN: true,
   showBorder: true,
-  showVendorCard: true,
-  showVendorName: true,
-  showVendorCode: true,
-  showVendorContact: true,
-  showVendorEmail: true,
-  showVendorTRN: true,
+  showBillTo: true,
+  showCustomerName: true,
+  showCustomerCode: true,
+  showCustomerPhone: true,
+  showCustomerEmail: true,
+  showCustomerTRN: true,
   showQuickSummary: true,
   showOpeningBalance: true,
-  showPurchases: true,
-  showPayments: true,
+  showSales: true,
+  showReceipts: true,
   showPDC: true,
   showClosingBalance: true,
   showTerms: false,
   showTermsConditions: false,
-  footerText: "This is a computer-generated vendor statement and does not require a signature.",
-  emailSubject: "Vendor Statement of Account - {vendor}",
-  emailBody: "Dear {vendor},\n\nPlease find attached your Statement of Account for the period {period}.\n\nIf you have any questions, please feel free to contact us.\n\nBest regards,\n{company}"
+  footerText: "This is a computer-generated customer statement and does not require a signature.",
+  emailSubject: "Customer Statement of Account - {customer}",
+  emailBody: "Dear {customer},\n\nPlease find attached your Statement of Account for the period {period}.\n\nIf you have any questions, please feel free to contact us.\n\nBest regards,\n{company}"
 });
 
 const readInitialSettings = ({ templateName, initialSettings, editingTemplate }) => {
   const stored = initialSettings || editingTemplate?.settings || {};
-  const resolvedName = stored.templateName || templateName || editingTemplate?.name || "Default Vendor Statement of Account";
+  const resolvedName = stored.templateName || templateName || editingTemplate?.name || "Default Customer Statement of Account";
 
   return {
-    ...defaultVendorSoaTemplateSettings(resolvedName),
+    ...defaultCustomerSoaTemplateSettings(resolvedName),
     ...stored,
     templateName: resolvedName,
     paperSize: stored.paperSize || stored.pageSize || "A4",
     orientation: String(stored.orientation || "portrait").toLowerCase() === "landscape" ? "landscape" : "portrait",
     margins: {
-      ...defaultVendorSoaTemplateSettings().margins,
+      ...defaultCustomerSoaTemplateSettings().margins,
       ...(stored.margins || {})
     }
   };
@@ -151,7 +151,7 @@ const Toggle = ({ label, checked, onChange }) => (
   </label>
 );
 
-function VendorSoATemplateDesigner({
+function CustomerSoATemplateDesigner({
   onBack,
   onClose,
   editingTemplate,
@@ -184,7 +184,7 @@ function VendorSoATemplateDesigner({
 
   const preview = useMemo(() => {
     const template = normalizePurchaseTemplate({
-      category: "Vendor Statement of Account",
+      category: "Customer Statement of Account",
       name: settings.templateName,
       paperSize: settings.paperSize,
       orientation: settings.orientation === "landscape" ? "Landscape" : "Portrait",
@@ -194,14 +194,14 @@ function VendorSoATemplateDesigner({
         showCompanyDetails: true,
         showCustomerDetails: true,
         showTerms: false,
-        purchaseDesigner: "soa",
-        purchaseDesignerSettings: settings
+        salesDesigner: "soa",
+        salesDesignerSettings: settings
       },
       columns: {}
-    }, "Vendor Statement of Account");
-    const data = buildVendorSoaPrintData(
+    }, "Customer Statement of Account");
+    const data = buildCustomerSoaPrintData(
       sampleStatement,
-      sampleVendor,
+      sampleCustomer,
       sampleCompany,
       {
         startDate: "2026-01-01",
@@ -219,9 +219,9 @@ function VendorSoATemplateDesigner({
   const handleSave = () => {
     const payload = {
       ...settings,
-      purchaseDesigner: "soa",
-      docType: "vendor-soa",
-      templateName: settings.templateName || "Vendor Statement of Account"
+      salesDesigner: "soa",
+      docType: "customer-soa",
+      templateName: settings.templateName || "Customer Statement of Account"
     };
 
     if (onSave) {
@@ -229,7 +229,7 @@ function VendorSoATemplateDesigner({
       return;
     }
 
-    toast.success("Vendor SOA template saved");
+    toast.success("Customer SOA template saved");
   };
 
   const tabs = [
@@ -262,7 +262,7 @@ function VendorSoATemplateDesigner({
                 <span className="rounded bg-[#F5C742] px-2 py-0.5 text-xs font-bold text-black">Default</span>
               )}
             </div>
-            <p className="text-sm text-slate-500">Vendor Statement of Account Template</p>
+            <p className="text-sm text-slate-500">Customer Statement of Account Template</p>
           </div>
         </div>
 
@@ -438,14 +438,14 @@ function VendorSoATemplateDesigner({
               <div className="space-y-3">
                 <Toggle label="Quick Balance Summary" checked={settings.showQuickSummary !== false} onChange={(value) => updateSetting("showQuickSummary", value)} />
                 <Toggle label="Opening Balance" checked={settings.showOpeningBalance !== false} onChange={(value) => updateSetting("showOpeningBalance", value)} />
-                <Toggle label="Purchase Details" checked={settings.showPurchases !== false} onChange={(value) => updateSetting("showPurchases", value)} />
-                <Toggle label="Payment Details" checked={settings.showPayments !== false} onChange={(value) => updateSetting("showPayments", value)} />
+                <Toggle label="Sales Details" checked={settings.showSales !== false} onChange={(value) => updateSetting("showSales", value)} />
+                <Toggle label="Receipt Details" checked={settings.showReceipts !== false} onChange={(value) => updateSetting("showReceipts", value)} />
                 <Toggle label="PDC / Cheques" checked={settings.showPDC !== false} onChange={(value) => updateSetting("showPDC", value)} />
                 <Toggle label="Closing Balance" checked={settings.showClosingBalance !== false} onChange={(value) => updateSetting("showClosingBalance", value)} />
-                <Toggle label="Vendor Code" checked={settings.showVendorCode !== false} onChange={(value) => updateSetting("showVendorCode", value)} />
-                <Toggle label="Vendor Contact" checked={settings.showVendorContact !== false} onChange={(value) => updateSetting("showVendorContact", value)} />
-                <Toggle label="Vendor Email" checked={settings.showVendorEmail !== false} onChange={(value) => updateSetting("showVendorEmail", value)} />
-                <Toggle label="Vendor TRN" checked={settings.showVendorTRN !== false} onChange={(value) => updateSetting("showVendorTRN", value)} />
+                <Toggle label="Customer Code" checked={settings.showCustomerCode !== false} onChange={(value) => updateSetting("showCustomerCode", value)} />
+                <Toggle label="Customer Phone" checked={settings.showCustomerPhone !== false} onChange={(value) => updateSetting("showCustomerPhone", value)} />
+                <Toggle label="Customer Email" checked={settings.showCustomerEmail !== false} onChange={(value) => updateSetting("showCustomerEmail", value)} />
+                <Toggle label="Customer TRN" checked={settings.showCustomerTRN !== false} onChange={(value) => updateSetting("showCustomerTRN", value)} />
 
                 <div className="pt-2">
                   <FieldLabel>Footer Text</FieldLabel>
@@ -468,7 +468,7 @@ function VendorSoATemplateDesigner({
                     onChange={(event) => updateSetting("emailSubject", event.target.value)}
                     className="h-10 w-full rounded-md border border-slate-200 px-3 text-sm"
                   />
-                  <p className="mt-1 text-[11px] text-slate-500">Variables: {"{vendor}"}, {"{period}"}, {"{date}"}, {"{company}"}</p>
+                  <p className="mt-1 text-[11px] text-slate-500">Variables: {"{customer}"}, {"{period}"}, {"{date}"}, {"{company}"}</p>
                 </div>
 
                 <div>
@@ -479,7 +479,7 @@ function VendorSoATemplateDesigner({
                     rows={10}
                     className="w-full rounded-md border border-slate-200 px-3 py-2 text-sm"
                   />
-                  <p className="mt-1 text-[11px] text-slate-500">Variables: {"{vendor}"}, {"{period}"}, {"{date}"}, {"{company}"}, {"{balance}"}</p>
+                  <p className="mt-1 text-[11px] text-slate-500">Variables: {"{customer}"}, {"{period}"}, {"{date}"}, {"{company}"}, {"{balance}"}</p>
                 </div>
               </div>
             )}
@@ -492,8 +492,8 @@ function VendorSoATemplateDesigner({
             emailHtml={preview.emailHtml}
             paperSize={settings.paperSize || "A4"}
             orientation={settings.orientation === "landscape" ? "Landscape" : "Portrait"}
-            title="Vendor SOA Template Preview"
-            subtitle="Print and email preview use the live Vendor SOA rendering engine."
+            title="Customer SOA Template Preview"
+            subtitle="Print and email preview use the live Customer SOA rendering engine."
           />
         </main>
       </div>
@@ -501,4 +501,4 @@ function VendorSoATemplateDesigner({
   );
 }
 
-export { VendorSoATemplateDesigner };
+export { CustomerSoATemplateDesigner };

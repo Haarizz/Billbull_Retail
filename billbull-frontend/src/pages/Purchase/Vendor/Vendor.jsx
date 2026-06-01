@@ -13,11 +13,21 @@ import SearchableDropdown from '../../../components/SearchableDropdown';
 import ExportDropdown from '../../../components/common/ExportDropdown';
 import { exportToExcel, exportToPDF } from '../../../utils/exportUtils';
 import { generateSOAFilename } from '../../../utils/filenameUtils';
-import { usePrintDocument } from '../../../hooks/usePrintDocument';
 import CurrencyAmount from '../../../components/CurrencyAmount';
 import PaginationFooter from '../../../components/common/PaginationFooter';
 import { STATEMENT_EXPORT_COLUMNS, formatStatementEntryType, mapStatementEntriesForExport } from '../../../utils/statementUtils';
 import { formatDisplayDate } from '../../../utils/dateUtils';
+import { getTemplatesByCategory } from '../../../api/printTemplateApi';
+import { generatePrintHtmlAsync, printHtml } from '../../../utils/printGenerator';
+import {
+  buildVendorSoaPrintData,
+  buildPaymentVoucherPrintData,
+  resolvePurchasePrintTemplate
+} from '../../../utils/purchasePrintUtils';
+import { buildDocumentHeaderProfile } from '../../../utils/branchPrintProfile';
+import { useBranch } from '../../../context/BranchContext';
+import billBullLogo from '../../../assets/billBullLogo.png';
+import toast from 'react-hot-toast';
 
 // ==========================================
 // 1. MOCK DATA & CONFIGURATION
@@ -179,6 +189,7 @@ import { getBankAccounts } from '../../../api/ledgerApi';
 
 const PayInvoices = ({ vendors, initialVendor }) => {
   const { company } = useCompany();
+  const { branches: availableBranches, activeBranch } = useBranch();
   const currency = resolveCurrencyDisplayCode(company || {});
   // State
   const [selectedVendor, setSelectedVendor] = useState(null);
@@ -199,6 +210,9 @@ const PayInvoices = ({ vendors, initialVendor }) => {
   const [chequeDate, setChequeDate] = useState('');
   const [receivedAmount, setReceivedAmount] = useState('');
   const [isProcessing, setIsProcessing] = useState(false);
+  const [isPaymentPrinting, setIsPaymentPrinting] = useState(false);
+  const [lastSavedPayment, setLastSavedPayment] = useState(null);
+  const [lastSavedInvoice, setLastSavedInvoice] = useState(null);
 
   // History State
   const [history, setHistory] = useState([]);
@@ -398,6 +412,8 @@ const PayInvoices = ({ vendors, initialVendor }) => {
 
     setIsProcessing(true);
     try {
+      let latestSavedPayment = null;
+      let latestSavedInvoice = null;
       const promises = selectedIds.map(async (invId) => {
         const amount = settleAmounts[invId];
         if (!amount || amount <= 0) return;
@@ -421,9 +437,25 @@ const PayInvoices = ({ vendors, initialVendor }) => {
         if (saved && saved.id) {
           await updateVoucherStatus(saved.id, 'POSTED');
         }
+        latestSavedPayment = {
+          ...payload,
+          ...saved,
+          voucherNumber: saved?.voucherNumber || payload.voucherNumber || nextVoucherNo,
+          paymentDate: saved?.paymentDate || saved?.date || paymentDate,
+          paymentMode: saved?.paymentMode || saved?.mode || paymentMethod,
+          referenceNumber: saved?.referenceNumber || saved?.ref || reference,
+          vendorName: saved?.vendorName || selectedVendor.name,
+          vendorId: saved?.vendorId || selectedVendor.code,
+          amount,
+          status: saved?.status || 'POSTED',
+          branchId: saved?.branch?.id ?? saved?.branchId ?? activeBranch?.id,
+        };
+        latestSavedInvoice = invoice || null;
       });
 
       await Promise.all(promises);
+      setLastSavedPayment(latestSavedPayment);
+      setLastSavedInvoice(latestSavedInvoice);
 
       alert("Payment processed successfully!");
       setReference('');
@@ -738,8 +770,13 @@ const PayInvoices = ({ vendors, initialVendor }) => {
                   {isProcessing ? 'Processing...' : 'Process Payment'}
                 </button>
 
-                <button className="w-full mt-3 bg-white border border-slate-200 text-slate-600 font-bold py-2 rounded-md hover:bg-slate-50 transition-colors flex items-center justify-center gap-2 text-xs">
-                  <Printer size={14} /> Print Receipt
+                <button
+                  onClick={() => handlePrintPaymentVoucher()}
+                  disabled={!lastSavedPayment || isPaymentPrinting}
+                  className={`w-full mt-3 bg-white border border-slate-200 text-slate-600 font-bold py-2 rounded-md hover:bg-slate-50 transition-colors flex items-center justify-center gap-2 text-xs ${!lastSavedPayment || isPaymentPrinting ? 'opacity-50 cursor-not-allowed' : ''}`}
+                >
+                  {isPaymentPrinting ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <Printer size={14} />}
+                  {isPaymentPrinting ? 'Preparing...' : 'Print Payment Voucher'}
                 </button>
               </div>
             </div>
@@ -793,7 +830,7 @@ const PayInvoices = ({ vendors, initialVendor }) => {
 
 const VendorSoA = ({ vendors }) => {
   const { company } = useCompany();
-  const { print } = usePrintDocument();
+  const { branches: availableBranches, activeBranch } = useBranch();
   const currency = resolveCurrencyDisplayCode(company || {});
   const defaultStartDate = `${new Date().getFullYear()}-01-01`;
   const defaultEndDate = new Date().toISOString().split('T')[0];
@@ -803,6 +840,7 @@ const VendorSoA = ({ vendors }) => {
   const [endDate, setEndDate] = useState(defaultEndDate);
   const [statementData, setStatementData] = useState(null);
   const [isLoading, setIsLoading] = useState(false);
+  const [isPrinting, setIsPrinting] = useState(false);
 
   useEffect(() => {
     if (vendors.length > 0 && !selectedVendorName) {
@@ -831,15 +869,96 @@ const VendorSoA = ({ vendors }) => {
     }
   }, [selectedVendorName]);
 
-  const handlePrint = () => {
-    const filename = generateSOAFilename(
-      selectedVendorDetails?.name || selectedVendorName,
-      selectedVendorDetails?.code || 'N/A',
-      startDate,
-      endDate,
-      currency
-    );
-    print(filename);
+  const selectedVendorDetails = vendors.find(v => v.name === selectedVendorName);
+
+  const handlePrint = async () => {
+    if (!selectedVendorName || !startDate || !endDate) {
+      toast.error('Select a vendor and statement period first.');
+      return;
+    }
+
+    const loadingToast = toast.loading('Preparing Vendor SOA print layout...');
+    setIsPrinting(true);
+
+    try {
+      const [freshStatement, templates] = await Promise.all([
+        fetchStatementOfAccount('VENDOR', selectedVendorName, startDate, endDate),
+        getTemplatesByCategory('Vendor Statement of Account').catch(() => [])
+      ]);
+      setStatementData(freshStatement);
+
+      const defaultTemplate = resolvePurchasePrintTemplate('Vendor Statement of Account', templates);
+      const printData = buildVendorSoaPrintData(
+        freshStatement,
+        selectedVendorDetails || { name: selectedVendorName },
+        company,
+        { startDate, endDate }
+      );
+      const html = await generatePrintHtmlAsync(defaultTemplate, printData, {
+        companyProfile: buildDocumentHeaderProfile({
+          company,
+          branches: availableBranches || [],
+          branchId: activeBranch?.id,
+        }),
+        billBullLogo,
+      });
+
+      printHtml(html);
+    } catch (error) {
+      console.error('Failed to print Vendor SOA', error);
+      toast.error(error?.response?.data?.message || error?.message || 'Failed to generate Vendor SOA print layout');
+    } finally {
+      toast.dismiss(loadingToast);
+      setIsPrinting(false);
+    }
+  };
+
+  const handlePrintPaymentVoucher = async (payment = lastSavedPayment, linkedInvoice = lastSavedInvoice) => {
+    if (!payment) {
+      toast.error("Please process a payment first, then print the voucher.");
+      return;
+    }
+
+    const loadingToast = toast.loading('Preparing payment voucher print layout...');
+    setIsPaymentPrinting(true);
+
+    try {
+      const templates = await getTemplatesByCategory('Payment Voucher').catch(() => []);
+      const defaultTemplate = resolvePurchasePrintTemplate('Payment Voucher', templates);
+      const voucherForPrint = {
+        ...payment,
+        voucherNumber: payment.voucherNumber || payment.paymentNumber || payment.id || nextVoucherNo,
+        paymentDate: payment.paymentDate || payment.date || paymentDate,
+        paymentMode: payment.paymentMode || payment.mode || paymentMethod,
+        referenceNumber: payment.referenceNumber || payment.ref || reference,
+        vendorName: payment.vendorName || selectedVendor?.name,
+        vendorId: payment.vendorId || selectedVendor?.code,
+        bankAccount: payment.bankAccount || bankAccount,
+        chequeDate: payment.chequeDate || chequeDate,
+      };
+      const printData = buildPaymentVoucherPrintData(
+        voucherForPrint,
+        selectedVendor || { name: voucherForPrint.vendorName, code: voucherForPrint.vendorId },
+        company,
+        linkedInvoice
+      );
+      const html = await generatePrintHtmlAsync(defaultTemplate, printData, {
+        companyProfile: buildDocumentHeaderProfile({
+          company,
+          branches: availableBranches || [],
+          branchId: voucherForPrint.branch?.id ?? voucherForPrint.branchId ?? activeBranch?.id,
+        }),
+        billBullLogo,
+      });
+
+      printHtml(html);
+    } catch (error) {
+      console.error('Failed to print payment voucher', error);
+      toast.error(error?.response?.data?.message || error?.message || 'Failed to generate payment voucher print layout');
+    } finally {
+      toast.dismiss(loadingToast);
+      setIsPaymentPrinting(false);
+    }
   };
 
   const handleExportExcel = () => {
@@ -854,8 +973,6 @@ const VendorSoA = ({ vendors }) => {
 
     exportToExcel(mapStatementEntriesForExport(statementData), STATEMENT_EXPORT_COLUMNS, filename);
   };
-
-  const selectedVendorDetails = vendors.find(v => v.name === selectedVendorName);
 
   return (
     <div className="space-y-6">
@@ -904,8 +1021,8 @@ const VendorSoA = ({ vendors }) => {
             {isLoading ? <RefreshCw className="h-4 w-4 animate-spin" /> : <FileText className="h-4 w-4" />}
             Generate Statement
           </button>
-          <button onClick={handlePrint} className="px-4 py-2 border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 text-sm font-medium rounded-md shadow-sm flex items-center gap-2">
-            <Printer className="h-4 w-4" /> Print
+          <button onClick={handlePrint} disabled={isPrinting || isLoading || !selectedVendorName} className="px-4 py-2 border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 text-sm font-medium rounded-md shadow-sm flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed">
+            {isPrinting ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Printer className="h-4 w-4" />} Print
           </button>
           <button onClick={handleExportExcel} disabled={!statementData} className="px-4 py-2 border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 text-sm font-medium rounded-md shadow-sm flex items-center gap-2 disabled:opacity-50">
             <Download className="h-4 w-4" /> Export Excel
