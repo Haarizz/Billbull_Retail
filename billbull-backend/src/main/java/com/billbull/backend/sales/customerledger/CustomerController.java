@@ -5,9 +5,11 @@ import com.billbull.backend.sales.settings.SalesDocumentNumberingService;
 import com.billbull.backend.sales.settings.SalesDocumentType;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.multipart.MultipartFile;
 
 import java.util.List;
 
@@ -18,6 +20,9 @@ public class CustomerController {
 
     @Autowired
     private CustomerService service;
+
+    @Autowired
+    private CustomerImportService importService;
 
     @Autowired
     private AuditLogService auditLogService;
@@ -39,6 +44,16 @@ public class CustomerController {
     @PreAuthorize("hasAnyRole('ADMIN','SALES','ACCOUNTANT')")
     public ResponseEntity<java.util.Map<String, String>> getNextCustomerCode() {
         return ResponseEntity.ok(java.util.Map.of("customerCode", numberingService.preview(SalesDocumentType.CUSTOMER)));
+    }
+
+    @PostMapping(value = "/import/excel", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    @PreAuthorize("hasAnyRole('ADMIN','SALES')")
+    public ResponseEntity<String> importCustomers(@RequestParam("file") MultipartFile file) {
+        try {
+            return ResponseEntity.ok(importService.importCustomers(file));
+        } catch (Exception e) {
+            return ResponseEntity.badRequest().body("Import Failed: " + e.getMessage());
+        }
     }
 
     // =========================

@@ -24,6 +24,15 @@ export const createCustomer = async (payload) => {
   return res.data;
 };
 
+export const importCustomers = async (file) => {
+  const formData = new FormData();
+  formData.append("file", file);
+  const res = await api.post(`${BASE_URL}/import/excel`, formData, {
+    headers: { "Content-Type": "multipart/form-data" },
+  });
+  return res.data;
+};
+
 export const getNextCustomerCode = async () => {
   const res = await api.get(`${BASE_URL}/next-code`);
   return res.data.customerCode;

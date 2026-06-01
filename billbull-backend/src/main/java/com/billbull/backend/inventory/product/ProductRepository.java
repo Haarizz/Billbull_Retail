@@ -13,6 +13,8 @@ public interface ProductRepository extends JpaRepository<Product, Long> {
 
         boolean existsByCodeAndStatusNot(String code, ProductStatus status);
 
+        Optional<Product> findByCode(String code);
+
         Optional<Product> findByIdAndIsActiveTrue(Long id);
 
         List<Product> findAllByIsActiveTrue();

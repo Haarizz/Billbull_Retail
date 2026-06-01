@@ -2116,8 +2116,14 @@ const PurchaseSummaryReport = () => {
     const setFilter = (key, value) => setFilters(prev => ({ ...prev, [key]: value }));
     const resetFilters = () => setFilters(defaultFilters());
 
-    const expandAllGroups = () => setOpenGroups(Object.fromEntries(REPORT_GROUPS.map(group => [group.id, true])));
-    const collapseAllGroups = () => setOpenGroups(Object.fromEntries(REPORT_GROUPS.map(group => [group.id, false])));
+    const updateGroupsPreservingScroll = updater => {
+        captureScroll();
+        setOpenGroups(updater);
+    };
+
+    const expandAllGroups = () => updateGroupsPreservingScroll(Object.fromEntries(REPORT_GROUPS.map(group => [group.id, true])));
+    const collapseAllGroups = () => updateGroupsPreservingScroll(Object.fromEntries(REPORT_GROUPS.map(group => [group.id, false])));
+    const toggleGroup = groupId => updateGroupsPreservingScroll(prev => ({ ...prev, [groupId]: !prev[groupId] }));
 
     const selectReport = (id) => {
         captureScroll();
@@ -2264,8 +2270,9 @@ const PurchaseSummaryReport = () => {
                         <div key={group.id} className="mb-2 overflow-hidden rounded-lg border border-slate-200 bg-slate-50">
                             <button
                                 type="button"
-                                onClick={() => setOpenGroups(prev => ({ ...prev, [group.id]: !prev[group.id] }))}
-                                className="flex w-full items-center justify-between gap-3 px-3 py-2 text-left hover:bg-white"
+                                onClick={() => toggleGroup(group.id)}
+                                aria-expanded={isOpen}
+                                className="flex w-full items-center justify-between gap-3 px-3 py-2 text-left transition-colors duration-200 hover:bg-white"
                             >
                                 <span className="flex min-w-0 items-center gap-2">
                                     <GroupIcon size={15} className="shrink-0 text-slate-500" />
@@ -2274,45 +2281,55 @@ const PurchaseSummaryReport = () => {
                                         <span className="text-[10px] text-slate-500">{group.reports.length} report(s)</span>
                                     </span>
                                 </span>
-                                <ChevronDown size={14} className={`shrink-0 text-slate-500 transition-transform ${isOpen ? 'rotate-180' : ''}`} />
+                                <ChevronDown size={14} className={`shrink-0 text-slate-500 transition-transform duration-300 ease-in-out ${isOpen ? 'rotate-180' : ''}`} />
                             </button>
 
-                            {isOpen && (
-                                <div className="border-t border-slate-200 p-2">
-                                    {group.reports.map(report => {
-                                        const Icon = report.icon;
-                                        const active = report.id === activeId;
-                                        return (
-                                            <button
-                                                type="button"
-                                                key={report.id}
-                                                onClick={() => selectReport(report.id)}
-                                                className={`mb-1 w-full rounded-lg border p-2 text-left transition ${
-                                                    active
-                                                        ? 'border-yellow-400 bg-yellow-50 shadow-sm'
-                                                        : 'border-slate-200 bg-white hover:border-yellow-200 hover:bg-yellow-50/30'
-                                                }`}
-                                            >
-                                                <div className="flex items-start gap-2">
-                                                    <Icon size={15} className={`mt-0.5 shrink-0 ${active ? 'text-yellow-600' : 'text-slate-500'}`} />
-                                                    <div className="min-w-0 flex-1">
-                                                        <div className="flex items-start justify-between gap-2">
-                                                            <span className="truncate text-xs font-bold text-slate-950">{report.title}</span>
-                                                            <span className={`shrink-0 rounded-full border px-2 py-0.5 text-[10px] ${report.badge === 'Chart' ? 'border-yellow-300 bg-yellow-50 text-yellow-700' : 'border-slate-200 bg-slate-50 text-slate-600'}`}>
-                                                                {report.badge}
+                            <div
+                                aria-hidden={!isOpen}
+                                className={`grid transition-[grid-template-rows,opacity] duration-300 ease-in-out ${
+                                    isOpen ? 'grid-rows-[1fr] opacity-100' : 'grid-rows-[0fr] opacity-0'
+                                }`}
+                            >
+                                <div className="min-h-0 overflow-hidden">
+                                    <div className={`border-t border-slate-200 p-2 transition-transform duration-300 ease-in-out ${
+                                        isOpen ? 'translate-y-0' : '-translate-y-1 pointer-events-none'
+                                    }`}>
+                                        {group.reports.map(report => {
+                                            const Icon = report.icon;
+                                            const active = report.id === activeId;
+                                            return (
+                                                <button
+                                                    type="button"
+                                                    key={report.id}
+                                                    onClick={() => selectReport(report.id)}
+                                                    tabIndex={isOpen ? 0 : -1}
+                                                    className={`mb-1 w-full rounded-lg border p-2 text-left transition ${
+                                                        active
+                                                            ? 'border-yellow-400 bg-yellow-50 shadow-sm'
+                                                            : 'border-slate-200 bg-white hover:border-yellow-200 hover:bg-yellow-50/30'
+                                                    }`}
+                                                >
+                                                    <div className="flex items-start gap-2">
+                                                        <Icon size={15} className={`mt-0.5 shrink-0 ${active ? 'text-yellow-600' : 'text-slate-500'}`} />
+                                                        <div className="min-w-0 flex-1">
+                                                            <div className="flex items-start justify-between gap-2">
+                                                                <span className="truncate text-xs font-bold text-slate-950">{report.title}</span>
+                                                                <span className={`shrink-0 rounded-full border px-2 py-0.5 text-[10px] ${report.badge === 'Chart' ? 'border-yellow-300 bg-yellow-50 text-yellow-700' : 'border-slate-200 bg-slate-50 text-slate-600'}`}>
+                                                                    {report.badge}
+                                                                </span>
+                                                            </div>
+                                                            <p className="mt-1 line-clamp-2 text-[11px] leading-snug text-slate-500">{report.description}</p>
+                                                            <span className="mt-2 inline-flex rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-[10px] text-slate-600">
+                                                                {report.tag}
                                                             </span>
                                                         </div>
-                                                        <p className="mt-1 line-clamp-2 text-[11px] leading-snug text-slate-500">{report.description}</p>
-                                                        <span className="mt-2 inline-flex rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-[10px] text-slate-600">
-                                                            {report.tag}
-                                                        </span>
                                                     </div>
-                                                </div>
-                                            </button>
-                                        );
-                                    })}
+                                                </button>
+                                            );
+                                        })}
+                                    </div>
                                 </div>
-                            )}
+                            </div>
                         </div>
                     );
                 })}

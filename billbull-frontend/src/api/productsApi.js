@@ -98,3 +98,17 @@ export const importProducts = async (file) => {
   });
   return res.data;
 };
+
+export const startProductImport = async (file) => {
+  const formData = new FormData();
+  formData.append("file", file);
+  const res = await api.post("/api/products/import/excel/start", formData, {
+    headers: { "Content-Type": "multipart/form-data" },
+  });
+  return res.data;
+};
+
+export const getProductImportProgress = async (jobId) => {
+  const res = await api.get(`/api/products/import/excel/progress/${encodeURIComponent(jobId)}`);
+  return res.data;
+};

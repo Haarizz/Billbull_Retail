@@ -49,6 +49,7 @@ import {
   getVendors,
   createVendor,
   createVendorDraft,
+  importVendors,
   updateVendor,
   deleteVendor
 } from "../../../api/vendorsApi";
@@ -1603,6 +1604,12 @@ const Vendor = () => {
     }
   };
 
+  const handleImportVendors = async (file) => {
+    const result = await importVendors(file);
+    await loadVendors();
+    return result;
+  };
+
   const handleEdit = (vendor) => {
     setSelectedVendor(vendor);
     setView("create");
@@ -1613,7 +1620,7 @@ const Vendor = () => {
     if (window.confirm("Are you sure you want to delete this vendor?")) {
       try {
         await deleteVendor(id);
-        fetchVendors();
+        await loadVendors();
       } catch (err) {
         alert(err.response?.data?.message || "Failed to delete vendor");
       }
@@ -1629,6 +1636,7 @@ const Vendor = () => {
           onAddNew={() => { setSelectedVendor(null); setView("create"); }}
           onEdit={handleEdit}
           onDelete={handleDelete}
+          onImport={handleImportVendors}
         />
       ) : (
         <CreateVendorWizard
@@ -1642,7 +1650,7 @@ const Vendor = () => {
 };
 
 // Sub-Component: ListView with Actions wired
-const VendorListViewWithActions = ({ vendors, loading, onAddNew, onEdit, onDelete }) => {
+const VendorListViewWithActions = ({ vendors, loading, onAddNew, onEdit, onDelete, onImport }) => {
   const { company } = useCompany();
   const currencyLabel = resolveCurrencyDisplayCode(company);
   const [activeTab, setActiveTab] = useState("Vendors List");
@@ -1650,6 +1658,8 @@ const VendorListViewWithActions = ({ vendors, loading, onAddNew, onEdit, onDelet
   const [searchTerm, setSearchTerm] = useState("");
   const [filterStatus, setFilterStatus] = useState("All Status");
   const [filterCategory, setFilterCategory] = useState("All Categories");
+  const importFileRef = useRef(null);
+  const [isImporting, setIsImporting] = useState(false);
 
   // Calculate Stats
   const totalVendors = vendors.length;
@@ -1753,6 +1763,25 @@ const VendorListViewWithActions = ({ vendors, loading, onAddNew, onEdit, onDelet
     })), VENDOR_COLUMNS, 'Vendor List', 'Vendor_List');
   };
 
+  const handleImportFileChange = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file || !onImport) return;
+
+    const toastId = toast.loading(`Importing ${file.name}...`);
+    setIsImporting(true);
+    try {
+      const result = await onImport(file);
+      toast.success(result || 'Vendors imported successfully.', { id: toastId, duration: 6000 });
+    } catch (error) {
+      console.error('Failed to import vendors', error);
+      const message = error.response?.data || error.message || 'Failed to import vendors.';
+      toast.error(message, { id: toastId, duration: 7000 });
+    } finally {
+      setIsImporting(false);
+      e.target.value = null;
+    }
+  };
+
   const renderStars = (rating) => (
     <div className="flex text-[#F5C742]">
       {[...Array(5)].map((_, i) => (
@@ -1790,7 +1819,21 @@ const VendorListViewWithActions = ({ vendors, loading, onAddNew, onEdit, onDelet
           <div className="flex items-center gap-2">
             {activeTab === "Vendors List" ? (
               <>
-                <button className="inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md text-sm font-medium border bg-white hover:bg-slate-50 h-9 px-4 border-slate-200 text-slate-700 shadow-sm"><Upload className="h-4 w-4" /> Import</button>
+                <input
+                  ref={importFileRef}
+                  type="file"
+                  accept=".xlsx,.xls"
+                  className="hidden"
+                  onChange={handleImportFileChange}
+                />
+                <button
+                  onClick={() => importFileRef.current?.click()}
+                  disabled={isImporting}
+                  className="inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md text-sm font-medium border bg-white hover:bg-slate-50 h-9 px-4 border-slate-200 text-slate-700 shadow-sm disabled:opacity-60 disabled:cursor-not-allowed"
+                >
+                  {isImporting ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
+                  {isImporting ? 'Importing...' : 'Import'}
+                </button>
                 <ExportDropdown
                   onExportExcel={handleExportExcel}
                   onExportPdf={handleExportPdf}
