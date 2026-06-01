@@ -43,6 +43,10 @@ import {
 } from "../Purchase/Templates/PurchaseTemplateUI";
 import { InvoiceOverlayDesigner } from "./Templates/InvoiceOverlayDesigner";
 import { PickListDesigner, defaultPickListSettings } from "./Templates/PickListDesigner";
+import {
+    CustomerSoATemplateDesigner,
+    defaultCustomerSoaTemplateSettings
+} from "./Templates/CustomerSoATemplateDesigner";
 
 const TEMPLATE_TYPES = [
     {
@@ -106,6 +110,15 @@ const TEMPLATE_TYPES = [
         description: "Customer payment receipt voucher template",
         designer: "payment",
         icon: Receipt
+    },
+    {
+        id: "customer-soa",
+        category: "Customer Statement of Account",
+        label: "Customer Statement of Account",
+        description: "Customer SOA template for invoices, receipts and balances",
+        designer: "soa",
+        docType: "customer-soa",
+        icon: FileText
     },
     {
         id: "credit-note",
@@ -181,6 +194,7 @@ const toApiOrientation = (value) => {
 
 const categoryDefaultsForColumns = (typeId) => {
     const isReceipt = typeId === "receipt";
+    const isStatement = typeId === "customer-soa";
     const isPickList = typeId === "pick-list";
     const isDelivery = typeId === "delivery-note";
     const isOrder = typeId === "sales-order";
@@ -190,10 +204,10 @@ const categoryDefaultsForColumns = (typeId) => {
 
     return {
         ...DEFAULT_TEMPLATE_COLUMNS,
-        discount: !isReceipt && !isDelivery && !isPickList,
-        tax: !isReceipt && !isOrder && !isDelivery && !isPickList,
-        total: !isReceipt && !isDelivery && !isPickList,
-        unitPrice: !isReceipt && !isDelivery && !isPickList,
+        discount: !isReceipt && !isStatement && !isDelivery && !isPickList,
+        tax: !isReceipt && !isStatement && !isOrder && !isDelivery && !isPickList,
+        total: !isReceipt && !isStatement && !isDelivery && !isPickList,
+        unitPrice: !isReceipt && !isStatement && !isDelivery && !isPickList,
         taxableAmount: isInvoice || isCredit || typeId === "quotation" || typeId === "proforma-invoice",
         barcode: isPickList,
         brand: false,
@@ -227,6 +241,8 @@ const defaultTermsFor = (typeId) => {
             return "Returned goods are held in quarantine pending QC sign-off. Credit will be issued after inspection and approval.";
         case "receipt":
             return "Received with thanks the amount stated above. This receipt is valid after cheque or bank-transfer clearance.";
+        case "customer-soa":
+            return "This is a computer-generated customer statement and does not require a signature.";
         case "pick-list":
             return "Pick the items from the indicated bin or location. Scan batch barcodes where applicable before dispatch.";
         default:
@@ -240,6 +256,9 @@ const defaultSettingsFor = (typeId, name) => {
 
     if (typeId === "pick-list") {
         return defaultPickListSettings(baseName);
+    }
+    if (typeId === "customer-soa") {
+        return defaultCustomerSoaTemplateSettings(baseName || "Default Customer Statement of Account");
     }
 
     const isOverlay = meta?.designer === "overlay";
@@ -276,7 +295,7 @@ const defaultSettingsFor = (typeId, name) => {
         showCompanyPhone: true,
         showCompanyEmail: true,
         showTRN: true,
-        showBillTo: !isReceipt,
+        showBillTo: true,
         showCustomerName: true,
         showCustomerCode: true,
         showCustomerPhone: true,
@@ -400,14 +419,14 @@ const buildRendererDisplayOptions = (settings = {}, typeId) => ({
         settings.showCompanyTaxId,
         settings.showCompanyRegNumber
     ].some((value) => value !== false),
-    showCustomerDetails: settings.showBillTo ?? settings.showShipTo ?? settings.showCustomerName ?? typeId !== "receipt",
-    showTerms: settings.showTerms ?? settings.showTermsConditions ?? typeId !== "receipt",
+    showCustomerDetails: settings.showBillTo ?? settings.showShipTo ?? settings.showCustomerName ?? !["receipt", "customer-soa"].includes(typeId),
+    showTerms: typeId === "customer-soa" ? false : (settings.showTerms ?? settings.showTermsConditions ?? typeId !== "receipt"),
     showItemImage: settings.colProductImage ?? settings.showItemImage ?? false,
     currencyDisplay: settings.currencyDisplay === "code" ? "code" : "symbol"
 });
 
 const buildRendererColumns = (settings = {}, typeId) => {
-    const isVoucherLike = ["receipt", "sales-invoice-preprinted", "sales-invoice-letterhead"].includes(typeId);
+    const isVoucherLike = ["receipt", "customer-soa", "sales-invoice-preprinted", "sales-invoice-letterhead"].includes(typeId);
     const defaults = categoryDefaultsForColumns(typeId);
 
     return sanitizeTemplateColumns({
@@ -719,6 +738,7 @@ export default function PrintEmailTemplates() {
         }
         if (meta.designer === "grv") return <GRVTemplateDesigner {...commonProps} />;
         if (meta.designer === "payment") return <PaymentReceiptDesigner {...commonProps} />;
+        if (meta.designer === "soa") return <CustomerSoATemplateDesigner {...commonProps} />;
         if (meta.designer === "pick-list") return <PickListDesigner {...commonProps} />;
         if (meta.designer === "overlay") {
             return <InvoiceOverlayDesigner mode={meta.mode} {...commonProps} />;

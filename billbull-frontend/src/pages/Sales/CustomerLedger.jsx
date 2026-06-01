@@ -4,6 +4,7 @@ import {
     FileText, CreditCard, Truck, Building, Save, X, CheckCircle2, AlertCircle, File, Edit, Trash2, Eye,
     Calendar, DollarSign, Image as ImageIcon, UserPlus, History, Tag, Camera, XCircle, Clock, Paperclip, Printer, Share2, RefreshCw
 } from 'lucide-react';
+import toast from 'react-hot-toast';
 import SearchableDropdown from '../../components/SearchableDropdown'; // ✅ Import Searchable Dropdown
 
 import StatementPrintPreview from '../../components/StatementPrintPreview';
@@ -33,12 +34,18 @@ import { formatDisplayDate } from '../../utils/dateUtils';
 import ExportDropdown from '../../components/common/ExportDropdown';
 import { exportToExcel, exportToPDF } from '../../utils/exportUtils';
 import { generateSOAFilename } from '../../utils/filenameUtils';
-import { usePrintDocument } from '../../hooks/usePrintDocument';
 import { STATEMENT_EXPORT_COLUMNS, formatStatementEntryType, mapStatementEntriesForExport } from '../../utils/statementUtils';
 import { isAutoNumberingEnabled } from '../../utils/salesNumbering';
 import { getTemplatesByCategory } from '../../api/printTemplateApi';
 import { generatePrintHtmlAsync, printHtml } from '../../utils/printGenerator';
-import { normalizePurchaseTemplate, buildReceiptVoucherPrintData } from '../../utils/purchasePrintUtils';
+import {
+    normalizePurchaseTemplate,
+    buildReceiptVoucherPrintData,
+    buildCustomerSoaPrintData,
+    resolvePurchasePrintTemplate
+} from '../../utils/purchasePrintUtils';
+import { buildDocumentHeaderProfile } from '../../utils/branchPrintProfile';
+import billBullLogo from '../../assets/billBullLogo.png';
 // QA-040: shared email modal
 import SendDocumentEmailModal from '../../components/SendDocumentEmailModal';
 import { sendReceiptVoucherEmail } from '../../api/receiptVoucherApi';
@@ -72,6 +79,104 @@ const getOpeningInvoiceOriginalAmount = (invoice = {}) => {
         : invoice.openingBalanceAmount;
     const value = Number(source || 0);
     return Number.isFinite(value) && value > 0 ? value : 0;
+};
+
+const createDefaultReceiptVoucherTemplate = () => normalizePurchaseTemplate({
+    category: 'Receipt Voucher',
+    name: 'Default Receipt Voucher',
+    isDefault: true,
+    paperSize: 'A4',
+    orientation: 'Portrait',
+    headerContent: '',
+    footerContent: '',
+    termsContent: 'Received with thanks the amount stated above. This receipt is valid after cheque or bank-transfer clearance.',
+    displayOptions: {
+        showLogo: true,
+        showCompanyDetails: true,
+        showCustomerDetails: true,
+        showTerms: false,
+        showItemImage: false,
+        salesDesigner: 'payment',
+        salesDesignerSettings: {
+            templateName: 'Default Receipt Voucher',
+            salesDesigner: 'payment',
+            docType: 'receipt',
+            accentColor: '#F5C742',
+            primaryColor: '#F5C742',
+            headerBg: '#1e293b',
+            borderColor: '#dbe2ea',
+            fontFamily: 'Inter, sans-serif',
+            fontSize: 9,
+            paperSize: 'A4',
+            orientation: 'portrait',
+            showLogo: true,
+            showCompanyLogo: true,
+            showCompanyName: true,
+            showCompanyAddress: true,
+            showCompanyPhone: true,
+            showCompanyEmail: true,
+            showTRN: true,
+            showBillTo: true,
+            showCustomerName: true,
+            showCustomerCode: true,
+            showCustomerPhone: true,
+            showCustomerEmail: true,
+            showCustomerTRN: true,
+            showReceiptNumber: true,
+            showReceiptDate: true,
+            showDocNumber: true,
+            showDocDate: true,
+            showStatusBadge: true,
+            showItemsTable: false,
+            showGrandTotalBanner: true,
+            showTotalReceivedBold: true,
+            showAmountPaid: true,
+            showBalanceDue: false,
+            showTerms: false,
+            showTermsConditions: false,
+            showNote: true,
+            showNotes: true,
+            showCompanyStamp: true,
+            showGeneratedBy: true,
+            showReceivedByLine: true,
+        }
+    },
+    columns: {
+        qty: false,
+        unitPrice: false,
+        taxableAmount: false,
+        tax: false,
+        discount: false,
+        total: false,
+    }
+}, 'Receipt Voucher');
+
+const resolveReceiptVoucherPrintTemplate = (templates = []) => {
+    const selectedTemplate = Array.isArray(templates)
+        ? (templates.find((template) => template?.isDefault) || templates[0])
+        : null;
+    const normalizedTemplate = selectedTemplate
+        ? normalizePurchaseTemplate({ ...selectedTemplate, category: 'Receipt Voucher' }, 'Receipt Voucher')
+        : createDefaultReceiptVoucherTemplate();
+    const displayOptions = { ...(normalizedTemplate.displayOptions || {}) };
+    const designerSettings = {
+        ...(displayOptions.salesDesignerSettings || displayOptions.designerSettings || {}),
+    };
+
+    if (designerSettings.showCustomerName !== false) {
+        designerSettings.showBillTo = true;
+        displayOptions.showCustomerDetails = true;
+    }
+
+    return {
+        ...normalizedTemplate,
+        displayOptions: {
+            ...displayOptions,
+            salesDesigner: displayOptions.salesDesigner || 'payment',
+            salesDesignerSettings: designerSettings,
+            designerSettings,
+        },
+    };
 };
 
 // ==========================================
@@ -1364,8 +1469,10 @@ const AddCustomerModal = ({ isOpen, onClose, customerToEdit, onSaveCustomer }) =
 
 const ReceiveMoneyView = () => {
     const { company } = useCompany();
+    const { branches: availableBranches, activeBranch } = useBranch();
     const currency = company?.currency || 'AED';
     const [isLoading, setIsLoading] = useState(false);
+    const [isReceiptPrinting, setIsReceiptPrinting] = useState(false);
 
     // Data States
     const [customers, setCustomers] = useState([]);
@@ -1665,25 +1772,37 @@ const ReceiveMoneyView = () => {
 
     const handlePrintReceipt = async () => {
         if (!lastSavedPayment) {
-            alert("Please record a payment first, then print the receipt.");
+            toast.error("Please record a payment first, then print the receipt.");
             return;
         }
+
+        const loadingToast = toast.loading('Preparing receipt print layout...');
+        setIsReceiptPrinting(true);
+
         try {
-            let templates = await getTemplatesByCategory('Receipt Voucher').catch(() => []);
-            if (!templates || templates.length === 0) {
-                templates = await getTemplatesByCategory('Payment Voucher').catch(() => []);
-            }
-            const rawTemplate = (templates && (templates.find(t => t.isDefault) || templates[0])) || null;
-            const template = normalizePurchaseTemplate(
-                { ...(rawTemplate || {}), category: 'Receipt Voucher' },
-                'Receipt Voucher'
-            );
-            const printData = buildReceiptVoucherPrintData(lastSavedPayment, selectedCustomer, company);
-            const html = await generatePrintHtmlAsync(template, printData, { companyProfile: company });
+            const templates = await getTemplatesByCategory('Receipt Voucher').catch(() => []);
+            const template = resolveReceiptVoucherPrintTemplate(templates);
+            const receiptForPrint = {
+                ...lastSavedPayment,
+                customerCode: lastSavedPayment.customerCode || selectedCustomer?.code,
+                customerName: lastSavedPayment.customerName || selectedCustomer?.name,
+            };
+            const printData = buildReceiptVoucherPrintData(receiptForPrint, selectedCustomer, company);
+            const html = await generatePrintHtmlAsync(template, printData, {
+                companyProfile: buildDocumentHeaderProfile({
+                    company,
+                    branches: availableBranches || [],
+                    branchId: lastSavedPayment?.branchId ?? activeBranch?.id,
+                }),
+                billBullLogo,
+            });
             printHtml(html);
         } catch (err) {
             console.error('Failed to print receipt', err);
-            alert('Failed to generate print layout');
+            toast.error(err?.response?.data?.message || err?.message || 'Failed to generate receipt print layout');
+        } finally {
+            toast.dismiss(loadingToast);
+            setIsReceiptPrinting(false);
         }
     };
 
@@ -1930,10 +2049,10 @@ const ReceiveMoneyView = () => {
 
                                 <button
                                     onClick={handlePrintReceipt}
-                                    disabled={!lastSavedPayment}
-                                    className={`w-full mt-3 bg-white border border-slate-200 text-slate-600 font-bold py-2 rounded-md hover:bg-slate-50 transition-colors flex items-center justify-center gap-2 text-xs ${!lastSavedPayment ? 'opacity-50 cursor-not-allowed' : ''}`}
+                                    disabled={!lastSavedPayment || isReceiptPrinting}
+                                    className={`w-full mt-3 bg-white border border-slate-200 text-slate-600 font-bold py-2 rounded-md hover:bg-slate-50 transition-colors flex items-center justify-center gap-2 text-xs ${!lastSavedPayment || isReceiptPrinting ? 'opacity-50 cursor-not-allowed' : ''}`}
                                 >
-                                    <Printer size={14} /> Print Receipt
+                                    {isReceiptPrinting ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <Printer size={14} />} {isReceiptPrinting ? 'Preparing...' : 'Print Receipt'}
                                 </button>
                                 <button
                                     onClick={() => setIsReceiptEmailOpen(true)}
@@ -2001,7 +2120,7 @@ const ReceiveMoneyView = () => {
 
 const CustomerSOAView = ({ customers = [] }) => {
     const { company } = useCompany();
-    const { print } = usePrintDocument();
+    const { branches: availableBranches, activeBranch } = useBranch();
     const currency = company?.currency || 'AED';
     const defaultStartDate = `${new Date().getFullYear()}-01-01`;
     const defaultEndDate = new Date().toISOString().split('T')[0];
@@ -2011,6 +2130,7 @@ const CustomerSOAView = ({ customers = [] }) => {
     const [endDate, setEndDate] = useState(defaultEndDate);
     const [statementData, setStatementData] = useState(null);
     const [isLoading, setIsLoading] = useState(false);
+    const [isPrinting, setIsPrinting] = useState(false);
 
     useEffect(() => {
         if (customers.length > 0 && !selectedCustomerCode) {
@@ -2038,15 +2158,46 @@ const CustomerSOAView = ({ customers = [] }) => {
         }
     }, [selectedCustomerCode]);
 
-    const handlePrint = () => {
-        const filename = generateSOAFilename(
-            selectedCustomerDetails?.name || 'Customer',
-            selectedCustomerDetails?.code || selectedCustomerCode || 'N/A',
-            startDate,
-            endDate,
-            currency
-        );
-        print(filename);
+    const handlePrint = async () => {
+        if (!selectedCustomerCode || !startDate || !endDate) {
+            toast.error('Select a customer and statement period first.');
+            return;
+        }
+
+        const loadingToast = toast.loading('Preparing Customer SOA print layout...');
+        setIsPrinting(true);
+
+        try {
+            const [freshStatement, templates] = await Promise.all([
+                fetchStatementOfAccount('CUSTOMER', selectedCustomerCode, startDate, endDate),
+                getTemplatesByCategory('Customer Statement of Account').catch(() => [])
+            ]);
+            setStatementData(freshStatement);
+
+            const defaultTemplate = resolvePurchasePrintTemplate('Customer Statement of Account', templates);
+            const printData = buildCustomerSoaPrintData(
+                freshStatement,
+                selectedCustomerDetails || { code: selectedCustomerCode },
+                company,
+                { startDate, endDate }
+            );
+            const html = await generatePrintHtmlAsync(defaultTemplate, printData, {
+                companyProfile: buildDocumentHeaderProfile({
+                    company,
+                    branches: availableBranches || [],
+                    branchId: activeBranch?.id,
+                }),
+                billBullLogo,
+            });
+
+            printHtml(html);
+        } catch (error) {
+            console.error('Failed to print Customer SOA', error);
+            toast.error(error?.response?.data?.message || error?.message || 'Failed to generate Customer SOA print layout');
+        } finally {
+            toast.dismiss(loadingToast);
+            setIsPrinting(false);
+        }
     };
 
     const handleExportExcel = () => {
@@ -2115,8 +2266,8 @@ const CustomerSOAView = ({ customers = [] }) => {
                         {isLoading ? <RefreshCw className="h-4 w-4 animate-spin" /> : <FileText className="h-4 w-4" />}
                         Generate Statement
                     </button>
-                    <button onClick={handlePrint} className="px-4 py-2 border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 text-sm font-medium rounded-md shadow-sm flex items-center gap-2">
-                        <Printer className="h-4 w-4" /> Print
+                    <button onClick={handlePrint} disabled={isPrinting || isLoading || !selectedCustomerCode} className="px-4 py-2 border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 text-sm font-medium rounded-md shadow-sm flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed">
+                        {isPrinting ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Printer className="h-4 w-4" />} Print
                     </button>
                     <button onClick={handleExportExcel} disabled={!statementData} className="px-4 py-2 border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 text-sm font-medium rounded-md shadow-sm flex items-center gap-2 disabled:opacity-50">
                         <Download className="h-4 w-4" /> Export Excel

@@ -25,6 +25,7 @@ const PURCHASE_TEMPLATE_TERMS = {
     "Goods Return Voucher": `1. Goods returned to the vendor are subject to inspection and final acceptance.
 2. Inventory and account adjustments are posted according to company policy.`,
     "Vendor Statement of Account": `This is a computer-generated vendor statement and does not require a signature.`,
+    "Customer Statement of Account": `This is a computer-generated customer statement and does not require a signature.`,
     "Cheque": `Cheque layout is used only for authorized payment printing.`,
 };
 
@@ -37,6 +38,7 @@ const TEMPLATE_NAMES = {
     "Purchase Return": "Standard Purchase Return",
     "Debit Note": "Standard Debit Note",
     "Vendor Statement of Account": "Standard Vendor SoA",
+    "Customer Statement of Account": "Standard Customer SoA",
     "Cheque": "Standard Cheque",
 };
 
@@ -88,6 +90,12 @@ const PURCHASE_TEMPLATE_META = {
         designer: "soa",
         docType: "vendor-soa",
         label: "Vendor Statement of Account",
+    },
+    "Customer Statement of Account": {
+        typeId: "customer-soa",
+        designer: "soa",
+        docType: "customer-soa",
+        label: "Customer Statement of Account",
     },
     "Cheque": {
         typeId: "cheque-printing",
@@ -420,10 +428,90 @@ const buildPaymentDesignerDefaults = (templateName) => ({
     showReceivedByLine: true,
 });
 
+const buildVendorSoaDesignerDefaults = (templateName) => ({
+    purchaseDesigner: "soa",
+    docType: "vendor-soa",
+    templateName: templateName || "Default Vendor Statement of Account",
+    primaryColor: "#F5C742",
+    accentColor: "#F5C742",
+    headerBg: "#1e293b",
+    fontFamily: "Inter",
+    fontSize: "13",
+    paperSize: "A4",
+    orientation: "portrait",
+    margins: { top: 14, right: 12, bottom: 14, left: 12 },
+    showLogo: true,
+    showCompanyLogo: true,
+    showCompanyName: true,
+    showCompanyAddress: true,
+    showCompanyPhone: true,
+    showCompanyEmail: true,
+    showCompanyWebsite: true,
+    showTRN: true,
+    showBorder: true,
+    showVendorCard: true,
+    showVendorName: true,
+    showVendorCode: true,
+    showVendorContact: true,
+    showVendorEmail: true,
+    showVendorTRN: true,
+    showQuickSummary: true,
+    showOpeningBalance: true,
+    showPurchases: true,
+    showPayments: true,
+    showPDC: true,
+    showClosingBalance: true,
+    showPageNumbers: false,
+    footerText: PURCHASE_TEMPLATE_TERMS["Vendor Statement of Account"],
+    emailSubject: "Vendor Statement of Account - {vendor}",
+    emailBody: "Dear {vendor},\n\nPlease find attached your Statement of Account for the period {period}.\n\nIf you have any questions, please feel free to contact us.\n\nBest regards,\n{company}",
+});
+
+const buildCustomerSoaDesignerDefaults = (templateName) => ({
+    salesDesigner: "soa",
+    docType: "customer-soa",
+    templateName: templateName || "Default Customer Statement of Account",
+    primaryColor: "#F5C742",
+    accentColor: "#F5C742",
+    headerBg: "#1e293b",
+    fontFamily: "Inter",
+    fontSize: "13",
+    paperSize: "A4",
+    orientation: "portrait",
+    margins: { top: 14, right: 12, bottom: 14, left: 12 },
+    showLogo: true,
+    showCompanyLogo: true,
+    showCompanyName: true,
+    showCompanyAddress: true,
+    showCompanyPhone: true,
+    showCompanyEmail: true,
+    showCompanyWebsite: true,
+    showTRN: true,
+    showBorder: true,
+    showBillTo: true,
+    showCustomerName: true,
+    showCustomerCode: true,
+    showCustomerPhone: true,
+    showCustomerEmail: true,
+    showCustomerTRN: true,
+    showQuickSummary: true,
+    showOpeningBalance: true,
+    showSales: true,
+    showReceipts: true,
+    showPDC: true,
+    showClosingBalance: true,
+    showPageNumbers: false,
+    footerText: PURCHASE_TEMPLATE_TERMS["Customer Statement of Account"],
+    emailSubject: "Customer Statement of Account - {customer}",
+    emailBody: "Dear {customer},\n\nPlease find attached your Statement of Account for the period {period}.\n\nIf you have any questions, please feel free to contact us.\n\nBest regards,\n{company}",
+});
+
 const buildDesignerDefaultsForCategory = (category, templateName) => {
     const meta = PURCHASE_TEMPLATE_META[category] || {};
     if (meta.designer === "grn") return buildGrnDesignerDefaults(templateName);
     if (meta.designer === "payment") return buildPaymentDesignerDefaults(templateName);
+    if (category === "Customer Statement of Account") return buildCustomerSoaDesignerDefaults(templateName);
+    if (meta.designer === "soa") return buildVendorSoaDesignerDefaults(templateName);
     return buildDocumentDesignerDefaults(category, templateName);
 };
 
@@ -511,11 +599,14 @@ const pickDefined = (...values) => values.find(defined);
 const isTemplateDefault = (template) => template?.isDefault === true || template?.default === true;
 
 const hasStoredDesignerSettings = (template) => {
+    if (template?.salesDesignerSettings && typeof template.salesDesignerSettings === "object") {
+        return true;
+    }
     if (template?.purchaseDesignerSettings && typeof template.purchaseDesignerSettings === "object") {
         return true;
     }
     const displayOptions = parsePrintTemplateObject(template?.displayOptions);
-    return Boolean(displayOptions.purchaseDesignerSettings || displayOptions.designerSettings);
+    return Boolean(displayOptions.purchaseDesignerSettings || displayOptions.salesDesignerSettings || displayOptions.designerSettings);
 };
 
 const templateModifiedTime = (template) => {
@@ -624,7 +715,7 @@ const getDesignerSettings = (template, category = template?.category, rawDisplay
         return normalizeDesignerSettings(template.purchaseDesignerSettings, template, category);
     }
     const displayOptions = rawDisplayOptions || parsePrintTemplateObject(template?.displayOptions);
-    const settings = displayOptions.purchaseDesignerSettings || displayOptions.designerSettings;
+    const settings = displayOptions.purchaseDesignerSettings || displayOptions.salesDesignerSettings || displayOptions.designerSettings;
     if (settings && typeof settings === "object") {
         return normalizeDesignerSettings(settings, template, category);
     }
@@ -723,7 +814,7 @@ const buildDescriptionLines = (item, vendorItemMeta = {}) => {
 };
 
 export const getPurchaseDefaultDisplayOptions = (category, overrides = {}) => {
-    const isVoucher = category === "Payment Voucher" || category === "Cheque" || category === "Vendor Statement of Account";
+    const isVoucher = category === "Payment Voucher" || category === "Cheque" || category === "Vendor Statement of Account" || category === "Customer Statement of Account";
     return sanitizeTemplateDisplayOptions(
         {
             ...DEFAULT_TEMPLATE_DISPLAY_OPTIONS,
@@ -740,7 +831,7 @@ export const getPurchaseDefaultDisplayOptions = (category, overrides = {}) => {
 };
 
 export const getPurchaseDefaultColumns = (category, overrides = {}) => {
-    const isVoucher = category === "Payment Voucher" || category === "Cheque" || category === "Vendor Statement of Account";
+    const isVoucher = category === "Payment Voucher" || category === "Cheque" || category === "Vendor Statement of Account" || category === "Customer Statement of Account";
     return sanitizeTemplateColumns(
         {
             ...DEFAULT_TEMPLATE_COLUMNS,
@@ -762,10 +853,21 @@ export const getPurchaseDefaultColumns = (category, overrides = {}) => {
 
 export const normalizePurchaseTemplate = (template, category = template?.category) => {
     if (!PURCHASE_TEMPLATE_CATEGORIES.includes(category)) {
+        const rawDisplayOptions = parsePrintTemplateObject(template?.displayOptions);
+        const rawColumns = parsePrintTemplateObject(template?.columns);
+        const designerSettings = rawDisplayOptions.salesDesignerSettings || rawDisplayOptions.purchaseDesignerSettings || rawDisplayOptions.designerSettings;
+
         return {
             ...template,
-            displayOptions: sanitizeTemplateDisplayOptions(template?.displayOptions),
-            columns: sanitizeTemplateColumns(template?.columns),
+            displayOptions: {
+                ...sanitizeTemplateDisplayOptions(rawDisplayOptions),
+                ...(rawDisplayOptions.salesDesigner ? { salesDesigner: rawDisplayOptions.salesDesigner } : {}),
+                ...(rawDisplayOptions.purchaseDesigner ? { purchaseDesigner: rawDisplayOptions.purchaseDesigner } : {}),
+                ...(designerSettings ? { designerSettings } : {}),
+                ...(rawDisplayOptions.salesDesignerSettings ? { salesDesignerSettings: rawDisplayOptions.salesDesignerSettings } : {}),
+                ...(rawDisplayOptions.purchaseDesignerSettings ? { purchaseDesignerSettings: rawDisplayOptions.purchaseDesignerSettings } : {}),
+            },
+            columns: sanitizeTemplateColumns(rawColumns),
         };
     }
 
@@ -825,6 +927,9 @@ export const getDefaultPurchaseTemplate = (category) => {
     const fallbackTemplate = getDefaultPurchaseTemplates().find(
         (template) => template.category === category
     );
+    const statementDesignerSettings = category === "Customer Statement of Account"
+        ? buildCustomerSoaDesignerDefaults(TEMPLATE_NAMES[category])
+        : null;
 
     return normalizePurchaseTemplate(
         fallbackTemplate || {
@@ -836,7 +941,14 @@ export const getDefaultPurchaseTemplate = (category) => {
             headerContent: "",
             termsContent: PURCHASE_TEMPLATE_TERMS[category] || "",
             footerContent: "",
-            displayOptions: getPurchaseDefaultDisplayOptions(category),
+            displayOptions: statementDesignerSettings
+                ? {
+                    ...getPurchaseDefaultDisplayOptions(category),
+                    showTerms: false,
+                    salesDesigner: "soa",
+                    salesDesignerSettings: statementDesignerSettings,
+                }
+                : getPurchaseDefaultDisplayOptions(category),
             columns: getPurchaseDefaultColumns(category),
         },
         category
@@ -1387,8 +1499,205 @@ export const buildPaymentVoucherPrintData = (voucher, vendor, companyProfile, li
     };
 };
 
+const formatStatementType = (type) => {
+    const text = trimValue(type);
+    if (!text) return "";
+    return text
+        .toLowerCase()
+        .split("_")
+        .filter(Boolean)
+        .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+        .join(" ");
+};
+
+export const buildVendorSoaPrintData = (statement, vendor, companyProfile, options = {}) => {
+    const safeStatement = statement || {};
+    const openingBalance = toNumber(safeStatement.openingBalance);
+    const totalDebit = toNumber(safeStatement.totalDebit);
+    const totalCredit = toNumber(safeStatement.totalCredit);
+    const closingBalance = toNumber(safeStatement.closingBalance);
+    const generatedOn = firstValue(options.generatedOn, new Date().toISOString().slice(0, 10));
+    const periodText = [options.startDate, options.endDate].filter(Boolean).join(" to ");
+    const party = resolveParty(vendor, safeStatement.accountName);
+    const currency = resolveCurrency(companyProfile, vendor);
+    const statementRows = (Array.isArray(safeStatement.entries) ? safeStatement.entries : []).map((entry, index) => {
+        const type = firstValue(entry?.type);
+
+        return {
+            rowNo: index + 1,
+            date: firstValue(entry?.transactionDate, entry?.date),
+            type,
+            typeLabel: formatStatementType(type),
+            documentNo: firstValue(entry?.documentNo),
+            description: firstValue(entry?.description, formatStatementType(type)),
+            reference: firstValue(entry?.reference),
+            debit: toNumber(entry?.debit),
+            credit: toNumber(entry?.credit),
+            balance: toNumber(entry?.runningBalance),
+            status: firstValue(entry?.status),
+        };
+    });
+
+    return {
+        title: "VENDOR STATEMENT OF ACCOUNT",
+        docNo: firstValue(
+            options.statementNo,
+            options.statementNumber,
+            safeStatement.statementNo,
+            [party.code || party.name || "VENDOR", options.endDate || generatedOn].filter(Boolean).join("-")
+        ),
+        date: generatedOn,
+        status: firstValue(options.status, "GENERATED"),
+        hideTotalsTable: true,
+        party,
+        headerMeta: [
+            { label: "Statement Period", value: periodText },
+            { label: "From Date", value: options.startDate },
+            { label: "To Date", value: options.endDate },
+        ].filter((item) => trimValue(item.value)),
+        references: [
+            { label: "Account Code", value: firstValue(safeStatement.accountCode, party.code) },
+            { label: "Generated On", value: generatedOn },
+        ].filter((item) => trimValue(item.value)),
+        items: [],
+        totals: {
+            currency,
+            subTotal: totalCredit,
+            tax: 0,
+            grandTotal: Math.abs(closingBalance),
+            amountPaid: totalDebit,
+            balanceDue: Math.abs(closingBalance),
+            openingBalance,
+            closingBalance,
+            totalDebit,
+            totalCredit,
+        },
+        summaryAmount: buildSummaryAmount("Closing Balance", Math.abs(closingBalance), companyProfile, vendor),
+        notes: firstValue(options.notes),
+        statement: {
+            accountCode: firstValue(safeStatement.accountCode, party.code),
+            accountName: firstValue(safeStatement.accountName, party.name),
+            startDate: options.startDate,
+            endDate: options.endDate,
+            generatedOn,
+            openingBalance,
+            closingBalance,
+            totalDebit,
+            totalCredit,
+            entries: statementRows,
+        },
+        statementRows,
+        debitSummaryLabel: "Total Payments",
+        creditSummaryLabel: "Total Purchases",
+        debitColumnLabel: "Debit (Payment)",
+        creditColumnLabel: "Credit (Invoice)",
+        positiveBalanceLabel: "Cr",
+        negativeBalanceLabel: "Dr",
+    };
+};
+
+export const buildCustomerSoaPrintData = (statement, customer, companyProfile, options = {}) => {
+    const safeStatement = statement || {};
+    const openingBalance = toNumber(safeStatement.openingBalance);
+    const totalDebit = toNumber(safeStatement.totalDebit);
+    const totalCredit = toNumber(safeStatement.totalCredit);
+    const closingBalance = toNumber(safeStatement.closingBalance);
+    const generatedOn = firstValue(options.generatedOn, new Date().toISOString().slice(0, 10));
+    const periodText = [options.startDate, options.endDate].filter(Boolean).join(" to ");
+    const party = {
+        name: firstValue(customer?.name, customer?.customerName, safeStatement.accountName, "Unknown Customer"),
+        code: firstValue(customer?.code, customer?.customerCode, safeStatement.accountCode),
+        address: firstValue(customer?.billingAddress, customer?.address, customer?.location),
+        phone: firstValue(customer?.contact, customer?.mobile, customer?.phone, customer?.primaryPhone, customer?.secondaryPhone),
+        email: firstValue(customer?.email),
+        taxId: firstValue(customer?.trn, customer?.taxId),
+    };
+    const currency = resolveCurrency(companyProfile, customer);
+    const statementRows = (Array.isArray(safeStatement.entries) ? safeStatement.entries : []).map((entry, index) => {
+        const type = firstValue(entry?.type);
+
+        return {
+            rowNo: index + 1,
+            date: firstValue(entry?.transactionDate, entry?.date),
+            type,
+            typeLabel: formatStatementType(type),
+            documentNo: firstValue(entry?.documentNo),
+            description: firstValue(entry?.description, formatStatementType(type)),
+            reference: firstValue(entry?.reference),
+            debit: toNumber(entry?.debit),
+            credit: toNumber(entry?.credit),
+            balance: toNumber(entry?.runningBalance),
+            status: firstValue(entry?.status),
+        };
+    });
+
+    return {
+        title: "CUSTOMER STATEMENT OF ACCOUNT",
+        statementKind: "customer",
+        docNo: firstValue(
+            options.statementNo,
+            options.statementNumber,
+            safeStatement.statementNo,
+            [party.code || party.name || "CUSTOMER", options.endDate || generatedOn].filter(Boolean).join("-")
+        ),
+        date: generatedOn,
+        status: firstValue(options.status, "GENERATED"),
+        hideTotalsTable: true,
+        party,
+        headerMeta: [
+            { label: "Statement Period", value: periodText },
+            { label: "From Date", value: options.startDate },
+            { label: "To Date", value: options.endDate },
+        ].filter((item) => trimValue(item.value)),
+        references: [
+            { label: "Account Code", value: firstValue(safeStatement.accountCode, party.code) },
+            { label: "Generated On", value: generatedOn },
+        ].filter((item) => trimValue(item.value)),
+        items: [],
+        totals: {
+            currency,
+            subTotal: totalDebit,
+            tax: 0,
+            grandTotal: Math.abs(closingBalance),
+            amountPaid: totalCredit,
+            balanceDue: Math.abs(closingBalance),
+            openingBalance,
+            closingBalance,
+            totalDebit,
+            totalCredit,
+        },
+        summaryAmount: buildSummaryAmount("Closing Balance", Math.abs(closingBalance), companyProfile, customer),
+        notes: firstValue(options.notes),
+        statement: {
+            accountCode: firstValue(safeStatement.accountCode, party.code),
+            accountName: firstValue(safeStatement.accountName, party.name),
+            startDate: options.startDate,
+            endDate: options.endDate,
+            generatedOn,
+            openingBalance,
+            closingBalance,
+            totalDebit,
+            totalCredit,
+            entries: statementRows,
+        },
+        statementRows,
+        debitSummaryLabel: "Total Sales",
+        creditSummaryLabel: "Total Receipts",
+        debitColumnLabel: "Debit (Invoice)",
+        creditColumnLabel: "Credit (Receipt)",
+        positiveBalanceLabel: "Dr",
+        negativeBalanceLabel: "Cr",
+    };
+};
+
 export const buildReceiptVoucherPrintData = (payment, customer, companyProfile) => {
     const amount = toNumber(payment?.amount);
+    const receiptNo = firstValue(payment?.paymentNumber, payment?.receiptNumber, payment?.voucherId, payment?.paymentNo, payment?.id);
+    const receiptDate = firstValue(payment?.paymentDate, payment?.date);
+    const paymentMode = firstValue(payment?.paymentMode, payment?.mode);
+    const referenceNumber = firstValue(payment?.referenceNumber, payment?.reference, payment?.ref);
+    const bankAccount = firstValue(payment?.bankName, payment?.bankAccount);
+    const invoiceReference = firstValue(payment?.linkedInvoice, payment?.invoiceNo, payment?.invoiceNumber);
     const totals = buildTotals(
         { subTotal: amount, tax: 0, grandTotal: amount, amountPaid: amount, balanceDue: 0 },
         companyProfile,
@@ -1406,29 +1715,29 @@ export const buildReceiptVoucherPrintData = (payment, customer, companyProfile) 
 
     return {
         title: "RECEIPT VOUCHER",
-        docNo: firstValue(payment?.paymentNumber, payment?.id),
-        date: payment?.paymentDate || payment?.date,
+        docNo: receiptNo,
+        date: receiptDate,
         status: firstValue(payment?.status, "COMPLETED"),
         hideTotalsTable: true,
         party,
         headerMeta: [
-            { label: "Receipt No", value: firstValue(payment?.paymentNumber, payment?.id) },
+            { label: "Receipt No", value: receiptNo },
             { label: "Status", value: payment?.status },
         ].filter((item) => trimValue(item.value)),
         references: [
-            { label: "Invoice Reference", value: payment?.linkedInvoice },
-            { label: "Reference No", value: payment?.referenceNumber },
+            { label: "Invoice Reference", value: invoiceReference },
+            { label: "Reference No", value: referenceNumber },
         ].filter((item) => trimValue(item.value)),
         items: [],
         totals,
         summaryAmount: buildSummaryAmount("Amount Received", amount, companyProfile, null),
         notes: firstValue(payment?.notes),
         paymentDetails: [
-            { label: "Payment Mode", value: payment?.paymentMode || payment?.mode },
-            { label: "Reference Number", value: payment?.referenceNumber },
-            { label: "Bank Account", value: payment?.bankName },
+            { label: "Payment Mode", value: paymentMode },
+            { label: "Reference Number", value: referenceNumber },
+            { label: "Bank Account", value: bankAccount },
             { label: "Cheque Date", value: payment?.chequeDate },
-            { label: "Invoice Reference", value: payment?.linkedInvoice },
+            { label: "Invoice Reference", value: invoiceReference },
         ].filter((item) => trimValue(item.value)),
     };
 };

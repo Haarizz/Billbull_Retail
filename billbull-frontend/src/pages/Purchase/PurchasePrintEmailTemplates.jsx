@@ -30,7 +30,10 @@ import {
 import { GRNTemplateDesigner } from "./Templates/GRNTemplateDesigner";
 import { GRVTemplateDesigner } from "./Templates/GRVTemplateDesigner";
 import { PaymentReceiptDesigner } from "./Templates/PaymentReceiptDesigner";
-import { VendorSoATemplateDesigner } from "./Templates/VendorSoATemplateDesigner";
+import {
+    VendorSoATemplateDesigner,
+    defaultVendorSoaTemplateSettings
+} from "./Templates/VendorSoATemplateDesigner";
 
 const TEMPLATE_TYPES = [
     {
@@ -202,6 +205,9 @@ const defaultSettingsFor = (typeId, name) => {
     if (typeId === "cheque-printing") {
         return defaultChequePrintSettings(name || "Default Cheque Template");
     }
+    if (typeId === "vendor-soa") {
+        return defaultVendorSoaTemplateSettings(name || "Default Vendor Statement of Account");
+    }
     return {
         templateName: name || `Default ${meta?.label || "Purchase"} Template`,
         docType: meta?.docType,
@@ -218,8 +224,8 @@ const defaultSettingsFor = (typeId, name) => {
         showBillTo: true,
         showVendorCard: true,
         showCustomerName: true,
-        showTerms: typeId !== "vendor-payment" && typeId !== "cheque-printing",
-        showTermsConditions: typeId !== "vendor-payment" && typeId !== "cheque-printing",
+        showTerms: typeId !== "vendor-payment" && typeId !== "cheque-printing" && typeId !== "vendor-soa",
+        showTermsConditions: typeId !== "vendor-payment" && typeId !== "cheque-printing" && typeId !== "vendor-soa",
         colDescription: true,
         colQty: typeId !== "vendor-payment" && typeId !== "cheque-printing",
         colUnitPrice: typeId !== "vendor-payment" && typeId !== "cheque-printing",
@@ -244,7 +250,7 @@ const buildRendererDisplayOptions = (settings = {}, typeId) => ({
         settings.showCompanyRegNumber
     ].some((value) => value !== false),
     showCustomerDetails: settings.showBillTo ?? settings.showShipTo ?? settings.showVendorCard ?? settings.showCustomerName ?? typeId !== "cheque-printing",
-    showTerms: settings.showTerms ?? settings.showTermsConditions ?? false,
+    showTerms: typeId === "vendor-soa" ? false : (settings.showTerms ?? settings.showTermsConditions ?? false),
     showItemImage: settings.colProductImage ?? settings.showItemImage ?? false
 });
 
