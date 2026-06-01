@@ -1790,7 +1790,10 @@ const DeliveryNote = () => {
                 date: dnDate,
                 customer: {
                     name: selectedCustomer?.name || '',
+                    code: selectedCustomer?.code || '',
                     address: shippingAddress || fullCustomer?.address || '',
+                    shippingAddress: shippingAddress || fullCustomer?.shippingAddress || '',
+                    phone: selectedCustomer?.mobile || fullCustomer?.mobile || fullCustomer?.phone || '',
                     trn: selectedCustomer?.trn || fullCustomer?.trn
                 },
                 items: items.map(i => ({
@@ -1812,6 +1815,7 @@ const DeliveryNote = () => {
                 meta: {
                     status: status,
                     // QA-031: explicit source-doc cross-references for Pick List.
+                    linkedDeliveryNote: dnNumber || '',
                     linkedSalesOrder: linkedSO || '',
                     linkedSalesInvoice: linkedSI || '',
                     location: warehouse || '',
