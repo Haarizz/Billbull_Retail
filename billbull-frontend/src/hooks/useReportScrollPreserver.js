@@ -11,10 +11,11 @@ export const useReportScrollPreserver = (scrollRefs = []) => {
         if (!snapshot || typeof window === 'undefined') return;
 
         window.scrollTo(snapshot.windowLeft, snapshot.windowTop);
-        snapshot.elements.forEach(({ element, top, left }) => {
-            if (!element) return;
-            element.scrollTop = top;
-            element.scrollLeft = left;
+        snapshot.elements.forEach(({ index, element, top, left }) => {
+            const currentElement = refsRef.current[index]?.current || element;
+            if (!currentElement) return;
+            currentElement.scrollTop = top;
+            currentElement.scrollLeft = left;
         });
     }, []);
 
@@ -25,10 +26,11 @@ export const useReportScrollPreserver = (scrollRefs = []) => {
             windowTop: window.scrollY,
             windowLeft: window.scrollX,
             elements: refsRef.current
-                .map(ref => {
+                .map((ref, index) => {
                     const element = ref?.current;
                     if (!element) return null;
                     return {
+                        index,
                         element,
                         top: element.scrollTop,
                         left: element.scrollLeft
@@ -42,12 +44,24 @@ export const useReportScrollPreserver = (scrollRefs = []) => {
         if (!snapshotRef.current) return undefined;
 
         restore();
-        const frame = window.requestAnimationFrame(() => {
+        const frames = [];
+        const timers = [];
+
+        frames.push(window.requestAnimationFrame(() => {
+            restore();
+            frames.push(window.requestAnimationFrame(restore));
+        }));
+
+        timers.push(window.setTimeout(restore, 80));
+        timers.push(window.setTimeout(() => {
             restore();
             snapshotRef.current = null;
-        });
+        }, 180));
 
-        return () => window.cancelAnimationFrame(frame);
+        return () => {
+            frames.forEach(frame => window.cancelAnimationFrame(frame));
+            timers.forEach(timer => window.clearTimeout(timer));
+        };
     });
 
     return { captureScroll };

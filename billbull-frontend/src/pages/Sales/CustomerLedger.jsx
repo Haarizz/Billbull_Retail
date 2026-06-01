@@ -12,7 +12,7 @@ import CurrencyAmount, { CurrencySymbol } from '../../components/CurrencyAmount'
 import PaginationFooter from '../../components/common/PaginationFooter';
 
 // --- API IMPORTS ---
-import { getAllCustomers, getCustomerById, createCustomer, deleteCustomer, getOpeningInvoicesByCustomerCode, getNextCustomerCode } from '../../api/customerledgerApi';
+import { getAllCustomers, getCustomerById, createCustomer, importCustomers, deleteCustomer, getOpeningInvoicesByCustomerCode, getNextCustomerCode } from '../../api/customerledgerApi';
 import { fetchStatementOfAccount } from '../../api/financialsApi';
 // ✅ Import Warehouse API
 import { getWarehouses } from '../../api/warehouseApi';
@@ -2409,6 +2409,8 @@ const CustomerLedger = () => {
 
     // Customer Data State (Empty init, API fetch)
     const [customers, setCustomers] = useState([]);
+    const customerImportInputRef = useRef(null);
+    const [isImportingCustomers, setIsImportingCustomers] = useState(false);
 
     // Fetch Customers on Mount
     useEffect(() => {
@@ -2436,6 +2438,26 @@ const CustomerLedger = () => {
         } catch (err) {
             console.error("Failed to load customers", err);
             setCustomers([]); // 🔥 NEVER leave it undefined
+        }
+    };
+
+    const handleCustomerImport = async (e) => {
+        const file = e.target.files?.[0];
+        if (!file) return;
+
+        const toastId = toast.loading(`Importing ${file.name}...`);
+        setIsImportingCustomers(true);
+        try {
+            const result = await importCustomers(file);
+            await loadCustomers();
+            toast.success(result || 'Customers imported successfully.', { id: toastId, duration: 6000 });
+        } catch (error) {
+            console.error('Failed to import customers', error);
+            const message = error.response?.data || error.message || 'Failed to import customers.';
+            toast.error(message, { id: toastId, duration: 7000 });
+        } finally {
+            setIsImportingCustomers(false);
+            e.target.value = null;
         }
     };
 
@@ -2745,6 +2767,13 @@ const CustomerLedger = () => {
                         </div>
 
                         <div className="flex flex-wrap gap-2 w-full lg:w-auto">
+                            <input
+                                ref={customerImportInputRef}
+                                type="file"
+                                accept=".xlsx,.xls"
+                                className="hidden"
+                                onChange={handleCustomerImport}
+                            />
                             <ExportDropdown
                                 onExportExcel={() => exportToExcel(
                                     filteredCustomers.map((cust, index) => ({ ...cust, sNo: index + 1 })),
@@ -2758,8 +2787,13 @@ const CustomerLedger = () => {
                                     'Customers'
                                 )}
                             />
-                            <button className="flex items-center gap-2 px-3 py-2 bg-white border border-slate-200 rounded-md text-sm text-slate-600 hover:bg-slate-50 transition-colors">
-                                <Upload size={16} /> Import
+                            <button
+                                onClick={() => customerImportInputRef.current?.click()}
+                                disabled={isImportingCustomers}
+                                className="flex items-center gap-2 px-3 py-2 bg-white border border-slate-200 rounded-md text-sm text-slate-600 hover:bg-slate-50 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+                            >
+                                {isImportingCustomers ? <RefreshCw size={16} className="animate-spin" /> : <Upload size={16} />}
+                                {isImportingCustomers ? 'Importing...' : 'Import'}
                             </button>
                             <button
                                 onClick={() => setIsAddModalOpen(true)}

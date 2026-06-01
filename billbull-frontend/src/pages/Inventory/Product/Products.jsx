@@ -20,7 +20,8 @@ import {
   createProduct,
   updateProduct,
   deleteProduct,
-  importProducts
+  startProductImport,
+  getProductImportProgress
 } from "../../../api/productsApi";
 import { getBrands, createBrand } from "../../../api/brandsApi";
 import { usePermissions } from "../../../context/PermissionContext";
@@ -1699,14 +1700,26 @@ const ViewBarcodesModal = ({ product, units, onClose }) => {
 // ==========================================
 // IMPORT PROGRESS MODAL
 // ==========================================
-const ImportProgressModal = ({ fileName, status, message, onClose }) => {
+const formatImportDuration = (ms) => {
+  if (ms == null || !Number.isFinite(Number(ms))) return 'calculating...';
+  const totalSeconds = Math.max(0, Math.round(Number(ms) / 1000));
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  if (minutes <= 0) return `${seconds}s`;
+  return `${minutes}m ${seconds.toString().padStart(2, '0')}s`;
+};
+
+const ImportProgressModal = ({ fileName, status, message, progress = {}, onClose }) => {
   if (!fileName) return null;
   const isLoading = status === 'loading';
   const isSuccess = status === 'success';
+  const percent = Math.max(0, Math.min(100, Number(progress.percent ?? 0)));
+  const processedRows = Number(progress.processedRows || 0);
+  const totalRows = Number(progress.totalRows || 0);
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md mx-4 overflow-hidden">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg mx-4 overflow-hidden">
         {/* Header */}
         <div className={`px-6 py-4 flex items-center gap-3 ${isLoading ? 'bg-[#F5C742]/10 border-b border-[#F5C742]/30' :
           isSuccess ? 'bg-emerald-50 border-b border-emerald-200' :
@@ -1729,7 +1742,7 @@ const ImportProgressModal = ({ fileName, status, message, onClose }) => {
             <p className="font-semibold text-slate-800 text-sm">
               {isLoading ? 'Importing...' : isSuccess ? 'Import Complete' : 'Import Failed'}
             </p>
-            <p className="text-xs text-slate-500 mt-0.5 truncate max-w-[280px]" title={fileName}>
+            <p className="text-xs text-slate-500 mt-0.5 truncate max-w-[320px]" title={fileName}>
               📄 {fileName}
             </p>
           </div>
@@ -1739,20 +1752,48 @@ const ImportProgressModal = ({ fileName, status, message, onClose }) => {
         <div className="px-6 py-5">
           {isLoading ? (
             <div className="flex flex-col items-center gap-4 py-4">
-              <div className="relative h-16 w-16">
+              <div className="relative h-20 w-20">
                 <div className="absolute inset-0 rounded-full border-4 border-slate-100" />
                 <div className="absolute inset-0 rounded-full border-4 border-[#F5C742] border-t-transparent animate-spin" />
                 <div className="absolute inset-0 flex items-center justify-center">
-                  <Upload className="h-6 w-6 text-[#F5C742]" />
+                  <span className="text-sm font-bold text-slate-800">{percent}%</span>
                 </div>
               </div>
-              <div className="text-center">
-                <p className="text-sm font-medium text-slate-700">Processing your Excel file</p>
-                <p className="text-xs text-slate-400 mt-1">This may take a moment for large files...</p>
+              <div className="text-center w-full">
+                <p className="text-sm font-medium text-slate-700">Adding products to database</p>
+                <p className="text-xs text-slate-400 mt-1">
+                  {processedRows.toLocaleString()} of {totalRows.toLocaleString()} rows processed
+                </p>
               </div>
-              {/* Animated progress bar */}
-              <div className="w-full bg-slate-100 rounded-full h-1.5 overflow-hidden">
-                <div className="h-full bg-[#F5C742] rounded-full animate-pulse" style={{ width: '60%' }} />
+              <div className="w-full bg-slate-100 rounded-full h-3 overflow-hidden">
+                <div
+                  className="h-full bg-[#F5C742] rounded-full transition-all duration-300"
+                  style={{ width: `${percent}%` }}
+                />
+              </div>
+              <div className="grid grid-cols-2 gap-3 w-full text-xs">
+                <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                  <div className="text-slate-400">Created</div>
+                  <div className="mt-1 font-bold text-slate-800">{Number(progress.createdCount || 0).toLocaleString()}</div>
+                </div>
+                <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                  <div className="text-slate-400">Duplicate Codes Added</div>
+                  <div className="mt-1 font-bold text-slate-800">{Number(progress.duplicateCreatedCount || 0).toLocaleString()}</div>
+                </div>
+                <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                  <div className="text-slate-400">Updated</div>
+                  <div className="mt-1 font-bold text-slate-800">{Number(progress.updatedCount || 0).toLocaleString()}</div>
+                </div>
+                <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                  <div className="text-slate-400">Skipped</div>
+                  <div className="mt-1 font-bold text-slate-800">{Number(progress.skippedCount || 0).toLocaleString()}</div>
+                </div>
+              </div>
+              <div className="flex w-full items-center justify-between text-xs text-slate-500">
+                <span className="inline-flex items-center gap-1">
+                  <Clock className="h-3.5 w-3.5" /> Elapsed {formatImportDuration(progress.elapsedMs)}
+                </span>
+                <span>Remaining {formatImportDuration(progress.estimatedRemainingMs)}</span>
               </div>
             </div>
           ) : (
@@ -1802,7 +1843,7 @@ const Products = () => {
   const [printConfig, setPrintConfig] = useState({ copies: 1, type: "code128" });
   const [viewBarcodesProduct, setViewBarcodesProduct] = useState(null);
 
-  const [importModal, setImportModal] = useState({ fileName: null, status: 'loading', message: '' });
+  const [importModal, setImportModal] = useState({ fileName: null, status: 'loading', message: '', progress: null });
   const closeImportModal = () => setImportModal(m => ({ ...m, fileName: null }));
 
   const [searchTerm, setSearchTerm] = useState("");
@@ -1997,15 +2038,43 @@ const Products = () => {
     const file = e.target.files[0];
     if (!file) return;
 
-    setImportModal({ fileName: file.name, status: 'loading', message: '' });
+    setImportModal({
+      fileName: file.name,
+      status: 'loading',
+      message: '',
+      progress: { percent: 0, processedRows: 0, totalRows: 0 }
+    });
     try {
-      const result = await importProducts(file);
-      setImportModal({ fileName: file.name, status: 'success', message: result });
+      const started = await startProductImport(file);
+      let latest = started;
+      setImportModal(m => ({ ...m, progress: latest }));
+
+      while (latest?.status === 'QUEUED' || latest?.status === 'RUNNING') {
+        await new Promise(resolve => setTimeout(resolve, 700));
+        latest = await getProductImportProgress(started.jobId);
+        setImportModal(m => ({ ...m, progress: latest }));
+      }
+
+      if (latest?.status === 'SUCCESS') {
+        setImportModal({
+          fileName: file.name,
+          status: 'success',
+          message: latest.message || 'Import completed successfully.',
+          progress: latest
+        });
+      } else {
+        setImportModal({
+          fileName: file.name,
+          status: 'error',
+          message: latest?.message || 'Failed to import products.',
+          progress: latest
+        });
+      }
       await fetchProducts();
     } catch (err) {
       console.error('Import failed', err);
       const errMsg = err.response?.data || err.message || 'Failed to import products.';
-      setImportModal({ fileName: file.name, status: 'error', message: errMsg });
+      setImportModal({ fileName: file.name, status: 'error', message: errMsg, progress: null });
     } finally {
       e.target.value = null;
     }
@@ -2473,6 +2542,7 @@ const Products = () => {
         fileName={importModal.fileName}
         status={importModal.status}
         message={importModal.message}
+        progress={importModal.progress}
         onClose={closeImportModal}
       />
 

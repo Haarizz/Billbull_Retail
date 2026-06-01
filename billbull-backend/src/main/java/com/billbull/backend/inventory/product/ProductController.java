@@ -58,6 +58,21 @@ public class ProductController {
         }
     }
 
+    @PostMapping(value = "/import/excel/start", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    @PreAuthorize("isAuthenticated()")
+    public ResponseEntity<ProductImportService.ImportJobStatus> startImportFromExcel(
+            @RequestParam("file") MultipartFile file) {
+        modulePermissionService.requireCanCreate("inventory");
+        return ResponseEntity.ok(importService.startImport(file));
+    }
+
+    @GetMapping("/import/excel/progress/{jobId}")
+    @PreAuthorize("isAuthenticated()")
+    public ResponseEntity<ProductImportService.ImportJobStatus> getImportProgress(@PathVariable String jobId) {
+        modulePermissionService.requireCanView("inventory");
+        return ResponseEntity.ok(importService.getImportJobStatus(jobId));
+    }
+
     // -------------------------------------------------
     // CREATE (Multipart)
     // -------------------------------------------------

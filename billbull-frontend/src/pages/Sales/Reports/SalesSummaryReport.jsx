@@ -177,6 +177,7 @@ const SalesSummaryReport = () => {
     const [sidebarOpen, setSidebarOpen] = useState(false);
     const [branches, setBranches] = useState([{ id: 'All', name: 'All' }]);
     const [openGroups, setOpenGroups] = useState(() => Object.fromEntries(REPORT_GROUPS.map(group => [group.id, true])));
+    const [bodyMinHeight, setBodyMinHeight] = useState(0);
     // Derive the initial branch filter from the sidebar's active branch so
     // that switching to "Dubai Branch" scopes the report data automatically.
     const initialBranchId = isAllBranches || !activeBranchId ? 'All' : String(activeBranchId);
@@ -232,6 +233,7 @@ const SalesSummaryReport = () => {
         const cacheKey = JSON.stringify({ reportId: activeId, filters: nextFilters });
         if (!force && reportCacheRef.current.has(cacheKey)) {
             setPayload(reportCacheRef.current.get(cacheKey));
+            setBodyMinHeight(0);
             return;
         }
 
@@ -246,6 +248,7 @@ const SalesSummaryReport = () => {
             toast.error('Failed to load sales report.');
         } finally {
             setLoading(false);
+            setBodyMinHeight(0);
         }
     };
 
@@ -292,12 +295,25 @@ const SalesSummaryReport = () => {
 
     const handleReportSelect = id => {
         captureScroll();
+        const currentBody = reportBodyRef.current;
+        if (currentBody) {
+            setBodyMinHeight(currentBody.scrollHeight);
+        }
         setActiveId(id);
         setSidebarOpen(false);
     };
 
-    const expandAllGroups = () => setOpenGroups(Object.fromEntries(REPORT_GROUPS.map(group => [group.id, true])));
-    const collapseAllGroups = () => setOpenGroups(Object.fromEntries(REPORT_GROUPS.map(group => [group.id, false])));
+    const updateGroupsPreservingScroll = updater => {
+        captureScroll();
+        setOpenGroups(updater);
+    };
+
+    const expandAllGroups = () => updateGroupsPreservingScroll(Object.fromEntries(REPORT_GROUPS.map(group => [group.id, true])));
+    const collapseAllGroups = () => updateGroupsPreservingScroll(Object.fromEntries(REPORT_GROUPS.map(group => [group.id, false])));
+
+    const toggleGroup = groupId => {
+        updateGroupsPreservingScroll(prev => ({ ...prev, [groupId]: !prev[groupId] }));
+    };
 
     const exportColumns = useMemo(() => columns.map(column => ({
         header: column.header,
@@ -437,52 +453,63 @@ const SalesSummaryReport = () => {
                         <div key={group.id} className="mb-2 overflow-hidden rounded-lg border border-slate-200 bg-slate-50">
                             <button
                                 type="button"
-                                onClick={() => setOpenGroups(prev => ({ ...prev, [group.id]: !prev[group.id] }))}
-                                className="flex w-full items-center justify-between gap-3 px-3 py-2 text-left hover:bg-white"
+                                onClick={() => toggleGroup(group.id)}
+                                aria-expanded={isOpen}
+                                className="flex w-full items-center justify-between gap-3 px-3 py-2 text-left transition-colors duration-200 hover:bg-white"
                             >
                                 <span className="min-w-0">
                                     <span className="block truncate text-[11px] font-bold text-slate-800">{group.title}</span>
                                     <span className="text-[10px] text-slate-500">{group.reports.length} report(s)</span>
                                 </span>
-                                <FaChevronDown className={`shrink-0 text-[10px] text-slate-500 transition-transform ${isOpen ? 'rotate-180' : ''}`} />
+                                <FaChevronDown className={`shrink-0 text-[10px] text-slate-500 transition-transform duration-300 ease-in-out ${isOpen ? 'rotate-180' : ''}`} />
                             </button>
 
-                            {isOpen && (
-                                <div className="border-t border-slate-200 p-2">
-                                    {group.reports.map(report => {
-                                        const Icon = report.icon;
-                                        const active = report.id === activeId;
-                                        return (
-                                            <button
-                                                key={report.id}
-                                                type="button"
-                                                onClick={() => handleReportSelect(report.id)}
-                                                className={`mb-1 w-full rounded-lg border p-2 text-left transition ${
-                                                    active
-                                                        ? 'border-yellow-400 bg-yellow-50 shadow-sm'
-                                                        : 'border-slate-200 bg-white hover:border-yellow-200 hover:bg-yellow-50/30'
-                                                }`}
-                                            >
-                                                <div className="flex items-start gap-2">
-                                                    <Icon className={`mt-0.5 text-sm ${active ? 'text-yellow-600' : 'text-slate-500'}`} />
-                                                    <div className="min-w-0 flex-1">
-                                                        <div className="flex items-start justify-between gap-2">
-                                                            <span className="truncate text-xs font-bold text-slate-950">{report.title}</span>
-                                                            <span className={`shrink-0 rounded-full border px-2 py-0.5 text-[10px] ${report.badge === 'Chart' ? 'border-yellow-300 bg-yellow-50 text-yellow-700' : 'border-slate-200 bg-slate-50 text-slate-600'}`}>
-                                                                {report.badge}
+                            <div
+                                aria-hidden={!isOpen}
+                                className={`grid transition-[grid-template-rows,opacity] duration-300 ease-in-out ${
+                                    isOpen ? 'grid-rows-[1fr] opacity-100' : 'grid-rows-[0fr] opacity-0'
+                                }`}
+                            >
+                                <div className="min-h-0 overflow-hidden">
+                                    <div className={`border-t border-slate-200 p-2 transition-transform duration-300 ease-in-out ${
+                                        isOpen ? 'translate-y-0' : '-translate-y-1 pointer-events-none'
+                                    }`}>
+                                        {group.reports.map(report => {
+                                            const Icon = report.icon;
+                                            const active = report.id === activeId;
+                                            return (
+                                                <button
+                                                    key={report.id}
+                                                    type="button"
+                                                    onClick={() => handleReportSelect(report.id)}
+                                                    tabIndex={isOpen ? 0 : -1}
+                                                    className={`mb-1 w-full rounded-lg border p-2 text-left transition ${
+                                                        active
+                                                            ? 'border-yellow-400 bg-yellow-50 shadow-sm'
+                                                            : 'border-slate-200 bg-white hover:border-yellow-200 hover:bg-yellow-50/30'
+                                                    }`}
+                                                >
+                                                    <div className="flex items-start gap-2">
+                                                        <Icon className={`mt-0.5 text-sm ${active ? 'text-yellow-600' : 'text-slate-500'}`} />
+                                                        <div className="min-w-0 flex-1">
+                                                            <div className="flex items-start justify-between gap-2">
+                                                                <span className="truncate text-xs font-bold text-slate-950">{report.title}</span>
+                                                                <span className={`shrink-0 rounded-full border px-2 py-0.5 text-[10px] ${report.badge === 'Chart' ? 'border-yellow-300 bg-yellow-50 text-yellow-700' : 'border-slate-200 bg-slate-50 text-slate-600'}`}>
+                                                                    {report.badge}
+                                                                </span>
+                                                            </div>
+                                                            <p className="mt-1 line-clamp-2 text-[11px] leading-snug text-slate-500">{report.description}</p>
+                                                            <span className="mt-2 inline-flex rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-[10px] text-slate-600">
+                                                                {report.tag}
                                                             </span>
                                                         </div>
-                                                        <p className="mt-1 line-clamp-2 text-[11px] leading-snug text-slate-500">{report.description}</p>
-                                                        <span className="mt-2 inline-flex rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-[10px] text-slate-600">
-                                                            {report.tag}
-                                                        </span>
                                                     </div>
-                                                </div>
-                                            </button>
-                                        );
-                                    })}
+                                                </button>
+                                            );
+                                        })}
+                                    </div>
                                 </div>
-                            )}
+                            </div>
                         </div>
                     );
                 })}
@@ -581,13 +608,19 @@ const SalesSummaryReport = () => {
                     </div>
 
                     {loading && !payload ? (
-                        <div className="flex h-72 items-center justify-center rounded-xl border border-slate-200 bg-white">
+                        <div
+                            className="flex h-72 items-center justify-center rounded-xl border border-slate-200 bg-white"
+                            style={bodyMinHeight ? { minHeight: bodyMinHeight } : undefined}
+                        >
                             <div className="flex items-center gap-3 text-sm font-semibold text-slate-500">
                                 <FaSync className="animate-spin text-yellow-500" /> Loading sales report data...
                             </div>
                         </div>
                     ) : (
-                        <div className="flex flex-col gap-4">
+                        <div
+                            className="flex flex-col gap-4"
+                            style={bodyMinHeight ? { minHeight: bodyMinHeight } : undefined}
+                        >
                             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
                                 {(payload?.cards || []).map(card => (
                                     <div key={card.label} className="rounded-xl border border-slate-200 bg-white p-4">
