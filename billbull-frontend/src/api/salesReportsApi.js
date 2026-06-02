@@ -5,9 +5,12 @@ export const getSalesReportData = async (reportId, filters = {}, abortSignal) =>
         const params = {};
         if (filters.dateFrom) params.dateFrom = filters.dateFrom;
         if (filters.dateTo) params.dateTo = filters.dateTo;
-        if (filters.branchId && filters.branchId !== 'All') params.branchId = filters.branchId;
+        if (filters.branchId && !['All', 'ALL'].includes(String(filters.branchId)) && Number.isFinite(Number(filters.branchId))) {
+            params.branchId = filters.branchId;
+        }
         if (filters.salesChannel && filters.salesChannel !== 'All') params.salesChannel = filters.salesChannel;
         if (filters.salesperson && filters.salesperson !== 'All') params.salesperson = filters.salesperson;
+        if (filters.valuationMethod) params.valuationMethod = filters.valuationMethod;
         if (filters.searchQuery) params.search = filters.searchQuery;
 
         const res = await api.get(`/api/sales/reports/data/${reportId}`, {

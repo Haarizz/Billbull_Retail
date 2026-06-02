@@ -15,6 +15,7 @@ export const getInventoryReportData = async (reportId, filters = {}, abortSignal
         if (filters.brand && filters.brand !== 'All') params.brand = filters.brand;
         if (filters.searchQuery) params.search = filters.searchQuery;
         if (filters.stockCondition && filters.stockCondition !== 'All') params.stockCondition = filters.stockCondition;
+        if (filters.costingMethod && filters.costingMethod !== 'avg') params.costingMethod = filters.costingMethod;
 
         const res = await api.get(`/api/inventory/reports/data/${reportId}`, {
             params,
