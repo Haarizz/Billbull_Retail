@@ -1,14 +1,45 @@
 import api from './axiosConfig';
 
+const REPORT_ID_ENDPOINTS = {
+    soh: 'stock-on-hand',
+    low_stock: 'low-stock-reorder',
+    out_of_stock: 'out-of-stock',
+    negative_stock: 'negative-stock-mismatch',
+    valuation: 'stock-valuation',
+    expiry: 'expiry-batch-ageing',
+    movement_ledger: 'stock-movement-ledger',
+    transfer: 'stock-transfer-report',
+    reconciliation: 'stock-reconciliation-report',
+    wastage: 'wastage-internal-consumption',
+    in_out_summary: 'inflow-outflow-summary',
+    price_audit: 'price-level-audit',
+    cost_variance: 'grn-invoice-cost-variance',
+    margin: 'item-margin-report',
+    master_completeness: 'item-master-completeness',
+    barcode_audit: 'barcode-label-audit',
+    scale_export: 'weighing-scale-export',
+    dead_stock: 'dead-slow-moving-stock',
+    fast_moving: 'fast-moving-items',
+    bin_stock: 'warehouse-bin-stock',
+};
+
+const reportEndpointId = (reportId) => REPORT_ID_ENDPOINTS[reportId] || reportId;
+
+const numericParam = (value) => {
+    if (value === undefined || value === null || value === '' || value === 'All' || value === 'ALL') {
+        return null;
+    }
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+};
+
 export const getInventoryReportData = async (reportId, filters = {}, abortSignal) => {
     try {
         const params = {};
-        if (filters.warehouseId && filters.warehouseId !== 'All') {
-            params.warehouseId = filters.warehouseId;
-        }
-        if (filters.branchId && filters.branchId !== 'All') {
-            params.branchId = filters.branchId;
-        }
+        const warehouseId = numericParam(filters.warehouseId);
+        const branchId = numericParam(filters.branchId);
+        if (warehouseId !== null) params.warehouseId = warehouseId;
+        if (branchId !== null) params.branchId = branchId;
         if (filters.dateFrom) params.dateFrom = filters.dateFrom;
         if (filters.dateTo) params.dateTo = filters.dateTo;
         if (filters.department && filters.department !== 'All') params.department = filters.department;
@@ -17,7 +48,7 @@ export const getInventoryReportData = async (reportId, filters = {}, abortSignal
         if (filters.stockCondition && filters.stockCondition !== 'All') params.stockCondition = filters.stockCondition;
         if (filters.costingMethod && filters.costingMethod !== 'avg') params.costingMethod = filters.costingMethod;
 
-        const res = await api.get(`/api/inventory/reports/data/${reportId}`, {
+        const res = await api.get(`/api/inventory/reports/data/${reportEndpointId(reportId)}`, {
             params,
             signal: abortSignal
         });

@@ -27,6 +27,8 @@ import { Badge } from "../../Sales/Reports/ui/badge";
 import { Separator } from "../../Sales/Reports/ui/separator";
 import { Input } from "../../Sales/Reports/ui/input";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, PieChart, Pie, Cell } from "recharts";
+import { getInventoryReportData } from "../../../api/inventoryReportsApi";
+import { getWarehouses } from "../../../api/warehouseApi";
 
 type ReportGroupId =
   | "stock"
@@ -443,8 +445,6 @@ let mockExpiry: ExpiryItem[] = [
   },
 ];
 
-import { getInventoryReportData } from "../../../api/inventoryReportsApi";
-
 function n(value: any): number {
   if (typeof value === "number") return Number.isFinite(value) ? value : 0;
   const parsed = Number(String(value ?? "").replace(/,/g, ""));
@@ -461,10 +461,87 @@ function dateOnly(value: any, fallback = ""): string {
   return raw.length > 10 ? raw.slice(0, 10) : raw;
 }
 
+function daysSince(value: any): number {
+  const date = Date.parse(dateOnly(value));
+  if (!Number.isFinite(date)) return 0;
+  return Math.max(0, Math.floor((Date.now() - date) / 86400000));
+}
+
+function percentChange(oldValue: number, newValue: number): string {
+  if (!oldValue) return "0.0%";
+  const pct = ((newValue - oldValue) / oldValue) * 100;
+  return `${pct >= 0 ? "+" : ""}${pct.toFixed(1)}%`;
+}
+
+function sumByKey<T extends Record<string, any>>(
+  rows: T[],
+  groupKey: keyof T,
+  valueKeys: (keyof T)[]
+) {
+  const totals = new Map<string, any>();
+  rows.forEach((row) => {
+    const label = asText(row[groupKey], "Uncategorized");
+    const existing = totals.get(label) ?? { [groupKey]: label, items: 0 };
+    existing.items += 1;
+    valueKeys.forEach((key) => {
+      existing[key] = n(existing[key]) + n(row[key]);
+    });
+    totals.set(label, existing);
+  });
+  return Array.from(totals.values());
+}
+
+function chartRows(data: any, index = 0): any[] {
+  return Array.isArray(data?.charts?.[index]?.data) ? data.charts[index].data : [];
+}
+
+function clearLiveReportData(reportId?: ReportId) {
+  if (!reportId || reportId === "soh") {
+    mockRowsSOH = [];
+    mockSOH = [];
+    mockSOHByCategory = [];
+  }
+  if (!reportId || reportId === "low_stock") {
+    mockRowsLowStock = [];
+    mockLowStock = [];
+  }
+  if (!reportId || reportId === "out_of_stock") mockOutOfStock = [];
+  if (!reportId || reportId === "negative_stock") mockNegativeStock = [];
+  if (!reportId || reportId === "valuation") {
+    mockRowsValuation = [];
+    mockValuationByCategory = [];
+    mockValuationByWarehouse = [];
+  }
+  if (!reportId || reportId === "expiry") mockExpiry = [];
+  if (!reportId || reportId === "movement_ledger") mockMovementLedger = [];
+  if (!reportId || reportId === "transfer") mockTransfers = [];
+  if (!reportId || reportId === "reconciliation") mockReconciliation = [];
+  if (!reportId || reportId === "wastage") {
+    mockWastage = [];
+    mockWastageByCategory = [];
+  }
+  if (!reportId || reportId === "in_out_summary") {
+    mockInflowOutflow = [];
+    mockInflowOutflowByCategory = [];
+  }
+  if (!reportId || reportId === "price_audit") mockPriceAudit = [];
+  if (!reportId || reportId === "cost_variance") mockCostVariance = [];
+  if (!reportId || reportId === "margin") {
+    mockItemMargin = [];
+    mockItemMarginByCategory = [];
+  }
+  if (!reportId || reportId === "master_completeness") mockMasterCompleteness = [];
+  if (!reportId || reportId === "barcode_audit") mockBarcodeAudit = [];
+  if (!reportId || reportId === "scale_export") mockScaleExport = [];
+  if (!reportId || reportId === "dead_stock") mockDeadStock = [];
+  if (!reportId || reportId === "fast_moving") mockFastMoving = [];
+  if (!reportId || reportId === "bin_stock") mockBinStock = [];
+}
+
 function applyLiveReportData(reportId: ReportId, data: any) {
+  clearLiveReportData(reportId);
   if (!data) return;
   const rows = Array.isArray(data.rows) ? data.rows : (Array.isArray(data.data) ? data.data : []);
-  if (!rows.length) return;
 
   switch (reportId) {
     case "soh":
@@ -473,13 +550,23 @@ function applyLiveReportData(reportId: ReportId, data: any) {
         item: asText(row.itemName ?? row.item, "N/A"),
         category: asText(row.category, "Uncategorized"),
         warehouse: asText(row.warehouseName ?? row.warehouse, "Main WH"),
-        qty: n(row.stockOnHand ?? row.qty),
+        qty: n(row.stockOnHand ?? row.onHand ?? row.qty),
         minQty: n(row.minStock ?? row.minQty),
-        reorder: n(row.reorderLevel ?? row.reorder),
+        reorder: n(row.reorderLevel ?? row.reorder ?? row.suggestedPoQty),
         uom: asText(row.uom, "Pcs"),
-        cost: n(row.avgCost ?? row.cost),
+        cost: n(row.avgCost ?? row.unitCost ?? row.cost),
         value: n(row.stockValue ?? row.value)
       }));
+      mockRowsSOH = mockSOH.map((row) => ({
+        sku: row.sku,
+        item: row.item,
+        warehouse: row.warehouse,
+        qty: row.qty,
+        uom: row.uom,
+        cost: row.cost,
+        value: row.value
+      }));
+      mockSOHByCategory = sumByKey(mockSOH, "category", ["qty", "value"]);
       break;
     case "low_stock":
       mockLowStock = rows.map(row => ({
@@ -490,10 +577,19 @@ function applyLiveReportData(reportId: ReportId, data: any) {
         onHand: n(row.stockOnHand ?? row.onHand),
         minQty: n(row.minStock ?? row.minQty),
         reorderQty: n(row.reorderLevel ?? row.reorderQty),
-        suggested: n(row.suggestedQty ?? row.suggested),
-        vendor: asText(row.preferredVendor ?? row.vendor, "N/A"),
+        suggested: n(row.suggestedQty ?? row.suggestedPoQty ?? row.suggested),
+        vendor: asText(row.preferredVendor ?? row.defaultVendor ?? row.vendor, "N/A"),
         lastPO: dateOnly(row.lastPoDate ?? row.lastPO, "-"),
         urgency: asText(row.urgency, "High")
+      }));
+      mockRowsLowStock = mockLowStock.map((row) => ({
+        sku: row.sku,
+        item: row.item,
+        warehouse: row.warehouse,
+        onHand: row.onHand,
+        min: row.minQty,
+        suggested: row.suggested,
+        vendor: row.vendor
       }));
       break;
     case "out_of_stock":
@@ -505,8 +601,8 @@ function applyLiveReportData(reportId: ReportId, data: any) {
         lastSold: dateOnly(row.lastSaleDate ?? row.lastSold, "-"),
         lastReceived: dateOnly(row.lastReceiptDate ?? row.lastReceived, "-"),
         avgDailySales: n(row.avgDailySales),
-        daysSinceStock: n(row.daysSinceStock),
-        suggestedPO: n(row.suggestedPO)
+        daysSinceStock: n(row.daysSinceStock) || daysSince(row.lastReceiptDate ?? row.lastReceived),
+        suggestedPO: n(row.suggestedPO ?? row.suggestedPoQty)
       }));
       break;
     case "negative_stock":
@@ -516,8 +612,8 @@ function applyLiveReportData(reportId: ReportId, data: any) {
         category: asText(row.category, "Uncategorized"),
         warehouse: asText(row.warehouseName ?? row.warehouse, "Main WH"),
         qty: n(row.stockOnHand ?? row.qty),
-        issue: asText(row.issueReason ?? row.issue, "Negative balance"),
-        lastTxn: dateOnly(row.lastTxnDate ?? row.lastTxn, "-"),
+        issue: asText(row.issueReason ?? row.rootIssue ?? row.issue, "Negative balance"),
+        lastTxn: dateOnly(row.lastTxnDate ?? row.lastTxn ?? row.date, "-"),
         impact: n(row.costImpact ?? row.impact),
         severity: asText(row.severity, "High")
       }));
@@ -530,12 +626,258 @@ function applyLiveReportData(reportId: ReportId, data: any) {
         department: asText(row.department, "N/A"),
         warehouse: asText(row.warehouseName ?? row.warehouse, "Main WH"),
         qty: n(row.stockOnHand ?? row.qty),
-        avgCost: n(row.avgCost),
-        fifoCost: n(row.fifoCost),
-        lastCost: n(row.lastCost),
-        avgValue: n(row.avgValue),
+        avgCost: n(row.avgCost ?? row.unitCost),
+        fifoCost: n(row.fifoCost ?? row.fifoUnitCost),
+        lastCost: n(row.lastCost ?? row.lastPurchaseCost),
+        avgValue: n(row.avgValue ?? row.value),
         fifoValue: n(row.fifoValue),
-        lastValue: n(row.lastValue)
+        lastValue: n(row.lastValue ?? row.lastPurchaseValue)
+      }));
+      mockValuationByCategory = sumByKey(mockRowsValuation, "category", ["qty", "avgValue", "fifoValue", "lastValue"]);
+      mockValuationByWarehouse = sumByKey(mockRowsValuation, "warehouse", ["qty", "avgValue", "fifoValue", "lastValue"]);
+      {
+        const totalWarehouseValue = mockValuationByWarehouse.reduce((sum, row) => sum + n(row.avgValue), 0);
+        mockValuationByWarehouse = mockValuationByWarehouse.map((row) => ({
+          ...row,
+          percentage: totalWarehouseValue ? Number(((n(row.avgValue) / totalWarehouseValue) * 100).toFixed(1)) : 0
+        }));
+      }
+      break;
+    case "expiry": {
+      const grouped = new Map<string, ExpiryItem>();
+      rows.forEach((row) => {
+        const sku = asText(row.sku ?? row.itemCode, "N/A");
+        const key = `${sku}|${asText(row.itemName ?? row.item, "N/A")}`;
+        const item = grouped.get(key) ?? {
+          sku,
+          item: asText(row.itemName ?? row.item, "N/A"),
+          category: asText(row.category, "Uncategorized"),
+          batches: []
+        };
+        const daysLeft = n(row.daysToExpiry);
+        item.batches.push({
+          batchNo: asText(row.batchNumber ?? row.batchNo, "-"),
+          warehouse: asText(row.warehouseName ?? row.warehouse, "Main WH"),
+          qty: n(row.totalQty ?? row.qty ?? row.onHand),
+          expiryDate: dateOnly(row.nearestExpiry ?? row.expiryDate, "-"),
+          daysLeft,
+          cost: n(row.unitCost ?? row.cost),
+          value: n(row.totalValue ?? row.value),
+          status: asText(row.worstStatus ?? row.status, daysLeft <= 7 ? "Critical" : daysLeft <= 14 ? "High" : daysLeft <= 30 ? "Warning" : daysLeft <= 90 ? "Watch" : "OK")
+        });
+        grouped.set(key, item);
+      });
+      mockExpiry = Array.from(grouped.values());
+      break;
+    }
+    case "movement_ledger":
+      mockMovementLedger = rows.map(row => ({
+        date: dateOnly(row.date ?? row.movementDate, "-"),
+        txnType: asText(row.txnType ?? row.type, "Adjustment"),
+        ref: asText(row.ref ?? row.reference, "-"),
+        item: asText(row.item, "N/A"),
+        sku: asText(row.sku, "N/A"),
+        in: n(row.in ?? row.inQty),
+        out: n(row.out ?? row.outQty),
+        balance: n(row.balance),
+        cost: n(row.cost ?? row.unitCost),
+        warehouse: asText(row.warehouse, "Warehouse")
+      }));
+      break;
+    case "transfer":
+      mockTransfers = rows.map(row => ({
+        ref: asText(row.ref, "-"),
+        date: dateOnly(row.date, "-"),
+        from: asText(row.from ?? row.fromWarehouse, "-"),
+        to: asText(row.to ?? row.toWarehouse, "-"),
+        item: asText(row.item, "N/A"),
+        sku: asText(row.sku, "N/A"),
+        qty: n(row.qty),
+        cost: n(row.cost ?? row.unitCost),
+        value: n(row.value),
+        status: asText(row.status, "Pending"),
+        approver: asText(row.approver, "-")
+      }));
+      break;
+    case "reconciliation":
+      mockReconciliation = rows.map(row => ({
+        date: dateOnly(row.date, "-"),
+        ref: asText(row.ref, "-"),
+        item: asText(row.item, "N/A"),
+        sku: asText(row.sku, "N/A"),
+        before: n(row.before ?? row.beforeQty),
+        after: n(row.after ?? row.afterQty),
+        diff: n(row.diff),
+        reason: asText(row.reason, "Stock adjustment"),
+        approver: asText(row.approver, "System"),
+        costImpact: n(row.costImpact)
+      }));
+      break;
+    case "wastage":
+      mockWastage = rows.map(row => ({
+        date: dateOnly(row.date, "-"),
+        ref: asText(row.ref, "-"),
+        item: asText(row.item, "N/A"),
+        sku: asText(row.sku, "N/A"),
+        qty: n(row.qty),
+        reason: asText(row.reason, "Write-off"),
+        cost: n(row.cost ?? row.unitCost),
+        impact: n(row.impact),
+        warehouse: asText(row.warehouse, "Warehouse")
+      }));
+      mockWastageByCategory = chartRows(data).map((row) => ({
+        category: asText(row.name ?? row.category, "Uncategorized"),
+        value: n(row.value),
+        qty: n(row.qty)
+      }));
+      if (!mockWastageByCategory.length) {
+        mockWastageByCategory = sumByKey(mockWastage as any, "reason", ["impact"]).map((row: any) => ({
+          category: row.reason,
+          value: row.impact,
+          qty: 0
+        }));
+      }
+      break;
+    case "in_out_summary":
+      mockInflowOutflow = rows.map(row => ({
+        period: asText(row.period, "-"),
+        inflow: n(row.inflow),
+        outflow: n(row.outflow),
+        net: n(row.net)
+      }));
+      mockInflowOutflowByCategory = chartRows(data, 1).map((row) => ({
+        category: asText(row.name ?? row.category, "Uncategorized"),
+        inflow: n(row.inflow),
+        outflow: n(row.outflow)
+      }));
+      break;
+    case "price_audit":
+      mockPriceAudit = rows.map(row => {
+        const oldPrice = n(row.oldPrice ?? row.retailPrice ?? row.newPrice);
+        const newPrice = n(row.newPrice ?? row.retailPrice);
+        return {
+          date: dateOnly(row.date ?? row.updatedAt, "-"),
+          item: asText(row.item, "N/A"),
+          sku: asText(row.sku, "N/A"),
+          priceLevel: asText(row.priceLevel, "Retail"),
+          oldPrice,
+          newPrice,
+          pct: asText(row.pct, percentChange(oldPrice, newPrice)),
+          changedBy: asText(row.changedBy ?? row.updatedBy, "System"),
+          approved: asText(row.approved, "Auto")
+        };
+      });
+      break;
+    case "cost_variance":
+      mockCostVariance = rows.map(row => {
+        const variance = n(row.variance ?? row.varianceUnit);
+        return {
+          grnRef: asText(row.grnRef ?? row.grnNo, "-"),
+          invRef: asText(row.invRef ?? row.invoiceNo, "-"),
+          item: asText(row.item, "N/A"),
+          sku: asText(row.sku, "N/A"),
+          qty: n(row.qty),
+          grnCost: n(row.grnCost),
+          invCost: n(row.invCost ?? row.invoiceCost),
+          variance,
+          totalVar: n(row.totalVar ?? row.varianceTotal),
+          status: variance > 0 ? "Over" : variance < 0 ? "Under" : "Match"
+        };
+      });
+      break;
+    case "margin":
+      mockItemMargin = rows.map(row => ({
+        item: asText(row.item, "N/A"),
+        sku: asText(row.sku, "N/A"),
+        category: asText(row.category, "Sales"),
+        salesQty: n(row.salesQty ?? row.qtySold),
+        revenue: n(row.revenue ?? row.salesValue),
+        cost: n(row.cost ?? row.costValue),
+        gp: n(row.gp ?? row.grossProfit),
+        gpPct: n(row.gpPct ?? row.gpPercent)
+      }));
+      mockItemMarginByCategory = sumByKey(mockItemMargin as any, "category", ["revenue", "gp"]).map((row: any) => ({
+        ...row,
+        gpPct: row.revenue ? (row.gp / row.revenue) * 100 : 0
+      }));
+      break;
+    case "master_completeness":
+      mockMasterCompleteness = rows.map(row => {
+        const issues = asText(row.issues).toLowerCase();
+        return {
+          sku: asText(row.sku, "N/A"),
+          item: asText(row.item, "N/A"),
+          hasBarcode: !issues.includes("barcode"),
+          hasCost: !issues.includes("cost"),
+          hasCategory: !issues.includes("category"),
+          hasImage: true,
+          hasVendor: !issues.includes("brand") && !issues.includes("vendor"),
+          score: n(row.score),
+          status: asText(row.status, "Review")
+        };
+      });
+      break;
+    case "barcode_audit":
+      mockBarcodeAudit = rows.map(row => ({
+        sku: asText(row.sku, "N/A"),
+        item: asText(row.item, "N/A"),
+        barcode: asText(row.barcode, "-"),
+        template: asText(row.template ?? row.labelLayout, "-"),
+        lastPrinted: dateOnly(row.lastPrinted ?? row.updatedAt, "Never"),
+        printedBy: asText(row.printedBy, "-"),
+        queueStatus: asText(row.queueStatus, "-"),
+        status: asText(row.status ?? row.active, "OK")
+      }));
+      break;
+    case "scale_export":
+      mockScaleExport = rows.map(row => ({
+        sku: asText(row.sku, "N/A"),
+        item: asText(row.item, "N/A"),
+        scale: asText(row.scale, "Scale"),
+        lastSync: dateOnly(row.lastSync, "-"),
+        price: n(row.price),
+        status: asText(row.status, "Ready")
+      }));
+      break;
+    case "dead_stock":
+      mockDeadStock = rows.map(row => {
+        const days = n(row.daysSinceSale ?? row.daysSinceSold);
+        return {
+          sku: asText(row.sku, "N/A"),
+          item: asText(row.item, "N/A"),
+          category: asText(row.category, "Uncategorized"),
+          warehouse: asText(row.warehouse, "Warehouse"),
+          qty: n(row.qty ?? row.onHand),
+          lastSoldDate: dateOnly(row.lastSoldDate ?? row.lastSold, "-"),
+          daysSinceSale: days,
+          avgMonthlySales: n(row.avgMonthlySales),
+          value: n(row.value),
+          bucket: days >= 90 ? "90+ days" : days >= 60 ? "60-90 days" : days >= 45 ? "45-60 days" : days >= 30 ? "30-45 days" : "15-30 days"
+        };
+      });
+      break;
+    case "fast_moving":
+      mockFastMoving = rows.map(row => ({
+        sku: asText(row.sku, "N/A"),
+        item: asText(row.item, "N/A"),
+        category: asText(row.category, "Sales"),
+        warehouse: asText(row.warehouse, "All"),
+        qtySold: n(row.qtySold),
+        revenue: n(row.revenue ?? row.salesValue),
+        avgDailySales: n(row.avgDailySales ?? row.avgDailyQty),
+        turnover: n(row.turnover),
+        trend: asText(row.trend, "+0%")
+      }));
+      break;
+    case "bin_stock":
+      mockBinStock = rows.map(row => ({
+        bin: asText(row.bin, "Unlocated"),
+        zone: asText(row.zone, "Unassigned"),
+        item: asText(row.item, "N/A"),
+        sku: asText(row.sku, "N/A"),
+        qty: n(row.qty),
+        uom: asText(row.uom, "Pcs"),
+        warehouse: asText(row.warehouse, "Warehouse")
       }));
       break;
   }
@@ -548,6 +890,7 @@ interface InventoryReportsProps {
 export default function InventoryReports({ onNavigate }: InventoryReportsProps) {
   const [activeReport, setActiveReport] = useState<ReportId>("soh");
   const [query, setQuery] = useState("");
+  const [warehouseOptions, setWarehouseOptions] = useState<Array<{ id: string; name: string }>>([]);
   const [groupOpen, setGroupOpen] = useState<Record<ReportGroupId, boolean>>({
     stock: true,
     movement: true,
@@ -567,6 +910,8 @@ export default function InventoryReports({ onNavigate }: InventoryReportsProps) 
   const [, setDataRevision] = useState(0);
 
   async function loadReport(signal?: AbortSignal) {
+    clearLiveReportData(activeReport);
+    setDataRevision((value) => value + 1);
     try {
       const data = await getInventoryReportData(activeReport, {
         dateFrom,
@@ -589,7 +934,29 @@ export default function InventoryReports({ onNavigate }: InventoryReportsProps) 
     const controller = new AbortController();
     loadReport(controller.signal);
     return () => controller.abort();
-  }, [activeReport, dateFrom, dateTo, warehouse, department, brand, onlyPositiveStock]);
+  }, [activeReport, dateFrom, dateTo, warehouse, department, brand, itemSearch, onlyPositiveStock]);
+
+  React.useEffect(() => {
+    let cancelled = false;
+    getWarehouses()
+      .then((warehouses) => {
+        if (cancelled || !Array.isArray(warehouses)) return;
+        setWarehouseOptions(
+          warehouses
+            .filter((warehouse) => warehouse?.id !== undefined && warehouse?.id !== null)
+            .map((warehouse) => ({
+              id: String(warehouse.id),
+              name: asText(warehouse.name ?? warehouse.code, `Warehouse #${warehouse.id}`),
+            }))
+        );
+      })
+      .catch((error) => {
+        console.error("Unable to load warehouses for inventory reports", error);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const activeDef = useMemo(
     () => REPORTS.find((r) => r.id === activeReport)!,
@@ -877,10 +1244,10 @@ export default function InventoryReports({ onNavigate }: InventoryReportsProps) 
                     Date From
                   </label>
                   <Input
+                    type="date"
                     value={dateFrom}
                     onChange={(e) => setDateFrom(e.target.value)}
-                    placeholder="YYYY-MM-DD"
-                    className="h-8 text-[11px] bg-slate-50 border-slate-200"
+                    className="h-8 text-[11px] bg-slate-50 border-slate-200 [color-scheme:light]"
                   />
                 </div>
 
@@ -890,10 +1257,10 @@ export default function InventoryReports({ onNavigate }: InventoryReportsProps) 
                     Date To
                   </label>
                   <Input
+                    type="date"
                     value={dateTo}
                     onChange={(e) => setDateTo(e.target.value)}
-                    placeholder="YYYY-MM-DD"
-                    className="h-8 text-[11px] bg-slate-50 border-slate-200"
+                    className="h-8 text-[11px] bg-slate-50 border-slate-200 [color-scheme:light]"
                   />
                 </div>
 
@@ -907,9 +1274,10 @@ export default function InventoryReports({ onNavigate }: InventoryReportsProps) 
                     onChange={(e) => setWarehouse(e.target.value)}
                     className="w-full h-8 text-[11px] rounded-lg border border-slate-200 bg-slate-50 px-2"
                   >
-                    <option>All</option>
-                    <option>Main WH</option>
-                    <option>Outlet WH</option>
+                    <option value="All">All</option>
+                    {warehouseOptions.map((option) => (
+                      <option key={option.id} value={option.id}>{option.name}</option>
+                    ))}
                   </select>
                 </div>
 
@@ -975,7 +1343,10 @@ export default function InventoryReports({ onNavigate }: InventoryReportsProps) 
 
                 <div className="flex items-end gap-2">
                   <Button
-                    className="flex-1 h-8 text-[11px] bg-[#F5C742] hover:bg-[#e4b82e] text-slate-900"
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => loadReport()}
+                    className="flex-1 h-8 min-w-[132px] rounded-md !bg-[#F5C742] !text-slate-900 shadow-sm hover:!bg-[#e4b82e] focus-visible:ring-2 focus-visible:ring-[#F5C742]/40 text-[11px] font-semibold"
                   >
                     Generate
                   </Button>
@@ -1080,40 +1451,42 @@ function StockValuationReport() {
   const totalAvgValue = mockRowsValuation.reduce((sum, r) => sum + r.avgValue, 0);
   const totalFifoValue = mockRowsValuation.reduce((sum, r) => sum + r.fifoValue, 0);
   const totalLastValue = mockRowsValuation.reduce((sum, r) => sum + r.lastValue, 0);
+  const totalValuationQty = mockRowsValuation.reduce((sum, r) => sum + r.qty, 0);
+  const totalValuationItems = new Set(mockRowsValuation.map((row) => row.sku)).size;
   
   return (
     <div className="space-y-3">
       {/* Summary Cards */}
       <div className="grid grid-cols-3 gap-3">
         <Card className={`border-2 cursor-pointer transition-all ${costingMethod === 'avg' ? 'border-[#F5C742] bg-[#FFF6D8]' : 'border-slate-200 bg-white'}`} onClick={() => setCostingMethod('avg')}>
-          <CardContent className="p-4">
+          <CardContent className="min-h-[92px] p-4 flex flex-col items-start justify-center gap-2 text-left">
             <div className="flex items-center justify-between mb-2">
               <span className="text-[10px] font-medium text-slate-600">Average Cost Method</span>
               <DollarSign className="h-4 w-4 text-[#F5C742]" />
             </div>
-            <div className="text-xl font-bold text-slate-900">AED {totalAvgValue.toLocaleString('en-US', { minimumFractionDigits: 2 })}</div>
-            <div className="text-[9px] text-slate-500 mt-1">18 items • 5,725 units</div>
+            <div className="text-2xl font-bold leading-none tabular-nums tracking-normal text-slate-900">AED {totalAvgValue.toLocaleString('en-US', { minimumFractionDigits: 2 })}</div>
+            <div className="text-[9px] text-slate-500 mt-1">{totalValuationItems} items / {totalValuationQty.toLocaleString()} units</div>
           </CardContent>
         </Card>
         
         <Card className={`border-2 cursor-pointer transition-all ${costingMethod === 'fifo' ? 'border-[#F5C742] bg-[#FFF6D8]' : 'border-slate-200 bg-white'}`} onClick={() => setCostingMethod('fifo')}>
-          <CardContent className="p-4">
+          <CardContent className="min-h-[92px] p-4 flex flex-col items-start justify-center gap-2 text-left">
             <div className="flex items-center justify-between mb-2">
               <span className="text-[10px] font-medium text-slate-600">FIFO Cost Method</span>
               <TrendingUp className="h-4 w-4 text-blue-600" />
             </div>
-            <div className="text-xl font-bold text-slate-900">AED {totalFifoValue.toLocaleString('en-US', { minimumFractionDigits: 2 })}</div>
+            <div className="text-2xl font-bold leading-none tabular-nums tracking-normal text-slate-900">AED {totalFifoValue.toLocaleString('en-US', { minimumFractionDigits: 2 })}</div>
             <div className="text-[9px] text-slate-500 mt-1">First-in, First-out basis</div>
           </CardContent>
         </Card>
         
         <Card className={`border-2 cursor-pointer transition-all ${costingMethod === 'last' ? 'border-[#F5C742] bg-[#FFF6D8]' : 'border-slate-200 bg-white'}`} onClick={() => setCostingMethod('last')}>
-          <CardContent className="p-4">
+          <CardContent className="min-h-[92px] p-4 flex flex-col items-start justify-center gap-2 text-left">
             <div className="flex items-center justify-between mb-2">
               <span className="text-[10px] font-medium text-slate-600">Last Purchase Cost</span>
               <TrendingUp className="h-4 w-4 text-emerald-600" />
             </div>
-            <div className="text-xl font-bold text-slate-900">AED {totalLastValue.toLocaleString('en-US', { minimumFractionDigits: 2 })}</div>
+            <div className="text-2xl font-bold leading-none tabular-nums tracking-normal text-slate-900">AED {totalLastValue.toLocaleString('en-US', { minimumFractionDigits: 2 })}</div>
             <div className="text-[9px] text-slate-500 mt-1">Latest purchase price</div>
           </CardContent>
         </Card>
@@ -1240,7 +1613,7 @@ function StockValuationReport() {
           <div className="mt-3 p-3 bg-gradient-to-r from-[#F5C742] to-[#f4d673] rounded-lg flex items-center justify-between text-white">
             <div>
               <div className="text-[10px] opacity-90">Total Stock Valuation</div>
-              <div className="text-2xl font-bold">
+              <div className="text-2xl font-bold leading-none tabular-nums tracking-normal">
                 AED {(costingMethod === 'avg' ? totalAvgValue : costingMethod === 'fifo' ? totalFifoValue : totalLastValue).toLocaleString('en-US', { minimumFractionDigits: 2 })}
               </div>
             </div>
@@ -1436,6 +1809,8 @@ let mockBinStock = [
 
 // ── Shared helpers ───────────────────────────────────────────────────────────
 
+clearLiveReportData();
+
 const INV_COLORS = ["#F5C742", "#3b82f6", "#8b5cf6", "#10b981", "#f97316", "#ef4444", "#06b6d4"];
 
 function urgencyBadge(urgency: string) {
@@ -1529,6 +1904,7 @@ function Td({ children, right, mono }: { children: React.ReactNode; right?: bool
 // ── Stock on Hand ────────────────────────────────────────────────────────────
 
 function StockOnHandReport() {
+  const warehouses = Array.from(new Set(mockSOH.map((row) => row.warehouse).filter(Boolean)));
   return (
     <div className="space-y-3">
       <div className="grid grid-cols-4 gap-3">
@@ -1536,13 +1912,14 @@ function StockOnHandReport() {
           { label: "Total SKUs", value: mockSOH.length.toString(), sub: "across all warehouses" },
           { label: "Total Units", value: mockSOH.reduce((s, r) => s + r.qty, 0).toLocaleString(), sub: "on hand now" },
           { label: "Total Value", value: `AED ${mockSOH.reduce((s, r) => s + r.value, 0).toLocaleString("en-US", { minimumFractionDigits: 0 })}`, sub: "at avg cost" },
+          { label: "Warehouses", value: warehouses.length.toString(), sub: warehouses.join(" / ") || "selected warehouses", live: true },
           { label: "Warehouses", value: "2", sub: "Main WH · Outlet WH" },
-        ].map((c) => (
+        ].filter((c: any) => c.label !== "Warehouses" || c.live).map((c) => (
           <Card key={c.label} className="border border-slate-200 bg-white">
-            <CardContent className="p-4">
-              <div className="text-[10px] text-slate-500 mb-1">{c.label}</div>
-              <div className="text-xl font-bold text-slate-900">{c.value}</div>
-              <div className="text-[10px] text-slate-400 mt-0.5">{c.sub}</div>
+            <CardContent className="min-h-[92px] p-4 flex flex-col items-start justify-center gap-2 text-left">
+              <div className="max-w-full text-[10px] font-semibold leading-snug text-slate-500 whitespace-normal break-words">{c.label}</div>
+              <div className="text-2xl font-bold leading-none tabular-nums tracking-normal text-slate-900">{c.value}</div>
+              <div className="max-w-full text-[10px] leading-snug text-slate-400 break-words">{c.sub}</div>
             </CardContent>
           </Card>
         ))}
@@ -1632,9 +2009,9 @@ function LowStockReport() {
           { label: "Total Suggest PO",  value: mockLowStock.reduce((s, r) => s + r.suggested, 0).toString() + " units", cls: "text-slate-900" },
         ].map((c) => (
           <Card key={c.label} className="border border-slate-200 bg-white">
-            <CardContent className="p-4">
-              <div className="text-[10px] text-slate-500 mb-1">{c.label}</div>
-              <div className={`text-xl font-bold ${c.cls}`}>{c.value}</div>
+            <CardContent className="min-h-[92px] p-4 flex flex-col items-start justify-center gap-2 text-left">
+              <div className="max-w-full text-[10px] font-semibold leading-snug text-slate-500 whitespace-normal break-words">{c.label}</div>
+              <div className={`text-2xl font-bold leading-none tabular-nums tracking-normal ${c.cls}`}>{c.value}</div>
             </CardContent>
           </Card>
         ))}
@@ -1672,20 +2049,23 @@ function LowStockReport() {
 
 function OutOfStockReport() {
   const totalDailyLoss = mockOutOfStock.reduce((s, r) => s + r.avgDailySales, 0);
+  const avgDaysOut = mockOutOfStock.length
+    ? mockOutOfStock.reduce((s, r) => s + r.daysSinceStock, 0) / mockOutOfStock.length
+    : 0;
   return (
     <div className="space-y-3">
       <div className="grid grid-cols-4 gap-3">
         {[
           { label: "Out of Stock SKUs",  value: mockOutOfStock.length.toString(), sub: "zero inventory" },
-          { label: "Avg Days Out",       value: (mockOutOfStock.reduce((s, r) => s + r.daysSinceStock, 0) / mockOutOfStock.length).toFixed(1), sub: "since last stock" },
+          { label: "Avg Days Out",       value: avgDaysOut.toFixed(1), sub: "since last stock" },
           { label: "Daily Sales Lost",   value: `~${totalDailyLoss} units/day`, sub: "based on history" },
           { label: "Suggested PO Total", value: mockOutOfStock.reduce((s, r) => s + r.suggestedPO, 0).toString() + " units", sub: "to replenish" },
         ].map((c) => (
           <Card key={c.label} className="border border-slate-200 bg-white">
-            <CardContent className="p-4">
-              <div className="text-[10px] text-slate-500 mb-1">{c.label}</div>
-              <div className="text-xl font-bold text-red-600">{c.value}</div>
-              <div className="text-[10px] text-slate-400 mt-0.5">{c.sub}</div>
+            <CardContent className="min-h-[92px] p-4 flex flex-col items-start justify-center gap-2 text-left">
+              <div className="max-w-full text-[10px] font-semibold leading-snug text-slate-500 whitespace-normal break-words">{c.label}</div>
+              <div className="text-2xl font-bold leading-none tabular-nums tracking-normal text-red-600">{c.value}</div>
+              <div className="max-w-full text-[10px] leading-snug text-slate-400 break-words">{c.sub}</div>
             </CardContent>
           </Card>
         ))}
@@ -1730,10 +2110,10 @@ function NegativeStockReport() {
           { label: "Cost Impact",     value: `AED ${totalImpact.toFixed(2)}`, sub: "financial exposure" },
         ].map((c) => (
           <Card key={c.label} className="border border-slate-200 bg-white">
-            <CardContent className="p-4">
-              <div className="text-[10px] text-slate-500 mb-1">{c.label}</div>
-              <div className="text-xl font-bold text-red-600">{c.value}</div>
-              <div className="text-[10px] text-slate-400 mt-0.5">{c.sub}</div>
+            <CardContent className="min-h-[92px] p-4 flex flex-col items-start justify-center gap-2 text-left">
+              <div className="max-w-full text-[10px] font-semibold leading-snug text-slate-500 whitespace-normal break-words">{c.label}</div>
+              <div className="text-2xl font-bold leading-none tabular-nums tracking-normal text-red-600">{c.value}</div>
+              <div className="max-w-full text-[10px] leading-snug text-slate-400 break-words">{c.sub}</div>
             </CardContent>
           </Card>
         ))}
@@ -1836,10 +2216,10 @@ function ExpiryReport() {
           { label: "At-Risk Value",        value: `AED ${atRiskValue.toFixed(0)}`,     cls: "text-red-600",    sub: "critical + high batches" },
         ].map((c) => (
           <Card key={c.label} className="border border-slate-200 bg-white">
-            <CardContent className="p-4">
-              <div className="text-[10px] text-slate-500 mb-1">{c.label}</div>
-              <div className={`text-xl font-bold ${c.cls ?? "text-slate-900"}`}>{c.value}</div>
-              {c.sub && <div className="text-[10px] text-slate-400 mt-0.5">{c.sub}</div>}
+            <CardContent className="min-h-[92px] p-4 flex flex-col items-start justify-center gap-2 text-left">
+              <div className="max-w-full text-[10px] font-semibold leading-snug text-slate-500 whitespace-normal break-words">{c.label}</div>
+              <div className={`text-2xl font-bold leading-none tabular-nums tracking-normal ${c.cls ?? "text-slate-900"}`}>{c.value}</div>
+              {c.sub && <div className="max-w-full text-[10px] leading-snug text-slate-400 break-words">{c.sub}</div>}
             </CardContent>
           </Card>
         ))}
@@ -2067,9 +2447,9 @@ function ReconciliationReport() {
           { label: "Net Cost Impact", value: `AED ${totalImpact > 0 ? "+" : ""}${totalImpact.toFixed(2)}` },
         ].map((c) => (
           <Card key={c.label} className="border border-slate-200 bg-white">
-            <CardContent className="p-4">
-              <div className="text-[10px] text-slate-500 mb-1">{c.label}</div>
-              <div className="text-xl font-bold text-slate-900">{c.value}</div>
+            <CardContent className="min-h-[92px] p-4 flex flex-col items-start justify-center gap-2 text-left">
+              <div className="max-w-full text-[10px] font-semibold leading-snug text-slate-500 whitespace-normal break-words">{c.label}</div>
+              <div className="text-2xl font-bold leading-none tabular-nums tracking-normal text-slate-900">{c.value}</div>
             </CardContent>
           </Card>
         ))}
@@ -2111,6 +2491,7 @@ function ReconciliationReport() {
 
 function WastageReport() {
   const totalImpact = mockWastage.reduce((s, r) => s + r.impact, 0);
+  const avgImpact = mockWastage.length ? totalImpact / mockWastage.length : 0;
   return (
     <div className="space-y-3">
       <div className="grid grid-cols-2 gap-3">
@@ -2131,15 +2512,15 @@ function WastageReport() {
           </CardContent>
         </Card>
         <Card className="border border-slate-200 bg-white">
-          <CardContent className="p-4 flex flex-col gap-4 justify-center h-full">
+          <CardContent className="min-h-[148px] p-4 flex flex-col gap-4 justify-center h-full text-left">
             {[
               { label: "Total Wastage Events", value: mockWastage.length.toString() },
               { label: "Total Cost Impact",    value: `AED ${totalImpact.toFixed(2)}`, cls: "text-red-600" },
-              { label: "Avg per Event",        value: `AED ${(totalImpact / mockWastage.length).toFixed(2)}` },
+              { label: "Avg per Event",        value: `AED ${avgImpact.toFixed(2)}` },
             ].map((c) => (
               <div key={c.label}>
                 <div className="text-[10px] text-slate-500">{c.label}</div>
-                <div className={`text-xl font-bold ${c.cls ?? "text-slate-900"}`}>{c.value}</div>
+                <div className={`text-2xl font-bold leading-none tabular-nums tracking-normal ${c.cls ?? "text-slate-900"}`}>{c.value}</div>
               </div>
             ))}
           </CardContent>
@@ -2293,9 +2674,9 @@ function CostVarianceReport() {
           { label: "Net Variance", value: `AED ${totalVar > 0 ? "+" : ""}${totalVar.toFixed(2)}`, cls: totalVar > 0 ? "text-red-600" : "text-emerald-600" },
         ].map((c) => (
           <Card key={c.label} className="border border-slate-200 bg-white">
-            <CardContent className="p-4">
-              <div className="text-[10px] text-slate-500 mb-1">{c.label}</div>
-              <div className={`text-xl font-bold ${c.cls ?? "text-slate-900"}`}>{c.value}</div>
+            <CardContent className="min-h-[92px] p-4 flex flex-col items-start justify-center gap-2 text-left">
+              <div className="max-w-full text-[10px] font-semibold leading-snug text-slate-500 whitespace-normal break-words">{c.label}</div>
+              <div className={`text-2xl font-bold leading-none tabular-nums tracking-normal ${c.cls ?? "text-slate-900"}`}>{c.value}</div>
             </CardContent>
           </Card>
         ))}
@@ -2406,7 +2787,9 @@ function ItemMarginReport() {
 // ── Item Master Completeness ─────────────────────────────────────────────────
 
 function ItemMasterCompletenessReport() {
-  const avg = mockMasterCompleteness.reduce((s, r) => s + r.score, 0) / mockMasterCompleteness.length;
+  const avg = mockMasterCompleteness.length
+    ? mockMasterCompleteness.reduce((s, r) => s + r.score, 0) / mockMasterCompleteness.length
+    : 0;
   const scoreData = [
     { range: "100%", count: mockMasterCompleteness.filter((r) => r.score === 100).length },
     { range: "60–99%", count: mockMasterCompleteness.filter((r) => r.score >= 60 && r.score < 100).length },
@@ -2421,10 +2804,10 @@ function ItemMasterCompletenessReport() {
           { label: "Fully Complete", value: mockMasterCompleteness.filter((r) => r.score === 100).length.toString(), sub: "100% score" },
         ].map((c) => (
           <Card key={c.label} className="border border-slate-200 bg-white">
-            <CardContent className="p-4">
-              <div className="text-[10px] text-slate-500 mb-1">{c.label}</div>
-              <div className={`text-xl font-bold ${c.cls ?? "text-slate-900"}`}>{c.value}</div>
-              {c.sub && <div className="text-[10px] text-slate-400 mt-0.5">{c.sub}</div>}
+            <CardContent className="min-h-[92px] p-4 flex flex-col items-start justify-center gap-2 text-left">
+              <div className="max-w-full text-[10px] font-semibold leading-snug text-slate-500 whitespace-normal break-words">{c.label}</div>
+              <div className={`text-2xl font-bold leading-none tabular-nums tracking-normal ${c.cls ?? "text-slate-900"}`}>{c.value}</div>
+              {c.sub && <div className="max-w-full text-[10px] leading-snug text-slate-400 break-words">{c.sub}</div>}
             </CardContent>
           </Card>
         ))}
@@ -2454,7 +2837,7 @@ function ItemMasterCompletenessReport() {
             {(["hasBarcode", "hasCost", "hasCategory", "hasImage", "hasVendor"] as const).map((f) => {
               const label = { hasBarcode: "Barcode", hasCost: "Cost", hasCategory: "Category", hasImage: "Image", hasVendor: "Vendor" }[f];
               const filled = mockMasterCompleteness.filter((r) => r[f]).length;
-              const pct = Math.round((filled / mockMasterCompleteness.length) * 100);
+              const pct = mockMasterCompleteness.length ? Math.round((filled / mockMasterCompleteness.length) * 100) : 0;
               return (
                 <div key={f}>
                   <div className="flex justify-between text-[10px] text-slate-600 mb-0.5">
@@ -2551,9 +2934,9 @@ function ScaleExportReport() {
           { label: "Failed",      value: failed.toString(), cls: "text-red-600" },
         ].map((c) => (
           <Card key={c.label} className="border border-slate-200 bg-white">
-            <CardContent className="p-4">
-              <div className="text-[10px] text-slate-500 mb-1">{c.label}</div>
-              <div className={`text-xl font-bold ${c.cls ?? "text-slate-900"}`}>{c.value}</div>
+            <CardContent className="min-h-[92px] p-4 flex flex-col items-start justify-center gap-2 text-left">
+              <div className="max-w-full text-[10px] font-semibold leading-snug text-slate-500 whitespace-normal break-words">{c.label}</div>
+              <div className={`text-2xl font-bold leading-none tabular-nums tracking-normal ${c.cls ?? "text-slate-900"}`}>{c.value}</div>
             </CardContent>
           </Card>
         ))}
@@ -2611,14 +2994,14 @@ function DeadStockReport() {
           </CardContent>
         </Card>
         <Card className="border border-slate-200 bg-white">
-          <CardContent className="p-4 flex flex-col gap-4 justify-center h-full">
+          <CardContent className="min-h-[148px] p-4 flex flex-col gap-4 justify-center h-full text-left">
             <div>
               <div className="text-[10px] text-slate-500">Total Dead Stock SKUs</div>
-              <div className="text-2xl font-bold text-slate-900">{mockDeadStock.length}</div>
+              <div className="text-2xl font-bold leading-none tabular-nums tracking-normal text-slate-900">{mockDeadStock.length}</div>
             </div>
             <div>
               <div className="text-[10px] text-slate-500">Total Tied-Up Value</div>
-              <div className="text-2xl font-bold text-amber-600">AED {mockDeadStock.reduce((s, r) => s + r.value, 0).toLocaleString("en-US", { minimumFractionDigits: 2 })}</div>
+              <div className="text-2xl font-bold leading-none tabular-nums tracking-normal text-amber-600">AED {mockDeadStock.reduce((s, r) => s + r.value, 0).toLocaleString("en-US", { minimumFractionDigits: 2 })}</div>
             </div>
           </CardContent>
         </Card>
@@ -2734,10 +3117,10 @@ function BinStockReport() {
           { label: "Total Units",    value: mockBinStock.reduce((s, r) => s + r.qty, 0).toLocaleString() },
         ].map((c) => (
           <Card key={c.label} className="border border-slate-200 bg-white">
-            <CardContent className="p-4">
-              <div className="text-[10px] text-slate-500 mb-1">{c.label}</div>
-              <div className="text-xl font-bold text-slate-900">{c.value}</div>
-              {c.sub && <div className="text-[10px] text-slate-400 mt-0.5 truncate">{c.sub}</div>}
+            <CardContent className="min-h-[92px] p-4 flex flex-col items-start justify-center gap-2 text-left">
+              <div className="max-w-full text-[10px] font-semibold leading-snug text-slate-500 whitespace-normal break-words">{c.label}</div>
+              <div className="text-2xl font-bold leading-none tabular-nums tracking-normal text-slate-900">{c.value}</div>
+              {c.sub && <div className="max-w-full text-[10px] leading-snug text-slate-400 break-words truncate">{c.sub}</div>}
             </CardContent>
           </Card>
         ))}
