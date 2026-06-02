@@ -270,9 +270,9 @@ const Payment = () => {
     const handlePrint = async (payment) => {
         if (!payment) return;
         try {
-            const templates = await getTemplatesByCategory('Sales Invoice');
+            const templates = await getTemplatesByCategory('Receipt Voucher');
             const defaultTemplate = (templates && templates.find(t => t.isDefault)) || {
-                category: 'Sales Invoice',
+                category: 'Receipt Voucher',
                 paperSize: 'A4',
                 orientation: 'Portrait',
                 headerContent: '',

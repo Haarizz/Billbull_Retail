@@ -289,42 +289,39 @@ export const generateReportPrintHtml = (_template, reportTitle, columns, data, c
 };
 
 export const printHtml = (htmlContent) => {
-    const printWindow = window.open('', '_blank', 'width=960,height=760');
-    if (!printWindow) {
-        toast.error('Pop-up blocked! Please allow pop-ups for this site.');
-        return;
-    }
+    // Remove any previous print frame
+    const existing = document.getElementById('__bb_print_frame__');
+    if (existing) existing.remove();
+
+    const iframe = document.createElement('iframe');
+    iframe.id = '__bb_print_frame__';
+    iframe.style.cssText = 'position:fixed;top:0;left:0;width:1px;height:1px;opacity:0;border:none;pointer-events:none;';
+    document.body.appendChild(iframe);
+
+    const cleanup = () => {
+        setTimeout(() => { if (iframe.parentNode) iframe.remove(); }, 3000);
+    };
 
     let hasPrinted = false;
-    const printDate = new Date().toISOString().slice(0, 10);
     const runPrint = () => {
-        if (hasPrinted || printWindow.closed) return;
+        if (hasPrinted) return;
         hasPrinted = true;
-        printWindow.focus();
-        printWindow.print();
+        try {
+            iframe.contentWindow.focus();
+            iframe.contentWindow.print();
+        } catch {
+            // Fallback: open new window if iframe print is blocked
+            const win = window.open('', '_blank');
+            if (win) { win.document.write(htmlContent); win.document.close(); setTimeout(() => win.print(), 500); }
+        }
+        cleanup();
     };
 
-    printWindow.document.open();
-    printWindow.document.write(htmlContent);
-    printWindow.document.close();
+    const doc = iframe.contentWindow.document;
+    doc.open();
+    doc.write(htmlContent);
+    doc.close();
 
-    // Ensure the title is set for the Save as PDF filename
-    const titleMatch = htmlContent.match(/<title>(.*?)<\/title>/i);
-    if (titleMatch && titleMatch[1]) {
-        printWindow.document.title = titleMatch[1];
-    }
-
-    try {
-        printWindow.history.replaceState(null, '', `/print/${printDate}`);
-    } catch {
-        // Browser print helpers may block history changes in some contexts.
-    }
-
-    printWindow.onload = () => {
-        setTimeout(runPrint, 300);
-    };
-
-    setTimeout(() => {
-        runPrint();
-    }, 900);
+    iframe.onload = () => setTimeout(runPrint, 250);
+    setTimeout(runPrint, 800);
 };

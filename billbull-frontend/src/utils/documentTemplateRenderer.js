@@ -199,10 +199,10 @@ const renderCurrencySymbol = (value) => {
     return escapeHtml(currencyConfig.label);
 };
 
-const renderCurrencySymbolHtml = (value) => {
+const renderCurrencySymbolHtml = (value, imgHeight = '0.85em') => {
     const currencyConfig = resolveCurrencyDisplayConfig(value);
     if (currencyConfig.hasImage) {
-        return `<img src="${UAE_DIRHAM_SYMBOL_IMAGE}" alt="${escapeHtml(currencyConfig.ariaLabel)}" style="height:0.85em;width:auto;display:inline-block;vertical-align:-0.07em;" />`;
+        return `<img src="${UAE_DIRHAM_SYMBOL_IMAGE}" alt="${escapeHtml(currencyConfig.ariaLabel)}" style="height:${imgHeight};width:auto;display:inline-block;vertical-align:-0.07em;" />`;
     }
     return escapeHtml(currencyConfig.label);
 };
@@ -215,10 +215,10 @@ const renderCurrencyCode = (value) => {
 // Pick currency rendering mode based on template displayOptions.currencyDisplay:
 // 'symbol' (default, legacy) renders the glyph / dirham image; 'code' renders the
 // alphabetic ISO code (AED / USD).
-const renderCurrencyForLayout = (value, displayOptions = {}) =>
+const renderCurrencyForLayout = (value, displayOptions = {}, imgHeight = '0.85em') =>
     displayOptions?.currencyDisplay === 'code'
         ? renderCurrencyCode(value)
-        : renderCurrencySymbolHtml(value);
+        : renderCurrencySymbolHtml(value, imgHeight);
 
 const formatNumber = (value, decimals = 2) =>
     asNumber(value).toLocaleString('en-AE', {
@@ -352,11 +352,60 @@ const resolveCurrency = (companyProfile = {}, totals = {}, summaryAmount = {}) =
     return resolveCurrencyDisplayConfig(documentCurrency || 'AED').label;
 };
 
+const ONES = ['', 'One', 'Two', 'Three', 'Four', 'Five', 'Six', 'Seven', 'Eight', 'Nine',
+    'Ten', 'Eleven', 'Twelve', 'Thirteen', 'Fourteen', 'Fifteen', 'Sixteen',
+    'Seventeen', 'Eighteen', 'Nineteen'];
+const TENS = ['', '', 'Twenty', 'Thirty', 'Forty', 'Fifty', 'Sixty', 'Seventy', 'Eighty', 'Ninety'];
+
+const convertHundreds = (n) => {
+    if (n === 0) return '';
+    if (n < 20) return ONES[n];
+    if (n < 100) return TENS[Math.floor(n / 10)] + (n % 10 ? ' ' + ONES[n % 10] : '');
+    return ONES[Math.floor(n / 100)] + ' Hundred' + (n % 100 ? ' ' + convertHundreds(n % 100) : '');
+};
+
+const numberToWords = (num) => {
+    if (!Number.isFinite(num) || num < 0) return 'Zero';
+    if (num === 0) return 'Zero';
+    const parts = [];
+    const n = Math.floor(num);
+    if (n >= 1000000) { parts.push(convertHundreds(Math.floor(n / 1000000)) + ' Million'); }
+    if (n % 1000000 >= 1000) { parts.push(convertHundreds(Math.floor((n % 1000000) / 1000)) + ' Thousand'); }
+    if (n % 1000 > 0) { parts.push(convertHundreds(n % 1000)); }
+    return parts.join(' ');
+};
+
+const CURRENCY_UNITS = {
+    AED: { main: 'Dirhams', sub: 'Fils' },     USD: { main: 'Dollars', sub: 'Cents' },
+    EUR: { main: 'Euros', sub: 'Cents' },       GBP: { main: 'Pounds', sub: 'Pence' },
+    INR: { main: 'Rupees', sub: 'Paise' },      SAR: { main: 'Riyals', sub: 'Halalas' },
+    QAR: { main: 'Riyals', sub: 'Dirhams' },    KWD: { main: 'Dinars', sub: 'Fils' },
+    BHD: { main: 'Dinars', sub: 'Fils' },       OMR: { main: 'Rials', sub: 'Baisa' },
+    JOD: { main: 'Dinars', sub: 'Fils' },       EGP: { main: 'Pounds', sub: 'Piastres' },
+    AUD: { main: 'Dollars', sub: 'Cents' },     CAD: { main: 'Dollars', sub: 'Cents' },
+    SGD: { main: 'Dollars', sub: 'Cents' },     HKD: { main: 'Dollars', sub: 'Cents' },
+    MYR: { main: 'Ringgit', sub: 'Sen' },       PKR: { main: 'Rupees', sub: 'Paisa' },
+    NPR: { main: 'Rupees', sub: 'Paisa' },      LKR: { main: 'Rupees', sub: 'Cents' },
+    BDT: { main: 'Taka', sub: 'Poisha' },       NGN: { main: 'Naira', sub: 'Kobo' },
+    KES: { main: 'Shillings', sub: 'Cents' },   ZAR: { main: 'Rand', sub: 'Cents' },
+    CHF: { main: 'Francs', sub: 'Rappen' },     TRY: { main: 'Lira', sub: 'Kurus' },
+    CNY: { main: 'Yuan', sub: 'Jiao' },         JPY: { main: 'Yen', sub: 'Sen' },
+    PHP: { main: 'Pesos', sub: 'Centavos' },    THB: { main: 'Baht', sub: 'Satang' },
+    MXN: { main: 'Pesos', sub: 'Centavos' },    BRL: { main: 'Reais', sub: 'Centavos' },
+    RUB: { main: 'Rubles', sub: 'Kopeks' },     NOK: { main: 'Kroner', sub: 'Ore' },
+    SEK: { main: 'Kronor', sub: 'Ore' },        DKK: { main: 'Kroner', sub: 'Ore' },
+};
+
 const formatAmountInWords = (value, currency) => {
     const amount = asNumber(value);
     const whole = Math.floor(amount);
-    const fils = Math.round((amount - whole) * 100);
-    return `${whole.toLocaleString('en-AE')} ${currency} and ${fils} Fils Only`;
+    const sub = Math.round((amount - whole) * 100);
+    const units = CURRENCY_UNITS[String(currency || '').toUpperCase()] || { main: String(currency || 'Units'), sub: 'Cents' };
+    const mainWords = numberToWords(whole) || 'Zero';
+    const result = sub > 0
+        ? `${mainWords} ${units.main} and ${numberToWords(sub)} ${units.sub} Only`
+        : `${mainWords} ${units.main} Only`;
+    return result;
 };
 
 const visibleWhen = (settings, keys, fallback = true) => pickSetting(settings, keys, fallback);
@@ -1137,11 +1186,16 @@ const buildFooterAddon = (layout) =>
 
 const buildGrandTotal = (layout) => {
     if (!layout.showHighlight) return '';
-
+    // Cap-height of Inter/Arial digits ≈ 73% of em-square.
+    // Use absolute px so the image size is never affected by em inheritance
+    // issues in print iframe contexts (where em always resolves to body 9px).
+    const gtFontPx = (layout.theme?.fontSize || 9) + 22;
+    const imgPx = Math.round(gtFontPx * 0.73);
+    const currHtml = renderCurrencyForLayout(layout.currency, layout.displayOptions, `${imgPx}px`);
     return `
         <div class="grand-total-display">
             <div class="grand-total-label">${escapeHtml(layout.highlight.label || 'Grand Total')}</div>
-            <div class="grand-total-value">${renderCurrencyCode(layout.currency)} ${formatNumber(layout.highlight.value)}</div>
+            <div class="grand-total-value">${currHtml} ${formatNumber(layout.highlight.value)}</div>
         </div>
     `;
 };
@@ -1572,9 +1626,14 @@ const buildCoreStyles = () => `
     }
     .grand-total-value {
         color: #000000;
-        font-size: 16px;
-        font-weight: 700;
+        font-size: 31px;
+        font-weight: 800;
         line-height: 1.2;
+    }
+    .grand-total-value img {
+        height: 0.88em;
+        width: auto;
+        vertical-align: middle;
     }
     .document-shell-designer .grand-total-value {
         font-weight: 800;
@@ -2121,7 +2180,7 @@ const buildTemplateThemeStyles = (layout) => {
         }
         .document-title {
             color: ${theme.primaryColor};
-            font-size: ${theme.fontSize + (layout.isPurchaseDesigner ? 17 : 10)}px;
+            font-size: ${theme.fontSize + 17}px;
         }
         .company-name,
         .company-local-name,
@@ -2133,7 +2192,7 @@ const buildTemplateThemeStyles = (layout) => {
         }
         .grand-total-value {
             color: ${theme.grandTotalColor || theme.primaryColor};
-            font-size: ${theme.fontSize + (layout.isPurchaseDesigner ? 22 : 7)}px;
+            font-size: ${theme.fontSize + 22}px;
         }
         .document-shell-designer .grand-total-display {
             border-top: 0;
@@ -3547,7 +3606,7 @@ const renderGrnReceiptHtml = (template, data, options = {}, _renderTarget = 'pri
     const orientation = (template.orientation || s.orientation || 'portrait');
 
     const currencyConfig = resolveCurrencyDisplayConfig(company);
-    const currencyLabel = escapeHtml(currencyConfig.currency || currencyConfig.label || 'AED');
+    const currencyLabel = renderCurrencySymbolHtml(company);
 
     // ── header logo ──
     const logoUrl = company.logoUrl;
@@ -3999,6 +4058,164 @@ const buildDocumentHtml = (template, data, options = {}, renderTarget = 'print')
     `;
 };
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Customer Payment Receipt — mirrors PaymentReceiptPreview in
+// PaymentReceiptDesigner.jsx. Triggered for 'Receipt Voucher' category.
+// ─────────────────────────────────────────────────────────────────────────────
+const defaultPaymentReceiptSettings = () => ({
+    accentColor: '#F5C742', fontFamily: 'Inter, sans-serif', fontSize: 9, paperSize: 'A4',
+    showLogo: true, showStatusBadge: true,
+    showCustomerName: true, showCustomerCode: true, showCustomerAddress: true,
+    showCustomerPhone: false, showCustomerEmail: false, showCustomerTRN: true, showVATNumber: false,
+    showReceiptNumber: true, showReceiptDate: true, showReceiptSession: false,
+    showInvoiceCount: false, showAccountCurrency: false, showBankAccount: true,
+    showInvoiceStatus: true, showInvoiceDate: true, showInvoiceTotal: true,
+    showOutstanding: true, showReceivedNow: true, showBalanceAfter: true, showLinkedSO: false,
+    showTotalOutstanding: true, showDiscountAllowed: false, showRemainingBalance: true, showTotalReceivedBold: true,
+    showPaymentMethod: true, showChequeRef: true, showDepositedTo: true, showChequeDate: false,
+    showNote: false, showCompanyStamp: false, showQRCode: false,
+    showGeneratedBy: true, showReceivedByLine: true,
+    showCompanyName: true, showCompanyAddress: true, showCompanyPhone: false, showCompanyEmail: false, showTRN: true,
+});
+
+const renderCustomerPaymentReceiptHtml = (template, data, options = {}) => {
+    const raw = getTemplateDesignerSettings(template);
+    const s = { ...defaultPaymentReceiptSettings(), ...raw };
+    const co = normalizeDocumentCompanyProfile(options.companyProfile || {});
+    const f = Number(s.fontSize) || 9;
+    const gold = s.accentColor || '#F5C742';
+    const paper = resolvePaperDimensions(s.paperSize || template?.paperSize || 'A4', 'Portrait');
+    const esc = escapeHtml;
+    const fmt = (n) => Number(n || 0).toLocaleString('en-AE', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    const currHtml = renderCurrencySymbolHtml(co);
+
+    const r = data.receiptData || {};
+    const cust = data.customerData || {};
+    const invoices = Array.isArray(data.invoices) ? data.invoices : [];
+    const sum = data.summary || {};
+    const pay = data.payment || {};
+
+    const logoHtml = s.showLogo
+        ? (co.logoUrl
+            ? `<img src="${esc(co.logoUrl)}" alt="Logo" style="height:60px;width:60px;object-fit:contain;border-radius:50%;border:2px solid ${gold};" />`
+            : `<div style="width:60px;height:60px;border-radius:50%;background:${gold}22;border:3px solid ${gold};display:flex;align-items:center;justify-content:center;font-size:26px;font-weight:900;color:${gold};">${esc((co.companyName||'G').charAt(0))}</div>`)
+        : '';
+
+    const metaRows = [
+        s.showReceiptNumber && r.receiptNumber ? ['Receipt No.', r.receiptNumber] : null,
+        s.showReceiptDate && r.date ? ['Date', r.date] : null,
+        s.showReceiptSession && r.session ? ['Receipt Session', r.session] : null,
+        s.showInvoiceCount && r.invoiceCount ? ['Invoices', r.invoiceCount] : null,
+        s.showAccountCurrency && r.account ? ['Account', r.account] : null,
+        s.showBankAccount && r.bankAccount ? ['Cash / Bank', r.bankAccount] : null,
+    ].filter(Boolean);
+
+    const invoiceRows = invoices.map((inv, i) => {
+        const statusColor = (inv.status || '').toLowerCase().includes('full') ? '#059669' : '#d97706';
+        const statusBg = (inv.status || '').toLowerCase().includes('full') ? '#ecfdf5' : '#fffbeb';
+        const statusBorder = (inv.status || '').toLowerCase().includes('full') ? '#6ee7b7' : '#fcd34d';
+        return `<tr style="background:${i % 2 === 0 ? '#fff' : '#fafafa'}">
+            <td style="padding:6px 8px;font-size:${f}px;border-bottom:1px solid ${gold}18;vertical-align:top;">
+                ${s.showInvoiceStatus && inv.status ? `<span style="display:inline-block;margin-bottom:2px;font-size:${f-1.5}px;font-weight:600;color:${statusColor};background:${statusBg};border:1px solid ${statusBorder};border-radius:10px;padding:0 6px;">${esc(inv.status)}</span><br/>` : ''}
+                <span style="font-weight:600;color:#1d4ed8;">${esc(inv.ref || '—')}</span>
+                ${s.showLinkedSO && inv.soRef ? `<div style="color:#94a3b8;font-size:${f-1.5}px;margin-top:1px;">SO: ${esc(inv.soRef)}</div>` : ''}
+            </td>
+            ${s.showInvoiceDate ? `<td style="padding:6px 8px;font-size:${f}px;color:#64748b;text-align:right;border-bottom:1px solid ${gold}18;">${esc(inv.date||'')}</td>` : ''}
+            ${s.showInvoiceTotal ? `<td style="padding:6px 8px;font-size:${f}px;text-align:right;border-bottom:1px solid ${gold}18;"><div style="color:#94a3b8;font-size:${f-1}px;">${currHtml}</div><div>${fmt(inv.total)}</div></td>` : ''}
+            ${s.showOutstanding ? `<td style="padding:6px 8px;font-size:${f}px;text-align:right;border-bottom:1px solid ${gold}18;"><div style="color:#94a3b8;font-size:${f-1}px;">${currHtml}</div><div>${fmt(inv.outstanding)}</div></td>` : ''}
+            ${s.showReceivedNow ? `<td style="padding:6px 8px;font-size:${f}px;text-align:right;border-bottom:1px solid ${gold}18;"><div style="color:${gold};font-size:${f-1}px;font-weight:600;">${currHtml}</div><div style="font-weight:700;color:#1a1a2e;">${fmt(inv.received)}</div></td>` : ''}
+            ${s.showBalanceAfter ? `<td style="padding:6px 8px;font-size:${f}px;text-align:right;border-bottom:1px solid ${gold}18;">${Number(inv.balance) > 0 ? `<span style="font-weight:600;">${currHtml} ${fmt(inv.balance)}</span>` : `<span style="color:#94a3b8;">${currHtml} 0.00</span>`}</td>` : ''}
+        </tr>`;
+    }).join('');
+
+    const now = new Date();
+    const generatedStr = `${now.toLocaleDateString('en-AE')} ${now.toLocaleTimeString('en-AE', { hour: '2-digit', minute: '2-digit' })}`;
+
+    return `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"/>
+<title>Payment Receipt ${esc(r.receiptNumber||'')}</title>
+<style>
+@page { size: ${paper.cssSize}; margin: 12mm; }
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: ${esc(s.fontFamily||'Inter, sans-serif')}; font-size: ${f}px; color: #1a1a2e; background: #fff; }
+table { width: 100%; border-collapse: collapse; }
+</style></head>
+<body style="padding:0;">
+<div style="padding:0;">
+  <!-- HEADER -->
+  <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:18px;gap:16px;">
+    <div style="flex:1;">
+      <h1 style="font-size:${f+11}px;font-weight:700;color:#1a1a2e;margin:0 0 4px;letter-spacing:-0.3px;white-space:nowrap;">Customer Payment Receipt</h1>
+      ${s.showStatusBadge && r.status ? `<div style="margin-bottom:12px;"><span style="background:${gold}22;color:#92400e;border:1px solid ${gold}88;font-size:${f-1}px;font-weight:600;padding:2px 10px;border-radius:12px;">${esc(r.status)}</span></div>` : ''}
+      ${s.showCustomerName && cust.name ? `<div>
+        <p style="font-weight:700;font-size:${f-0.5}px;margin-bottom:4px;color:#888;letter-spacing:.5px;text-transform:uppercase;">Customer</p>
+        <p style="font-weight:700;font-size:${f+1}px;margin-bottom:2px;">${esc(cust.name)}</p>
+        ${s.showCustomerCode && cust.code ? `<p style="color:#64748b;font-size:${f-0.5}px;">${esc(cust.code)}</p>` : ''}
+        ${s.showCustomerAddress && cust.address ? `<p style="white-space:pre-line;line-height:1.65;color:#444;">${esc(cust.address)}</p>` : ''}
+        ${s.showCustomerPhone && cust.phone ? `<p style="color:#555;">${esc(cust.phone)}</p>` : ''}
+        ${s.showCustomerEmail && cust.email ? `<p style="color:#555;">${esc(cust.email)}</p>` : ''}
+        ${s.showCustomerTRN && cust.trn ? `<p style="color:#64748b;font-size:${f-0.5}px;">TRN: ${esc(cust.trn)}</p>` : ''}
+      </div>` : ''}
+    </div>
+    ${metaRows.length > 0 ? `<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px 20px;align-self:flex-end;padding-bottom:2px;">${metaRows.map(([lbl,val]) => `<div><p style="margin:0;font-size:${f-1}px;color:#999;font-weight:500;">${esc(lbl)}</p><p style="margin:1px 0 0;font-size:${f}px;font-weight:700;color:#1a1a2e;">${esc(val)}</p></div>`).join('')}</div>` : ''}
+    <div style="display:flex;flex-direction:column;align-items:flex-end;gap:5px;">
+      ${logoHtml}
+      ${s.showCompanyName && co.companyName ? `<div style="text-align:right;line-height:1.55;">
+        <p style="font-weight:700;font-size:${f+1}px;color:#1a1a2e;margin:0;white-space:nowrap;">${esc(co.companyName)}</p>
+        ${s.showCompanyAddress && co.address ? `<p style="margin:0;color:#555;white-space:pre-line;">${esc(co.address)}</p>` : ''}
+        ${s.showCompanyPhone && co.phone ? `<p style="margin:0;">${esc(co.phone)}</p>` : ''}
+        ${s.showCompanyEmail && co.email ? `<p style="margin:0;">${esc(co.email)}</p>` : ''}
+        ${s.showTRN && co.trn ? `<p style="margin:0;color:#666;">TRN · ${esc(co.trn)}</p>` : ''}
+      </div>` : ''}
+    </div>
+  </div>
+  <!-- INVOICE TABLE -->
+  ${invoices.length > 0 ? `
+  <div style="font-size:${f-0.5}px;font-weight:700;color:#64748b;letter-spacing:1px;text-transform:uppercase;margin-bottom:8px;">Invoices included in this receipt</div>
+  <table style="margin-bottom:12px;">
+    <thead><tr>
+      <th style="padding:6px 8px;font-size:${f-0.5}px;color:#374151;border-bottom:1px solid #e2e8f0;background:#f8fafc;text-align:left;">Invoice ref.</th>
+      ${s.showInvoiceDate ? `<th style="padding:6px 8px;font-size:${f-0.5}px;color:#374151;border-bottom:1px solid #e2e8f0;background:#f8fafc;text-align:right;">Invoice date</th>` : ''}
+      ${s.showInvoiceTotal ? `<th style="padding:6px 8px;font-size:${f-0.5}px;color:#374151;border-bottom:1px solid #e2e8f0;background:#f8fafc;text-align:right;">Invoice total</th>` : ''}
+      ${s.showOutstanding ? `<th style="padding:6px 8px;font-size:${f-0.5}px;color:#374151;border-bottom:1px solid #e2e8f0;background:#f8fafc;text-align:right;">Outstanding</th>` : ''}
+      ${s.showReceivedNow ? `<th style="padding:6px 8px;font-size:${f-0.5}px;color:#92400e;border-bottom:1px solid #e2e8f0;background:#f8fafc;text-align:right;">Received now</th>` : ''}
+      ${s.showBalanceAfter ? `<th style="padding:6px 8px;font-size:${f-0.5}px;color:#374151;border-bottom:1px solid #e2e8f0;background:#f8fafc;text-align:right;">Balance after</th>` : ''}
+    </tr></thead>
+    <tbody>${invoiceRows}</tbody>
+  </table>` : ''}
+  <!-- SUMMARY -->
+  <div style="display:flex;justify-content:flex-end;margin-bottom:16px;">
+    <table style="min-width:300px;border-collapse:collapse;font-size:${f}px;">
+      <tbody>
+        ${s.showTotalOutstanding ? `<tr><td style="padding:3px 16px 3px 0;color:#64748b;text-align:right;">Total outstanding</td><td style="padding:3px 0 3px 12px;text-align:right;font-weight:600;">${currHtml} ${fmt(sum.totalOutstanding)}</td></tr>` : ''}
+        ${s.showDiscountAllowed ? `<tr><td style="padding:3px 16px 3px 0;color:#64748b;text-align:right;">Discount allowed</td><td style="padding:3px 0 3px 12px;text-align:right;color:#e11d48;">${currHtml} —${fmt(sum.discount||0)}</td></tr>` : ''}
+        ${s.showRemainingBalance ? `<tr><td style="padding:3px 16px 3px 0;color:#64748b;text-align:right;">Remaining balance</td><td style="padding:3px 0 3px 12px;text-align:right;font-weight:600;">${currHtml} ${fmt(sum.remaining)}</td></tr>` : ''}
+        ${s.showTotalReceivedBold ? `<tr style="background:${gold}18;"><td style="padding:6px 16px 6px 0;font-weight:700;text-align:right;font-size:${f+1}px;">Total received now</td><td style="padding:6px 0 6px 12px;text-align:right;font-weight:800;font-size:${f+2}px;color:#1a1a2e;">${currHtml} ${fmt(sum.totalReceived)}</td></tr>` : ''}
+      </tbody>
+    </table>
+  </div>
+  <!-- PAYMENT DETAILS -->
+  ${s.showPaymentMethod && pay.method ? `
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px 32px;margin-bottom:14px;font-size:${f}px;border-top:1px solid ${gold}30;padding-top:10px;">
+    <div style="display:flex;gap:10px;"><span style="color:#94a3b8;min-width:90px;">Payment method</span><span style="font-weight:600;">${esc(pay.method)}</span></div>
+    ${s.showChequeRef && pay.chequeRef ? `<div style="display:flex;gap:10px;"><span style="color:#94a3b8;min-width:90px;">Cheque no. / ref.</span><span style="font-weight:600;">${esc(pay.chequeRef)}</span></div>` : ''}
+    ${s.showDepositedTo && pay.depositedTo ? `<div style="display:flex;gap:10px;"><span style="color:#94a3b8;min-width:90px;">Deposited to</span><span style="font-weight:600;">${esc(pay.depositedTo)}</span></div>` : ''}
+    ${s.showChequeDate && pay.chequeDate ? `<div style="display:flex;gap:10px;"><span style="color:#94a3b8;min-width:90px;">Cheque date</span><span style="font-weight:600;">${esc(pay.chequeDate)}</span></div>` : ''}
+  </div>` : ''}
+  <!-- NOTE -->
+  ${s.showNote && data.note ? `<div style="background:${gold}14;border:1px solid ${gold}66;border-radius:4px;padding:7px 12px;font-size:${f}px;color:#374151;margin-bottom:16px;">${esc(data.note)}</div>` : ''}
+  <!-- STAMP / QR -->
+  ${(s.showCompanyStamp || s.showQRCode) ? `<div style="display:flex;align-items:flex-end;gap:20px;margin-bottom:14px;">
+    ${s.showCompanyStamp ? `<div style="display:flex;flex-direction:column;align-items:center;gap:6px;"><div style="width:88px;height:88px;border-radius:50%;border:2px dashed ${gold};background:${gold}0d;display:flex;align-items:center;justify-content:center;"><span style="font-size:${f-1}px;color:#92400e;font-weight:700;text-align:center;line-height:1.4;">Company<br>Stamp</span></div><span style="font-size:${f-2}px;color:#94a3b8;">Official Stamp</span></div>` : ''}
+  </div>` : ''}
+  <!-- FOOTER -->
+  ${(s.showGeneratedBy || s.showReceivedByLine) ? `<div style="border-top:2px solid ${gold};margin-top:8px;padding-top:7px;display:flex;justify-content:space-between;align-items:center;font-size:${f-0.5}px;color:#64748b;">
+    ${s.showGeneratedBy ? `<div>BillBull ERP · Generated: ${esc(generatedStr)}</div>` : '<div></div>'}
+    ${s.showReceivedByLine ? `<div style="display:flex;align-items:center;gap:6px;">Received by: <span style="border-bottom:1px solid #94a3b8;display:inline-block;min-width:90px;">&nbsp;</span></div>` : ''}
+  </div>` : ''}
+</div>
+</body></html>`;
+};
+
 export const generateDocumentPrintHtml = (template, data, options = {}) => {
     if (template?.category === 'Pick List') {
         return generatePickListHtml(template, data, options);
@@ -4008,6 +4225,9 @@ export const generateDocumentPrintHtml = (template, data, options = {}) => {
     }
     if (template?.category === 'Goods Receipt Note' && isGrnDesignerTemplate(template)) {
         return renderGrnReceiptHtml(template, data, options, 'print');
+    }
+    if (template?.category === 'Receipt Voucher' && data?.receiptData) {
+        return renderCustomerPaymentReceiptHtml(template, data, options);
     }
     return buildDocumentHtml(template, data, options, 'print');
 };
@@ -4021,6 +4241,9 @@ export const generateDocumentEmailHtml = (template, data, options = {}) => {
     }
     if (template?.category === 'Goods Receipt Note' && isGrnDesignerTemplate(template)) {
         return renderGrnReceiptHtml(template, data, options, 'email');
+    }
+    if (template?.category === 'Receipt Voucher' && data?.receiptData) {
+        return renderCustomerPaymentReceiptHtml(template, data, options);
     }
     return buildDocumentHtml(template, data, options, 'email');
 };

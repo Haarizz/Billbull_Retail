@@ -208,11 +208,14 @@ public class SalesInvoiceService {
             invoice.setInvoiceNumber(numberingService.resolveNumberForCreate(
                     SalesDocumentType.SALES_INVOICE,
                     invoice.getInvoiceNumber()));
+            SalesSettings settings = settingsService.getSettings();
+            invoice.setFastSale(settings.getSalesMode() == SalesMode.FAST_SALE);
         } else if (existing != null) {
             invoice.setInvoiceNumber(numberingService.resolveNumberForUpdate(
                     SalesDocumentType.SALES_INVOICE,
                     existing.getInvoiceNumber(),
                     invoice.getInvoiceNumber()));
+            invoice.setFastSale(existing.isFastSale());
         }
 
         // Calculate totals from items
@@ -281,15 +284,6 @@ public class SalesInvoiceService {
         // Status logic
         if (invoice.getStatus() == null) {
             invoice.setStatus(SalesInvoiceStatus.DRAFT);
-        }
-
-        // FAST_SALE enforcement: new invoices must never stay in DRAFT — the mode
-        // requires immediate posting so that the auto-delivery chain is always triggered.
-        if (invoice.getId() == null
-                && settings.getSalesMode() == SalesMode.FAST_SALE
-                && (invoice.getStatus() == null || invoice.getStatus() == SalesInvoiceStatus.DRAFT)) {
-            System.out.println("[FAST_SALE] Forcing invoice status from DRAFT → POSTED (salesMode=FAST_SALE)");
-            invoice.setStatus(SalesInvoiceStatus.POSTED);
         }
 
         SalesInvoiceStatus intendedStatus = invoice.getStatus();

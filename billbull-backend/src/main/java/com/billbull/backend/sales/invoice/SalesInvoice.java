@@ -26,6 +26,12 @@ public class SalesInvoice {
 
     private LocalDate invoiceDate;
 
+    @Column(name = "sales_channel", length = 50)
+    private String salesChannel;
+
+    @Column(name = "is_fast_sale", columnDefinition = "boolean default false")
+    private boolean isFastSale = false;
+
     @Column(name = "delivery_date")
     private LocalDate dueDate;
 
@@ -136,6 +142,22 @@ public class SalesInvoice {
 
     public void setInvoiceDate(LocalDate invoiceDate) {
         this.invoiceDate = invoiceDate;
+    }
+
+    public String getSalesChannel() {
+        return salesChannel;
+    }
+
+    public void setSalesChannel(String salesChannel) {
+        this.salesChannel = salesChannel;
+    }
+
+    public boolean isFastSale() {
+        return isFastSale;
+    }
+
+    public void setFastSale(boolean fastSale) {
+        isFastSale = fastSale;
     }
 
     public LocalDate getDueDate() {
