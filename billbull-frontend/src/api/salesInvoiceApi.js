@@ -99,8 +99,8 @@ export const recordInvoicePayment = async (id, amount) => {
 // --------------------
 // GET ITEM PRICE HISTORY
 // --------------------
-export const getItemPriceHistory = async (itemCode) => {
-    const res = await api.get(`${BASE_URL}/price-history/${itemCode}`);
+export const getItemPriceHistory = async (itemCode, customerCode = '') => {
+    const res = await api.get(`${BASE_URL}/price-history/${itemCode}`, { params: { customerCode } });
     return res.data;
 };
 

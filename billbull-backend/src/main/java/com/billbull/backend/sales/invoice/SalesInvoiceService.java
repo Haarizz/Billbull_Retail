@@ -25,6 +25,11 @@ import com.billbull.backend.financials.generalledger.postingengine.PostingEngine
 import com.billbull.backend.financials.receiptvoucher.ReceiptPurpose;
 import com.billbull.backend.financials.receiptvoucher.ReceiptVoucher;
 import com.billbull.backend.financials.receiptvoucher.ReceiptVoucherService;
+import com.billbull.backend.sales.payment.Payment;
+import com.billbull.backend.sales.payment.PaymentService;
+import com.billbull.backend.sales.payment.PaymentStatus;
+import com.billbull.backend.sales.payment.PaymentType;
+import com.billbull.backend.financials.receiptvoucher.ReceiptVoucherService;
 import com.billbull.backend.inventory.product.ProductBarcodeRepository;
 import com.billbull.backend.sales.customerledger.CustomerRepository;
 import com.billbull.backend.sales.customerledger.OpeningInvoice;
@@ -79,6 +84,7 @@ public class SalesInvoiceService {
     private final StockMovementRepository stockMovementRepo;
     private final BinRepository binRepo;
     private final BatchSelectionService batchSelectionService;
+    private final PaymentService paymentService;
 
     public SalesInvoiceService(SalesInvoiceRepository invoiceRepo,
             PostingEngineService postingEngineService,
@@ -101,7 +107,8 @@ public class SalesInvoiceService {
             BranchAccessService branchAccessService,
             StockMovementRepository stockMovementRepo,
             BinRepository binRepo,
-            BatchSelectionService batchSelectionService) {
+            BatchSelectionService batchSelectionService,
+            PaymentService paymentService) {
         this.invoiceRepo = invoiceRepo;
         this.postingEngineService = postingEngineService;
         this.deliveryNoteService = deliveryNoteService;
@@ -124,6 +131,7 @@ public class SalesInvoiceService {
         this.stockMovementRepo = stockMovementRepo;
         this.binRepo = binRepo;
         this.batchSelectionService = batchSelectionService;
+        this.paymentService = paymentService;
     }
 
     // ----------------------------
@@ -382,7 +390,7 @@ public class SalesInvoiceService {
             }
 
             if (remainingPaidToReceipt > 0.01) {
-                createReceiptForInvoicePayment(
+                createSalesPaymentForInvoice(
                         refreshed,
                         remainingPaidToReceipt,
                         refreshed.getPaymentMode(),
@@ -820,7 +828,7 @@ public class SalesInvoiceService {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Payment amount must be greater than zero.");
         }
 
-        createReceiptForInvoicePayment(invoice, paymentAmount, paymentMode, paymentReference, paymentDate, bankAccount, chequeDate);
+        createSalesPaymentForInvoice(invoice, paymentAmount, paymentMode, paymentReference, paymentDate, bankAccount, chequeDate);
 
         // Sync invoice's paymentMode to the actual mode used for payment
         if (paymentMode != null && !paymentMode.isBlank()) {
@@ -832,27 +840,34 @@ public class SalesInvoiceService {
         return getById(id);
     }
 
-    private void createReceiptForInvoicePayment(SalesInvoice invoice, double paymentAmount, String paymentMode,
+    private void createSalesPaymentForInvoice(SalesInvoice invoice, double paymentAmount, String paymentMode,
             String paymentReference, LocalDate paymentDate, String bankAccount, LocalDate chequeDate) {
-        ReceiptVoucher rv = new ReceiptVoucher();
-        rv.setDate(paymentDate != null ? paymentDate : LocalDate.now());
-        rv.setPaymentMode((paymentMode != null && !paymentMode.isBlank()) ? paymentMode : "Bank Transfer");
-        rv.setReference((paymentReference != null && !paymentReference.isBlank())
-                ? paymentReference
-                : "Auto-RV for INV: " + invoice.getInvoiceNumber());
-        rv.setAmount(BigDecimal.valueOf(paymentAmount));
-        rv.setMemberName(invoice.getCustomerName() != null ? invoice.getCustomerName() : "Walk-in Customer");
-        rv.setStatus("Completed");
-        rv.setPurpose(ReceiptPurpose.AGAINST_INVOICE);
-        rv.setSalesInvoiceId(invoice.getId());
-        if (bankAccount != null && !bankAccount.isBlank()) {
-            rv.setBankAccount(bankAccount);
+        Payment p = new Payment();
+        p.setPaymentType(PaymentType.RECEIVED);
+        p.setCustomerCode(invoice.getCustomerCode());
+        p.setCustomerName(invoice.getCustomerName());
+        p.setLinkedInvoice(invoice.getInvoiceNumber());
+        p.setInvoiceAmount(invoice.getInvoiceTotal());
+        p.setInvoiceBalance(invoice.getBalance());
+        p.setAmount(paymentAmount);
+        p.setPaymentMode((paymentMode != null && !paymentMode.isBlank()) ? paymentMode : "Bank Transfer");
+        p.setReferenceNumber(paymentReference);
+        p.setBankName(bankAccount);
+        p.setChequeDate(chequeDate);
+        p.setPaymentDate(paymentDate != null ? paymentDate : LocalDate.now());
+        
+        // Auto-determine status based on amount vs balance (though PaymentService typically doesn't strictly check for Sales Invoices)
+        if (paymentAmount >= (invoice.getBalance() != null ? invoice.getBalance() : invoice.getInvoiceTotal())) {
+            p.setStatus(PaymentStatus.COMPLETED);
+        } else {
+            p.setStatus(PaymentStatus.PARTIAL);
         }
-        if (chequeDate != null) {
-            rv.setChequeDate(chequeDate);
-        }
+        
+        // Numbering is handled either by frontend passing it, or backend if left null
+        // Currently PaymentController expects the client to pass the paymentNumber if manual,
+        // or uses NumberingService if null. We will let PaymentService generate the number if null.
 
-        receiptVoucherService.createReceipt(rv, null);
+        paymentService.savePayment(p);
     }
 
     // ----------------------------
@@ -1386,13 +1401,14 @@ public class SalesInvoiceService {
     // PRICE HISTORY
     // ----------------------------
     @Transactional(readOnly = true)
-    public List<PriceHistoryDTO> getPriceHistory(String itemCode) {
+    public List<PriceHistoryDTO> getPriceHistory(String itemCode, String customerCode) {
         Long currentBranchId = branchAccessService.getCurrentUserBranchId();
         if (currentBranchId == null) {
             return List.of();
         }
         return invoiceRepo.findPriceHistoryByItemCodeAndBranchScope(
                 itemCode,
+                customerCode,
                 currentBranchId,
                 org.springframework.data.domain.PageRequest.of(0, 10));
     }

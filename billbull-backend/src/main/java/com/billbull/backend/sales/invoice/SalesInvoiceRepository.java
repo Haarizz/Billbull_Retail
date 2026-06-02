@@ -76,13 +76,15 @@ public interface SalesInvoiceRepository extends JpaRepository<SalesInvoice, Long
         @Query("SELECT new com.billbull.backend.sales.invoice.PriceHistoryDTO(s.invoiceDate, s.invoiceNumber, s.customerName, i.price) "
                         +
                         "FROM SalesInvoiceItem i JOIN i.salesInvoice s " +
-                        "WHERE i.itemCode = :itemCode AND s.status = com.billbull.backend.sales.invoice.SalesInvoiceStatus.POSTED "
+                        "WHERE i.itemCode = :itemCode AND s.status NOT IN (com.billbull.backend.sales.invoice.SalesInvoiceStatus.DRAFT, com.billbull.backend.sales.invoice.SalesInvoiceStatus.CANCELLED) "
+                        + "AND (:customerCode IS NULL OR :customerCode = '' OR s.customerCode = :customerCode) "
                         + "AND (s.branchId = :branchId OR s.branchId IS NULL) "
                         +
                         "ORDER BY s.invoiceDate DESC, s.id DESC")
         List<PriceHistoryDTO> findPriceHistoryByItemCodeAndBranchScope(
-                        String itemCode,
-                        Long branchId,
+                        @Param("itemCode") String itemCode,
+                        @Param("customerCode") String customerCode,
+                        @Param("branchId") Long branchId,
                         org.springframework.data.domain.Pageable pageable);
 
         // --- DASHBOARD AGGREGATE QUERIES ---

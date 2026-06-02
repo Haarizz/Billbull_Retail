@@ -59,6 +59,11 @@ public class ReceiptVoucherController {
         }
     }
 
+    @GetMapping("/next-number")
+    public ResponseEntity<Map<String, String>> getNextVoucherNumber() {
+        return ResponseEntity.ok(Map.of("voucherNumber", service.generateNextVoucherId()));
+    }
+
     @GetMapping
     public ResponseEntity<List<ReceiptVoucher>> getAllReceipts() {
         return ResponseEntity.ok(service.getAllReceipts());

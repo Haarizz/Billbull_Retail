@@ -207,7 +207,7 @@ public class ReceiptVoucherService {
         syncOpeningInvoice(linkedOpeningInvoiceId);
     }
 
-    private String generateNextVoucherId() {
+    public String generateNextVoucherId() {
         String year = java.time.Year.now().toString();
         String prefix = "RV-" + year + "-";
         String lastId = repository.findMaxVoucherIdByPrefix(prefix);
