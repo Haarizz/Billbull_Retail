@@ -2,6 +2,7 @@ import React, { useState } from "react";
 import {
     ArrowLeft, Save, Palette, AlignLeft, Mail, ChevronDown, Layout,
 } from "lucide-react";
+import { useCompany } from '../../context/CompanyContext';
 import toast from "react-hot-toast";
 
 // ─── Voucher type metadata ────────────────────────────────────────────────────
@@ -198,7 +199,7 @@ function TermsFooter({ s }) {
 
 // ─── Previews ─────────────────────────────────────────────────────────────────
 
-function JournalPreview({ s }) {
+function JournalPreview({ s, currency = 'AED' }) {
     const f = s.fontSize;
     const gold = s.accentColor;
     const totalDr = MOCK.journalEntries.reduce((sum, e) => sum + e.debit, 0);
@@ -213,7 +214,7 @@ function JournalPreview({ s }) {
                 ["showVoucherDate", "Date", "22-May-2026"],
                 ["showReference", "Reference", "ADJ-MAY-2026"],
                 ["showBranch", "Branch", "Dubai — Main"],
-                ["showCurrency", "Currency", "AED"],
+                ["showCurrency", "Currency", currency],
             ]} />
 
             <table style={{ width: "100%", borderCollapse: "collapse", marginBottom: 16 }}>
@@ -222,8 +223,8 @@ function JournalPreview({ s }) {
                         {s.showAccountCode && <th style={thS}>#</th>}
                         <th style={{ ...thS, width: "40%" }}>Account</th>
                         <th style={thS}>Description / Narration</th>
-                        <th style={{ ...thS, textAlign: "right" }}>Debit (AED)</th>
-                        <th style={{ ...thS, textAlign: "right" }}>Credit (AED)</th>
+                        <th style={{ ...thS, textAlign: "right" }}>Debit ({currency})</th>
+                        <th style={{ ...thS, textAlign: "right" }}>Credit ({currency})</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -269,7 +270,7 @@ function JournalPreview({ s }) {
     );
 }
 
-function ExpensePreview({ s }) {
+function ExpensePreview({ s, currency = 'AED' }) {
     const f = s.fontSize;
     const gold = s.accentColor;
     const total = MOCK.expenseItems.reduce((sum, e) => sum + e.amount, 0);
@@ -311,7 +312,7 @@ function ExpensePreview({ s }) {
                         <th style={thS}>Expense Description</th>
                         <th style={thS}>Category</th>
                         {s.showCostCenter && <th style={thS}>Cost Center</th>}
-                        <th style={{ ...thS, textAlign: "right" }}>Amount (AED)</th>
+                        <th style={{ ...thS, textAlign: "right" }}>Amount ({currency})</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -352,7 +353,7 @@ function ExpensePreview({ s }) {
                 <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 16 }}>
                     <div style={{ border: `2px solid ${gold}`, borderRadius: 8, padding: "10px 20px", textAlign: "right", minWidth: 200 }}>
                         <div style={{ fontSize: `${f - 1}px`, color: "#666", marginBottom: 2 }}>Net Amount Claimed</div>
-                        <div style={{ fontSize: `${f + 6}px`, fontWeight: 700, color: "#1a1a2e" }}>AED {fmt(total)}</div>
+                        <div style={{ fontSize: `${f + 6}px`, fontWeight: 700, color: "#1a1a2e" }}>{currency} {fmt(total)}</div>
                     </div>
                 </div>
             )}
@@ -368,7 +369,7 @@ function ExpensePreview({ s }) {
     );
 }
 
-function ReceiptPaymentPreview({ s, mode }) {
+function ReceiptPaymentPreview({ s, mode, currency = 'AED' }) {
     const f = s.fontSize;
     const gold = s.accentColor;
     const data = MOCK.receiptPayment;
@@ -433,7 +434,7 @@ function ReceiptPaymentPreview({ s, mode }) {
                 <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 16 }}>
                     <div style={{ border: `2px solid ${gold}`, borderRadius: 8, padding: "10px 20px", textAlign: "right", minWidth: 200 }}>
                         <div style={{ fontSize: `${f - 1}px`, color: "#666", marginBottom: 2 }}>Total {isReceipt ? "Received" : "Paid"}</div>
-                        <div style={{ fontSize: `${f + 6}px`, fontWeight: 700, color: "#1a1a2e" }}>AED {fmt(data.amount)}</div>
+                        <div style={{ fontSize: `${f + 6}px`, fontWeight: 700, color: "#1a1a2e" }}>{currency} {fmt(data.amount)}</div>
                     </div>
                 </div>
             )}
@@ -449,7 +450,7 @@ function ReceiptPaymentPreview({ s, mode }) {
     );
 }
 
-function ContraPreview({ s }) {
+function ContraPreview({ s, currency = 'AED' }) {
     const f = s.fontSize;
     const gold = s.accentColor;
     const total = MOCK.contraEntries.reduce((sum, e) => sum + e.amount, 0);
@@ -465,7 +466,7 @@ function ContraPreview({ s }) {
             <div style={{ background: `${gold}12`, border: `1px solid ${gold}44`, borderRadius: 8, padding: "10px 14px", marginBottom: 16, display: "flex", alignItems: "center", gap: 10 }}>
                 <div style={{ fontWeight: 700, color: "#92400e", fontSize: `${f - 0.5}px`, textTransform: "uppercase", letterSpacing: "0.5px" }}>Transfer Type:</div>
                 <div style={{ fontWeight: 600, color: "#1a1a2e" }}>Cash to Cash</div>
-                <div style={{ marginLeft: "auto", fontWeight: 700, fontSize: `${f + 3}px`, color: "#1a1a2e" }}>AED {fmt(total)}</div>
+                <div style={{ marginLeft: "auto", fontWeight: 700, fontSize: `${f + 3}px`, color: "#1a1a2e" }}>{currency} {fmt(total)}</div>
             </div>
 
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 16 }}>
@@ -473,7 +474,7 @@ function ContraPreview({ s }) {
                     <div key={i} style={{ border: `2px solid ${i === 0 ? "#166534" : "#991b1b"}22`, borderRadius: 8, padding: 12, background: i === 0 ? "#f0fdf4" : "#fff1f2" }}>
                         <div style={{ fontSize: `${f - 1.5}px`, fontWeight: 700, color: i === 0 ? "#166534" : "#991b1b", textTransform: "uppercase", letterSpacing: "0.5px", marginBottom: 4 }}>{entry.type === "Dr" ? "Debit (To)" : "Credit (From)"}</div>
                         <div style={{ fontWeight: 700, color: "#1a1a2e", fontSize: `${f}px`, marginBottom: 2 }}>{entry.account}</div>
-                        <div style={{ fontFamily: "monospace", fontWeight: 700, fontSize: `${f + 3}px`, color: i === 0 ? "#166534" : "#991b1b" }}>AED {fmt(entry.amount)}</div>
+                        <div style={{ fontFamily: "monospace", fontWeight: 700, fontSize: `${f + 3}px`, color: i === 0 ? "#166534" : "#991b1b" }}>{currency} {fmt(entry.amount)}</div>
                     </div>
                 ))}
             </div>
@@ -502,7 +503,7 @@ function ContraPreview({ s }) {
     );
 }
 
-function ChequePreview({ s }) {
+function ChequePreview({ s, currency = 'AED' }) {
     const f = s.fontSize;
     const gold = s.accentColor;
     const chq = MOCK.cheque;
@@ -541,7 +542,7 @@ function ChequePreview({ s }) {
                         <span style={{ fontWeight: 700, color: "#1e3a5f", whiteSpace: "nowrap", fontSize: `${f - 0.5}px` }}>PAY:</span>
                         <span style={{ fontWeight: 700, color: "#1a1a2e", fontSize: `${f + 1}px`, flex: 1, paddingBottom: 2 }}>{chq.payee}</span>
                         <div style={{ border: "1px solid #1e3a5f", borderRadius: 4, padding: "2px 10px", background: "rgba(255,255,255,0.7)", fontFamily: "monospace", fontWeight: 700, color: "#1e3a5f", fontSize: `${f}px`, whiteSpace: "nowrap" }}>
-                            AED {fmt(chq.amount)}
+                            {currency} {fmt(chq.amount)}
                         </div>
                     </div>
 
@@ -565,7 +566,7 @@ function ChequePreview({ s }) {
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: "4px 16px" }}>
                     {[
                         ["Payee", chq.payee],
-                        ["Amount", `AED ${chq.amount.toLocaleString()}`],
+                        ["Amount", `${currency} ${chq.amount.toLocaleString()}`],
                         ["Date", chq.date],
                         ["Bank", chq.bank],
                     ].map(([k, v]) => (
@@ -759,17 +760,19 @@ export default function FinancialVoucherDesigner({ voucherType, templateName, in
         ...(initialSettings || {}),
     }));
     const [zoom, setZoom] = useState(90);
+    const { company } = useCompany();
+    const currency = company?.currency || company?.currencySymbol || 'AED';
 
     const label = voucherTypeLabel(voucherType);
 
     function renderPreview() {
         switch (voucherType) {
-            case "journal-voucher": return <JournalPreview s={settings} />;
-            case "expense-voucher": return <ExpensePreview s={settings} />;
-            case "receipt-voucher": return <ReceiptPaymentPreview s={settings} mode="receipt" />;
-            case "payment-voucher": return <ReceiptPaymentPreview s={settings} mode="payment" />;
-            case "contra-voucher":  return <ContraPreview s={settings} />;
-            case "cheque-printing": return <ChequePreview s={settings} />;
+            case "journal-voucher": return <JournalPreview s={settings} currency={currency} />;
+            case "expense-voucher": return <ExpensePreview s={settings} currency={currency} />;
+            case "receipt-voucher": return <ReceiptPaymentPreview s={settings} mode="receipt" currency={currency} />;
+            case "payment-voucher": return <ReceiptPaymentPreview s={settings} mode="payment" currency={currency} />;
+            case "contra-voucher":  return <ContraPreview s={settings} currency={currency} />;
+            case "cheque-printing": return <ChequePreview s={settings} currency={currency} />;
             default: return null;
         }
     }

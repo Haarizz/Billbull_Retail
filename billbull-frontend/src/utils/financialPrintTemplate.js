@@ -9,6 +9,7 @@
 // drives the actual printout.
 
 import { defaultVoucherSettings } from '../pages/Financials/FinancialVoucherDesigner';
+import { resolveCurrencyDisplayConfig, UAE_DIRHAM_SYMBOL_IMAGE } from './countryCurrencyOptions';
 
 const escapeHtml = (str = '') =>
     String(str)
@@ -20,6 +21,14 @@ const escapeHtml = (str = '') =>
 
 const fmt = (n) =>
     Number(n || 0).toLocaleString('en-AE', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+const renderCurrencyHtml = (currencyCode) => {
+    const config = resolveCurrencyDisplayConfig({ currency: currencyCode });
+    if (config.hasImage) {
+        return `<img src="${UAE_DIRHAM_SYMBOL_IMAGE}" alt="${escapeHtml(config.ariaLabel)}" style="height:0.85em;width:auto;display:inline-block;vertical-align:-0.07em;" />`;
+    }
+    return escapeHtml(config.label);
+};
 
 const PAPER_DIMENSIONS = {
     A4: '210mm 297mm',
@@ -185,8 +194,8 @@ function renderJournal(s, co, jv) {
                 ${s.showAccountCode ? '<th>#</th>' : ''}
                 <th style="width:40%">Account</th>
                 <th>Description / Narration</th>
-                <th class="num">Debit (${jv.currency || 'AED'})</th>
-                <th class="num">Credit (${jv.currency || 'AED'})</th>
+                <th class="num">Debit (${renderCurrencyHtml(jv.currency)})</th>
+                <th class="num">Credit (${renderCurrencyHtml(jv.currency)})</th>
             </tr></thead>
             <tbody>
                 ${rows}
@@ -248,7 +257,7 @@ function renderExpense(s, co, ev) {
                 <th>Expense Description</th>
                 <th>Category</th>
                 ${s.showCostCenter ? '<th>Cost Center</th>' : ''}
-                <th class="num">Amount (${ev.currency || 'AED'})</th>
+                <th class="num">Amount (${renderCurrencyHtml(ev.currency)})</th>
             </tr></thead>
             <tbody>
                 ${rows}
@@ -257,7 +266,7 @@ function renderExpense(s, co, ev) {
         </table>
         ${s.showNarration && ev.narration ? `<div class="narration"><b>Narration:</b>${escapeHtml(ev.narration)}</div>` : ''}
         ${s.showAmountInWords && ev.amountInWords ? `<div class="words"><b>Amount in Words: </b>${escapeHtml(ev.amountInWords)}</div>` : ''}
-        ${s.showNetAmount ? `<div class="net-box"><div class="inner"><div class="lbl">Net Amount Claimed</div><div class="amt">${escapeHtml(ev.currency || 'AED')} ${fmt(total)}</div></div></div>` : ''}
+        ${s.showNetAmount ? `<div class="net-box"><div class="inner"><div class="lbl">Net Amount Claimed</div><div class="amt">${renderCurrencyHtml(ev.currency)} ${fmt(total)}</div></div></div>` : ''}
         ${renderSignatures(s, [
             s.showPreparedBySign && 'Claimant',
             s.showCheckedBySign && 'Verified By',
@@ -318,7 +327,7 @@ function renderReceiptPayment(s, co, rv, mode) {
             </table>` : ''}
         ${s.showNarration && rv.narration ? `<div class="narration"><b>Narration:</b>${escapeHtml(rv.narration)}</div>` : ''}
         ${s.showAmountInWords && rv.amountInWords ? `<div class="words"><b>Amount in Words: </b>${escapeHtml(rv.amountInWords)}</div>` : ''}
-        ${s.showNetAmount ? `<div class="net-box"><div class="inner"><div class="lbl">Total ${isReceipt ? 'Received' : 'Paid'}</div><div class="amt">${escapeHtml(rv.currency || 'AED')} ${fmt(rv.amount)}</div></div></div>` : ''}
+        ${s.showNetAmount ? `<div class="net-box"><div class="inner"><div class="lbl">Total ${isReceipt ? 'Received' : 'Paid'}</div><div class="amt">${renderCurrencyHtml(rv.currency)} ${fmt(rv.amount)}</div></div></div>` : ''}
         ${renderSignatures(s, [
             s.showPreparedBySign && 'Prepared By',
             s.showCheckedBySign && 'Checked By',
@@ -347,7 +356,7 @@ function renderContra(s, co, cv) {
             <div style="border:2px solid ${isDr ? '#16653422' : '#991b1b22'};border-radius:8px;padding:12px;background:${isDr ? '#f0fdf4' : '#fff1f2'}">
                 <div style="font-size:${(s.fontSize||9)-1.5}pt;font-weight:700;color:${isDr ? '#166534' : '#991b1b'};text-transform:uppercase;letter-spacing:0.5px;margin-bottom:4px">${isDr ? 'Debit (To)' : 'Credit (From)'}</div>
                 <div style="font-weight:700;color:#1a1a2e;margin-bottom:2px">${escapeHtml(entry.account || '')}</div>
-                <div style="font-family:monospace;font-weight:700;font-size:${(s.fontSize||9)+3}pt;color:${isDr ? '#166534' : '#991b1b'}">${escapeHtml(cv.currency || 'AED')} ${fmt(entry.amount)}</div>
+                <div style="font-family:monospace;font-weight:700;font-size:${(s.fontSize||9)+3}pt;color:${isDr ? '#166534' : '#991b1b'}">${renderCurrencyHtml(cv.currency)} ${fmt(entry.amount)}</div>
             </div>`;
     }).join('');
 
@@ -356,7 +365,7 @@ function renderContra(s, co, cv) {
         <div style="background:${s.accentColor}12;border:1px solid ${s.accentColor}44;border-radius:8px;padding:10px 14px;margin-bottom:16px;display:flex;align-items:center;gap:10px">
             <div style="font-weight:700;color:#92400e;font-size:${(s.fontSize||9)-0.5}pt;text-transform:uppercase;letter-spacing:0.5px">Transfer Type:</div>
             <div style="font-weight:600;color:#1a1a2e">${escapeHtml(cv.transferType || 'Cash to Cash')}</div>
-            <div style="margin-left:auto;font-weight:700;font-size:${(s.fontSize||9)+3}pt;color:#1a1a2e">${escapeHtml(cv.currency || 'AED')} ${fmt(total)}</div>
+            <div style="margin-left:auto;font-weight:700;font-size:${(s.fontSize||9)+3}pt;color:#1a1a2e">${renderCurrencyHtml(cv.currency)} ${fmt(total)}</div>
         </div>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:16px">${cards}</div>
         ${s.showNarration && cv.narration ? `<div class="narration"><b>Narration:</b>${escapeHtml(cv.narration)}</div>` : ''}

@@ -227,7 +227,7 @@ const SalesInvoice = () => {
 
         if (filterPayMode !== 'All') {
             data = data.filter(inv => {
-                const mode = inv.paymentMode || 'Cash';
+                const mode = inv.paymentMode || '';
                 return mode === filterPayMode;
             });
         }
@@ -293,6 +293,7 @@ const SalesInvoice = () => {
     const [invoiceDate, setInvoiceDate] = useState('2026-01-21');
     const [deliveryDate, setDeliveryDate] = useState(''); // Due Date
     const [reference, setReference] = useState('');
+    const [salesChannel, setSalesChannel] = useState('Retail');
 
     // Linking
     const [selectedCustomer, setSelectedCustomer] = useState(null);
@@ -317,7 +318,7 @@ const SalesInvoice = () => {
     }, []);
 
     // Payment Details
-    const [paymentMode, setPaymentMode] = useState('Cash');
+    const [paymentMode, setPaymentMode] = useState('');
     const [paymentTerms, setPaymentTerms] = useState('Immediate');
     const [salesperson, setSalesperson] = useState('');
     const [employeesList, setEmployeesList] = useState([]);
@@ -1116,7 +1117,7 @@ const SalesInvoice = () => {
         setLinkedQuotation('');
         setVatMode('EXCLUSIVE');
         setIsGeneratedFromDN(false);
-        setPaymentMode('Cash');
+        setPaymentMode('');
         setPaymentTerms('Immediate');
         setSalesperson('John Doe');
         setBranch(defaultBranch?.name || '');
@@ -1959,15 +1960,7 @@ const SalesInvoice = () => {
                 setItems(savedInvoice.items.map((i, index) => mapServerInvoiceItem(i, Date.now() + index)));
             }
 
-            // 🔵 AUTO-POST: If invoice is fully paid, update status to POSTED
-            // This triggers the backend journal generation (JournalEntryGeneratorService)
-            const fullyPrepaid = Number(amountCollected) >= netTotal && netTotal > 0;
-            if (fullyPrepaid) {
-                await updateInvoiceStatus(savedInvoice.id, 'POSTED');
-                setStatus('POSTED');
-            }
-
-            await verifyPickingNoteAfterSave(savedInvoice);
+            if (newStatus !== 'Draft') await verifyPickingNoteAfterSave(savedInvoice);
 
             await fetchInvoices();
             const hasBatchLines = Array.isArray(savedInvoice.items)
@@ -1975,9 +1968,8 @@ const SalesInvoice = () => {
             if (newStatus === 'Draft' && salesType === 'DIRECT_SALE' && hasBatchLines) {
                 setActiveTab('create');
                 alert('Draft saved. Select exact batches for each batch-controlled line, then confirm the invoice.');
-            } else if (newStatus === 'Confirmed' && !fullyPrepaid) {
-                // Invoice confirmed with a balance outstanding — offer AR
-                // settlement against it before returning to the list.
+            } else if (newStatus === 'Confirmed') {
+                // Invoice confirmed — offer AR settlement before returning to the list.
                 setSettlementInvoice(savedInvoice);
             } else {
                 setActiveTab('list');
@@ -2004,6 +1996,7 @@ const SalesInvoice = () => {
         setInvoiceNo(invoice.invoiceNumber);
         setInvoiceDate(invoice.invoiceDate);
         setDeliveryDate(invoice.dueDate || '');
+        setSalesChannel(invoice.salesChannel || 'Retail');
 
         // Resolve from master so reopening a saved invoice rehydrates the customer
         // panel (phone, balance, TRN, savedAddresses) — invoice persists only code+name.
@@ -2034,7 +2027,7 @@ const SalesInvoice = () => {
         setLinkedQuotation(invoice.linkedQuotation || '');
         setVatMode(invoice.vatMode === 'INCLUSIVE' ? 'INCLUSIVE' : 'EXCLUSIVE');
 
-        setPaymentMode(invoice.paymentMode || 'Cash');
+        setPaymentMode(invoice.paymentMode || '');
         setPaymentTerms(invoice.paymentTerms || 'Immediate');
         setSalesperson(invoice.salesperson || 'John Doe');
         setBranch(invoice.branch || defaultBranch?.name || '');
@@ -2290,8 +2283,9 @@ const SalesInvoice = () => {
                     customerName: rv.memberName || invoice.customerName,
                     amount: Number(rv.amount || 0),
                     mode: rv.paymentMode || 'Cash',
-                    reference: rv.reference || '',
-                    bankName: '',
+                    reference: rv.reference || rv.chequeRef || '',
+                    bankName: rv.depositAccount || rv.bankName || '',
+                    branchId: rv.branchId || invoice.branchId,
                     status: rv.status || 'Completed',
                     notes: rv.notes || '',
                     purpose: rv.purpose,
@@ -2312,70 +2306,71 @@ const SalesInvoice = () => {
     };
 
     const buildReceiptVoucherPrintData = (receipt, invoice) => {
-        // Map a normalized receipt row → print data shape understood by
-        // generatePrintHtml. We reuse the Sales Invoice template renderer
-        // (there is no dedicated "Receipt Voucher" template category yet)
-        // but override the title and item-row content so the printed output
-        // reads as a Receipt Voucher.
         const amount = Number(receipt.amount) || 0;
         const currencyCode = company?.currencySymbol || company?.currency || 'AED';
+        const invoiceTotal = Number(invoice?.invoiceTotal || invoice?.netTotal || 0);
+        const previousPaid = Math.max(0, Number(invoice?.amountPaid || 0) - amount);
+        const outstandingBefore = Math.max(0, invoiceTotal - previousPaid);
+        const balanceAfter = Math.max(0, outstandingBefore - amount);
         return {
+            // Rich receipt layout data (used by renderCustomerPaymentReceiptHtml)
+            receiptData: {
+                receiptNumber: receipt.receiptNumber || '',
+                date: receipt.date || '',
+                status: receipt.status || 'Completed',
+                session: null,
+                invoiceCount: '1 invoice',
+                account: null,
+                bankAccount: receipt.bankName || null,
+            },
+            customerData: {
+                name: receipt.customerName || invoice?.customerName || '',
+                code: invoice?.customerCode || '',
+                address: invoice?.customerAddress || '',
+                phone: invoice?.customerPhone || '',
+                email: invoice?.customerEmail || '',
+                trn: invoice?.customerTrn || '',
+                crn: invoice?.customerCrn || '',
+            },
+            invoices: [{
+                ref: invoice?.invoiceNumber || receipt.linkedInvoice || '—',
+                soRef: invoice?.linkedSalesOrder || '',
+                date: invoice?.invoiceDate || '',
+                total: invoiceTotal,
+                outstanding: outstandingBefore,
+                received: amount,
+                balance: balanceAfter,
+                status: balanceAfter <= 0 ? 'Fully paid' : 'Partial',
+            }],
+            summary: {
+                totalOutstanding: outstandingBefore,
+                discount: 0,
+                remaining: balanceAfter,
+                totalReceived: amount,
+            },
+            payment: {
+                method: receipt.mode || '',
+                depositedTo: receipt.bankName || '',
+                chequeRef: receipt.reference || '',
+                chequeDate: receipt.chequeDate || '',
+            },
+            note: '',
+            // Fallback fields for generic renderer
             title: 'PAYMENT RECEIPT',
             docNo: receipt.receiptNumber,
             date: receipt.date,
-            customer: {
-                name: receipt.customerName || invoice?.customerName || '',
-                address: invoice?.customerAddress || '',
-                trn: invoice?.customerTrn || '',
-                phone: invoice?.customerPhone || ''
-            },
-            items: [{
-                name: 'Receipt Against Invoice',
-                description: {
-                    title: 'Receipt Against Invoice',
-                    details: [
-                        `Invoice: ${invoice?.invoiceNumber || '—'}`,
-                        `Mode: ${receipt.mode || 'Cash'}`,
-                        receipt.reference ? `Ref: ${receipt.reference}` : null,
-                        receipt.bankName ? `Bank: ${receipt.bankName}` : null,
-                        receipt.purpose ? `Purpose: ${receipt.purpose}` : null
-                    ].filter(Boolean)
-                },
-                unit: '',
-                qty: 1,
-                price: amount,
-                taxableAmount: amount,
-                taxAmt: 0,
-                taxPercent: 0,
-                total: amount
-            }],
-            totals: {
-                subTotal: amount,
-                tax: 0,
-                grandTotal: amount,
-                currency: currencyCode,
-                billDiscount: 0,
-                billDiscountAmount: 0
-            },
-            summaryAmount: {
-                label: 'Amount Received',
-                value: amount,
-                currency: currencyCode
-            },
-            meta: {
-                status: receipt.status || 'Completed',
-                paymentMode: receipt.mode || '',
-                reference: receipt.reference || '',
-                notes: receipt.notes || ''
-            }
+            customer: { name: receipt.customerName || invoice?.customerName || '' },
+            totals: { subTotal: amount, tax: 0, grandTotal: amount, currency: currencyCode },
+            summaryAmount: { label: 'Amount Received', value: amount, currency: currencyCode },
+            meta: { status: receipt.status || 'Completed', paymentMode: receipt.mode || '' },
         };
     };
 
     const handlePrintReceipt = async (receipt, invoiceContext = receiptsInvoiceContext) => {
         try {
-            const templates = await getTemplatesByCategory('Sales Invoice');
+            const templates = await getTemplatesByCategory('Receipt Voucher');
             const defaultTemplate = (templates && templates.find((t) => t.isDefault)) || (templates && templates[0]) || {
-                category: 'Sales Invoice',
+                category: 'Receipt Voucher',
                 paperSize: 'A4',
                 orientation: 'Portrait',
                 headerContent: '',
@@ -2696,13 +2691,21 @@ const SalesInvoice = () => {
     };
 
     // Helper for Status Badges
-    const renderListStatus = (statusVal) => {
+    const renderListStatus = (statusVal, inv = null) => {
         const s = statusVal?.toUpperCase();
+        // Compute overdue: confirmed/partially-paid with outstanding balance past due date
+        if (inv && (s === 'CONFIRMED' || s === 'PARTIALLY_PAID') && inv.dueDate && (inv.balance ?? 0) > 0) {
+            const today = new Date(); today.setHours(0, 0, 0, 0);
+            if (new Date(inv.dueDate) < today) {
+                return <span className="bg-red-100 text-red-700 px-2 py-0.5 rounded text-[10px] font-bold">Overdue</span>;
+            }
+        }
         if (s === 'PAID') return <span className="bg-emerald-100 text-emerald-700 px-2 py-0.5 rounded text-[10px] font-bold">Paid</span>;
         if (s === 'OVERDUE') return <span className="bg-red-100 text-red-700 px-2 py-0.5 rounded text-[10px] font-bold">Overdue</span>;
         if (s === 'PARTIALLY_PAID') return <span className="bg-orange-100 text-orange-700 px-2 py-0.5 rounded text-[10px] font-bold">Partially Paid</span>;
         if (s === 'CONFIRMED') return <span className="bg-blue-100 text-blue-700 px-2 py-0.5 rounded text-[10px] font-bold">Confirmed</span>;
         if (s === 'COMPLETED') return <span className="bg-emerald-100 text-emerald-700 px-2 py-0.5 rounded text-[10px] font-bold">Completed</span>;
+        if (s === 'POSTED') return <span className="bg-purple-100 text-purple-700 px-2 py-0.5 rounded text-[10px] font-bold">Posted</span>;
         return <span className="bg-slate-100 text-slate-600 px-2 py-0.5 rounded text-[10px] font-bold">{statusVal || 'Draft'}</span>;
     };
 
@@ -2785,8 +2788,8 @@ const SalesInvoice = () => {
         return { label: 'Direct Sale', ref: null, color: 'bg-orange-100 text-orange-700 border-orange-200' };
     };
 
-    const renderTypeBadge = (type) => {
-        if (type === 'DIRECT_SALE') return <span className="bg-purple-100 text-purple-700 px-2 py-0.5 rounded text-[10px] font-bold ml-2 border border-purple-200 shadow-sm flex items-center gap-1"><ShoppingCart size={10} /> Direct Sale</span>;
+    const renderTypeBadge = (inv) => {
+        if (inv?.fastSale) return <span className="bg-red-50 text-red-600 px-2 py-0.5 rounded text-[10px] font-bold ml-2 border border-red-200 shadow-sm flex items-center gap-1"><ShoppingCart size={10} /> Fast Sale</span>;
         return null;
     };
 
@@ -2799,11 +2802,11 @@ const SalesInvoice = () => {
                 <div>
                     <h4 className="font-bold text-slate-800 text-sm flex items-center">
                         {inv.invoiceNumber}
-                        {renderTypeBadge(inv.salesType)}
+                        {renderTypeBadge(inv)}
                     </h4>
                     <div className="text-xs text-slate-500">{formatDisplayDate(inv.invoiceDate)}</div>
                 </div>
-                {renderListStatus(inv.status)}
+                {renderListStatus(inv.status, inv)}
             </div>
 
             <div className="flex items-center gap-2 mb-3 text-xs text-slate-600">
@@ -2948,7 +2951,7 @@ const SalesInvoice = () => {
                                 {activeTab === 'create' && (
                                     <div className="flex flex-wrap items-center gap-2 pt-2">
                                         {renderListStatus(status)}
-                                        {renderTypeBadge(salesType)}
+                                        {renderTypeBadge({ fastSale: salesSettings?.salesMode === 'FAST_SALE' })}
                                         <span className="text-xs text-slate-500 font-medium">
                                             Invoice No: <span className="text-slate-800 font-bold">{invoiceNo || '-'}</span>
                                         </span>
@@ -2979,12 +2982,6 @@ const SalesInvoice = () => {
                                             className="flex-1 sm:flex-none h-8 px-4 rounded-md bg-[#F5C742] hover:bg-[#E5B732] text-slate-900 flex items-center justify-center gap-1.5 text-sm font-bold shadow-sm transition-colors"
                                         >
                                             <CheckCircle2 className="h-4 w-4" /> Confirm
-                                        </button>
-                                        <button
-                                            onClick={() => handleOpenPaymentModal()}
-                                            className="flex-1 sm:flex-none h-8 px-3 border border-slate-300 rounded-md bg-white hover:bg-slate-50 text-slate-700 flex items-center justify-center gap-1.5 text-sm font-medium transition-colors"
-                                        >
-                                            <DollarSign className="h-4 w-4" /> Pay
                                         </button>
                                         <div className="flex-1 sm:flex-none flex items-stretch">
                                             <button
@@ -3124,7 +3121,7 @@ const SalesInvoice = () => {
                                                 <td className="px-4 py-3 font-medium text-slate-700">
                                                     <div className="flex items-center">
                                                         {inv.invoiceNumber}
-                                                        {renderTypeBadge(inv.salesType)}
+                                                        {renderTypeBadge(inv)}
                                                     </div>
                                                 </td>
                                                 <td className="px-4 py-3 text-slate-500">{formatDisplayDate(inv.invoiceDate)}</td>
@@ -3156,35 +3153,36 @@ const SalesInvoice = () => {
                                                     })()}
                                                 </td>
                                                 <td className="px-4 py-3">
-                                                    <span className="border border-slate-200 px-2 py-0.5 rounded text-[10px] bg-white text-slate-600">{inv.paymentMode || 'Cash'}</span>
+                                                    <span className="border border-slate-200 px-2 py-0.5 rounded text-[10px] bg-white text-slate-600">{inv.paymentMode || '—'}</span>
                                                 </td>
                                                 <td className="px-4 py-3 font-medium text-slate-800"><CurrencyAmount value={inv.invoiceTotal || 0} currency={invoiceCurrency} /></td>
                                                 <td className="px-4 py-3 text-emerald-600"><CurrencyAmount value={inv.amountPaid || 0} currency={invoiceCurrency} /></td>
                                                 <td className="px-4 py-3">
                                                     <CurrencyAmount value={inv.balance || 0} currency={invoiceCurrency} className="text-red-500 font-medium mr-2" />
-                                                    {renderListStatus(inv.status)}
+                                                    {renderListStatus(inv.status, inv)}
                                                 </td>
-                                                <td className="px-4 py-3 text-slate-500">{inv.salesChannel || 'In-Store'}</td>
+                                                <td className="px-4 py-3 text-slate-500">{inv.salesChannel || 'Retail'}</td>
                                                 <td className="px-4 py-3 text-right">
                                                     <div className="flex justify-end gap-2" onClick={(e) => e.stopPropagation()}>
-                                                        <button onClick={() => handleLoadInvoice(inv)} className="p-1 hover:bg-slate-200 rounded text-slate-500"><Edit size={14} /></button>
-                                                        <button onClick={() => handlePrintClick(inv)} disabled={isPrinting} className="p-1 hover:bg-slate-200 rounded text-slate-500 disabled:opacity-50"><Printer size={14} /></button>
+                                                        <button onClick={() => handleLoadInvoice(inv)} className="p-1 hover:bg-slate-200 rounded text-slate-500" title="Edit"><Edit size={14} /></button>
+                                                        <button onClick={() => handlePrintClick(inv)} disabled={isPrinting} className="p-1 hover:bg-slate-200 rounded text-slate-500 disabled:opacity-50" title="Print"><Printer size={14} /></button>
                                                         <button
                                                             onClick={() => handleViewReceipts(inv)}
                                                             className="p-1 hover:bg-indigo-100 rounded text-indigo-600"
                                                             title="Receipts"
                                                         ><Receipt size={14} /></button>
+                                                        {!['PAID', 'CANCELLED'].includes(inv.status?.toUpperCase()) && (
                                                         <button
-                                                            onClick={() => {
-                                                                handleLoadInvoice(inv);
-                                                                const bal = inv.balance != null ? inv.balance : Math.max((inv.netTotal || 0) - (inv.amountPaid || 0), 0);
-                                                                setModalPaymentAmount(bal > 0 ? bal.toFixed(2) : 0);
-                                                                setModalBankAccount('');
-                                                                setIsPaymentModalOpen(true);
-                                                            }}
+                                                            onClick={() => setSettlementInvoice(inv)}
                                                             className="p-1 hover:bg-green-100 rounded text-green-600"
                                                             title="Record Payment"
                                                         ><DollarSign size={14} /></button>
+                                                        )}
+                                                        <button
+                                                            onClick={() => { handleLoadInvoice(inv); setIsEmailModalOpen(true); }}
+                                                            className="p-1 hover:bg-sky-100 rounded text-sky-500"
+                                                            title="Send Email"
+                                                        ><Mail size={14} /></button>
                                                     </div>
                                                 </td>
                                             </tr>
@@ -3278,12 +3276,6 @@ const SalesInvoice = () => {
                                             >
                                                 <CheckCircle2 size={14} /> Confirm
                                             </button>
-                                            <button
-                                                onClick={() => handleOpenPaymentModal()}
-                                                className="flex items-center justify-center gap-1 px-3 py-1.5 bg-white border border-slate-200 rounded text-xs font-bold text-slate-600 hover:bg-slate-50 flex-1 md:flex-none"
-                                            >
-                                                <DollarSign size={14} /> Pay
-                                            </button>
                                             <button onClick={() => handlePrintClick()} disabled={isPrinting} className="p-2 hover:bg-slate-50 rounded border border-slate-200 text-slate-600 hidden md:block disabled:opacity-50"><Printer size={16} /></button>
                                             <button className="flex items-center justify-center gap-1 px-3 py-1.5 bg-white border border-slate-200 rounded text-xs font-medium text-slate-600 hover:bg-slate-50 flex-1 md:flex-none"><Mail size={14} /></button>
                                         </div>
@@ -3333,12 +3325,28 @@ const SalesInvoice = () => {
                                                 <div className="relative">
                                                     <select value={paymentTerms} onChange={e => setPaymentTerms(e.target.value)} disabled={isReadOnlyInvoice} className="w-full text-xs p-2 border border-slate-200 rounded bg-white appearance-none focus:outline-none focus:border-[#F5C742] disabled:bg-slate-50 disabled:text-slate-500">
                                                         <option>Immediate</option>
+                                                        <option>Net 15</option>
                                                         <option>Net 30</option>
+                                                        <option>Net 45</option>
                                                         <option>Net 60</option>
                                                     </select>
-                                                    <ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
+                                                    <ChevronDown className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={14} />
                                                 </div>
                                             </div>
+
+                                            <div>
+                                                <label className="block text-xs font-bold text-slate-700 mb-1">Sales Mode</label>
+                                                <div className="relative">
+                                                    <select value={salesChannel} onChange={e => setSalesChannel(e.target.value)} disabled={isReadOnlyInvoice} className="w-full text-xs p-2 border border-slate-200 rounded bg-white appearance-none focus:outline-none focus:border-[#F5C742] disabled:bg-slate-50 disabled:text-slate-500">
+                                                        <option value="Retail">Retail</option>
+                                                        <option value="Wholesale">Wholesale</option>
+                                                        <option value="POS">POS</option>
+                                                        <option value="Online">Online</option>
+                                                    </select>
+                                                    <ChevronDown className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={14} />
+                                                </div>
+                                            </div>
+
 
                                             <div>
                                                 <label className="block text-xs font-bold text-slate-700 mb-1">Invoice Type</label>
@@ -3435,6 +3443,8 @@ const SalesInvoice = () => {
                                         onCustomerUpdated={setSelectedCustomer}
                                         shippingAddress={shippingAddress}
                                         onShippingChange={setShippingAddress}
+                                        expectedDispatch={deliveryDate}
+                                        onExpectedDispatchChange={setDeliveryDate}
                                         isReadOnly={isReadOnlyInvoice}
                                         currency={invoiceCurrency}
                                     />
@@ -3952,11 +3962,13 @@ const SalesInvoice = () => {
                                                     <span>New Total Outstanding</span>
                                                     <CurrencyAmount value={newTotalOutstanding} currency={invoiceCurrency} />
                                                 </div>
+                                                {paymentMode && (
                                                 <div>
                                                     <span className={`text-[10px] font-bold px-2 py-1 rounded text-white ${paymentMode === 'Cash' ? 'bg-emerald-500' : 'bg-blue-500'}`}>
                                                         {paymentMode} Invoice
                                                     </span>
                                                 </div>
+                                                )}
                                             </div>
                                         </div>
                                     </div>
@@ -4035,9 +4047,6 @@ const SalesInvoice = () => {
                                             <CheckCircle2 size={14} /> Confirm
                                         </button>
                                     )}
-                                    <button onClick={() => handleOpenPaymentModal()} className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-slate-300 text-slate-700 rounded text-xs font-bold hover:bg-slate-50 transition-colors shadow-sm">
-                                        <DollarSign size={14} /> Pay
-                                    </button>
                                     <div className="flex items-stretch">
                                         <button onClick={() => handlePrintClick()} disabled={isPrinting} className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-slate-300 rounded-l text-xs font-bold hover:bg-slate-50 transition-colors shadow-sm disabled:opacity-50 text-slate-700">
                                             <Printer size={14} /> {isPrinting ? 'Printing...' : 'Print'}
