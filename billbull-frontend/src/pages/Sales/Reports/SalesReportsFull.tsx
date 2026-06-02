@@ -407,7 +407,7 @@ let mockChannelSalesData = [
 
 // Mock data for Daily Sales (Z-style)
 let mockDailySalesData = {
-  date: "2026-01-16",
+  date: new Date().toISOString().split("T")[0],
   branch: "Main Branch",
   preparedBy: "Ahmed Hassan",
   approvedBy: "Mgr. Ali Khalid",
@@ -1094,7 +1094,7 @@ function applyLiveReportData(reportId: ReportId, data: SalesReportPayload | null
             { mode: "Collected", amount: collected },
             { mode: "Outstanding", amount: outstanding },
           ];
-      const periodDate = dateOnly(rows[rows.length - 1]?.date, dateOnly(new Date().toISOString()));
+      const periodDate = new Date().toISOString().split("T")[0];
 
       mockDailySalesData = {
         date: periodDate,
