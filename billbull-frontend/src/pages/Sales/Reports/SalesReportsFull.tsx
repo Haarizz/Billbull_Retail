@@ -975,6 +975,17 @@ function dateOnly(value: any, fallback = ""): string {
   return raw.length > 10 ? raw.slice(0, 10) : raw;
 }
 
+function dateRangeLabel(rows: ReportPayloadRow[]): string {
+  const dates = rows
+    .map((row) => dateOnly(row.date))
+    .filter(Boolean)
+    .sort();
+  if (!dates.length) return "Selected Period";
+  const first = dates[0];
+  const last = dates[dates.length - 1];
+  return first === last ? first : `${first} - ${last}`;
+}
+
 function timeOnly(value: any): string {
   const raw = asText(value);
   return raw.length > 15 ? raw.slice(11, 16) : "";
@@ -1083,25 +1094,48 @@ function applyLiveReportData(reportId: ReportId, data: SalesReportPayload | null
             { mode: "Collected", amount: collected },
             { mode: "Outstanding", amount: outstanding },
           ];
+      const periodDate = dateOnly(rows[rows.length - 1]?.date, dateOnly(new Date().toISOString()));
 
       mockDailySalesData = {
-        ...mockDailySalesData,
-        date: dateOnly(rows[rows.length - 1]?.date, dateOnly(new Date().toISOString())),
-        totalGrossSales: gross,
+        date: periodDate,
+        branch: "All Branches",
+        preparedBy: "System",
+        approvedBy: "",
+        shift: "Selected period",
+        openingBalances: [],
+        posSales: 0,
+        vanSales: 0,
         backOfficeSales: gross,
+        totalGrossSales: gross,
         salesReturns: returns,
         discounts,
         netSales,
         vatOnSales: vat,
         salesPayments,
+        totalPurchases: 0,
+        purchaseReturns: 0,
+        netPurchases: 0,
+        vatOnPurchases: 0,
+        purchasePayments: [],
+        totalExpenses: 0,
+        expensePayments: [],
+        salesReturnLines: returns
+          ? [{ ref: "SALES-RETURNS", customer: "Selected period", items: rows.length, amount: returns, mode: "Total" }]
+          : [],
+        purchaseReturnLines: [],
+        soAdvances: [],
+        lpoAdvances: [],
+        salaryAdvances: [],
+        otherReceipts: [],
+        otherPayments: [],
         customerReceipts: collected
           ? [{ ref: "COLLECTED", customer: "Selected period", mode: "Mixed", amount: collected }]
           : [],
-        cashAccounts: mockDailySalesData.cashAccounts.map((account: any, index: number) => ({
-          ...account,
-          inflow: index === 0 ? collected : account.inflow,
-          closing: index === 0 ? account.opening + collected - account.outflow : account.closing,
-        })),
+        vendorPayments: [],
+        cashAccounts: [],
+        bankAccounts: outstanding
+          ? [{ bank: "Outstanding receivables", opening: 0, receipts: collected, payments: 0, closing: outstanding }]
+          : [],
       };
       break;
     }
@@ -1725,8 +1759,8 @@ export function SalesReports({ onNavigate }: SalesReportsProps) {
   });
 
   // Filters
-  const [dateFrom, setDateFrom] = useState("2026-01-10");
-  const [dateTo, setDateTo] = useState("2026-01-16");
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
   const [branch, setBranch] = useState("All");
   const [channel, setChannel] = useState("All");
   const [cashier, setCashier] = useState("All");
@@ -1778,6 +1812,8 @@ export function SalesReports({ onNavigate }: SalesReportsProps) {
 
   async function loadReport(signal?: AbortSignal) {
     try {
+      applyLiveReportData(activeReport, { rows: [], charts: [] });
+      setDataRevision((value) => value + 1);
       const data = await getSalesReportData(activeReport, {
         dateFrom,
         dateTo,
@@ -2197,6 +2233,7 @@ function SalesSummaryReport() {
   const totalGrossProfit = rows.reduce((sum, d) => sum + d.grossProfit, 0);
   const avgGP = totalNetSales > 0 ? (totalGrossProfit / totalNetSales * 100) : 0;
   const returnsPct = totalGrossSales > 0 ? ((totalReturns / totalGrossSales) * 100).toFixed(1) : "0.0";
+  const detailRangeLabel = dateRangeLabel(rows);
 
   return (
     <div className="space-y-3">
@@ -2302,7 +2339,7 @@ function SalesSummaryReport() {
         <CardHeader className="py-3 px-3">
           <div className="flex items-start justify-between gap-3">
             <CardTitle className="text-xs font-semibold text-slate-800">
-              Sales Summary Detail (Jan 10 - Jan 16, 2026)
+              Sales Summary Detail ({detailRangeLabel})
             </CardTitle>
             <Button variant="ghost" size="sm" className="h-7 px-2 text-[10px] flex items-center gap-1">
               <Download className="h-3 w-3" />
@@ -5293,6 +5330,82 @@ let mockProfitDrilldownData: ProfitCustomer[] = [
     ],
   },
 ];
+
+function clearInitialSalesReportData() {
+  mockSalesSummaryData = [];
+  mockChannelSalesData = [];
+  mockDailySalesData = {
+    date: "",
+    branch: "All Branches",
+    preparedBy: "System",
+    approvedBy: "",
+    shift: "Selected period",
+    openingBalances: [],
+    posSales: 0,
+    vanSales: 0,
+    backOfficeSales: 0,
+    totalGrossSales: 0,
+    salesReturns: 0,
+    discounts: 0,
+    netSales: 0,
+    vatOnSales: 0,
+    salesPayments: [],
+    totalPurchases: 0,
+    purchaseReturns: 0,
+    netPurchases: 0,
+    vatOnPurchases: 0,
+    purchasePayments: [],
+    totalExpenses: 0,
+    expensePayments: [],
+    salesReturnLines: [],
+    purchaseReturnLines: [],
+    soAdvances: [],
+    lpoAdvances: [],
+    salaryAdvances: [],
+    otherReceipts: [],
+    otherPayments: [],
+    customerReceipts: [],
+    vendorPayments: [],
+    cashAccounts: [],
+    bankAccounts: [],
+  };
+  mockCustomerSalesData = [];
+  mockCashierPerformanceData = [];
+  mockPOSTransactionData = [];
+  mockPOSItemSalesData = [];
+  mockPOSPaymentData = [];
+  mockVoidData = [];
+  mockVANSalesSummaryData = [];
+  mockVANRouteData = [];
+  mockVANItemData = [];
+  mockVANCollectionData = [];
+  mockVANStockData = [];
+  mockInvoiceRegisterData = [];
+  mockOrderStatusData = [];
+  mockDeliveryData = [];
+  mockCreditNoteData = [];
+  mockAgingData = [];
+  mockTopDormantData = { top: [], dormant: [] };
+  mockPriceLevelData = [];
+  mockItemWiseSalesData = [];
+  mockCategoryData = [];
+  mockFastSlowData = { fast: [], slow: [] };
+  mockDiscountData = [];
+  mockPromotionData = [];
+  mockFreeIssueData = [];
+  mockTaxData = [
+    { taxRate: "5% VAT Standard", taxableSales: 0, taxAmount: 0, exemptSales: 0, zeroRated: 0, netTaxPayable: 0 },
+    { taxRate: "0% Zero-Rated", taxableSales: 0, taxAmount: 0, exemptSales: 0, zeroRated: 0, netTaxPayable: 0 },
+    { taxRate: "Exempt", taxableSales: 0, taxAmount: 0, exemptSales: 0, zeroRated: 0, netTaxPayable: 0 },
+  ];
+  mockVATOutputData = [];
+  mockPriceOverrideData = [];
+  mockManualEntryData = [];
+  mockEditLogData = [];
+  mockProfitDrilldownData = [];
+}
+
+clearInitialSalesReportData();
 
 const CHANNEL_COLORS: Record<string, string> = {
   "POS": "text-purple-700 bg-purple-50 border-purple-200",

@@ -48,4 +48,11 @@ public interface LpoRepository extends JpaRepository<Lpo, Long> {
             + "GROUP BY l.status")
     List<Object[]> countByStatusScoped(@Param("allBranches") boolean allBranches,
             @Param("branchIds") Collection<Long> branchIds);
+
+    @Query("SELECT DISTINCT l FROM Lpo l LEFT JOIN FETCH l.items "
+            + "WHERE (:dateFrom IS NULL OR l.lpoDate >= :dateFrom) "
+            + "AND (:dateTo IS NULL OR l.lpoDate <= :dateTo) "
+            + "ORDER BY l.lpoDate DESC")
+    List<Lpo> findForReports(@Param("dateFrom") java.time.LocalDate dateFrom,
+            @Param("dateTo") java.time.LocalDate dateTo);
 }

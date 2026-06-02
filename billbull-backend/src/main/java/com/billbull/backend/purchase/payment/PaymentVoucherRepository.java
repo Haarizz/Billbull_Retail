@@ -89,4 +89,11 @@ public interface PaymentVoucherRepository extends JpaRepository<PaymentVoucher, 
             + "GROUP BY v.paymentMode")
     List<Object[]> sumPostedByModeScoped(@Param("allBranches") boolean allBranches,
             @Param("branchIds") Collection<Long> branchIds);
+
+    @Query("SELECT v FROM PaymentVoucher v WHERE "
+            + "(:dateFrom IS NULL OR v.paymentDate >= :dateFrom) "
+            + "AND (:dateTo IS NULL OR v.paymentDate <= :dateTo) "
+            + "ORDER BY v.paymentDate DESC, v.id DESC")
+    List<PaymentVoucher> findForReports(@Param("dateFrom") java.time.LocalDate dateFrom,
+            @Param("dateTo") java.time.LocalDate dateTo);
 }

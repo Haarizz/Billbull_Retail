@@ -4,6 +4,8 @@ import java.util.List;
 import java.util.Optional;
 
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 
 public interface GrnRepository extends JpaRepository<GrnEntity, Long> {
 
@@ -27,6 +29,13 @@ public interface GrnRepository extends JpaRepository<GrnEntity, Long> {
         List<GrnEntity> findByReferenceIdAndSourceTypeIn(
                         Long referenceId,
                         List<GrnSourceType> sourceTypes);
+
+        @Query("SELECT DISTINCT g FROM GrnEntity g LEFT JOIN FETCH g.items "
+                        + "WHERE (:dateFrom IS NULL OR g.grnDate >= :dateFrom) "
+                        + "AND (:dateTo IS NULL OR g.grnDate <= :dateTo) "
+                        + "ORDER BY g.grnDate DESC")
+        List<GrnEntity> findForReports(@Param("dateFrom") java.time.LocalDate dateFrom,
+                        @Param("dateTo") java.time.LocalDate dateTo);
 
         /* ================= CONVENIENCE METHODS ================= */
 

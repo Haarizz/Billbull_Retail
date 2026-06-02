@@ -33,7 +33,7 @@ import {
   Clock,
   Activity,
 } from "lucide-react";
-import { getProfitLoss, getBalanceSheet, getTrialBalance, getCashFlow } from "../../api/financialReportsBackendApi";
+import { getProfitLoss, getBalanceSheet, getTrialBalance, getCashFlow, getTaxDashboard, getTaxReconciliation, getARAgingReport, getAPAgingReport } from "../../api/financialReportsBackendApi";
 
 let mockProfitLossSections: any = null;
 let mockGrossProfitRows: any = null;
@@ -41,43 +41,116 @@ let mockBalanceSheetAssets: any = null;
 let mockBalanceSheetEqLiab: any = null;
 let mockTrialBalanceRows: any = null;
 let mockCashFlowSections: any = null;
+let mockCashFlowData: any = null;
+let mockCustomerAgingRows: any = null;
+let mockVendorAgingRows: any = null;
+let mockVatDashboard: any = null;
+let mockVatOutputLines: any = null;
+let mockVatInputLines: any = null;
 
 function applyLiveReportData(reportId: ReportId, data: any) {
   if (!data) return;
-  
-  switch(reportId) {
-    case "profit_loss":
-      // Map API profit & loss data to the UI format
+
+  switch (reportId) {
+    case "profit_loss": {
       if (data.revenueItems || data.cogsItems || data.operatingExpenseItems) {
-         mockProfitLossSections = [
-           { label: "Revenue", isRevenue: true, rows: (data.revenueItems || []).map((r: any) => ({ name: r.accountName || r.category, cur: r.amount || 0, prior: r.priorAmount || 0 })) },
-           { label: "Cost of Sales", rows: (data.cogsItems || []).map((r: any) => ({ name: r.accountName || r.category, cur: -Math.abs(r.amount || 0), prior: -Math.abs(r.priorAmount || 0) })) },
-           { label: "Operating Expenses", rows: (data.operatingExpenseItems || data.expenseItems || []).map((r: any) => ({ name: r.accountName || r.category, cur: -Math.abs(r.amount || 0), prior: -Math.abs(r.priorAmount || 0) })) },
-           { label: "Other Income", rows: (data.otherIncomeItems || []).map((r: any) => ({ name: r.accountName || r.category, cur: Math.abs(r.amount || 0), prior: Math.abs(r.priorAmount || 0) })) }
-         ];
+        const toRow = (r: any) => ({ name: r.accountName || r.category, cur: Number(r.amount || 0), prior: Number(r.priorAmount || 0) });
+        mockProfitLossSections = [
+          { label: "Revenue", isRevenue: true, rows: (data.revenueItems || []).map(toRow) },
+          { label: "Cost of Sales", rows: (data.cogsItems || []).map((r: any) => ({ ...toRow(r), cur: -Math.abs(Number(r.amount || 0)), prior: -Math.abs(Number(r.priorAmount || 0)) })) },
+          { label: "Operating Expenses", rows: (data.operatingExpenseItems || data.expenseItems || []).map((r: any) => ({ ...toRow(r), cur: -Math.abs(Number(r.amount || 0)), prior: -Math.abs(Number(r.priorAmount || 0)) })) },
+          { label: "Other Income", rows: (data.otherIncomeItems || []).map((r: any) => ({ ...toRow(r), cur: Math.abs(Number(r.amount || 0)), prior: Math.abs(Number(r.priorAmount || 0)) })) },
+        ];
       }
       break;
-    case "balance_sheet":
+    }
+    case "balance_sheet": {
       if (data.assetItems) {
-         mockBalanceSheetAssets = [
-           { section: "Assets", rows: data.assetItems.map((r: any) => ({ name: r.accountName || r.category, amount: r.amount || 0 })) }
-         ];
-         mockBalanceSheetEqLiab = [
-           { section: "Equity", rows: (data.equityItems || []).map((r: any) => ({ name: r.accountName || r.category, amount: r.amount || 0 })) },
-           { section: "Liabilities", rows: (data.liabilityItems || []).map((r: any) => ({ name: r.accountName || r.category, amount: r.amount || 0 })) }
-         ];
+        const groupByCategory = (items: any[]) => {
+          const map: Record<string, { name: string; amount: number }[]> = {};
+          for (const r of items) {
+            const sec = r.category || "Assets";
+            if (!map[sec]) map[sec] = [];
+            map[sec].push({ name: r.accountName || r.category, amount: Number(r.amount || 0) });
+          }
+          return map;
+        };
+
+        const assetMap = groupByCategory(data.assetItems || []);
+        const ASSET_ORDER = ["Non-Current Assets", "Current Assets", "Cash & Cash Equivalents"];
+        const assetKeys = ASSET_ORDER.filter(k => assetMap[k]).concat(Object.keys(assetMap).filter(k => !ASSET_ORDER.includes(k)));
+        mockBalanceSheetAssets = assetKeys.map(sec => ({ section: sec, rows: assetMap[sec] }));
+
+        const liabMap = groupByCategory(data.liabilityItems || []);
+        const LIAB_ORDER = ["Non-Current Liabilities", "Current Liabilities"];
+        const liabKeys = LIAB_ORDER.filter(k => liabMap[k]).concat(Object.keys(liabMap).filter(k => !LIAB_ORDER.includes(k)));
+        const equityRows = (data.equityItems || []).map((r: any) => ({ name: r.accountName || r.category, amount: Number(r.amount || 0) }));
+
+        mockBalanceSheetEqLiab = [
+          ...(equityRows.length > 0 ? [{ section: "Equity", rows: equityRows }] : []),
+          ...liabKeys.map(sec => ({ section: sec, rows: liabMap[sec] })),
+        ];
       }
       break;
-    case "trial_balance":
-      if (data.lines || data.data) {
-         const rows = data.lines || data.data;
-         mockTrialBalanceRows = rows.map((r: any) => ({
-            code: r.accountCode || r.code || "",
-            name: r.accountName || r.name || "Unknown",
-            debit: r.debitBalance || r.debit || 0,
-            credit: r.creditBalance || r.credit || 0
-         }));
+    }
+    case "trial_balance": {
+      const rows = data.lines || data.data;
+      if (rows) {
+        mockTrialBalanceRows = rows.map((r: any) => ({
+          code: r.accountCode || r.code || "",
+          name: r.accountName || r.name || "Unknown",
+          debit: Number(r.debitBalance ?? r.debit ?? 0),
+          credit: Number(r.creditBalance ?? r.credit ?? 0),
+        }));
       }
+      break;
+    }
+    case "cash_flow_statement": {
+      const toRows = (items: any[]) => (items || []).map((r: any) => ({ name: r.accountName || r.category, amount: Number(r.amount || 0) }));
+      if (data.operatingActivities !== undefined || data.investingActivities !== undefined) {
+        mockCashFlowData = {
+          ops: toRows(data.operatingActivities),
+          inv: toRows(data.investingActivities),
+          fin: toRows(data.financingActivities),
+          totalOperating: Number(data.totalOperating || 0),
+          totalInvesting: Number(data.totalInvesting || 0),
+          totalFinancing: Number(data.totalFinancing || 0),
+          netCashFlow: Number(data.netCashFlow || 0),
+        };
+      }
+      break;
+    }
+    case "customer_aging": {
+      const arr = Array.isArray(data) ? data : (data ? Object.values(data) : []);
+      if (arr.length > 0) {
+        mockCustomerAgingRows = arr.map((r: any) => ({
+          customer: r.partnerName || r.customerName || "Unknown",
+          current: Number(r.amount0to30 || 0),
+          d30: Number(r.amount31to60 || 0),
+          d60: Number(r.amount61to90 || 0),
+          d90: 0,
+          d90plus: Number(r.amount90Plus || r.amount90plus || 0),
+          total: Number(r.total || 0),
+        }));
+      }
+      break;
+    }
+    case "vendor_aging": {
+      const arr = Array.isArray(data) ? data : (data ? Object.values(data) : []);
+      if (arr.length > 0) {
+        mockVendorAgingRows = arr.map((r: any) => ({
+          vendor: r.partnerName || r.vendorName || "Unknown",
+          current: Number(r.amount0to30 || 0),
+          d30: Number(r.amount31to60 || 0),
+          d60: Number(r.amount61to90 || 0),
+          d90: 0,
+          d90plus: Number(r.amount90Plus || r.amount90plus || 0),
+          total: Number(r.total || 0),
+        }));
+      }
+      break;
+    }
+    default:
       break;
   }
 }
@@ -543,15 +616,15 @@ function MiniBarChart({
   data: { label: string; value: number }[];
   color?: string;
 }) {
-  const max = Math.max(...data.map((d) => d.value));
+  const max = Math.max(...data.map((d) => Math.abs(d.value)), 1);
   return (
     <div className="flex items-end gap-1.5 h-20 mt-2">
-      {data.map((d) => (
-        <div key={d.label} className="flex flex-col items-center flex-1 gap-1">
+      {data.map((d, i) => (
+        <div key={`${d.label}-${i}`} className="flex flex-col items-center flex-1 gap-1">
           <div
             className="w-full rounded-t-sm"
             style={{
-              height: `${Math.round((d.value / max) * 64)}px`,
+              height: `${Math.round((Math.abs(d.value) / max) * 64)}px`,
               backgroundColor: color,
               opacity: 0.85,
             }}
@@ -673,13 +746,13 @@ function ProfitLossReport() {
                         </span>
                       </Td>
                     </tr>
-                    {sec.rows.map((row) => {
+                    {sec.rows.map((row, ri) => {
                       const v =
                         row.prior !== 0
                           ? (((row.cur - row.prior) / Math.abs(row.prior)) * 100).toFixed(1)
                           : "—";
                       return (
-                        <tr key={row.name}>
+                        <tr key={`${sec.label}-${ri}`}>
                           <Td className="pl-6">{row.name}</Td>
                           <Td right>{aed(row.cur)}</Td>
                           <Td right>{aed(row.prior)}</Td>
@@ -976,8 +1049,8 @@ function BalanceSheetReport() {
                     <tr className="bg-slate-50">
                       <Td bold colSpan={2}>{sec.section}</Td>
                     </tr>
-                    {sec.rows.map((r) => (
-                      <tr key={r.name}>
+                    {sec.rows.map((r, i) => (
+                      <tr key={`asset-${sec.section}-${i}`}>
                         <Td className="pl-6">{r.name}</Td>
                         <Td right>{aed(r.amount)}</Td>
                       </tr>
@@ -1014,8 +1087,8 @@ function BalanceSheetReport() {
                     <tr className="bg-slate-50">
                       <Td bold colSpan={2}>{sec.section}</Td>
                     </tr>
-                    {sec.rows.map((r) => (
-                      <tr key={r.name}>
+                    {sec.rows.map((r, i) => (
+                      <tr key={`eq-${sec.section}-${i}`}>
                         <Td className="pl-6">{r.name}</Td>
                         <Td right>{aed(r.amount)}</Td>
                       </tr>
@@ -1096,8 +1169,8 @@ function TrialBalanceReport() {
             </tr>
           </thead>
           <tbody>
-            {rows.map((r) => (
-              <tr key={r.code}>
+            {rows.map((r, i) => (
+              <tr key={`tb-${i}-${r.code}`}>
                 <Td muted>{r.code}</Td>
                 <Td>{r.name}</Td>
                 <Td right>{r.debit > 0 ? aed(r.debit) : "—"}</Td>
@@ -1110,7 +1183,7 @@ function TrialBalanceReport() {
               <Td right bold>{aed(totCredit)}</Td>
             </tr>
             <tr>
-              <Td muted colSpan={2}>
+              <Td muted colSpan={4}>
                 {totDebit === totCredit ? (
                   <span className="text-emerald-600 flex items-center gap-1">
                     <CheckCircle2 className="h-3 w-3" /> Balanced
@@ -1121,8 +1194,6 @@ function TrialBalanceReport() {
                   </span>
                 )}
               </Td>
-              <Td right muted />
-              <Td right muted />
             </tr>
           </tbody>
         </Tbl>
@@ -1132,7 +1203,8 @@ function TrialBalanceReport() {
 }
 
 function CashFlowReport() {
-  const ops = [
+  const live = mockCashFlowData;
+  const ops = live?.ops?.length ? live.ops : [
     { name: "Net Profit Before Tax", amount: 77_850 },
     { name: "Add: Depreciation & Amortisation", amount: 8_500 },
     { name: "Add: Finance Expense", amount: 1_200 },
@@ -1142,19 +1214,19 @@ function CashFlowReport() {
     { name: "Increase in Contract Liabilities", amount: 2_800 },
     { name: "Income Tax Paid", amount: -8_500 },
   ];
-  const inv = [
+  const inv = live?.inv?.length ? live.inv : [
     { name: "Purchase of PP&E", amount: -18_500 },
     { name: "Proceeds from disposal of assets", amount: 1_200 },
   ];
-  const fin = [
+  const fin = live?.fin?.length ? live.fin : [
     { name: "Repayment of lease liabilities", amount: -6_500 },
     { name: "Finance expense paid", amount: -1_200 },
     { name: "New borrowings", amount: 5_000 },
   ];
-  const totOps = ops.reduce((a, r) => a + r.amount, 0);
-  const totInv = inv.reduce((a, r) => a + r.amount, 0);
-  const totFin = fin.reduce((a, r) => a + r.amount, 0);
-  const netChange = totOps + totInv + totFin;
+  const totOps = live ? live.totalOperating : ops.reduce((a, r) => a + r.amount, 0);
+  const totInv = live ? live.totalInvesting : inv.reduce((a, r) => a + r.amount, 0);
+  const totFin = live ? live.totalFinancing : fin.reduce((a, r) => a + r.amount, 0);
+  const netChange = live ? live.netCashFlow : (totOps + totInv + totFin);
 
   const chartData = [
     { label: "Operating", value: Math.abs(totOps) },
@@ -1349,7 +1421,7 @@ function PettyCashReport() {
 }
 
 function CustomerAgingReport() {
-  const rows = [
+  const rows = mockCustomerAgingRows || [
     { customer: "Al Futtaim Retail LLC", current: 12_500, d30: 8_200, d60: 3_500, d90: 0, d90plus: 0, total: 24_200 },
     { customer: "Lulu Hypermarket", current: 28_000, d30: 0, d60: 0, d90: 0, d90plus: 0, total: 28_000 },
     { customer: "Carrefour UAE", current: 0, d30: 15_400, d60: 9_800, d90: 4_200, d90plus: 0, total: 29_400 },
@@ -1531,7 +1603,7 @@ function CreditUtilizationReport() {
 }
 
 function VendorAgingReport() {
-  const rows = [
+  const rows = mockVendorAgingRows || [
     { vendor: "Al Rawabi Foods LLC", current: 18_500, d30: 0, d60: 0, d90: 0, d90plus: 0, total: 18_500 },
     { vendor: "Agthia Group PJSC", current: 9_200, d30: 5_400, d60: 0, d90: 0, d90plus: 0, total: 14_600 },
     { vendor: "Emirates Logistics Co.", current: 0, d30: 12_800, d60: 3_200, d90: 0, d90plus: 0, total: 16_000 },
@@ -1708,14 +1780,20 @@ function OutstandingPayablesReport() {
 }
 
 function VATReturnSummaryReport() {
+  const vd = mockVatDashboard;
+  const outputTax = vd ? Number(vd.outputTax || 0) : 9_450;
+  const inputTax = vd ? Number(vd.inputTax || 0) : 5_510;
+  const netPayable = vd ? Number(vd.netTaxPayable || 0) : 3_940;
+  const salesBase = vd ? Number(vd.taxableSalesBase || 0) : 189_000;
+  const purchaseBase = vd ? Number(vd.taxablePurchaseBase || 0) : 110_200;
   const boxes = [
-    { box: "1", label: "Standard rated supplies (5%)", taxable: 189_000, vat: 9_450 },
-    { box: "2", label: "Zero-rated supplies (0%)", taxable: 12_000, vat: 0 },
+    { box: "1", label: "Standard rated supplies (5%)", taxable: salesBase, vat: outputTax },
+    { box: "2", label: "Zero-rated supplies (0%)", taxable: 0, vat: 0 },
     { box: "3", label: "Exempt supplies", taxable: 0, vat: 0 },
-    { box: "4", label: "Total supplies (Box 1+2+3)", taxable: 201_000, vat: 9_450 },
-    { box: "5", label: "Taxable expenses (5% input VAT)", taxable: 110_200, vat: 5_510 },
-    { box: "6", label: "Input VAT recoverable (Box 5 VAT)", taxable: null, vat: 5_510 },
-    { box: "7", label: "VAT payable / (refundable) (Box 4–6)", taxable: null, vat: 3_940 },
+    { box: "4", label: "Total supplies (Box 1+2+3)", taxable: salesBase, vat: outputTax },
+    { box: "5", label: "Taxable expenses (5% input VAT)", taxable: purchaseBase, vat: inputTax },
+    { box: "6", label: "Input VAT recoverable (Box 5 VAT)", taxable: null, vat: inputTax },
+    { box: "7", label: "VAT payable / (refundable) (Box 4–6)", taxable: null, vat: netPayable },
   ];
   return (
     <Card className="border border-slate-200 bg-white">
@@ -1723,14 +1801,14 @@ function VATReturnSummaryReport() {
         <ReportHeader
           title="VAT Return Summary"
           subtitle="UAE FTA VAT Return — Standard format (Box 1–7)"
-          period="Q4 2025 (Oct–Dec)"
+          period="Selected Period"
           branch="All Branches"
         />
         <div className="mb-3 flex gap-3">
           {[
-            { label: "Output VAT", value: aed(9_450), color: "text-slate-800" },
-            { label: "Input VAT Recoverable", value: aed(5_510), color: "text-emerald-700" },
-            { label: "Net VAT Payable", value: aed(3_940), color: "text-red-600" },
+            { label: "Output VAT", value: aed(outputTax), color: "text-slate-800" },
+            { label: "Input VAT Recoverable", value: aed(inputTax), color: "text-emerald-700" },
+            { label: "Net VAT Payable", value: aed(netPayable), color: "text-red-600" },
           ].map((s) => (
             <div key={s.label} className="flex-1 rounded-lg border border-slate-200 bg-slate-50 p-3 text-center">
               <p className="text-[10px] text-slate-500">{s.label}</p>
@@ -1774,15 +1852,26 @@ function VATReturnSummaryReport() {
 }
 
 function VATOutputRegisterReport() {
-  const rows = [
-    { date: "2026-01-05", inv: "TAX-INV-1001", customer: "Al Futtaim Retail LLC", taxable: 52_000, vatRate: "5%", vat: 2_600, total: 54_600 },
-    { date: "2026-01-08", inv: "TAX-INV-1002", customer: "Lulu Hypermarket", taxable: 28_000, vatRate: "5%", vat: 1_400, total: 29_400 },
-    { date: "2026-01-12", inv: "TAX-INV-1003", customer: "Carrefour UAE", taxable: 35_000, vatRate: "5%", vat: 1_750, total: 36_750 },
-    { date: "2026-01-15", inv: "TAX-INV-1004", customer: "ENOC Stations", taxable: 8_800, vatRate: "5%", vat: 440, total: 9_240 },
-    { date: "2026-01-18", inv: "TAX-INV-1005", customer: "Spinneys Group", taxable: 18_500, vatRate: "5%", vat: 925, total: 19_425 },
-    { date: "2026-01-22", inv: "TAX-INV-1006", customer: "Union Coop", taxable: 13_700, vatRate: "5%", vat: 685, total: 14_385 },
-    { date: "2026-01-25", inv: "TAX-INV-1007", customer: "Cash Customer", taxable: 12_000, vatRate: "0%", vat: 0, total: 12_000 },
-  ];
+  const liveRows = mockVatOutputLines;
+  const rows = liveRows?.length
+    ? liveRows.map((l: any) => ({
+        date: "—",
+        inv: l.documentNumber || "—",
+        customer: l.accountName || "—",
+        taxable: Number(l.baseAmount || 0),
+        vatRate: "5%",
+        vat: Number(l.taxAmount || 0),
+        total: Number(l.baseAmount || 0) + Number(l.taxAmount || 0),
+      }))
+    : [
+        { date: "2026-01-05", inv: "TAX-INV-1001", customer: "Al Futtaim Retail LLC", taxable: 52_000, vatRate: "5%", vat: 2_600, total: 54_600 },
+        { date: "2026-01-08", inv: "TAX-INV-1002", customer: "Lulu Hypermarket", taxable: 28_000, vatRate: "5%", vat: 1_400, total: 29_400 },
+        { date: "2026-01-12", inv: "TAX-INV-1003", customer: "Carrefour UAE", taxable: 35_000, vatRate: "5%", vat: 1_750, total: 36_750 },
+        { date: "2026-01-15", inv: "TAX-INV-1004", customer: "ENOC Stations", taxable: 8_800, vatRate: "5%", vat: 440, total: 9_240 },
+        { date: "2026-01-18", inv: "TAX-INV-1005", customer: "Spinneys Group", taxable: 18_500, vatRate: "5%", vat: 925, total: 19_425 },
+        { date: "2026-01-22", inv: "TAX-INV-1006", customer: "Union Coop", taxable: 13_700, vatRate: "5%", vat: 685, total: 14_385 },
+        { date: "2026-01-25", inv: "TAX-INV-1007", customer: "Cash Customer", taxable: 12_000, vatRate: "0%", vat: 0, total: 12_000 },
+      ];
   return (
     <Card className="border border-slate-200 bg-white">
       <CardContent className="pt-4 px-4 pb-4">
@@ -1833,15 +1922,25 @@ function VATOutputRegisterReport() {
 }
 
 function VATInputRegisterReport() {
-  const rows = [
-    { date: "2026-01-04", inv: "SI-9901", vendor: "Al Rawabi Foods LLC", taxable: 18_500, vat: 925, recoverable: 925 },
-    { date: "2026-01-06", inv: "SI-3340", vendor: "Agthia Group PJSC", taxable: 14_600, vat: 730, recoverable: 730 },
-    { date: "2026-01-10", inv: "SI-8820", vendor: "DAFZA Warehouse Ltd.", taxable: 25_000, vat: 1_250, recoverable: 1_250 },
-    { date: "2026-01-14", inv: "SI-7718", vendor: "Emirates Logistics Co.", taxable: 16_000, vat: 800, recoverable: 800 },
-    { date: "2026-01-18", inv: "SI-0055", vendor: "Sharjah Packaging LLC", taxable: 7_400, vat: 370, recoverable: 370 },
-    { date: "2026-01-20", inv: "UTIL-JAN", vendor: "DEWA (Utilities)", taxable: 4_200, vat: 210, recoverable: 210 },
-    { date: "2026-01-22", inv: "RENT-JAN", vendor: "Emaar Properties PJSC", taxable: 25_000, vat: 1_250, recoverable: 225 },
-  ];
+  const liveRows = mockVatInputLines;
+  const rows = liveRows?.length
+    ? liveRows.map((l: any) => ({
+        date: "—",
+        inv: l.documentNumber || "—",
+        vendor: l.accountName || "—",
+        taxable: Number(l.baseAmount || 0),
+        vat: Number(l.taxAmount || 0),
+        recoverable: Number(l.taxAmount || 0),
+      }))
+    : [
+        { date: "2026-01-04", inv: "SI-9901", vendor: "Al Rawabi Foods LLC", taxable: 18_500, vat: 925, recoverable: 925 },
+        { date: "2026-01-06", inv: "SI-3340", vendor: "Agthia Group PJSC", taxable: 14_600, vat: 730, recoverable: 730 },
+        { date: "2026-01-10", inv: "SI-8820", vendor: "DAFZA Warehouse Ltd.", taxable: 25_000, vat: 1_250, recoverable: 1_250 },
+        { date: "2026-01-14", inv: "SI-7718", vendor: "Emirates Logistics Co.", taxable: 16_000, vat: 800, recoverable: 800 },
+        { date: "2026-01-18", inv: "SI-0055", vendor: "Sharjah Packaging LLC", taxable: 7_400, vat: 370, recoverable: 370 },
+        { date: "2026-01-20", inv: "UTIL-JAN", vendor: "DEWA (Utilities)", taxable: 4_200, vat: 210, recoverable: 210 },
+        { date: "2026-01-22", inv: "RENT-JAN", vendor: "Emaar Properties PJSC", taxable: 25_000, vat: 1_250, recoverable: 225 },
+      ];
   return (
     <Card className="border border-slate-200 bg-white">
       <CardContent className="pt-4 px-4 pb-4">
@@ -3500,25 +3599,41 @@ export default function FinancialReports({ onNavigate }: { onNavigate?: (s: stri
   const [branch, setBranch] = useState("All");
   const [accountSearch, setAccountSearch] = useState("");
   const [, setDataRevision] = useState(0);
+  const [fetchKey, setFetchKey] = useState(0);
 
   useEffect(() => {
     const controller = new AbortController();
     async function fetchReport() {
       try {
-        let data = null;
-        if (activeReport === "profit_loss" || activeReport === "gross_profit" || activeReport === "departmental_pl") {
-          data = await getProfitLoss(dateFrom, dateTo);
+        if (activeReport === "profit_loss" || activeReport === "gross_profit" || activeReport === "departmental_pl" || activeReport === "comparative_pl") {
+          const data = await getProfitLoss(dateFrom, dateTo);
+          if (data) { applyLiveReportData("profit_loss", data); setDataRevision(r => r + 1); }
         } else if (activeReport === "balance_sheet") {
-          data = await getBalanceSheet(dateTo || new Date().toISOString().split("T")[0]);
+          const data = await getBalanceSheet(dateTo || new Date().toISOString().split("T")[0]);
+          if (data) { applyLiveReportData("balance_sheet", data); setDataRevision(r => r + 1); }
         } else if (activeReport === "trial_balance") {
-          data = await getTrialBalance(dateFrom, dateTo);
+          const data = await getTrialBalance(dateFrom, dateTo);
+          if (data) { applyLiveReportData("trial_balance", data); setDataRevision(r => r + 1); }
         } else if (activeReport === "cash_flow_statement") {
-          data = await getCashFlow(dateFrom, dateTo);
-        }
-        
-        if (data) {
-          applyLiveReportData(activeReport, data);
-          setDataRevision(r => r + 1);
+          const data = await getCashFlow(dateFrom, dateTo);
+          if (data) { applyLiveReportData("cash_flow_statement", data); setDataRevision(r => r + 1); }
+        } else if (activeReport === "customer_aging") {
+          const data = await getARAgingReport(dateTo);
+          if (data) { applyLiveReportData("customer_aging", data); setDataRevision(r => r + 1); }
+        } else if (activeReport === "vendor_aging") {
+          const data = await getAPAgingReport(dateTo);
+          if (data) { applyLiveReportData("vendor_aging", data); setDataRevision(r => r + 1); }
+        } else if (activeReport === "vat_return_summary" || activeReport === "vat_output_register" || activeReport === "vat_input_register") {
+          const [dashData, reconData] = await Promise.all([
+            getTaxDashboard(dateFrom, dateTo),
+            getTaxReconciliation(dateFrom, dateTo),
+          ]);
+          if (dashData) { mockVatDashboard = dashData; }
+          if (reconData?.lines) {
+            mockVatOutputLines = reconData.lines.filter((l: any) => l.type === "SALES");
+            mockVatInputLines = reconData.lines.filter((l: any) => l.type === "PURCHASE");
+          }
+          if (dashData || reconData) setDataRevision(r => r + 1);
         }
       } catch (err) {
         console.error("Failed to load financial report:", err);
@@ -3526,7 +3641,7 @@ export default function FinancialReports({ onNavigate }: { onNavigate?: (s: stri
     }
     fetchReport();
     return () => controller.abort();
-  }, [activeReport, dateFrom, dateTo, branch]);
+  }, [activeReport, dateFrom, dateTo, branch, fetchKey]);
 
   const activeDef = useMemo(
     () => REPORTS.find((r) => r.id === activeReport)!,
@@ -3911,7 +4026,7 @@ export default function FinancialReports({ onNavigate }: { onNavigate?: (s: stri
                 </div>
 
                 <div className="flex items-end gap-2 md:col-span-2 xl:col-span-4">
-                  <Button className="h-8 px-6 text-[11px] bg-[#F5C742] hover:bg-[#e4b82e] text-slate-900">
+                  <Button className="h-8 px-6 text-[11px] bg-[#F5C742] hover:bg-[#e4b82e] text-slate-900" onClick={() => setFetchKey(k => k + 1)}>
                     Generate
                   </Button>
                   <Button
@@ -3927,7 +4042,9 @@ export default function FinancialReports({ onNavigate }: { onNavigate?: (s: stri
           </Card>
 
           {/* Report Results */}
-          {renderResults()}
+          <div key={activeReport}>
+            {renderResults()}
+          </div>
         </motion.div>
       </div>
     </div>

@@ -47,6 +47,7 @@ import {
   Pie,
   Cell,
 } from "recharts";
+import { getPurchaseReportData } from "../../../api/purchaseReportsApi";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -182,7 +183,6 @@ function Tbl({ children }: { children: React.ReactNode }) {
     </div>
   );
 }
-
 function Th({ children, right }: { children: React.ReactNode; right?: boolean }) {
   return (
     <th className={`px-3 py-2 font-semibold text-slate-700 bg-slate-50 border-b border-slate-200 whitespace-nowrap ${right ? "text-right" : ""}`}>
@@ -269,15 +269,247 @@ function KpiCard({ label, value, sub, accent }: { label: string; value: string; 
 }
 
 // ---------------------------------------------------------------------------
-// Mock data & Live Hydration Skeleton
+// Mock data & Live Hydration
 // ---------------------------------------------------------------------------
 
-export function applyLiveReportData(reportId: ReportId, data: any) {
-  // Skeleton for future backend API hydration
+type ReportPayloadRow = Record<string, any>;
+
+type PurchaseReportPayload = {
+  rows?: ReportPayloadRow[];
+  charts?: ReportPayloadRow[];
+};
+
+function rowsOf(data: PurchaseReportPayload | null): ReportPayloadRow[] {
+  return Array.isArray(data?.rows) ? data.rows : [];
+}
+
+function n(value: any): number {
+  if (typeof value === "number") return Number.isFinite(value) ? value : 0;
+  const parsed = Number(String(value ?? "").replace(/,/g, ""));
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function asText(value: any, fallback = ""): string {
+  if (value === null || value === undefined || value === "") return fallback;
+  return String(value);
+}
+
+function dateOnly(value: any, fallback = ""): string {
+  const raw = asText(value, fallback);
+  return raw.length > 10 ? raw.slice(0, 10) : raw;
+}
+
+function firstWord(value: any): string {
+  return asText(value, "N/A").split(/\s+/)[0] || "N/A";
+}
+
+function normalizeRows(rows: ReportPayloadRow[], numericKeys: string[] = []): any[] {
+  return rows.map((row) => {
+    const next = { ...row };
+    for (const key of numericKeys) next[key] = n(next[key]);
+    return next;
+  });
+}
+
+function sumRows(rows: ReportPayloadRow[], key: string): number {
+  return rows.reduce((total, row) => total + n(row[key]), 0);
+}
+
+function vendorAgingChart(rows: ReportPayloadRow[]) {
+  return [
+    { name: "0-30 Days", value: sumRows(rows, "d30") },
+    { name: "31-60 Days", value: sumRows(rows, "d60") },
+    { name: "61-90 Days", value: sumRows(rows, "d90") },
+    { name: "90+ Days", value: sumRows(rows, "d90plus") },
+  ];
+}
+
+function lpoAgingChart(rows: ReportPayloadRow[]) {
+  const buckets = [
+    { bucket: "0-7 days", count: 0, value: 0 },
+    { bucket: "8-15 days", count: 0, value: 0 },
+    { bucket: "16-30 days", count: 0, value: 0 },
+    { bucket: "31-60 days", count: 0, value: 0 },
+    { bucket: "60+ days", count: 0, value: 0 },
+  ];
+  for (const row of rows) {
+    const days = n(row.daysPending);
+    const index = days <= 7 ? 0 : days <= 15 ? 1 : days <= 30 ? 2 : days <= 60 ? 3 : 4;
+    buckets[index].count += 1;
+    buckets[index].value += n(row.value);
+  }
+  return buckets;
+}
+
+function aggregateChart(rows: ReportPayloadRow[], nameKey: string, valueKey: string, outputKey: string) {
+  const grouped = new Map<string, number>();
+  for (const row of rows) {
+    const name = asText(row[nameKey], "Unassigned");
+    grouped.set(name, (grouped.get(name) || 0) + n(row[valueKey]));
+  }
+  return Array.from(grouped, ([name, value]) => ({ name: firstWord(name), [outputKey]: value }));
+}
+
+function reasonChart(rows: ReportPayloadRow[]) {
+  const grouped = new Map<string, number>();
+  for (const row of rows) {
+    const reason = asText(row.reason, "Unspecified");
+    grouped.set(reason, (grouped.get(reason) || 0) + 1);
+  }
+  return Array.from(grouped, ([reason, count]) => ({ reason, count }));
+}
+
+function claimStatusChart(rows: ReportPayloadRow[]) {
+  const grouped = new Map<string, number>();
+  for (const row of rows) {
+    const status = asText(row.status, "Pending");
+    grouped.set(status, (grouped.get(status) || 0) + 1);
+  }
+  return Array.from(grouped, ([name, value]) => ({ name, value }));
+}
+
+export function applyLiveReportData(reportId: ReportId, data: PurchaseReportPayload | null) {
   if (!data) return;
+  const rows = rowsOf(data);
+
   switch (reportId) {
     case "vendor-master":
-      // Re-assign mockVendorMaster here when API is ready
+      mockVendorMaster = normalizeRows(rows, ["creditLimit", "outstanding", "rating"]);
+      break;
+    case "vendor-aging":
+      mockVendorAging = normalizeRows(rows, ["total", "d30", "d60", "d90", "d90plus", "creditLimit"]);
+      mockVendorAgingChart = vendorAgingChart(mockVendorAging);
+      break;
+    case "vendor-performance":
+      mockVendorPerf = normalizeRows(rows, ["orders", "onTime", "onTimePct", "returnRate", "claimRate", "avgSettleDays"]);
+      mockVendorPerfChart = mockVendorPerf.map((row) => ({ name: firstWord(row.vendor), onTime: n(row.onTimePct), returnRate: n(row.returnRate) }));
+      break;
+    case "vendor-price-history":
+      mockPriceHistory = normalizeRows(rows, ["p1", "p2", "p3", "p4", "p5", "change"]);
+      break;
+    case "vendor-contract-compliance":
+      mockContractCompliance = normalizeRows(rows, ["contractPrice", "actualPrice", "variance", "variancePct"]);
+      break;
+    case "lpo-register":
+      mockLpoRegister = normalizeRows(rows, ["totalItems", "totalValue"]);
+      break;
+    case "lpo-fulfillment":
+      mockLpoFulfillment = normalizeRows(rows, ["orderedQty", "deliveredQty", "pendingQty", "orderedValue", "deliveredValue", "fulfillmentPct"]);
+      mockLpoFulfillmentChart = mockLpoFulfillment.map((row) => ({ name: asText(row.lpoNo).slice(-4), ordered: n(row.orderedValue), delivered: n(row.deliveredValue) }));
+      break;
+    case "lpo-aging":
+      mockLpoAging = normalizeRows(rows, ["daysPending", "value"]);
+      mockLpoAgingChart = lpoAgingChart(mockLpoAging);
+      break;
+    case "lpo-cancelled":
+      mockLpoCancelled = normalizeRows(rows, ["value"]);
+      break;
+    case "grn-register":
+      mockGrnRegister = normalizeRows(rows, ["items", "receivedQty", "value"]);
+      break;
+    case "grn-variance":
+      mockGrnVariance = normalizeRows(rows, ["lpoQty", "grnQty", "qtyVar", "lpoRate", "grnRate", "valueVar", "variancePct"]);
+      mockGrnVarianceChart = aggregateChart(mockGrnVariance, "vendor", "valueVar", "variance");
+      break;
+    case "grn-batch-expiry":
+      mockBatchExpiry = normalizeRows(rows, ["qty", "daysToExpiry"]);
+      break;
+    case "grn-qc-rejection":
+      mockQcRejection = normalizeRows(rows, ["rejectedQty", "value"]);
+      mockQcChart = reasonChart(mockQcRejection);
+      break;
+    case "grv-register":
+      mockGrvRegister = normalizeRows(rows, ["items", "value"]);
+      break;
+    case "grv-reason-analysis":
+      mockGrvReasonChart = normalizeRows(rows, ["count", "value"]);
+      break;
+    case "grv-replacement-pending":
+      mockGrvPending = normalizeRows(rows, ["qty", "value", "daysPending"]);
+      break;
+    case "grv-debit-note-mapping":
+      mockGrvDebitNote = normalizeRows(rows, ["grvValue", "dnValue"]);
+      break;
+    case "invoice-register":
+      mockInvoiceRegister = normalizeRows(rows, ["taxableAmt", "vat", "totalAmt"]);
+      break;
+    case "invoice-grn-variance":
+      mockInvGrnVariance = normalizeRows(rows, ["invQty", "grnQty", "qtyVar", "invRate", "grnRate", "rateVar", "valueVar"]);
+      mockInvGrnVarianceChart = aggregateChart(mockInvGrnVariance, "vendor", "valueVar", "variance");
+      break;
+    case "invoice-landed-cost":
+      mockLandedCost = normalizeRows(rows, ["invoiceValue", "freight", "customs", "handling", "total", "items", "nlcPerItem"]);
+      mockLandedCostChart = mockLandedCost.map((row) => ({
+        name: firstWord(row.vendor),
+        invoice: n(row.invoiceValue),
+        freight: n(row.freight),
+        customs: n(row.customs),
+        handling: n(row.handling),
+      }));
+      break;
+    case "invoice-backdated":
+      mockBackdatedInv = normalizeRows(rows, ["value"]);
+      break;
+    case "payment-register":
+      mockPaymentRegister = normalizeRows(rows, ["amount"]);
+      break;
+    case "payment-aging":
+      mockPaymentAging = rows.map((row) => ({
+        vendor: asText(row.vendor, "Unassigned"),
+        total: n(row.total),
+        overdue0: n(row.overdue0 ?? row.d30),
+        overdue30: n(row.overdue30 ?? row.d60),
+        overdue60: n(row.overdue60 ?? row.d90),
+        overdue90plus: n(row.overdue90plus ?? row.d90plus),
+        avgDelay: n(row.avgDelay),
+      }));
+      mockPaymentAgingChart = mockPaymentAging.map((row) => ({
+        name: firstWord(row.vendor),
+        current: n(row.overdue0),
+        d30: n(row.overdue30),
+        d60: n(row.overdue60),
+        d90: n(row.overdue90plus),
+      }));
+      break;
+    case "payment-cheque-tracking":
+      mockChequeTracking = normalizeRows(rows, ["amount"]);
+      break;
+    case "payment-advance":
+      mockAdvancePayment = normalizeRows(rows, ["advAmount", "adjusted", "balance"]);
+      mockAdvChart = mockAdvancePayment.map((row) => ({
+        vendor: firstWord(row.vendor),
+        advance: n(row.advAmount),
+        adjusted: n(row.adjusted),
+        balance: n(row.balance),
+      }));
+      break;
+    case "debit-note-register":
+      mockDebitNoteRegister = normalizeRows(rows, ["amount"]);
+      break;
+    case "claim-settlement":
+      mockClaimSettlement = normalizeRows(rows, ["amount", "daysToSettle"]);
+      mockClaimStatusChart = claimStatusChart(mockClaimSettlement);
+      break;
+    case "vendor-claim-history":
+      mockVendorClaimHistory = normalizeRows(rows, ["totalClaims", "settled", "rejected", "pending", "totalValue", "avgSettleDays"]);
+      mockVendorClaimChart = mockVendorClaimHistory.map((row) => ({
+        name: firstWord(row.vendor),
+        settled: n(row.settled),
+        rejected: n(row.rejected),
+        pending: n(row.pending),
+      }));
+      break;
+    case "vat-input-register":
+      mockVatInput = normalizeRows(rows, ["taxableAmt", "vatAmt", "totalAmt"]);
+      break;
+    case "period-lock-violations":
+      mockPeriodLockViolations = rows.map((row) => ({ ...row, txDate: dateOnly(row.txDate), postDate: dateOnly(row.postDate) }));
+      break;
+    case "missing-documents":
+      mockMissingDocuments = normalizeRows(rows, ["value", "daysOpen"]);
+      break;
+    case "audit-trail":
+      mockAuditTrail = rows.map((row) => ({ ...row, timestamp: asText(row.timestamp).replace("T", " ").slice(0, 19) }));
       break;
     default:
       break;
@@ -285,7 +517,7 @@ export function applyLiveReportData(reportId: ReportId, data: any) {
 }
 
 
-const mockVendorMaster = [
+let mockVendorMaster = [
   { code: "VEN-001", name: "Global Supplies LLC", category: "Electronics", trn: "100234567890003", creditLimit: 500000, outstanding: 385000, paymentTerms: "Net 45", status: "Active", rating: 4.5 },
   { code: "VEN-002", name: "Tech Solutions Ltd", category: "IT Equipment", trn: "100234567890004", creditLimit: 400000, outstanding: 312000, paymentTerms: "Net 30", status: "Active", rating: 4.2 },
   { code: "VEN-003", name: "Metro Traders", category: "Food & Beverage", trn: "100234567890005", creditLimit: 350000, outstanding: 175000, paymentTerms: "Net 30", status: "Active", rating: 4.3 },
@@ -294,14 +526,14 @@ const mockVendorMaster = [
   { code: "VEN-006", name: "Desert Frozen Foods", category: "Frozen", trn: "100234567890008", creditLimit: 200000, outstanding: 198000, paymentTerms: "Net 15", status: "Blocked", rating: 2.8 },
 ];
 
-const mockVendorAgingChart = [
+let mockVendorAgingChart = [
   { name: "0-30 Days", value: 820000 },
   { name: "31-60 Days", value: 430000 },
   { name: "61-90 Days", value: 190000 },
   { name: "90+ Days", value: 82000 },
 ];
 
-const mockVendorAging = [
+let mockVendorAging = [
   { vendor: "Global Supplies LLC", total: 385000, d30: 220000, d60: 110000, d90: 40000, d90plus: 15000, creditLimit: 500000, status: "Active" },
   { vendor: "Tech Solutions Ltd", total: 312000, d30: 180000, d60: 95000, d90: 30000, d90plus: 7000, creditLimit: 400000, status: "Active" },
   { vendor: "Metro Traders", total: 175000, d30: 100000, d60: 50000, d90: 20000, d90plus: 5000, creditLimit: 350000, status: "Active" },
@@ -309,7 +541,7 @@ const mockVendorAging = [
   { vendor: "Gulf FMCG Co.", total: 542000, d30: 290000, d60: 150000, d90: 80000, d90plus: 22000, creditLimit: 600000, status: "Active" },
 ];
 
-const mockVendorPerf = [
+let mockVendorPerf = [
   { vendor: "Global Supplies LLC", orders: 42, onTime: 38, onTimePct: 90.5, returnRate: 1.2, claimRate: 0.8, avgSettleDays: 38, score: "A" },
   { vendor: "Tech Solutions Ltd", orders: 35, onTime: 30, onTimePct: 85.7, returnRate: 2.1, claimRate: 1.5, avgSettleDays: 29, score: "B+" },
   { vendor: "Metro Traders", orders: 68, onTime: 64, onTimePct: 94.1, returnRate: 0.8, claimRate: 0.5, avgSettleDays: 28, score: "A+" },
@@ -318,9 +550,9 @@ const mockVendorPerf = [
   { vendor: "Desert Frozen Foods", orders: 15, onTime: 8, onTimePct: 53.3, returnRate: 8.5, claimRate: 6.2, avgSettleDays: 61, score: "D" },
 ];
 
-const mockVendorPerfChart = mockVendorPerf.map((r) => ({ name: r.vendor.split(" ")[0], onTime: r.onTimePct, returnRate: r.returnRate }));
+let mockVendorPerfChart = mockVendorPerf.map((r) => ({ name: r.vendor.split(" ")[0], onTime: r.onTimePct, returnRate: r.returnRate }));
 
-const mockPriceHistory = [
+let mockPriceHistory = [
   { item: "Nestle Nido 900g", sku: "SKU-1001", vendor: "Gulf FMCG Co.", p1: 42.00, p2: 42.50, p3: 43.00, p4: 43.50, p5: 44.00, change: 4.76 },
   { item: "Ariel Powder 3kg", sku: "SKU-1045", vendor: "Metro Traders", p1: 38.50, p2: 39.00, p3: 39.00, p4: 40.00, p5: 41.25, change: 7.14 },
   { item: "Samsung 50\" TV", sku: "SKU-2012", vendor: "Tech Solutions Ltd", p1: 1850, p2: 1800, p3: 1780, p4: 1750, p5: 1720, change: -7.03 },
@@ -328,7 +560,7 @@ const mockPriceHistory = [
   { item: "Logitech Keyboard", sku: "SKU-3021", vendor: "Global Supplies LLC", p1: 89.00, p2: 92.00, p3: 91.00, p4: 95.00, p5: 95.00, change: 6.74 },
 ];
 
-const mockContractCompliance = [
+let mockContractCompliance = [
   { vendor: "Gulf FMCG Co.", item: "Nestle Nido 900g", contractPrice: 41.00, actualPrice: 44.00, variance: 3.00, variancePct: 7.32, penaltyApplied: true, status: "Breached" },
   { vendor: "Metro Traders", item: "Ariel Powder 3kg", contractPrice: 39.00, actualPrice: 41.25, variance: 2.25, variancePct: 5.77, penaltyApplied: false, status: "Breached" },
   { vendor: "Global Supplies LLC", item: "Logitech Keyboard", contractPrice: 90.00, actualPrice: 95.00, variance: 5.00, variancePct: 5.56, penaltyApplied: true, status: "Breached" },
@@ -336,7 +568,7 @@ const mockContractCompliance = [
   { vendor: "Prime Distributors", item: "Generic Box 10kg", contractPrice: 25.00, actualPrice: 25.00, variance: 0, variancePct: 0, penaltyApplied: false, status: "Compliant" },
 ];
 
-const mockLpoRegister = [
+let mockLpoRegister = [
   { lpoNo: "LPO-2026-0421", date: "2026-05-01", vendor: "Gulf FMCG Co.", branch: "Main", totalItems: 12, totalValue: 48500, status: "Approved", approvedBy: "Mohammed Al Rashidi" },
   { lpoNo: "LPO-2026-0422", date: "2026-05-02", vendor: "Metro Traders", branch: "Dubai", totalItems: 8, totalValue: 22300, status: "Received", approvedBy: "Sara Abdullah" },
   { lpoNo: "LPO-2026-0423", date: "2026-05-03", vendor: "Tech Solutions Ltd", branch: "Main", totalItems: 3, totalValue: 15600, status: "Partial", approvedBy: "Ahmed Hassan" },
@@ -345,7 +577,7 @@ const mockLpoRegister = [
   { lpoNo: "LPO-2026-0426", date: "2026-05-08", vendor: "Prime Distributors", branch: "Dubai", totalItems: 9, totalValue: 33400, status: "Cancelled", approvedBy: "Mohammed Al Rashidi" },
 ];
 
-const mockLpoFulfillment = [
+let mockLpoFulfillment = [
   { lpoNo: "LPO-2026-0418", vendor: "Gulf FMCG Co.", orderedQty: 500, deliveredQty: 495, pendingQty: 5, orderedValue: 22000, deliveredValue: 21780, fulfillmentPct: 99.0 },
   { lpoNo: "LPO-2026-0419", vendor: "Metro Traders", orderedQty: 200, deliveredQty: 180, pendingQty: 20, orderedValue: 9200, deliveredValue: 8280, fulfillmentPct: 90.0 },
   { lpoNo: "LPO-2026-0420", vendor: "Tech Solutions Ltd", orderedQty: 30, deliveredQty: 15, pendingQty: 15, orderedValue: 27000, deliveredValue: 13500, fulfillmentPct: 50.0 },
@@ -353,13 +585,13 @@ const mockLpoFulfillment = [
   { lpoNo: "LPO-2026-0422", vendor: "Desert Frozen Foods", orderedQty: 120, deliveredQty: 100, pendingQty: 20, orderedValue: 5400, deliveredValue: 4500, fulfillmentPct: 83.3 },
 ];
 
-const mockLpoFulfillmentChart = mockLpoFulfillment.map((r) => ({
+let mockLpoFulfillmentChart = mockLpoFulfillment.map((r) => ({
   name: r.lpoNo.slice(-4),
   ordered: r.orderedValue,
   delivered: r.deliveredValue,
 }));
 
-const mockLpoAging = [
+let mockLpoAging = [
   { lpoNo: "LPO-2026-0388", vendor: "Tech Solutions Ltd", issueDate: "2026-03-10", expectedDate: "2026-03-25", daysPending: 58, value: 15600, status: "Overdue" },
   { lpoNo: "LPO-2026-0395", vendor: "Prime Distributors", issueDate: "2026-03-20", expectedDate: "2026-04-05", daysPending: 47, value: 8900, status: "Overdue" },
   { lpoNo: "LPO-2026-0410", vendor: "Global Supplies LLC", issueDate: "2026-04-15", expectedDate: "2026-04-30", daysPending: 22, value: 41200, status: "Pending" },
@@ -367,7 +599,7 @@ const mockLpoAging = [
   { lpoNo: "LPO-2026-0418", vendor: "Desert Frozen Foods", issueDate: "2026-05-01", expectedDate: "2026-05-15", daysPending: 7, value: 6800, status: "Pending" },
 ];
 
-const mockLpoAgingChart = [
+let mockLpoAgingChart = [
   { bucket: "0-7 days", count: 8, value: 55000 },
   { bucket: "8-15 days", count: 5, value: 38000 },
   { bucket: "16-30 days", count: 4, value: 28000 },
@@ -375,14 +607,14 @@ const mockLpoAgingChart = [
   { bucket: "60+ days", count: 2, value: 18000 },
 ];
 
-const mockLpoCancelled = [
+let mockLpoCancelled = [
   { lpoNo: "LPO-2026-0380", vendor: "Prime Distributors", date: "2026-04-02", value: 18500, reason: "Vendor price increased beyond budget", cancelledBy: "Mohammed Al Rashidi", status: "Cancelled" },
   { lpoNo: "LPO-2026-0391", vendor: "Desert Frozen Foods", date: "2026-04-10", value: 6200, reason: "Duplicate order", cancelledBy: "Sara Abdullah", status: "Cancelled" },
   { lpoNo: "LPO-2026-0406", vendor: "Tech Solutions Ltd", date: "2026-04-20", value: 32000, reason: "Budget reallocation", cancelledBy: "Ahmed Hassan", status: "Cancelled" },
   { lpoNo: "LPO-2026-0426", vendor: "Prime Distributors", date: "2026-05-08", value: 33400, reason: "Vendor out of stock", cancelledBy: "Mohammed Al Rashidi", status: "Cancelled" },
 ];
 
-const mockGrnRegister = [
+let mockGrnRegister = [
   { grnNo: "GRN-2026-0812", date: "2026-05-02", lpoNo: "LPO-2026-0418", vendor: "Gulf FMCG Co.", warehouse: "Main WH", items: 12, receivedQty: 495, value: 21780, qcStatus: "Pass", status: "Posted" },
   { grnNo: "GRN-2026-0813", date: "2026-05-03", lpoNo: "LPO-2026-0419", vendor: "Metro Traders", warehouse: "Dubai WH", items: 8, receivedQty: 180, value: 8280, qcStatus: "Pass", status: "Posted" },
   { grnNo: "GRN-2026-0814", date: "2026-05-05", lpoNo: "LPO-2026-0420", vendor: "Tech Solutions Ltd", warehouse: "Main WH", items: 3, receivedQty: 15, value: 13500, qcStatus: "Fail", status: "On Hold" },
@@ -390,19 +622,19 @@ const mockGrnRegister = [
   { grnNo: "GRN-2026-0816", date: "2026-05-09", lpoNo: "LPO-2026-0422", vendor: "Desert Frozen Foods", warehouse: "Main WH", items: 6, receivedQty: 100, value: 4500, qcStatus: "Partial", status: "Pending" },
 ];
 
-const mockGrnVariance = [
+let mockGrnVariance = [
   { grnNo: "GRN-2026-0813", vendor: "Metro Traders", item: "Ariel Powder 3kg", lpoQty: 200, grnQty: 180, qtyVar: -20, lpoRate: 41.25, grnRate: 41.25, valueVar: -825, variancePct: -10.0 },
   { grnNo: "GRN-2026-0814", vendor: "Tech Solutions Ltd", item: "Samsung 50\" TV", lpoQty: 30, grnQty: 15, qtyVar: -15, lpoRate: 1720, grnRate: 1750, valueVar: 8700, variancePct: 16.7 },
   { grnNo: "GRN-2026-0816", vendor: "Desert Frozen Foods", item: "Frozen Chicken 1kg", lpoQty: 120, grnQty: 100, qtyVar: -20, lpoRate: 45, grnRate: 45, valueVar: -900, variancePct: -16.7 },
 ];
 
-const mockGrnVarianceChart = [
+let mockGrnVarianceChart = [
   { name: "Metro Traders", variance: -825 },
   { name: "Tech Solutions", variance: 8700 },
   { name: "Desert Frozen", variance: -900 },
 ];
 
-const mockBatchExpiry = [
+let mockBatchExpiry = [
   { grnNo: "GRN-2026-0812", item: "Nestle Nido 900g", batchNo: "B2026-441", mfgDate: "2026-02-01", expiryDate: "2027-02-01", qty: 200, warehouse: "Main WH", status: "Active", daysToExpiry: 256 },
   { grnNo: "GRN-2026-0812", item: "Heinz Ketchup 570g", batchNo: "B2026-312", mfgDate: "2025-12-01", expiryDate: "2026-06-01", qty: 50, warehouse: "Main WH", status: "Near Expiry", daysToExpiry: 10 },
   { grnNo: "GRN-2026-0813", item: "Ariel Powder 3kg", batchNo: "B2026-188", mfgDate: "2026-01-01", expiryDate: "2028-01-01", qty: 180, warehouse: "Dubai WH", status: "Active", daysToExpiry: 621 },
@@ -410,13 +642,13 @@ const mockBatchExpiry = [
   { grnNo: "GRN-2026-0816", item: "Frozen Chicken 1kg", batchNo: "B2026-211", mfgDate: "2026-04-15", expiryDate: "2026-07-15", qty: 100, warehouse: "Main WH", status: "Active", daysToExpiry: 54 },
 ];
 
-const mockQcRejection = [
+let mockQcRejection = [
   { grnNo: "GRN-2026-0814", vendor: "Tech Solutions Ltd", item: "Samsung 50\" TV", rejectedQty: 3, reason: "Physical damage", warehouse: "Main WH", date: "2026-05-05", value: 5250, action: "Return to Vendor" },
   { grnNo: "GRN-2026-0810", vendor: "Desert Frozen Foods", item: "Frozen Beef 1kg", rejectedQty: 12, reason: "Cold chain breach", warehouse: "Main WH", date: "2026-04-28", value: 540, action: "Disposed" },
   { grnNo: "GRN-2026-0802", vendor: "Prime Distributors", item: "Generic Box 10kg", rejectedQty: 5, reason: "Wrong specification", warehouse: "Dubai WH", date: "2026-04-18", value: 125, action: "Return to Vendor" },
 ];
 
-const mockQcChart = [
+let mockQcChart = [
   { reason: "Physical Damage", count: 5 },
   { reason: "Cold Chain", count: 3 },
   { reason: "Wrong Spec", count: 4 },
@@ -424,7 +656,7 @@ const mockQcChart = [
   { reason: "Contamination", count: 1 },
 ];
 
-const mockGrvRegister = [
+let mockGrvRegister = [
   { grvNo: "GRV-2026-0085", date: "2026-05-06", grnNo: "GRN-2026-0814", vendor: "Tech Solutions Ltd", items: 3, value: 5250, reason: "Damage", status: "Settled", debitNote: "DN-2026-042" },
   { grvNo: "GRV-2026-0086", date: "2026-05-07", grnNo: "GRN-2026-0810", vendor: "Desert Frozen Foods", items: 12, value: 540, reason: "Cold Chain", status: "Pending", debitNote: "-" },
   { grvNo: "GRV-2026-0087", date: "2026-05-08", grnNo: "GRN-2026-0802", vendor: "Prime Distributors", items: 5, value: 125, reason: "Wrong Item", status: "Issued", debitNote: "-" },
@@ -432,7 +664,7 @@ const mockGrvRegister = [
   { grvNo: "GRV-2026-0089", date: "2026-05-12", grnNo: "GRN-2026-0815", vendor: "Global Supplies LLC", items: 1, value: 95, reason: "Wrong Spec", status: "Settled", debitNote: "DN-2026-043" },
 ];
 
-const mockGrvReasonChart = [
+let mockGrvReasonChart = [
   { reason: "Damage", count: 5, value: 12500 },
   { reason: "Cold Chain", count: 3, value: 1620 },
   { reason: "Wrong Item", count: 4, value: 2800 },
@@ -440,20 +672,20 @@ const mockGrvReasonChart = [
   { reason: "Wrong Spec", count: 2, value: 950 },
 ];
 
-const mockGrvPending = [
+let mockGrvPending = [
   { grvNo: "GRV-2026-0086", vendor: "Desert Frozen Foods", item: "Frozen Beef 1kg", qty: 12, value: 540, grvDate: "2026-05-07", slaDate: "2026-05-14", daysPending: 8, status: "Overdue" },
   { grvNo: "GRV-2026-0087", vendor: "Prime Distributors", item: "Generic Box 10kg", qty: 5, value: 125, grvDate: "2026-05-08", slaDate: "2026-05-22", daysPending: 14, status: "Pending" },
   { grvNo: "GRV-2026-0088", vendor: "Gulf FMCG Co.", item: "Heinz Ketchup 570g", qty: 2, value: 88, grvDate: "2026-05-10", slaDate: "2026-05-24", daysPending: 12, status: "Pending" },
 ];
 
-const mockGrvDebitNote = [
+let mockGrvDebitNote = [
   { grvNo: "GRV-2026-0085", vendor: "Tech Solutions Ltd", grvValue: 5250, debitNote: "DN-2026-042", dnValue: 5250, matched: true, settledDate: "2026-05-15", status: "Settled" },
   { grvNo: "GRV-2026-0089", vendor: "Global Supplies LLC", grvValue: 95, debitNote: "DN-2026-043", dnValue: 95, matched: true, settledDate: "2026-05-18", status: "Settled" },
   { grvNo: "GRV-2026-0086", vendor: "Desert Frozen Foods", grvValue: 540, debitNote: "-", dnValue: 0, matched: false, settledDate: "-", status: "Pending" },
   { grvNo: "GRV-2026-0087", vendor: "Prime Distributors", grvValue: 125, debitNote: "-", dnValue: 0, matched: false, settledDate: "-", status: "Pending" },
 ];
 
-const mockInvoiceRegister = [
+let mockInvoiceRegister = [
   { invNo: "INV-V-2026-1821", date: "2026-05-03", vendor: "Gulf FMCG Co.", grnRef: "GRN-2026-0812", lpoRef: "LPO-2026-0418", taxableAmt: 20743, vat: 1037, totalAmt: 21780, status: "Posted", dueDate: "2026-06-17" },
   { invNo: "INV-V-2026-1822", date: "2026-05-04", vendor: "Metro Traders", grnRef: "GRN-2026-0813", lpoRef: "LPO-2026-0419", taxableAmt: 7886, vat: 394, totalAmt: 8280, status: "Posted", dueDate: "2026-06-03" },
   { invNo: "INV-V-2026-1823", date: "2026-05-06", vendor: "Tech Solutions Ltd", grnRef: "GRN-2026-0814", lpoRef: "LPO-2026-0420", taxableAmt: 12857, vat: 643, totalAmt: 13500, status: "On Hold", dueDate: "2026-06-05" },
@@ -461,27 +693,27 @@ const mockInvoiceRegister = [
   { invNo: "INV-V-2026-1825", date: "2026-05-10", vendor: "Desert Frozen Foods", grnRef: "GRN-2026-0816", lpoRef: "LPO-2026-0422", taxableAmt: 4286, vat: 214, totalAmt: 4500, status: "Draft", dueDate: "2026-05-25" },
 ];
 
-const mockInvGrnVariance = [
+let mockInvGrnVariance = [
   { invNo: "INV-V-2026-1822", vendor: "Metro Traders", grnNo: "GRN-2026-0813", invQty: 180, grnQty: 180, qtyVar: 0, invRate: 46.00, grnRate: 41.25, rateVar: 4.75, valueVar: 855, status: "Variance" },
   { invNo: "INV-V-2026-1823", vendor: "Tech Solutions Ltd", grnNo: "GRN-2026-0814", invQty: 15, grnQty: 15, qtyVar: 0, invRate: 1800, grnRate: 1750, rateVar: 50, valueVar: 750, status: "Variance" },
   { invNo: "INV-V-2026-1821", vendor: "Gulf FMCG Co.", grnNo: "GRN-2026-0812", invQty: 495, grnQty: 495, qtyVar: 0, invRate: 44.00, grnRate: 44.00, rateVar: 0, valueVar: 0, status: "Matched" },
   { invNo: "INV-V-2026-1824", vendor: "Global Supplies LLC", grnNo: "GRN-2026-0815", invQty: 800, grnQty: 800, qtyVar: 0, invRate: 45.00, grnRate: 45.00, rateVar: 0, valueVar: 0, status: "Matched" },
 ];
 
-const mockInvGrnVarianceChart = [
+let mockInvGrnVarianceChart = [
   { name: "Metro Traders", variance: 855 },
   { name: "Tech Solutions", variance: 750 },
   { name: "Gulf FMCG", variance: 0 },
   { name: "Global Supplies", variance: 0 },
 ];
 
-const mockLandedCost = [
+let mockLandedCost = [
   { invNo: "INV-V-2026-1821", vendor: "Gulf FMCG Co.", invoiceValue: 21780, freight: 650, customs: 320, handling: 180, total: 22930, items: 12, nlcPerItem: 1910.83 },
   { invNo: "INV-V-2026-1822", vendor: "Metro Traders", invoiceValue: 8280, freight: 220, customs: 0, handling: 80, total: 8580, items: 8, nlcPerItem: 1072.5 },
   { invNo: "INV-V-2026-1824", vendor: "Global Supplies LLC", invoiceValue: 36000, freight: 1200, customs: 2800, handling: 400, total: 40400, items: 20, nlcPerItem: 2020 },
 ];
 
-const mockLandedCostChart = mockLandedCost.map((r) => ({
+let mockLandedCostChart = mockLandedCost.map((r) => ({
   name: r.vendor.split(" ")[0],
   invoice: r.invoiceValue,
   freight: r.freight,
@@ -489,12 +721,12 @@ const mockLandedCostChart = mockLandedCost.map((r) => ({
   handling: r.handling,
 }));
 
-const mockBackdatedInv = [
+let mockBackdatedInv = [
   { invNo: "INV-V-2026-1790", invDate: "2026-04-02", postDate: "2026-05-05", vendor: "Prime Distributors", value: 8900, postedBy: "Ahmed Hassan", period: "Apr-2026", status: "Backdated" },
   { invNo: "INV-V-2026-1812", invDate: "2026-04-18", postDate: "2026-05-10", vendor: "Desert Frozen Foods", value: 3200, postedBy: "Sara Abdullah", period: "Apr-2026", status: "Backdated" },
 ];
 
-const mockPaymentRegister = [
+let mockPaymentRegister = [
   { pvNo: "PV-2026-0621", date: "2026-05-05", vendor: "Gulf FMCG Co.", invRef: "INV-V-2026-1801", mode: "Bank Transfer", bank: "Emirates NBD", amount: 45000, status: "Paid" },
   { pvNo: "PV-2026-0622", date: "2026-05-07", vendor: "Metro Traders", invRef: "INV-V-2026-1808", mode: "Cheque", bank: "FAB", amount: 18500, status: "Cleared" },
   { pvNo: "PV-2026-0623", date: "2026-05-08", vendor: "Tech Solutions Ltd", invRef: "INV-V-2026-1812", mode: "Bank Transfer", bank: "ADIB", amount: 28000, status: "Paid" },
@@ -503,7 +735,7 @@ const mockPaymentRegister = [
   { pvNo: "PV-2026-0626", date: "2026-05-14", vendor: "Prime Distributors", invRef: "INV-V-2026-1822", mode: "Bank Transfer", bank: "Emirates NBD", amount: 22000, status: "Paid" },
 ];
 
-const mockPaymentAging = [
+let mockPaymentAging = [
   { vendor: "Gulf FMCG Co.", total: 542000, overdue0: 120000, overdue30: 210000, overdue60: 155000, overdue90plus: 57000, avgDelay: 12 },
   { vendor: "Global Supplies LLC", total: 385000, overdue0: 150000, overdue30: 140000, overdue60: 70000, overdue90plus: 25000, avgDelay: 8 },
   { vendor: "Tech Solutions Ltd", total: 312000, overdue0: 80000, overdue30: 120000, overdue60: 82000, overdue90plus: 30000, avgDelay: 15 },
@@ -511,7 +743,7 @@ const mockPaymentAging = [
   { vendor: "Prime Distributors", total: 88000, overdue0: 20000, overdue30: 30000, overdue60: 25000, overdue90plus: 13000, avgDelay: 22 },
 ];
 
-const mockPaymentAgingChart = mockPaymentAging.map((r) => ({
+let mockPaymentAgingChart = mockPaymentAging.map((r) => ({
   name: r.vendor.split(" ")[0],
   current: r.overdue0,
   d30: r.overdue30,
@@ -519,26 +751,26 @@ const mockPaymentAgingChart = mockPaymentAging.map((r) => ({
   d90: r.overdue90plus,
 }));
 
-const mockChequeTracking = [
+let mockChequeTracking = [
   { chequeNo: "CHQ-0045821", vendor: "Metro Traders", bank: "FAB", branch: "Deira", amount: 18500, chequeDate: "2026-05-07", pvNo: "PV-2026-0622", status: "Cleared", clearedDate: "2026-05-09" },
   { chequeNo: "CHQ-0045890", vendor: "Global Supplies LLC", bank: "Mashreq", branch: "Bur Dubai", amount: 60000, chequeDate: "2026-06-10", pvNo: "PV-2026-0624", status: "Pending", clearedDate: "-" },
   { chequeNo: "CHQ-0045710", vendor: "Prime Distributors", bank: "Emirates NBD", branch: "Al Quoz", amount: 22000, chequeDate: "2026-05-20", pvNo: "PV-2026-0626", status: "Pending", clearedDate: "-" },
   { chequeNo: "CHQ-0045600", vendor: "Tech Solutions Ltd", bank: "ADIB", branch: "Sharjah", amount: 12000, chequeDate: "2026-05-01", pvNo: "PV-2026-0610", status: "Bounced", clearedDate: "-" },
 ];
 
-const mockAdvancePayment = [
+let mockAdvancePayment = [
   { pvNo: "ADV-2026-012", vendor: "Gulf FMCG Co.", advDate: "2026-04-10", advAmount: 100000, adjusted: 85000, balance: 15000, lastAdj: "2026-05-05", status: "Open" },
   { pvNo: "ADV-2026-013", vendor: "Global Supplies LLC", advDate: "2026-04-15", advAmount: 50000, adjusted: 50000, balance: 0, lastAdj: "2026-05-08", status: "Closed" },
   { pvNo: "ADV-2026-014", vendor: "Metro Traders", advDate: "2026-05-01", advAmount: 30000, adjusted: 18280, balance: 11720, lastAdj: "2026-05-04", status: "Open" },
 ];
 
-const mockAdvChart = [
+let mockAdvChart = [
   { vendor: "Gulf FMCG", advance: 100000, adjusted: 85000, balance: 15000 },
   { vendor: "Global Supplies", advance: 50000, adjusted: 50000, balance: 0 },
   { vendor: "Metro Traders", advance: 30000, adjusted: 18280, balance: 11720 },
 ];
 
-const mockDebitNoteRegister = [
+let mockDebitNoteRegister = [
   { dnNo: "DN-2026-042", date: "2026-05-12", vendor: "Tech Solutions Ltd", grvNo: "GRV-2026-0085", reason: "Damaged Goods", amount: 5250, status: "Settled", settledDate: "2026-05-15" },
   { dnNo: "DN-2026-043", date: "2026-05-14", vendor: "Global Supplies LLC", grvNo: "GRV-2026-0089", reason: "Wrong Specification", amount: 95, status: "Settled", settledDate: "2026-05-18" },
   { dnNo: "DN-2026-044", date: "2026-05-16", vendor: "Desert Frozen Foods", grvNo: "GRV-2026-0086", reason: "Cold Chain Breach", amount: 540, status: "Issued", settledDate: "-" },
@@ -546,7 +778,7 @@ const mockDebitNoteRegister = [
   { dnNo: "DN-2026-040", date: "2026-05-05", vendor: "Gulf FMCG Co.", grvNo: "GRV-2026-0082", reason: "Near Expiry Return", amount: 1100, status: "Rejected", settledDate: "-" },
 ];
 
-const mockClaimSettlement = [
+let mockClaimSettlement = [
   { claimNo: "CLM-2026-018", vendor: "Tech Solutions Ltd", amount: 5250, issueDate: "2026-05-06", settleDate: "2026-05-15", daysToSettle: 9, status: "Settled" },
   { claimNo: "CLM-2026-019", vendor: "Global Supplies LLC", amount: 95, issueDate: "2026-05-08", settleDate: "2026-05-18", daysToSettle: 10, status: "Settled" },
   { claimNo: "CLM-2026-020", vendor: "Desert Frozen Foods", amount: 540, issueDate: "2026-05-10", settleDate: "-", daysToSettle: 12, status: "Pending" },
@@ -554,14 +786,14 @@ const mockClaimSettlement = [
   { claimNo: "CLM-2026-016", vendor: "Gulf FMCG Co.", amount: 1100, issueDate: "2026-05-01", settleDate: "-", daysToSettle: 21, status: "Rejected" },
 ];
 
-const mockClaimStatusChart = [
+let mockClaimStatusChart = [
   { name: "Settled", value: 8 },
   { name: "Issued", value: 3 },
   { name: "Pending", value: 4 },
   { name: "Rejected", value: 2 },
 ];
 
-const mockVendorClaimHistory = [
+let mockVendorClaimHistory = [
   { vendor: "Gulf FMCG Co.", totalClaims: 12, settled: 9, rejected: 2, pending: 1, totalValue: 28500, avgSettleDays: 11, lastClaimDate: "2026-05-01" },
   { vendor: "Tech Solutions Ltd", totalClaims: 8, settled: 5, rejected: 1, pending: 2, totalValue: 18200, avgSettleDays: 14, lastClaimDate: "2026-05-06" },
   { vendor: "Metro Traders", totalClaims: 4, settled: 4, rejected: 0, pending: 0, totalValue: 5400, avgSettleDays: 8, lastClaimDate: "2026-04-20" },
@@ -569,14 +801,14 @@ const mockVendorClaimHistory = [
   { vendor: "Prime Distributors", totalClaims: 3, settled: 1, rejected: 1, pending: 1, totalValue: 2800, avgSettleDays: 18, lastClaimDate: "2026-05-12" },
 ];
 
-const mockVendorClaimChart = mockVendorClaimHistory.map((r) => ({
+let mockVendorClaimChart = mockVendorClaimHistory.map((r) => ({
   name: r.vendor.split(" ")[0],
   settled: r.settled,
   rejected: r.rejected,
   pending: r.pending,
 }));
 
-const mockVatInput = [
+let mockVatInput = [
   { invNo: "INV-V-2026-1821", invDate: "2026-05-03", vendor: "Gulf FMCG Co.", trn: "100234567890007", taxableAmt: 20743, vatAmt: 1037, totalAmt: 21780, vatRate: "5%", period: "May-2026" },
   { invNo: "INV-V-2026-1822", invDate: "2026-05-04", vendor: "Metro Traders", trn: "100234567890005", taxableAmt: 7886, vatAmt: 394, totalAmt: 8280, vatRate: "5%", period: "May-2026" },
   { invNo: "INV-V-2026-1823", invDate: "2026-05-06", vendor: "Tech Solutions Ltd", trn: "100234567890004", taxableAmt: 12857, vatAmt: 643, totalAmt: 13500, vatRate: "5%", period: "May-2026" },
@@ -584,13 +816,13 @@ const mockVatInput = [
   { invNo: "INV-V-2026-1825", invDate: "2026-05-10", vendor: "Desert Frozen Foods", trn: "100234567890008", taxableAmt: 4286, vatAmt: 214, totalAmt: 4500, vatRate: "5%", period: "May-2026" },
 ];
 
-const mockPeriodLockViolations = [
+let mockPeriodLockViolations = [
   { refNo: "INV-V-2026-1790", type: "Purchase Invoice", txDate: "2026-04-02", postDate: "2026-05-05", lockedPeriod: "Apr-2026", user: "Ahmed Hassan", reason: "Late invoice from vendor" },
   { refNo: "PV-2026-0601", type: "Payment Voucher", txDate: "2026-04-15", postDate: "2026-05-08", lockedPeriod: "Apr-2026", user: "Sara Abdullah", reason: "Cheque bounce rebook" },
   { refNo: "GRN-2026-0800", type: "GRN", txDate: "2026-04-20", postDate: "2026-05-11", lockedPeriod: "Apr-2026", user: "Mohammed Al Rashidi", reason: "System delay" },
 ];
 
-const mockMissingDocuments = [
+let mockMissingDocuments = [
   { refNo: "GRN-2026-0814", type: "GRN without Invoice", vendor: "Tech Solutions Ltd", date: "2026-05-05", value: 13500, daysOpen: 17, status: "Critical" },
   { refNo: "GRN-2026-0816", type: "GRN without Invoice", vendor: "Desert Frozen Foods", date: "2026-05-09", value: 4500, daysOpen: 13, status: "Warning" },
   { refNo: "PV-2026-0624", type: "Payment without Attachment", vendor: "Global Supplies LLC", date: "2026-05-10", value: 60000, daysOpen: 12, status: "Critical" },
@@ -598,7 +830,7 @@ const mockMissingDocuments = [
   { refNo: "LPO-2026-0424", type: "LPO without Approval", vendor: "Global Supplies LLC", date: "2026-05-05", value: 94200, daysOpen: 17, status: "Critical" },
 ];
 
-const mockAuditTrail = [
+let mockAuditTrail = [
   { timestamp: "2026-05-22 09:12:34", user: "Ahmed Hassan", action: "Edit", module: "Purchase Invoice", refNo: "INV-V-2026-1823", field: "Unit Rate", before: "1720.00", after: "1750.00" },
   { timestamp: "2026-05-22 08:45:10", user: "Sara Abdullah", action: "Delete", module: "GRN", refNo: "GRN-2026-0816", field: "Status", before: "Draft", after: "Deleted" },
   { timestamp: "2026-05-21 17:30:55", user: "Mohammed Al Rashidi", action: "Approve", module: "LPO", refNo: "LPO-2026-0425", field: "Status", before: "Pending", after: "Approved" },
@@ -606,6 +838,55 @@ const mockAuditTrail = [
   { timestamp: "2026-05-21 14:08:01", user: "Ahmed Hassan", action: "Edit", module: "Vendor Master", refNo: "VEN-006", field: "Credit Limit", before: "250000", after: "200000" },
   { timestamp: "2026-05-20 11:55:44", user: "Sara Abdullah", action: "Post", module: "Payment Voucher", refNo: "PV-2026-0623", field: "Status", before: "Draft", after: "Posted" },
 ];
+
+function clearInitialPurchaseReportData() {
+  mockVendorMaster = [];
+  mockVendorAgingChart = [];
+  mockVendorAging = [];
+  mockVendorPerf = [];
+  mockVendorPerfChart = [];
+  mockPriceHistory = [];
+  mockContractCompliance = [];
+  mockLpoRegister = [];
+  mockLpoFulfillment = [];
+  mockLpoFulfillmentChart = [];
+  mockLpoAging = [];
+  mockLpoAgingChart = [];
+  mockLpoCancelled = [];
+  mockGrnRegister = [];
+  mockGrnVariance = [];
+  mockGrnVarianceChart = [];
+  mockBatchExpiry = [];
+  mockQcRejection = [];
+  mockQcChart = [];
+  mockGrvRegister = [];
+  mockGrvReasonChart = [];
+  mockGrvPending = [];
+  mockGrvDebitNote = [];
+  mockInvoiceRegister = [];
+  mockInvGrnVariance = [];
+  mockInvGrnVarianceChart = [];
+  mockLandedCost = [];
+  mockLandedCostChart = [];
+  mockBackdatedInv = [];
+  mockPaymentRegister = [];
+  mockPaymentAging = [];
+  mockPaymentAgingChart = [];
+  mockChequeTracking = [];
+  mockAdvancePayment = [];
+  mockAdvChart = [];
+  mockDebitNoteRegister = [];
+  mockClaimSettlement = [];
+  mockClaimStatusChart = [];
+  mockVendorClaimHistory = [];
+  mockVendorClaimChart = [];
+  mockVatInput = [];
+  mockPeriodLockViolations = [];
+  mockMissingDocuments = [];
+  mockAuditTrail = [];
+}
+
+clearInitialPurchaseReportData();
 
 // ---------------------------------------------------------------------------
 // Individual report components
@@ -622,56 +903,57 @@ function VendorMasterReport() {
         <KpiCard label="Total Outstanding" value={`AED ${total.toLocaleString()}`} sub="All vendors" />
         <KpiCard label="Total Credit Limit" value={`AED ${creditTotal.toLocaleString()}`} sub="Aggregate limit" />
       </div>
-      <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">
-        <Tbl>
-          <thead>
-            <tr>
-              <Th>Code</Th>
-              <Th>Vendor Name</Th>
-              <Th>Category</Th>
-              <Th>TRN</Th>
-              <Th right>Credit Limit (AED)</Th>
-              <Th right>Outstanding (AED)</Th>
-              <Th>Terms</Th>
-              <Th>Status</Th>
-            </tr>
-          </thead>
-          <tbody>
-            {mockVendorMaster.map((r) => (
-              <tr key={r.code} className="hover:bg-slate-50">
-                <Td bold>{r.code}</Td>
-                <Td>{r.name}</Td>
-                <Td muted>{r.category}</Td>
-                <Td muted>{r.trn}</Td>
-                <Td right>{r.creditLimit.toLocaleString()}</Td>
-                <Td right bold>{r.outstanding.toLocaleString()}</Td>
-                <Td muted>{r.paymentTerms}</Td>
-                <Td>{statusBadge(r.status)}</Td>
+      <Card className="border border-slate-200 bg-white">
+        <CardHeader className="py-3 px-3"><CardTitle className="text-xs font-semibold text-slate-800">Outstanding by Category</CardTitle></CardHeader>
+        <CardContent className="px-3 pb-3">
+          <ResponsiveContainer width="100%" height={300}>
+            <BarChart data={mockVendorMaster.map((r) => ({ name: r.name.split(" ")[0], outstanding: r.outstanding, limit: r.creditLimit }))}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+              <XAxis dataKey="name" tick={{ fontSize: 9 }} />
+              <YAxis tick={{ fontSize: 9 }} />
+              <Tooltip contentStyle={{ fontSize: "11px" }} />
+              <Legend wrapperStyle={{ fontSize: "10px" }} />
+              <Bar dataKey="limit" name="Credit Limit" fill="#e2e8f0" />
+              <Bar dataKey="outstanding" name="Outstanding" fill="#F5C742" />
+            </BarChart>
+          </ResponsiveContainer>
+        </CardContent>
+      </Card>
+      <div className="overflow-x-auto rounded-lg border border-slate-200">
+        <div className="max-h-[320px] overflow-y-auto">
+          <table className="w-full text-[11px] text-left">
+            <thead className="sticky top-0 z-10 bg-slate-50">
+              <tr>
+                <Th>Code</Th>
+                <Th>Vendor Name</Th>
+                <Th>Category</Th>
+                <Th>TRN</Th>
+                <Th right>Credit Limit (AED)</Th>
+                <Th right>Outstanding (AED)</Th>
+                <Th>Terms</Th>
+                <Th>Status</Th>
               </tr>
-            ))}
-          </tbody>
-        </Tbl>
-        <Card className="border border-slate-200 bg-white">
-          <CardHeader className="py-3 px-3"><CardTitle className="text-xs font-semibold text-slate-800">Outstanding by Category</CardTitle></CardHeader>
-          <CardContent className="px-3 pb-3">
-            <ResponsiveContainer width="100%" height={220}>
-              <BarChart data={mockVendorMaster.map((r) => ({ name: r.name.split(" ")[0], outstanding: r.outstanding, limit: r.creditLimit }))}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-                <XAxis dataKey="name" tick={{ fontSize: 9 }} />
-                <YAxis tick={{ fontSize: 9 }} />
-                <Tooltip contentStyle={{ fontSize: "11px" }} />
-                <Legend wrapperStyle={{ fontSize: "10px" }} />
-                <Bar dataKey="limit" name="Credit Limit" fill="#e2e8f0" />
-                <Bar dataKey="outstanding" name="Outstanding" fill="#F5C742" />
-              </BarChart>
-            </ResponsiveContainer>
-          </CardContent>
-        </Card>
+            </thead>
+            <tbody>
+              {mockVendorMaster.map((r) => (
+                <tr key={r.code} className="hover:bg-slate-50">
+                  <Td bold>{r.code}</Td>
+                  <Td>{r.name}</Td>
+                  <Td muted>{r.category}</Td>
+                  <Td muted>{r.trn}</Td>
+                  <Td right>{r.creditLimit.toLocaleString()}</Td>
+                  <Td right bold>{r.outstanding.toLocaleString()}</Td>
+                  <Td muted>{r.paymentTerms}</Td>
+                  <Td>{statusBadge(r.status)}</Td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       </div>
     </div>
   );
 }
-
 function VendorAgingReport() {
   const totals = mockVendorAging.reduce((s, r) => ({ total: s.total + r.total, d30: s.d30 + r.d30, d60: s.d60 + r.d60, d90: s.d90 + r.d90, d90plus: s.d90plus + r.d90plus }), { total: 0, d30: 0, d60: 0, d90: 0, d90plus: 0 });
   return (
@@ -679,8 +961,8 @@ function VendorAgingReport() {
       <ReportHeader title="Vendor Outstanding & Aging" subtitle="Payable aging analysis across all vendors" count={mockVendorAging.length} />
       <div className="grid grid-cols-4 gap-3">
         <KpiCard label="Total Payable" value={`AED ${totals.total.toLocaleString()}`} sub="All vendors" accent />
-        <KpiCard label="0–30 Days" value={`AED ${totals.d30.toLocaleString()}`} sub="Current" />
-        <KpiCard label="31–90 Days" value={`AED ${(totals.d60 + totals.d90).toLocaleString()}`} sub="Moderate" />
+        <KpiCard label="0â€“30 Days" value={`AED ${totals.d30.toLocaleString()}`} sub="Current" />
+        <KpiCard label="31â€“90 Days" value={`AED ${(totals.d60 + totals.d90).toLocaleString()}`} sub="Moderate" />
         <KpiCard label="90+ Days" value={`AED ${totals.d90plus.toLocaleString()}`} sub="Overdue" />
       </div>
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">
@@ -729,13 +1011,17 @@ function VendorAgingReport() {
 }
 
 function VendorPerformanceReport() {
+  const avgOnTime = mockVendorPerf.length ? mockVendorPerf.reduce((s, r) => s + r.onTimePct, 0) / mockVendorPerf.length : 0;
+  const avgReturnRate = mockVendorPerf.length ? mockVendorPerf.reduce((s, r) => s + r.returnRate, 0) / mockVendorPerf.length : 0;
+  const avgSettleDays = mockVendorPerf.length ? Math.round(mockVendorPerf.reduce((s, r) => s + r.avgSettleDays, 0) / mockVendorPerf.length) : 0;
+
   return (
     <div className="space-y-3">
       <ReportHeader title="Vendor Performance Summary" subtitle="KPI tracking: delivery, returns, claims, settlement" count={mockVendorPerf.length} />
       <div className="grid grid-cols-3 gap-3">
-        <KpiCard label="Avg On-Time Delivery" value={`${(mockVendorPerf.reduce((s, r) => s + r.onTimePct, 0) / mockVendorPerf.length).toFixed(1)}%`} sub="All vendors" accent />
-        <KpiCard label="Avg Return Rate" value={`${(mockVendorPerf.reduce((s, r) => s + r.returnRate, 0) / mockVendorPerf.length).toFixed(1)}%`} sub="By value" />
-        <KpiCard label="Avg Settlement Days" value={`${Math.round(mockVendorPerf.reduce((s, r) => s + r.avgSettleDays, 0) / mockVendorPerf.length)} days`} sub="Invoice to payment" />
+        <KpiCard label="Avg On-Time Delivery" value={`${avgOnTime.toFixed(1)}%`} sub="All vendors" accent />
+        <KpiCard label="Avg Return Rate" value={`${avgReturnRate.toFixed(1)}%`} sub="By value" />
+        <KpiCard label="Avg Settlement Days" value={`${avgSettleDays} days`} sub="Invoice to payment" />
       </div>
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">
         <Tbl>
@@ -786,12 +1072,14 @@ function VendorPerformanceReport() {
 }
 
 function VendorPriceHistoryReport() {
+  const avgCostChange = mockPriceHistory.length ? mockPriceHistory.reduce((s, r) => s + r.change, 0) / mockPriceHistory.length : 0;
+
   return (
     <div className="space-y-3">
       <ReportHeader title="Vendor Price History" subtitle="Last 5 purchase rates per item with cost change %" count={mockPriceHistory.length} />
       <div className="grid grid-cols-2 gap-3">
         <KpiCard label="Items Tracked" value={String(mockPriceHistory.length)} sub="Across vendors" accent />
-        <KpiCard label="Avg Cost Change" value={`${(mockPriceHistory.reduce((s, r) => s + r.change, 0) / mockPriceHistory.length).toFixed(2)}%`} sub="YTD movement" />
+        <KpiCard label="Avg Cost Change" value={`${avgCostChange.toFixed(2)}%`} sub="YTD movement" />
       </div>
       <Tbl>
         <thead>
@@ -857,7 +1145,7 @@ function VendorContractComplianceReport() {
               <Td>{r.item}</Td>
               <Td right>{r.contractPrice.toLocaleString()}</Td>
               <Td right>{r.actualPrice.toLocaleString()}</Td>
-              <Td right>{r.variance !== 0 ? amtBadge(r.variance) : "—"}</Td>
+              <Td right>{r.variance !== 0 ? amtBadge(r.variance) : "â€”"}</Td>
               <Td right><span className={r.variancePct > 0 ? "text-red-600 font-semibold" : r.variancePct < 0 ? "text-emerald-700 font-semibold" : "text-slate-500"}>{r.variancePct > 0 ? "+" : ""}{r.variancePct.toFixed(2)}%</span></Td>
               <Td>{r.penaltyApplied ? <Badge variant="outline" className="bg-red-100 text-red-700 border-red-300 text-[10px]">Applied</Badge> : <Badge variant="outline" className="bg-slate-100 text-slate-600 border-slate-300 text-[10px]">None</Badge>}</Td>
               <Td>{statusBadge(r.status === "Breached" ? "Overdue" : "Active")}</Td>
@@ -1163,7 +1451,7 @@ function GrnBatchExpiryReport() {
       <ReportHeader title="Batch & Expiry Report" subtitle="Batch tracking with expiry monitoring" count={mockBatchExpiry.length} />
       <div className="grid grid-cols-3 gap-3">
         <KpiCard label="Total Batches" value={String(mockBatchExpiry.length)} sub="Active batches" accent />
-        <KpiCard label="Near Expiry (≤30d)" value={String(nearExpiry)} sub="Requires action" />
+        <KpiCard label="Near Expiry (â‰¤30d)" value={String(nearExpiry)} sub="Requires action" />
         <KpiCard label="Active Batches" value={String(mockBatchExpiry.filter((r) => r.status === "Active").length)} sub="Good standing" />
       </div>
       <Tbl>
@@ -1320,7 +1608,7 @@ function GrvReasonAnalysisReport() {
                 <Td bold>{r.reason}</Td>
                 <Td right>{r.count}</Td>
                 <Td right>{r.value.toLocaleString()}</Td>
-                <Td right muted>{(r.value / r.count).toFixed(2)}</Td>
+                <Td right muted>{r.count ? (r.value / r.count).toFixed(2) : "0.00"}</Td>
               </tr>
             ))}
           </tbody>
@@ -1415,7 +1703,7 @@ function GrvDebitNoteMappingReport() {
               <Td>{r.vendor}</Td>
               <Td right bold>{r.grvValue.toLocaleString()}</Td>
               <Td muted>{r.debitNote}</Td>
-              <Td right>{r.dnValue > 0 ? r.dnValue.toLocaleString() : "—"}</Td>
+              <Td right>{r.dnValue > 0 ? r.dnValue.toLocaleString() : "â€”"}</Td>
               <Td>{r.matched ? <Badge variant="outline" className="bg-emerald-100 text-emerald-700 border-emerald-300 text-[10px]">Yes</Badge> : <Badge variant="outline" className="bg-red-100 text-red-700 border-red-300 text-[10px]">No</Badge>}</Td>
               <Td muted>{r.settledDate}</Td>
               <Td>{statusBadge(r.status)}</Td>
@@ -1505,7 +1793,7 @@ function InvoiceGrnVarianceReport() {
                 <Td right>{r.qtyVar}</Td>
                 <Td right>{r.invRate.toFixed(2)}</Td>
                 <Td right>{r.grnRate.toFixed(2)}</Td>
-                <Td right>{r.valueVar !== 0 ? amtBadge(r.valueVar) : "—"}</Td>
+                <Td right>{r.valueVar !== 0 ? amtBadge(r.valueVar) : "â€”"}</Td>
                 <Td>{statusBadge(r.status === "Variance" ? "Overdue" : "Active")}</Td>
               </tr>
             ))}
@@ -1876,14 +2164,17 @@ function DebitNoteRegisterReport() {
 }
 
 function ClaimSettlementReport() {
+  const settledClaims = mockClaimSettlement.filter((r) => r.status === "Settled");
+  const avgSettlementDays = settledClaims.length ? Math.round(settledClaims.reduce((s, r) => s + r.daysToSettle, 0) / settledClaims.length) : 0;
+
   return (
     <div className="space-y-3">
-      <ReportHeader title="Claim Settlement Status" subtitle="Lifecycle tracking: issued → accepted → settled / rejected" count={mockClaimSettlement.length} />
+      <ReportHeader title="Claim Settlement Status" subtitle="Lifecycle tracking: issued â†’ accepted â†’ settled / rejected" count={mockClaimSettlement.length} />
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">
         <div className="space-y-3">
           <div className="grid grid-cols-2 gap-3">
-            <KpiCard label="Settled Claims" value={String(mockClaimSettlement.filter((r) => r.status === "Settled").length)} sub="Resolved" accent />
-            <KpiCard label="Avg Settlement Days" value={`${Math.round(mockClaimSettlement.filter((r) => r.status === "Settled").reduce((s, r) => s + r.daysToSettle, 0) / mockClaimSettlement.filter((r) => r.status === "Settled").length)} days`} sub="For settled claims" />
+            <KpiCard label="Settled Claims" value={String(settledClaims.length)} sub="Resolved" accent />
+            <KpiCard label="Avg Settlement Days" value={`${avgSettlementDays} days`} sub="For settled claims" />
           </div>
           <Tbl>
             <thead>
@@ -1990,7 +2281,7 @@ function VatInputRegisterReport() {
   const totalVat = mockVatInput.reduce((s, r) => s + r.vatAmt, 0);
   return (
     <div className="space-y-3">
-      <ReportHeader title="VAT Input Register (UAE)" subtitle="Input tax register for FTA filing — all taxable purchases" count={mockVatInput.length} />
+      <ReportHeader title="VAT Input Register (UAE)" subtitle="Input tax register for FTA filing â€” all taxable purchases" count={mockVatInput.length} />
       <div className="grid grid-cols-3 gap-3">
         <KpiCard label="Total Taxable Value" value={`AED ${totalTaxable.toLocaleString()}`} sub="Excl. VAT" accent />
         <KpiCard label="Total Input VAT" value={`AED ${totalVat.toLocaleString()}`} sub="Recoverable @ 5%" />
@@ -2031,12 +2322,14 @@ function VatInputRegisterReport() {
 }
 
 function PeriodLockViolationsReport() {
+  const breachedPeriods = new Set(mockPeriodLockViolations.map((r) => r.lockedPeriod).filter(Boolean)).size;
+
   return (
     <div className="space-y-3">
       <ReportHeader title="Period Lock Violation Report" subtitle="Transactions posted into closed accounting periods" count={mockPeriodLockViolations.length} />
       <div className="grid grid-cols-3 gap-3">
         <KpiCard label="Total Violations" value={String(mockPeriodLockViolations.length)} sub="This period" accent />
-        <KpiCard label="Periods Breached" value="1" sub="Apr-2026" />
+        <KpiCard label="Periods Breached" value={String(breachedPeriods)} sub="Locked periods" />
         <KpiCard label="Users Involved" value={String(new Set(mockPeriodLockViolations.map((r) => r.user)).size)} sub="Unique users" />
       </div>
       <Tbl>
@@ -2147,7 +2440,7 @@ function AuditTrailReport() {
               <Td muted>{r.refNo}</Td>
               <Td muted>{r.field}</Td>
               <Td muted>{r.before}</Td>
-              <Td>{r.after !== "-" ? <span className="text-emerald-700 font-semibold">{r.after}</span> : "—"}</Td>
+              <Td>{r.after !== "-" ? <span className="text-emerald-700 font-semibold">{r.after}</span> : "â€”"}</Td>
             </tr>
           ))}
         </tbody>
@@ -2175,30 +2468,37 @@ export default function VendorsPurchasesReports({ onNavigate }: { onNavigate?: (
   });
 
   // Filters
-  const [dateFrom, setDateFrom] = useState("2026-05-01");
-  const [dateTo, setDateTo] = useState("2026-05-22");
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
   const [vendor, setVendor] = useState("All");
   const [branch, setBranch] = useState("All");
+  const [searchText, setSearchText] = useState("");
   const [, setDataRevision] = useState(0);
 
-  useEffect(() => {
-    // Phase 2: Add actual backend API fetching logic here
-    const controller = new AbortController();
-    async function fetchReport() {
-      try {
-        let data = null;
-        // Example: data = await getVendors();
-        if (data) {
-          applyLiveReportData(activeReport, data);
-          setDataRevision((r) => r + 1);
-        }
-      } catch (err) {
-        console.error("Failed to fetch report data", err);
-      }
+  async function loadReport(signal?: AbortSignal) {
+    try {
+      applyLiveReportData(activeReport, { rows: [], charts: [] });
+      setDataRevision((value) => value + 1);
+      const data = await getPurchaseReportData(activeReport, {
+        dateFrom,
+        dateTo,
+        vendor,
+        branch,
+        searchQuery: searchText,
+      }, signal);
+      if (!data) return;
+      applyLiveReportData(activeReport, data);
+      setDataRevision((value) => value + 1);
+    } catch (err) {
+      console.error("Failed to fetch purchase report data", err);
     }
-    fetchReport();
+  }
+
+  useEffect(() => {
+    const controller = new AbortController();
+    loadReport(controller.signal);
     return () => controller.abort();
-  }, [activeReport, dateFrom, dateTo, vendor, branch]);
+  }, [activeReport]);
 
   const activeDef = useMemo(() => REPORTS.find((r) => r.id === activeReport)!, [activeReport]);
 
@@ -2315,7 +2615,7 @@ export default function VendorsPurchasesReports({ onNavigate }: { onNavigate?: (
                 Vendors &amp; Purchases Reports
               </CardTitle>
               <span className="text-[10px] text-slate-500">
-                Vendor • LPO • GRN • GRV • Invoice • Payment • Compliance
+                Vendor â€¢ LPO â€¢ GRN â€¢ GRV â€¢ Invoice â€¢ Payment â€¢ Compliance
               </span>
             </CardHeader>
             <CardContent className="px-3 pb-3 space-y-2">
@@ -2324,7 +2624,7 @@ export default function VendorsPurchasesReports({ onNavigate }: { onNavigate?: (
                 <Input
                   value={query}
                   onChange={(e) => setQuery(e.target.value)}
-                  placeholder="Search reports…"
+                  placeholder="Search reportsâ€¦"
                   className="pl-8 pr-3 py-1 h-9 rounded-full text-xs bg-slate-50 border-none focus-visible:ring-0 focus-visible:ring-offset-0"
                 />
               </div>
@@ -2530,13 +2830,15 @@ export default function VendorsPurchasesReports({ onNavigate }: { onNavigate?: (
                     Item / SKU Search
                   </label>
                   <Input
-                    placeholder="Search item name or SKU…"
+                    value={searchText}
+                    onChange={(e) => setSearchText(e.target.value)}
+                    placeholder="Search item name or SKUâ€¦"
                     className="h-8 text-[11px] bg-slate-50 border-slate-200"
                   />
                 </div>
 
                 <div className="flex items-end gap-2">
-                  <Button className="flex-1 h-8 text-[11px] bg-[#F5C742] hover:bg-[#e4b82e] text-slate-900">
+                  <Button onClick={() => loadReport()} className="flex-1 h-8 text-[11px] bg-[#F5C742] hover:bg-[#e4b82e] text-slate-900">
                     Generate
                   </Button>
                   <Button variant="ghost" className="h-8 text-[11px] text-slate-600 flex items-center gap-1">

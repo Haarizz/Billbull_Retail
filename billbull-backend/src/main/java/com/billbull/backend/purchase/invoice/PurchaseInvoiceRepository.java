@@ -3,6 +3,8 @@ package com.billbull.backend.purchase.invoice;
 import java.util.List;
 
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 
 public interface PurchaseInvoiceRepository
                 extends JpaRepository<PurchaseInvoice, Long> {
@@ -23,6 +25,13 @@ public interface PurchaseInvoiceRepository
         List<PurchaseInvoice> findByLpoId(Long lpoId);
 
         List<PurchaseInvoice> findByLpoIdOrReferenceNo(Long lpoId, String referenceNo);
+
+        @Query("SELECT DISTINCT i FROM PurchaseInvoice i LEFT JOIN FETCH i.items "
+                        + "WHERE (:dateFrom IS NULL OR i.invoiceDate >= :dateFrom) "
+                        + "AND (:dateTo IS NULL OR i.invoiceDate <= :dateTo) "
+                        + "ORDER BY i.invoiceDate DESC")
+        List<PurchaseInvoice> findForReports(@Param("dateFrom") java.time.LocalDate dateFrom,
+                        @Param("dateTo") java.time.LocalDate dateTo);
 
         // --- STATEMENT QUERIES ---
         @org.springframework.data.jpa.repository.Query("SELECT SUM(s.grandTotal) FROM PurchaseInvoice s WHERE s.vendorName = :vendorName AND s.invoiceDate < :startDate AND s.status <> 'CANCELLED'")
