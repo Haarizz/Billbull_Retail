@@ -17,6 +17,11 @@ export const sendReceiptVoucherEmail = async (
     }
 };
 
+export const getNextReceiptVoucherNumber = async () => {
+    const res = await api.get(`${BASE_PATH}/next-number`);
+    return res.data.voucherNumber;
+};
+
 export const receiptVoucherApi = {
     getAll: async () => {
         const response = await api.get(BASE_PATH);

@@ -95,33 +95,64 @@ const paperDims = (settings) => {
     return PAPER_DIMS[key] || PAPER_DIMS['A4-portrait'];
 };
 
+const firstOf = (...vals) => {
+    for (const v of vals) {
+        if (v !== undefined && v !== null && String(v).trim() !== '') return v;
+    }
+    return '';
+};
+
 // Resolve a field id to its printable string value from the invoice data.
 const resolveFieldValue = (id, data, company) => {
     const t = data.totals || {};
     const c = data.customer || {};
     const m = data.meta || {};
     const currency = t.currency || '';
+    const crn = firstOf(company.crn, company.crNumber, company.registrationNumber, company.companyRegistrationNumber);
     switch (id) {
+        // Company
         case 'company_name': return company.companyName || company.name || '';
-        case 'company_address': return company.address || '';
-        case 'company_phone': return company.phone || '';
+        case 'company_address': return firstOf(company.fullAddress, company.address) || '';
+        case 'company_phone': return firstOf(company.phone, company.mobile) || '';
         case 'company_email': return company.email || '';
+        case 'company_website': return company.website || '';
         case 'company_trn': return company.trn ? `TRN: ${company.trn}` : '';
+        case 'company_cr': return crn ? `CR: ${crn}` : '';
+        // Document
         case 'invoice_title': return data.title || 'TAX INVOICE';
         case 'invoice_no': return data.docNo || '';
         case 'invoice_date': return data.date || '';
         case 'due_date': return m.dueDate || '';
-        case 'payment_terms': return m.paymentTerm || m.paymentTerms || '';
-        case 'salesperson': return m.salesPerson || m.salesperson || '';
+        case 'valid_until': return firstOf(m.validUntil, m.validTill) || '';
+        case 'payment_terms': return firstOf(m.paymentTerm, m.paymentTerms) || '';
+        case 'salesperson': return firstOf(m.salesPerson, m.salesperson) || '';
+        case 'currency': return currency || '';
+        case 'po_reference': return firstOf(m.poNumber, m.poRef, m.reference, m.linkedSalesOrder) || '';
+        case 'location_store': return firstOf(m.locationStore, m.location) || '';
+        case 'warehouse': return m.warehouse || '';
+        case 'delivery_terms': return firstOf(m.deliveryTerms, m.deliveryType) || '';
+        // Customer
         case 'bill_to_label': return 'BILL TO';
         case 'customer_name': return c.name || '';
         case 'customer_address1': return c.address || '';
         case 'customer_address2': return c.shippingAddress || '';
+        case 'customer_code': return c.code || '';
+        case 'customer_phone': return c.phone || '';
+        case 'customer_email': return c.email || '';
         case 'customer_trn': return c.trn ? `TRN: ${c.trn}` : '';
+        case 'ship_to_label': return 'SHIP TO';
+        case 'ship_to_address': return c.shippingAddress || '';
+        // Totals
+        case 'taxable_total': return fmtMoney(firstOf(t.taxableAmount, t.subTotal), currency);
         case 'subtotal': return fmtMoney(t.subTotal, currency);
+        case 'discount_total': return fmtMoney(firstOf(t.billDiscountAmount, t.discount), currency);
         case 'tax_amount': return fmtMoney(t.tax, currency);
+        case 'delivery_charge': return fmtMoney(t.deliveryCharge, currency);
+        case 'round_off': return fmtMoney(t.roundOff, currency);
         case 'grand_total': return fmtMoney(t.grandTotal, currency);
         case 'amount_words': return amountInWords(t.grandTotal, currency);
+        // Footer
+        case 'terms': return firstOf(m.terms, m.termsAndConditions) || '';
         case 'notes': return m.notes || '';
         case 'bank_name': return company.bankName || company.bankAccountName || '';
         case 'account_number': return company.accountNumber || company.bankAccountNumber || '';
@@ -131,30 +162,78 @@ const resolveFieldValue = (id, data, company) => {
     }
 };
 
-const renderItemsTable = (field, data, currency) => {
+// Cell value for a given items-table column key.
+const cellValue = (col, it, idx) => {
+    switch (col) {
+        case 'lineNo': return String(idx + 1);
+        case 'code': return escapeHtml(it.code || '');
+        case 'name': return escapeHtml(it.name || it.desc || it.code || '');
+        case 'description': return escapeHtml(it.desc || it.detailedDesc || '');
+        case 'brand': return escapeHtml(it.brand || '');
+        case 'sku': return escapeHtml(it.sku || '');
+        case 'barcode': return escapeHtml(it.barcode || '');
+        case 'batchNumber': return escapeHtml(it.batchNumber || '');
+        case 'location': return escapeHtml(it.location || '');
+        case 'unit': return escapeHtml(it.unit || '');
+        case 'qty': return fmt2(it.qty);
+        case 'price': return fmt2(it.price);
+        case 'taxableAmount': return fmt2(num(it.qty) * num(it.price) - num(it.disc));
+        case 'disc': return fmt2(it.disc);
+        case 'taxPercent': return `${num(it.tax)}%`;
+        case 'taxAmt': return fmt2(it.taxAmt);
+        case 'total': return fmt2(it.total);
+        case 'image': return it.image ? `<img src="${escapeHtml(it.image)}" style="max-width:12mm;max-height:12mm;object-fit:contain;" alt="" />` : '';
+        default: return '';
+    }
+};
+
+// Column catalogue — must stay in sync with OVERLAY_TABLE_COLUMNS in
+// InvoiceOverlayDesigner.jsx (key / label / align / relative width).
+const TABLE_COLUMN_DEFS = [
+    { key: 'lineNo', label: '#', align: 'center', flex: 0.4 },
+    { key: 'image', label: 'Image', align: 'center', flex: 0.8 },
+    { key: 'code', label: 'Item Code', align: 'left', flex: 1.1 },
+    { key: 'name', label: 'Product / Service', align: 'left', flex: 2 },
+    { key: 'description', label: 'Description', align: 'left', flex: 2.4 },
+    { key: 'brand', label: 'Brand', align: 'left', flex: 1 },
+    { key: 'sku', label: 'SKU', align: 'left', flex: 1 },
+    { key: 'barcode', label: 'Barcode', align: 'left', flex: 1.2 },
+    { key: 'batchNumber', label: 'Batch No', align: 'left', flex: 1.2 },
+    { key: 'location', label: 'Location / Bin', align: 'left', flex: 1 },
+    { key: 'unit', label: 'UOM', align: 'center', flex: 0.7 },
+    { key: 'qty', label: 'Qty', align: 'right', flex: 0.7 },
+    { key: 'price', label: 'Unit Price', align: 'right', flex: 1 },
+    { key: 'taxableAmount', label: 'Taxable', align: 'right', flex: 1 },
+    { key: 'disc', label: 'Discount', align: 'right', flex: 0.9 },
+    { key: 'taxPercent', label: 'VAT %', align: 'right', flex: 0.7 },
+    { key: 'taxAmt', label: 'VAT Amount', align: 'right', flex: 1 },
+    { key: 'total', label: 'Line Total', align: 'right', flex: 1 }
+];
+const DEFAULT_TABLE_COLUMNS = { lineNo: true, name: true, description: true, qty: true, price: true, taxAmt: true, total: true };
+
+const renderItemsTable = (field, data) => {
     const items = Array.isArray(data.items) ? data.items : [];
-    const rows = items.map((it, idx) => `
-        <tr>
-            <td style="padding:1mm 1.5mm;border-bottom:0.2mm solid #ccc;text-align:center;">${idx + 1}</td>
-            <td style="padding:1mm 1.5mm;border-bottom:0.2mm solid #ccc;">${escapeHtml(it.name || it.desc || it.code || '')}</td>
-            <td style="padding:1mm 1.5mm;border-bottom:0.2mm solid #ccc;text-align:center;">${escapeHtml(it.unit || '')}</td>
-            <td style="padding:1mm 1.5mm;border-bottom:0.2mm solid #ccc;text-align:right;">${fmt2(it.qty)}</td>
-            <td style="padding:1mm 1.5mm;border-bottom:0.2mm solid #ccc;text-align:right;">${fmt2(it.price)}</td>
-            <td style="padding:1mm 1.5mm;border-bottom:0.2mm solid #ccc;text-align:right;">${fmt2(it.total)}</td>
-        </tr>`).join('');
+    const colCfg = field.columns || DEFAULT_TABLE_COLUMNS;
+    const cols = TABLE_COLUMN_DEFS.filter((c) => colCfg[c.key]);
+    if (cols.length === 0) return '';
+    const showHeader = field.showHeader !== false;
+    const zebra = Boolean(field.zebra);
+    const totalFlex = cols.reduce((sum, c) => sum + c.flex, 0);
+
+    const colGroup = cols.map((c) => `<col style="width:${(c.flex / totalFlex * 100).toFixed(2)}%;" />`).join('');
+
+    const headerCells = cols.map((c) => `<th style="padding:1mm 1.5mm;border-bottom:0.4mm solid #333;text-align:${c.align};white-space:nowrap;">${escapeHtml(c.label)}</th>`).join('');
+
+    const rows = items.map((it, idx) => {
+        const bg = zebra && idx % 2 === 1 ? 'background:rgba(0,0,0,0.035);' : '';
+        const cells = cols.map((c) => `<td style="padding:1mm 1.5mm;border-bottom:0.2mm solid #ccc;text-align:${c.align};${bg}">${cellValue(c.key, it, idx)}</td>`).join('');
+        return `<tr>${cells}</tr>`;
+    }).join('');
 
     return `
-        <table style="width:100%;border-collapse:collapse;font-size:${num(field.fontSize) || 9}pt;font-family:${field.fontFamily || 'Inter'},sans-serif;color:${field.color || '#0f1923'};">
-            <thead>
-                <tr>
-                    <th style="padding:1mm 1.5mm;border-bottom:0.4mm solid #333;text-align:center;">#</th>
-                    <th style="padding:1mm 1.5mm;border-bottom:0.4mm solid #333;text-align:left;">Description</th>
-                    <th style="padding:1mm 1.5mm;border-bottom:0.4mm solid #333;text-align:center;">Unit</th>
-                    <th style="padding:1mm 1.5mm;border-bottom:0.4mm solid #333;text-align:right;">Qty</th>
-                    <th style="padding:1mm 1.5mm;border-bottom:0.4mm solid #333;text-align:right;">Price</th>
-                    <th style="padding:1mm 1.5mm;border-bottom:0.4mm solid #333;text-align:right;">Amount</th>
-                </tr>
-            </thead>
+        <table style="width:100%;border-collapse:collapse;table-layout:fixed;font-size:${num(field.fontSize) || 9}pt;font-family:${field.fontFamily || 'Inter'},sans-serif;color:${field.color || '#0f1923'};">
+            <colgroup>${colGroup}</colgroup>
+            ${showHeader ? `<thead><tr>${headerCells}</tr></thead>` : ''}
             <tbody>${rows}</tbody>
         </table>`;
 };
@@ -174,7 +253,10 @@ const renderDrawing = (d) => {
         return `<div style="position:absolute;left:${x}mm;top:${y}mm;height:${h}mm;border-left:${thickness * 0.35}mm ${borderStyle} ${color};"></div>`;
     }
     // box / border
-    const fill = (d.fillOpacity && num(d.fillOpacity) > 0) ? d.fillColor || 'transparent' : 'transparent';
+    const fillOpacity = num(d.fillOpacity);
+    const fill = fillOpacity > 0
+        ? (d.fillColor || '#ffffff') + Math.round(fillOpacity * 255).toString(16).padStart(2, '0')
+        : 'transparent';
     return `<div style="position:absolute;left:${x}mm;top:${y}mm;width:${w}mm;height:${h}mm;border:${thickness * 0.35}mm ${borderStyle} ${color};background:${fill};"></div>`;
 };
 
@@ -200,14 +282,14 @@ export const generateOverlayInvoiceHtml = (template, data, options = {}) => {
     const printOnlyValues = settings.printOnlyValues ?? isPreprinted;
 
     const dims = paperDims(settings);
-    const currency = (data.totals && data.totals.currency) || '';
     const fields = Array.isArray(settings.fields) ? settings.fields : [];
     const drawings = Array.isArray(settings.drawings) ? settings.drawings : [];
 
+    const logoUrl = firstOf(company.logoUrl, company.logo, company.companyLogo, company.logoPath);
+    const stampUrl = firstOf(company.stampUrl, company.stamp, company.stampPath);
+
     const fieldHtml = fields.map((f) => {
         if (f.enabled === false) return '';
-        // In pre-printed mode the company block is already on the paper.
-        if (isPreprinted && f.category === 'company') return '';
 
         const x = num(f.x);
         const y = num(f.y);
@@ -226,7 +308,15 @@ export const generateOverlayInvoiceHtml = (template, data, options = {}) => {
         ].filter(Boolean).join(';');
 
         if (f.id === 'items_table') {
-            return `<div style="${styleBits}">${renderItemsTable(f, data, currency)}</div>`;
+            return `<div style="${styleBits}">${renderItemsTable(f, data)}</div>`;
+        }
+        // Image fields: pull logo / stamp from the company profile. QR codes are
+        // not pre-generated for the overlay renderer, so nothing is printed.
+        if (f.id === 'company_logo') {
+            return logoUrl ? `<div style="${styleBits}"><img src="${escapeHtml(logoUrl)}" style="max-width:${width}mm;max-height:${width}mm;object-fit:contain;" alt="" /></div>` : '';
+        }
+        if (f.id === 'company_stamp') {
+            return stampUrl ? `<div style="${styleBits}"><img src="${escapeHtml(stampUrl)}" style="max-width:${width}mm;max-height:${width}mm;object-fit:contain;" alt="" /></div>` : '';
         }
         if (f.id === 'qr_code') return '';
 

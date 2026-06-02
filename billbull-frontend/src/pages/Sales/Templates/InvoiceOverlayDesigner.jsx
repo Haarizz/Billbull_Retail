@@ -2,11 +2,6 @@ import { useState, useRef, useCallback, useEffect } from "react";
 import {
   Badge,
   Button,
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
   Input,
   Label,
   ScrollArea,
@@ -57,6 +52,14 @@ import {
   Trash2,
   Copy
 } from "lucide-react";
+// Local, density-matched card primitives (theme: light border + subtle shadow,
+// tight padding) so the whole module reads like the standard document designer
+// instead of the airy shadow-md/p-6 defaults.
+const Card = ({ className = "", ...props }) => <div className={`rounded-lg bg-white border border-slate-200 shadow-sm ${className}`} {...props} />;
+const CardHeader = ({ className = "", ...props }) => <div className={`px-3.5 pt-3 pb-2 ${className}`} {...props} />;
+const CardContent = ({ className = "", ...props }) => <div className={`px-3.5 pb-3.5 pt-0 ${className}`} {...props} />;
+const CardTitle = ({ className = "", ...props }) => <h3 className={`text-[13px] font-semibold text-slate-800 ${className}`} {...props} />;
+const CardDescription = ({ className = "", ...props }) => <p className={`text-[11px] text-slate-500 leading-snug ${className}`} {...props} />;
 const PAPER_DIMS = {
   "A4-portrait": { w: 210, h: 297 },
   "A4-landscape": { w: 297, h: 210 },
@@ -81,34 +84,101 @@ const makeLine = (type, x, y, w, h) => ({
   fillOpacity: 0,
   locked: false
 });
+// Image-style fields render as a placeholder box on the canvas and pull a real
+// image (logo / stamp) or generated graphic (QR) from the company profile at print time.
+const IMAGE_FIELD_LABELS = {
+  company_logo: "Logo",
+  company_stamp: "Stamp",
+  qr_code: "QR Code"
+};
+const isImageField = (id) => Object.prototype.hasOwnProperty.call(IMAGE_FIELD_LABELS, id);
+
+// Configurable columns for the items table block — full parity with the
+// standard (FULL) Sales Invoice designer's table columns. `flex` drives the
+// relative auto-width when a column is enabled.
+const OVERLAY_TABLE_COLUMNS = [
+  { key: "lineNo", label: "#", align: "center", flex: 0.4 },
+  { key: "image", label: "Image", align: "center", flex: 0.8 },
+  { key: "code", label: "Item Code", align: "left", flex: 1.1 },
+  { key: "name", label: "Product / Service", align: "left", flex: 2 },
+  { key: "description", label: "Description", align: "left", flex: 2.4 },
+  { key: "brand", label: "Brand", align: "left", flex: 1 },
+  { key: "sku", label: "SKU", align: "left", flex: 1 },
+  { key: "barcode", label: "Barcode", align: "left", flex: 1.2 },
+  { key: "batchNumber", label: "Batch No", align: "left", flex: 1.2 },
+  { key: "location", label: "Location / Bin", align: "left", flex: 1 },
+  { key: "unit", label: "UOM", align: "center", flex: 0.7 },
+  { key: "qty", label: "Qty", align: "right", flex: 0.7 },
+  { key: "price", label: "Unit Price", align: "right", flex: 1 },
+  { key: "taxableAmount", label: "Taxable", align: "right", flex: 1 },
+  { key: "disc", label: "Discount", align: "right", flex: 0.9 },
+  { key: "taxPercent", label: "VAT %", align: "right", flex: 0.7 },
+  { key: "taxAmt", label: "VAT Amount", align: "right", flex: 1 },
+  { key: "total", label: "Line Total", align: "right", flex: 1 }
+];
+const DEFAULT_TABLE_COLUMNS = { lineNo: true, name: true, description: true, qty: true, price: true, taxAmt: true, total: true };
+// Sample item row used to render a realistic preview inside the designer canvas.
+const SAMPLE_TABLE_ROW = {
+  lineNo: "1", image: "", code: "JSW-POS-001", name: "JASEWAY POS Machine",
+  description: "i5 / 8GB / 256GB SSD / 10\" LCD", brand: "JASEWAY", sku: "JSW-POS-001-BLK",
+  barcode: "6291041500213", batchNumber: "BTH-2025-0441", location: "WH-3 / B-12",
+  unit: "PCS", qty: "12.00", price: "1,500.00", taxableAmount: "18,000.00", disc: "0.00",
+  taxPercent: "5%", taxAmt: "900.00", total: "18,900.00"
+};
 const DEFAULT_FIELDS = [
+  // ── Company header ──
+  { id: "company_logo", label: "Company Logo", sampleValue: "[Logo]", category: "company", x: 20, y: 12, fontSize: 9, fontFamily: "Inter", bold: false, italic: false, color: "#0f1923", align: "left", width: 30, enabled: false, locked: false, printLabel: false },
   { id: "company_name", label: "Company Name", sampleValue: "BillBull Retail Ltd", category: "company", x: 20, y: 15, fontSize: 16, fontFamily: "Inter", bold: true, italic: false, color: "#0f1923", align: "left", width: 100, enabled: true, locked: false, printLabel: false },
   { id: "company_address", label: "Company Address", sampleValue: "Building 123, Dubai, UAE", category: "company", x: 20, y: 24, fontSize: 9, fontFamily: "Inter", bold: false, italic: false, color: "#3b4a58", align: "left", width: 100, enabled: true, locked: false, printLabel: false },
   { id: "company_phone", label: "Company Phone", sampleValue: "+971 4 123 4567", category: "company", x: 20, y: 31, fontSize: 9, fontFamily: "Inter", bold: false, italic: false, color: "#3b4a58", align: "left", width: 80, enabled: true, locked: false, printLabel: false },
   { id: "company_email", label: "Company Email", sampleValue: "info@billbull.ae", category: "company", x: 20, y: 37, fontSize: 9, fontFamily: "Inter", bold: false, italic: false, color: "#3b4a58", align: "left", width: 80, enabled: true, locked: false, printLabel: false },
-  { id: "company_trn", label: "Company TRN", sampleValue: "TRN: 100123456789003", category: "company", x: 20, y: 43, fontSize: 9, fontFamily: "Inter", bold: false, italic: false, color: "#3b4a58", align: "left", width: 80, enabled: true, locked: false, printLabel: false },
+  { id: "company_website", label: "Company Website", sampleValue: "www.billbull.ae", category: "company", x: 20, y: 43, fontSize: 9, fontFamily: "Inter", bold: false, italic: false, color: "#3b4a58", align: "left", width: 80, enabled: false, locked: false, printLabel: false },
+  { id: "company_trn", label: "Company TRN", sampleValue: "TRN: 100123456789003", category: "company", x: 20, y: 49, fontSize: 9, fontFamily: "Inter", bold: false, italic: false, color: "#3b4a58", align: "left", width: 80, enabled: true, locked: false, printLabel: false },
+  { id: "company_cr", label: "Company CR Number", sampleValue: "CR: DED-2022-112345", category: "company", x: 20, y: 55, fontSize: 9, fontFamily: "Inter", bold: false, italic: false, color: "#3b4a58", align: "left", width: 80, enabled: false, locked: false, printLabel: false },
+  // ── Document info ──
   { id: "invoice_title", label: "Document Title", sampleValue: "TAX INVOICE", category: "document", x: 130, y: 20, fontSize: 20, fontFamily: "Inter", bold: true, italic: false, color: "#0f1923", align: "right", width: 60, enabled: true, locked: false, printLabel: false },
   { id: "invoice_no", label: "Invoice Number", sampleValue: "INV-2024-001", category: "document", x: 130, y: 40, fontSize: 10, fontFamily: "Inter", bold: true, italic: false, color: "#0f1923", align: "right", width: 60, enabled: true, locked: false, printLabel: true },
   { id: "invoice_date", label: "Invoice Date", sampleValue: "20 May 2024", category: "document", x: 130, y: 49, fontSize: 10, fontFamily: "Inter", bold: false, italic: false, color: "#0f1923", align: "right", width: 60, enabled: true, locked: false, printLabel: true },
   { id: "due_date", label: "Due Date", sampleValue: "19 Jun 2024", category: "document", x: 130, y: 58, fontSize: 10, fontFamily: "Inter", bold: false, italic: false, color: "#0f1923", align: "right", width: 60, enabled: true, locked: false, printLabel: true },
-  { id: "payment_terms", label: "Payment Terms", sampleValue: "Net 30", category: "document", x: 130, y: 67, fontSize: 10, fontFamily: "Inter", bold: false, italic: false, color: "#3b4a58", align: "right", width: 60, enabled: true, locked: false, printLabel: true },
-  { id: "salesperson", label: "Salesperson", sampleValue: "John Smith", category: "document", x: 130, y: 76, fontSize: 10, fontFamily: "Inter", bold: false, italic: false, color: "#3b4a58", align: "right", width: 60, enabled: false, locked: false, printLabel: true },
-  { id: "bill_to_label", label: '"Bill To" Heading', sampleValue: "BILL TO", category: "customer", x: 20, y: 60, fontSize: 8, fontFamily: "Inter", bold: true, italic: false, color: "#6b7a8a", align: "left", width: 90, enabled: true, locked: false, printLabel: false },
-  { id: "customer_name", label: "Customer Name", sampleValue: "Acme Corporation", category: "customer", x: 20, y: 67, fontSize: 11, fontFamily: "Inter", bold: true, italic: false, color: "#0f1923", align: "left", width: 90, enabled: true, locked: false, printLabel: false },
-  { id: "customer_address1", "label": "Customer Address 1", "sampleValue": "456 Client Avenue", category: "customer", x: 20, y: 75, fontSize: 9, fontFamily: "Inter", bold: false, italic: false, color: "#3b4a58", align: "left", width: 90, enabled: true, locked: false, printLabel: false },
-  { id: "customer_address2", "label": "Customer Address 2", "sampleValue": "Bur Dubai, Dubai, UAE", category: "customer", x: 20, y: 82, fontSize: 9, fontFamily: "Inter", bold: false, italic: false, color: "#3b4a58", align: "left", width: 90, enabled: true, locked: false, printLabel: false },
-  { id: "customer_trn", label: "Customer TRN", sampleValue: "100987654321003", category: "customer", x: 20, y: 103, fontSize: 9, fontFamily: "Inter", bold: false, italic: false, color: "#3b4a58", align: "left", width: 90, enabled: true, locked: false, printLabel: true },
-  { id: "items_table", label: "Items Table", sampleValue: "[Items Table Block]", category: "items", x: 10, y: 120, fontSize: 9, fontFamily: "Inter", bold: false, italic: false, color: "#0f1923", align: "left", width: 190, enabled: true, locked: false, printLabel: false },
+  { id: "valid_until", label: "Valid Until", sampleValue: "30 Jun 2024", category: "document", x: 130, y: 67, fontSize: 10, fontFamily: "Inter", bold: false, italic: false, color: "#3b4a58", align: "right", width: 60, enabled: false, locked: false, printLabel: true },
+  { id: "payment_terms", label: "Payment Terms", sampleValue: "Net 30", category: "document", x: 130, y: 76, fontSize: 10, fontFamily: "Inter", bold: false, italic: false, color: "#3b4a58", align: "right", width: 60, enabled: true, locked: false, printLabel: true },
+  { id: "salesperson", label: "Salesperson", sampleValue: "John Smith", category: "document", x: 130, y: 85, fontSize: 10, fontFamily: "Inter", bold: false, italic: false, color: "#3b4a58", align: "right", width: 60, enabled: false, locked: false, printLabel: true },
+  { id: "currency", label: "Currency", sampleValue: "AED", category: "document", x: 130, y: 94, fontSize: 10, fontFamily: "Inter", bold: false, italic: false, color: "#3b4a58", align: "right", width: 60, enabled: false, locked: false, printLabel: true },
+  { id: "po_reference", label: "PO / Reference", sampleValue: "PO-99817", category: "document", x: 130, y: 103, fontSize: 10, fontFamily: "Inter", bold: false, italic: false, color: "#3b4a58", align: "right", width: 60, enabled: false, locked: false, printLabel: true },
+  { id: "location_store", label: "Location / Store", sampleValue: "DXB-01", category: "document", x: 130, y: 112, fontSize: 10, fontFamily: "Inter", bold: false, italic: false, color: "#3b4a58", align: "right", width: 60, enabled: false, locked: false, printLabel: true },
+  { id: "warehouse", label: "Warehouse / Store", sampleValue: "Main Store, Fujairah", category: "document", x: 130, y: 121, fontSize: 10, fontFamily: "Inter", bold: false, italic: false, color: "#3b4a58", align: "right", width: 60, enabled: false, locked: false, printLabel: true },
+  { id: "delivery_terms", label: "Delivery Terms", sampleValue: "DAP - Customer Warehouse", category: "document", x: 130, y: 130, fontSize: 10, fontFamily: "Inter", bold: false, italic: false, color: "#3b4a58", align: "right", width: 60, enabled: false, locked: false, printLabel: true },
+  // ── Customer / Bill To & Ship To ──
+  { id: "bill_to_label", label: '"Bill To" Heading', sampleValue: "BILL TO", category: "customer", x: 20, y: 62, fontSize: 8, fontFamily: "Inter", bold: true, italic: false, color: "#6b7a8a", align: "left", width: 90, enabled: true, locked: false, printLabel: false },
+  { id: "customer_name", label: "Customer Name", sampleValue: "Acme Corporation", category: "customer", x: 20, y: 69, fontSize: 11, fontFamily: "Inter", bold: true, italic: false, color: "#0f1923", align: "left", width: 90, enabled: true, locked: false, printLabel: false },
+  { id: "customer_address1", label: "Customer Address 1", sampleValue: "456 Client Avenue", category: "customer", x: 20, y: 77, fontSize: 9, fontFamily: "Inter", bold: false, italic: false, color: "#3b4a58", align: "left", width: 90, enabled: true, locked: false, printLabel: false },
+  { id: "customer_address2", label: "Customer Address 2", sampleValue: "Bur Dubai, Dubai, UAE", category: "customer", x: 20, y: 84, fontSize: 9, fontFamily: "Inter", bold: false, italic: false, color: "#3b4a58", align: "left", width: 90, enabled: true, locked: false, printLabel: false },
+  { id: "customer_code", label: "Customer Code", sampleValue: "CUS-0042", category: "customer", x: 20, y: 91, fontSize: 9, fontFamily: "Inter", bold: false, italic: false, color: "#3b4a58", align: "left", width: 90, enabled: false, locked: false, printLabel: true },
+  { id: "customer_phone", label: "Customer Phone", sampleValue: "+971 50 123 4567", category: "customer", x: 20, y: 97, fontSize: 9, fontFamily: "Inter", bold: false, italic: false, color: "#3b4a58", align: "left", width: 90, enabled: false, locked: false, printLabel: true },
+  { id: "customer_email", label: "Customer Email", sampleValue: "ap@acme.com", category: "customer", x: 20, y: 103, fontSize: 9, fontFamily: "Inter", bold: false, italic: false, color: "#3b4a58", align: "left", width: 90, enabled: false, locked: false, printLabel: true },
+  { id: "customer_trn", label: "Customer TRN", sampleValue: "100987654321003", category: "customer", x: 20, y: 109, fontSize: 9, fontFamily: "Inter", bold: false, italic: false, color: "#3b4a58", align: "left", width: 90, enabled: true, locked: false, printLabel: true },
+  { id: "ship_to_label", label: '"Ship To" Heading', sampleValue: "SHIP TO", category: "customer", x: 110, y: 62, fontSize: 8, fontFamily: "Inter", bold: true, italic: false, color: "#6b7a8a", align: "left", width: 80, enabled: false, locked: false, printLabel: false },
+  { id: "ship_to_address", label: "Shipping Address", sampleValue: "Warehouse 8, Industrial Area, Sharjah", category: "customer", x: 110, y: 69, fontSize: 9, fontFamily: "Inter", bold: false, italic: false, color: "#3b4a58", align: "left", width: 80, enabled: false, locked: false, printLabel: false },
+  // ── Items table ──
+  { id: "items_table", label: "Items Table", sampleValue: "[Items Table Block]", category: "items", x: 10, y: 140, fontSize: 9, fontFamily: "Inter", bold: false, italic: false, color: "#0f1923", align: "left", width: 190, enabled: true, locked: false, printLabel: false, columns: { ...DEFAULT_TABLE_COLUMNS }, showHeader: true, zebra: false },
+  // ── Totals ──
+  { id: "taxable_total", label: "Taxable Amount", sampleValue: "AED 5,000.00", category: "totals", x: 130, y: 211, fontSize: 10, fontFamily: "Inter", bold: false, italic: false, color: "#0f1923", align: "right", width: 65, enabled: false, locked: false, printLabel: true },
   { id: "subtotal", label: "Subtotal", sampleValue: "AED 5,000.00", category: "totals", x: 130, y: 220, fontSize: 10, fontFamily: "Inter", bold: false, italic: false, color: "#0f1923", align: "right", width: 65, enabled: true, locked: false, printLabel: true },
-  { id: "tax_amount", label: "VAT Amount", sampleValue: "AED 250.00", category: "totals", x: 130, y: 229, fontSize: 10, fontFamily: "Inter", bold: false, italic: false, color: "#0f1923", align: "right", width: 65, enabled: true, locked: false, printLabel: true },
-  { id: "grand_total", label: "Grand Total", sampleValue: "AED 5,250.00", category: "totals", x: 130, y: 247, fontSize: 11, fontFamily: "Inter", bold: true, italic: false, color: "#0f1923", align: "right", width: 65, enabled: true, locked: false, printLabel: true },
-  { id: "amount_words", label: "Amount in Words", sampleValue: "Five Thousand Two Hundred Fifty Dirhams Only", category: "totals", x: 10, y: 258, fontSize: 9, fontFamily: "Inter", bold: false, italic: true, color: "#3b4a58", align: "left", width: 120, enabled: true, locked: false, printLabel: false },
-  { id: "notes", label: "Notes / Remarks", sampleValue: "Payment due within 30 days.", category: "footer", x: 10, y: 270, fontSize: 8, fontFamily: "Inter", bold: false, italic: false, color: "#6b7a8a", align: "left", width: 120, enabled: true, locked: false, printLabel: false },
-  { id: "bank_name", label: "Bank Name", sampleValue: "Emirates NBD", category: "footer", x: 10, y: 280, fontSize: 9, fontFamily: "Inter", bold: false, italic: false, color: "#0f1923", align: "left", width: 90, enabled: true, locked: false, printLabel: true },
-  { id: "account_number", label: "Account Number", sampleValue: "1012345678", category: "footer", x: 10, y: 287, fontSize: 9, fontFamily: "Inter", bold: false, italic: false, color: "#0f1923", align: "left", width: 90, enabled: true, locked: false, printLabel: true },
-  { id: "iban", label: "IBAN", sampleValue: "AE07 0330 0000 0102 1450 801", category: "footer", x: 10, y: 294, fontSize: 9, fontFamily: "Inter", bold: false, italic: false, color: "#0f1923", align: "left", width: 90, enabled: true, locked: false, printLabel: true },
-  { id: "qr_code", label: "QR Code", sampleValue: "[QR]", category: "footer", x: 170, y: 272, fontSize: 9, fontFamily: "Inter", bold: false, italic: false, color: "#0f1923", align: "left", width: 28, enabled: true, locked: false, printLabel: false },
-  { id: "signature", label: "Authorized Signature", sampleValue: "________________________", category: "footer", x: 130, y: 280, fontSize: 9, fontFamily: "Inter", bold: false, italic: false, color: "#0f1923", align: "center", width: 60, enabled: true, locked: false, printLabel: true }
+  { id: "discount_total", label: "Discount", sampleValue: "AED 0.00", category: "totals", x: 130, y: 229, fontSize: 10, fontFamily: "Inter", bold: false, italic: false, color: "#0f1923", align: "right", width: 65, enabled: false, locked: false, printLabel: true },
+  { id: "tax_amount", label: "VAT Amount", sampleValue: "AED 250.00", category: "totals", x: 130, y: 238, fontSize: 10, fontFamily: "Inter", bold: false, italic: false, color: "#0f1923", align: "right", width: 65, enabled: true, locked: false, printLabel: true },
+  { id: "delivery_charge", label: "Delivery Charge", sampleValue: "AED 0.00", category: "totals", x: 130, y: 247, fontSize: 10, fontFamily: "Inter", bold: false, italic: false, color: "#0f1923", align: "right", width: 65, enabled: false, locked: false, printLabel: true },
+  { id: "round_off", label: "Round Off", sampleValue: "AED 0.00", category: "totals", x: 130, y: 256, fontSize: 10, fontFamily: "Inter", bold: false, italic: false, color: "#0f1923", align: "right", width: 65, enabled: false, locked: false, printLabel: true },
+  { id: "grand_total", label: "Grand Total", sampleValue: "AED 5,250.00", category: "totals", x: 130, y: 266, fontSize: 11, fontFamily: "Inter", bold: true, italic: false, color: "#0f1923", align: "right", width: 65, enabled: true, locked: false, printLabel: true },
+  { id: "amount_words", label: "Amount in Words", sampleValue: "Five Thousand Two Hundred Fifty Dirhams Only", category: "totals", x: 10, y: 256, fontSize: 9, fontFamily: "Inter", bold: false, italic: true, color: "#3b4a58", align: "left", width: 120, enabled: true, locked: false, printLabel: false },
+  // ── Footer ──
+  { id: "terms", label: "Terms & Conditions", sampleValue: "Goods sold are not returnable. Payment due within 30 days.", category: "footer", x: 10, y: 268, fontSize: 8, fontFamily: "Inter", bold: false, italic: false, color: "#6b7a8a", align: "left", width: 120, enabled: false, locked: false, printLabel: false },
+  { id: "notes", label: "Notes / Remarks", sampleValue: "Thank you for your business.", category: "footer", x: 10, y: 278, fontSize: 8, fontFamily: "Inter", bold: false, italic: false, color: "#6b7a8a", align: "left", width: 120, enabled: true, locked: false, printLabel: false },
+  { id: "bank_name", label: "Bank Name", sampleValue: "Emirates NBD", category: "footer", x: 10, y: 285, fontSize: 9, fontFamily: "Inter", bold: false, italic: false, color: "#0f1923", align: "left", width: 90, enabled: false, locked: false, printLabel: true },
+  { id: "account_number", label: "Account Number", sampleValue: "1012345678", category: "footer", x: 10, y: 291, fontSize: 9, fontFamily: "Inter", bold: false, italic: false, color: "#0f1923", align: "left", width: 90, enabled: false, locked: false, printLabel: true },
+  { id: "iban", label: "IBAN", sampleValue: "AE07 0330 0000 0102 1450 801", category: "footer", x: 10, y: 297, fontSize: 9, fontFamily: "Inter", bold: false, italic: false, color: "#0f1923", align: "left", width: 90, enabled: false, locked: false, printLabel: true },
+  { id: "company_stamp", label: "Company Stamp", sampleValue: "[Stamp]", category: "footer", x: 150, y: 255, fontSize: 9, fontFamily: "Inter", bold: false, italic: false, color: "#0f1923", align: "center", width: 30, enabled: false, locked: false, printLabel: false },
+  { id: "qr_code", label: "QR Code", sampleValue: "[QR]", category: "footer", x: 175, y: 272, fontSize: 9, fontFamily: "Inter", bold: false, italic: false, color: "#0f1923", align: "left", width: 24, enabled: true, locked: false, printLabel: false },
+  { id: "signature", label: "Authorized Signature", sampleValue: "________________________", category: "footer", x: 130, y: 285, fontSize: 9, fontFamily: "Inter", bold: false, italic: false, color: "#0f1923", align: "center", width: 60, enabled: true, locked: false, printLabel: true }
 ];
 const CATEGORY_COLORS = {
   company: "#8b5cf6",
@@ -127,6 +197,38 @@ const CATEGORY_LABELS = {
   footer: "Footer"
 };
 const fontFamilies = ["Inter", "Arial", "Helvetica", "Times New Roman", "Georgia", "Courier New", "Roboto", "Open Sans", "Poppins"];
+// Merge saved field overrides (position/style/enabled) onto the current full
+// DEFAULT_FIELDS set so templates created before new fields existed still pick
+// up the added fields, while honouring any per-field tweaks the user saved.
+const mergeFields = (savedFields, mode) => {
+  // Pre-printed stationery already carries the company header, so company
+  // fields default OFF (the user can still turn them on per template).
+  const withModeDefault = (f) => ({
+    ...f,
+    enabled: mode === "preprinted" && f.category === "company" ? false : f.enabled
+  });
+  if (!Array.isArray(savedFields) || savedFields.length === 0) {
+    return DEFAULT_FIELDS.map(withModeDefault);
+  }
+  const savedById = new Map(savedFields.map((f) => [f.id, f]));
+  const merged = DEFAULT_FIELDS.map((def) => {
+    const saved = savedById.get(def.id);
+    if (!saved) return withModeDefault(def);
+    const out = { ...def, ...saved };
+    if (def.id === "items_table") {
+      out.columns = { ...DEFAULT_TABLE_COLUMNS, ...(saved.columns || {}) };
+      out.showHeader = saved.showHeader !== false;
+      out.zebra = Boolean(saved.zebra);
+    }
+    return out;
+  });
+  // Preserve any custom/unknown saved fields that aren't in DEFAULT_FIELDS.
+  const knownIds = new Set(DEFAULT_FIELDS.map((f) => f.id));
+  savedFields.forEach((f) => {
+    if (!knownIds.has(f.id)) merged.push({ ...f });
+  });
+  return merged;
+};
 const defaultSettings = (mode, name) => ({
   templateName: name,
   mode,
@@ -146,9 +248,11 @@ const defaultSettings = (mode, name) => ({
   printOnlyValues: mode === "preprinted"
 });
 function InvoiceOverlayDesigner({ mode, templateName, initialSettings, onClose, onSave }) {
-  const [settings, setSettings] = useState({
-    ...defaultSettings(mode, templateName ?? (mode === "preprinted" ? "Pre-printed Invoice Template" : "Letterhead Invoice Template")),
-    ...initialSettings
+  const [settings, setSettings] = useState(() => {
+    const base = defaultSettings(mode, templateName ?? (mode === "preprinted" ? "Pre-printed Invoice Template" : "Letterhead Invoice Template"));
+    const merged = { ...base, ...initialSettings };
+    merged.fields = mergeFields(initialSettings?.fields, mode);
+    return merged;
   });
   const [selectedField, setSelectedField] = useState(null);
   const [selectedDrawing, setSelectedDrawing] = useState(null);
@@ -358,59 +462,78 @@ function InvoiceOverlayDesigner({ mode, templateName, initialSettings, onClose, 
     return { x1, y1, w, h };
   })() : null;
   const drawToolCursor = drawTool === "select" ? "default" : "crosshair";
-  return <div className="fixed inset-0 bg-background z-50 overflow-hidden flex flex-col">
+  return <div className="fixed inset-0 bg-[#F0F0F3] z-50 overflow-hidden flex flex-col">
 
       {
     /* ── Top bar ── */
   }
-      <div className="border-b bg-white px-6 py-4 flex items-center justify-between">
-        <div className="flex items-center gap-4">
-          <Button variant="ghost" onClick={onClose}><ArrowLeft className="h-4 w-4 mr-2" />Back</Button>
-          <div>
-            <h1 className="text-2xl font-semibold flex items-center gap-2">
-              {isPreprinted ? <><Printer className="h-5 w-5 text-[#F5C742]" /> Pre-printed Invoice Designer</> : <><FileImage className="h-5 w-5 text-[#F5C742]" /> Letterhead Invoice Designer</>}
-            </h1>
-            <p className="text-sm text-muted-foreground">
-              {isPreprinted ? "Upload your pre-printed form and position where each value should be printed" : "Upload your company letterhead and design the invoice layout on top of it"}
-            </p>
+      <div className="border-b border-slate-200 bg-white px-4 py-2 flex items-center justify-between gap-4">
+        <div className="flex items-center gap-3 min-w-0">
+          <button onClick={onClose} className="flex items-center gap-1.5 text-slate-500 hover:text-slate-800 text-xs transition-colors flex-shrink-0">
+            <ArrowLeft className="h-3.5 w-3.5" />Back
+          </button>
+          <span className="text-slate-200">|</span>
+          <div className="flex items-center gap-2.5 min-w-0">
+            <div className="h-9 w-9 rounded-lg bg-[#FFF8E7] border border-[#FDE6A9] flex items-center justify-center flex-shrink-0">
+              {isPreprinted ? <Printer className="h-4 w-4 text-[#9a7a00]" /> : <FileImage className="h-4 w-4 text-[#9a7a00]" />}
+            </div>
+            <div className="min-w-0">
+              <h1 className="text-sm font-semibold leading-tight truncate text-slate-800">
+                {isPreprinted ? "Pre-printed Invoice Designer" : "Letterhead Invoice Designer"}
+              </h1>
+              <p className="text-[11px] text-slate-500 truncate leading-tight">
+                {isPreprinted ? "Position values onto your pre-printed stationery" : "Lay the invoice out on top of your letterhead"}
+              </p>
+            </div>
           </div>
         </div>
-        <div className="flex gap-2 items-center">
-          <Badge variant="outline" className={isPreprinted ? "border-blue-400 text-blue-700 bg-blue-50" : "border-purple-400 text-purple-700 bg-purple-50"}>
+        <div className="flex gap-2 items-center flex-shrink-0">
+          <Badge variant="outline" className={`text-[10px] py-0 px-2 h-5 ${isPreprinted ? "border-blue-300 text-blue-700 bg-blue-50" : "border-purple-300 text-purple-700 bg-purple-50"}`}>
             {isPreprinted ? "Pre-printed" : "Letterhead"}
           </Badge>
-          <Button variant="outline" onClick={handleExport}><Download className="mr-2 h-4 w-4" />Export</Button>
-          <Button className="bg-[#F5C742] hover:bg-[#F5C742]/90 text-black" onClick={handleSave}><Save className="mr-2 h-4 w-4" />Save Template</Button>
+          <span className="text-slate-200">|</span>
+          <Button size="sm" variant="outline" className="h-7 text-[11px] gap-1.5 px-3" onClick={handleExport}><Download className="h-3.5 w-3.5" />Export</Button>
+          <Button size="sm" className="h-7 text-[11px] gap-1.5 px-3 bg-[#F5C742] text-slate-900 hover:bg-[#e8b830] border-0" onClick={handleSave}><Save className="h-3.5 w-3.5" />Save Template</Button>
         </div>
       </div>
 
       <div className="flex-1 overflow-hidden flex">
 
         { /* ── Left settings panel ── */ }
-        <div className="w-[380px] shadow-[4px_0_24px_rgba(0,0,0,0.08)] bg-white overflow-y-auto flex-shrink-0 relative z-10">
-          <ScrollArea className="h-full">
-            <div className="p-6">
-              <div className="space-y-2 mb-6">
-                <Label>Template Name</Label>
-                <Input value={settings.templateName} onChange={(e) => update("templateName", e.target.value)} />
-              </div>
-
+        <div className="w-[360px] border-r border-slate-200 bg-white flex flex-col flex-shrink-0 relative z-10 overflow-hidden">
+          { /* Template name + tab bar (fixed header) */ }
+          <div className="px-4 pt-3.5 pb-0 border-b border-slate-200">
+            <div className="space-y-1.5 mb-3">
+              <Label className="text-[11px] font-medium text-muted-foreground uppercase tracking-wide">Template Name</Label>
+              <Input value={settings.templateName} onChange={(e) => update("templateName", e.target.value)} className="h-9 text-[13px] font-medium" />
+            </div>
+            <div className="flex overflow-x-auto -mb-px">
+              {[
+    { value: "paper", label: "Paper", Icon: LayoutGrid },
+    { value: "upload", label: "Upload", Icon: Upload },
+    { value: "fields", label: "Fields", Icon: Layers },
+    { value: "lines", label: "Lines", Icon: RectangleHorizontal },
+    { value: "style", label: "Style", Icon: AlignLeft }
+  ].map(({ value, label, Icon }) => <button
+    key={value}
+    onClick={() => setActiveTab(value)}
+    className={`flex items-center gap-1.5 px-3 py-2 text-[11px] font-medium whitespace-nowrap border-b-2 transition-colors ${activeTab === value ? "border-[#F5C742] text-slate-900 bg-[#FFFBF0]" : "border-transparent text-slate-500 hover:text-slate-700"}`}
+  >
+                  <Icon className="h-3.5 w-3.5" />{label}
+                </button>)}
+            </div>
+          </div>
+          <ScrollArea className="flex-1">
+            <div className="p-4">
               <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4">
-                <TabsList className="grid grid-cols-5 w-full">
-                  <TabsTrigger value="paper">Paper</TabsTrigger>
-                  <TabsTrigger value="upload">Upload</TabsTrigger>
-                  <TabsTrigger value="fields">Fields</TabsTrigger>
-                  <TabsTrigger value="lines">Lines</TabsTrigger>
-                  <TabsTrigger value="style">Style</TabsTrigger>
-                </TabsList>
 
                 {
     /* ── Paper tab ── */
   }
-                <TabsContent value="paper" className="space-y-6">
+                <TabsContent value="paper" className="space-y-3">
                   <Card>
                     <CardHeader>
-                      <CardTitle className="text-lg flex items-center gap-2"><LayoutGrid className="h-5 w-5" />Paper & Canvas</CardTitle>
+                      <CardTitle className="flex items-center gap-2"><LayoutGrid className="h-4 w-4 text-[#9a7a00]" />Paper & Canvas</CardTitle>
                       <CardDescription>Set the paper dimensions to match your physical form</CardDescription>
                     </CardHeader>
                     <CardContent className="space-y-4">
@@ -530,11 +653,11 @@ function InvoiceOverlayDesigner({ mode, templateName, initialSettings, onClose, 
                 {
     /* ── Upload tab ── */
   }
-                <TabsContent value="upload" className="space-y-6">
+                <TabsContent value="upload" className="space-y-3">
                   <Card>
                     <CardHeader>
-                      <CardTitle className="text-lg flex items-center gap-2">
-                        <FileImage className="h-5 w-5" />
+                      <CardTitle className="flex items-center gap-2">
+                        <FileImage className="h-4 w-4 text-[#9a7a00]" />
                         {isPreprinted ? "Pre-printed Form Image" : "Letterhead Image"}
                       </CardTitle>
                       <CardDescription>
@@ -668,7 +791,7 @@ function InvoiceOverlayDesigner({ mode, templateName, initialSettings, onClose, 
                     </CardContent>
                   </Card>
                   <Card>
-                    <CardHeader><CardTitle className="text-lg">Canvas View</CardTitle></CardHeader>
+                    <CardHeader><CardTitle>Canvas View</CardTitle></CardHeader>
                     <CardContent className="space-y-3">
                       <div className="flex items-center justify-between">
                         <Label className="font-normal">Show Sample Values</Label>
@@ -690,7 +813,7 @@ function InvoiceOverlayDesigner({ mode, templateName, initialSettings, onClose, 
                 {
     /* ── Fields tab ── */
   }
-                <TabsContent value="fields" className="space-y-6">
+                <TabsContent value="fields" className="space-y-3">
                   <div className="flex flex-wrap gap-1">
                     {categories.map((cat) => <button
     key={cat}
@@ -710,39 +833,100 @@ function InvoiceOverlayDesigner({ mode, templateName, initialSettings, onClose, 
                             {CATEGORY_LABELS[cat]}
                           </CardTitle>
                         </CardHeader>
-                        <CardContent className="space-y-2">
-                          {catFields.map((field) => <div
+                        <CardContent className="space-y-1.5 pt-0">
+                          {catFields.map((field) => {
+    const isSel = selectedField === field.id;
+    return <div
       key={field.id}
-      className={`p-3 border rounded-lg cursor-pointer transition-all ${selectedField === field.id ? "border-[#F5C742] bg-[#F5C742]/5 shadow-sm" : "hover:border-gray-400"} ${!field.enabled ? "opacity-50" : ""}`}
+      className={`rounded-lg border transition-all ${isSel ? "border-[#F5C742] bg-[#F5C742]/5 shadow-sm" : field.enabled ? "border-gray-200 hover:border-gray-300" : "border-gray-100 bg-gray-50/60"}`}
+    >
+                              { /* compact header row */ }
+                              <div
+      className="flex items-center gap-2 px-2.5 py-1.5 cursor-pointer"
       onClick={() => {
         setSelectedField(field.id);
         setSelectedDrawing(null);
-        setActiveTab("style");
       }}
     >
-                              <div className="flex items-center justify-between mb-2">
-                                <span className="text-xs font-semibold text-gray-700">{field.label}</span>
-                                <div className="flex items-center gap-1">
-                                  <button onClick={(e) => {
-      e.stopPropagation();
-      updateField(field.id, { locked: !field.locked });
-    }} className="p-0.5 rounded hover:bg-gray-100">
-                                    {field.locked ? <Lock className="h-3 w-3 text-amber-500" /> : <Unlock className="h-3 w-3 text-gray-400" />}
-                                  </button>
-                                  <Switch checked={field.enabled} onCheckedChange={(v) => updateField(field.id, { enabled: v })} onClick={(e) => e.stopPropagation()} />
-                                </div>
+                                <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: field.enabled ? CATEGORY_COLORS[field.category] : "#cbd5e1" }} />
+                                <span className={`text-xs font-medium flex-1 truncate ${field.enabled ? "text-gray-700" : "text-gray-400"}`}>{field.label}</span>
+                                {field.enabled && !isSel && <span className="text-[10px] text-muted-foreground tabular-nums hidden sm:inline">{field.x},{field.y}</span>}
+                                {field.locked && <Lock className="h-3 w-3 text-amber-500 flex-shrink-0" />}
+                                <button
+      title={field.locked ? "Unlock position" : "Lock position"}
+      onClick={(e) => {
+        e.stopPropagation();
+        updateField(field.id, { locked: !field.locked });
+      }}
+      className="p-0.5 rounded hover:bg-gray-100 flex-shrink-0"
+    >
+                                  {field.locked ? <Lock className="h-3 w-3 text-amber-500" /> : <Unlock className="h-3 w-3 text-gray-400" />}
+                                </button>
+                                <Switch checked={field.enabled} onCheckedChange={(v) => updateField(field.id, { enabled: v })} onClick={(e) => e.stopPropagation()} />
                               </div>
-                              {field.enabled && <div className="grid grid-cols-2 gap-2">
-                                  <div className="space-y-1">
-                                    <Label className="text-xs text-muted-foreground">X (mm)</Label>
-                                    <Input type="number" step="0.5" value={field.x} onChange={(e) => updateField(field.id, { x: +e.target.value })} onClick={(e) => e.stopPropagation()} className="h-7 text-xs" />
+
+                              { /* inline editor — only for the selected, enabled field */ }
+                              {isSel && field.enabled && <div className="px-2.5 pb-2.5 pt-1.5 border-t border-dashed border-gray-200" onClick={(e) => e.stopPropagation()}>
+                                  <div className={isImageField(field.id) ? "grid grid-cols-3 gap-1.5" : "grid grid-cols-4 gap-1.5"}>
+                                    <div className="space-y-0.5">
+                                      <Label className="text-[10px] text-muted-foreground">X mm</Label>
+                                      <Input type="number" step="0.5" value={field.x} onChange={(e) => updateField(field.id, { x: +e.target.value })} className="h-7 text-xs px-1.5" />
+                                    </div>
+                                    <div className="space-y-0.5">
+                                      <Label className="text-[10px] text-muted-foreground">Y mm</Label>
+                                      <Input type="number" step="0.5" value={field.y} onChange={(e) => updateField(field.id, { y: +e.target.value })} className="h-7 text-xs px-1.5" />
+                                    </div>
+                                    <div className="space-y-0.5">
+                                      <Label className="text-[10px] text-muted-foreground">{isImageField(field.id) ? "Size" : "W mm"}</Label>
+                                      <Input type="number" step="1" value={field.width} onChange={(e) => updateField(field.id, { width: +e.target.value })} className="h-7 text-xs px-1.5" />
+                                    </div>
+                                    {!isImageField(field.id) && <div className="space-y-0.5">
+                                      <Label className="text-[10px] text-muted-foreground">Font</Label>
+                                      <Input type="number" step="0.5" value={field.fontSize} onChange={(e) => updateField(field.id, { fontSize: +e.target.value })} className="h-7 text-xs px-1.5" />
+                                    </div>}
                                   </div>
-                                  <div className="space-y-1">
-                                    <Label className="text-xs text-muted-foreground">Y (mm)</Label>
-                                    <Input type="number" step="0.5" value={field.y} onChange={(e) => updateField(field.id, { y: +e.target.value })} onClick={(e) => e.stopPropagation()} className="h-7 text-xs" />
-                                  </div>
+
+                                  {field.id === "items_table" && (() => {
+    const cols = field.columns || DEFAULT_TABLE_COLUMNS;
+    const enabledCount = OVERLAY_TABLE_COLUMNS.filter((c) => cols[c.key]).length;
+    return <div className="mt-2.5">
+                                      <div className="flex items-center justify-between mb-1.5">
+                                        <Label className="text-[11px] font-semibold text-gray-700">Table Columns</Label>
+                                        <span className="text-[10px] text-muted-foreground">{enabledCount}/{OVERLAY_TABLE_COLUMNS.length}</span>
+                                      </div>
+                                      <div className="grid grid-cols-2 gap-1">
+                                        {OVERLAY_TABLE_COLUMNS.map((col) => {
+      const on = Boolean(cols[col.key]);
+      return <button
+        key={col.key}
+        onClick={() => updateField("items_table", { columns: { ...cols, [col.key]: !on } })}
+        className={`flex items-center gap-1.5 px-2 py-1 rounded border text-[11px] transition-colors text-left ${on ? "border-[#F5C742] bg-[#F5C742]/10 font-medium" : "border-gray-200 text-gray-500 hover:border-gray-400"}`}
+      >
+                                            {on ? <CheckSquare className="h-3 w-3 text-[#9a7a00] flex-shrink-0" /> : <Square className="h-3 w-3 flex-shrink-0" />}
+                                            <span className="truncate">{col.label}</span>
+                                          </button>;
+    })}
+                                      </div>
+                                      <div className="flex items-center justify-between mt-2 px-2 py-1.5 border rounded">
+                                        <Label className="text-[11px] font-normal">Column Headers</Label>
+                                        <Switch checked={field.showHeader !== false} onCheckedChange={(v) => updateField("items_table", { showHeader: v })} />
+                                      </div>
+                                      <div className="flex items-center justify-between mt-1.5 px-2 py-1.5 border rounded">
+                                        <Label className="text-[11px] font-normal">Zebra Striping</Label>
+                                        <Switch checked={Boolean(field.zebra)} onCheckedChange={(v) => updateField("items_table", { zebra: v })} />
+                                      </div>
+                                    </div>;
+  })()}
+
+                                  {!isImageField(field.id) && field.id !== "items_table" && <button
+      onClick={() => setActiveTab("style")}
+      className="mt-2 w-full text-[11px] text-[#9a7a00] hover:text-[#7a6000] font-medium text-left"
+    >
+                                      Font, color & alignment ›
+                                    </button>}
                                 </div>}
-                            </div>)}
+                            </div>;
+  })}
                         </CardContent>
                       </Card>;
   })}
@@ -751,13 +935,13 @@ function InvoiceOverlayDesigner({ mode, templateName, initialSettings, onClose, 
                 {
     /* ── Lines tab ── */
   }
-                <TabsContent value="lines" className="space-y-6">
+                <TabsContent value="lines" className="space-y-3">
                   {
     /* Draw tool picker */
   }
                   <Card>
                     <CardHeader>
-                      <CardTitle className="text-lg flex items-center gap-2"><Square className="h-5 w-5" />Drawing Tools</CardTitle>
+                      <CardTitle className="flex items-center gap-2"><Square className="h-4 w-4 text-[#9a7a00]" />Drawing Tools</CardTitle>
                       <CardDescription>Select a tool, then drag on the canvas to draw</CardDescription>
                     </CardHeader>
                     <CardContent className="space-y-3">
@@ -910,10 +1094,6 @@ function InvoiceOverlayDesigner({ mode, templateName, initialSettings, onClose, 
                           </div>
                           <Switch checked={selectedD.dashed} onCheckedChange={(v) => updateDrawing(selectedD.id, { dashed: v })} />
                         </div>
-                        {selectedD.dashed && <div className="space-y-1">
-                            <Label className="text-xs">Dash Pattern (px,gap)</Label>
-                            <Input value={selectedD.dashPattern} onChange={(e) => updateDrawing(selectedD.id, { dashPattern: e.target.value })} placeholder="4,2" className="h-8 text-xs" />
-                          </div>}
                         {selectedD.type === "border" && <>
                             <Separator />
                             <div className="space-y-2">
@@ -956,65 +1136,100 @@ function InvoiceOverlayDesigner({ mode, templateName, initialSettings, onClose, 
                 {
     /* ── Style tab (field style editor) ── */
   }
-                <TabsContent value="style" className="space-y-6">
+                <TabsContent value="style" className="space-y-3">
                   {selectedF ? <>
+                      {selectedF.id === "items_table" && <Card>
+                          <CardHeader>
+                            <CardTitle className="text-sm flex items-center gap-2"><LayoutGrid className="h-4 w-4" />Table Columns</CardTitle>
+                            <CardDescription>Choose which columns print in the items table</CardDescription>
+                          </CardHeader>
+                          <CardContent className="space-y-3">
+                            <div className="grid grid-cols-2 gap-1.5">
+                              {OVERLAY_TABLE_COLUMNS.map((col) => {
+    const cols = selectedF.columns || DEFAULT_TABLE_COLUMNS;
+    const on = Boolean(cols[col.key]);
+    return <button
+      key={col.key}
+      onClick={() => updateField("items_table", { columns: { ...cols, [col.key]: !on } })}
+      className={`flex items-center gap-1.5 px-2 py-1.5 rounded border text-xs transition-colors text-left ${on ? "border-[#F5C742] bg-[#F5C742]/10 font-medium" : "border-gray-200 text-gray-500 hover:border-gray-400"}`}
+    >
+                                  {on ? <CheckSquare className="h-3.5 w-3.5 text-[#9a7a00] flex-shrink-0" /> : <Square className="h-3.5 w-3.5 flex-shrink-0" />}
+                                  <span className="truncate">{col.label}</span>
+                                </button>;
+  })}
+                            </div>
+                            <Separator />
+                            <div className="flex items-center justify-between p-2 border rounded">
+                              <Label className="text-xs font-normal">Show Column Headers</Label>
+                              <Switch checked={selectedF.showHeader !== false} onCheckedChange={(v) => updateField("items_table", { showHeader: v })} />
+                            </div>
+                            <div className="flex items-center justify-between p-2 border rounded">
+                              <Label className="text-xs font-normal">Zebra Striping</Label>
+                              <Switch checked={Boolean(selectedF.zebra)} onCheckedChange={(v) => updateField("items_table", { zebra: v })} />
+                            </div>
+                            <p className="text-[11px] text-muted-foreground">
+                              {OVERLAY_TABLE_COLUMNS.filter((c) => (selectedF.columns || DEFAULT_TABLE_COLUMNS)[c.key]).length} of {OVERLAY_TABLE_COLUMNS.length} columns enabled. Drag the table block on the canvas to reposition it.
+                            </p>
+                          </CardContent>
+                        </Card>}
                       <Card>
                         <CardHeader>
-                          <CardTitle className="text-lg flex items-center gap-2">
-                            <span className="w-3 h-3 rounded-full" style={{ background: CATEGORY_COLORS[selectedF.category] }} />
+                          <CardTitle className="flex items-center gap-2">
+                            <span className="w-2.5 h-2.5 rounded-full" style={{ background: CATEGORY_COLORS[selectedF.category] }} />
                             {selectedF.label}
                           </CardTitle>
                           <CardDescription>Style and position this field</CardDescription>
                         </CardHeader>
-                        <CardContent className="space-y-4">
-                          <div className="grid grid-cols-2 gap-3">
-                            <div className="space-y-2"><Label>X Position (mm)</Label><Input type="number" step="0.5" value={selectedF.x} onChange={(e) => updateField(selectedF.id, { x: +e.target.value })} /></div>
-                            <div className="space-y-2"><Label>Y Position (mm)</Label><Input type="number" step="0.5" value={selectedF.y} onChange={(e) => updateField(selectedF.id, { y: +e.target.value })} /></div>
-                            <div className="space-y-2"><Label>Width (mm)</Label><Input type="number" step="1" value={selectedF.width} onChange={(e) => updateField(selectedF.id, { width: +e.target.value })} /></div>
-                            <div className="space-y-2"><Label>Font Size (pt)</Label><Input type="number" step="0.5" value={selectedF.fontSize} onChange={(e) => updateField(selectedF.id, { fontSize: +e.target.value })} /></div>
+                        <CardContent className="space-y-3">
+                          <div className="grid grid-cols-2 gap-2.5">
+                            <div className="space-y-1"><Label className="text-[11px] text-muted-foreground">X Position (mm)</Label><Input type="number" step="0.5" value={selectedF.x} onChange={(e) => updateField(selectedF.id, { x: +e.target.value })} className="h-8 text-xs" /></div>
+                            <div className="space-y-1"><Label className="text-[11px] text-muted-foreground">Y Position (mm)</Label><Input type="number" step="0.5" value={selectedF.y} onChange={(e) => updateField(selectedF.id, { y: +e.target.value })} className="h-8 text-xs" /></div>
+                            <div className="space-y-1"><Label className="text-[11px] text-muted-foreground">Width (mm)</Label><Input type="number" step="1" value={selectedF.width} onChange={(e) => updateField(selectedF.id, { width: +e.target.value })} className="h-8 text-xs" /></div>
+                            <div className="space-y-1"><Label className="text-[11px] text-muted-foreground">Font Size (pt)</Label><Input type="number" step="0.5" value={selectedF.fontSize} onChange={(e) => updateField(selectedF.id, { fontSize: +e.target.value })} className="h-8 text-xs" /></div>
                           </div>
                           <Separator />
-                          <div className="space-y-2">
-                            <Label>Font Family</Label>
+                          <div className="space-y-1">
+                            <Label className="text-[11px] text-muted-foreground">Font Family</Label>
                             <Select value={selectedF.fontFamily} onValueChange={(v) => updateField(selectedF.id, { fontFamily: v })}>
-                              <SelectTrigger><SelectValue /></SelectTrigger>
+                              <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
                               <SelectContent>{fontFamilies.map((f) => <SelectItem key={f} value={f}>{f}</SelectItem>)}</SelectContent>
                             </Select>
                           </div>
-                          <div className="flex gap-3">
+                          <div className="flex gap-1.5">
                             {[
     { key: "bold", Icon: Bold, active: selectedF.bold, toggle: () => updateField(selectedF.id, { bold: !selectedF.bold }) },
     { key: "italic", Icon: Italic, active: selectedF.italic, toggle: () => updateField(selectedF.id, { italic: !selectedF.italic }) }
-  ].map(({ key, Icon, active, toggle }) => <Button key={key} type="button" variant={active ? "default" : "outline"} className={active ? "bg-[#F5C742] text-black hover:bg-[#F5C742]/90" : ""} onClick={toggle}>
-                                <Icon className="h-4 w-4" />
+  ].map(({ key, Icon, active, toggle }) => <Button key={key} type="button" size="sm" variant={active ? "default" : "outline"} className={`h-8 w-9 p-0 ${active ? "bg-[#F5C742] text-slate-900 hover:bg-[#e8b830]" : ""}`} onClick={toggle}>
+                                <Icon className="h-3.5 w-3.5" />
                               </Button>)}
-                            {["left", "center", "right"].map((a) => <Button key={a} type="button" variant={selectedF.align === a ? "default" : "outline"} className={selectedF.align === a ? "bg-[#F5C742] text-black hover:bg-[#F5C742]/90" : ""} onClick={() => updateField(selectedF.id, { align: a })}>
-                                {a === "left" ? <AlignLeft className="h-4 w-4" /> : a === "center" ? <AlignCenter className="h-4 w-4" /> : <AlignRight className="h-4 w-4" />}
+                            <div className="w-px bg-slate-200 mx-0.5" />
+                            {["left", "center", "right"].map((a) => <Button key={a} type="button" size="sm" variant={selectedF.align === a ? "default" : "outline"} className={`h-8 w-9 p-0 ${selectedF.align === a ? "bg-[#F5C742] text-slate-900 hover:bg-[#e8b830]" : ""}`} onClick={() => updateField(selectedF.id, { align: a })}>
+                                {a === "left" ? <AlignLeft className="h-3.5 w-3.5" /> : a === "center" ? <AlignCenter className="h-3.5 w-3.5" /> : <AlignRight className="h-3.5 w-3.5" />}
                               </Button>)}
                           </div>
-                          <div className="space-y-2">
-                            <Label>Text Color</Label>
+                          <div className="space-y-1">
+                            <Label className="text-[11px] text-muted-foreground">Text Color</Label>
                             <div className="flex gap-2">
-                              <Input type="color" value={selectedF.color} onChange={(e) => updateField(selectedF.id, { color: e.target.value })} className="w-20 h-10" />
-                              <Input value={selectedF.color} onChange={(e) => updateField(selectedF.id, { color: e.target.value })} />
+                              <Input type="color" value={selectedF.color} onChange={(e) => updateField(selectedF.id, { color: e.target.value })} className="w-12 h-8 p-1" />
+                              <Input value={selectedF.color} onChange={(e) => updateField(selectedF.id, { color: e.target.value })} className="h-8 text-xs" />
                             </div>
                           </div>
                           <Separator />
-                          <div className="flex items-center justify-between p-2 border rounded">
+                          <div className="flex items-center justify-between px-2 py-1.5 border border-slate-200 rounded-md">
                             <div>
-                              <Label className="font-normal">Print Label Text</Label>
-                              <p className="text-xs text-muted-foreground mt-0.5">"Invoice No:" before the value</p>
+                              <Label className="text-xs font-normal">Print Label Text</Label>
+                              <p className="text-[10px] text-muted-foreground mt-0.5">"Invoice No:" before the value</p>
                             </div>
                             <Switch checked={selectedF.printLabel} onCheckedChange={(v) => updateField(selectedF.id, { printLabel: v })} />
                           </div>
-                          <div className="flex items-center justify-between p-2 border rounded">
-                            <Label className="font-normal">Lock Position</Label>
+                          <div className="flex items-center justify-between px-2 py-1.5 border border-slate-200 rounded-md">
+                            <Label className="text-xs font-normal">Lock Position</Label>
                             <Switch checked={selectedF.locked} onCheckedChange={(v) => updateField(selectedF.id, { locked: v })} />
                           </div>
                         </CardContent>
                       </Card>
-                      <div className="p-3 bg-gray-50 rounded-lg border text-xs text-gray-600 space-y-1">
-                        <p className="font-semibold">Sample Value Preview:</p>
+                      <div className="p-2.5 bg-[#FFFBF0] rounded-lg border border-[#FDE6A9] text-xs text-slate-600 space-y-1">
+                        <p className="font-semibold text-[11px] text-[#9a7a00] uppercase tracking-wide">Sample Value Preview</p>
                         <p style={{ fontFamily: selectedF.fontFamily, fontSize: `${selectedF.fontSize}pt`, fontWeight: selectedF.bold ? 700 : 400, fontStyle: selectedF.italic ? "italic" : "normal", color: selectedF.color, textAlign: selectedF.align }}>
                           {selectedF.printLabel ? `${selectedF.label}: ` : ""}{selectedF.sampleValue}
                         </p>
@@ -1033,22 +1248,22 @@ function InvoiceOverlayDesigner({ mode, templateName, initialSettings, onClose, 
         {
     /* ── Canvas area ── */
   }
-        <div className="flex-1 overflow-auto bg-slate-200 p-6">
+        <div className="flex-1 overflow-auto bg-gradient-to-br from-slate-100 to-slate-200 p-6">
 
           {
     /* Toolbar above canvas */
   }
-          <div className="flex items-center gap-3 mb-4 flex-wrap">
-            <div className="flex items-center gap-1 bg-white rounded-lg border px-2 py-1">
+          <div className="flex items-center gap-2 mb-4 flex-wrap">
+            <div className="flex items-center gap-1 bg-white rounded-lg border shadow-sm px-2 py-1">
               <button onClick={() => setZoom((z) => Math.max(0.3, +(z - 0.1).toFixed(1)))} className="p-1 hover:bg-gray-100 rounded"><ZoomOut className="h-4 w-4" /></button>
-              <span className="text-xs font-medium w-10 text-center">{Math.round(zoom * 100)}%</span>
+              <span className="text-xs font-medium w-10 text-center tabular-nums">{Math.round(zoom * 100)}%</span>
               <button onClick={() => setZoom((z) => Math.min(2, +(z + 0.1).toFixed(1)))} className="p-1 hover:bg-gray-100 rounded"><ZoomIn className="h-4 w-4" /></button>
             </div>
 
             {
     /* Draw tool quick-select in toolbar */
   }
-            <div className="flex items-center bg-white rounded-lg border divide-x overflow-hidden">
+            <div className="flex items-center bg-white rounded-lg border shadow-sm divide-x overflow-hidden">
               {[
     { id: "select", Icon: MousePointer2, title: "Select & Move" },
     { id: "h-line", Icon: HLineIcon, title: "Horizontal Line" },
@@ -1069,27 +1284,27 @@ function InvoiceOverlayDesigner({ mode, templateName, initialSettings, onClose, 
 
             <button
     onClick={() => setShowSampleValues((s) => !s)}
-    className={`flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg border transition-colors ${showSampleValues ? "bg-white border-gray-300" : "bg-gray-700 border-gray-700 text-white"}`}
+    className={`flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg border shadow-sm transition-colors ${showSampleValues ? "bg-white border-gray-300" : "bg-gray-800 border-gray-800 text-white"}`}
   >
               {showSampleValues ? <Eye className="h-3.5 w-3.5" /> : <EyeOff className="h-3.5 w-3.5" />}
-              {showSampleValues ? "Sample values on" : "Field names only"}
+              {showSampleValues ? "Sample values" : "Field names"}
             </button>
 
-            {drawTool === "select" ? <span className="text-xs text-gray-500 bg-white border rounded-lg px-3 py-1.5">
-                <Move className="h-3.5 w-3.5 inline mr-1" />Drag fields to reposition · Click to select
-              </span> : <span className="text-xs text-amber-700 bg-amber-50 border border-amber-300 rounded-lg px-3 py-1.5">
+            {drawTool === "select" ? <span className="text-xs text-gray-500 bg-white border shadow-sm rounded-lg px-3 py-1.5 hidden lg:inline-flex items-center">
+                <Move className="h-3.5 w-3.5 inline mr-1" />Drag to reposition · Click to select
+              </span> : <span className="text-xs text-amber-700 bg-amber-50 border border-amber-300 shadow-sm rounded-lg px-3 py-1.5">
                 {drawTool === "h-line" ? "\u2192 Drag left\u2013right to draw a horizontal line" : drawTool === "v-line" ? "\u2193 Drag top\u2013bottom to draw a vertical line" : "\u2B1C Drag to draw a box / border"}
               </span>}
 
             {(selectedField || selectedDrawing) && <button onClick={() => {
     setSelectedField(null);
     setSelectedDrawing(null);
-  }} className="text-xs px-3 py-1.5 bg-white border rounded-lg hover:bg-gray-50">
+  }} className="text-xs px-3 py-1.5 bg-white border shadow-sm rounded-lg hover:bg-gray-50">
                 ✕ Deselect
               </button>}
 
-            <div className="flex items-center gap-2 ml-auto flex-wrap">
-              {Object.entries(CATEGORY_LABELS).map(([cat, label]) => <span key={cat} className="flex items-center gap-1 text-xs text-gray-600">
+            <div className="ml-auto flex items-center gap-2.5 bg-white border shadow-sm rounded-lg px-3 py-1.5 flex-wrap">
+              {Object.entries(CATEGORY_LABELS).map(([cat, label]) => <span key={cat} className="flex items-center gap-1 text-[11px] text-gray-600">
                   <span className="w-2.5 h-2.5 rounded-full" style={{ background: CATEGORY_COLORS[cat] }} />
                   {label}
                 </span>)}
@@ -1145,7 +1360,6 @@ function InvoiceOverlayDesigner({ mode, templateName, initialSettings, onClose, 
   }
                 {settings.drawings.map((el) => {
     const isSel = selectedDrawing === el.id;
-    const dashStr = el.dashed ? el.dashPattern : "none";
     const selColor = "#F5C742";
     return <div
       key={el.id}
@@ -1241,7 +1455,10 @@ function InvoiceOverlayDesigner({ mode, templateName, initialSettings, onClose, 
     const isSelected = selectedField === field.id;
     const text = showSampleValues ? field.printLabel ? `${field.label}: ${field.sampleValue}` : field.sampleValue : field.label;
     const isTableField = field.id === "items_table";
+    const isImg = isImageField(field.id);
     const isQR = field.id === "qr_code";
+    const tableCols = isTableField ? OVERLAY_TABLE_COLUMNS.filter((c) => (field.columns || DEFAULT_TABLE_COLUMNS)[c.key]) : [];
+    const tableGrid = tableCols.map((c) => `${c.flex}fr`).join(" ");
     return <div
       key={field.id}
       onMouseDown={(e) => handleFieldMouseDown(e, field.id)}
@@ -1263,19 +1480,20 @@ function InvoiceOverlayDesigner({ mode, templateName, initialSettings, onClose, 
       }}
     >
                       {isSelected && <div style={{ position: "absolute", inset: "-3px", border: `2px solid ${CATEGORY_COLORS[field.category]}`, borderRadius: "3px", pointerEvents: "none", zIndex: -1, boxShadow: `0 0 0 3px ${CATEGORY_COLORS[field.category]}30` }} />}
-                      {isTableField ? <div style={{ border: "none", borderRadius: "4px", padding: "6px 8px", background: isSelected ? "rgba(251, 191, 36, 0.12)" : "rgba(251, 191, 36, 0.06)", minHeight: "50px" }}>
-                          <div style={{ fontSize: "8px", color: "#b45309", fontWeight: 600, textTransform: "uppercase", letterSpacing: "1px", marginBottom: "4px" }}>Items Table</div>
-                          {showSampleValues ? <div style={{ fontSize: "8px", color: "#6b7a8a" }}>
-                              <div style={{ display: "grid", gridTemplateColumns: "3fr 1fr 1fr 1fr", gap: "4px", fontWeight: 600, paddingBottom: "2px", marginBottom: "2px" }}>
-                                <span>Description</span><span style={{ textAlign: "right" }}>Qty</span><span style={{ textAlign: "right" }}>Price</span><span style={{ textAlign: "right" }}>Total</span>
-                              </div>
-                              <div style={{ display: "grid", gridTemplateColumns: "3fr 1fr 1fr 1fr", gap: "4px" }}>
-                                <span>Samsung Galaxy Tab A8</span><span style={{ textAlign: "right" }}>5</span><span style={{ textAlign: "right" }}>500.00</span><span style={{ textAlign: "right" }}>2,500.00</span>
-                              </div>
-                            </div> : <div style={{ fontSize: "8px", color: "#b45309" }}>Item rows will be printed here</div>}
-                        </div> : isQR ? <div style={{ width: field.width * scale, height: field.width * scale, border: "none", borderRadius: "4px", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", background: isSelected ? "rgba(156, 163, 175, 0.15)" : "rgba(156, 163, 175, 0.08)", gap: "4px" }}>
-                          <div style={{ width: "28px", height: "28px", background: "repeating-conic-gradient(#0f1923 0% 25%, #fff 0% 50%) 0 0 / 5px 5px", borderRadius: "2px" }} />
-                          <div style={{ fontSize: "7px", color: "#6b7a8a" }}>QR Code</div>
+                      {isTableField ? <div style={{ border: "none", borderRadius: "4px", padding: "4px 6px", background: isSelected ? "rgba(251, 191, 36, 0.12)" : "rgba(251, 191, 36, 0.06)", minHeight: "44px", fontFamily: field.fontFamily }}>
+                          {tableCols.length === 0 ? <div style={{ fontSize: "8px", color: "#b45309" }}>No columns enabled — pick columns in the Style panel</div> : showSampleValues ? <div style={{ fontSize: "7px", color: "#3b4a58" }}>
+                              {field.showHeader !== false && <div style={{ display: "grid", gridTemplateColumns: tableGrid, gap: "3px", fontWeight: 700, color: "#0f1923", borderBottom: "1px solid #cbd5e1", paddingBottom: "2px", marginBottom: "2px" }}>
+                                  {tableCols.map((c) => <span key={c.key} style={{ textAlign: c.align, whiteSpace: "nowrap", overflow: "hidden" }}>{c.label}</span>)}
+                                </div>}
+                              {[0, 1].map((r) => <div key={r} style={{ display: "grid", gridTemplateColumns: tableGrid, gap: "3px", padding: "1px 0", background: field.zebra && r % 2 === 1 ? "rgba(0,0,0,0.03)" : "transparent" }}>
+                                  {tableCols.map((c) => <span key={c.key} style={{ textAlign: c.align, whiteSpace: "nowrap", overflow: "hidden" }}>
+                                      {c.key === "image" ? <span style={{ display: "inline-block", width: "8px", height: "8px", background: "#cbd5e1", borderRadius: "1px" }} /> : c.key === "lineNo" ? r + 1 : SAMPLE_TABLE_ROW[c.key] || ""}
+                                    </span>)}
+                                </div>)}
+                            </div> : <div style={{ fontSize: "8px", color: "#b45309" }}>{tableCols.length} columns · item rows print here</div>}
+                        </div> : isImg ? <div style={{ width: field.width * scale, height: field.width * scale, border: `1px dashed ${isSelected ? CATEGORY_COLORS[field.category] : "#cbd5e1"}`, borderRadius: "4px", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", background: isSelected ? "rgba(156, 163, 175, 0.15)" : "rgba(156, 163, 175, 0.06)", gap: "3px" }}>
+                          {isQR ? <div style={{ width: "60%", height: "60%", background: "repeating-conic-gradient(#0f1923 0% 25%, #fff 0% 50%) 0 0 / 5px 5px", borderRadius: "2px" }} /> : <FileImage style={{ width: "40%", height: "40%", color: "#94a3b8" }} />}
+                          <div style={{ fontSize: "6px", color: "#6b7a8a" }}>{IMAGE_FIELD_LABELS[field.id]}</div>
                         </div> : <div style={{ fontSize: `${field.fontSize}pt`, fontFamily: field.fontFamily, fontWeight: field.bold ? 700 : 400, fontStyle: field.italic ? "italic" : "normal", color: showSampleValues ? field.color : CATEGORY_COLORS[field.category], textAlign: field.align, borderBottom: isSelected ? `1px solid ${CATEGORY_COLORS[field.category]}` : "1px dashed transparent", padding: "1px 2px", whiteSpace: "nowrap", overflow: "hidden", lineHeight: 1.3 }}>
                           {text}
                         </div>}
@@ -1298,12 +1516,14 @@ function InvoiceOverlayDesigner({ mode, templateName, initialSettings, onClose, 
           {
     /* Bottom info bar */
   }
-          <div className="mt-4 flex items-center gap-4 text-xs text-gray-500 flex-wrap">
-            <span>Fields enabled: <strong>{settings.fields.filter((f) => f.enabled).length}</strong> of {settings.fields.length}</span>
-            <span>Drawing elements: <strong>{settings.drawings.length}</strong></span>
-            {selectedF && <span className="text-[#F5C742] font-medium">Field: {selectedF.label} at ({selectedF.x.toFixed(1)}, {selectedF.y.toFixed(1)}) mm</span>}
-            {selectedD && <span className="text-[#F5C742] font-medium">Drawing: {selectedD.label} at ({selectedD.x.toFixed(1)}, {selectedD.y.toFixed(1)}) mm</span>}
-            {isPreprinted && <span className="text-blue-600">Pre-printed mode: {settings.printOnlyValues ? "values only" : "labels + values"}</span>}
+          <div className="mt-4 mx-auto w-fit max-w-full flex items-center gap-3 text-xs text-gray-600 flex-wrap bg-white/80 backdrop-blur-sm border shadow-sm rounded-lg px-3 py-1.5">
+            <span><strong className="text-gray-800">{settings.fields.filter((f) => f.enabled).length}</strong>/{settings.fields.length} fields</span>
+            <span className="w-px h-3.5 bg-gray-200" />
+            <span><strong className="text-gray-800">{settings.drawings.length}</strong> drawings</span>
+            {(selectedF || selectedD) && <span className="w-px h-3.5 bg-gray-200" />}
+            {selectedF && <span className="text-[#9a7a00] font-medium">{selectedF.label} · ({selectedF.x.toFixed(1)}, {selectedF.y.toFixed(1)}) mm</span>}
+            {selectedD && <span className="text-[#9a7a00] font-medium">{selectedD.label} · ({selectedD.x.toFixed(1)}, {selectedD.y.toFixed(1)}) mm</span>}
+            {isPreprinted && <><span className="w-px h-3.5 bg-gray-200" /><span className="text-blue-600">{settings.printOnlyValues ? "Values only" : "Labels + values"}</span></>}
           </div>
         </div>
       </div>

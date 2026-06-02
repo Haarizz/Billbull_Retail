@@ -2092,15 +2092,9 @@ const buildCoreStyles = () => `
             justify-items: start;
         }
         .doc-meta-item,
-        .header-right,
-        .summary-totals {
+        .header-right {
             text-align: left;
             justify-items: start;
-            justify-content: flex-start;
-        }
-        .tot-label {
-            text-align: left;
-            padding-right: 14px;
         }
         .footer-bar {
             flex-direction: column;

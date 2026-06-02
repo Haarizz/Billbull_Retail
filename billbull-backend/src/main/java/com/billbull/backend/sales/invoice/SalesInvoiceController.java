@@ -178,8 +178,10 @@ public class SalesInvoiceController {
 
     @GetMapping("/price-history/{itemCode}")
     @PreAuthorize("hasAnyRole('ADMIN','SALES','ACCOUNTANT')")
-    public List<PriceHistoryDTO> getPriceHistory(@PathVariable String itemCode) {
-        return service.getPriceHistory(itemCode);
+    public List<PriceHistoryDTO> getPriceHistory(
+            @PathVariable String itemCode,
+            @RequestParam(required = false) String customerCode) {
+        return service.getPriceHistory(itemCode, customerCode);
     }
 
     /**
