@@ -59,14 +59,14 @@ import MySales from "./MyProfile/MySales";
 import TasksActivities from "./MyProfile/TasksActivities";
 import Messaging from "./pages/Customer/Messaging";
 import TaxCompliance from "./pages/Financials/TaxCompliance";
-import FinancialReports from "./pages/Financials/FinancialReports";
+import FinancialReports from "./pages/Financials/FinancialReports.tsx";
 import FinancialConfig from "./pages/Financials/FinancialConfig";
 import FinancialsPrintEmailTemplates from "./pages/Financials/FinancialsPrintEmailTemplates";
 import PrintEmailTemplates from "./pages/Sales/PrintEmailTemplates";
 import SalesSettings from "./pages/Sales/SalesSettings";
 import PurchasePrintEmailTemplates from "./pages/Purchase/PurchasePrintEmailTemplates";
 import StockTaking from "./pages/Inventory/StockTaking/StockTaking";
-import InventoryReports from "./pages/Inventory/Reports/InventoryReports";
+import InventoryReports from "./pages/Inventory/Reports/InventoryReports.tsx";
 import CompanySettings from "./pages/Settings/CompanySettings";
 import UserRoleConfig from "./pages/Settings/UserRoleConfig";
 import BranchSetup from "./pages/Settings/BranchSetup";
@@ -74,7 +74,7 @@ import EmailSettings from "./pages/Settings/EmailSettings";
 import BranchOutlets from "./pages/Enterprise/BranchOutlets";
 import DataManagement from "./pages/Enterprise/DataManagement";
 import SalesSummaryReport from "./pages/Sales/Reports/SalesSummaryReport";
-import PurchaseSummaryReport from "./pages/Purchase/Reports/PurchaseSummaryReport";
+import VendorsPurchasesReports from "./pages/Purchase/Reports/VendorsPurchasesReports.tsx";
 // import Products from "./pages/Inventory/Product/Products";
 // import Warehouse from "./pages/Inventory/Warehouse/Warehouse";
 // import Quotations from "./pages/Sales/Quotations";
@@ -575,7 +575,7 @@ function App() {
                       path="/purchases/reports/summary"
                       element={
                         <ResourceGuard module="purchases.invoice">
-                          <PurchaseSummaryReport />
+                          <VendorsPurchasesReports />
                         </ResourceGuard>
                       }
                     />

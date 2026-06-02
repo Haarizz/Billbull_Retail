@@ -1,0 +1,2557 @@
+import React, { useMemo, useState, useEffect } from "react";
+import { motion } from "framer-motion";
+import {
+  Search,
+  Filter,
+  Download,
+  Printer,
+  Calendar,
+  Users,
+  TrendingUp,
+  AlertTriangle,
+  CheckCircle2,
+  ChevronRight,
+  ChevronDown,
+  BarChart3,
+  FileSpreadsheet,
+  FileText,
+  DollarSign,
+  Truck,
+  Package,
+  Shield,
+  Clock,
+  Activity,
+  RefreshCw,
+  Receipt,
+  Lock,
+  Eye,
+  XCircle,
+  Building2,
+} from "lucide-react";
+
+import { Card, CardContent, CardHeader, CardTitle } from "../../Sales/Reports/ui/card";
+import { Button } from "../../Sales/Reports/ui/button";
+import { Badge } from "../../Sales/Reports/ui/badge";
+import { Separator } from "../../Sales/Reports/ui/separator";
+import { Input } from "../../Sales/Reports/ui/input";
+import {
+  BarChart,
+  Bar,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  Legend,
+  ResponsiveContainer,
+  PieChart,
+  Pie,
+  Cell,
+} from "recharts";
+
+// ---------------------------------------------------------------------------
+// Types
+// ---------------------------------------------------------------------------
+
+type ReportGroupId =
+  | "vendor"
+  | "lpo"
+  | "grn"
+  | "grv"
+  | "invoice"
+  | "payment"
+  | "claim"
+  | "compliance";
+
+type ReportId =
+  // Vendor
+  | "vendor-master"
+  | "vendor-aging"
+  | "vendor-performance"
+  | "vendor-price-history"
+  | "vendor-contract-compliance"
+  // LPO
+  | "lpo-register"
+  | "lpo-fulfillment"
+  | "lpo-aging"
+  | "lpo-cancelled"
+  // GRN
+  | "grn-register"
+  | "grn-variance"
+  | "grn-batch-expiry"
+  | "grn-qc-rejection"
+  // GRV
+  | "grv-register"
+  | "grv-reason-analysis"
+  | "grv-replacement-pending"
+  | "grv-debit-note-mapping"
+  // Invoice
+  | "invoice-register"
+  | "invoice-grn-variance"
+  | "invoice-landed-cost"
+  | "invoice-backdated"
+  // Payment
+  | "payment-register"
+  | "payment-aging"
+  | "payment-cheque-tracking"
+  | "payment-advance"
+  // Claim
+  | "debit-note-register"
+  | "claim-settlement"
+  | "vendor-claim-history"
+  // Compliance
+  | "vat-input-register"
+  | "period-lock-violations"
+  | "missing-documents"
+  | "audit-trail";
+
+type ReportKind = "table" | "table+chart";
+
+interface ReportDef {
+  id: ReportId;
+  label: string;
+  description: string;
+  kind: ReportKind;
+  group: ReportGroupId;
+  tags?: string[];
+}
+
+// ---------------------------------------------------------------------------
+// Report definitions
+// ---------------------------------------------------------------------------
+
+const REPORTS: ReportDef[] = [
+  // Vendor
+  { id: "vendor-master", label: "Vendor Master Report", description: "Complete vendor master with credit limits and balances", kind: "table+chart", group: "vendor", tags: ["Core", "Master"] },
+  { id: "vendor-aging", label: "Vendor Outstanding & Aging", description: "Aging buckets 0-30 / 31-60 / 61-90 / 90+ with credit tracking", kind: "table+chart", group: "vendor", tags: ["Finance", "Aging"] },
+  { id: "vendor-performance", label: "Vendor Performance Summary", description: "On-time delivery, return rates, claim rates, settlement days", kind: "table+chart", group: "vendor", tags: ["Analytics", "KPI"] },
+  { id: "vendor-price-history", label: "Vendor Price History", description: "Item-wise last 5 purchase prices and cost change %", kind: "table+chart", group: "vendor", tags: ["Pricing"] },
+  { id: "vendor-contract-compliance", label: "Vendor Contract Compliance", description: "Contract price vs actual price variance and penalty tracking", kind: "table", group: "vendor", tags: ["Compliance"] },
+
+  // LPO
+  { id: "lpo-register", label: "LPO Register", description: "Purchase orders with status and approval tracking", kind: "table", group: "lpo", tags: ["Core", "Purchasing"] },
+  { id: "lpo-fulfillment", label: "LPO vs Delivery Fulfillment", description: "Ordered vs delivered quantities with fulfillment %", kind: "table+chart", group: "lpo", tags: ["Analytics"] },
+  { id: "lpo-aging", label: "LPO Aging Report", description: "Pending LPOs with aging analysis and overdue highlighting", kind: "table+chart", group: "lpo", tags: ["Aging"] },
+  { id: "lpo-cancelled", label: "Cancelled / Modified LPO", description: "Cancelled and modified LPOs with reasons and authorization", kind: "table", group: "lpo", tags: ["Audit"] },
+
+  // GRN
+  { id: "grn-register", label: "GRN Register", description: "Goods receipt notes with warehouse and QC status", kind: "table", group: "grn", tags: ["Core", "Warehouse"] },
+  { id: "grn-variance", label: "GRN Variance Report", description: "LPO vs GRN quantity and value variance with alerts", kind: "table+chart", group: "grn", tags: ["Audit", "Variance"] },
+  { id: "grn-batch-expiry", label: "Batch & Expiry Report", description: "Batch tracking with expiry dates and near-expiry alerts", kind: "table", group: "grn", tags: ["Warehouse", "Compliance"] },
+  { id: "grn-qc-rejection", label: "QC Rejection Report", description: "Quality control rejections by reason, warehouse, vendor", kind: "table+chart", group: "grn", tags: ["Quality"] },
+
+  // GRV
+  { id: "grv-register", label: "GRV Register", description: "Goods return vouchers with reasons and settlement status", kind: "table", group: "grv", tags: ["Core", "Returns"] },
+  { id: "grv-reason-analysis", label: "GRV Reason Analysis", description: "Return reason breakdown: damage, expiry, wrong item, recall", kind: "table+chart", group: "grv", tags: ["Analytics"] },
+  { id: "grv-replacement-pending", label: "Replacement Pending Report", description: "Pending replacements with SLA monitoring", kind: "table", group: "grv", tags: ["SLA"] },
+  { id: "grv-debit-note-mapping", label: "GRV vs Debit Note Mapping", description: "Link GRVs to debit notes with settlement tracking", kind: "table", group: "grv", tags: ["Finance"] },
+
+  // Invoice
+  { id: "invoice-register", label: "Purchase Invoice Register", description: "Invoice register with GRN/LPO references and tax details", kind: "table", group: "invoice", tags: ["Core", "Finance"] },
+  { id: "invoice-grn-variance", label: "Invoice vs GRN Variance", description: "Quantity and cost variance between invoices and GRNs", kind: "table+chart", group: "invoice", tags: ["Audit", "Variance"] },
+  { id: "invoice-landed-cost", label: "Landed Cost Allocation", description: "Freight, customs, handling charges with NLC per item", kind: "table+chart", group: "invoice", tags: ["Costing"] },
+  { id: "invoice-backdated", label: "Backdated Invoice Report", description: "Invoices posted after period with impact analysis", kind: "table", group: "invoice", tags: ["Audit"] },
+
+  // Payment
+  { id: "payment-register", label: "Payment Voucher Register", description: "Payment vouchers with mode, status, and bank details", kind: "table", group: "payment", tags: ["Core", "Finance"] },
+  { id: "payment-aging", label: "Payment Aging & Delay", description: "Due date vs actual payment with delay analysis", kind: "table+chart", group: "payment", tags: ["Aging", "Finance"] },
+  { id: "payment-cheque-tracking", label: "Cheque / PDC Tracking", description: "Post-dated cheques with bank, date, and clearance status", kind: "table", group: "payment", tags: ["Banking"] },
+  { id: "payment-advance", label: "Advance Payment Utilization", description: "Vendor advances with adjustment and balance tracking", kind: "table+chart", group: "payment", tags: ["Finance"] },
+
+  // Claim
+  { id: "debit-note-register", label: "Debit Note Register", description: "Debit notes with reasons, amounts, and settlement status", kind: "table", group: "claim", tags: ["Core", "Finance"] },
+  { id: "claim-settlement", label: "Claim Settlement Status", description: "Claims through issued, accepted, settled, rejected lifecycle", kind: "table+chart", group: "claim", tags: ["Tracking"] },
+  { id: "vendor-claim-history", label: "Vendor Claim History", description: "Claim frequency and average settlement days by vendor", kind: "table+chart", group: "claim", tags: ["Analytics"] },
+
+  // Compliance
+  { id: "vat-input-register", label: "VAT Input Register (UAE)", description: "Taxable value, VAT amount, TRN, invoice ref for FTA", kind: "table", group: "compliance", tags: ["VAT", "FTA"] },
+  { id: "period-lock-violations", label: "Period Lock Violation Report", description: "Backdated postings and override users for audit review", kind: "table", group: "compliance", tags: ["Audit"] },
+  { id: "missing-documents", label: "Missing Document Report", description: "GRN without invoice, invoice without GRN, payments without attachments", kind: "table", group: "compliance", tags: ["Audit"] },
+  { id: "audit-trail", label: "Audit Trail Report", description: "User actions with timestamps and before/after values", kind: "table", group: "compliance", tags: ["Audit", "Security"] },
+];
+
+// ---------------------------------------------------------------------------
+// Shared helpers
+// ---------------------------------------------------------------------------
+
+const PIE_COLORS = ["#F5C742", "#3b82f6", "#10b981", "#f97316", "#8b5cf6", "#ef4444", "#06b6d4", "#ec4899"];
+
+function Tbl({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="overflow-x-auto rounded-lg border border-slate-200">
+      <table className="w-full text-[11px] text-left">{children}</table>
+    </div>
+  );
+}
+
+function Th({ children, right }: { children: React.ReactNode; right?: boolean }) {
+  return (
+    <th className={`px-3 py-2 font-semibold text-slate-700 bg-slate-50 border-b border-slate-200 whitespace-nowrap ${right ? "text-right" : ""}`}>
+      {children}
+    </th>
+  );
+}
+
+function Td({ children, right, bold, muted }: { children: React.ReactNode; right?: boolean; bold?: boolean; muted?: boolean }) {
+  return (
+    <td className={`px-3 py-2 border-b border-slate-100 ${right ? "text-right" : ""} ${bold ? "font-semibold" : ""} ${muted ? "text-slate-500" : ""}`}>
+      {children}
+    </td>
+  );
+}
+
+function ReportHeader({ title, subtitle, count }: { title: string; subtitle?: string; count?: number }) {
+  return (
+    <Card className="border border-slate-200 bg-white">
+      <CardContent className="px-4 py-3 flex items-center justify-between">
+        <div>
+          <div className="text-sm font-semibold text-slate-900">{title}</div>
+          {subtitle && <div className="text-[10px] text-slate-500 mt-0.5">{subtitle}</div>}
+        </div>
+        {count !== undefined && (
+          <Badge variant="outline" className="text-[10px] border-slate-300 text-slate-600">
+            {count} records
+          </Badge>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+function statusBadge(status: string) {
+  const map: Record<string, string> = {
+    Active: "bg-emerald-100 text-emerald-700 border-emerald-300",
+    Inactive: "bg-slate-100 text-slate-600 border-slate-300",
+    Review: "bg-amber-100 text-amber-700 border-amber-300",
+    Blocked: "bg-red-100 text-red-700 border-red-300",
+    Pending: "bg-blue-100 text-blue-700 border-blue-300",
+    Approved: "bg-emerald-100 text-emerald-700 border-emerald-300",
+    Cancelled: "bg-red-100 text-red-700 border-red-300",
+    Partial: "bg-amber-100 text-amber-700 border-amber-300",
+    Received: "bg-emerald-100 text-emerald-700 border-emerald-300",
+    Open: "bg-blue-100 text-blue-700 border-blue-300",
+    Closed: "bg-slate-100 text-slate-600 border-slate-300",
+    Overdue: "bg-red-100 text-red-700 border-red-300",
+    Settled: "bg-emerald-100 text-emerald-700 border-emerald-300",
+    Issued: "bg-amber-100 text-amber-700 border-amber-300",
+    Rejected: "bg-red-100 text-red-700 border-red-300",
+    Cleared: "bg-emerald-100 text-emerald-700 border-emerald-300",
+    "In-Transit": "bg-blue-100 text-blue-700 border-blue-300",
+    Posted: "bg-emerald-100 text-emerald-700 border-emerald-300",
+    Draft: "bg-slate-100 text-slate-600 border-slate-300",
+    Paid: "bg-emerald-100 text-emerald-700 border-emerald-300",
+    Unpaid: "bg-red-100 text-red-700 border-red-300",
+    Pass: "bg-emerald-100 text-emerald-700 border-emerald-300",
+    Fail: "bg-red-100 text-red-700 border-red-300",
+  };
+  const cls = map[status] ?? "bg-slate-100 text-slate-600 border-slate-300";
+  return (
+    <Badge variant="outline" className={`text-[10px] ${cls}`}>
+      {status}
+    </Badge>
+  );
+}
+
+function amtBadge(amount: number) {
+  const color = amount > 0 ? "text-emerald-700" : amount < 0 ? "text-red-600" : "text-slate-600";
+  return <span className={`font-semibold ${color}`}>AED {Math.abs(amount).toLocaleString()}</span>;
+}
+
+function KpiCard({ label, value, sub, accent }: { label: string; value: string; sub?: string; accent?: boolean }) {
+  return (
+    <Card className={`border ${accent ? "border-2 border-[#F5C742] bg-gradient-to-br from-[#FFF6D8] to-white" : "border-slate-200 bg-white"}`}>
+      <CardContent className="p-4">
+        <div className="text-[10px] font-medium text-slate-600 mb-1">{label}</div>
+        <div className="text-lg font-bold text-slate-900">{value}</div>
+        {sub && <div className="text-[9px] text-slate-500 mt-0.5">{sub}</div>}
+      </CardContent>
+    </Card>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Mock data & Live Hydration Skeleton
+// ---------------------------------------------------------------------------
+
+export function applyLiveReportData(reportId: ReportId, data: any) {
+  // Skeleton for future backend API hydration
+  if (!data) return;
+  switch (reportId) {
+    case "vendor-master":
+      // Re-assign mockVendorMaster here when API is ready
+      break;
+    default:
+      break;
+  }
+}
+
+
+const mockVendorMaster = [
+  { code: "VEN-001", name: "Global Supplies LLC", category: "Electronics", trn: "100234567890003", creditLimit: 500000, outstanding: 385000, paymentTerms: "Net 45", status: "Active", rating: 4.5 },
+  { code: "VEN-002", name: "Tech Solutions Ltd", category: "IT Equipment", trn: "100234567890004", creditLimit: 400000, outstanding: 312000, paymentTerms: "Net 30", status: "Active", rating: 4.2 },
+  { code: "VEN-003", name: "Metro Traders", category: "Food & Beverage", trn: "100234567890005", creditLimit: 350000, outstanding: 175000, paymentTerms: "Net 30", status: "Active", rating: 4.3 },
+  { code: "VEN-004", name: "Prime Distributors", category: "General Merchandise", trn: "100234567890006", creditLimit: 300000, outstanding: 88000, paymentTerms: "Net 60", status: "Review", rating: 3.5 },
+  { code: "VEN-005", name: "Gulf FMCG Co.", category: "FMCG", trn: "100234567890007", creditLimit: 600000, outstanding: 542000, paymentTerms: "Net 45", status: "Active", rating: 4.7 },
+  { code: "VEN-006", name: "Desert Frozen Foods", category: "Frozen", trn: "100234567890008", creditLimit: 200000, outstanding: 198000, paymentTerms: "Net 15", status: "Blocked", rating: 2.8 },
+];
+
+const mockVendorAgingChart = [
+  { name: "0-30 Days", value: 820000 },
+  { name: "31-60 Days", value: 430000 },
+  { name: "61-90 Days", value: 190000 },
+  { name: "90+ Days", value: 82000 },
+];
+
+const mockVendorAging = [
+  { vendor: "Global Supplies LLC", total: 385000, d30: 220000, d60: 110000, d90: 40000, d90plus: 15000, creditLimit: 500000, status: "Active" },
+  { vendor: "Tech Solutions Ltd", total: 312000, d30: 180000, d60: 95000, d90: 30000, d90plus: 7000, creditLimit: 400000, status: "Active" },
+  { vendor: "Metro Traders", total: 175000, d30: 100000, d60: 50000, d90: 20000, d90plus: 5000, creditLimit: 350000, status: "Active" },
+  { vendor: "Prime Distributors", total: 88000, d30: 30000, d60: 25000, d90: 20000, d90plus: 13000, creditLimit: 300000, status: "Review" },
+  { vendor: "Gulf FMCG Co.", total: 542000, d30: 290000, d60: 150000, d90: 80000, d90plus: 22000, creditLimit: 600000, status: "Active" },
+];
+
+const mockVendorPerf = [
+  { vendor: "Global Supplies LLC", orders: 42, onTime: 38, onTimePct: 90.5, returnRate: 1.2, claimRate: 0.8, avgSettleDays: 38, score: "A" },
+  { vendor: "Tech Solutions Ltd", orders: 35, onTime: 30, onTimePct: 85.7, returnRate: 2.1, claimRate: 1.5, avgSettleDays: 29, score: "B+" },
+  { vendor: "Metro Traders", orders: 68, onTime: 64, onTimePct: 94.1, returnRate: 0.8, claimRate: 0.5, avgSettleDays: 28, score: "A+" },
+  { vendor: "Prime Distributors", orders: 21, onTime: 14, onTimePct: 66.7, returnRate: 5.2, claimRate: 3.1, avgSettleDays: 52, score: "C" },
+  { vendor: "Gulf FMCG Co.", orders: 89, onTime: 83, onTimePct: 93.3, returnRate: 1.1, claimRate: 0.7, avgSettleDays: 35, score: "A" },
+  { vendor: "Desert Frozen Foods", orders: 15, onTime: 8, onTimePct: 53.3, returnRate: 8.5, claimRate: 6.2, avgSettleDays: 61, score: "D" },
+];
+
+const mockVendorPerfChart = mockVendorPerf.map((r) => ({ name: r.vendor.split(" ")[0], onTime: r.onTimePct, returnRate: r.returnRate }));
+
+const mockPriceHistory = [
+  { item: "Nestle Nido 900g", sku: "SKU-1001", vendor: "Gulf FMCG Co.", p1: 42.00, p2: 42.50, p3: 43.00, p4: 43.50, p5: 44.00, change: 4.76 },
+  { item: "Ariel Powder 3kg", sku: "SKU-1045", vendor: "Metro Traders", p1: 38.50, p2: 39.00, p3: 39.00, p4: 40.00, p5: 41.25, change: 7.14 },
+  { item: "Samsung 50\" TV", sku: "SKU-2012", vendor: "Tech Solutions Ltd", p1: 1850, p2: 1800, p3: 1780, p4: 1750, p5: 1720, change: -7.03 },
+  { item: "Heinz Ketchup 570g", sku: "SKU-1088", vendor: "Gulf FMCG Co.", p1: 14.50, p2: 14.75, p3: 15.00, p4: 14.75, p5: 15.25, change: 5.17 },
+  { item: "Logitech Keyboard", sku: "SKU-3021", vendor: "Global Supplies LLC", p1: 89.00, p2: 92.00, p3: 91.00, p4: 95.00, p5: 95.00, change: 6.74 },
+];
+
+const mockContractCompliance = [
+  { vendor: "Gulf FMCG Co.", item: "Nestle Nido 900g", contractPrice: 41.00, actualPrice: 44.00, variance: 3.00, variancePct: 7.32, penaltyApplied: true, status: "Breached" },
+  { vendor: "Metro Traders", item: "Ariel Powder 3kg", contractPrice: 39.00, actualPrice: 41.25, variance: 2.25, variancePct: 5.77, penaltyApplied: false, status: "Breached" },
+  { vendor: "Global Supplies LLC", item: "Logitech Keyboard", contractPrice: 90.00, actualPrice: 95.00, variance: 5.00, variancePct: 5.56, penaltyApplied: true, status: "Breached" },
+  { vendor: "Tech Solutions Ltd", item: "Samsung 50\" TV", contractPrice: 1800, actualPrice: 1720, variance: -80, variancePct: -4.44, penaltyApplied: false, status: "Compliant" },
+  { vendor: "Prime Distributors", item: "Generic Box 10kg", contractPrice: 25.00, actualPrice: 25.00, variance: 0, variancePct: 0, penaltyApplied: false, status: "Compliant" },
+];
+
+const mockLpoRegister = [
+  { lpoNo: "LPO-2026-0421", date: "2026-05-01", vendor: "Gulf FMCG Co.", branch: "Main", totalItems: 12, totalValue: 48500, status: "Approved", approvedBy: "Mohammed Al Rashidi" },
+  { lpoNo: "LPO-2026-0422", date: "2026-05-02", vendor: "Metro Traders", branch: "Dubai", totalItems: 8, totalValue: 22300, status: "Received", approvedBy: "Sara Abdullah" },
+  { lpoNo: "LPO-2026-0423", date: "2026-05-03", vendor: "Tech Solutions Ltd", branch: "Main", totalItems: 3, totalValue: 15600, status: "Partial", approvedBy: "Ahmed Hassan" },
+  { lpoNo: "LPO-2026-0424", date: "2026-05-05", vendor: "Global Supplies LLC", branch: "Abu Dhabi", totalItems: 20, totalValue: 94200, status: "Pending", approvedBy: "-" },
+  { lpoNo: "LPO-2026-0425", date: "2026-05-06", vendor: "Desert Frozen Foods", branch: "Main", totalItems: 6, totalValue: 11800, status: "Approved", approvedBy: "Fatima Al Zaabi" },
+  { lpoNo: "LPO-2026-0426", date: "2026-05-08", vendor: "Prime Distributors", branch: "Dubai", totalItems: 9, totalValue: 33400, status: "Cancelled", approvedBy: "Mohammed Al Rashidi" },
+];
+
+const mockLpoFulfillment = [
+  { lpoNo: "LPO-2026-0418", vendor: "Gulf FMCG Co.", orderedQty: 500, deliveredQty: 495, pendingQty: 5, orderedValue: 22000, deliveredValue: 21780, fulfillmentPct: 99.0 },
+  { lpoNo: "LPO-2026-0419", vendor: "Metro Traders", orderedQty: 200, deliveredQty: 180, pendingQty: 20, orderedValue: 9200, deliveredValue: 8280, fulfillmentPct: 90.0 },
+  { lpoNo: "LPO-2026-0420", vendor: "Tech Solutions Ltd", orderedQty: 30, deliveredQty: 15, pendingQty: 15, orderedValue: 27000, deliveredValue: 13500, fulfillmentPct: 50.0 },
+  { lpoNo: "LPO-2026-0421", vendor: "Global Supplies LLC", orderedQty: 800, deliveredQty: 800, pendingQty: 0, orderedValue: 36000, deliveredValue: 36000, fulfillmentPct: 100.0 },
+  { lpoNo: "LPO-2026-0422", vendor: "Desert Frozen Foods", orderedQty: 120, deliveredQty: 100, pendingQty: 20, orderedValue: 5400, deliveredValue: 4500, fulfillmentPct: 83.3 },
+];
+
+const mockLpoFulfillmentChart = mockLpoFulfillment.map((r) => ({
+  name: r.lpoNo.slice(-4),
+  ordered: r.orderedValue,
+  delivered: r.deliveredValue,
+}));
+
+const mockLpoAging = [
+  { lpoNo: "LPO-2026-0388", vendor: "Tech Solutions Ltd", issueDate: "2026-03-10", expectedDate: "2026-03-25", daysPending: 58, value: 15600, status: "Overdue" },
+  { lpoNo: "LPO-2026-0395", vendor: "Prime Distributors", issueDate: "2026-03-20", expectedDate: "2026-04-05", daysPending: 47, value: 8900, status: "Overdue" },
+  { lpoNo: "LPO-2026-0410", vendor: "Global Supplies LLC", issueDate: "2026-04-15", expectedDate: "2026-04-30", daysPending: 22, value: 41200, status: "Pending" },
+  { lpoNo: "LPO-2026-0415", vendor: "Metro Traders", issueDate: "2026-04-22", expectedDate: "2026-05-07", daysPending: 15, value: 12500, status: "Pending" },
+  { lpoNo: "LPO-2026-0418", vendor: "Desert Frozen Foods", issueDate: "2026-05-01", expectedDate: "2026-05-15", daysPending: 7, value: 6800, status: "Pending" },
+];
+
+const mockLpoAgingChart = [
+  { bucket: "0-7 days", count: 8, value: 55000 },
+  { bucket: "8-15 days", count: 5, value: 38000 },
+  { bucket: "16-30 days", count: 4, value: 28000 },
+  { bucket: "31-60 days", count: 6, value: 42000 },
+  { bucket: "60+ days", count: 2, value: 18000 },
+];
+
+const mockLpoCancelled = [
+  { lpoNo: "LPO-2026-0380", vendor: "Prime Distributors", date: "2026-04-02", value: 18500, reason: "Vendor price increased beyond budget", cancelledBy: "Mohammed Al Rashidi", status: "Cancelled" },
+  { lpoNo: "LPO-2026-0391", vendor: "Desert Frozen Foods", date: "2026-04-10", value: 6200, reason: "Duplicate order", cancelledBy: "Sara Abdullah", status: "Cancelled" },
+  { lpoNo: "LPO-2026-0406", vendor: "Tech Solutions Ltd", date: "2026-04-20", value: 32000, reason: "Budget reallocation", cancelledBy: "Ahmed Hassan", status: "Cancelled" },
+  { lpoNo: "LPO-2026-0426", vendor: "Prime Distributors", date: "2026-05-08", value: 33400, reason: "Vendor out of stock", cancelledBy: "Mohammed Al Rashidi", status: "Cancelled" },
+];
+
+const mockGrnRegister = [
+  { grnNo: "GRN-2026-0812", date: "2026-05-02", lpoNo: "LPO-2026-0418", vendor: "Gulf FMCG Co.", warehouse: "Main WH", items: 12, receivedQty: 495, value: 21780, qcStatus: "Pass", status: "Posted" },
+  { grnNo: "GRN-2026-0813", date: "2026-05-03", lpoNo: "LPO-2026-0419", vendor: "Metro Traders", warehouse: "Dubai WH", items: 8, receivedQty: 180, value: 8280, qcStatus: "Pass", status: "Posted" },
+  { grnNo: "GRN-2026-0814", date: "2026-05-05", lpoNo: "LPO-2026-0420", vendor: "Tech Solutions Ltd", warehouse: "Main WH", items: 3, receivedQty: 15, value: 13500, qcStatus: "Fail", status: "On Hold" },
+  { grnNo: "GRN-2026-0815", date: "2026-05-07", lpoNo: "LPO-2026-0421", vendor: "Global Supplies LLC", warehouse: "Abu Dhabi WH", items: 20, receivedQty: 800, value: 36000, qcStatus: "Pass", status: "Posted" },
+  { grnNo: "GRN-2026-0816", date: "2026-05-09", lpoNo: "LPO-2026-0422", vendor: "Desert Frozen Foods", warehouse: "Main WH", items: 6, receivedQty: 100, value: 4500, qcStatus: "Partial", status: "Pending" },
+];
+
+const mockGrnVariance = [
+  { grnNo: "GRN-2026-0813", vendor: "Metro Traders", item: "Ariel Powder 3kg", lpoQty: 200, grnQty: 180, qtyVar: -20, lpoRate: 41.25, grnRate: 41.25, valueVar: -825, variancePct: -10.0 },
+  { grnNo: "GRN-2026-0814", vendor: "Tech Solutions Ltd", item: "Samsung 50\" TV", lpoQty: 30, grnQty: 15, qtyVar: -15, lpoRate: 1720, grnRate: 1750, valueVar: 8700, variancePct: 16.7 },
+  { grnNo: "GRN-2026-0816", vendor: "Desert Frozen Foods", item: "Frozen Chicken 1kg", lpoQty: 120, grnQty: 100, qtyVar: -20, lpoRate: 45, grnRate: 45, valueVar: -900, variancePct: -16.7 },
+];
+
+const mockGrnVarianceChart = [
+  { name: "Metro Traders", variance: -825 },
+  { name: "Tech Solutions", variance: 8700 },
+  { name: "Desert Frozen", variance: -900 },
+];
+
+const mockBatchExpiry = [
+  { grnNo: "GRN-2026-0812", item: "Nestle Nido 900g", batchNo: "B2026-441", mfgDate: "2026-02-01", expiryDate: "2027-02-01", qty: 200, warehouse: "Main WH", status: "Active", daysToExpiry: 256 },
+  { grnNo: "GRN-2026-0812", item: "Heinz Ketchup 570g", batchNo: "B2026-312", mfgDate: "2025-12-01", expiryDate: "2026-06-01", qty: 50, warehouse: "Main WH", status: "Near Expiry", daysToExpiry: 10 },
+  { grnNo: "GRN-2026-0813", item: "Ariel Powder 3kg", batchNo: "B2026-188", mfgDate: "2026-01-01", expiryDate: "2028-01-01", qty: 180, warehouse: "Dubai WH", status: "Active", daysToExpiry: 621 },
+  { grnNo: "GRN-2026-0815", item: "Logitech Keyboard", batchNo: "B2026-901", mfgDate: "2026-03-01", expiryDate: "2029-03-01", qty: 50, warehouse: "Abu Dhabi WH", status: "Active", daysToExpiry: 1013 },
+  { grnNo: "GRN-2026-0816", item: "Frozen Chicken 1kg", batchNo: "B2026-211", mfgDate: "2026-04-15", expiryDate: "2026-07-15", qty: 100, warehouse: "Main WH", status: "Active", daysToExpiry: 54 },
+];
+
+const mockQcRejection = [
+  { grnNo: "GRN-2026-0814", vendor: "Tech Solutions Ltd", item: "Samsung 50\" TV", rejectedQty: 3, reason: "Physical damage", warehouse: "Main WH", date: "2026-05-05", value: 5250, action: "Return to Vendor" },
+  { grnNo: "GRN-2026-0810", vendor: "Desert Frozen Foods", item: "Frozen Beef 1kg", rejectedQty: 12, reason: "Cold chain breach", warehouse: "Main WH", date: "2026-04-28", value: 540, action: "Disposed" },
+  { grnNo: "GRN-2026-0802", vendor: "Prime Distributors", item: "Generic Box 10kg", rejectedQty: 5, reason: "Wrong specification", warehouse: "Dubai WH", date: "2026-04-18", value: 125, action: "Return to Vendor" },
+];
+
+const mockQcChart = [
+  { reason: "Physical Damage", count: 5 },
+  { reason: "Cold Chain", count: 3 },
+  { reason: "Wrong Spec", count: 4 },
+  { reason: "Expired", count: 2 },
+  { reason: "Contamination", count: 1 },
+];
+
+const mockGrvRegister = [
+  { grvNo: "GRV-2026-0085", date: "2026-05-06", grnNo: "GRN-2026-0814", vendor: "Tech Solutions Ltd", items: 3, value: 5250, reason: "Damage", status: "Settled", debitNote: "DN-2026-042" },
+  { grvNo: "GRV-2026-0086", date: "2026-05-07", grnNo: "GRN-2026-0810", vendor: "Desert Frozen Foods", items: 12, value: 540, reason: "Cold Chain", status: "Pending", debitNote: "-" },
+  { grvNo: "GRV-2026-0087", date: "2026-05-08", grnNo: "GRN-2026-0802", vendor: "Prime Distributors", items: 5, value: 125, reason: "Wrong Item", status: "Issued", debitNote: "-" },
+  { grvNo: "GRV-2026-0088", date: "2026-05-10", grnNo: "GRN-2026-0812", vendor: "Gulf FMCG Co.", items: 2, value: 88, reason: "Near Expiry", status: "Issued", debitNote: "-" },
+  { grvNo: "GRV-2026-0089", date: "2026-05-12", grnNo: "GRN-2026-0815", vendor: "Global Supplies LLC", items: 1, value: 95, reason: "Wrong Spec", status: "Settled", debitNote: "DN-2026-043" },
+];
+
+const mockGrvReasonChart = [
+  { reason: "Damage", count: 5, value: 12500 },
+  { reason: "Cold Chain", count: 3, value: 1620 },
+  { reason: "Wrong Item", count: 4, value: 2800 },
+  { reason: "Near Expiry", count: 6, value: 3240 },
+  { reason: "Wrong Spec", count: 2, value: 950 },
+];
+
+const mockGrvPending = [
+  { grvNo: "GRV-2026-0086", vendor: "Desert Frozen Foods", item: "Frozen Beef 1kg", qty: 12, value: 540, grvDate: "2026-05-07", slaDate: "2026-05-14", daysPending: 8, status: "Overdue" },
+  { grvNo: "GRV-2026-0087", vendor: "Prime Distributors", item: "Generic Box 10kg", qty: 5, value: 125, grvDate: "2026-05-08", slaDate: "2026-05-22", daysPending: 14, status: "Pending" },
+  { grvNo: "GRV-2026-0088", vendor: "Gulf FMCG Co.", item: "Heinz Ketchup 570g", qty: 2, value: 88, grvDate: "2026-05-10", slaDate: "2026-05-24", daysPending: 12, status: "Pending" },
+];
+
+const mockGrvDebitNote = [
+  { grvNo: "GRV-2026-0085", vendor: "Tech Solutions Ltd", grvValue: 5250, debitNote: "DN-2026-042", dnValue: 5250, matched: true, settledDate: "2026-05-15", status: "Settled" },
+  { grvNo: "GRV-2026-0089", vendor: "Global Supplies LLC", grvValue: 95, debitNote: "DN-2026-043", dnValue: 95, matched: true, settledDate: "2026-05-18", status: "Settled" },
+  { grvNo: "GRV-2026-0086", vendor: "Desert Frozen Foods", grvValue: 540, debitNote: "-", dnValue: 0, matched: false, settledDate: "-", status: "Pending" },
+  { grvNo: "GRV-2026-0087", vendor: "Prime Distributors", grvValue: 125, debitNote: "-", dnValue: 0, matched: false, settledDate: "-", status: "Pending" },
+];
+
+const mockInvoiceRegister = [
+  { invNo: "INV-V-2026-1821", date: "2026-05-03", vendor: "Gulf FMCG Co.", grnRef: "GRN-2026-0812", lpoRef: "LPO-2026-0418", taxableAmt: 20743, vat: 1037, totalAmt: 21780, status: "Posted", dueDate: "2026-06-17" },
+  { invNo: "INV-V-2026-1822", date: "2026-05-04", vendor: "Metro Traders", grnRef: "GRN-2026-0813", lpoRef: "LPO-2026-0419", taxableAmt: 7886, vat: 394, totalAmt: 8280, status: "Posted", dueDate: "2026-06-03" },
+  { invNo: "INV-V-2026-1823", date: "2026-05-06", vendor: "Tech Solutions Ltd", grnRef: "GRN-2026-0814", lpoRef: "LPO-2026-0420", taxableAmt: 12857, vat: 643, totalAmt: 13500, status: "On Hold", dueDate: "2026-06-05" },
+  { invNo: "INV-V-2026-1824", date: "2026-05-08", vendor: "Global Supplies LLC", grnRef: "GRN-2026-0815", lpoRef: "LPO-2026-0421", taxableAmt: 34286, vat: 1714, totalAmt: 36000, status: "Posted", dueDate: "2026-06-22" },
+  { invNo: "INV-V-2026-1825", date: "2026-05-10", vendor: "Desert Frozen Foods", grnRef: "GRN-2026-0816", lpoRef: "LPO-2026-0422", taxableAmt: 4286, vat: 214, totalAmt: 4500, status: "Draft", dueDate: "2026-05-25" },
+];
+
+const mockInvGrnVariance = [
+  { invNo: "INV-V-2026-1822", vendor: "Metro Traders", grnNo: "GRN-2026-0813", invQty: 180, grnQty: 180, qtyVar: 0, invRate: 46.00, grnRate: 41.25, rateVar: 4.75, valueVar: 855, status: "Variance" },
+  { invNo: "INV-V-2026-1823", vendor: "Tech Solutions Ltd", grnNo: "GRN-2026-0814", invQty: 15, grnQty: 15, qtyVar: 0, invRate: 1800, grnRate: 1750, rateVar: 50, valueVar: 750, status: "Variance" },
+  { invNo: "INV-V-2026-1821", vendor: "Gulf FMCG Co.", grnNo: "GRN-2026-0812", invQty: 495, grnQty: 495, qtyVar: 0, invRate: 44.00, grnRate: 44.00, rateVar: 0, valueVar: 0, status: "Matched" },
+  { invNo: "INV-V-2026-1824", vendor: "Global Supplies LLC", grnNo: "GRN-2026-0815", invQty: 800, grnQty: 800, qtyVar: 0, invRate: 45.00, grnRate: 45.00, rateVar: 0, valueVar: 0, status: "Matched" },
+];
+
+const mockInvGrnVarianceChart = [
+  { name: "Metro Traders", variance: 855 },
+  { name: "Tech Solutions", variance: 750 },
+  { name: "Gulf FMCG", variance: 0 },
+  { name: "Global Supplies", variance: 0 },
+];
+
+const mockLandedCost = [
+  { invNo: "INV-V-2026-1821", vendor: "Gulf FMCG Co.", invoiceValue: 21780, freight: 650, customs: 320, handling: 180, total: 22930, items: 12, nlcPerItem: 1910.83 },
+  { invNo: "INV-V-2026-1822", vendor: "Metro Traders", invoiceValue: 8280, freight: 220, customs: 0, handling: 80, total: 8580, items: 8, nlcPerItem: 1072.5 },
+  { invNo: "INV-V-2026-1824", vendor: "Global Supplies LLC", invoiceValue: 36000, freight: 1200, customs: 2800, handling: 400, total: 40400, items: 20, nlcPerItem: 2020 },
+];
+
+const mockLandedCostChart = mockLandedCost.map((r) => ({
+  name: r.vendor.split(" ")[0],
+  invoice: r.invoiceValue,
+  freight: r.freight,
+  customs: r.customs,
+  handling: r.handling,
+}));
+
+const mockBackdatedInv = [
+  { invNo: "INV-V-2026-1790", invDate: "2026-04-02", postDate: "2026-05-05", vendor: "Prime Distributors", value: 8900, postedBy: "Ahmed Hassan", period: "Apr-2026", status: "Backdated" },
+  { invNo: "INV-V-2026-1812", invDate: "2026-04-18", postDate: "2026-05-10", vendor: "Desert Frozen Foods", value: 3200, postedBy: "Sara Abdullah", period: "Apr-2026", status: "Backdated" },
+];
+
+const mockPaymentRegister = [
+  { pvNo: "PV-2026-0621", date: "2026-05-05", vendor: "Gulf FMCG Co.", invRef: "INV-V-2026-1801", mode: "Bank Transfer", bank: "Emirates NBD", amount: 45000, status: "Paid" },
+  { pvNo: "PV-2026-0622", date: "2026-05-07", vendor: "Metro Traders", invRef: "INV-V-2026-1808", mode: "Cheque", bank: "FAB", amount: 18500, status: "Cleared" },
+  { pvNo: "PV-2026-0623", date: "2026-05-08", vendor: "Tech Solutions Ltd", invRef: "INV-V-2026-1812", mode: "Bank Transfer", bank: "ADIB", amount: 28000, status: "Paid" },
+  { pvNo: "PV-2026-0624", date: "2026-05-10", vendor: "Global Supplies LLC", invRef: "INV-V-2026-1815", mode: "PDC", bank: "Mashreq", amount: 60000, status: "Pending" },
+  { pvNo: "PV-2026-0625", date: "2026-05-12", vendor: "Desert Frozen Foods", invRef: "INV-V-2026-1821", mode: "Cash", bank: "-", amount: 4500, status: "Paid" },
+  { pvNo: "PV-2026-0626", date: "2026-05-14", vendor: "Prime Distributors", invRef: "INV-V-2026-1822", mode: "Bank Transfer", bank: "Emirates NBD", amount: 22000, status: "Paid" },
+];
+
+const mockPaymentAging = [
+  { vendor: "Gulf FMCG Co.", total: 542000, overdue0: 120000, overdue30: 210000, overdue60: 155000, overdue90plus: 57000, avgDelay: 12 },
+  { vendor: "Global Supplies LLC", total: 385000, overdue0: 150000, overdue30: 140000, overdue60: 70000, overdue90plus: 25000, avgDelay: 8 },
+  { vendor: "Tech Solutions Ltd", total: 312000, overdue0: 80000, overdue30: 120000, overdue60: 82000, overdue90plus: 30000, avgDelay: 15 },
+  { vendor: "Metro Traders", total: 175000, overdue0: 90000, overdue30: 55000, overdue60: 20000, overdue90plus: 10000, avgDelay: 5 },
+  { vendor: "Prime Distributors", total: 88000, overdue0: 20000, overdue30: 30000, overdue60: 25000, overdue90plus: 13000, avgDelay: 22 },
+];
+
+const mockPaymentAgingChart = mockPaymentAging.map((r) => ({
+  name: r.vendor.split(" ")[0],
+  current: r.overdue0,
+  d30: r.overdue30,
+  d60: r.overdue60,
+  d90: r.overdue90plus,
+}));
+
+const mockChequeTracking = [
+  { chequeNo: "CHQ-0045821", vendor: "Metro Traders", bank: "FAB", branch: "Deira", amount: 18500, chequeDate: "2026-05-07", pvNo: "PV-2026-0622", status: "Cleared", clearedDate: "2026-05-09" },
+  { chequeNo: "CHQ-0045890", vendor: "Global Supplies LLC", bank: "Mashreq", branch: "Bur Dubai", amount: 60000, chequeDate: "2026-06-10", pvNo: "PV-2026-0624", status: "Pending", clearedDate: "-" },
+  { chequeNo: "CHQ-0045710", vendor: "Prime Distributors", bank: "Emirates NBD", branch: "Al Quoz", amount: 22000, chequeDate: "2026-05-20", pvNo: "PV-2026-0626", status: "Pending", clearedDate: "-" },
+  { chequeNo: "CHQ-0045600", vendor: "Tech Solutions Ltd", bank: "ADIB", branch: "Sharjah", amount: 12000, chequeDate: "2026-05-01", pvNo: "PV-2026-0610", status: "Bounced", clearedDate: "-" },
+];
+
+const mockAdvancePayment = [
+  { pvNo: "ADV-2026-012", vendor: "Gulf FMCG Co.", advDate: "2026-04-10", advAmount: 100000, adjusted: 85000, balance: 15000, lastAdj: "2026-05-05", status: "Open" },
+  { pvNo: "ADV-2026-013", vendor: "Global Supplies LLC", advDate: "2026-04-15", advAmount: 50000, adjusted: 50000, balance: 0, lastAdj: "2026-05-08", status: "Closed" },
+  { pvNo: "ADV-2026-014", vendor: "Metro Traders", advDate: "2026-05-01", advAmount: 30000, adjusted: 18280, balance: 11720, lastAdj: "2026-05-04", status: "Open" },
+];
+
+const mockAdvChart = [
+  { vendor: "Gulf FMCG", advance: 100000, adjusted: 85000, balance: 15000 },
+  { vendor: "Global Supplies", advance: 50000, adjusted: 50000, balance: 0 },
+  { vendor: "Metro Traders", advance: 30000, adjusted: 18280, balance: 11720 },
+];
+
+const mockDebitNoteRegister = [
+  { dnNo: "DN-2026-042", date: "2026-05-12", vendor: "Tech Solutions Ltd", grvNo: "GRV-2026-0085", reason: "Damaged Goods", amount: 5250, status: "Settled", settledDate: "2026-05-15" },
+  { dnNo: "DN-2026-043", date: "2026-05-14", vendor: "Global Supplies LLC", grvNo: "GRV-2026-0089", reason: "Wrong Specification", amount: 95, status: "Settled", settledDate: "2026-05-18" },
+  { dnNo: "DN-2026-044", date: "2026-05-16", vendor: "Desert Frozen Foods", grvNo: "GRV-2026-0086", reason: "Cold Chain Breach", amount: 540, status: "Issued", settledDate: "-" },
+  { dnNo: "DN-2026-045", date: "2026-05-18", vendor: "Prime Distributors", grvNo: "GRV-2026-0087", reason: "Wrong Item", amount: 125, status: "Issued", settledDate: "-" },
+  { dnNo: "DN-2026-040", date: "2026-05-05", vendor: "Gulf FMCG Co.", grvNo: "GRV-2026-0082", reason: "Near Expiry Return", amount: 1100, status: "Rejected", settledDate: "-" },
+];
+
+const mockClaimSettlement = [
+  { claimNo: "CLM-2026-018", vendor: "Tech Solutions Ltd", amount: 5250, issueDate: "2026-05-06", settleDate: "2026-05-15", daysToSettle: 9, status: "Settled" },
+  { claimNo: "CLM-2026-019", vendor: "Global Supplies LLC", amount: 95, issueDate: "2026-05-08", settleDate: "2026-05-18", daysToSettle: 10, status: "Settled" },
+  { claimNo: "CLM-2026-020", vendor: "Desert Frozen Foods", amount: 540, issueDate: "2026-05-10", settleDate: "-", daysToSettle: 12, status: "Pending" },
+  { claimNo: "CLM-2026-021", vendor: "Prime Distributors", amount: 125, issueDate: "2026-05-12", settleDate: "-", daysToSettle: 10, status: "Issued" },
+  { claimNo: "CLM-2026-016", vendor: "Gulf FMCG Co.", amount: 1100, issueDate: "2026-05-01", settleDate: "-", daysToSettle: 21, status: "Rejected" },
+];
+
+const mockClaimStatusChart = [
+  { name: "Settled", value: 8 },
+  { name: "Issued", value: 3 },
+  { name: "Pending", value: 4 },
+  { name: "Rejected", value: 2 },
+];
+
+const mockVendorClaimHistory = [
+  { vendor: "Gulf FMCG Co.", totalClaims: 12, settled: 9, rejected: 2, pending: 1, totalValue: 28500, avgSettleDays: 11, lastClaimDate: "2026-05-01" },
+  { vendor: "Tech Solutions Ltd", totalClaims: 8, settled: 5, rejected: 1, pending: 2, totalValue: 18200, avgSettleDays: 14, lastClaimDate: "2026-05-06" },
+  { vendor: "Metro Traders", totalClaims: 4, settled: 4, rejected: 0, pending: 0, totalValue: 5400, avgSettleDays: 8, lastClaimDate: "2026-04-20" },
+  { vendor: "Desert Frozen Foods", totalClaims: 6, settled: 2, rejected: 1, pending: 3, totalValue: 9800, avgSettleDays: 22, lastClaimDate: "2026-05-10" },
+  { vendor: "Prime Distributors", totalClaims: 3, settled: 1, rejected: 1, pending: 1, totalValue: 2800, avgSettleDays: 18, lastClaimDate: "2026-05-12" },
+];
+
+const mockVendorClaimChart = mockVendorClaimHistory.map((r) => ({
+  name: r.vendor.split(" ")[0],
+  settled: r.settled,
+  rejected: r.rejected,
+  pending: r.pending,
+}));
+
+const mockVatInput = [
+  { invNo: "INV-V-2026-1821", invDate: "2026-05-03", vendor: "Gulf FMCG Co.", trn: "100234567890007", taxableAmt: 20743, vatAmt: 1037, totalAmt: 21780, vatRate: "5%", period: "May-2026" },
+  { invNo: "INV-V-2026-1822", invDate: "2026-05-04", vendor: "Metro Traders", trn: "100234567890005", taxableAmt: 7886, vatAmt: 394, totalAmt: 8280, vatRate: "5%", period: "May-2026" },
+  { invNo: "INV-V-2026-1823", invDate: "2026-05-06", vendor: "Tech Solutions Ltd", trn: "100234567890004", taxableAmt: 12857, vatAmt: 643, totalAmt: 13500, vatRate: "5%", period: "May-2026" },
+  { invNo: "INV-V-2026-1824", invDate: "2026-05-08", vendor: "Global Supplies LLC", trn: "100234567890003", taxableAmt: 34286, vatAmt: 1714, totalAmt: 36000, vatRate: "5%", period: "May-2026" },
+  { invNo: "INV-V-2026-1825", invDate: "2026-05-10", vendor: "Desert Frozen Foods", trn: "100234567890008", taxableAmt: 4286, vatAmt: 214, totalAmt: 4500, vatRate: "5%", period: "May-2026" },
+];
+
+const mockPeriodLockViolations = [
+  { refNo: "INV-V-2026-1790", type: "Purchase Invoice", txDate: "2026-04-02", postDate: "2026-05-05", lockedPeriod: "Apr-2026", user: "Ahmed Hassan", reason: "Late invoice from vendor" },
+  { refNo: "PV-2026-0601", type: "Payment Voucher", txDate: "2026-04-15", postDate: "2026-05-08", lockedPeriod: "Apr-2026", user: "Sara Abdullah", reason: "Cheque bounce rebook" },
+  { refNo: "GRN-2026-0800", type: "GRN", txDate: "2026-04-20", postDate: "2026-05-11", lockedPeriod: "Apr-2026", user: "Mohammed Al Rashidi", reason: "System delay" },
+];
+
+const mockMissingDocuments = [
+  { refNo: "GRN-2026-0814", type: "GRN without Invoice", vendor: "Tech Solutions Ltd", date: "2026-05-05", value: 13500, daysOpen: 17, status: "Critical" },
+  { refNo: "GRN-2026-0816", type: "GRN without Invoice", vendor: "Desert Frozen Foods", date: "2026-05-09", value: 4500, daysOpen: 13, status: "Warning" },
+  { refNo: "PV-2026-0624", type: "Payment without Attachment", vendor: "Global Supplies LLC", date: "2026-05-10", value: 60000, daysOpen: 12, status: "Critical" },
+  { refNo: "INV-V-2026-1825", type: "Invoice without GRN", vendor: "Desert Frozen Foods", date: "2026-05-10", value: 4500, daysOpen: 12, status: "Warning" },
+  { refNo: "LPO-2026-0424", type: "LPO without Approval", vendor: "Global Supplies LLC", date: "2026-05-05", value: 94200, daysOpen: 17, status: "Critical" },
+];
+
+const mockAuditTrail = [
+  { timestamp: "2026-05-22 09:12:34", user: "Ahmed Hassan", action: "Edit", module: "Purchase Invoice", refNo: "INV-V-2026-1823", field: "Unit Rate", before: "1720.00", after: "1750.00" },
+  { timestamp: "2026-05-22 08:45:10", user: "Sara Abdullah", action: "Delete", module: "GRN", refNo: "GRN-2026-0816", field: "Status", before: "Draft", after: "Deleted" },
+  { timestamp: "2026-05-21 17:30:55", user: "Mohammed Al Rashidi", action: "Approve", module: "LPO", refNo: "LPO-2026-0425", field: "Status", before: "Pending", after: "Approved" },
+  { timestamp: "2026-05-21 16:12:22", user: "Fatima Al Zaabi", action: "Create", module: "Debit Note", refNo: "DN-2026-045", field: "-", before: "-", after: "Created" },
+  { timestamp: "2026-05-21 14:08:01", user: "Ahmed Hassan", action: "Edit", module: "Vendor Master", refNo: "VEN-006", field: "Credit Limit", before: "250000", after: "200000" },
+  { timestamp: "2026-05-20 11:55:44", user: "Sara Abdullah", action: "Post", module: "Payment Voucher", refNo: "PV-2026-0623", field: "Status", before: "Draft", after: "Posted" },
+];
+
+// ---------------------------------------------------------------------------
+// Individual report components
+// ---------------------------------------------------------------------------
+
+function VendorMasterReport() {
+  const total = mockVendorMaster.reduce((s, r) => s + r.outstanding, 0);
+  const creditTotal = mockVendorMaster.reduce((s, r) => s + r.creditLimit, 0);
+  return (
+    <div className="space-y-3">
+      <ReportHeader title="Vendor Master Report" subtitle="Active and inactive vendors with credit details" count={mockVendorMaster.length} />
+      <div className="grid grid-cols-3 gap-3">
+        <KpiCard label="Total Vendors" value={String(mockVendorMaster.length)} sub="In system" accent />
+        <KpiCard label="Total Outstanding" value={`AED ${total.toLocaleString()}`} sub="All vendors" />
+        <KpiCard label="Total Credit Limit" value={`AED ${creditTotal.toLocaleString()}`} sub="Aggregate limit" />
+      </div>
+      <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">
+        <Tbl>
+          <thead>
+            <tr>
+              <Th>Code</Th>
+              <Th>Vendor Name</Th>
+              <Th>Category</Th>
+              <Th>TRN</Th>
+              <Th right>Credit Limit (AED)</Th>
+              <Th right>Outstanding (AED)</Th>
+              <Th>Terms</Th>
+              <Th>Status</Th>
+            </tr>
+          </thead>
+          <tbody>
+            {mockVendorMaster.map((r) => (
+              <tr key={r.code} className="hover:bg-slate-50">
+                <Td bold>{r.code}</Td>
+                <Td>{r.name}</Td>
+                <Td muted>{r.category}</Td>
+                <Td muted>{r.trn}</Td>
+                <Td right>{r.creditLimit.toLocaleString()}</Td>
+                <Td right bold>{r.outstanding.toLocaleString()}</Td>
+                <Td muted>{r.paymentTerms}</Td>
+                <Td>{statusBadge(r.status)}</Td>
+              </tr>
+            ))}
+          </tbody>
+        </Tbl>
+        <Card className="border border-slate-200 bg-white">
+          <CardHeader className="py-3 px-3"><CardTitle className="text-xs font-semibold text-slate-800">Outstanding by Category</CardTitle></CardHeader>
+          <CardContent className="px-3 pb-3">
+            <ResponsiveContainer width="100%" height={220}>
+              <BarChart data={mockVendorMaster.map((r) => ({ name: r.name.split(" ")[0], outstanding: r.outstanding, limit: r.creditLimit }))}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                <XAxis dataKey="name" tick={{ fontSize: 9 }} />
+                <YAxis tick={{ fontSize: 9 }} />
+                <Tooltip contentStyle={{ fontSize: "11px" }} />
+                <Legend wrapperStyle={{ fontSize: "10px" }} />
+                <Bar dataKey="limit" name="Credit Limit" fill="#e2e8f0" />
+                <Bar dataKey="outstanding" name="Outstanding" fill="#F5C742" />
+              </BarChart>
+            </ResponsiveContainer>
+          </CardContent>
+        </Card>
+      </div>
+    </div>
+  );
+}
+
+function VendorAgingReport() {
+  const totals = mockVendorAging.reduce((s, r) => ({ total: s.total + r.total, d30: s.d30 + r.d30, d60: s.d60 + r.d60, d90: s.d90 + r.d90, d90plus: s.d90plus + r.d90plus }), { total: 0, d30: 0, d60: 0, d90: 0, d90plus: 0 });
+  return (
+    <div className="space-y-3">
+      <ReportHeader title="Vendor Outstanding & Aging" subtitle="Payable aging analysis across all vendors" count={mockVendorAging.length} />
+      <div className="grid grid-cols-4 gap-3">
+        <KpiCard label="Total Payable" value={`AED ${totals.total.toLocaleString()}`} sub="All vendors" accent />
+        <KpiCard label="0–30 Days" value={`AED ${totals.d30.toLocaleString()}`} sub="Current" />
+        <KpiCard label="31–90 Days" value={`AED ${(totals.d60 + totals.d90).toLocaleString()}`} sub="Moderate" />
+        <KpiCard label="90+ Days" value={`AED ${totals.d90plus.toLocaleString()}`} sub="Overdue" />
+      </div>
+      <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">
+        <Tbl>
+          <thead>
+            <tr>
+              <Th>Vendor</Th>
+              <Th right>Total (AED)</Th>
+              <Th right>0-30</Th>
+              <Th right>31-60</Th>
+              <Th right>61-90</Th>
+              <Th right>90+</Th>
+              <Th>Status</Th>
+            </tr>
+          </thead>
+          <tbody>
+            {mockVendorAging.map((r) => (
+              <tr key={r.vendor} className="hover:bg-slate-50">
+                <Td bold>{r.vendor}</Td>
+                <Td right bold>{r.total.toLocaleString()}</Td>
+                <Td right>{r.d30.toLocaleString()}</Td>
+                <Td right>{r.d60.toLocaleString()}</Td>
+                <Td right>{r.d90.toLocaleString()}</Td>
+                <Td right>{r.d90plus > 0 ? <span className="text-red-600 font-semibold">{r.d90plus.toLocaleString()}</span> : "0"}</Td>
+                <Td>{statusBadge(r.status)}</Td>
+              </tr>
+            ))}
+          </tbody>
+        </Tbl>
+        <Card className="border border-slate-200 bg-white">
+          <CardHeader className="py-3 px-3"><CardTitle className="text-xs font-semibold text-slate-800">Aging Bucket Distribution</CardTitle></CardHeader>
+          <CardContent className="px-3 pb-3">
+            <ResponsiveContainer width="100%" height={220}>
+              <PieChart>
+                <Pie data={mockVendorAgingChart} cx="50%" cy="50%" outerRadius={80} dataKey="value" label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`} labelLine={false}>
+                  {mockVendorAgingChart.map((_, i) => <Cell key={i} fill={PIE_COLORS[i % PIE_COLORS.length]} />)}
+                </Pie>
+                <Tooltip contentStyle={{ fontSize: "11px" }} formatter={(v: number) => `AED ${v.toLocaleString()}`} />
+              </PieChart>
+            </ResponsiveContainer>
+          </CardContent>
+        </Card>
+      </div>
+    </div>
+  );
+}
+
+function VendorPerformanceReport() {
+  return (
+    <div className="space-y-3">
+      <ReportHeader title="Vendor Performance Summary" subtitle="KPI tracking: delivery, returns, claims, settlement" count={mockVendorPerf.length} />
+      <div className="grid grid-cols-3 gap-3">
+        <KpiCard label="Avg On-Time Delivery" value={`${(mockVendorPerf.reduce((s, r) => s + r.onTimePct, 0) / mockVendorPerf.length).toFixed(1)}%`} sub="All vendors" accent />
+        <KpiCard label="Avg Return Rate" value={`${(mockVendorPerf.reduce((s, r) => s + r.returnRate, 0) / mockVendorPerf.length).toFixed(1)}%`} sub="By value" />
+        <KpiCard label="Avg Settlement Days" value={`${Math.round(mockVendorPerf.reduce((s, r) => s + r.avgSettleDays, 0) / mockVendorPerf.length)} days`} sub="Invoice to payment" />
+      </div>
+      <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">
+        <Tbl>
+          <thead>
+            <tr>
+              <Th>Vendor</Th>
+              <Th right>Orders</Th>
+              <Th right>On-Time%</Th>
+              <Th right>Return%</Th>
+              <Th right>Claim%</Th>
+              <Th right>Settle Days</Th>
+              <Th>Score</Th>
+            </tr>
+          </thead>
+          <tbody>
+            {mockVendorPerf.map((r) => (
+              <tr key={r.vendor} className="hover:bg-slate-50">
+                <Td bold>{r.vendor}</Td>
+                <Td right>{r.orders}</Td>
+                <Td right><span className={r.onTimePct >= 85 ? "text-emerald-700 font-semibold" : "text-red-600 font-semibold"}>{r.onTimePct}%</span></Td>
+                <Td right>{r.returnRate}%</Td>
+                <Td right>{r.claimRate}%</Td>
+                <Td right>{r.avgSettleDays}</Td>
+                <Td><Badge variant="outline" className={r.score.startsWith("A") ? "bg-emerald-100 text-emerald-700 border-emerald-300 text-[10px]" : r.score.startsWith("B") ? "bg-blue-100 text-blue-700 border-blue-300 text-[10px]" : "bg-red-100 text-red-700 border-red-300 text-[10px]"}>{r.score}</Badge></Td>
+              </tr>
+            ))}
+          </tbody>
+        </Tbl>
+        <Card className="border border-slate-200 bg-white">
+          <CardHeader className="py-3 px-3"><CardTitle className="text-xs font-semibold text-slate-800">On-Time % vs Return Rate</CardTitle></CardHeader>
+          <CardContent className="px-3 pb-3">
+            <ResponsiveContainer width="100%" height={220}>
+              <BarChart data={mockVendorPerfChart}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                <XAxis dataKey="name" tick={{ fontSize: 9 }} />
+                <YAxis tick={{ fontSize: 9 }} />
+                <Tooltip contentStyle={{ fontSize: "11px" }} />
+                <Legend wrapperStyle={{ fontSize: "10px" }} />
+                <Bar dataKey="onTime" name="On-Time%" fill="#F5C742" />
+                <Bar dataKey="returnRate" name="Return%" fill="#f97316" />
+              </BarChart>
+            </ResponsiveContainer>
+          </CardContent>
+        </Card>
+      </div>
+    </div>
+  );
+}
+
+function VendorPriceHistoryReport() {
+  return (
+    <div className="space-y-3">
+      <ReportHeader title="Vendor Price History" subtitle="Last 5 purchase rates per item with cost change %" count={mockPriceHistory.length} />
+      <div className="grid grid-cols-2 gap-3">
+        <KpiCard label="Items Tracked" value={String(mockPriceHistory.length)} sub="Across vendors" accent />
+        <KpiCard label="Avg Cost Change" value={`${(mockPriceHistory.reduce((s, r) => s + r.change, 0) / mockPriceHistory.length).toFixed(2)}%`} sub="YTD movement" />
+      </div>
+      <Tbl>
+        <thead>
+          <tr>
+            <Th>Item</Th>
+            <Th>SKU</Th>
+            <Th>Vendor</Th>
+            <Th right>P1 (AED)</Th>
+            <Th right>P2 (AED)</Th>
+            <Th right>P3 (AED)</Th>
+            <Th right>P4 (AED)</Th>
+            <Th right>P5 (AED)</Th>
+            <Th right>Change%</Th>
+          </tr>
+        </thead>
+        <tbody>
+          {mockPriceHistory.map((r) => (
+            <tr key={r.sku} className="hover:bg-slate-50">
+              <Td bold>{r.item}</Td>
+              <Td muted>{r.sku}</Td>
+              <Td>{r.vendor}</Td>
+              <Td right>{r.p1.toFixed(2)}</Td>
+              <Td right>{r.p2.toFixed(2)}</Td>
+              <Td right>{r.p3.toFixed(2)}</Td>
+              <Td right>{r.p4.toFixed(2)}</Td>
+              <Td right bold>{r.p5.toFixed(2)}</Td>
+              <Td right><span className={r.change > 0 ? "text-red-600 font-semibold" : "text-emerald-700 font-semibold"}>{r.change > 0 ? "+" : ""}{r.change.toFixed(2)}%</span></Td>
+            </tr>
+          ))}
+        </tbody>
+      </Tbl>
+    </div>
+  );
+}
+
+function VendorContractComplianceReport() {
+  const breached = mockContractCompliance.filter((r) => r.status === "Breached").length;
+  return (
+    <div className="space-y-3">
+      <ReportHeader title="Vendor Contract Compliance" subtitle="Contract price vs actual purchase price with penalty tracking" count={mockContractCompliance.length} />
+      <div className="grid grid-cols-3 gap-3">
+        <KpiCard label="Items Reviewed" value={String(mockContractCompliance.length)} sub="Under contract" accent />
+        <KpiCard label="Breaches" value={String(breached)} sub="Price violations" />
+        <KpiCard label="Penalties Applied" value={String(mockContractCompliance.filter((r) => r.penaltyApplied).length)} sub="Enforcement actions" />
+      </div>
+      <Tbl>
+        <thead>
+          <tr>
+            <Th>Vendor</Th>
+            <Th>Item</Th>
+            <Th right>Contract Price (AED)</Th>
+            <Th right>Actual Price (AED)</Th>
+            <Th right>Variance (AED)</Th>
+            <Th right>Variance%</Th>
+            <Th>Penalty</Th>
+            <Th>Status</Th>
+          </tr>
+        </thead>
+        <tbody>
+          {mockContractCompliance.map((r, i) => (
+            <tr key={i} className="hover:bg-slate-50">
+              <Td bold>{r.vendor}</Td>
+              <Td>{r.item}</Td>
+              <Td right>{r.contractPrice.toLocaleString()}</Td>
+              <Td right>{r.actualPrice.toLocaleString()}</Td>
+              <Td right>{r.variance !== 0 ? amtBadge(r.variance) : "—"}</Td>
+              <Td right><span className={r.variancePct > 0 ? "text-red-600 font-semibold" : r.variancePct < 0 ? "text-emerald-700 font-semibold" : "text-slate-500"}>{r.variancePct > 0 ? "+" : ""}{r.variancePct.toFixed(2)}%</span></Td>
+              <Td>{r.penaltyApplied ? <Badge variant="outline" className="bg-red-100 text-red-700 border-red-300 text-[10px]">Applied</Badge> : <Badge variant="outline" className="bg-slate-100 text-slate-600 border-slate-300 text-[10px]">None</Badge>}</Td>
+              <Td>{statusBadge(r.status === "Breached" ? "Overdue" : "Active")}</Td>
+            </tr>
+          ))}
+        </tbody>
+      </Tbl>
+    </div>
+  );
+}
+
+function LpoRegisterReport() {
+  const total = mockLpoRegister.reduce((s, r) => s + r.totalValue, 0);
+  return (
+    <div className="space-y-3">
+      <ReportHeader title="LPO Register" subtitle="All purchase orders with approval status" count={mockLpoRegister.length} />
+      <div className="grid grid-cols-3 gap-3">
+        <KpiCard label="Total LPO Value" value={`AED ${total.toLocaleString()}`} sub="Period total" accent />
+        <KpiCard label="Approved" value={String(mockLpoRegister.filter((r) => r.status === "Approved" || r.status === "Received").length)} sub="Orders" />
+        <KpiCard label="Pending / Partial" value={String(mockLpoRegister.filter((r) => r.status === "Pending" || r.status === "Partial").length)} sub="Awaiting action" />
+      </div>
+      <Tbl>
+        <thead>
+          <tr>
+            <Th>LPO No.</Th>
+            <Th>Date</Th>
+            <Th>Vendor</Th>
+            <Th>Branch</Th>
+            <Th right>Items</Th>
+            <Th right>Value (AED)</Th>
+            <Th>Status</Th>
+            <Th>Approved By</Th>
+          </tr>
+        </thead>
+        <tbody>
+          {mockLpoRegister.map((r) => (
+            <tr key={r.lpoNo} className="hover:bg-slate-50">
+              <Td bold>{r.lpoNo}</Td>
+              <Td muted>{r.date}</Td>
+              <Td>{r.vendor}</Td>
+              <Td muted>{r.branch}</Td>
+              <Td right>{r.totalItems}</Td>
+              <Td right bold>{r.totalValue.toLocaleString()}</Td>
+              <Td>{statusBadge(r.status)}</Td>
+              <Td muted>{r.approvedBy}</Td>
+            </tr>
+          ))}
+        </tbody>
+      </Tbl>
+    </div>
+  );
+}
+
+function LpoFulfillmentReport() {
+  return (
+    <div className="space-y-3">
+      <ReportHeader title="LPO vs Delivery Fulfillment" subtitle="Ordered vs delivered quantities and value" count={mockLpoFulfillment.length} />
+      <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">
+        <Tbl>
+          <thead>
+            <tr>
+              <Th>LPO No.</Th>
+              <Th>Vendor</Th>
+              <Th right>Ordered Qty</Th>
+              <Th right>Delivered Qty</Th>
+              <Th right>Pending Qty</Th>
+              <Th right>Ordered (AED)</Th>
+              <Th right>Delivered (AED)</Th>
+              <Th right>Fulfillment%</Th>
+            </tr>
+          </thead>
+          <tbody>
+            {mockLpoFulfillment.map((r) => (
+              <tr key={r.lpoNo} className="hover:bg-slate-50">
+                <Td bold>{r.lpoNo}</Td>
+                <Td>{r.vendor}</Td>
+                <Td right>{r.orderedQty}</Td>
+                <Td right>{r.deliveredQty}</Td>
+                <Td right>{r.pendingQty > 0 ? <span className="text-amber-600 font-semibold">{r.pendingQty}</span> : "0"}</Td>
+                <Td right>{r.orderedValue.toLocaleString()}</Td>
+                <Td right bold>{r.deliveredValue.toLocaleString()}</Td>
+                <Td right><span className={r.fulfillmentPct >= 95 ? "text-emerald-700 font-semibold" : r.fulfillmentPct >= 70 ? "text-amber-700 font-semibold" : "text-red-600 font-semibold"}>{r.fulfillmentPct.toFixed(1)}%</span></Td>
+              </tr>
+            ))}
+          </tbody>
+        </Tbl>
+        <Card className="border border-slate-200 bg-white">
+          <CardHeader className="py-3 px-3"><CardTitle className="text-xs font-semibold text-slate-800">Ordered vs Delivered Value</CardTitle></CardHeader>
+          <CardContent className="px-3 pb-3">
+            <ResponsiveContainer width="100%" height={220}>
+              <BarChart data={mockLpoFulfillmentChart}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                <XAxis dataKey="name" tick={{ fontSize: 9 }} />
+                <YAxis tick={{ fontSize: 9 }} />
+                <Tooltip contentStyle={{ fontSize: "11px" }} />
+                <Legend wrapperStyle={{ fontSize: "10px" }} />
+                <Bar dataKey="ordered" name="Ordered" fill="#e2e8f0" />
+                <Bar dataKey="delivered" name="Delivered" fill="#F5C742" />
+              </BarChart>
+            </ResponsiveContainer>
+          </CardContent>
+        </Card>
+      </div>
+    </div>
+  );
+}
+
+function LpoAgingReport() {
+  return (
+    <div className="space-y-3">
+      <ReportHeader title="LPO Aging Report" subtitle="Pending LPOs with aging and overdue highlighting" count={mockLpoAging.length} />
+      <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">
+        <Tbl>
+          <thead>
+            <tr>
+              <Th>LPO No.</Th>
+              <Th>Vendor</Th>
+              <Th>Issue Date</Th>
+              <Th>Expected Date</Th>
+              <Th right>Days Pending</Th>
+              <Th right>Value (AED)</Th>
+              <Th>Status</Th>
+            </tr>
+          </thead>
+          <tbody>
+            {mockLpoAging.map((r) => (
+              <tr key={r.lpoNo} className="hover:bg-slate-50">
+                <Td bold>{r.lpoNo}</Td>
+                <Td>{r.vendor}</Td>
+                <Td muted>{r.issueDate}</Td>
+                <Td muted>{r.expectedDate}</Td>
+                <Td right><span className={r.daysPending > 30 ? "text-red-600 font-bold" : "text-amber-700 font-semibold"}>{r.daysPending}</span></Td>
+                <Td right bold>{r.value.toLocaleString()}</Td>
+                <Td>{statusBadge(r.status)}</Td>
+              </tr>
+            ))}
+          </tbody>
+        </Tbl>
+        <Card className="border border-slate-200 bg-white">
+          <CardHeader className="py-3 px-3"><CardTitle className="text-xs font-semibold text-slate-800">Pending LPO by Aging Bucket</CardTitle></CardHeader>
+          <CardContent className="px-3 pb-3">
+            <ResponsiveContainer width="100%" height={220}>
+              <BarChart data={mockLpoAgingChart}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                <XAxis dataKey="bucket" tick={{ fontSize: 9 }} />
+                <YAxis tick={{ fontSize: 9 }} />
+                <Tooltip contentStyle={{ fontSize: "11px" }} />
+                <Legend wrapperStyle={{ fontSize: "10px" }} />
+                <Bar dataKey="count" name="LPO Count" fill="#F5C742" />
+                <Bar dataKey="value" name="Value" fill="#3b82f6" />
+              </BarChart>
+            </ResponsiveContainer>
+          </CardContent>
+        </Card>
+      </div>
+    </div>
+  );
+}
+
+function LpoCancelledReport() {
+  const total = mockLpoCancelled.reduce((s, r) => s + r.value, 0);
+  return (
+    <div className="space-y-3">
+      <ReportHeader title="Cancelled / Modified LPO" subtitle="Cancelled and modified orders with authorization" count={mockLpoCancelled.length} />
+      <div className="grid grid-cols-2 gap-3">
+        <KpiCard label="Total Cancelled Value" value={`AED ${total.toLocaleString()}`} sub="This period" accent />
+        <KpiCard label="Cancelled Orders" value={String(mockLpoCancelled.length)} sub="Requiring review" />
+      </div>
+      <Tbl>
+        <thead>
+          <tr>
+            <Th>LPO No.</Th>
+            <Th>Vendor</Th>
+            <Th>Date</Th>
+            <Th right>Value (AED)</Th>
+            <Th>Reason</Th>
+            <Th>Cancelled By</Th>
+            <Th>Status</Th>
+          </tr>
+        </thead>
+        <tbody>
+          {mockLpoCancelled.map((r) => (
+            <tr key={r.lpoNo} className="hover:bg-slate-50">
+              <Td bold>{r.lpoNo}</Td>
+              <Td>{r.vendor}</Td>
+              <Td muted>{r.date}</Td>
+              <Td right bold>{r.value.toLocaleString()}</Td>
+              <Td muted>{r.reason}</Td>
+              <Td>{r.cancelledBy}</Td>
+              <Td>{statusBadge(r.status)}</Td>
+            </tr>
+          ))}
+        </tbody>
+      </Tbl>
+    </div>
+  );
+}
+
+function GrnRegisterReport() {
+  const total = mockGrnRegister.reduce((s, r) => s + r.value, 0);
+  return (
+    <div className="space-y-3">
+      <ReportHeader title="GRN Register" subtitle="All goods receipts with QC and warehouse status" count={mockGrnRegister.length} />
+      <div className="grid grid-cols-3 gap-3">
+        <KpiCard label="Total Received Value" value={`AED ${total.toLocaleString()}`} sub="Period total" accent />
+        <KpiCard label="QC Passed" value={String(mockGrnRegister.filter((r) => r.qcStatus === "Pass").length)} sub="Receipts" />
+        <KpiCard label="QC Failed / On Hold" value={String(mockGrnRegister.filter((r) => r.qcStatus === "Fail" || r.status === "On Hold").length)} sub="Needs action" />
+      </div>
+      <Tbl>
+        <thead>
+          <tr>
+            <Th>GRN No.</Th>
+            <Th>Date</Th>
+            <Th>LPO Ref</Th>
+            <Th>Vendor</Th>
+            <Th>Warehouse</Th>
+            <Th right>Items</Th>
+            <Th right>Qty</Th>
+            <Th right>Value (AED)</Th>
+            <Th>QC</Th>
+            <Th>Status</Th>
+          </tr>
+        </thead>
+        <tbody>
+          {mockGrnRegister.map((r) => (
+            <tr key={r.grnNo} className="hover:bg-slate-50">
+              <Td bold>{r.grnNo}</Td>
+              <Td muted>{r.date}</Td>
+              <Td muted>{r.lpoNo}</Td>
+              <Td>{r.vendor}</Td>
+              <Td muted>{r.warehouse}</Td>
+              <Td right>{r.items}</Td>
+              <Td right>{r.receivedQty}</Td>
+              <Td right bold>{r.value.toLocaleString()}</Td>
+              <Td>{statusBadge(r.qcStatus)}</Td>
+              <Td>{statusBadge(r.status)}</Td>
+            </tr>
+          ))}
+        </tbody>
+      </Tbl>
+    </div>
+  );
+}
+
+function GrnVarianceReport() {
+  return (
+    <div className="space-y-3">
+      <ReportHeader title="GRN Variance Report" subtitle="LPO vs GRN quantity and value differences" count={mockGrnVariance.length} />
+      <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">
+        <Tbl>
+          <thead>
+            <tr>
+              <Th>GRN No.</Th>
+              <Th>Vendor</Th>
+              <Th>Item</Th>
+              <Th right>LPO Qty</Th>
+              <Th right>GRN Qty</Th>
+              <Th right>Qty Var</Th>
+              <Th right>LPO Rate</Th>
+              <Th right>GRN Rate</Th>
+              <Th right>Value Var (AED)</Th>
+            </tr>
+          </thead>
+          <tbody>
+            {mockGrnVariance.map((r, i) => (
+              <tr key={i} className="hover:bg-slate-50">
+                <Td bold>{r.grnNo}</Td>
+                <Td>{r.vendor}</Td>
+                <Td>{r.item}</Td>
+                <Td right>{r.lpoQty}</Td>
+                <Td right>{r.grnQty}</Td>
+                <Td right><span className={r.qtyVar !== 0 ? "text-red-600 font-semibold" : "text-slate-500"}>{r.qtyVar}</span></Td>
+                <Td right>{r.lpoRate.toFixed(2)}</Td>
+                <Td right>{r.grnRate.toFixed(2)}</Td>
+                <Td right>{amtBadge(r.valueVar)}</Td>
+              </tr>
+            ))}
+          </tbody>
+        </Tbl>
+        <Card className="border border-slate-200 bg-white">
+          <CardHeader className="py-3 px-3"><CardTitle className="text-xs font-semibold text-slate-800">Value Variance by Vendor</CardTitle></CardHeader>
+          <CardContent className="px-3 pb-3">
+            <ResponsiveContainer width="100%" height={220}>
+              <BarChart data={mockGrnVarianceChart}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                <XAxis dataKey="name" tick={{ fontSize: 9 }} />
+                <YAxis tick={{ fontSize: 9 }} />
+                <Tooltip contentStyle={{ fontSize: "11px" }} />
+                <Bar dataKey="variance" name="Variance (AED)" fill="#f97316" />
+              </BarChart>
+            </ResponsiveContainer>
+          </CardContent>
+        </Card>
+      </div>
+    </div>
+  );
+}
+
+function GrnBatchExpiryReport() {
+  const nearExpiry = mockBatchExpiry.filter((r) => r.daysToExpiry <= 30).length;
+  return (
+    <div className="space-y-3">
+      <ReportHeader title="Batch & Expiry Report" subtitle="Batch tracking with expiry monitoring" count={mockBatchExpiry.length} />
+      <div className="grid grid-cols-3 gap-3">
+        <KpiCard label="Total Batches" value={String(mockBatchExpiry.length)} sub="Active batches" accent />
+        <KpiCard label="Near Expiry (≤30d)" value={String(nearExpiry)} sub="Requires action" />
+        <KpiCard label="Active Batches" value={String(mockBatchExpiry.filter((r) => r.status === "Active").length)} sub="Good standing" />
+      </div>
+      <Tbl>
+        <thead>
+          <tr>
+            <Th>GRN No.</Th>
+            <Th>Item</Th>
+            <Th>Batch No.</Th>
+            <Th>Mfg Date</Th>
+            <Th>Expiry Date</Th>
+            <Th right>Qty</Th>
+            <Th>Warehouse</Th>
+            <Th right>Days to Expiry</Th>
+            <Th>Status</Th>
+          </tr>
+        </thead>
+        <tbody>
+          {mockBatchExpiry.map((r, i) => (
+            <tr key={i} className="hover:bg-slate-50">
+              <Td bold>{r.grnNo}</Td>
+              <Td>{r.item}</Td>
+              <Td muted>{r.batchNo}</Td>
+              <Td muted>{r.mfgDate}</Td>
+              <Td muted>{r.expiryDate}</Td>
+              <Td right>{r.qty}</Td>
+              <Td muted>{r.warehouse}</Td>
+              <Td right><span className={r.daysToExpiry <= 30 ? "text-red-600 font-bold" : r.daysToExpiry <= 90 ? "text-amber-600 font-semibold" : "text-slate-600"}>{r.daysToExpiry}</span></Td>
+              <Td>{statusBadge(r.status === "Near Expiry" ? "Overdue" : r.status)}</Td>
+            </tr>
+          ))}
+        </tbody>
+      </Tbl>
+    </div>
+  );
+}
+
+function GrnQcRejectionReport() {
+  const totalValue = mockQcRejection.reduce((s, r) => s + r.value, 0);
+  return (
+    <div className="space-y-3">
+      <ReportHeader title="QC Rejection Report" subtitle="Quality control rejections by reason and vendor" count={mockQcRejection.length} />
+      <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">
+        <div className="space-y-3">
+          <div className="grid grid-cols-2 gap-3">
+            <KpiCard label="Total Rejections" value={String(mockQcRejection.length)} sub="This period" accent />
+            <KpiCard label="Total Rejected Value" value={`AED ${totalValue.toLocaleString()}`} sub="Impact" />
+          </div>
+          <Tbl>
+            <thead>
+              <tr>
+                <Th>GRN No.</Th>
+                <Th>Vendor</Th>
+                <Th>Item</Th>
+                <Th right>Rejected Qty</Th>
+                <Th>Reason</Th>
+                <Th right>Value (AED)</Th>
+                <Th>Action</Th>
+              </tr>
+            </thead>
+            <tbody>
+              {mockQcRejection.map((r, i) => (
+                <tr key={i} className="hover:bg-slate-50">
+                  <Td bold>{r.grnNo}</Td>
+                  <Td>{r.vendor}</Td>
+                  <Td>{r.item}</Td>
+                  <Td right><span className="text-red-600 font-semibold">{r.rejectedQty}</span></Td>
+                  <Td muted>{r.reason}</Td>
+                  <Td right bold>{r.value.toLocaleString()}</Td>
+                  <Td muted>{r.action}</Td>
+                </tr>
+              ))}
+            </tbody>
+          </Tbl>
+        </div>
+        <Card className="border border-slate-200 bg-white">
+          <CardHeader className="py-3 px-3"><CardTitle className="text-xs font-semibold text-slate-800">Rejections by Reason</CardTitle></CardHeader>
+          <CardContent className="px-3 pb-3">
+            <ResponsiveContainer width="100%" height={220}>
+              <PieChart>
+                <Pie data={mockQcChart} cx="50%" cy="50%" outerRadius={75} dataKey="count" label={({ reason, count }) => `${reason}: ${count}`} labelLine={false}>
+                  {mockQcChart.map((_, i) => <Cell key={i} fill={PIE_COLORS[i % PIE_COLORS.length]} />)}
+                </Pie>
+                <Tooltip contentStyle={{ fontSize: "11px" }} />
+              </PieChart>
+            </ResponsiveContainer>
+          </CardContent>
+        </Card>
+      </div>
+    </div>
+  );
+}
+
+function GrvRegisterReport() {
+  const total = mockGrvRegister.reduce((s, r) => s + r.value, 0);
+  return (
+    <div className="space-y-3">
+      <ReportHeader title="GRV Register" subtitle="All goods return vouchers with settlement status" count={mockGrvRegister.length} />
+      <div className="grid grid-cols-3 gap-3">
+        <KpiCard label="Total GRV Value" value={`AED ${total.toLocaleString()}`} sub="Period returns" accent />
+        <KpiCard label="Settled" value={String(mockGrvRegister.filter((r) => r.status === "Settled").length)} sub="Returns" />
+        <KpiCard label="Pending / Issued" value={String(mockGrvRegister.filter((r) => r.status !== "Settled").length)} sub="Awaiting action" />
+      </div>
+      <Tbl>
+        <thead>
+          <tr>
+            <Th>GRV No.</Th>
+            <Th>Date</Th>
+            <Th>GRN Ref</Th>
+            <Th>Vendor</Th>
+            <Th right>Items</Th>
+            <Th right>Value (AED)</Th>
+            <Th>Reason</Th>
+            <Th>Debit Note</Th>
+            <Th>Status</Th>
+          </tr>
+        </thead>
+        <tbody>
+          {mockGrvRegister.map((r) => (
+            <tr key={r.grvNo} className="hover:bg-slate-50">
+              <Td bold>{r.grvNo}</Td>
+              <Td muted>{r.date}</Td>
+              <Td muted>{r.grnNo}</Td>
+              <Td>{r.vendor}</Td>
+              <Td right>{r.items}</Td>
+              <Td right bold>{r.value.toLocaleString()}</Td>
+              <Td muted>{r.reason}</Td>
+              <Td muted>{r.debitNote}</Td>
+              <Td>{statusBadge(r.status)}</Td>
+            </tr>
+          ))}
+        </tbody>
+      </Tbl>
+    </div>
+  );
+}
+
+function GrvReasonAnalysisReport() {
+  return (
+    <div className="space-y-3">
+      <ReportHeader title="GRV Reason Analysis" subtitle="Return reason breakdown with value impact" count={mockGrvReasonChart.length} />
+      <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">
+        <Tbl>
+          <thead>
+            <tr>
+              <Th>Return Reason</Th>
+              <Th right>Count</Th>
+              <Th right>Total Value (AED)</Th>
+              <Th right>Avg per Return (AED)</Th>
+            </tr>
+          </thead>
+          <tbody>
+            {mockGrvReasonChart.map((r, i) => (
+              <tr key={i} className="hover:bg-slate-50">
+                <Td bold>{r.reason}</Td>
+                <Td right>{r.count}</Td>
+                <Td right>{r.value.toLocaleString()}</Td>
+                <Td right muted>{(r.value / r.count).toFixed(2)}</Td>
+              </tr>
+            ))}
+          </tbody>
+        </Tbl>
+        <Card className="border border-slate-200 bg-white">
+          <CardHeader className="py-3 px-3"><CardTitle className="text-xs font-semibold text-slate-800">Return Value by Reason</CardTitle></CardHeader>
+          <CardContent className="px-3 pb-3">
+            <ResponsiveContainer width="100%" height={220}>
+              <PieChart>
+                <Pie data={mockGrvReasonChart} cx="50%" cy="50%" outerRadius={75} dataKey="value" nameKey="reason" label={({ reason }) => reason} labelLine={false}>
+                  {mockGrvReasonChart.map((_, i) => <Cell key={i} fill={PIE_COLORS[i % PIE_COLORS.length]} />)}
+                </Pie>
+                <Tooltip contentStyle={{ fontSize: "11px" }} formatter={(v: number) => `AED ${v.toLocaleString()}`} />
+              </PieChart>
+            </ResponsiveContainer>
+          </CardContent>
+        </Card>
+      </div>
+    </div>
+  );
+}
+
+function GrvReplacementPendingReport() {
+  return (
+    <div className="space-y-3">
+      <ReportHeader title="Replacement Pending Report" subtitle="GRVs awaiting vendor replacement with SLA monitoring" count={mockGrvPending.length} />
+      <div className="grid grid-cols-3 gap-3">
+        <KpiCard label="Pending Replacements" value={String(mockGrvPending.length)} sub="Open items" accent />
+        <KpiCard label="Overdue SLA" value={String(mockGrvPending.filter((r) => r.status === "Overdue").length)} sub="Breach count" />
+        <KpiCard label="Total Value Pending" value={`AED ${mockGrvPending.reduce((s, r) => s + r.value, 0).toLocaleString()}`} sub="At risk" />
+      </div>
+      <Tbl>
+        <thead>
+          <tr>
+            <Th>GRV No.</Th>
+            <Th>Vendor</Th>
+            <Th>Item</Th>
+            <Th right>Qty</Th>
+            <Th right>Value (AED)</Th>
+            <Th>GRV Date</Th>
+            <Th>SLA Date</Th>
+            <Th right>Days Pending</Th>
+            <Th>Status</Th>
+          </tr>
+        </thead>
+        <tbody>
+          {mockGrvPending.map((r) => (
+            <tr key={r.grvNo} className="hover:bg-slate-50">
+              <Td bold>{r.grvNo}</Td>
+              <Td>{r.vendor}</Td>
+              <Td>{r.item}</Td>
+              <Td right>{r.qty}</Td>
+              <Td right bold>{r.value.toLocaleString()}</Td>
+              <Td muted>{r.grvDate}</Td>
+              <Td muted>{r.slaDate}</Td>
+              <Td right><span className={r.status === "Overdue" ? "text-red-600 font-bold" : "text-amber-600 font-semibold"}>{r.daysPending}</span></Td>
+              <Td>{statusBadge(r.status)}</Td>
+            </tr>
+          ))}
+        </tbody>
+      </Tbl>
+    </div>
+  );
+}
+
+function GrvDebitNoteMappingReport() {
+  return (
+    <div className="space-y-3">
+      <ReportHeader title="GRV vs Debit Note Mapping" subtitle="GRV to debit note matching with settlement tracking" count={mockGrvDebitNote.length} />
+      <div className="grid grid-cols-3 gap-3">
+        <KpiCard label="Matched & Settled" value={String(mockGrvDebitNote.filter((r) => r.matched).length)} sub="GRV-DN pairs" accent />
+        <KpiCard label="Unmatched GRVs" value={String(mockGrvDebitNote.filter((r) => !r.matched).length)} sub="Need debit note" />
+        <KpiCard label="Total Settled" value={`AED ${mockGrvDebitNote.filter((r) => r.matched).reduce((s, r) => s + r.grvValue, 0).toLocaleString()}`} sub="Recovered" />
+      </div>
+      <Tbl>
+        <thead>
+          <tr>
+            <Th>GRV No.</Th>
+            <Th>Vendor</Th>
+            <Th right>GRV Value (AED)</Th>
+            <Th>Debit Note</Th>
+            <Th right>DN Value (AED)</Th>
+            <Th>Matched</Th>
+            <Th>Settled Date</Th>
+            <Th>Status</Th>
+          </tr>
+        </thead>
+        <tbody>
+          {mockGrvDebitNote.map((r, i) => (
+            <tr key={i} className="hover:bg-slate-50">
+              <Td bold>{r.grvNo}</Td>
+              <Td>{r.vendor}</Td>
+              <Td right bold>{r.grvValue.toLocaleString()}</Td>
+              <Td muted>{r.debitNote}</Td>
+              <Td right>{r.dnValue > 0 ? r.dnValue.toLocaleString() : "—"}</Td>
+              <Td>{r.matched ? <Badge variant="outline" className="bg-emerald-100 text-emerald-700 border-emerald-300 text-[10px]">Yes</Badge> : <Badge variant="outline" className="bg-red-100 text-red-700 border-red-300 text-[10px]">No</Badge>}</Td>
+              <Td muted>{r.settledDate}</Td>
+              <Td>{statusBadge(r.status)}</Td>
+            </tr>
+          ))}
+        </tbody>
+      </Tbl>
+    </div>
+  );
+}
+
+function InvoiceRegisterReport() {
+  const total = mockInvoiceRegister.reduce((s, r) => s + r.totalAmt, 0);
+  const vatTotal = mockInvoiceRegister.reduce((s, r) => s + r.vat, 0);
+  return (
+    <div className="space-y-3">
+      <ReportHeader title="Purchase Invoice Register" subtitle="All vendor invoices with VAT and reference details" count={mockInvoiceRegister.length} />
+      <div className="grid grid-cols-3 gap-3">
+        <KpiCard label="Total Invoice Value" value={`AED ${total.toLocaleString()}`} sub="Gross with VAT" accent />
+        <KpiCard label="Total VAT (Input)" value={`AED ${vatTotal.toLocaleString()}`} sub="Recoverable" />
+        <KpiCard label="On Hold" value={String(mockInvoiceRegister.filter((r) => r.status === "On Hold").length)} sub="Awaiting clearance" />
+      </div>
+      <Tbl>
+        <thead>
+          <tr>
+            <Th>Invoice No.</Th>
+            <Th>Date</Th>
+            <Th>Vendor</Th>
+            <Th>GRN Ref</Th>
+            <Th>LPO Ref</Th>
+            <Th right>Taxable (AED)</Th>
+            <Th right>VAT (AED)</Th>
+            <Th right>Total (AED)</Th>
+            <Th>Due Date</Th>
+            <Th>Status</Th>
+          </tr>
+        </thead>
+        <tbody>
+          {mockInvoiceRegister.map((r) => (
+            <tr key={r.invNo} className="hover:bg-slate-50">
+              <Td bold>{r.invNo}</Td>
+              <Td muted>{r.date}</Td>
+              <Td>{r.vendor}</Td>
+              <Td muted>{r.grnRef}</Td>
+              <Td muted>{r.lpoRef}</Td>
+              <Td right>{r.taxableAmt.toLocaleString()}</Td>
+              <Td right>{r.vat.toLocaleString()}</Td>
+              <Td right bold>{r.totalAmt.toLocaleString()}</Td>
+              <Td muted>{r.dueDate}</Td>
+              <Td>{statusBadge(r.status)}</Td>
+            </tr>
+          ))}
+        </tbody>
+      </Tbl>
+    </div>
+  );
+}
+
+function InvoiceGrnVarianceReport() {
+  return (
+    <div className="space-y-3">
+      <ReportHeader title="Invoice vs GRN Variance" subtitle="Rate and value differences between invoices and goods received" count={mockInvGrnVariance.length} />
+      <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">
+        <Tbl>
+          <thead>
+            <tr>
+              <Th>Invoice No.</Th>
+              <Th>Vendor</Th>
+              <Th>GRN No.</Th>
+              <Th right>Inv Qty</Th>
+              <Th right>GRN Qty</Th>
+              <Th right>Qty Var</Th>
+              <Th right>Inv Rate</Th>
+              <Th right>GRN Rate</Th>
+              <Th right>Value Var (AED)</Th>
+              <Th>Status</Th>
+            </tr>
+          </thead>
+          <tbody>
+            {mockInvGrnVariance.map((r, i) => (
+              <tr key={i} className="hover:bg-slate-50">
+                <Td bold>{r.invNo}</Td>
+                <Td>{r.vendor}</Td>
+                <Td muted>{r.grnNo}</Td>
+                <Td right>{r.invQty}</Td>
+                <Td right>{r.grnQty}</Td>
+                <Td right>{r.qtyVar}</Td>
+                <Td right>{r.invRate.toFixed(2)}</Td>
+                <Td right>{r.grnRate.toFixed(2)}</Td>
+                <Td right>{r.valueVar !== 0 ? amtBadge(r.valueVar) : "—"}</Td>
+                <Td>{statusBadge(r.status === "Variance" ? "Overdue" : "Active")}</Td>
+              </tr>
+            ))}
+          </tbody>
+        </Tbl>
+        <Card className="border border-slate-200 bg-white">
+          <CardHeader className="py-3 px-3"><CardTitle className="text-xs font-semibold text-slate-800">Value Variance by Vendor</CardTitle></CardHeader>
+          <CardContent className="px-3 pb-3">
+            <ResponsiveContainer width="100%" height={220}>
+              <BarChart data={mockInvGrnVarianceChart}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                <XAxis dataKey="name" tick={{ fontSize: 9 }} />
+                <YAxis tick={{ fontSize: 9 }} />
+                <Tooltip contentStyle={{ fontSize: "11px" }} />
+                <Bar dataKey="variance" name="Variance (AED)" fill="#f97316" />
+              </BarChart>
+            </ResponsiveContainer>
+          </CardContent>
+        </Card>
+      </div>
+    </div>
+  );
+}
+
+function InvoiceLandedCostReport() {
+  return (
+    <div className="space-y-3">
+      <ReportHeader title="Landed Cost Allocation" subtitle="Freight, customs, handling allocated per purchase invoice" count={mockLandedCost.length} />
+      <div className="grid grid-cols-3 gap-3">
+        <KpiCard label="Total Invoice Value" value={`AED ${mockLandedCost.reduce((s, r) => s + r.invoiceValue, 0).toLocaleString()}`} sub="Before landed cost" accent />
+        <KpiCard label="Total Landed Costs" value={`AED ${mockLandedCost.reduce((s, r) => s + r.freight + r.customs + r.handling, 0).toLocaleString()}`} sub="Freight + customs + handling" />
+        <KpiCard label="Total NLC" value={`AED ${mockLandedCost.reduce((s, r) => s + r.total, 0).toLocaleString()}`} sub="Net landed cost" />
+      </div>
+      <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">
+        <Tbl>
+          <thead>
+            <tr>
+              <Th>Invoice No.</Th>
+              <Th>Vendor</Th>
+              <Th right>Invoice (AED)</Th>
+              <Th right>Freight (AED)</Th>
+              <Th right>Customs (AED)</Th>
+              <Th right>Handling (AED)</Th>
+              <Th right>Total NLC (AED)</Th>
+              <Th right>Items</Th>
+              <Th right>NLC/Item</Th>
+            </tr>
+          </thead>
+          <tbody>
+            {mockLandedCost.map((r) => (
+              <tr key={r.invNo} className="hover:bg-slate-50">
+                <Td bold>{r.invNo}</Td>
+                <Td>{r.vendor}</Td>
+                <Td right>{r.invoiceValue.toLocaleString()}</Td>
+                <Td right>{r.freight.toLocaleString()}</Td>
+                <Td right>{r.customs.toLocaleString()}</Td>
+                <Td right>{r.handling.toLocaleString()}</Td>
+                <Td right bold>{r.total.toLocaleString()}</Td>
+                <Td right>{r.items}</Td>
+                <Td right muted>{r.nlcPerItem.toFixed(2)}</Td>
+              </tr>
+            ))}
+          </tbody>
+        </Tbl>
+        <Card className="border border-slate-200 bg-white">
+          <CardHeader className="py-3 px-3"><CardTitle className="text-xs font-semibold text-slate-800">Cost Component Breakdown</CardTitle></CardHeader>
+          <CardContent className="px-3 pb-3">
+            <ResponsiveContainer width="100%" height={220}>
+              <BarChart data={mockLandedCostChart}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                <XAxis dataKey="name" tick={{ fontSize: 9 }} />
+                <YAxis tick={{ fontSize: 9 }} />
+                <Tooltip contentStyle={{ fontSize: "11px" }} />
+                <Legend wrapperStyle={{ fontSize: "10px" }} />
+                <Bar dataKey="invoice" name="Invoice" fill="#F5C742" stackId="a" />
+                <Bar dataKey="freight" name="Freight" fill="#3b82f6" stackId="a" />
+                <Bar dataKey="customs" name="Customs" fill="#f97316" stackId="a" />
+                <Bar dataKey="handling" name="Handling" fill="#10b981" stackId="a" />
+              </BarChart>
+            </ResponsiveContainer>
+          </CardContent>
+        </Card>
+      </div>
+    </div>
+  );
+}
+
+function InvoiceBackdatedReport() {
+  return (
+    <div className="space-y-3">
+      <ReportHeader title="Backdated Invoice Report" subtitle="Invoices posted after the period lock date" count={mockBackdatedInv.length} />
+      <div className="grid grid-cols-2 gap-3">
+        <KpiCard label="Backdated Invoices" value={String(mockBackdatedInv.length)} sub="Period violations" accent />
+        <KpiCard label="Total Backdated Value" value={`AED ${mockBackdatedInv.reduce((s, r) => s + r.value, 0).toLocaleString()}`} sub="Financial impact" />
+      </div>
+      <Tbl>
+        <thead>
+          <tr>
+            <Th>Invoice No.</Th>
+            <Th>Invoice Date</Th>
+            <Th>Post Date</Th>
+            <Th>Vendor</Th>
+            <Th right>Value (AED)</Th>
+            <Th>Posted By</Th>
+            <Th>Locked Period</Th>
+            <Th>Status</Th>
+          </tr>
+        </thead>
+        <tbody>
+          {mockBackdatedInv.map((r) => (
+            <tr key={r.invNo} className="hover:bg-slate-50">
+              <Td bold>{r.invNo}</Td>
+              <Td muted>{r.invDate}</Td>
+              <Td muted>{r.postDate}</Td>
+              <Td>{r.vendor}</Td>
+              <Td right bold>{r.value.toLocaleString()}</Td>
+              <Td>{r.postedBy}</Td>
+              <Td muted>{r.period}</Td>
+              <Td>{statusBadge("Overdue")}</Td>
+            </tr>
+          ))}
+        </tbody>
+      </Tbl>
+    </div>
+  );
+}
+
+function PaymentRegisterReport() {
+  const total = mockPaymentRegister.reduce((s, r) => s + r.amount, 0);
+  return (
+    <div className="space-y-3">
+      <ReportHeader title="Payment Voucher Register" subtitle="All vendor payments with mode and bank details" count={mockPaymentRegister.length} />
+      <div className="grid grid-cols-3 gap-3">
+        <KpiCard label="Total Payments" value={`AED ${total.toLocaleString()}`} sub="Period total" accent />
+        <KpiCard label="Bank Transfers" value={String(mockPaymentRegister.filter((r) => r.mode === "Bank Transfer").length)} sub="Transactions" />
+        <KpiCard label="Cheque / PDC" value={String(mockPaymentRegister.filter((r) => r.mode === "Cheque" || r.mode === "PDC").length)} sub="Instruments" />
+      </div>
+      <Tbl>
+        <thead>
+          <tr>
+            <Th>PV No.</Th>
+            <Th>Date</Th>
+            <Th>Vendor</Th>
+            <Th>Invoice Ref</Th>
+            <Th>Mode</Th>
+            <Th>Bank</Th>
+            <Th right>Amount (AED)</Th>
+            <Th>Status</Th>
+          </tr>
+        </thead>
+        <tbody>
+          {mockPaymentRegister.map((r) => (
+            <tr key={r.pvNo} className="hover:bg-slate-50">
+              <Td bold>{r.pvNo}</Td>
+              <Td muted>{r.date}</Td>
+              <Td>{r.vendor}</Td>
+              <Td muted>{r.invRef}</Td>
+              <Td muted>{r.mode}</Td>
+              <Td muted>{r.bank}</Td>
+              <Td right bold>{r.amount.toLocaleString()}</Td>
+              <Td>{statusBadge(r.status)}</Td>
+            </tr>
+          ))}
+        </tbody>
+      </Tbl>
+    </div>
+  );
+}
+
+function PaymentAgingReport() {
+  return (
+    <div className="space-y-3">
+      <ReportHeader title="Payment Aging & Delay" subtitle="Due vs actual payment analysis by vendor" count={mockPaymentAging.length} />
+      <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">
+        <Tbl>
+          <thead>
+            <tr>
+              <Th>Vendor</Th>
+              <Th right>Total (AED)</Th>
+              <Th right>Current</Th>
+              <Th right>0-30d</Th>
+              <Th right>31-60d</Th>
+              <Th right>60d+</Th>
+              <Th right>Avg Delay (days)</Th>
+            </tr>
+          </thead>
+          <tbody>
+            {mockPaymentAging.map((r) => (
+              <tr key={r.vendor} className="hover:bg-slate-50">
+                <Td bold>{r.vendor}</Td>
+                <Td right bold>{r.total.toLocaleString()}</Td>
+                <Td right>{r.overdue0.toLocaleString()}</Td>
+                <Td right>{r.overdue30.toLocaleString()}</Td>
+                <Td right>{r.overdue60.toLocaleString()}</Td>
+                <Td right><span className={r.overdue90plus > 0 ? "text-red-600 font-semibold" : "text-slate-500"}>{r.overdue90plus.toLocaleString()}</span></Td>
+                <Td right><span className={r.avgDelay > 15 ? "text-red-600 font-semibold" : "text-emerald-700 font-semibold"}>{r.avgDelay}</span></Td>
+              </tr>
+            ))}
+          </tbody>
+        </Tbl>
+        <Card className="border border-slate-200 bg-white">
+          <CardHeader className="py-3 px-3"><CardTitle className="text-xs font-semibold text-slate-800">Aging Distribution by Vendor</CardTitle></CardHeader>
+          <CardContent className="px-3 pb-3">
+            <ResponsiveContainer width="100%" height={220}>
+              <BarChart data={mockPaymentAgingChart}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                <XAxis dataKey="name" tick={{ fontSize: 9 }} />
+                <YAxis tick={{ fontSize: 9 }} />
+                <Tooltip contentStyle={{ fontSize: "11px" }} />
+                <Legend wrapperStyle={{ fontSize: "10px" }} />
+                <Bar dataKey="current" name="Current" fill="#10b981" stackId="a" />
+                <Bar dataKey="d30" name="0-30d" fill="#F5C742" stackId="a" />
+                <Bar dataKey="d60" name="31-60d" fill="#f97316" stackId="a" />
+                <Bar dataKey="d90" name="60d+" fill="#ef4444" stackId="a" />
+              </BarChart>
+            </ResponsiveContainer>
+          </CardContent>
+        </Card>
+      </div>
+    </div>
+  );
+}
+
+function PaymentChequeTrackingReport() {
+  return (
+    <div className="space-y-3">
+      <ReportHeader title="Cheque / PDC Tracking" subtitle="Post-dated cheques with clearance status" count={mockChequeTracking.length} />
+      <div className="grid grid-cols-3 gap-3">
+        <KpiCard label="Total Cheque Value" value={`AED ${mockChequeTracking.reduce((s, r) => s + r.amount, 0).toLocaleString()}`} sub="All instruments" accent />
+        <KpiCard label="Cleared" value={String(mockChequeTracking.filter((r) => r.status === "Cleared").length)} sub="Cheques" />
+        <KpiCard label="Bounced / Pending" value={String(mockChequeTracking.filter((r) => r.status !== "Cleared").length)} sub="Requires attention" />
+      </div>
+      <Tbl>
+        <thead>
+          <tr>
+            <Th>Cheque No.</Th>
+            <Th>Vendor</Th>
+            <Th>Bank</Th>
+            <Th>Branch</Th>
+            <Th right>Amount (AED)</Th>
+            <Th>Cheque Date</Th>
+            <Th>PV No.</Th>
+            <Th>Cleared Date</Th>
+            <Th>Status</Th>
+          </tr>
+        </thead>
+        <tbody>
+          {mockChequeTracking.map((r) => (
+            <tr key={r.chequeNo} className="hover:bg-slate-50">
+              <Td bold>{r.chequeNo}</Td>
+              <Td>{r.vendor}</Td>
+              <Td muted>{r.bank}</Td>
+              <Td muted>{r.branch}</Td>
+              <Td right bold>{r.amount.toLocaleString()}</Td>
+              <Td muted>{r.chequeDate}</Td>
+              <Td muted>{r.pvNo}</Td>
+              <Td muted>{r.clearedDate}</Td>
+              <Td>{statusBadge(r.status)}</Td>
+            </tr>
+          ))}
+        </tbody>
+      </Tbl>
+    </div>
+  );
+}
+
+function PaymentAdvanceReport() {
+  return (
+    <div className="space-y-3">
+      <ReportHeader title="Advance Payment Utilization" subtitle="Vendor advances with adjustment and balance tracking" count={mockAdvancePayment.length} />
+      <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">
+        <div className="space-y-3">
+          <div className="grid grid-cols-2 gap-3">
+            <KpiCard label="Total Advances" value={`AED ${mockAdvancePayment.reduce((s, r) => s + r.advAmount, 0).toLocaleString()}`} sub="Given to vendors" accent />
+            <KpiCard label="Unadjusted Balance" value={`AED ${mockAdvancePayment.reduce((s, r) => s + r.balance, 0).toLocaleString()}`} sub="Remaining" />
+          </div>
+          <Tbl>
+            <thead>
+              <tr>
+                <Th>PV No.</Th>
+                <Th>Vendor</Th>
+                <Th>Adv Date</Th>
+                <Th right>Advance (AED)</Th>
+                <Th right>Adjusted (AED)</Th>
+                <Th right>Balance (AED)</Th>
+                <Th>Last Adj</Th>
+                <Th>Status</Th>
+              </tr>
+            </thead>
+            <tbody>
+              {mockAdvancePayment.map((r) => (
+                <tr key={r.pvNo} className="hover:bg-slate-50">
+                  <Td bold>{r.pvNo}</Td>
+                  <Td>{r.vendor}</Td>
+                  <Td muted>{r.advDate}</Td>
+                  <Td right bold>{r.advAmount.toLocaleString()}</Td>
+                  <Td right>{r.adjusted.toLocaleString()}</Td>
+                  <Td right><span className={r.balance > 0 ? "text-amber-700 font-semibold" : "text-emerald-700 font-semibold"}>{r.balance.toLocaleString()}</span></Td>
+                  <Td muted>{r.lastAdj}</Td>
+                  <Td>{statusBadge(r.status === "Open" ? "Open" : "Closed")}</Td>
+                </tr>
+              ))}
+            </tbody>
+          </Tbl>
+        </div>
+        <Card className="border border-slate-200 bg-white">
+          <CardHeader className="py-3 px-3"><CardTitle className="text-xs font-semibold text-slate-800">Advance vs Adjusted vs Balance</CardTitle></CardHeader>
+          <CardContent className="px-3 pb-3">
+            <ResponsiveContainer width="100%" height={220}>
+              <BarChart data={mockAdvChart}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                <XAxis dataKey="vendor" tick={{ fontSize: 9 }} />
+                <YAxis tick={{ fontSize: 9 }} />
+                <Tooltip contentStyle={{ fontSize: "11px" }} />
+                <Legend wrapperStyle={{ fontSize: "10px" }} />
+                <Bar dataKey="advance" name="Advance" fill="#F5C742" />
+                <Bar dataKey="adjusted" name="Adjusted" fill="#10b981" />
+                <Bar dataKey="balance" name="Balance" fill="#f97316" />
+              </BarChart>
+            </ResponsiveContainer>
+          </CardContent>
+        </Card>
+      </div>
+    </div>
+  );
+}
+
+function DebitNoteRegisterReport() {
+  const total = mockDebitNoteRegister.reduce((s, r) => s + r.amount, 0);
+  return (
+    <div className="space-y-3">
+      <ReportHeader title="Debit Note Register" subtitle="All vendor debit notes with reason and settlement status" count={mockDebitNoteRegister.length} />
+      <div className="grid grid-cols-3 gap-3">
+        <KpiCard label="Total Debit Notes" value={`AED ${total.toLocaleString()}`} sub="Period total" accent />
+        <KpiCard label="Settled" value={String(mockDebitNoteRegister.filter((r) => r.status === "Settled").length)} sub="Recovered" />
+        <KpiCard label="Pending / Rejected" value={String(mockDebitNoteRegister.filter((r) => r.status !== "Settled").length)} sub="Open" />
+      </div>
+      <Tbl>
+        <thead>
+          <tr>
+            <Th>DN No.</Th>
+            <Th>Date</Th>
+            <Th>Vendor</Th>
+            <Th>GRV Ref</Th>
+            <Th>Reason</Th>
+            <Th right>Amount (AED)</Th>
+            <Th>Settled Date</Th>
+            <Th>Status</Th>
+          </tr>
+        </thead>
+        <tbody>
+          {mockDebitNoteRegister.map((r) => (
+            <tr key={r.dnNo} className="hover:bg-slate-50">
+              <Td bold>{r.dnNo}</Td>
+              <Td muted>{r.date}</Td>
+              <Td>{r.vendor}</Td>
+              <Td muted>{r.grvNo}</Td>
+              <Td muted>{r.reason}</Td>
+              <Td right bold>{r.amount.toLocaleString()}</Td>
+              <Td muted>{r.settledDate}</Td>
+              <Td>{statusBadge(r.status)}</Td>
+            </tr>
+          ))}
+        </tbody>
+      </Tbl>
+    </div>
+  );
+}
+
+function ClaimSettlementReport() {
+  return (
+    <div className="space-y-3">
+      <ReportHeader title="Claim Settlement Status" subtitle="Lifecycle tracking: issued → accepted → settled / rejected" count={mockClaimSettlement.length} />
+      <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">
+        <div className="space-y-3">
+          <div className="grid grid-cols-2 gap-3">
+            <KpiCard label="Settled Claims" value={String(mockClaimSettlement.filter((r) => r.status === "Settled").length)} sub="Resolved" accent />
+            <KpiCard label="Avg Settlement Days" value={`${Math.round(mockClaimSettlement.filter((r) => r.status === "Settled").reduce((s, r) => s + r.daysToSettle, 0) / mockClaimSettlement.filter((r) => r.status === "Settled").length)} days`} sub="For settled claims" />
+          </div>
+          <Tbl>
+            <thead>
+              <tr>
+                <Th>Claim No.</Th>
+                <Th>Vendor</Th>
+                <Th right>Amount (AED)</Th>
+                <Th>Issue Date</Th>
+                <Th>Settle Date</Th>
+                <Th right>Days</Th>
+                <Th>Status</Th>
+              </tr>
+            </thead>
+            <tbody>
+              {mockClaimSettlement.map((r) => (
+                <tr key={r.claimNo} className="hover:bg-slate-50">
+                  <Td bold>{r.claimNo}</Td>
+                  <Td>{r.vendor}</Td>
+                  <Td right bold>{r.amount.toLocaleString()}</Td>
+                  <Td muted>{r.issueDate}</Td>
+                  <Td muted>{r.settleDate}</Td>
+                  <Td right muted>{r.daysToSettle}</Td>
+                  <Td>{statusBadge(r.status)}</Td>
+                </tr>
+              ))}
+            </tbody>
+          </Tbl>
+        </div>
+        <Card className="border border-slate-200 bg-white">
+          <CardHeader className="py-3 px-3"><CardTitle className="text-xs font-semibold text-slate-800">Claims by Status</CardTitle></CardHeader>
+          <CardContent className="px-3 pb-3">
+            <ResponsiveContainer width="100%" height={220}>
+              <PieChart>
+                <Pie data={mockClaimStatusChart} cx="50%" cy="50%" outerRadius={75} dataKey="value" label={({ name, value }) => `${name}: ${value}`} labelLine={false}>
+                  {mockClaimStatusChart.map((_, i) => <Cell key={i} fill={PIE_COLORS[i % PIE_COLORS.length]} />)}
+                </Pie>
+                <Tooltip contentStyle={{ fontSize: "11px" }} />
+              </PieChart>
+            </ResponsiveContainer>
+          </CardContent>
+        </Card>
+      </div>
+    </div>
+  );
+}
+
+function VendorClaimHistoryReport() {
+  return (
+    <div className="space-y-3">
+      <ReportHeader title="Vendor Claim History" subtitle="Claim frequency, values, and settlement performance by vendor" count={mockVendorClaimHistory.length} />
+      <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">
+        <Tbl>
+          <thead>
+            <tr>
+              <Th>Vendor</Th>
+              <Th right>Total Claims</Th>
+              <Th right>Settled</Th>
+              <Th right>Rejected</Th>
+              <Th right>Pending</Th>
+              <Th right>Total Value (AED)</Th>
+              <Th right>Avg Settle Days</Th>
+              <Th>Last Claim</Th>
+            </tr>
+          </thead>
+          <tbody>
+            {mockVendorClaimHistory.map((r) => (
+              <tr key={r.vendor} className="hover:bg-slate-50">
+                <Td bold>{r.vendor}</Td>
+                <Td right>{r.totalClaims}</Td>
+                <Td right><span className="text-emerald-700 font-semibold">{r.settled}</span></Td>
+                <Td right><span className="text-red-600 font-semibold">{r.rejected}</span></Td>
+                <Td right><span className="text-amber-700 font-semibold">{r.pending}</span></Td>
+                <Td right bold>{r.totalValue.toLocaleString()}</Td>
+                <Td right muted>{r.avgSettleDays}</Td>
+                <Td muted>{r.lastClaimDate}</Td>
+              </tr>
+            ))}
+          </tbody>
+        </Tbl>
+        <Card className="border border-slate-200 bg-white">
+          <CardHeader className="py-3 px-3"><CardTitle className="text-xs font-semibold text-slate-800">Settled vs Rejected vs Pending by Vendor</CardTitle></CardHeader>
+          <CardContent className="px-3 pb-3">
+            <ResponsiveContainer width="100%" height={220}>
+              <BarChart data={mockVendorClaimChart}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                <XAxis dataKey="name" tick={{ fontSize: 9 }} />
+                <YAxis tick={{ fontSize: 9 }} />
+                <Tooltip contentStyle={{ fontSize: "11px" }} />
+                <Legend wrapperStyle={{ fontSize: "10px" }} />
+                <Bar dataKey="settled" name="Settled" fill="#10b981" />
+                <Bar dataKey="rejected" name="Rejected" fill="#ef4444" />
+                <Bar dataKey="pending" name="Pending" fill="#F5C742" />
+              </BarChart>
+            </ResponsiveContainer>
+          </CardContent>
+        </Card>
+      </div>
+    </div>
+  );
+}
+
+function VatInputRegisterReport() {
+  const totalTaxable = mockVatInput.reduce((s, r) => s + r.taxableAmt, 0);
+  const totalVat = mockVatInput.reduce((s, r) => s + r.vatAmt, 0);
+  return (
+    <div className="space-y-3">
+      <ReportHeader title="VAT Input Register (UAE)" subtitle="Input tax register for FTA filing — all taxable purchases" count={mockVatInput.length} />
+      <div className="grid grid-cols-3 gap-3">
+        <KpiCard label="Total Taxable Value" value={`AED ${totalTaxable.toLocaleString()}`} sub="Excl. VAT" accent />
+        <KpiCard label="Total Input VAT" value={`AED ${totalVat.toLocaleString()}`} sub="Recoverable @ 5%" />
+        <KpiCard label="Total Incl. VAT" value={`AED ${(totalTaxable + totalVat).toLocaleString()}`} sub="Gross" />
+      </div>
+      <Tbl>
+        <thead>
+          <tr>
+            <Th>Invoice No.</Th>
+            <Th>Date</Th>
+            <Th>Vendor</Th>
+            <Th>TRN</Th>
+            <Th right>Taxable (AED)</Th>
+            <Th right>VAT (AED)</Th>
+            <Th right>Total (AED)</Th>
+            <Th>VAT Rate</Th>
+            <Th>Period</Th>
+          </tr>
+        </thead>
+        <tbody>
+          {mockVatInput.map((r) => (
+            <tr key={r.invNo} className="hover:bg-slate-50">
+              <Td bold>{r.invNo}</Td>
+              <Td muted>{r.invDate}</Td>
+              <Td>{r.vendor}</Td>
+              <Td muted>{r.trn}</Td>
+              <Td right>{r.taxableAmt.toLocaleString()}</Td>
+              <Td right><span className="text-blue-700 font-semibold">{r.vatAmt.toLocaleString()}</span></Td>
+              <Td right bold>{r.totalAmt.toLocaleString()}</Td>
+              <Td muted>{r.vatRate}</Td>
+              <Td muted>{r.period}</Td>
+            </tr>
+          ))}
+        </tbody>
+      </Tbl>
+    </div>
+  );
+}
+
+function PeriodLockViolationsReport() {
+  return (
+    <div className="space-y-3">
+      <ReportHeader title="Period Lock Violation Report" subtitle="Transactions posted into closed accounting periods" count={mockPeriodLockViolations.length} />
+      <div className="grid grid-cols-3 gap-3">
+        <KpiCard label="Total Violations" value={String(mockPeriodLockViolations.length)} sub="This period" accent />
+        <KpiCard label="Periods Breached" value="1" sub="Apr-2026" />
+        <KpiCard label="Users Involved" value={String(new Set(mockPeriodLockViolations.map((r) => r.user)).size)} sub="Unique users" />
+      </div>
+      <Tbl>
+        <thead>
+          <tr>
+            <Th>Ref No.</Th>
+            <Th>Type</Th>
+            <Th>Transaction Date</Th>
+            <Th>Post Date</Th>
+            <Th>Locked Period</Th>
+            <Th>User</Th>
+            <Th>Reason</Th>
+          </tr>
+        </thead>
+        <tbody>
+          {mockPeriodLockViolations.map((r, i) => (
+            <tr key={i} className="hover:bg-slate-50">
+              <Td bold>{r.refNo}</Td>
+              <Td muted>{r.type}</Td>
+              <Td muted>{r.txDate}</Td>
+              <Td muted>{r.postDate}</Td>
+              <Td><Badge variant="outline" className="bg-red-100 text-red-700 border-red-300 text-[10px]">{r.lockedPeriod}</Badge></Td>
+              <Td>{r.user}</Td>
+              <Td muted>{r.reason}</Td>
+            </tr>
+          ))}
+        </tbody>
+      </Tbl>
+    </div>
+  );
+}
+
+function MissingDocumentsReport() {
+  return (
+    <div className="space-y-3">
+      <ReportHeader title="Missing Document Report" subtitle="GRNs, invoices, and payments with missing required documents" count={mockMissingDocuments.length} />
+      <div className="grid grid-cols-3 gap-3">
+        <KpiCard label="Total Issues" value={String(mockMissingDocuments.length)} sub="Open items" accent />
+        <KpiCard label="Critical" value={String(mockMissingDocuments.filter((r) => r.status === "Critical").length)} sub="High priority" />
+        <KpiCard label="Total Value at Risk" value={`AED ${mockMissingDocuments.reduce((s, r) => s + r.value, 0).toLocaleString()}`} sub="Unverified transactions" />
+      </div>
+      <Tbl>
+        <thead>
+          <tr>
+            <Th>Ref No.</Th>
+            <Th>Issue Type</Th>
+            <Th>Vendor</Th>
+            <Th>Date</Th>
+            <Th right>Value (AED)</Th>
+            <Th right>Days Open</Th>
+            <Th>Priority</Th>
+          </tr>
+        </thead>
+        <tbody>
+          {mockMissingDocuments.map((r, i) => (
+            <tr key={i} className="hover:bg-slate-50">
+              <Td bold>{r.refNo}</Td>
+              <Td>{r.type}</Td>
+              <Td>{r.vendor}</Td>
+              <Td muted>{r.date}</Td>
+              <Td right bold>{r.value.toLocaleString()}</Td>
+              <Td right><span className={r.daysOpen > 14 ? "text-red-600 font-bold" : "text-amber-600 font-semibold"}>{r.daysOpen}</span></Td>
+              <Td>{r.status === "Critical" ? <Badge variant="outline" className="bg-red-100 text-red-700 border-red-300 text-[10px]">Critical</Badge> : <Badge variant="outline" className="bg-amber-100 text-amber-700 border-amber-300 text-[10px]">Warning</Badge>}</Td>
+            </tr>
+          ))}
+        </tbody>
+      </Tbl>
+    </div>
+  );
+}
+
+function AuditTrailReport() {
+  const actionColors: Record<string, string> = {
+    Edit: "bg-amber-100 text-amber-700 border-amber-300",
+    Delete: "bg-red-100 text-red-700 border-red-300",
+    Create: "bg-emerald-100 text-emerald-700 border-emerald-300",
+    Approve: "bg-blue-100 text-blue-700 border-blue-300",
+    Post: "bg-purple-100 text-purple-700 border-purple-300",
+  };
+  return (
+    <div className="space-y-3">
+      <ReportHeader title="Audit Trail Report" subtitle="Complete user action log with before/after values" count={mockAuditTrail.length} />
+      <div className="grid grid-cols-3 gap-3">
+        <KpiCard label="Total Actions" value={String(mockAuditTrail.length)} sub="Last 48 hours shown" accent />
+        <KpiCard label="Edit / Delete Actions" value={String(mockAuditTrail.filter((r) => r.action === "Edit" || r.action === "Delete").length)} sub="High-risk actions" />
+        <KpiCard label="Users Active" value={String(new Set(mockAuditTrail.map((r) => r.user)).size)} sub="Unique users" />
+      </div>
+      <Tbl>
+        <thead>
+          <tr>
+            <Th>Timestamp</Th>
+            <Th>User</Th>
+            <Th>Action</Th>
+            <Th>Module</Th>
+            <Th>Ref No.</Th>
+            <Th>Field</Th>
+            <Th>Before</Th>
+            <Th>After</Th>
+          </tr>
+        </thead>
+        <tbody>
+          {mockAuditTrail.map((r, i) => (
+            <tr key={i} className="hover:bg-slate-50">
+              <Td muted>{r.timestamp}</Td>
+              <Td bold>{r.user}</Td>
+              <Td><Badge variant="outline" className={`text-[10px] ${actionColors[r.action] ?? "bg-slate-100 text-slate-600 border-slate-300"}`}>{r.action}</Badge></Td>
+              <Td>{r.module}</Td>
+              <Td muted>{r.refNo}</Td>
+              <Td muted>{r.field}</Td>
+              <Td muted>{r.before}</Td>
+              <Td>{r.after !== "-" ? <span className="text-emerald-700 font-semibold">{r.after}</span> : "—"}</Td>
+            </tr>
+          ))}
+        </tbody>
+      </Tbl>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Main component
+// ---------------------------------------------------------------------------
+
+export default function VendorsPurchasesReports({ onNavigate }: { onNavigate?: (s: string) => void }) {
+  const [activeReport, setActiveReport] = useState<ReportId>("vendor-master");
+  const [query, setQuery] = useState("");
+  const [groupOpen, setGroupOpen] = useState<Record<ReportGroupId, boolean>>({
+    vendor: true,
+    lpo: true,
+    grn: false,
+    grv: false,
+    invoice: false,
+    payment: false,
+    claim: false,
+    compliance: false,
+  });
+
+  // Filters
+  const [dateFrom, setDateFrom] = useState("2026-05-01");
+  const [dateTo, setDateTo] = useState("2026-05-22");
+  const [vendor, setVendor] = useState("All");
+  const [branch, setBranch] = useState("All");
+  const [, setDataRevision] = useState(0);
+
+  useEffect(() => {
+    // Phase 2: Add actual backend API fetching logic here
+    const controller = new AbortController();
+    async function fetchReport() {
+      try {
+        let data = null;
+        // Example: data = await getVendors();
+        if (data) {
+          applyLiveReportData(activeReport, data);
+          setDataRevision((r) => r + 1);
+        }
+      } catch (err) {
+        console.error("Failed to fetch report data", err);
+      }
+    }
+    fetchReport();
+    return () => controller.abort();
+  }, [activeReport, dateFrom, dateTo, vendor, branch]);
+
+  const activeDef = useMemo(() => REPORTS.find((r) => r.id === activeReport)!, [activeReport]);
+
+  const groupMeta: Record<ReportGroupId, { label: string; icon: React.ReactNode }> = {
+    vendor: { label: "Vendor Management", icon: <Users className="h-4 w-4" /> },
+    lpo: { label: "LPO / Purchase Orders", icon: <FileText className="h-4 w-4" /> },
+    grn: { label: "GRN / Goods Receipt", icon: <Package className="h-4 w-4" /> },
+    grv: { label: "GRV / Goods Returns", icon: <RefreshCw className="h-4 w-4" /> },
+    invoice: { label: "Purchase Invoices", icon: <Receipt className="h-4 w-4" /> },
+    payment: { label: "Payments & Banking", icon: <DollarSign className="h-4 w-4" /> },
+    claim: { label: "Claims & Debit Notes", icon: <AlertTriangle className="h-4 w-4" /> },
+    compliance: { label: "Compliance & Audit", icon: <Shield className="h-4 w-4" /> },
+  };
+
+  const filteredReports = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return REPORTS;
+    return REPORTS.filter((r) => {
+      const hay = `${r.label} ${r.description} ${(r.tags || []).join(" ")}`.toLowerCase();
+      return hay.includes(q);
+    });
+  }, [query]);
+
+  const filteredGrouped = useMemo(() => {
+    const byGroup: Record<ReportGroupId, ReportDef[]> = {
+      vendor: [], lpo: [], grn: [], grv: [], invoice: [], payment: [], claim: [], compliance: [],
+    };
+    for (const r of filteredReports) byGroup[r.group].push(r);
+    return byGroup;
+  }, [filteredReports]);
+
+  function renderResults() {
+    switch (activeReport) {
+      case "vendor-master": return <VendorMasterReport />;
+      case "vendor-aging": return <VendorAgingReport />;
+      case "vendor-performance": return <VendorPerformanceReport />;
+      case "vendor-price-history": return <VendorPriceHistoryReport />;
+      case "vendor-contract-compliance": return <VendorContractComplianceReport />;
+      case "lpo-register": return <LpoRegisterReport />;
+      case "lpo-fulfillment": return <LpoFulfillmentReport />;
+      case "lpo-aging": return <LpoAgingReport />;
+      case "lpo-cancelled": return <LpoCancelledReport />;
+      case "grn-register": return <GrnRegisterReport />;
+      case "grn-variance": return <GrnVarianceReport />;
+      case "grn-batch-expiry": return <GrnBatchExpiryReport />;
+      case "grn-qc-rejection": return <GrnQcRejectionReport />;
+      case "grv-register": return <GrvRegisterReport />;
+      case "grv-reason-analysis": return <GrvReasonAnalysisReport />;
+      case "grv-replacement-pending": return <GrvReplacementPendingReport />;
+      case "grv-debit-note-mapping": return <GrvDebitNoteMappingReport />;
+      case "invoice-register": return <InvoiceRegisterReport />;
+      case "invoice-grn-variance": return <InvoiceGrnVarianceReport />;
+      case "invoice-landed-cost": return <InvoiceLandedCostReport />;
+      case "invoice-backdated": return <InvoiceBackdatedReport />;
+      case "payment-register": return <PaymentRegisterReport />;
+      case "payment-aging": return <PaymentAgingReport />;
+      case "payment-cheque-tracking": return <PaymentChequeTrackingReport />;
+      case "payment-advance": return <PaymentAdvanceReport />;
+      case "debit-note-register": return <DebitNoteRegisterReport />;
+      case "claim-settlement": return <ClaimSettlementReport />;
+      case "vendor-claim-history": return <VendorClaimHistoryReport />;
+      case "vat-input-register": return <VatInputRegisterReport />;
+      case "period-lock-violations": return <PeriodLockViolationsReport />;
+      case "missing-documents": return <MissingDocumentsReport />;
+      case "audit-trail": return <AuditTrailReport />;
+      default: return null;
+    }
+  }
+
+  return (
+    <div className="min-h-screen bg-[#F7F7FA] text-slate-900 p-5">
+      {/* Header */}
+      <div className="flex items-center justify-between gap-3 mb-4">
+        <div className="flex items-center gap-2 text-[11px] text-slate-500">
+          <span
+            className="cursor-pointer hover:text-slate-700"
+            onClick={() => onNavigate?.("home")}
+          >
+            BillBull
+          </span>
+          <ChevronRight className="h-3 w-3" />
+          <span>Vendors &amp; Purchases</span>
+          <ChevronRight className="h-3 w-3" />
+          <span className="font-medium text-slate-700">Reports</span>
+        </div>
+
+        <div className="flex items-center gap-2">
+          <Button variant="ghost" size="sm" className="text-[11px] text-slate-600 flex items-center gap-1">
+            <FileText className="h-3 w-3" />
+            PDF
+          </Button>
+          <Button variant="ghost" size="sm" className="text-[11px] text-slate-600 flex items-center gap-1">
+            <FileSpreadsheet className="h-3 w-3" />
+            Excel
+          </Button>
+          <Button variant="ghost" size="sm" className="text-[11px] text-slate-600 flex items-center gap-1">
+            <Printer className="h-3 w-3" />
+            Print
+          </Button>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 xl:grid-cols-[0.95fr_2.05fr] gap-4">
+        {/* Left: Report picker */}
+        <motion.div
+          initial={{ opacity: 0, x: -6 }}
+          animate={{ opacity: 1, x: 0 }}
+          transition={{ duration: 0.15 }}
+          className="space-y-3"
+        >
+          <Card className="border border-slate-200 bg-white">
+            <CardHeader className="py-3 px-3">
+              <CardTitle className="text-xs font-semibold text-slate-800">
+                Vendors &amp; Purchases Reports
+              </CardTitle>
+              <span className="text-[10px] text-slate-500">
+                Vendor • LPO • GRN • GRV • Invoice • Payment • Compliance
+              </span>
+            </CardHeader>
+            <CardContent className="px-3 pb-3 space-y-2">
+              <div className="relative">
+                <Search className="absolute left-2 top-2.5 h-4 w-4 text-slate-400" />
+                <Input
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                  placeholder="Search reports…"
+                  className="pl-8 pr-3 py-1 h-9 rounded-full text-xs bg-slate-50 border-none focus-visible:ring-0 focus-visible:ring-offset-0"
+                />
+              </div>
+
+              <Separator />
+
+              {(Object.keys(groupMeta) as ReportGroupId[]).map((gid) => (
+                <div key={gid} className="rounded-lg border border-slate-200 bg-slate-50/60">
+                  <button
+                    className="w-full px-3 py-2 flex items-center justify-between text-left"
+                    onClick={() => setGroupOpen((p) => ({ ...p, [gid]: !p[gid] }))}
+                  >
+                    <div className="flex items-center gap-2">
+                      <span className="text-slate-500">{groupMeta[gid].icon}</span>
+                      <div className="flex flex-col">
+                        <span className="text-[11px] font-medium text-slate-800">
+                          {groupMeta[gid].label}
+                        </span>
+                        <span className="text-[10px] text-slate-500">
+                          {filteredGrouped[gid].length} report(s)
+                        </span>
+                      </div>
+                    </div>
+                    {groupOpen[gid] ? (
+                      <ChevronDown className="h-3.5 w-3.5 text-slate-500" />
+                    ) : (
+                      <ChevronRight className="h-3.5 w-3.5 text-slate-500" />
+                    )}
+                  </button>
+
+                  {groupOpen[gid] && (
+                    <div className="px-2 pb-2">
+                      {filteredGrouped[gid].map((r) => {
+                        const isActive = r.id === activeReport;
+                        return (
+                          <button
+                            key={r.id}
+                            onClick={() => setActiveReport(r.id)}
+                            className={`w-full mt-1 rounded-lg px-2 py-2 text-left border transition-colors ${
+                              isActive
+                                ? "border-[#F5C742] bg-[#FFF6D8]"
+                                : "border-slate-200 bg-white hover:bg-slate-50"
+                            }`}
+                          >
+                            <div className="flex items-start justify-between gap-2">
+                              <div className="flex flex-col">
+                                <span className="text-[11px] font-medium text-slate-800">
+                                  {r.label}
+                                </span>
+                                <span className="text-[10px] text-slate-500">
+                                  {r.description}
+                                </span>
+                              </div>
+                              <Badge
+                                variant="outline"
+                                className={`text-[9px] shrink-0 ${
+                                  r.kind === "table+chart"
+                                    ? "bg-amber-50 text-amber-700 border-amber-200"
+                                    : "bg-slate-50 text-slate-700 border-slate-200"
+                                }`}
+                              >
+                                {r.kind === "table+chart" ? "Chart" : "Table"}
+                              </Badge>
+                            </div>
+
+                            {r.tags?.length ? (
+                              <div className="flex flex-wrap gap-1 mt-1.5">
+                                {r.tags.slice(0, 3).map((t) => (
+                                  <span
+                                    key={t}
+                                    className="text-[9px] px-1.5 py-0.5 rounded-full bg-slate-50 border border-slate-200 text-slate-600"
+                                  >
+                                    {t}
+                                  </span>
+                                ))}
+                              </div>
+                            ) : null}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </CardContent>
+          </Card>
+
+          <Card className="border border-slate-200 bg-white">
+            <CardHeader className="py-3 px-3">
+              <CardTitle className="text-xs font-semibold text-slate-800">
+                Quick guidance
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="px-3 pb-3 text-[11px] text-slate-600 space-y-2">
+              <div className="flex items-start gap-2">
+                <CheckCircle2 className="h-4 w-4 text-emerald-600 mt-0.5 shrink-0" />
+                <span>
+                  Start with <b>Vendor Aging</b> and <b>LPO Register</b> for an immediate payables overview.
+                </span>
+              </div>
+              <div className="flex items-start gap-2">
+                <AlertTriangle className="h-4 w-4 text-amber-600 mt-0.5 shrink-0" />
+                <span>
+                  Run <b>VAT Input Register</b> monthly before FTA filing; check <b>Missing Documents</b> weekly.
+                </span>
+              </div>
+            </CardContent>
+          </Card>
+        </motion.div>
+
+        {/* Right: Filters + Results */}
+        <motion.div
+          initial={{ opacity: 0, y: 6 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.15 }}
+          className="space-y-3"
+        >
+          {/* Filters */}
+          <Card className="border border-slate-200 bg-white">
+            <CardHeader className="py-3 px-3 flex flex-row items-center justify-between">
+              <div className="flex flex-col gap-0.5">
+                <CardTitle className="text-xs font-semibold text-slate-800">Filters</CardTitle>
+                <span className="text-[10px] text-slate-500">
+                  Applied to: <b>{activeDef.label}</b>
+                </span>
+              </div>
+              <Button
+                size="sm"
+                variant="outline"
+                className="h-7 px-3 text-[11px] rounded-full border-[#F5C742]/70 bg-[#FFF6D8] flex items-center gap-1"
+              >
+                <Filter className="h-3.5 w-3.5" />
+                Advanced
+              </Button>
+            </CardHeader>
+            <CardContent className="px-3 pb-3">
+              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3">
+                <div className="space-y-1.5">
+                  <label className="text-[11px] text-slate-600 flex items-center gap-1">
+                    <Calendar className="h-3.5 w-3.5" />
+                    Date From
+                  </label>
+                  <Input
+                    type="date"
+                    value={dateFrom}
+                    onChange={(e) => setDateFrom(e.target.value)}
+                    className="h-8 text-[11px] bg-slate-50 border-slate-200"
+                  />
+                </div>
+
+                <div className="space-y-1.5">
+                  <label className="text-[11px] text-slate-600 flex items-center gap-1">
+                    <Calendar className="h-3.5 w-3.5" />
+                    Date To
+                  </label>
+                  <Input
+                    type="date"
+                    value={dateTo}
+                    onChange={(e) => setDateTo(e.target.value)}
+                    className="h-8 text-[11px] bg-slate-50 border-slate-200"
+                  />
+                </div>
+
+                <div className="space-y-1.5">
+                  <label className="text-[11px] text-slate-600 flex items-center gap-1">
+                    <Truck className="h-3.5 w-3.5" />
+                    Vendor
+                  </label>
+                  <select
+                    value={vendor}
+                    onChange={(e) => setVendor(e.target.value)}
+                    className="w-full h-8 text-[11px] rounded-lg border border-slate-200 bg-slate-50 px-2"
+                  >
+                    <option>All</option>
+                    <option>Gulf FMCG Co.</option>
+                    <option>Global Supplies LLC</option>
+                    <option>Metro Traders</option>
+                    <option>Tech Solutions Ltd</option>
+                    <option>Desert Frozen Foods</option>
+                    <option>Prime Distributors</option>
+                  </select>
+                </div>
+
+                <div className="space-y-1.5">
+                  <label className="text-[11px] text-slate-600 flex items-center gap-1">
+                    <Building2 className="h-3.5 w-3.5" />
+                    Branch
+                  </label>
+                  <select
+                    value={branch}
+                    onChange={(e) => setBranch(e.target.value)}
+                    className="w-full h-8 text-[11px] rounded-lg border border-slate-200 bg-slate-50 px-2"
+                  >
+                    <option>All</option>
+                    <option>Main Branch</option>
+                    <option>Dubai Branch</option>
+                    <option>Abu Dhabi Branch</option>
+                  </select>
+                </div>
+
+                <div className="space-y-1.5 col-span-2">
+                  <label className="text-[11px] text-slate-600">
+                    Item / SKU Search
+                  </label>
+                  <Input
+                    placeholder="Search item name or SKU…"
+                    className="h-8 text-[11px] bg-slate-50 border-slate-200"
+                  />
+                </div>
+
+                <div className="flex items-end gap-2">
+                  <Button className="flex-1 h-8 text-[11px] bg-[#F5C742] hover:bg-[#e4b82e] text-slate-900">
+                    Generate
+                  </Button>
+                  <Button variant="ghost" className="h-8 text-[11px] text-slate-600 flex items-center gap-1">
+                    <Download className="h-3.5 w-3.5" />
+                    Export
+                  </Button>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Results */}
+          {renderResults()}
+        </motion.div>
+      </div>
+    </div>
+  );
+}
