@@ -14,7 +14,7 @@ import { getNextSalesPaymentNumber } from '../../../api/salesPaymentApi';
 // once recording succeeds we surface the real voucher number(s) the backend
 // returned.
 
-const QUICK_MODES = ['Cash', 'Card', 'Bank Transfer', 'Cheque', 'Credit'];
+const ALL_QUICK_MODES = ['Cash', 'Card', 'Bank Transfer', 'Cheque', 'Credit'];
 const ENTRY_MODES = ['Cash', 'Card', 'Bank Transfer', 'Cheque'];
 const MODE_EMOJI = { Cash: '💵', Card: '💳', 'Bank Transfer': '🏦', Cheque: '🧾' };
 const today = () => new Date().toISOString().slice(0, 10);
@@ -26,6 +26,7 @@ const InvoiceSettlementModal = ({
     currency = 'AED',
     bankAccountOptions = [],
     isSaving = false,
+    hideCredit = false,
     onSkip,
     onConfirm,
     onDone,
@@ -34,6 +35,7 @@ const InvoiceSettlementModal = ({
     onEmailVoucher,
     onWhatsAppVoucher,
 }) => {
+    const QUICK_MODES = hideCredit ? ALL_QUICK_MODES.filter(m => m !== 'Credit') : ALL_QUICK_MODES;
     const invoiceAmount = Number(netTotal) || 0;
     const money = (v) => formatCurrencyDisplay(Number(v) || 0, currency);
 

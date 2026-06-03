@@ -636,16 +636,48 @@ function InvoiceOverlayDesigner({ mode, templateName, initialSettings, onClose, 
                             </div>
                           </div>}
                       </div>
-                      {isPreprinted && <>
+                      <>
                           <Separator />
                           <div className="flex items-center justify-between p-2 border rounded bg-amber-50">
                             <div>
                               <Label className="font-normal">Print Values Only</Label>
-                              <p className="text-xs text-muted-foreground mt-0.5">Skip all labels — print data values only</p>
+                              <p className="text-xs text-muted-foreground mt-0.5">
+                                {settings.printOnlyValues ? 'Only data values are printed (no field labels)' : 'Field labels + values are both printed'}
+                              </p>
                             </div>
-                            <Switch checked={settings.printOnlyValues} onCheckedChange={(v) => update("printOnlyValues", v)} />
+                            <Switch checked={!!settings.printOnlyValues} onCheckedChange={(v) => update("printOnlyValues", v)} />
                           </div>
-                        </>}
+                        </>
+                      <Separator />
+                      <div className="flex items-center justify-between p-2 border rounded bg-slate-50">
+                        <div>
+                          <Label className="font-normal">Items Per Page</Label>
+                          <p className="text-xs text-muted-foreground mt-0.5">Max rows per page — overflow prints on next page (0 = no limit)</p>
+                        </div>
+                        <input
+                          type="number"
+                          min="0"
+                          max="100"
+                          value={settings.itemsPerPage ?? 0}
+                          onChange={(e) => update("itemsPerPage", Math.max(0, parseInt(e.target.value) || 0))}
+                          className="w-16 text-sm text-center border rounded px-2 py-1 outline-none focus:border-[#F5C742]"
+                        />
+                      </div>
+                      <Separator />
+                      <div className="flex items-center justify-between p-2 border rounded bg-slate-50">
+                        <div>
+                          <Label className="font-normal">Page Margin (mm)</Label>
+                          <p className="text-xs text-muted-foreground mt-0.5">Margin inside each page — adds spacing around content (0 = no margin)</p>
+                        </div>
+                        <input
+                          type="number"
+                          min="0"
+                          max="30"
+                          value={settings.pageMargin ?? 0}
+                          onChange={(e) => update("pageMargin", Math.max(0, parseInt(e.target.value) || 0))}
+                          className="w-16 text-sm text-center border rounded px-2 py-1 outline-none focus:border-[#F5C742]"
+                        />
+                      </div>
                     </CardContent>
                   </Card>
                 </TabsContent>
@@ -1523,7 +1555,8 @@ function InvoiceOverlayDesigner({ mode, templateName, initialSettings, onClose, 
             {(selectedF || selectedD) && <span className="w-px h-3.5 bg-gray-200" />}
             {selectedF && <span className="text-[#9a7a00] font-medium">{selectedF.label} · ({selectedF.x.toFixed(1)}, {selectedF.y.toFixed(1)}) mm</span>}
             {selectedD && <span className="text-[#9a7a00] font-medium">{selectedD.label} · ({selectedD.x.toFixed(1)}, {selectedD.y.toFixed(1)}) mm</span>}
-            {isPreprinted && <><span className="w-px h-3.5 bg-gray-200" /><span className="text-blue-600">{settings.printOnlyValues ? "Values only" : "Labels + values"}</span></>}
+            <span className="w-px h-3.5 bg-gray-200" /><span className="text-blue-600">{settings.printOnlyValues ? "Values only" : "Labels + values"}</span>
+            {(settings.itemsPerPage > 0) && <><span className="w-px h-3.5 bg-gray-200" /><span className="text-emerald-600">{settings.itemsPerPage} rows/page</span></>}
           </div>
         </div>
       </div>

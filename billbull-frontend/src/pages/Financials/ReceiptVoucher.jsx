@@ -53,6 +53,7 @@ import { exportToExcel, exportToPDF } from '../../utils/exportUtils';
 import { resolveCurrencyDisplayCode } from '../../utils/countryCurrencyOptions';
 import { formatDisplayDate } from '../../utils/dateUtils';
 import PaginationFooter from '../../components/common/PaginationFooter';
+import TableSkeleton from '../../components/common/TableSkeleton';
 
 // --- HELPER: CUSTOM SELECT ---
 const CustomSelect = ({ placeholder, options, value, onChange }) => {
@@ -136,6 +137,7 @@ const ReceiptVoucher = () => {
 
     // --- FORM STATE ---
     const [receipts, setReceipts] = useState([]);
+    const [isLoading, setIsLoading] = useState(false);
     const [editingReceipt, setEditingReceipt] = useState(null);
     const [formData, setFormData] = useState({
         date: '2026-01-22',
@@ -201,6 +203,7 @@ const ReceiptVoucher = () => {
 
     // --- DATA FETCHING ---
     const fetchReceipts = async () => {
+        setIsLoading(true);
         try {
             const data = await receiptVoucherApi.getAll();
             const formatted = data.map(r => ({
@@ -236,6 +239,8 @@ const ReceiptVoucher = () => {
             setReceipts(formatted);
         } catch (error) {
             console.error("Failed to fetch receipts:", error);
+        } finally {
+            setIsLoading(false);
         }
     };
 
@@ -1029,6 +1034,7 @@ const ReceiptVoucher = () => {
                             </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-50">
+                            {isLoading && <TableSkeleton cols={7} rows={8} />}
                             {filteredReceipts.length > 0 ? (
                                 pagedReceipts.map((row) => (
                                     <tr key={row.id} className="hover:bg-slate-50 group cursor-pointer" onClick={() => handleViewReceipt(row)}>

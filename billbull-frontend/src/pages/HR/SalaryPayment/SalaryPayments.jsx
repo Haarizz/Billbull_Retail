@@ -33,6 +33,7 @@ import { salaryPaymentApi } from '../../../api/salaryPaymentApi';
 import CurrencyAmount, { CurrencySymbol } from '../../../components/CurrencyAmount';
 import PaginationFooter from '../../../components/common/PaginationFooter';
 import { formatDisplayDate } from '../../../utils/dateUtils';
+import TableSkeleton from '../../../components/common/TableSkeleton';
 
 // --- Configuration ---
 
@@ -827,6 +828,7 @@ const SalaryPayments = () => {
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
+                      {isLoading && <TableSkeleton cols={8} rows={8} />}
                       {filteredEmployees.length > 0 ? (
                         pagedEmployees.map((emp) => (
                           <tr key={emp.id} className="hover:bg-slate-50/50 transition-colors">

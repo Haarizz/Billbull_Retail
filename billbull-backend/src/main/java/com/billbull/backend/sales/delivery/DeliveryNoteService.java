@@ -786,12 +786,11 @@ public class DeliveryNoteService {
             BigDecimal productCost = stockMovementService.getCostForOutbound(
                     product.getId(), dn.getWarehouse().getId(), fallbackCost);
 
-            if (productCost == null || productCost.compareTo(BigDecimal.ZERO) <= 0) {
-                throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
-                        "No cost available for '" + dnItem.getItemCode() + "'. "
-                                + "Set cost in Product Pricing or ensure inbound stock movements have unit cost.");
-            }
-            BigDecimal itemCogs = productCost.multiply(BigDecimal.valueOf(deliveredQty));
+            // Zero-cost and no-cost products are valid (service items, complimentary goods).
+            // Treat null or zero cost as ZERO COGS — no journal entry contribution.
+            BigDecimal effectiveCost = (productCost != null && productCost.compareTo(BigDecimal.ZERO) > 0)
+                    ? productCost : BigDecimal.ZERO;
+            BigDecimal itemCogs = effectiveCost.multiply(BigDecimal.valueOf(deliveredQty));
             totalCogs = totalCogs.add(itemCogs);
 
             // Match DN item to invoice item by itemCode for proportional revenue

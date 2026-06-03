@@ -119,6 +119,7 @@ import { ItemDescriptionCell, ItemDescriptionHeader } from '../../components/Ite
 import InlineProductSearchCell from '../../components/InlineProductSearchCell';
 import PaginationFooter from '../../components/common/PaginationFooter';
 import ItemAddOnsModal from '../../components/ItemAddOnsModal';
+import TableSkeleton from '../../components/common/TableSkeleton';
 
 const DeliveryNote = () => {
     const location = useLocation();
@@ -2160,6 +2161,7 @@ const DeliveryNote = () => {
                                         </tr>
                                     </thead>
                                     <tbody className="divide-y divide-slate-100">
+                                        {isListLoading && <TableSkeleton cols={8} rows={8} />}
                                         {filteredDeliveryNotes.map((dn, index) => (
                                             <tr key={dn.id} className="hover:bg-slate-50 cursor-pointer group" onClick={() => handleRowClick(dn)}>
                                                 <td className="px-3 py-3 text-center text-slate-400 font-mono font-medium">{index + 1}</td>

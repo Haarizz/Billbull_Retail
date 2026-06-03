@@ -49,6 +49,7 @@ import billBullLogo from '../../assets/billBullLogo.png';
 // QA-040: shared email modal
 import SendDocumentEmailModal from '../../components/SendDocumentEmailModal';
 import { sendReceiptVoucherEmail } from '../../api/receiptVoucherApi';
+import TableSkeleton from '../../components/common/TableSkeleton';
 
 // ==========================================
 // 1. CONFIGURATION
@@ -1876,6 +1877,7 @@ const ReceiveMoneyView = () => {
                                     </tr>
                                 </thead>
                                 <tbody className="divide-y divide-slate-100">
+                                    {isLoading && <TableSkeleton cols={8} rows={8} />}
                                     {customerInvoices.length > 0 ? (
                                         customerInvoices.map(inv => {
                                             const balance = (inv.balance != null ? inv.balance : (inv.invoiceTotal - (inv.amountPaid || 0)));

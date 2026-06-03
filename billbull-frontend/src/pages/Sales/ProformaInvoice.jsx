@@ -112,6 +112,7 @@ import { ItemDescriptionCell, ItemDescriptionHeader } from '../../components/Ite
 import InlineProductSearchCell from '../../components/InlineProductSearchCell';
 import PaginationFooter from '../../components/common/PaginationFooter';
 import ItemAddOnsModal from '../../components/ItemAddOnsModal';
+import TableSkeleton from '../../components/common/TableSkeleton';
 
 const ProformaInvoice = () => {
   const { company } = useCompany();
@@ -1431,6 +1432,7 @@ const ProformaInvoice = () => {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100/30">
+                  {isListLoading && <TableSkeleton cols={7} rows={8} />}
                   {filteredProformas.map((pi, index) => (
                     <tr
                       key={pi.id}

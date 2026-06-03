@@ -55,6 +55,7 @@ import { usePermissions } from '../../../context/PermissionContext';
 import { useBranch } from '../../../context/BranchContext';
 import { getImageUrl } from '../../../utils/urlUtils';
 import { formatDisplayDate as formatDateForDisplay } from '../../../utils/dateUtils';
+import TableSkeleton from '../../../components/common/TableSkeleton';
 
 // ==========================================
 // 0. CONSTANTS & UTILS
@@ -2390,6 +2391,7 @@ const Employees = () => {
   const [searchTerm, setSearchTerm] = useState("");
   const [filterRole, setFilterRole] = useState("All Roles");
   const [filterBranch, setFilterBranch] = useState("All Branches");
+  const [isLoading, setIsLoading] = useState(false);
 
   // --- 1. Fetch Data on Mount ---
   useEffect(() => {
@@ -2397,6 +2399,7 @@ const Employees = () => {
   }, []);
 
   const fetchData = async () => {
+    setIsLoading(true);
     try {
       // Parallel Fetch
       const [active, pending] = await Promise.all([
@@ -2408,6 +2411,8 @@ const Employees = () => {
       setPendingRequests(pending.map(mapBackendToFrontend));
     } catch (err) {
       console.error("Failed to load employees", err);
+    } finally {
+      setIsLoading(false);
     }
   };
 
@@ -2901,7 +2906,8 @@ const Employees = () => {
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
-                      {filteredEmployees.length === 0 ? (
+                      {isLoading && <TableSkeleton cols={7} rows={8} />}
+                      {!isLoading && filteredEmployees.length === 0 ? (
                         <tr>
                           <td colSpan="5" className="px-6 py-12 text-center text-slate-400">
                             <div className="flex flex-col items-center gap-2">
@@ -2983,7 +2989,8 @@ const Employees = () => {
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
-                      {filteredEmployees.length === 0 ? (
+                      {isLoading && <TableSkeleton cols={9} rows={8} />}
+                      {!isLoading && filteredEmployees.length === 0 ? (
                         <tr><td colSpan="9" className="px-6 py-12 text-center text-slate-400">No employees found matching filters.</td></tr>
                       ) : (
                         pagedEmployees.map((emp) => (

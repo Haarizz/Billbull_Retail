@@ -44,6 +44,7 @@ import { exportToExcel, exportToPDF } from '../../utils/exportUtils';
 import CurrencyAmount, { CurrencySymbol } from '../../components/CurrencyAmount';
 import { formatDisplayDate } from '../../utils/dateUtils';
 import { isAutoNumberingEnabled } from '../../utils/salesNumbering';
+import TableSkeleton from '../../components/common/TableSkeleton';
 
 // ==========================================
 // 1. CONFIGURATION
@@ -278,67 +279,72 @@ const Payment = () => {
                 headerContent: '',
                 footerContent: '',
                 termsContent: '',
-                displayOptions: { showLogo: true, showCompanyDetails: true, showCustomerDetails: true, showTerms: false, showItemImage: false },
+                displayOptions: { showLogo: true, showCompanyDetails: true, showCustomerDetails: true, showTerms: false },
                 columns: { qty: false, unitPrice: false, taxableAmount: false, tax: false, discount: false, total: true },
             };
 
             const amount = Number(payment.amount) || 0;
+            const invoiceAmt = Number(payment.invoiceAmount) || amount;
             const paymentBranchId = payment?.branchId ?? activeBranch?.id;
-            const printBranch = availableBranches?.find(b => b.id === paymentBranchId) || activeBranch || {};
+            const branchProfile = buildDocumentHeaderProfile({
+                company,
+                branches: availableBranches || [],
+                branchId: paymentBranchId,
+            });
+
             const printData = {
-                title: 'PAYMENT RECEIPT',
-                docNo: payment.paymentNo,
-                date: payment.date,
-                customer: {
+                receiptData: {
+                    receiptNumber: payment.paymentNo || '',
+                    date: payment.date || '',
+                    status: payment.status || 'Completed',
+                    session: null,
+                    invoiceCount: payment.invoiceNo ? '1 invoice' : null,
+                    account: null,
+                    bankAccount: payment.bankName || null,
+                },
+                customerData: {
                     name: payment.customerName || '',
+                    code: payment.customerCode || '',
                     address: '',
-                    shippingAddress: '',
                     phone: '',
                     email: '',
                     trn: '',
+                    crn: '',
                 },
-                items: [{
-                    name: 'Payment Received',
-                    description: { title: 'Payment Received', details: [
-                        `Mode: ${payment.mode || '-'}`,
-                        payment.reference ? `Ref: ${payment.reference}` : null,
-                        payment.invoiceNo ? `Invoice: ${payment.invoiceNo}` : null,
-                    ].filter(Boolean) },
-                    unit: '',
-                    qty: 1,
-                    price: amount,
-                    taxableAmount: amount,
-                    taxAmt: 0,
-                    taxPercent: 0,
-                    total: amount,
-                }],
-                totals: {
-                    subTotal: amount,
-                    tax: 0,
-                    grandTotal: amount,
-                    currency: company?.currencySymbol || company?.currency || 'AED',
-                    billDiscount: 0,
-                    billDiscountAmount: 0,
+                invoices: payment.invoiceNo ? [{
+                    ref: payment.invoiceNo,
+                    soRef: '',
+                    date: payment.date || '',
+                    total: invoiceAmt,
+                    outstanding: invoiceAmt,
+                    received: amount,
+                    balance: Math.max(invoiceAmt - amount, 0),
+                    status: Math.max(invoiceAmt - amount, 0) <= 0 ? 'Fully paid' : 'Partial',
+                }] : [],
+                summary: {
+                    totalOutstanding: invoiceAmt,
+                    discount: 0,
+                    remaining: Math.max(invoiceAmt - amount, 0),
+                    totalReceived: amount,
                 },
-                meta: {
-                    status: payment.status || 'Completed',
-                    paymentTerm: '',
-                    validTill: '',
-                    notes: payment.notes || '',
-                    location: printBranch.name || '',
-                    locationStore: printBranch.name || printBranch.code || '',
-                    warehouse: printBranch.defaultWarehouseName || '',
-                    deliveryTerms: '',
-                    salesPerson: '',
+                payment: {
+                    method: payment.mode || '',
+                    depositedTo: payment.bankName || '',
+                    chequeRef: payment.reference || '',
+                    chequeDate: payment.chequeDate || '',
                 },
+                note: payment.notes || '',
+                // Fallback fields for generic renderer
+                title: 'PAYMENT RECEIPT',
+                docNo: payment.paymentNo,
+                date: payment.date,
+                customer: { name: payment.customerName || '' },
+                totals: { subTotal: amount, tax: 0, grandTotal: amount, currency: company?.currencySymbol || company?.currency || 'AED' },
+                meta: { status: payment.status || 'Completed', paymentMode: payment.mode || '' },
             };
 
             const html = await generatePrintHtmlAsync(defaultTemplate, printData, {
-                companyProfile: buildDocumentHeaderProfile({
-                    company,
-                    branches: availableBranches || [],
-                    branchId: payment?.branchId ?? activeBranch?.id,
-                }),
+                companyProfile: branchProfile,
                 billBullLogo
             });
             printHtml(html);
@@ -835,6 +841,7 @@ const Payment = () => {
                                         </tr>
                                     </thead>
                                     <tbody className="divide-y divide-slate-100">
+                                        {isLoading && <TableSkeleton cols={10} rows={8} />}
                                         {filteredPayments.map((payment, index) => (
                                             <tr key={payment.id} className="hover:bg-slate-50 cursor-pointer group" onClick={() => handleViewPayment(payment)}>
                                                 <td className="px-3 py-3 text-center text-slate-400 font-mono font-medium">{index + 1}</td>

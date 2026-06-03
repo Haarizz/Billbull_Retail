@@ -53,6 +53,7 @@ import { formatDisplayDate } from '../../utils/dateUtils';
 import { resolveCurrencyDisplayCode } from '../../utils/countryCurrencyOptions';
 import PaginationFooter from '../../components/common/PaginationFooter';
 import { generateDocFilename } from '../../utils/filenameUtils';
+import TableSkeleton from '../../components/common/TableSkeleton';
 
 // ------------------------------------------------------------------
 // Display helpers (kept local — page-specific formatting only)
@@ -552,13 +553,8 @@ const PaymentVoucher = () => {
                             </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-50">
-                            {loading ? (
-                                <tr>
-                                    <td colSpan="8" className="px-4 py-12 text-center text-slate-400 italic">
-                                        Loading payment vouchers…
-                                    </td>
-                                </tr>
-                            ) : filtered.length === 0 ? (
+                            {loading && <TableSkeleton cols={8} rows={8} />}
+                            {!loading && filtered.length === 0 ? (
                                 <tr>
                                     <td colSpan="8" className="px-4 py-12 text-center text-slate-400 italic">
                                         No payment vouchers found.

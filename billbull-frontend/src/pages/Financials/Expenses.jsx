@@ -14,6 +14,7 @@ import CurrencyAmount, { CurrencySymbol } from '../../components/CurrencyAmount'
 import { formatDisplayDate } from '../../utils/dateUtils';
 import LedgerAccountCreateModal from '../../components/common/LedgerAccountCreateModal';
 import PaginationFooter from '../../components/common/PaginationFooter';
+import TableSkeleton from '../../components/common/TableSkeleton';
 
 
 const Expenses = () => {
@@ -87,6 +88,7 @@ setAllAccounts(Array.isArray(glData) ? glData : []);
     }, []);
 
     const [expenses, setExpenses] = useState([]);
+    const [isLoading, setIsLoading] = useState(false);
 
     // --- STATE ---
     const [isModalOpen, setIsModalOpen] = useState(false);
@@ -143,6 +145,7 @@ setAllAccounts(Array.isArray(glData) ? glData : []);
     }, []);
 
     const loadExpenses = async () => {
+        setIsLoading(true);
         try {
             let data = await fetchExpenses();
             
@@ -188,6 +191,8 @@ setAllAccounts(Array.isArray(glData) ? glData : []);
             setExpenses(data);
         } catch (error) {
             console.error("Failed to load expenses", error);
+        } finally {
+            setIsLoading(false);
         }
     };
 
@@ -531,6 +536,7 @@ setAllAccounts(Array.isArray(glData) ? glData : []);
                             </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-100">
+                            {isLoading && <TableSkeleton cols={7} rows={8} />}
                             {pagedExpenses.map((expense) => (
                                 <tr key={expense.id} className="hover:bg-slate-50 transition-colors">
                                     <td className="px-4 py-3 text-xs text-slate-600 whitespace-nowrap">{formatDisplayDate(expense.date)}</td>
