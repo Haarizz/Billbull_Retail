@@ -74,6 +74,7 @@ import { receiptVoucherApi } from "../../api/receiptVoucherApi";
 import { getSalesSettings } from '../../api/salesSettingsApi';
 import { useBranch } from "../../context/BranchContext";
 import ExportDropdown from '../../components/common/ExportDropdown';
+import DateFilter from '../../components/common/DateFilter';
 import { exportToExcel, exportToPDF } from '../../utils/exportUtils';
 
 // ==========================================
@@ -277,6 +278,8 @@ const ProformaInvoice = () => {
   // Search & Filter
   const [searchTerm, setSearchTerm] = useState('');
   const [filterStatus, setFilterStatus] = useState('All');
+  const _todayPI = new Date().toISOString().slice(0, 10);
+  const [dateRange, setDateRange] = useState({ fromDate: _todayPI, toDate: _todayPI });
   const [sortConfig, setSortConfig] = useState({ key: null, direction: 'desc' });
 
   // List View State
@@ -345,11 +348,10 @@ const ProformaInvoice = () => {
   useEffect(() => {
     const fetchAllData = async () => {
       try {
-        const [custData, qtnData, soData, piData, bankAccData, settingsData] = await Promise.all([
+        const [custData, qtnData, soData, bankAccData, settingsData] = await Promise.all([
           getAllCustomers(),
           getAllQuotations(),
           getAllSalesOrders(),
-          getAllProformas(),
           api.get('/api/ledger/accounts/bank-accounts').then(r => r.data).catch(() => []),
           getSalesSettings().catch(() => null)
         ]);
@@ -383,7 +385,6 @@ const ProformaInvoice = () => {
 
         setQuotationsList(Array.isArray(qtnData) ? qtnData : []);
         setSalesOrdersList(Array.isArray(soData) ? soData : []);
-        setProformaList(Array.isArray(piData) ? piData : []); // Set list
       } catch (error) {
         console.error("Error fetching data:", error);
       }
@@ -400,6 +401,8 @@ const ProformaInvoice = () => {
         size: 30,
         search: searchTerm || '',
         status: filterStatus && filterStatus !== 'All' ? filterStatus : '',
+        fromDate: dateRange?.fromDate,
+        toDate: dateRange?.toDate,
       });
       const rows = Array.isArray(data?.content) ? data.content : [];
       setProformaList(rows);
@@ -416,12 +419,12 @@ const ProformaInvoice = () => {
     }
   };
 
-  useEffect(() => { setListPage(0); }, [searchTerm, filterStatus]);
+  useEffect(() => { setListPage(0); }, [searchTerm, filterStatus, dateRange]);
   useEffect(() => {
     if (activeTab !== 'list') return;
     fetchProformasPage();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeTab, listPage, searchTerm, filterStatus]);
+  }, [activeTab, listPage, searchTerm, filterStatus, dateRange]);
 
   // Refetch when the global Branch Selector changes the active branch.
   useEffect(() => {
@@ -1362,6 +1365,7 @@ const ProformaInvoice = () => {
               <h2 className="font-bold text-slate-700 text-lg">Proforma Invoices</h2>
 
               <div className="flex flex-col md:flex-row gap-3 w-full md:w-auto">
+                <DateFilter onChange={(range) => { setDateRange(range); setListPage(0); }} />
                 {/* Search */}
                 <div className="relative">
                   <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={16} />

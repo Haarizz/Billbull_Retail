@@ -81,6 +81,7 @@ import { usePrintDocument } from '../../hooks/usePrintDocument';
 import { useCompany } from '../../context/CompanyContext';
 import { useBranch } from '../../context/BranchContext';
 import ExportDropdown from '../../components/common/ExportDropdown';
+import DateFilter from '../../components/common/DateFilter';
 import { exportToExcel, exportToPDF } from '../../utils/exportUtils';
 import CurrencyAmount, { CurrencySymbol } from '../../components/CurrencyAmount';
 import { formatCurrencyDisplay } from '../../utils/countryCurrencyOptions';
@@ -208,6 +209,8 @@ const SalesInvoice = () => {
     const [searchTerm, setSearchTerm] = useState('');
     const [filterStatus, setFilterStatus] = useState('All');
     const [filterPayMode, setFilterPayMode] = useState('All');
+    const _today = new Date().toISOString().slice(0, 10);
+    const [dateRange, setDateRange] = useState({ fromDate: _today, toDate: _today });
     const [sortConfig, setSortConfig] = useState({ key: null, direction: 'desc' });
 
     const filteredInvoices = useMemo(() => {
@@ -269,11 +272,11 @@ const SalesInvoice = () => {
     }, [invoicesList, searchTerm, filterStatus, filterPayMode, sortConfig]);
 
     const handleSort = (key) => {
-        let direction = 'desc';
-        if (sortConfig.key === key && sortConfig.direction === 'desc') {
-            direction = 'asc';
+        if (sortConfig.key === key) {
+            setSortConfig({ key, direction: sortConfig.direction === 'asc' ? 'desc' : 'asc' });
+        } else {
+            setSortConfig({ key, direction: 'asc' });
         }
-        setSortConfig({ key, direction });
     };
 
     const [customersList, setCustomersList] = useState([]);
@@ -953,6 +956,8 @@ const SalesInvoice = () => {
                 size: 30,
                 search: searchTerm || '',
                 status: filterStatus && filterStatus !== 'All' ? filterStatus : '',
+                fromDate: dateRange?.fromDate,
+                toDate: dateRange?.toDate,
             });
             const rows = Array.isArray(data?.content) ? data.content : [];
             setInvoicesList(rows);
@@ -977,7 +982,7 @@ const SalesInvoice = () => {
         if (activeTab !== 'list') return;
         fetchInvoices();
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [activeTab, listPage, searchTerm, filterStatus]);
+    }, [activeTab, listPage, searchTerm, filterStatus, dateRange]);
 
     // Lazy-load editor data (SOs, Proformas, DNs) only when the create tab is first opened.
     useEffect(() => {
@@ -3088,6 +3093,7 @@ const SalesInvoice = () => {
                             <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-6 gap-4">
                                 <h3 className="font-bold text-slate-700 text-sm">All Invoices</h3>
                                 <div className="flex flex-col md:flex-row gap-3 items-center w-full md:w-auto">
+                                    <DateFilter onChange={(range) => { setDateRange(range); setListPage(0); }} />
                                     <div className="relative w-full md:w-auto">
                                         <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={14} />
                                         <input type="text" placeholder="Search invoices..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} className="pl-9 pr-4 py-2 border border-slate-200 rounded-md text-xs w-full md:w-64 focus:outline-none focus:border-[#F5C742]" />

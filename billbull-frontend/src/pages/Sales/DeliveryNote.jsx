@@ -49,6 +49,7 @@ import { useBranch } from '../../context/BranchContext';
 import { generateDocFilename } from '../../utils/filenameUtils';
 import { usePrintDocument } from '../../hooks/usePrintDocument';
 import ExportDropdown from '../../components/common/ExportDropdown';
+import DateFilter from '../../components/common/DateFilter';
 import { exportToExcel, exportToPDF } from '../../utils/exportUtils';
 import { formatDisplayDate } from '../../utils/dateUtils';
 import { pickSalesItemPrice } from '../../utils/salesPricing';
@@ -146,6 +147,8 @@ const DeliveryNote = () => {
     const [searchTerm, setSearchTerm] = useState('');
     const [filterStatus, setFilterStatus] = useState('All');
     const [sortConfig, setSortConfig] = useState({ key: null, direction: 'desc' });
+    const _todayDN = new Date().toISOString().slice(0, 10);
+    const [dateRange, setDateRange] = useState({ fromDate: _todayDN, toDate: _todayDN });
     const [pickingSearchTerm, setPickingSearchTerm] = useState('');
     const [selectedPickingId, setSelectedPickingId] = useState(null);
     const [pickingScanValue, setPickingScanValue] = useState('');
@@ -248,11 +251,10 @@ const DeliveryNote = () => {
     );
 
     const handleSort = (key) => {
-        let direction = 'desc';
-        if (sortConfig.key === key && sortConfig.direction === 'desc') {
-            direction = 'asc';
-        }
-        setSortConfig({ key, direction });
+        setSortConfig(prev => ({
+            key,
+            direction: prev.key === key && prev.direction === 'asc' ? 'desc' : 'asc'
+        }));
     };
 
     useEffect(() => {
@@ -887,6 +889,8 @@ const DeliveryNote = () => {
                 size: 30,
                 search: searchTerm || '',
                 status: filterStatus && filterStatus !== 'All' ? filterStatus : '',
+                fromDate: dateRange?.fromDate,
+                toDate: dateRange?.toDate,
             });
             const data = Array.isArray(resp?.content) ? resp.content : [];
             setListPageMeta({
@@ -944,7 +948,7 @@ const DeliveryNote = () => {
         if (activeTab !== 'list') return;
         loadDeliveryNotes();
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [activeTab, listPage, searchTerm, filterStatus]);
+    }, [activeTab, listPage, searchTerm, filterStatus, dateRange]);
 
     useEffect(() => {
         loadDeliveryNotes();
@@ -2078,6 +2082,7 @@ const DeliveryNote = () => {
                             {/* Toolbar */}
                             <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-4 gap-4 md:gap-0">
                                 <div className="flex flex-col md:flex-row items-center gap-2 w-full md:w-auto">
+                                    <DateFilter onChange={(range) => { setDateRange(range); setListPage(0); }} />
                                     <div className="relative w-full md:w-auto">
                                         <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={14} />
                                         <input

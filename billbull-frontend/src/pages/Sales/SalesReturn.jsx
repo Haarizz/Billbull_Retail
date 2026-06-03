@@ -35,6 +35,7 @@ import {
 } from 'lucide-react';
 import ExportDropdown from '../../components/common/ExportDropdown';
 import PaginationFooter from '../../components/common/PaginationFooter';
+import DateFilter from '../../components/common/DateFilter';
 import { exportToExcel, exportToPDF } from '../../utils/exportUtils';
 import { generateDocFilename } from '../../utils/filenameUtils';
 import { usePrintDocument } from '../../hooks/usePrintDocument';
@@ -92,6 +93,8 @@ const SalesReturn = () => {
    const [searchQuery, setSearchQuery] = useState('');
    const [statusFilter, setStatusFilter] = useState('All Status');
    const [returnsPage, setReturnsPage] = useState(0);
+   const _todayRet = new Date().toISOString().slice(0, 10);
+   const [dateRange, setDateRange] = useState({ fromDate: _todayRet, toDate: _todayRet });
    const [returnsPageMeta, setReturnsPageMeta] = useState({ page: 0, size: 30, totalElements: 0, totalPages: 0 });
    const [salesSettings, setSalesSettings] = useState(null);
    const returnAutoNumbering = isAutoNumberingEnabled(salesSettings, 'SALES_RETURN');
@@ -154,7 +157,7 @@ const SalesReturn = () => {
       if (activeTab === 'list') {
          fetchReturns();
       }
-   }, [activeTab, returnsPage, searchQuery, statusFilter]);
+   }, [activeTab, returnsPage, searchQuery, statusFilter, dateRange]);
 
    const fetchReturns = async () => {
       setIsLoading(true);
@@ -163,7 +166,9 @@ const SalesReturn = () => {
             page: returnsPage,
             size: 30,
             search: searchQuery,
-            status: statusFilter === 'All Status' ? '' : statusFilter.toUpperCase()
+            status: statusFilter === 'All Status' ? '' : statusFilter.toUpperCase(),
+            fromDate: dateRange?.fromDate,
+            toDate: dateRange?.toDate,
          });
          setReturnsList(Array.isArray(data?.content) ? data.content : []);
          setReturnsPageMeta({
@@ -697,6 +702,9 @@ const SalesReturn = () => {
                      {/* FILTERS */}
                      <div className="mb-6">
                         <h3 className="text-sm font-bold text-slate-700 mb-4 flex items-center gap-2"><Filter size={16} /> Filters</h3>
+                        <div className="flex items-center gap-3 mb-3">
+                           <DateFilter onChange={(range) => { setDateRange(range); setReturnsPage(0); }} />
+                        </div>
                         <div className="grid grid-cols-1 md:grid-cols-6 gap-4 items-end">
                            <div className="md:col-span-2 relative">
                               <label className="block text-[10px] font-bold text-slate-500 mb-1">Search</label>
@@ -708,14 +716,6 @@ const SalesReturn = () => {
                                  value={searchQuery}
                                  onChange={(e) => { setSearchQuery(e.target.value); setReturnsPage(0); }}
                               />
-                           </div>
-                           <div>
-                              <label className="block text-[10px] font-bold text-slate-500 mb-1">Date Range</label>
-                              <select className="w-full px-3 py-2 text-xs border border-slate-200 rounded-md bg-white text-slate-600 font-medium">
-                                 <option>All Time</option>
-                                 <option>Today</option>
-                                 <option>This Month</option>
-                              </select>
                            </div>
                            <div>
                               <label className="block text-[10px] font-bold text-slate-500 mb-1">Status</label>

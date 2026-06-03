@@ -16,6 +16,8 @@ public interface SalesReturnRepository extends JpaRepository<SalesReturn, Long> 
 
     Optional<SalesReturn> findTopByOrderByReturnNumberDesc();
 
+    List<SalesReturn> findByReturnDateBetween(LocalDate from, LocalDate to);
+
     boolean existsByReturnNumber(String returnNumber);
 
     @Query("SELECT r.returnNumber FROM SalesReturn r WHERE r.returnNumber LIKE CONCAT(:prefix, '%')")

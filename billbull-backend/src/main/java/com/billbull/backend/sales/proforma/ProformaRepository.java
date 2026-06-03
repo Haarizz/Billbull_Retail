@@ -9,6 +9,8 @@ import java.util.List;
 public interface ProformaRepository extends JpaRepository<ProformaInvoice, Long> {
     List<ProformaInvoice> findByStatus(ProformaStatus status);
 
+    List<ProformaInvoice> findByPiDateBetween(java.time.LocalDate from, java.time.LocalDate to);
+
     boolean existsByPiNumber(String piNumber);
 
     @Query("SELECT pi.piNumber FROM ProformaInvoice pi WHERE pi.piNumber LIKE CONCAT(:prefix, '%')")

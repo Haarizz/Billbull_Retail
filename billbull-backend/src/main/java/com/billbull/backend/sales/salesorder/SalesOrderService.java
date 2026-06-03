@@ -344,6 +344,23 @@ public class SalesOrderService {
         return orders;
     }
 
+    @Transactional(readOnly = true)
+    public List<SalesOrder> getAllByDateRange(java.time.LocalDate from, java.time.LocalDate to) {
+        List<SalesOrder> orders = new ArrayList<>(
+                branchAccessService.filterBranchScopedByBranch(orderRepo.findByOrderDateBetween(from, to), SalesOrder::getBranch));
+        DocumentOrderingUtil.sortByDocumentDateAndNumberDesc(
+                orders,
+                SalesOrder::getOrderDate,
+                SalesOrder::getSoNumber,
+                SalesOrder::getId);
+        orders.forEach(order -> {
+            Hibernate.initialize(order.getItems());
+            Hibernate.initialize(order.getWarehouse());
+            hydrateOrderItemDisplayData(order);
+        });
+        return orders;
+    }
+
     @Transactional
     public SalesOrder saveBatchSelection(Long orderId, Long itemId, BatchSelectionRequest request) {
         SalesOrder order = getEditableBatchOrder(orderId);

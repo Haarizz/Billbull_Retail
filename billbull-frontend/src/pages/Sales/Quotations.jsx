@@ -106,6 +106,7 @@ import {
 import { useCompany } from '../../context/CompanyContext';
 import { useBranch } from '../../context/BranchContext';
 import ExportDropdown from '../../components/common/ExportDropdown';
+import DateFilter from '../../components/common/DateFilter';
 import { exportToExcel, exportToPDF } from '../../utils/exportUtils';
 import { generateDocFilename } from '../../utils/filenameUtils';
 import { isAutoNumberingEnabled } from '../../utils/salesNumbering';
@@ -387,6 +388,8 @@ const Quotations = () => {
     const [searchTerm, setSearchTerm] = useState('');
     const [sortConfig, setSortConfig] = useState({ key: null, direction: 'desc' });
     const [filterStatus, setFilterStatus] = useState('All');
+    const _todayQTN = new Date().toISOString().slice(0, 10);
+    const [dateRange, setDateRange] = useState({ fromDate: _todayQTN, toDate: _todayQTN });
     const [showToast, setShowToast] = useState(false);
     const [toastMessage, setToastMessage] = useState('');
     const [toastType, setToastType] = useState('success');
@@ -976,6 +979,8 @@ const Quotations = () => {
                 size: 30,
                 search: searchTerm || '',
                 status: filterStatus && filterStatus !== 'All' ? filterStatus : '',
+                fromDate: dateRange?.fromDate,
+                toDate: dateRange?.toDate,
             });
             const rows = Array.isArray(data?.content) ? data.content : [];
             setQuotationsList(rows.map(mapBackendToFrontend));
@@ -993,14 +998,14 @@ const Quotations = () => {
     };
 
     // Reset to first page whenever filter inputs change.
-    useEffect(() => { setListPage(0); }, [searchTerm, filterStatus]);
+    useEffect(() => { setListPage(0); }, [searchTerm, filterStatus, dateRange]);
 
     // Refetch whenever the user opens the list tab, changes filters, or pages.
     useEffect(() => {
         if (activeTab !== 'list') return;
         fetchQuotationsList();
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [activeTab, listPage, searchTerm, filterStatus]);
+    }, [activeTab, listPage, searchTerm, filterStatus, dateRange]);
 
     // Refetch when the global Branch Selector changes the active branch.
     useEffect(() => {
@@ -2786,6 +2791,7 @@ const Quotations = () => {
                             <h2 className="font-bold text-slate-700 text-lg">Quotations</h2>
 
                             <div className="flex flex-col md:flex-row gap-3 w-full md:w-auto">
+                                <DateFilter onChange={(range) => { setDateRange(range); setListPage(0); }} />
                                 {/* Search */}
                                 <div className="relative">
                                     <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={16} />

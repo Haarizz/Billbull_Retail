@@ -64,6 +64,17 @@ public class PaymentService {
         return payments;
     }
 
+    public List<Payment> getAllByDateRange(java.time.LocalDate from, java.time.LocalDate to) {
+        List<Payment> payments = new ArrayList<>(
+                branchAccessService.filterBranchScopedByBranch(paymentRepository.findByPaymentDateBetween(from, to), Payment::getBranch));
+        DocumentOrderingUtil.sortByDocumentDateAndNumberDesc(
+                payments,
+                Payment::getPaymentDate,
+                Payment::getPaymentNumber,
+                Payment::getId);
+        return payments;
+    }
+
     public Payment getPaymentById(Long id) {
         return paymentRepository.findById(id)
                 .orElseThrow(() -> new RuntimeException("Payment not found with ID: " + id));
