@@ -1150,7 +1150,7 @@ const AddProductWizard = ({ onCancel, onSave, initialData, brands: initialBrands
               </button>
             </div>
             <div className="overflow-x-auto rounded-lg border border-slate-200 mb-6">
-              <table className="w-full text-sm text-left">
+              <table className="bb-nowrap-table w-full text-sm text-left">
                 <thead className="bg-slate-50 text-slate-600 font-semibold border-b">
                   <tr>
                     <th className="p-3">Level</th>
@@ -1335,7 +1335,7 @@ const AddProductWizard = ({ onCancel, onSave, initialData, brands: initialBrands
                 </button>
               </div>
               <div className="overflow-x-auto rounded-lg border border-slate-200 mb-6">
-                <table className="w-full text-sm text-left">
+                <table className="bb-nowrap-table w-full text-sm text-left">
                   <thead className="bg-slate-50 text-slate-600 font-semibold border-b">
                     <tr>
                       <th className="p-3 w-1/4">Unit Level</th>
@@ -1652,7 +1652,7 @@ const ViewBarcodesModal = ({ product, units, onClose }) => {
           <button onClick={onClose} className="rounded-full p-2 hover:bg-slate-200 transition-colors"><X className="h-5 w-5 text-slate-500" /></button>
         </div>
         <div className="p-0 overflow-y-auto max-h-[60vh]">
-          <table className="w-full text-sm text-left">
+          <table className="bb-nowrap-table w-full text-sm text-left">
             <thead className="bg-slate-50 text-slate-600 font-semibold border-b">
               <tr>
                 <th className="p-3">Unit</th>
@@ -2349,7 +2349,7 @@ const Products = () => {
         </div>
 
         <div className="overflow-x-auto w-full">
-          <table className="w-full text-sm min-w-[1000px]">
+          <table className="bb-nowrap-table w-full text-sm min-w-[1000px]">
             <thead className="bg-slate-50 border-b border-slate-200">
               <tr>
                 <th className="text-center p-3 font-medium text-slate-600 w-16 select-none">S.No.</th>

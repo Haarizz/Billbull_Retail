@@ -814,7 +814,7 @@ const SalaryPayments = () => {
                   <p className="text-sm text-slate-500">Click "Pay" to process individual salary payment</p>
                 </div>
                 <div className="overflow-x-auto">
-                  <table className="w-full text-left text-sm whitespace-nowrap">
+                  <table className="bb-nowrap-table w-full text-left text-sm whitespace-nowrap">
                     <thead className="bg-[#F7F7FA] text-slate-500 font-semibold border-b border-slate-200">
                       <tr>
                         <th className="px-6 py-4 font-semibold text-xs uppercase">Employee</th>
@@ -927,7 +927,7 @@ const SalaryPayments = () => {
                   <p className="text-sm text-slate-500">Select multiple employees to process payments in batch</p>
                 </div>
                 <div className="overflow-x-auto">
-                  <table className="w-full text-left text-sm whitespace-nowrap">
+                  <table className="bb-nowrap-table w-full text-left text-sm whitespace-nowrap">
                     <thead className="bg-[#F7F7FA] text-slate-500 font-semibold border-b border-slate-200">
                       <tr>
                         <th className="px-6 py-4 w-12 font-semibold text-xs uppercase">
@@ -1088,7 +1088,7 @@ const SalaryPayments = () => {
                   </button>
                 </div>
                 <div className="overflow-x-auto">
-                  <table className="w-full text-left text-sm whitespace-nowrap">
+                  <table className="bb-nowrap-table w-full text-left text-sm whitespace-nowrap">
                     <thead className="bg-[#F7F7FA] text-slate-500 font-semibold border-b border-slate-200">
                       <tr>
                         <th className="px-6 py-4 font-semibold text-xs uppercase">Employee</th>

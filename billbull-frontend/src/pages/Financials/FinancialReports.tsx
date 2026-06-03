@@ -505,7 +505,7 @@ const REPORTS: ReportDef[] = [
 function Tbl({ children }: { children: React.ReactNode }) {
   return (
     <div className="overflow-x-auto rounded-xl border border-slate-200">
-      <table className="w-full text-[11px] border-collapse">{children}</table>
+      <table className="bb-nowrap-table w-full text-[11px] border-collapse">{children}</table>
     </div>
   );
 }

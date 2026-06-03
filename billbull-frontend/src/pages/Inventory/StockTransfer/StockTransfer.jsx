@@ -257,7 +257,7 @@ const ViewTransferModal = ({ isOpen, onClose, data, onPrint }) => {
                             <span className="bg-slate-100 text-slate-500 text-[10px] font-bold px-2 py-0.5 rounded-full">{data.items?.length || 0} Line Items</span>
                         </div>
                         <div className="border border-slate-100 rounded-xl overflow-hidden shadow-sm">
-                            <table className="w-full text-left text-xs">
+                            <table className="bb-nowrap-table w-full text-left text-xs">
                                 <thead className="bg-slate-50 text-slate-500 font-bold uppercase text-[9px]">
                                     <tr>
                                         <th className="px-6 py-3">Product</th>
@@ -427,7 +427,7 @@ const TransferHistoryView = ({ data, warehouses, onView, onSend, onPrint }) => {
             </div>
 
             <div className="overflow-x-auto">
-                <table className="w-full text-left">
+                <table className="bb-nowrap-table w-full text-left">
                     <thead className="bg-slate-50/50 text-slate-500 font-bold uppercase text-[10px] border-b border-slate-100">
                         <tr>
                             <th className="px-3 py-4 text-center text-slate-500 w-12 select-none">S.No.</th>
@@ -1108,7 +1108,7 @@ const CreateTransferView = ({ warehouses, onSubmit }) => {
                     </div>
 
                     <div className="overflow-x-auto">
-                        <table className="w-full text-left">
+                        <table className="bb-nowrap-table w-full text-left">
                             <thead className="bg-slate-50/50 text-slate-500 font-bold uppercase text-[10px] border-b border-slate-100">
                                 <tr>
                                     <th className="px-6 py-3 w-1.5 whitespace-nowrap">#</th>

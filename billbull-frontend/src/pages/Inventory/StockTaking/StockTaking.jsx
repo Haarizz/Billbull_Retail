@@ -281,7 +281,7 @@ const BatchEditor = ({ item, disabled, onChange }) => {
                 </div>
                 {seededLots.length > 0 ? (
                     <div className="border border-amber-100 bg-amber-50/30 rounded-lg overflow-hidden">
-                        <table className="w-full text-xs">
+                        <table className="bb-nowrap-table w-full text-xs">
                             <thead className="bg-amber-50 text-[10px] uppercase tracking-wide text-amber-700">
                                 <tr>
                                     {batchEnabled && <th className="px-2 py-1.5 text-left">Batch #</th>}
@@ -310,7 +310,7 @@ const BatchEditor = ({ item, disabled, onChange }) => {
                 </div>
                 {newLots.length > 0 && (
                     <div className="border border-emerald-100 bg-emerald-50/20 rounded-lg overflow-hidden mb-3">
-                        <table className="w-full text-xs">
+                        <table className="bb-nowrap-table w-full text-xs">
                             <thead className="bg-emerald-50 text-[10px] uppercase tracking-wide text-emerald-700">
                                 <tr>
                                     {batchEnabled && <th className="px-2 py-1.5 text-left">Batch #</th>}
@@ -877,7 +877,7 @@ const ListView = ({
                 </div>
 
                 <div className="overflow-x-auto">
-                    <table className="w-full text-sm">
+                    <table className="bb-nowrap-table w-full text-sm">
                         <thead className="bg-[#F8FAFC] border-b border-slate-200">
                             <tr>
                                 <th className="text-center px-4 py-2 font-semibold text-slate-500 w-16 select-none uppercase">S.No.</th>
@@ -1374,7 +1374,7 @@ const SessionView = ({
 
                     {/* Product Table */}
                     <div className="bg-white rounded-xl border border-slate-200 shadow-sm min-h-[400px] flex flex-col">
-                        <table className="w-full text-sm">
+                        <table className="bb-nowrap-table w-full text-sm">
                             <thead className="bg-[#F8FAFC] border-b border-slate-200 text-[9px] uppercase tracking-wider text-slate-400 font-bold">
                                 <tr>
                                     <th className="text-left px-4 py-2.5 w-10">#</th>
@@ -3457,7 +3457,7 @@ const StockTaking = () => {
                                     <h4 className="text-[11px] font-bold text-slate-700 uppercase tracking-widest">Variance Details</h4>
                                 </div>
                                 <div className="max-h-[250px] overflow-y-auto bg-white">
-                                    <table className="w-full text-left">
+                                    <table className="bb-nowrap-table w-full text-left">
                                         <thead className="sticky top-0 bg-white shadow-sm ring-1 ring-slate-100 z-10">
                                             <tr>
                                                 <th className="px-4 py-2 text-[10px] font-bold text-slate-500 uppercase tracking-widest">Product</th>

@@ -612,7 +612,7 @@ const SalesInvoice = () => {
                     {isLoading && <div className="animate-spin h-3.5 w-3.5 border-2 border-[#F5C742] border-t-transparent rounded-full" />}
                 </div>
                 <div className="max-h-[350px] overflow-y-auto">
-                    <table className="w-full text-left text-[11px]">
+                    <table className="bb-nowrap-table w-full text-left text-[11px]">
                         <thead className="bg-[#FBFBFD] text-slate-400 uppercase font-bold sticky top-0 z-10">
                             <tr>
                                 <th className="px-4 py-2 border-b border-slate-100">Customer</th>
@@ -3135,33 +3135,33 @@ const SalesInvoice = () => {
                             </div>
 
                             <div className="overflow-x-auto hidden md:block">
-                                <table className="w-full text-xs text-left">
+                                <table className="bb-nowrap-table w-full min-w-[1540px] text-xs text-left">
                                     <thead className="bg-[#F7F7FA] text-slate-500 font-semibold border-b border-slate-200">
                                         <tr>
-                                            <th className="px-4 py-3 text-center text-slate-500 w-16 select-none">S.No.</th>
-                                            <th className="px-4 py-3 cursor-pointer hover:bg-slate-100 select-none" onClick={() => handleSort('invoiceNumber')}>
+                                            <th className="px-4 py-3 text-center text-slate-500 w-16 select-none whitespace-nowrap">S.No.</th>
+                                            <th className="px-4 py-3 cursor-pointer hover:bg-slate-100 select-none whitespace-nowrap" onClick={() => handleSort('invoiceNumber')}>
                                                 <div className="flex items-center gap-1">Invoice No {sortConfig.key === 'invoiceNumber' && (sortConfig.direction === 'asc' ? <ArrowUp size={12} /> : <ArrowDown size={12} />)}</div>
                                             </th>
-                                            <th className="px-4 py-3 cursor-pointer hover:bg-slate-100 select-none" onClick={() => handleSort('invoiceDate')}>
+                                            <th className="px-4 py-3 cursor-pointer hover:bg-slate-100 select-none whitespace-nowrap" onClick={() => handleSort('invoiceDate')}>
                                                 <div className="flex items-center gap-1">Date {sortConfig.key === 'invoiceDate' && (sortConfig.direction === 'asc' ? <ArrowUp size={12} /> : <ArrowDown size={12} />)}</div>
                                             </th>
-                                            <th className="px-4 py-3 cursor-pointer hover:bg-slate-100 select-none" onClick={() => handleSort('customerName')}>
+                                            <th className="px-4 py-3 cursor-pointer hover:bg-slate-100 select-none whitespace-nowrap" onClick={() => handleSort('customerName')}>
                                                 <div className="flex items-center gap-1">Customer {sortConfig.key === 'customerName' && (sortConfig.direction === 'asc' ? <ArrowUp size={12} /> : <ArrowDown size={12} />)}</div>
                                             </th>
-                                            <th className="px-4 py-3">Branch</th>
-                                            <th className="px-4 py-3">Source Type</th>
-                                            <th className="px-4 py-3">Pay Mode</th>
-                                            <th className="px-4 py-3 cursor-pointer hover:bg-slate-100 select-none" onClick={() => handleSort('invoiceTotal')}>
+                                            <th className="px-4 py-3 whitespace-nowrap">Branch</th>
+                                            <th className="px-4 py-3 whitespace-nowrap">Source Type</th>
+                                            <th className="px-4 py-3 whitespace-nowrap">Pay Mode</th>
+                                            <th className="px-4 py-3 cursor-pointer hover:bg-slate-100 select-none whitespace-nowrap" onClick={() => handleSort('invoiceTotal')}>
                                                 <div className="flex items-center gap-1">Net Amount {sortConfig.key === 'invoiceTotal' && (sortConfig.direction === 'asc' ? <ArrowUp size={12} /> : <ArrowDown size={12} />)}</div>
                                             </th>
-                                            <th className="px-4 py-3 cursor-pointer hover:bg-slate-100 select-none" onClick={() => handleSort('amountPaid')}>
+                                            <th className="px-4 py-3 cursor-pointer hover:bg-slate-100 select-none whitespace-nowrap" onClick={() => handleSort('amountPaid')}>
                                                 <div className="flex items-center gap-1">Paid {sortConfig.key === 'amountPaid' && (sortConfig.direction === 'asc' ? <ArrowUp size={12} /> : <ArrowDown size={12} />)}</div>
                                             </th>
-                                            <th className="px-4 py-3 cursor-pointer hover:bg-slate-100 select-none" onClick={() => handleSort('balance')}>
+                                            <th className="px-4 py-3 cursor-pointer hover:bg-slate-100 select-none whitespace-nowrap" onClick={() => handleSort('balance')}>
                                                 <div className="flex items-center gap-1">Balance/Status {sortConfig.key === 'balance' && (sortConfig.direction === 'asc' ? <ArrowUp size={12} /> : <ArrowDown size={12} />)}</div>
                                             </th>
-                                            <th className="px-4 py-3">Sales Mode</th>
-                                            <th className="px-4 py-3 text-right">Actions</th>
+                                            <th className="px-4 py-3 whitespace-nowrap">Sales Mode</th>
+                                            <th className="px-4 py-3 text-right whitespace-nowrap">Actions</th>
                                         </tr>
                                     </thead>
                                     <tbody className="divide-y divide-slate-100">
@@ -3186,7 +3186,7 @@ const SalesInvoice = () => {
                                         ))}
                                         {filteredInvoices.map((inv, index) => (
                                             <tr key={inv.id} className="hover:bg-slate-50 cursor-pointer group" onClick={() => handleLoadInvoice(inv)}>
-                                                <td className="px-4 py-3 text-center text-slate-400 font-mono font-medium">
+                                                <td className="px-4 py-3 text-center text-slate-400 font-mono font-medium whitespace-nowrap">
                                                     {getListSerialNumber(index, {
                                                         documentNumber: inv.invoiceNumber,
                                                         page: listPageMeta.page,
@@ -3194,32 +3194,34 @@ const SalesInvoice = () => {
                                                         totalElements: listPageMeta.totalElements,
                                                     })}
                                                 </td>
-                                                <td className="px-4 py-3 font-medium text-slate-700">
-                                                    <div className="flex items-center">
+                                                <td className="px-4 py-3 font-medium text-slate-700 whitespace-nowrap">
+                                                    <div className="flex items-center gap-2 whitespace-nowrap">
                                                         {inv.invoiceNumber}
                                                         {renderTypeBadge(inv)}
                                                     </div>
                                                 </td>
-                                                <td className="px-4 py-3 text-slate-500">{formatDisplayDate(inv.invoiceDate)}</td>
-                                                <td className="px-4 py-3">
-                                                    <div className="font-medium text-slate-700">{inv.customerName}</div>
-                                                    <div className="text-[10px] text-slate-400">{inv.customerCode}</div>
+                                                <td className="px-4 py-3 text-slate-500 whitespace-nowrap">{formatDisplayDate(inv.invoiceDate)}</td>
+                                                <td className="px-4 py-3 whitespace-nowrap">
+                                                    <div className="inline-flex items-center gap-1.5 whitespace-nowrap">
+                                                        <span className="font-medium text-slate-700">{inv.customerName}</span>
+                                                        {inv.customerCode && <span className="text-[10px] text-slate-400">{inv.customerCode}</span>}
+                                                    </div>
                                                 </td>
-                                                <td className="px-4 py-3 text-slate-600 text-[11px]">
+                                                <td className="px-4 py-3 text-slate-600 text-[11px] whitespace-nowrap">
                                                     {inv.branchName ? (
-                                                        <>
-                                                            <div className="font-medium">{inv.branchName}</div>
-                                                            {inv.branchCode && <div className="text-slate-400">{inv.branchCode}</div>}
-                                                        </>
+                                                        <div className="inline-flex items-center gap-1.5 whitespace-nowrap">
+                                                            <span className="font-medium">{inv.branchName}</span>
+                                                            {inv.branchCode && <span className="text-slate-400">{inv.branchCode}</span>}
+                                                        </div>
                                                     ) : (
                                                         <span className="text-slate-300">—</span>
                                                     )}
                                                 </td>
-                                                <td className="px-4 py-3">
+                                                <td className="px-4 py-3 whitespace-nowrap">
                                                     {(() => {
                                                         const src = resolveSourceType(inv);
                                                         return (
-                                                            <div className="flex flex-col gap-0.5">
+                                                            <div className="inline-flex items-center gap-2 whitespace-nowrap">
                                                                 <span className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold border w-fit ${src.color}`}>
                                                                     {src.label}
                                                                 </span>
@@ -3228,18 +3230,18 @@ const SalesInvoice = () => {
                                                         );
                                                     })()}
                                                 </td>
-                                                <td className="px-4 py-3">
-                                                    <span className="border border-slate-200 px-2 py-0.5 rounded text-[10px] bg-white text-slate-600">{inv.paymentMode || '—'}</span>
+                                                <td className="px-4 py-3 whitespace-nowrap">
+                                                    <span className="border border-slate-200 px-2 py-0.5 rounded text-[10px] bg-white text-slate-600 whitespace-nowrap">{inv.paymentMode || '—'}</span>
                                                 </td>
-                                                <td className="px-4 py-3 font-medium text-slate-800"><CurrencyAmount value={inv.invoiceTotal || 0} currency={invoiceCurrency} /></td>
-                                                <td className="px-4 py-3 text-emerald-600"><CurrencyAmount value={inv.amountPaid || 0} currency={invoiceCurrency} /></td>
-                                                <td className="px-4 py-3">
+                                                <td className="px-4 py-3 font-medium text-slate-800 whitespace-nowrap"><CurrencyAmount value={inv.invoiceTotal || 0} currency={invoiceCurrency} /></td>
+                                                <td className="px-4 py-3 text-emerald-600 whitespace-nowrap"><CurrencyAmount value={inv.amountPaid || 0} currency={invoiceCurrency} /></td>
+                                                <td className="px-4 py-3 whitespace-nowrap">
                                                     <CurrencyAmount value={inv.balance || 0} currency={invoiceCurrency} className="text-red-500 font-medium mr-2" />
                                                     {renderListStatus(inv.status, inv)}
                                                 </td>
-                                                <td className="px-4 py-3 text-slate-500">{inv.salesChannel || 'Retail'}</td>
-                                                <td className="px-4 py-3 text-right">
-                                                    <div className="flex justify-end gap-2" onClick={(e) => e.stopPropagation()}>
+                                                <td className="px-4 py-3 text-slate-500 whitespace-nowrap">{inv.salesChannel || 'Retail'}</td>
+                                                <td className="px-4 py-3 text-right whitespace-nowrap">
+                                                    <div className="flex justify-end gap-2 whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
                                                         <button onClick={() => handleLoadInvoice(inv)} className="p-1 hover:bg-slate-200 rounded text-slate-500" title="Edit"><Edit size={14} /></button>
                                                         <button onClick={() => handlePrintClick(inv)} disabled={isPrinting} className="p-1 hover:bg-slate-200 rounded text-slate-500 disabled:opacity-50" title="Print"><Printer size={14} /></button>
                                                         <button
@@ -3608,7 +3610,7 @@ const SalesInvoice = () => {
                                         <div className="border border-slate-100 rounded-lg overflow-hidden">
                                             {/* Show more rows (closer to the left column height), then scroll inside for long invoices */}
                                             <div className="min-h-[320px] md:min-h-[420px] xl:min-h-[520px] max-h-[380px] md:max-h-[520px] xl:max-h-[680px] overflow-auto">
-                                                <table className="w-full text-[11px] text-left min-w-[860px]">
+                                                <table className="bb-nowrap-table w-full text-[11px] text-left min-w-[860px]">
                                                     <thead className="sticky top-0 z-10 bg-[#FBFBFD] border-b border-slate-200 text-[10px] font-semibold text-slate-600">
                                                         <tr>
                                                             <th className="px-3 py-2 w-8 text-center text-slate-400">#</th>
@@ -4196,7 +4198,7 @@ const SalesInvoice = () => {
                         </div>
 
                         <div className="flex-1 overflow-y-auto">
-                            <table className="w-full text-left text-xs">
+                            <table className="bb-nowrap-table w-full text-left text-xs">
                                 <thead className="bg-slate-50 text-slate-600 font-semibold border-b border-slate-200 sticky top-0">
                                     <tr>
                                         <th className="px-4 py-3">Receipt No</th>
@@ -4449,7 +4451,7 @@ const SalesInvoice = () => {
                         {/* Body - Scrollable */}
                         <div className="p-6 overflow-y-auto flex-1 bg-white">
                             <div className="border border-slate-200 rounded-lg overflow-hidden">
-                                <table className="w-full text-xs text-left">
+                                <table className="bb-nowrap-table w-full text-xs text-left">
                                     <thead className="bg-[#F7F7FA] text-slate-500 font-semibold border-b border-slate-200">
                                         <tr>
                                             <th className="px-4 py-3 w-10 text-center">

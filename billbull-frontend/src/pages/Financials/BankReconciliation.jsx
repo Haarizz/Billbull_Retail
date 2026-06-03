@@ -401,7 +401,7 @@ const BankReconciliation = () => {
                 </div>
 
                 <div className="overflow-x-auto">
-                    <table className="w-full">
+                    <table className="bb-nowrap-table w-full">
                         <thead className="bg-[#F7F7FA] border-b border-slate-100">
                             <tr>
                                 <th className="px-4 py-3 text-center w-12"><input type="checkbox" className="w-4 h-4 rounded border-slate-300" /></th>

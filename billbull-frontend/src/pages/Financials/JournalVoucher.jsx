@@ -1014,7 +1014,7 @@ const JournalVoucher = () => {
 
                         {/* TABLE */}
                         <div className="overflow-x-auto">
-                            <table className="w-full text-left border-collapse">
+                            <table className="bb-nowrap-table w-full text-left border-collapse">
                                 <thead className="bg-[#F7F7FA] text-slate-600 font-semibold text-xs border-b border-slate-200">
                                     <tr>
                                         <th className="px-4 py-3">JV No.</th>
@@ -1384,7 +1384,7 @@ const JournalVoucher = () => {
                             <h3 className="text-sm font-bold text-slate-700 mb-6 pb-2 border-b border-slate-100">Ledger Breakdown</h3>
 
                             <div className="overflow-x-auto">
-                                <table className="w-full text-left border-collapse">
+                                <table className="bb-nowrap-table w-full text-left border-collapse">
                                     <thead className="text-[10px] uppercase font-bold text-slate-500 border-b border-slate-200">
                                         <tr>
                                             <th className="py-3">Account Ledger</th>

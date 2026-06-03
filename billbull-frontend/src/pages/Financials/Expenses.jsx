@@ -517,7 +517,7 @@ setAllAccounts(Array.isArray(glData) ? glData : []);
                 <div className="overflow-x-auto border border-slate-100 rounded-lg min-h-[300px]">
                     <div onClick={() => setActiveActionId(null)} className={`fixed inset-0 z-0 ${activeActionId ? 'block' : 'hidden'}`} />
 
-                    <table className="w-full relative z-10">
+                    <table className="bb-nowrap-table w-full relative z-10">
                         <thead className="bg-[#F7F7FA] border-b border-slate-100">
                             <tr>
                                 <th className="px-4 py-3 text-left text-[10px] font-bold text-slate-500 uppercase tracking-wider">Date</th>

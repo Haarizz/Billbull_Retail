@@ -233,7 +233,7 @@ const FinancialConfig = () => {
                 </button>
             </div>
             <div className="overflow-x-auto">
-                <table className="w-full">
+                <table className="bb-nowrap-table w-full">
                     <thead className="bg-[#F7F7FA] border-b border-slate-100">
                         <tr>
                             <th className="px-4 py-3 text-left text-[10px] font-bold text-slate-500 uppercase tracking-wider w-40">Code</th>
@@ -282,7 +282,7 @@ const FinancialConfig = () => {
                                 </h3>
                             </div>
                             <div className="overflow-x-auto">
-                                <table className="w-full">
+                                <table className="bb-nowrap-table w-full">
                                     <thead className="bg-[#F7F7FA] border-b border-slate-100">
                                         <tr>
                                             <th className="px-4 py-3 text-left text-[10px] font-bold text-slate-500 uppercase w-8">#</th>
@@ -342,7 +342,7 @@ const FinancialConfig = () => {
                 </h3>
             </div>
             <div className="overflow-x-auto">
-                <table className="w-full">
+                <table className="bb-nowrap-table w-full">
                     <thead className="bg-[#F7F7FA] border-b border-slate-100">
                         <tr>
                             <th className="px-4 py-3 text-left text-[10px] font-bold text-slate-500 uppercase tracking-wider">Name</th>
@@ -458,7 +458,7 @@ const FinancialConfig = () => {
                 </div>
 
                 <div className="flex-1 overflow-y-auto">
-                    <table className="w-full">
+                    <table className="bb-nowrap-table w-full">
                         <thead className="bg-[#F7F7FA] border-b border-slate-100 sticky top-0 z-10">
                             <tr>
                                 <th className="px-6 py-3 text-left text-[10px] font-bold text-slate-500 uppercase tracking-wider w-32">Account Code</th>
@@ -579,7 +579,7 @@ const FinancialConfig = () => {
                 </button>
             </div>
             <div className="overflow-x-auto">
-                <table className="w-full">
+                <table className="bb-nowrap-table w-full">
                     <thead className="bg-[#F7F7FA] border-b border-slate-100">
                         <tr>
                             <th className="px-6 py-3 text-left text-[10px] font-bold text-slate-500 uppercase tracking-wider">Period Name</th>

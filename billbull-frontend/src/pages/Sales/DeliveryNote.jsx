@@ -463,7 +463,7 @@ const DeliveryNote = () => {
                     {isLoading && <div className="animate-spin h-3.5 w-3.5 border-2 border-[#F5C742] border-t-transparent rounded-full" />}
                 </div>
                 <div className="max-h-[350px] overflow-y-auto">
-                    <table className="w-full text-left text-[11px]">
+                    <table className="bb-nowrap-table w-full text-left text-[11px]">
                         <thead className="bg-[#FBFBFD] text-slate-400 uppercase font-bold sticky top-0 z-10">
                             <tr>
                                 <th className="px-4 py-2 border-b border-slate-100">Customer</th>
@@ -2138,7 +2138,7 @@ const DeliveryNote = () => {
 
                             {/* Table */}
                             <div className="overflow-x-auto hidden md:block">
-                                <table className="w-full text-xs text-left">
+                                <table className="bb-nowrap-table w-full text-xs text-left">
                                     <thead className="bg-[#F7F7FA] text-slate-500 font-semibold border-b border-slate-200">
                                         <tr>
                                             <th className="px-3 py-3 text-center text-slate-500 w-12 select-none">S.No.</th>
@@ -2580,7 +2580,7 @@ const DeliveryNote = () => {
                                         </div>
 
                                         <div className="overflow-auto max-h-[380px]">
-                                            <table className="w-full text-xs text-left min-w-[880px]">
+                                            <table className="bb-nowrap-table w-full text-xs text-left min-w-[880px]">
                                                 <thead className="sticky top-0 z-10 bg-white border-b border-slate-100/80 text-[11px] font-semibold text-slate-500">
                                                     <tr>
                                                         <th className="p-2 w-8 text-center text-slate-400">#</th>
@@ -3094,7 +3094,7 @@ const DeliveryNote = () => {
                                 )}
 
                                 <div className="hidden md:block overflow-x-auto">
-                                    <table className="w-full text-xs text-left">
+                                    <table className="bb-nowrap-table w-full text-xs text-left">
                                         <thead className="bg-[#F7F7FA] text-slate-500 font-semibold border-b border-slate-200">
                                             <tr>
                                                 <th className="px-4 py-3">Picking Note</th>
@@ -3292,7 +3292,7 @@ const DeliveryNote = () => {
                                             </div>
 
                                             <div className="overflow-x-auto">
-                                                <table className="w-full text-xs text-left min-w-[760px]">
+                                                <table className="bb-nowrap-table w-full text-xs text-left min-w-[760px]">
                                                     <thead className="bg-[#F7F7FA] text-slate-500 font-semibold border-b border-slate-200">
                                                         <tr>
                                                             <th className="px-4 py-3">Item</th>
@@ -3428,7 +3428,7 @@ const DeliveryNote = () => {
                                 </div>
 
                                 <div className="overflow-x-auto hidden md:block">
-                                    <table className="w-full text-xs text-left">
+                                    <table className="bb-nowrap-table w-full text-xs text-left">
                                         <thead className="bg-[#F7F7FA] text-slate-500 font-semibold border-b border-slate-200">
                                             <tr>
                                                 <th className="px-4 py-3">Picking Note</th>
@@ -3657,7 +3657,7 @@ const DeliveryNote = () => {
                 </div>
 
                 {/* Items */}
-                <table className="w-full text-left text-sm mb-12 border-collapse">
+                <table className="bb-nowrap-table w-full text-left text-sm mb-12 border-collapse">
                     <thead>
                         <tr className="border-b-2 border-slate-800">
                             <th className="py-2 w-12 text-slate-500">#</th>

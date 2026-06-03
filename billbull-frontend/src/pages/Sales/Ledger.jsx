@@ -789,7 +789,7 @@ const Ledger = () => {
              </div>
 
              <div className="overflow-x-auto min-h-[300px]">
-               <table className="w-full text-left text-xs">
+               <table className="bb-nowrap-table w-full text-left text-xs">
                  <thead className="bg-slate-50 text-slate-600 font-semibold border-b border-slate-200">
                    <tr>
                      <th className="px-4 py-3">Account Code</th>
@@ -964,7 +964,7 @@ const Ledger = () => {
              </div>
 
              <div className="overflow-x-auto">
-               <table className="w-full text-left text-xs">
+               <table className="bb-nowrap-table w-full text-left text-xs">
                  <thead className="bg-slate-50 text-slate-600 font-semibold border-b border-slate-200">
                    <tr>
                      <th className="px-4 py-3">Date</th>
@@ -1161,7 +1161,7 @@ const Ledger = () => {
              </div>
 
              <div className="overflow-x-auto">
-                 <table className="w-full text-left text-xs">
+                 <table className="bb-nowrap-table w-full text-left text-xs">
                    <thead className="bg-slate-50 text-slate-600 font-semibold border-b border-slate-200">
                      <tr>
                        <th className="px-4 py-3">Date</th>

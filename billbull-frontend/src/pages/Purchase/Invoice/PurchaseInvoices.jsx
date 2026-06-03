@@ -690,7 +690,7 @@ const InvoiceListView = ({ invoices, filteredInvoices, activeFilter, setActiveFi
         </div>
 
         <div className="overflow-x-auto">
-          <table className="w-full text-xs text-left min-w-[1320px]">
+          <table className="bb-nowrap-table w-full text-xs text-left min-w-[1320px]">
             <thead className="bg-[#F7F7FA] text-slate-500 font-medium border-b border-slate-200">
               <tr>
                 <th className="px-3 py-3 text-center text-slate-500 w-12 select-none uppercase whitespace-nowrap">S.No.</th>
@@ -2146,7 +2146,7 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
 
             {/* Items Table */}
             <div className="overflow-auto" style={{ maxHeight: 'calc(4 * 115px + 44px)' }}>
-              <table className="w-full text-xs text-left min-w-[800px]">
+              <table className="bb-nowrap-table w-full text-xs text-left min-w-[800px]">
                 <thead className="bg-slate-50 border-b border-slate-100 text-slate-500 sticky top-0 z-10">
                   <tr>
                     <th className="p-3 font-medium w-10 text-center text-slate-400">#</th>
@@ -2690,7 +2690,7 @@ const PendingApprovalView = ({ pendingApprovals, onApprove, onView }) => {
           </div>
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full text-xs text-left min-w-[800px]">
+            <table className="bb-nowrap-table w-full text-xs text-left min-w-[800px]">
               <thead className="bg-slate-50 border-b border-slate-100 text-slate-500">
                 <tr>
                   <th className="p-3 font-medium">Invoice No</th>
@@ -2758,7 +2758,7 @@ const PendingPaymentView = ({ pendingPayments, onPay, onView }) => {
 
         {/* Table */}
         <div className="overflow-x-auto">
-          <table className="w-full text-xs text-left min-w-[900px]">
+          <table className="bb-nowrap-table w-full text-xs text-left min-w-[900px]">
             <thead className="bg-slate-50 border-b border-slate-100 text-slate-500">
               <tr>
                 <th className="p-3 font-medium">Invoice No</th>
@@ -2842,7 +2842,7 @@ const DraftInvoicesView = ({ drafts, onEdit, onDelete }) => {
           </div>
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full text-xs text-left min-w-[800px]">
+            <table className="bb-nowrap-table w-full text-xs text-left min-w-[800px]">
               <thead className="bg-slate-50 border-b border-slate-100 text-slate-500">
                 <tr>
                   <th className="p-3 font-medium">Invoice No</th>

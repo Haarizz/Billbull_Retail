@@ -1864,7 +1864,7 @@ const ReceiveMoneyView = () => {
                         </div>
 
                         <div className="overflow-x-auto">
-                            <table className="w-full text-sm text-left">
+                            <table className="bb-nowrap-table w-full text-sm text-left">
                                 <thead className="bg-[#F7F7FA] text-slate-500 border-b border-slate-200">
                                     <tr>
                                         <th className="px-4 py-3 w-10 text-center"><input type="checkbox" onChange={handleSelectAll} className="rounded border-slate-300 text-yellow-500 focus:ring-yellow-500" /></th>
@@ -2302,7 +2302,7 @@ const CustomerSOAView = ({ customers = [] }) => {
 
             {/* Table */}
             <div className="bg-white rounded-lg border border-slate-200 shadow-sm overflow-hidden print:hidden">
-                <table className="w-full text-sm text-left">
+                <table className="bb-nowrap-table w-full text-sm text-left">
                     <thead className="bg-[#F7F7FA] text-slate-500 border-b border-slate-200">
                         <tr>
                             <th className="px-6 py-3 font-semibold text-xs uppercase">Date</th>
@@ -2608,7 +2608,7 @@ const CustomerLedger = () => {
                         {/* Customer Table */}
                         <div className="bg-white border border-slate-200 rounded-lg shadow-sm overflow-hidden">
                             <div className="overflow-x-auto">
-                                <table className="w-full text-sm text-left">
+                                <table className="bb-nowrap-table w-full text-sm text-left">
                                     <thead className="bg-[#F7F7FA] text-slate-500 border-b border-slate-200">
                                         <tr>
                                             <th className="px-3 py-4 font-semibold text-xs uppercase whitespace-nowrap text-center w-12">S.No.</th>

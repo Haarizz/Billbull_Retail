@@ -2349,7 +2349,7 @@ function SalesSummaryReport() {
         </CardHeader>
         <CardContent className="px-3 pb-3">
           <div className="border border-slate-100 rounded-lg overflow-hidden">
-            <table className="w-full text-[11px]">
+            <table className="bb-nowrap-table w-full text-[11px]">
               <thead className="bg-slate-50 text-slate-500">
                 <tr>
                   <th className="px-3 py-2 text-left font-medium">Date</th>
@@ -2466,7 +2466,7 @@ function DailySalesReport() {
   function SubTable({ rows, columns }: { rows: string[][]; columns: string[] }) {
     return (
       <div className="mt-2 border border-slate-100 rounded-lg overflow-hidden">
-        <table className="w-full text-[11px]">
+        <table className="bb-nowrap-table w-full text-[11px]">
           <thead className="bg-slate-50 text-slate-500">
             <tr>{columns.map((c) => <th key={c} className="px-3 py-1.5 text-left font-medium">{c}</th>)}</tr>
           </thead>
@@ -2495,7 +2495,7 @@ function DailySalesReport() {
       <div className="mt-3">
         <div className="mb-1 text-[10px] font-semibold text-slate-600">Payment Mode Breakdown</div>
         <div className="border border-slate-100 rounded-lg overflow-hidden">
-          <table className="w-full text-[11px]">
+          <table className="bb-nowrap-table w-full text-[11px]">
             <thead className="bg-slate-50 text-slate-500">
               <tr>
                 <th className="px-3 py-1.5 text-left font-medium">Payment Mode</th>
@@ -2734,7 +2734,7 @@ function DailySalesReport() {
         </div>
         <div className="px-4 py-3">
           <div className="border border-slate-100 rounded-lg overflow-hidden">
-            <table className="w-full text-[11px]">
+            <table className="bb-nowrap-table w-full text-[11px]">
               <thead className="bg-slate-50 text-slate-500">
                 <tr>
                   <th className="px-3 py-2 text-left font-medium">Account</th>
@@ -2790,7 +2790,7 @@ function DailySalesReport() {
         </div>
         <div className="px-4 py-3">
           <div className="border border-slate-100 rounded-lg overflow-hidden">
-            <table className="w-full text-[11px]">
+            <table className="bb-nowrap-table w-full text-[11px]">
               <thead className="bg-slate-50 text-slate-500">
                 <tr>
                   <th className="px-3 py-2 text-left font-medium">Bank Account</th>
@@ -2908,7 +2908,7 @@ function ChannelWiseReport() {
         </CardHeader>
         <CardContent className="px-3 pb-3">
           <div className="border border-slate-100 rounded-lg overflow-hidden">
-            <table className="w-full text-[11px]">
+            <table className="bb-nowrap-table w-full text-[11px]">
               <thead className="bg-slate-50 text-slate-500">
                 <tr>
                   <th className="px-3 py-2 text-left font-medium">Channel</th>
@@ -2957,7 +2957,7 @@ function CustomerSalesSummaryReport() {
         </CardHeader>
         <CardContent className="px-3 pb-3">
           <div className="border border-slate-100 rounded-lg overflow-hidden">
-            <table className="w-full text-[11px]">
+            <table className="bb-nowrap-table w-full text-[11px]">
               <thead className="bg-slate-50 text-slate-500">
                 <tr>
                   <th className="px-3 py-2 text-left font-medium">Customer</th>
@@ -3012,7 +3012,7 @@ function CashierPerformanceReport() {
         </CardHeader>
         <CardContent className="px-3 pb-3">
           <div className="border border-slate-100 rounded-lg overflow-hidden">
-            <table className="w-full text-[11px]">
+            <table className="bb-nowrap-table w-full text-[11px]">
               <thead className="bg-slate-50 text-slate-500">
                 <tr>
                   <th className="px-3 py-2 text-left font-medium">Cashier</th>
@@ -3090,7 +3090,7 @@ function POSTransactionReport() {
         </CardHeader>
         <CardContent className="px-3 pb-3">
           <div className="border border-slate-100 rounded-lg overflow-hidden">
-            <table className="w-full text-[11px]">
+            <table className="bb-nowrap-table w-full text-[11px]">
               <thead className="bg-slate-50 text-slate-500">
                 <tr>
                   <th className="px-3 py-2 text-left font-medium">Bill No</th>
@@ -3179,7 +3179,7 @@ function POSItemSalesReport() {
         </CardHeader>
         <CardContent className="px-3 pb-3">
           <div className="border border-slate-100 rounded-lg overflow-hidden">
-            <table className="w-full text-[11px]">
+            <table className="bb-nowrap-table w-full text-[11px]">
               <thead className="bg-slate-50 text-slate-500">
                 <tr>
                   <th className="px-3 py-2 text-left font-medium">Code</th>
@@ -3272,7 +3272,7 @@ function POSPaymentModeReport() {
         </CardHeader>
         <CardContent className="px-3 pb-3">
           <div className="border border-slate-100 rounded-lg overflow-hidden">
-            <table className="w-full text-[11px]">
+            <table className="bb-nowrap-table w-full text-[11px]">
               <thead className="bg-slate-50 text-slate-500">
                 <tr>
                   <th className="px-3 py-2 text-left font-medium">Mode</th>
@@ -3351,7 +3351,7 @@ function POSVoidReport() {
         </CardHeader>
         <CardContent className="px-3 pb-3">
           <div className="border border-slate-100 rounded-lg overflow-hidden">
-            <table className="w-full text-[11px]">
+            <table className="bb-nowrap-table w-full text-[11px]">
               <thead className="bg-slate-50 text-slate-500">
                 <tr>
                   <th className="px-3 py-2 text-left font-medium">Bill No</th>
@@ -3442,7 +3442,7 @@ function VANSalesSummaryReport() {
         </CardHeader>
         <CardContent className="px-3 pb-3">
           <div className="border border-slate-100 rounded-lg overflow-hidden">
-            <table className="w-full text-[11px]">
+            <table className="bb-nowrap-table w-full text-[11px]">
               <thead className="bg-slate-50 text-slate-500">
                 <tr>
                   <th className="px-3 py-2 text-left font-medium">Route</th>
@@ -3487,7 +3487,7 @@ function VANItemSalesReport() {
       </CardHeader>
       <CardContent className="px-3 pb-3">
         <div className="border border-slate-100 rounded-lg overflow-hidden">
-          <table className="w-full text-[11px]">
+          <table className="bb-nowrap-table w-full text-[11px]">
             <thead className="bg-slate-50 text-slate-500">
               <tr>
                 <th className="px-3 py-2 text-left font-medium">Item</th>
@@ -3547,7 +3547,7 @@ function VANRoutePerformanceReport() {
         </CardHeader>
         <CardContent className="px-3 pb-3">
           <div className="border border-slate-100 rounded-lg overflow-hidden">
-            <table className="w-full text-[11px]">
+            <table className="bb-nowrap-table w-full text-[11px]">
               <thead className="bg-slate-50 text-slate-500">
                 <tr>
                   <th className="px-3 py-2 text-left font-medium">Route</th>
@@ -3596,7 +3596,7 @@ function VANCollectionReport() {
       </CardHeader>
       <CardContent className="px-3 pb-3">
         <div className="border border-slate-100 rounded-lg overflow-hidden">
-          <table className="w-full text-[11px]">
+          <table className="bb-nowrap-table w-full text-[11px]">
             <thead className="bg-slate-50 text-slate-500">
               <tr>
                 <th className="px-3 py-2 text-left font-medium">Salesperson</th>
@@ -3644,7 +3644,7 @@ function VANStockVarianceReport() {
       </CardHeader>
       <CardContent className="px-3 pb-3">
         <div className="border border-slate-100 rounded-lg overflow-hidden">
-          <table className="w-full text-[11px]">
+          <table className="bb-nowrap-table w-full text-[11px]">
             <thead className="bg-slate-50 text-slate-500">
               <tr>
                 <th className="px-3 py-2 text-left font-medium">Salesperson</th>
@@ -3732,7 +3732,7 @@ function SalesInvoiceRegisterReport() {
         </CardHeader>
         <CardContent className="px-3 pb-3">
           <div className="border border-slate-100 rounded-lg overflow-hidden">
-            <table className="w-full text-[11px]">
+            <table className="bb-nowrap-table w-full text-[11px]">
               <thead className="bg-slate-50 text-slate-500">
                 <tr>
                   <th className="px-3 py-2 text-left font-medium">Invoice No</th>
@@ -3815,7 +3815,7 @@ function SalesOrderStatusReport() {
         </CardHeader>
         <CardContent className="px-3 pb-3">
           <div className="border border-slate-100 rounded-lg overflow-hidden">
-            <table className="w-full text-[11px]">
+            <table className="bb-nowrap-table w-full text-[11px]">
               <thead className="bg-slate-50 text-slate-500">
                 <tr>
                   <th className="px-3 py-2 text-left font-medium">Order No</th>
@@ -3887,7 +3887,7 @@ function DeliveryDispatchReport() {
         </CardHeader>
         <CardContent className="px-3 pb-3">
           <div className="border border-slate-100 rounded-lg overflow-hidden">
-            <table className="w-full text-[11px]">
+            <table className="bb-nowrap-table w-full text-[11px]">
               <thead className="bg-slate-50 text-slate-500">
                 <tr>
                   <th className="px-3 py-2 text-left font-medium">DN No</th>
@@ -3967,7 +3967,7 @@ function CreditNoteReturnsReport() {
         </CardHeader>
         <CardContent className="px-3 pb-3">
           <div className="border border-slate-100 rounded-lg overflow-hidden">
-            <table className="w-full text-[11px]">
+            <table className="bb-nowrap-table w-full text-[11px]">
               <thead className="bg-slate-50 text-slate-500">
                 <tr>
                   <th className="px-3 py-2 text-left font-medium">CN No</th>
@@ -4082,7 +4082,7 @@ function CustomerAgingReport() {
         </CardHeader>
         <CardContent className="px-3 pb-3">
           <div className="border border-slate-100 rounded-lg overflow-hidden">
-            <table className="w-full text-[11px]">
+            <table className="bb-nowrap-table w-full text-[11px]">
               <thead className="bg-slate-50 text-slate-500">
                 <tr>
                   <th className="px-3 py-2 text-left font-medium">Customer</th>
@@ -4144,7 +4144,7 @@ function TopDormantCustomersReport() {
           </CardHeader>
           <CardContent className="px-3 pb-3">
             <div className="border border-slate-100 rounded-lg overflow-hidden">
-              <table className="w-full text-[11px]">
+              <table className="bb-nowrap-table w-full text-[11px]">
                 <thead className="bg-slate-50 text-slate-500">
                   <tr>
                     <th className="px-3 py-2 text-left font-medium">#</th>
@@ -4175,7 +4175,7 @@ function TopDormantCustomersReport() {
           </CardHeader>
           <CardContent className="px-3 pb-3">
             <div className="border border-slate-100 rounded-lg overflow-hidden">
-              <table className="w-full text-[11px]">
+              <table className="bb-nowrap-table w-full text-[11px]">
                 <thead className="bg-slate-50 text-slate-500">
                   <tr>
                     <th className="px-3 py-2 text-left font-medium">Customer</th>
@@ -4233,7 +4233,7 @@ function CustomerPriceLevelReport() {
       </CardHeader>
       <CardContent className="px-3 pb-3">
         <div className="border border-slate-100 rounded-lg overflow-hidden">
-          <table className="w-full text-[11px]">
+          <table className="bb-nowrap-table w-full text-[11px]">
             <thead className="bg-slate-50 text-slate-500">
               <tr>
                 <th className="px-3 py-2 text-left font-medium">Customer</th>
@@ -4342,7 +4342,7 @@ function ItemWiseSalesReport() {
         </CardHeader>
         <CardContent className="px-3 pb-3">
           <div className="border border-slate-100 rounded-lg overflow-hidden">
-            <table className="w-full text-[11px]">
+            <table className="bb-nowrap-table w-full text-[11px]">
               <thead className="bg-slate-50 text-slate-500">
                 <tr>
                   <th className="px-3 py-2 text-left font-medium">Item</th>
@@ -4449,7 +4449,7 @@ function CategoryBrandSalesReport() {
         </CardHeader>
         <CardContent className="px-3 pb-3">
           <div className="border border-slate-100 rounded-lg overflow-hidden">
-            <table className="w-full text-[11px]">
+            <table className="bb-nowrap-table w-full text-[11px]">
               <thead className="bg-slate-50 text-slate-500">
                 <tr>
                   <th className="px-3 py-2 text-left font-medium">Category</th>
@@ -4502,7 +4502,7 @@ function FastSlowMovingReport() {
           </CardHeader>
           <CardContent className="px-3 pb-3">
             <div className="border border-slate-100 rounded-lg overflow-hidden">
-              <table className="w-full text-[11px]">
+              <table className="bb-nowrap-table w-full text-[11px]">
                 <thead className="bg-slate-50 text-slate-500">
                   <tr>
                     <th className="px-3 py-2 text-left font-medium">#</th>
@@ -4533,7 +4533,7 @@ function FastSlowMovingReport() {
           </CardHeader>
           <CardContent className="px-3 pb-3">
             <div className="border border-slate-100 rounded-lg overflow-hidden">
-              <table className="w-full text-[11px]">
+              <table className="bb-nowrap-table w-full text-[11px]">
                 <thead className="bg-slate-50 text-slate-500">
                   <tr>
                     <th className="px-3 py-2 text-left font-medium">#</th>
@@ -4628,7 +4628,7 @@ function DiscountAnalysisReport() {
         </CardHeader>
         <CardContent className="px-3 pb-3">
           <div className="border border-slate-100 rounded-lg overflow-hidden">
-            <table className="w-full text-[11px]">
+            <table className="bb-nowrap-table w-full text-[11px]">
               <thead className="bg-slate-50 text-slate-500">
                 <tr>
                   <th className="px-3 py-2 text-left font-medium">Cashier</th>
@@ -4694,7 +4694,7 @@ function PromotionImpactReport() {
         </CardHeader>
         <CardContent className="px-3 pb-3">
           <div className="border border-slate-100 rounded-lg overflow-hidden">
-            <table className="w-full text-[11px]">
+            <table className="bb-nowrap-table w-full text-[11px]">
               <thead className="bg-slate-50 text-slate-500">
                 <tr>
                   <th className="px-3 py-2 text-left font-medium">Promotion</th>
@@ -4759,7 +4759,7 @@ function FreeIssueSchemeReport() {
         </CardHeader>
         <CardContent className="px-3 pb-3">
           <div className="border border-slate-100 rounded-lg overflow-hidden">
-            <table className="w-full text-[11px]">
+            <table className="bb-nowrap-table w-full text-[11px]">
               <thead className="bg-slate-50 text-slate-500">
                 <tr>
                   <th className="px-3 py-2 text-left font-medium">Scheme</th>
@@ -4865,7 +4865,7 @@ function VATOutputRegisterReport() {
       </CardHeader>
       <CardContent className="px-3 pb-3">
         <div className="border border-slate-100 rounded-lg overflow-hidden">
-          <table className="w-full text-[11px]">
+          <table className="bb-nowrap-table w-full text-[11px]">
             <thead className="bg-slate-50 text-slate-500">
               <tr>
                 <th className="px-3 py-2 text-left font-medium">Invoice No</th>
@@ -4921,7 +4921,7 @@ function PriceOverrideReport() {
       </CardHeader>
       <CardContent className="px-3 pb-3">
         <div className="border border-slate-100 rounded-lg overflow-hidden">
-          <table className="w-full text-[11px]">
+          <table className="bb-nowrap-table w-full text-[11px]">
             <thead className="bg-slate-50 text-slate-500">
               <tr>
                 <th className="px-3 py-2 text-left font-medium">Date / Time</th>
@@ -4972,7 +4972,7 @@ function ManualEntryReport() {
       </CardHeader>
       <CardContent className="px-3 pb-3">
         <div className="border border-slate-100 rounded-lg overflow-hidden">
-          <table className="w-full text-[11px]">
+          <table className="bb-nowrap-table w-full text-[11px]">
             <thead className="bg-slate-50 text-slate-500">
               <tr>
                 <th className="px-3 py-2 text-left font-medium">Entry No</th>
@@ -5023,7 +5023,7 @@ function SalesEditLogReport() {
       </CardHeader>
       <CardContent className="px-3 pb-3">
         <div className="border border-slate-100 rounded-lg overflow-hidden">
-          <table className="w-full text-[11px]">
+          <table className="bb-nowrap-table w-full text-[11px]">
             <thead className="bg-slate-50 text-slate-500">
               <tr>
                 <th className="px-3 py-2 text-left font-medium">Edit No</th>

@@ -1407,7 +1407,7 @@ function ResultsTable({
       </CardHeader>
       <CardContent className="px-3 pb-3">
         <div className="border border-slate-100 rounded-lg overflow-hidden">
-          <table className="w-full text-[11px]">
+          <table className="bb-nowrap-table w-full text-[11px]">
             <thead className="bg-slate-50 text-slate-500">
               <tr>
                 {columns.map((c) => (
@@ -1577,7 +1577,7 @@ function StockValuationReport() {
         </CardHeader>
         <CardContent className="px-3 pb-3">
           <div className="border border-slate-100 rounded-lg overflow-hidden">
-            <table className="w-full text-[11px]">
+            <table className="bb-nowrap-table w-full text-[11px]">
               <thead className="bg-slate-50 text-slate-500">
                 <tr>
                   <th className="px-3 py-2 text-left font-medium">SKU</th>
@@ -1888,7 +1888,7 @@ function ReportHeader({ title, subtitle, rows }: { title: string; subtitle?: str
 function Tbl({ children }: { children: React.ReactNode }) {
   return (
     <div className="border border-slate-100 rounded-lg overflow-hidden">
-      <table className="w-full text-[11px]">{children}</table>
+      <table className="bb-nowrap-table w-full text-[11px]">{children}</table>
     </div>
   );
 }
@@ -2258,7 +2258,7 @@ function ExpiryReport() {
         </CardHeader>
         <CardContent className="px-3 pb-3">
           <div className="border border-slate-100 rounded-lg overflow-hidden">
-            <table className="w-full text-[11px]">
+            <table className="bb-nowrap-table w-full text-[11px]">
               <thead className="bg-slate-50 text-slate-500">
                 <tr>
                   <Th></Th>

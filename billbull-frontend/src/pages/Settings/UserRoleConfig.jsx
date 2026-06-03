@@ -463,7 +463,7 @@ const UserRoleConfig = () => {
 
                 {/* Column headers */}
                 <div className="overflow-x-auto">
-                  <table className="w-full text-xs">
+                  <table className="bb-nowrap-table w-full text-xs">
                     <thead>
                       <tr className="bg-slate-50 border-b border-slate-100">
                         <th className="text-left px-5 py-3 font-semibold text-slate-500 w-[240px]">Module</th>

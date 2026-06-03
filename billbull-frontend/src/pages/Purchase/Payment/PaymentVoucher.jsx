@@ -970,7 +970,7 @@ const PaymentVoucher = () => {
                                             {loadingInvoices ? (
                                                 <div className="flex justify-center py-16 text-slate-400 text-sm">Loading invoices...</div>
                                             ) : (
-                                                <table className="w-full text-sm text-left">
+                                                <table className="bb-nowrap-table w-full text-sm text-left">
                                                     <thead className="bg-[#F7F7FA] text-slate-500 border-b border-slate-200">
                                                         <tr>
                                                             <th className="px-4 py-3 w-10 text-center">
@@ -1200,7 +1200,7 @@ const PaymentVoucher = () => {
                             <div className="text-center py-10 text-slate-400 text-sm">Loading vouchers...</div>
                         ) : (
                             <div className="overflow-x-auto">
-                                <table className="w-full text-left text-xs">
+                                <table className="bb-nowrap-table w-full text-left text-xs">
                                     <thead className="bg-[#F9FAFB] text-slate-500 font-semibold border-b border-slate-200">
                                         <tr>
                                             <th className="px-4 py-3 text-center text-slate-500 w-12 select-none uppercase font-medium">S.No.</th>
@@ -1300,7 +1300,7 @@ const PaymentVoucher = () => {
                             <div className="text-center py-10 text-slate-400 text-sm">Checking for approvals...</div>
                         ) : (
                             <div className="border border-slate-200 rounded-lg overflow-hidden">
-                                <table className="w-full text-left text-xs">
+                                <table className="bb-nowrap-table w-full text-left text-xs">
                                     <thead className="bg-[#F9FAFB] text-slate-500 font-semibold border-b border-slate-200">
                                         <tr>
                                             <th className="px-4 py-3 text-center text-slate-500 w-12 select-none uppercase font-medium">S.No.</th>
@@ -1386,7 +1386,7 @@ const PaymentVoucher = () => {
                         </div>
 
                         <div className="overflow-x-auto">
-                            <table className="w-full text-left text-xs">
+                            <table className="bb-nowrap-table w-full text-left text-xs">
                                 <thead className="bg-[#F9FAFB] text-slate-500 font-semibold border-b border-slate-200">
                                     <tr>
                                         <th className="px-4 py-3 text-center text-slate-500 w-12 select-none uppercase font-medium">S.No.</th>

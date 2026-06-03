@@ -418,7 +418,7 @@ const ListView = ({ lpos, processedData, onEdit, onView, onPrint, activeFilter, 
       {/* DESKTOP TABLE VIEW */}
       <div className="bg-white border border-slate-200 rounded-lg shadow-sm overflow-hidden flex-1 hidden md:block">
         <div className="overflow-x-auto">
-          <table className="w-full text-xs text-left table-auto">
+          <table className="bb-nowrap-table w-full text-xs text-left table-auto">
 
             <thead className="bg-[#F7F7FA] text-slate-600 font-semibold border-b border-slate-200">
               <tr>
@@ -804,7 +804,7 @@ const ApprovalQueueView = ({ queue, onApprove, onReject }) => {
           </div>
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full text-xs text-left min-w-[700px]">
+            <table className="bb-nowrap-table w-full text-xs text-left min-w-[700px]">
               <thead className="bg-slate-50 border-b border-slate-100 text-slate-500">
                 <tr>
                   <th className="p-3 font-medium text-nowrap">LPO No.</th>
@@ -881,7 +881,7 @@ const HistoryView = ({ lpos }) => {
         </div>
 
         <div className="overflow-x-auto">
-          <table className="w-full text-xs text-left min-w-[700px]">
+          <table className="bb-nowrap-table w-full text-xs text-left min-w-[700px]">
             <thead className="bg-slate-50 border-b border-slate-200 text-slate-500">
               <tr>
                 <th className="px-4 py-3 whitespace-nowrap">LPO No.</th>
@@ -1798,7 +1798,7 @@ const EditorView = ({ initialData, vendors, warehouses, onSave, onSubmit, onPrin
               </div>
             </div>
             <div className="overflow-auto" style={{ maxHeight: 'calc(4 * 115px + 44px)' }}>
-              <table className="w-full text-xs text-left min-w-[800px]">
+              <table className="bb-nowrap-table w-full text-xs text-left min-w-[800px]">
                 <thead className="bg-slate-50 border-b border-slate-100 text-slate-500 sticky top-0 z-10">
                   <tr>
                     <th className="p-3 font-medium w-10 text-center text-slate-400">#</th>

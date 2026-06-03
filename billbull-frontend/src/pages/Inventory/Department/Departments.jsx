@@ -293,7 +293,7 @@ const Departments = () => {
 
         {/* Table */}
         <div className="overflow-x-auto w-full">
-          <table className="w-full text-sm min-w-[600px]">
+          <table className="bb-nowrap-table w-full text-sm min-w-[600px]">
             <thead className="bg-slate-50 border-b border-slate-200">
               <tr>
                 <th className="text-left p-3 font-medium text-slate-600">Department Name</th>

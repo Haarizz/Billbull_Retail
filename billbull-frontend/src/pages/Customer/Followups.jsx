@@ -905,7 +905,7 @@ const Followups = () => {
 
                 {/* TABLE - Desktop Only */}
                 <div className="hidden md:block bg-white rounded-lg border border-slate-200 shadow-sm overflow-hidden mb-6">
-                    <table className="w-full">
+                    <table className="bb-nowrap-table w-full">
                         <thead className="bg-slate-50 border-b border-slate-100">
                             <tr>
                                 {['Follow-Up ID', 'Customer', 'Inquiry', 'Schedule', 'Type', 'Assigned To', 'Priority', 'Status', 'Quotation', 'Actions'].map((h, i) => (
@@ -1319,7 +1319,7 @@ const Followups = () => {
 
                                 <h4 className="text-xs font-bold text-slate-500 mb-2">Items</h4>
                                 <div className="border border-slate-100 rounded-lg overflow-hidden mb-6">
-                                    <table className="w-full text-xs text-left">
+                                    <table className="bb-nowrap-table w-full text-xs text-left">
                                         <thead className="bg-slate-50 text-slate-500">
                                             <tr>
                                                 <th className="px-3 py-2 font-medium">Product</th>

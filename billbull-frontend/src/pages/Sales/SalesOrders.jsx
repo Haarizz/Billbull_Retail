@@ -1672,7 +1672,8 @@ const SalesOrders = () => {
           <div className="space-y-4">
 
             {/* DESKTOP TABLE VIEW */}
-            <table className="w-full text-xs text-left hidden md:table">
+            <div className="hidden overflow-x-auto md:block">
+            <table className="bb-nowrap-table w-full text-xs text-left">
               <thead className="bg-slate-50 text-slate-600 font-semibold border-b border-slate-200">
                 <tr>
                   <th className="px-4 py-3 text-center text-slate-500 w-16 select-none">S.No.</th>
@@ -1725,6 +1726,7 @@ const SalesOrders = () => {
                 ))}
               </tbody>
             </table>
+            </div>
 
             {/* MOBILE CARD VIEW */}
             <div className="md:hidden">
@@ -1994,7 +1996,7 @@ const SalesOrders = () => {
               </div>
 
               <div className="overflow-auto max-h-[380px]">
-                <table className="w-full text-xs text-left min-w-[800px]">
+                <table className="bb-nowrap-table w-full text-xs text-left min-w-[800px]">
                   <thead className="sticky top-0 z-10 bg-white border-b border-slate-100/80 text-[11px] font-semibold text-slate-500">
                     <tr>
                       <th className="p-2 w-8 text-center text-slate-400">#</th>

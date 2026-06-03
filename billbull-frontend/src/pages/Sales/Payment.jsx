@@ -835,7 +835,7 @@ const Payment = () => {
 
                             {/* TABLE */}
                             <div className="overflow-x-auto">
-                                <table className="w-full text-left text-xs">
+                                <table className="bb-nowrap-table w-full text-left text-xs">
                                     <thead className="bg-[#F7F7FA] text-slate-500 border-b border-slate-200 sticky top-0 z-10">
                                         <tr>
                                             <th className="px-3 py-3 text-center text-slate-500 w-12 select-none uppercase">S.No.</th>
@@ -978,7 +978,7 @@ const Payment = () => {
                                             </button>
                                         </div>
                                         <div className="overflow-x-auto">
-                                            <table className="w-full text-sm text-left">
+                                            <table className="bb-nowrap-table w-full text-sm text-left">
                                                 <thead className="bg-[#F7F7FA] text-slate-500 border-b border-slate-200">
                                                     <tr>
                                                         <th className="px-4 py-3 w-10 text-center">
