@@ -2283,11 +2283,13 @@ const buildPrintStyles = (paperSize = 'A4', orientation = 'Portrait', layout = {
     const page = resolvePaperDimensions(resolvedPaperSize, resolvedOrientation);
     const shellPadding = layout.isPurchaseDesigner ? '28px 32px' : '12mm';
     // Strategy: @page handles top+bottom margins on every page (incl. continuation).
-    // Shell padding handles left+right only, so there's no double-padding.
+    // Shell padding handles left+right, plus a small cloned top buffer for rows
+    // that start on a continuation page when browser print margins are tight.
     // Purchase-designer keeps its own padding without @page adjustment.
     const pageTopBottom = layout.isPurchaseDesigner ? '0' : '12mm';
     const continuousPageTop = layout.isPurchaseDesigner ? '0' : '26mm';
-    const shellPaddingPrint = layout.isPurchaseDesigner ? '28px 32px' : '0 12mm';
+    const continuationInnerGap = layout.isPurchaseDesigner ? '0' : '4mm';
+    const shellPaddingPrint = layout.isPurchaseDesigner ? '28px 32px' : `${continuationInnerGap} 12mm 0 12mm`;
 
     return `
         @page {
@@ -2342,6 +2344,8 @@ const buildPrintStyles = (paperSize = 'A4', orientation = 'Portrait', layout = {
                 padding: ${shellPaddingPrint};
                 border-radius: 0;
                 box-shadow: none;
+                -webkit-box-decoration-break: clone;
+                box-decoration-break: clone;
             }
             /* overflow:hidden on the shell creates a block formatting context
                that stops the browser from breaking the table mid-row correctly
