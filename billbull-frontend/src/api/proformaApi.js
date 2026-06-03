@@ -19,8 +19,8 @@ export const sendProformaEmail = async (
 export const getAllProformas = () =>
   api.get("/api/proforma").then(res => res.data);
 
-export const getProformasPage = ({ page = 0, size = 30, search = "", status = "" } = {}) =>
-  api.get("/api/proforma/page", { params: { page, size, search, status } }).then(res => res.data);
+export const getProformasPage = ({ page = 0, size = 30, search = "", status = "", fromDate, toDate } = {}) =>
+  api.get("/api/proforma/page", { params: { page, size, search, status, fromDate, toDate } }).then(res => res.data);
 
 export const getProformaById = (id) =>
   api.get(`/api/proforma/${id}`).then(res => res.data);

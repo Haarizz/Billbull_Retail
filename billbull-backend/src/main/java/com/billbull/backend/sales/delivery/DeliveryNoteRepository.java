@@ -97,6 +97,8 @@ public interface DeliveryNoteRepository extends JpaRepository<DeliveryNote, Long
       @Param("customerCode") String customerCode,
       @Param("excludedStatus") DeliveryNoteStatus excludedStatus);
 
+  List<DeliveryNote> findByDnDateBetween(java.time.LocalDate from, java.time.LocalDate to);
+
   List<DeliveryNote> findByDnNumberIn(List<String> dnNumbers);
 
   boolean existsByDnNumber(String dnNumber);

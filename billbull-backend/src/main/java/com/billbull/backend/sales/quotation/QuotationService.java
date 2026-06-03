@@ -164,6 +164,20 @@ public class QuotationService {
         return quotations;
     }
 
+    @Transactional(readOnly = true)
+    public List<Quotation> getAllByDateRange(java.time.LocalDate from, java.time.LocalDate to) {
+        List<Quotation> quotations = new ArrayList<>(
+                branchAccessService.filterBranchScoped(quotationRepo.findByDateBetween(from, to), Quotation::getBranchId));
+        DocumentOrderingUtil.sortByDocumentDateAndNumberDesc(
+                quotations,
+                Quotation::getDate,
+                Quotation::getQtnNo,
+                Quotation::getId);
+        quotations.forEach(this::initialize);
+        enrichQuotationImages(quotations);
+        return quotations;
+    }
+
     // -------------------------------------------------
     // GET NEXT QUOTATION NO
     // -------------------------------------------------

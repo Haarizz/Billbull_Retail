@@ -583,6 +583,23 @@ public class SalesInvoiceService {
         return invoices;
     }
 
+    @Transactional(readOnly = true)
+    public List<SalesInvoice> getAllByDateRange(java.time.LocalDate from, java.time.LocalDate to) {
+        List<SalesInvoice> invoices = new ArrayList<>(
+                branchAccessService.filterBranchScoped(invoiceRepo.findByInvoiceDateBetween(from, to), SalesInvoice::getBranchId));
+        DocumentOrderingUtil.sortByDocumentDateAndNumberDesc(
+                invoices,
+                SalesInvoice::getInvoiceDate,
+                SalesInvoice::getInvoiceNumber,
+                SalesInvoice::getId);
+        invoices.forEach(inv -> {
+            Hibernate.initialize(inv.getItems());
+            enrichItems(inv.getItems());
+            applyBatchSelectionSummary(inv);
+        });
+        return invoices;
+    }
+
     // ----------------------------
     // ENRICH ITEMS FROM PRODUCT
     // ----------------------------

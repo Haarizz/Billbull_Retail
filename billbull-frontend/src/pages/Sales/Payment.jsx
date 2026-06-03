@@ -29,6 +29,7 @@ import {
 // API Imports
 import { getAllSalesPayments, getSalesPaymentsPage, saveSalesPayment, getNextSalesPaymentNumber, getSalesPaymentStats, deleteSalesPayment } from '../../api/salesPaymentApi';
 import PaginationFooter from '../../components/common/PaginationFooter';
+import DateFilter from '../../components/common/DateFilter';
 import { getAllSalesInvoices } from '../../api/salesInvoiceApi';
 import { getAllCustomers, getOpeningInvoicesByCustomerCode } from '../../api/customerledgerApi';
 import { getBankAccounts } from '../../api/ledgerApi';
@@ -99,6 +100,8 @@ const Payment = () => {
     const [openingInvoices, setOpeningInvoices] = useState([]);
     const [searchQuery, setSearchQuery] = useState('');
     const [statusFilter, setStatusFilter] = useState('All Status');
+    const _todayPay = new Date().toISOString().slice(0, 10);
+    const [dateRange, setDateRange] = useState({ fromDate: _todayPay, toDate: _todayPay });
     const [salesSettings, setSalesSettings] = useState(null);
     const paymentAutoNumbering = isAutoNumberingEnabled(salesSettings, 'SALES_PAYMENT');
 
@@ -158,7 +161,7 @@ const Payment = () => {
         if (activeTab !== 'list') return;
         fetchPayments();
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [activeTab, listPage]);
+    }, [activeTab, listPage, dateRange]);
 
     // Refetch when the global Branch Selector changes the active branch.
     useEffect(() => {
@@ -170,7 +173,7 @@ const Payment = () => {
     const fetchPayments = async () => {
         setIsLoading(true);
         try {
-            const resp = await getSalesPaymentsPage({ page: listPage, size: 30 });
+            const resp = await getSalesPaymentsPage({ page: listPage, size: 30, fromDate: dateRange?.fromDate, toDate: dateRange?.toDate });
             const data = Array.isArray(resp?.content) ? resp.content : [];
             setListPageMeta({
                 page: resp?.page ?? listPage,
@@ -764,6 +767,9 @@ const Payment = () => {
                             {/* FILTERS */}
                             <div className="mb-6">
                                 <h3 className="text-sm font-bold text-slate-700 mb-4 flex items-center gap-2"><Filter size={16} /> Payment Filters</h3>
+                                <div className="flex items-center gap-3 mb-3">
+                                    <DateFilter onChange={(range) => { setDateRange(range); setListPage(0); }} />
+                                </div>
                                 <div className="grid grid-cols-1 md:grid-cols-6 gap-4 items-end">
                                     <div className="md:col-span-2 relative">
                                         <label className="block text-[10px] font-bold text-slate-500 mb-1">Search</label>
@@ -775,15 +781,6 @@ const Payment = () => {
                                             value={searchQuery}
                                             onChange={(e) => setSearchQuery(e.target.value)}
                                         />
-                                    </div>
-                                    <div>
-                                        <label className="block text-[10px] font-bold text-slate-500 mb-1">Date Range</label>
-                                        <select className="w-full px-3 py-2 text-xs border border-slate-200 rounded-md bg-white text-slate-600">
-                                            <option>All Time</option>
-                                            <option>Today</option>
-                                            <option>This Week</option>
-                                            <option>This Month</option>
-                                        </select>
                                     </div>
                                     <div>
                                         <label className="block text-[10px] font-bold text-slate-500 mb-1">Status</label>

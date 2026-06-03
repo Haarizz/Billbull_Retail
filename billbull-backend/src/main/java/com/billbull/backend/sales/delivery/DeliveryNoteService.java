@@ -288,6 +288,18 @@ public class DeliveryNoteService {
     }
 
     @Transactional(readOnly = true)
+    public List<DeliveryNoteResponse> listByDateRange(java.time.LocalDate from, java.time.LocalDate to) {
+        List<DeliveryNote> deliveryNotes = new ArrayList<>(
+                branchAccessService.filterBranchScoped(repo.findByDnDateBetween(from, to), DeliveryNote::getBranchId));
+        DocumentOrderingUtil.sortByDocumentDateAndNumberDesc(
+                deliveryNotes,
+                DeliveryNote::getDnDate,
+                DeliveryNote::getDnNumber,
+                DeliveryNote::getId);
+        return deliveryNotes.stream().map(this::toResponse).toList();
+    }
+
+    @Transactional(readOnly = true)
     public DeliveryNoteResponse get(Long id) {
         return toResponse(getEntity(id));
     }

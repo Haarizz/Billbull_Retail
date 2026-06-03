@@ -82,8 +82,15 @@ public class SalesOrderController {
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "30") int size,
             @RequestParam(required = false) String search,
-            @RequestParam(required = false) String status) {
-        return com.billbull.backend.util.PaginationUtil.paginate(service.getAll(), page, size, search, status);
+            @RequestParam(required = false) String status,
+            @RequestParam(required = false) String fromDate,
+            @RequestParam(required = false) String toDate) {
+        java.util.List<SalesOrder> all = (fromDate != null || toDate != null)
+                ? service.getAllByDateRange(
+                        fromDate != null ? java.time.LocalDate.parse(fromDate) : java.time.LocalDate.of(2000, 1, 1),
+                        toDate != null ? java.time.LocalDate.parse(toDate) : java.time.LocalDate.now())
+                : service.getAll();
+        return com.billbull.backend.util.PaginationUtil.paginate(all, page, size, search, status);
     }
 
     @GetMapping("/next-number")

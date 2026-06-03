@@ -19,8 +19,8 @@ export const sendDeliveryNoteEmail = async (
 export const getDeliveryNotes = () =>
   api.get("/api/delivery-notes").then(res => res.data);
 
-export const getDeliveryNotesPage = ({ page = 0, size = 30, search = "", status = "" } = {}) =>
-  api.get("/api/delivery-notes/page", { params: { page, size, search, status } }).then(res => res.data);
+export const getDeliveryNotesPage = ({ page = 0, size = 30, search = "", status = "", fromDate, toDate } = {}) =>
+  api.get("/api/delivery-notes/page", { params: { page, size, search, status, fromDate, toDate } }).then(res => res.data);
 
 export const getPickingNotes = async (deliveryNotes = null) => {
   const notes = deliveryNotes ?? await getDeliveryNotes();

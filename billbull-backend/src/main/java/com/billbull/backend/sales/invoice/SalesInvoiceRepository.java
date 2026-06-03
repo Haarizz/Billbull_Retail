@@ -19,6 +19,8 @@ public interface SalesInvoiceRepository extends JpaRepository<SalesInvoice, Long
 
         List<SalesInvoice> findAllByOrderByInvoiceDateDesc();
 
+        List<SalesInvoice> findByInvoiceDateBetween(LocalDate from, LocalDate to);
+
         /**
          * Sales-report loader: date-bounded invoices with their line items fetched
          * in a single query (no per-invoice N+1). Pass null dates for no bound.

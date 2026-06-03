@@ -68,10 +68,16 @@ public class QuotationController {
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "30") int size,
             @RequestParam(required = false) String search,
-            @RequestParam(required = false) String status) {
+            @RequestParam(required = false) String status,
+            @RequestParam(required = false) String fromDate,
+            @RequestParam(required = false) String toDate) {
         permissionService.requireCan(MODULE, "view");
-        return ResponseEntity.ok(com.billbull.backend.util.PaginationUtil.paginate(
-                service.getAllQuotations(), page, size, search, status));
+        java.util.List<Quotation> all = (fromDate != null || toDate != null)
+                ? service.getAllByDateRange(
+                        fromDate != null ? java.time.LocalDate.parse(fromDate) : java.time.LocalDate.of(2000, 1, 1),
+                        toDate != null ? java.time.LocalDate.parse(toDate) : java.time.LocalDate.now())
+                : service.getAllQuotations();
+        return ResponseEntity.ok(com.billbull.backend.util.PaginationUtil.paginate(all, page, size, search, status));
     }
 
     @GetMapping("/{id}")

@@ -96,6 +96,18 @@ public class SalesReturnService {
         return returns;
     }
 
+    @Transactional(readOnly = true)
+    public List<SalesReturn> getAllByDateRange(java.time.LocalDate from, java.time.LocalDate to) {
+        List<SalesReturn> returns = new ArrayList<>(
+                branchAccessService.filterBranchScopedByBranch(salesReturnRepository.findByReturnDateBetween(from, to), SalesReturn::getBranch));
+        DocumentOrderingUtil.sortByDocumentDateAndNumberDesc(
+                returns,
+                SalesReturn::getReturnDate,
+                SalesReturn::getReturnNumber,
+                SalesReturn::getId);
+        return returns;
+    }
+
     public SalesReturn getReturnById(Long id) {
         return salesReturnRepository.findById(id)
                 .orElseThrow(() -> new RuntimeException("Sales Return not found with ID: " + id));

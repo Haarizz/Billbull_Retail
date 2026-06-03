@@ -87,6 +87,7 @@ import useShortcuts from '../../hooks/useShortcuts';
 // ✅ PERMISSIONS
 import { usePermissions } from '../../context/PermissionContext';
 import ExportDropdown from '../../components/common/ExportDropdown';
+import DateFilter from '../../components/common/DateFilter';
 import { exportToExcel, exportToPDF } from '../../utils/exportUtils';
 import CurrencyAmount from '../../components/CurrencyAmount';
 import { formatCurrencyDisplay, resolveCurrencyDisplayCode } from '../../utils/countryCurrencyOptions';
@@ -205,6 +206,8 @@ const SalesOrders = () => {
   const [listPage, setListPage] = useState(0);
   const [listPageMeta, setListPageMeta] = useState({ page: 0, size: 30, totalElements: 0, totalPages: 0 });
   const [isListLoading, setIsListLoading] = useState(false);
+  const _todaySO = new Date().toISOString().slice(0, 10);
+  const [dateRange, setDateRange] = useState({ fromDate: _todaySO, toDate: _todaySO });
   const exportOrdersList = useMemo(() => ordersList.map((order) => ({
     ...order,
     orderTotal: formatCurrencyAmount(order.orderTotal, company),
@@ -509,7 +512,7 @@ const SalesOrders = () => {
   const fetchSalesOrders = async () => {
     setIsListLoading(true);
     try {
-      const data = await getSalesOrdersPage({ page: listPage, size: 30 });
+      const data = await getSalesOrdersPage({ page: listPage, size: 30, fromDate: dateRange?.fromDate, toDate: dateRange?.toDate });
       const rows = Array.isArray(data?.content) ? data.content : [];
       setOrdersList(rows);
       setListPageMeta({
@@ -530,7 +533,7 @@ const SalesOrders = () => {
     if (activeTab !== 'list') return;
     fetchSalesOrders();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeTab, listPage]);
+  }, [activeTab, listPage, dateRange]);
 
   // Refetch when the global Branch Selector changes the active branch.
   useEffect(() => {
@@ -1624,6 +1627,7 @@ const SalesOrders = () => {
           <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-4 gap-4 md:gap-0">
             <h2 className="font-bold text-slate-700 text-sm">Sales Orders</h2>
             <div className="flex flex-col md:flex-row gap-3 items-center w-full md:w-auto">
+              <DateFilter onChange={(range) => { setDateRange(range); setListPage(0); }} />
               <div className="relative w-full md:w-auto">
                 <input type="text" placeholder="Search by SO / customer / quotation" className="pl-3 pr-3 py-1.5 text-xs border border-slate-200 rounded-md w-full md:w-64 focus:outline-none focus:border-yellow-400" />
               </div>

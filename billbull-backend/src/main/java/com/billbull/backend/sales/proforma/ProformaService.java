@@ -113,6 +113,18 @@ public class ProformaService {
     }
 
     @Transactional(readOnly = true)
+    public List<ProformaResponse> listByDateRange(java.time.LocalDate from, java.time.LocalDate to) {
+        List<ProformaInvoice> proformas = new ArrayList<>(
+                branchAccessService.filterBranchScopedByBranch(repo.findByPiDateBetween(from, to), ProformaInvoice::getBranch));
+        DocumentOrderingUtil.sortByDocumentDateAndNumberDesc(
+                proformas,
+                ProformaInvoice::getPiDate,
+                ProformaInvoice::getPiNumber,
+                ProformaInvoice::getId);
+        return proformas.stream().map(this::toResponse).toList();
+    }
+
+    @Transactional(readOnly = true)
     public ProformaResponse get(Long id) {
         ProformaInvoice pi = repo.findById(id)
                 .orElseThrow(() -> new RuntimeException("Proforma not found"));
