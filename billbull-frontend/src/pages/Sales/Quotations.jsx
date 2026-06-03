@@ -109,6 +109,7 @@ import ExportDropdown from '../../components/common/ExportDropdown';
 import { exportToExcel, exportToPDF } from '../../utils/exportUtils';
 import { generateDocFilename } from '../../utils/filenameUtils';
 import { isAutoNumberingEnabled } from '../../utils/salesNumbering';
+import TableSkeleton from '../../components/common/TableSkeleton';
 
 // ==========================================
 // 1. CONFIGURATION
@@ -2886,6 +2887,7 @@ const Quotations = () => {
                                     </tr>
                                 </thead>
                                 <tbody className="divide-y divide-slate-100/30">
+                                    {isListLoading && <TableSkeleton cols={9} rows={8} />}
                                     {filteredQuotations.map((qtn, index) => (
                                         <React.Fragment key={qtn.id}>
                                             <tr

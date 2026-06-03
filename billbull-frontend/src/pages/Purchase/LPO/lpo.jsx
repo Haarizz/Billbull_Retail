@@ -128,6 +128,7 @@ import { useBranch } from '../../../context/BranchContext';
 import SearchableDropdown from '../../../components/SearchableDropdown';
 import ProductSelector from '../../../components/ProductSelector';
 import VendorSelector from '../../../components/VendorSelector';
+import TableSkeleton from '../../../components/common/TableSkeleton';
 
 const statusTabs = [
   "All LPOs",
@@ -328,7 +329,7 @@ const MobileCard = ({ row, onView, currencyLabel }) => (
 // 3. VIEW COMPONENTS
 // ==========================================
 
-const ListView = ({ lpos, processedData, onEdit, onView, onPrint, activeFilter, onApprove, onReject, onStockApprove, onStockReject, onProceedToInvoice, onConvertToGrn, onAdvancePayment, onPrintPaymentVoucher, searchQuery, setSearchQuery, sortConfig, requestSort, showFilterPanel, setShowFilterPanel, dateRange, setDateRange, selectedVendor, setSelectedVendor, vendors, currencyLabel, currentPage }) => {
+const ListView = ({ lpos, processedData, onEdit, onView, onPrint, activeFilter, onApprove, onReject, onStockApprove, onStockReject, onProceedToInvoice, onConvertToGrn, onAdvancePayment, onPrintPaymentVoucher, searchQuery, setSearchQuery, sortConfig, requestSort, showFilterPanel, setShowFilterPanel, dateRange, setDateRange, selectedVendor, setSelectedVendor, vendors, currencyLabel, currentPage, loading = false }) => {
   const formatDate = (dateString) => formatDisplayDate(dateString);
 
   return (
@@ -493,7 +494,9 @@ const ListView = ({ lpos, processedData, onEdit, onView, onPrint, activeFilter, 
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 bg-white">
-              {processedData.length === 0 ? (
+              {loading ? (
+                <TableSkeleton cols={9} rows={8} />
+              ) : processedData.length === 0 ? (
                 <tr><td colSpan="14" className="text-center py-8 text-slate-400">No records found.</td></tr>
               ) : processedData
                 .map((row, index) => (

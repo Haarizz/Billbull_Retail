@@ -23,6 +23,7 @@ import { buildFinancialVoucherPrintHtml } from '../../utils/financialPrintTempla
 import LedgerAccountCreateModal from '../../components/common/LedgerAccountCreateModal';
 import { formatUserDisplayName } from '../../utils/displayName';
 import PaginationFooter from '../../components/common/PaginationFooter';
+import TableSkeleton from '../../components/common/TableSkeleton';
 
 const formatAccountLedgerLabel = (account = {}) => {
     const code = account.code ? `${account.code} - ` : '';
@@ -1028,6 +1029,7 @@ const JournalVoucher = () => {
                                     </tr>
                                 </thead>
                                 <tbody className="divide-y divide-slate-100 text-xs">
+                                    {loading && <TableSkeleton cols={6} rows={8} />}
                                     {pagedData.map((row) => (
                                         <tr key={row.id} className="hover:bg-slate-50">
                                             <td className="px-4 py-3 font-medium text-slate-700">{row.jvNumber}</td>

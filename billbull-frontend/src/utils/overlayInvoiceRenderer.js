@@ -211,22 +211,24 @@ const TABLE_COLUMN_DEFS = [
 ];
 const DEFAULT_TABLE_COLUMNS = { lineNo: true, name: true, description: true, qty: true, price: true, taxAmt: true, total: true };
 
-const renderItemsTable = (field, data) => {
+const renderItemsTable = (field, data, options = {}) => {
     const items = Array.isArray(data.items) ? data.items : [];
     const colCfg = field.columns || DEFAULT_TABLE_COLUMNS;
     const cols = TABLE_COLUMN_DEFS.filter((c) => colCfg[c.key]);
     if (cols.length === 0) return '';
-    const showHeader = field.showHeader !== false;
+    const showHeader = options.showHeader !== false && field.showHeader !== false;
     const zebra = Boolean(field.zebra);
     const totalFlex = cols.reduce((sum, c) => sum + c.flex, 0);
+    const indexOffset = options.indexOffset || 0;
 
     const colGroup = cols.map((c) => `<col style="width:${(c.flex / totalFlex * 100).toFixed(2)}%;" />`).join('');
 
     const headerCells = cols.map((c) => `<th style="padding:1mm 1.5mm;border-bottom:0.4mm solid #333;text-align:${c.align};white-space:nowrap;">${escapeHtml(c.label)}</th>`).join('');
 
     const rows = items.map((it, idx) => {
-        const bg = zebra && idx % 2 === 1 ? 'background:rgba(0,0,0,0.035);' : '';
-        const cells = cols.map((c) => `<td style="padding:1mm 1.5mm;border-bottom:0.2mm solid #ccc;text-align:${c.align};${bg}">${cellValue(c.key, it, idx)}</td>`).join('');
+        const globalIdx = idx + indexOffset;
+        const bg = zebra && globalIdx % 2 === 1 ? 'background:rgba(0,0,0,0.035);' : '';
+        const cells = cols.map((c) => `<td style="padding:1mm 1.5mm;border-bottom:0.2mm solid #ccc;text-align:${c.align};${bg}">${cellValue(c.key, it, globalIdx)}</td>`).join('');
         return `<tr>${cells}</tr>`;
     }).join('');
 
@@ -260,6 +262,41 @@ const renderDrawing = (d) => {
     return `<div style="position:absolute;left:${x}mm;top:${y}mm;width:${w}mm;height:${h}mm;border:${thickness * 0.35}mm ${borderStyle} ${color};background:${fill};"></div>`;
 };
 
+// Render a single field into its absolute-position HTML.
+const renderField = (f, data, company, printOnlyValues, logoUrl, stampUrl) => {
+    if (f.enabled === false) return '';
+    const x = num(f.x);
+    const y = num(f.y);
+    const width = num(f.width) || 60;
+    const styleBits = [
+        'position:absolute',
+        `left:${x}mm`,
+        `top:${y}mm`,
+        `width:${width}mm`,
+        `font-size:${num(f.fontSize) || 10}pt`,
+        `font-family:${f.fontFamily || 'Inter'},sans-serif`,
+        `color:${f.color || '#0f1923'}`,
+        `text-align:${f.align || 'left'}`,
+        f.bold ? 'font-weight:700' : 'font-weight:400',
+        f.italic ? 'font-style:italic' : '',
+    ].filter(Boolean).join(';');
+
+    if (f.id === 'items_table') return null; // handled separately
+    if (f.id === 'company_logo') {
+        return logoUrl ? `<div style="${styleBits}"><img src="${escapeHtml(logoUrl)}" style="max-width:${width}mm;max-height:${width}mm;object-fit:contain;" alt="" /></div>` : '';
+    }
+    if (f.id === 'company_stamp') {
+        return stampUrl ? `<div style="${styleBits}"><img src="${escapeHtml(stampUrl)}" style="max-width:${width}mm;max-height:${width}mm;object-fit:contain;" alt="" /></div>` : '';
+    }
+    if (f.id === 'qr_code') return '';
+
+    const value = resolveFieldValue(f.id, data, company);
+    if (value === '' || value == null) return '';
+    const showLabel = !printOnlyValues && f.printLabel;
+    const label = showLabel ? `<span style="font-weight:400;color:#6b7a8a;">${escapeHtml(f.label)}: </span>` : '';
+    return `<div style="${styleBits}">${label}${escapeHtml(value)}</div>`;
+};
+
 /**
  * Build the print HTML for an overlay (pre-printed / letterhead) invoice template.
  *
@@ -288,47 +325,76 @@ export const generateOverlayInvoiceHtml = (template, data, options = {}) => {
     const logoUrl = firstOf(company.logoUrl, company.logo, company.companyLogo, company.logoPath);
     const stampUrl = firstOf(company.stampUrl, company.stamp, company.stampPath);
 
-    const fieldHtml = fields.map((f) => {
-        if (f.enabled === false) return '';
+    const drawingHtml = drawings.map(renderDrawing).join('');
 
-        const x = num(f.x);
-        const y = num(f.y);
-        const width = num(f.width) || 60;
+    // Find the items_table field config
+    const tableField = fields.find((f) => f.id === 'items_table' && f.enabled !== false);
+
+    // Separate fields into header (page 1 only), table (all pages), and
+    // last-page fields (totals + footer — appear only on the final page).
+    const LAST_PAGE_CATS = new Set(['totals', 'footer']);
+    const headerFields = fields.filter((f) => f.id !== 'items_table' && !LAST_PAGE_CATS.has(f.category));
+    const lastPageFields = fields.filter((f) => f.enabled !== false && LAST_PAGE_CATS.has(f.category));
+
+    const headerFieldsHtml = headerFields
+        .map((f) => renderField(f, data, company, printOnlyValues, logoUrl, stampUrl))
+        .filter(Boolean)
+        .join('');
+
+    const lastPageFieldsHtml = lastPageFields
+        .map((f) => renderField(f, data, company, printOnlyValues, logoUrl, stampUrl))
+        .filter(Boolean)
+        .join('');
+
+    const allItems = Array.isArray(data.items) ? data.items : [];
+    const itemsPerPage = Number(settings.itemsPerPage) || 0;
+    const pageMarginMm = Number(settings.pageMargin) || 0;
+
+    const renderTableDiv = (pageItems, isFirst, indexOffset) => {
+        if (!tableField) return '';
+        const x = num(tableField.x);
+        // On continuation pages, add the configured page margin as extra top offset
+        const yBase = num(tableField.y);
+        const y = isFirst ? yBase : yBase + pageMarginMm;
+        const width = num(tableField.width) || 60;
         const styleBits = [
             'position:absolute',
             `left:${x}mm`,
             `top:${y}mm`,
             `width:${width}mm`,
-            `font-size:${num(f.fontSize) || 10}pt`,
-            `font-family:${f.fontFamily || 'Inter'},sans-serif`,
-            `color:${f.color || '#0f1923'}`,
-            `text-align:${f.align || 'left'}`,
-            f.bold ? 'font-weight:700' : 'font-weight:400',
-            f.italic ? 'font-style:italic' : '',
-        ].filter(Boolean).join(';');
+            `font-size:${num(tableField.fontSize) || 9}pt`,
+            `font-family:${tableField.fontFamily || 'Inter'},sans-serif`,
+            `color:${tableField.color || '#0f1923'}`,
+        ].join(';');
+        const pageData = { ...data, items: pageItems };
+        return `<div style="${styleBits}">${renderItemsTable(tableField, pageData, { showHeader: isFirst, indexOffset })}</div>`;
+    };
 
-        if (f.id === 'items_table') {
-            return `<div style="${styleBits}">${renderItemsTable(f, data)}</div>`;
+    // Build one HTML page-div per chunk of items
+    const buildPageDiv = (pageItems, isFirst, isLast, indexOffset) => {
+        let content = drawingHtml;
+        if (isFirst) content += headerFieldsHtml;
+        content += renderTableDiv(pageItems, isFirst, indexOffset);
+        if (isLast) content += lastPageFieldsHtml;
+        return `<div class="ov-page">${content}</div>`;
+    };
+
+    let pagesHtml;
+    if (itemsPerPage > 0 && allItems.length > itemsPerPage) {
+        const pages = [];
+        const totalChunks = Math.ceil(allItems.length / itemsPerPage);
+        for (let i = 0; i < allItems.length; i += itemsPerPage) {
+            const chunkIndex = i / itemsPerPage;
+            const chunk = allItems.slice(i, i + itemsPerPage);
+            const isFirst = chunkIndex === 0;
+            const isLast = chunkIndex === totalChunks - 1;
+            pages.push(buildPageDiv(chunk, isFirst, isLast, i));
         }
-        // Image fields: pull logo / stamp from the company profile. QR codes are
-        // not pre-generated for the overlay renderer, so nothing is printed.
-        if (f.id === 'company_logo') {
-            return logoUrl ? `<div style="${styleBits}"><img src="${escapeHtml(logoUrl)}" style="max-width:${width}mm;max-height:${width}mm;object-fit:contain;" alt="" /></div>` : '';
-        }
-        if (f.id === 'company_stamp') {
-            return stampUrl ? `<div style="${styleBits}"><img src="${escapeHtml(stampUrl)}" style="max-width:${width}mm;max-height:${width}mm;object-fit:contain;" alt="" /></div>` : '';
-        }
-        if (f.id === 'qr_code') return '';
-
-        const value = resolveFieldValue(f.id, data, company);
-        if (value === '' || value == null) return '';
-
-        const showLabel = !printOnlyValues && f.printLabel;
-        const label = showLabel ? `<span style="font-weight:400;color:#6b7a8a;">${escapeHtml(f.label)}: </span>` : '';
-        return `<div style="${styleBits}">${label}${escapeHtml(value)}</div>`;
-    }).join('');
-
-    const drawingHtml = drawings.map(renderDrawing).join('');
+        pagesHtml = pages.join('\n');
+    } else {
+        // Single page — show everything
+        pagesHtml = buildPageDiv(allItems, true, true, 0);
+    }
 
     const title = `${data.title || 'Sales Invoice'} ${data.docNo || ''}`.trim();
 
@@ -350,15 +416,12 @@ export const generateOverlayInvoiceHtml = (template, data, options = {}) => {
     }
     @media print {
         .ov-page { page-break-after: always; }
+        .ov-page:last-child { page-break-after: auto; }
     }
 </style>
 </head>
 <body>
-    <div class="ov-page">
-        ${drawingHtml}
-        ${fieldHtml}
-    </div>
-    <script>window.onload = function () { window.focus(); window.print(); };</script>
+    ${pagesHtml}
 </body>
 </html>`;
 };

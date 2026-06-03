@@ -93,6 +93,7 @@ import ExportDropdown from '../../../components/common/ExportDropdown';
 import { exportToExcel, exportToPDF } from '../../../utils/exportUtils';
 import { formatCurrencyDisplay, resolveCurrencyDisplayCode } from '../../../utils/countryCurrencyOptions';
 import CurrencyAmount from '../../../components/CurrencyAmount';
+import TableSkeleton from '../../../components/common/TableSkeleton';
 
 // ==========================================
 // 1. MOCK DATA & CONFIGURATION
@@ -146,7 +147,7 @@ const getStatusColor = (status) => {
 // ==========================================
 
 // --- LIST VIEW ---
-const GRNListView = ({ data, onView, onEdit, onDelete, onPost, onPrint, onProceedToInvoice, activeFilter, setActiveFilter, currencyLabel }) => {
+const GRNListView = ({ data, onView, onEdit, onDelete, onPost, onPrint, onProceedToInvoice, activeFilter, setActiveFilter, currencyLabel, isLoading = false }) => {
   const filteredData = data.filter(item => {
     if (activeFilter === "All GRNs") return true;
     if (activeFilter === "Today") {
@@ -212,6 +213,7 @@ const GRNListView = ({ data, onView, onEdit, onDelete, onPost, onPrint, onProcee
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
+              {isLoading && <TableSkeleton cols={8} rows={8} />}
               {filteredData.map((row, index) => (
                 <tr key={row.id} className="hover:bg-slate-50 group transition-colors">
                   <td className="px-3 py-4 text-center text-slate-400 font-mono font-medium whitespace-nowrap">{index + 1}</td>
@@ -2415,6 +2417,7 @@ const GRN = () => {
   const location = useLocation();
   const [activeNavTab, setActiveNavTab] = useState("list");
   const [grns, setGrns] = useState([]);
+  const [isLoading, setIsLoading] = useState(false);
   // Client-side pagination over filtered list (status filter is rich on this page).
   const [listPage, setListPage] = useState(0);
   const LIST_PAGE_SIZE = 30;
@@ -2426,6 +2429,7 @@ const GRN = () => {
   const [grnType, setGrnType] = useState("Against LPO");
 
   const fetchGrns = async () => {
+    setIsLoading(true);
     try {
       const data = await getGrns();
       if (Array.isArray(data)) {
@@ -2436,6 +2440,8 @@ const GRN = () => {
       }
     } catch (error) {
       console.error("Failed to fetch GRNs", error);
+    } finally {
+      setIsLoading(false);
     }
   };
 
@@ -2748,6 +2754,7 @@ const GRN = () => {
             setActiveFilter={setActiveFilter}
             currencyLabel={currencyLabel}
             currentPage={0}
+            isLoading={isLoading}
           />
           <PaginationFooter
             page={listPage}
@@ -2787,6 +2794,7 @@ const GRN = () => {
         setActiveFilter={setActiveFilter}
         currencyLabel={currencyLabel}
         currentPage={0}
+        isLoading={isLoading}
       />;
     }
   };

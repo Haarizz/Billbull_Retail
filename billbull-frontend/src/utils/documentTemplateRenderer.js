@@ -49,7 +49,7 @@ const DOC_NO_LABELS = {
 
 const DOCUMENT_TITLE_LABELS = {
     'Quotation': 'Quotation',
-    'Sales Invoice': 'Sales Invoice',
+    'Sales Invoice': 'Tax Invoice',
     'Sales Order (SO)': 'Sales Order',
     'Delivery Note (DO/DN)': 'Delivery Note',
     'Proforma Invoice (PI)': 'Proforma Invoice',
@@ -2282,11 +2282,20 @@ const buildPrintStyles = (paperSize = 'A4', orientation = 'Portrait', layout = {
     const resolvedOrientation = orientation || 'Portrait';
     const page = resolvePaperDimensions(resolvedPaperSize, resolvedOrientation);
     const shellPadding = layout.isPurchaseDesigner ? '28px 32px' : '12mm';
+    // Strategy: @page handles top+bottom margins on every page (incl. continuation).
+    // Shell padding handles left+right only, so there's no double-padding.
+    // Purchase-designer keeps its own padding without @page adjustment.
+    const pageTopBottom = layout.isPurchaseDesigner ? '0' : '12mm';
+    const continuousPageTop = layout.isPurchaseDesigner ? '0' : '26mm';
+    const shellPaddingPrint = layout.isPurchaseDesigner ? '28px 32px' : '0 12mm';
 
     return `
         @page {
             size: ${resolvedPaperSize} ${resolvedOrientation};
-            margin: 0;
+            margin: ${continuousPageTop} 0 ${pageTopBottom} 0;
+        }
+        @page :first {
+            margin-top: ${pageTopBottom};
         }
         html,
         body {
@@ -2330,9 +2339,42 @@ const buildPrintStyles = (paperSize = 'A4', orientation = 'Portrait', layout = {
                 min-height: ${page.height}mm;
                 height: auto;
                 margin: 0;
-                padding: ${shellPadding};
+                padding: ${shellPaddingPrint};
                 border-radius: 0;
                 box-shadow: none;
+            }
+            /* overflow:hidden on the shell creates a block formatting context
+               that stops the browser from breaking the table mid-row correctly
+               (summary ends up on page 1 before remaining rows). */
+            .document-shell {
+                overflow: visible !important;
+            }
+            /* Switch from grid to block so the browser can break the items
+               table naturally mid-row, keeping the summary/totals section
+               after ALL item rows (on the last page). */
+            .content-stack {
+                display: block !important;
+                overflow: visible !important;
+            }
+            .content-stack > * {
+                margin-bottom: 16px;
+            }
+            /* Explicitly allow page breaks inside the table and between rows */
+            .table-section,
+            .document-table {
+                page-break-inside: auto !important;
+                break-inside: auto !important;
+                overflow: visible !important;
+            }
+            .document-table tbody tr {
+                page-break-inside: avoid !important;
+                break-inside: avoid !important;
+            }
+            /* Keep summary/totals with whatever content precedes them on the
+               last page — never break right before summary */
+            .summary-section {
+                page-break-before: auto !important;
+                break-before: auto !important;
             }
             /* Force 3-column header layout — prevents the responsive breakpoint
                from collapsing columns on narrow paper sizes like A4 */
@@ -4121,9 +4163,9 @@ const renderCustomerPaymentReceiptHtml = (template, data, options = {}) => {
                 ${s.showLinkedSO && inv.soRef ? `<div style="color:#94a3b8;font-size:${f-1.5}px;margin-top:1px;">SO: ${esc(inv.soRef)}</div>` : ''}
             </td>
             ${s.showInvoiceDate ? `<td style="padding:6px 8px;font-size:${f}px;color:#64748b;text-align:right;border-bottom:1px solid ${gold}18;">${esc(inv.date||'')}</td>` : ''}
-            ${s.showInvoiceTotal ? `<td style="padding:6px 8px;font-size:${f}px;text-align:right;border-bottom:1px solid ${gold}18;"><div style="color:#94a3b8;font-size:${f-1}px;">${currHtml}</div><div>${fmt(inv.total)}</div></td>` : ''}
-            ${s.showOutstanding ? `<td style="padding:6px 8px;font-size:${f}px;text-align:right;border-bottom:1px solid ${gold}18;"><div style="color:#94a3b8;font-size:${f-1}px;">${currHtml}</div><div>${fmt(inv.outstanding)}</div></td>` : ''}
-            ${s.showReceivedNow ? `<td style="padding:6px 8px;font-size:${f}px;text-align:right;border-bottom:1px solid ${gold}18;"><div style="color:${gold};font-size:${f-1}px;font-weight:600;">${currHtml}</div><div style="font-weight:700;color:#1a1a2e;">${fmt(inv.received)}</div></td>` : ''}
+            ${s.showInvoiceTotal ? `<td style="padding:6px 8px;font-size:${f}px;text-align:right;border-bottom:1px solid ${gold}18;white-space:nowrap;"><span style="color:#94a3b8;">${currHtml}</span> ${fmt(inv.total)}</td>` : ''}
+            ${s.showOutstanding ? `<td style="padding:6px 8px;font-size:${f}px;text-align:right;border-bottom:1px solid ${gold}18;white-space:nowrap;"><span style="color:#94a3b8;">${currHtml}</span> ${fmt(inv.outstanding)}</td>` : ''}
+            ${s.showReceivedNow ? `<td style="padding:6px 8px;font-size:${f}px;text-align:right;border-bottom:1px solid ${gold}18;white-space:nowrap;"><span style="color:${gold};font-weight:600;">${currHtml}</span> <span style="font-weight:700;color:#1a1a2e;">${fmt(inv.received)}</span></td>` : ''}
             ${s.showBalanceAfter ? `<td style="padding:6px 8px;font-size:${f}px;text-align:right;border-bottom:1px solid ${gold}18;">${Number(inv.balance) > 0 ? `<span style="font-weight:600;">${currHtml} ${fmt(inv.balance)}</span>` : `<span style="color:#94a3b8;">${currHtml} 0.00</span>`}</td>` : ''}
         </tr>`;
     }).join('');

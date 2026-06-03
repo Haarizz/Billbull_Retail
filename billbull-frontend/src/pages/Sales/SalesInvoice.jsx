@@ -192,6 +192,7 @@ const SalesInvoice = () => {
     const fromQuotationHandled = useRef(false);
     const fromSOHandled = useRef(false);
     const fromDNHandled = useRef(false);
+    const editorDataLoaded = useRef(false);
     const [activeTab, setActiveTab] = useState('list');
     const [isLoading, setIsLoading] = useState(false);
 
@@ -648,12 +649,8 @@ const SalesInvoice = () => {
     useEffect(() => {
         const loadData = async () => {
             try {
-                const [custData, soData, piData, dnData, invData, whsData, settingsData, bankAccData, empData] = await Promise.all([
+                const [custData, whsData, settingsData, bankAccData, empData] = await Promise.all([
                     getAllCustomers(),
-                    getAllSalesOrders(),
-                    getAllProformas(),
-                    getDeliveryNotes(),
-                    getAllSalesInvoices(),
                     getWarehouses(),
                     getSalesSettings().catch(() => null),
                     api.get('/api/ledger/accounts/bank-accounts').then(r => r.data).catch(() => []),
@@ -673,12 +670,23 @@ const SalesInvoice = () => {
                     }, ...validCustomers];
                 }
                 setCustomersList(validCustomers);
-                setSalesOrdersList(Array.isArray(soData) ? soData : []);
-                setProformaList(Array.isArray(piData) ? piData : []);
-                setDeliveryNotesList(Array.isArray(dnData) ? dnData : []);
-                setInvoicesList(Array.isArray(invData) ? invData : []);
                 setWarehousesList(Array.isArray(whsData) ? whsData : []);
                 if (settingsData) setSalesSettings(settingsData);
+
+                // Load editor-only data (SOs, Proformas, DNs) if navigating directly into editor
+                // or if a fromDeliveryNote navigation is pending.
+                const needsEditorData = location.state?.fromDeliveryNote || location.state?.fromSalesOrder || location.state?.fromProforma;
+                if (needsEditorData && !editorDataLoaded.current) {
+                    editorDataLoaded.current = true;
+                    const [soData, piData, dnData] = await Promise.all([
+                        getAllSalesOrders().catch(() => []),
+                        getAllProformas().catch(() => []),
+                        getDeliveryNotes().catch(() => []),
+                    ]);
+                    setSalesOrdersList(Array.isArray(soData) ? soData : []);
+                    setProformaList(Array.isArray(piData) ? piData : []);
+                    setDeliveryNotesList(Array.isArray(dnData) ? dnData : []);
+                }
 
             } catch (err) {
                 console.error("Failed to load master data", err);
@@ -970,6 +978,22 @@ const SalesInvoice = () => {
         fetchInvoices();
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [activeTab, listPage, searchTerm, filterStatus]);
+
+    // Lazy-load editor data (SOs, Proformas, DNs) only when the create tab is first opened.
+    useEffect(() => {
+        if (activeTab !== 'create' || editorDataLoaded.current) return;
+        editorDataLoaded.current = true;
+        Promise.all([
+            getAllSalesOrders().catch(() => []),
+            getAllProformas().catch(() => []),
+            getDeliveryNotes().catch(() => []),
+        ]).then(([soData, piData, dnData]) => {
+            setSalesOrdersList(Array.isArray(soData) ? soData : []);
+            setProformaList(Array.isArray(piData) ? piData : []);
+            setDeliveryNotesList(Array.isArray(dnData) ? dnData : []);
+        }).catch(err => console.error('Failed to load editor reference data', err));
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [activeTab]);
 
     // Refetch when the global Branch Selector changes the active branch.
     useEffect(() => {
@@ -2271,8 +2295,14 @@ const SalesInvoice = () => {
                 raw: p
             }));
 
+            // Exclude receipt vouchers that were auto-created by a sales payment
+            // (PaymentService.upsertReceiptVoucher stores the RV id in receiptVoucherRecordId)
+            const autoCreatedRvIds = new Set(
+                (salesPayments || []).map(p => p.receiptVoucherRecordId).filter(Boolean)
+            );
+
             const rvRows = (allReceiptVouchers || [])
-                .filter((rv) => Number(rv.salesInvoiceId) === Number(invoice.id))
+                .filter((rv) => Number(rv.salesInvoiceId) === Number(invoice.id) && !autoCreatedRvIds.has(rv.id))
                 .map((rv) => ({
                     key: `rv-${rv.id}`,
                     dbId: rv.id,
@@ -2659,9 +2689,15 @@ const SalesInvoice = () => {
             return;
         }
 
+        // Determine the document title: confirmed/posted/paid invoices are
+        // Tax Invoices (VAT-compliant); drafts remain Sales Invoices.
+        const printStatus = (isListView ? invoice.status : status) || 'DRAFT';
+        const FINALIZED = ['CONFIRMED', 'POSTED', 'PAID', 'PARTIALLY_PAID', 'COMPLETED', 'OVERDUE'];
+        const titleOverride = FINALIZED.includes(printStatus.toUpperCase()) ? 'TAX INVOICE' : 'SALES INVOICE';
+
         setIsPrinting(true);
         try {
-            const html = await buildInvoiceHtml(dataToPrint, { chosenTemplate });
+            const html = await buildInvoiceHtml(dataToPrint, { chosenTemplate, titleOverride });
             if (html) {
                 printHtml(html);
             } else {
@@ -3113,6 +3149,25 @@ const SalesInvoice = () => {
                                         </tr>
                                     </thead>
                                     <tbody className="divide-y divide-slate-100">
+                                        {isListLoading && invoicesList.length === 0 && Array.from({ length: 10 }).map((_, i) => (
+                                            <tr key={`sk-${i}`} className="animate-pulse">
+                                                <td className="px-4 py-3"><div className="h-3 w-6 bg-slate-200 rounded mx-auto" /></td>
+                                                <td className="px-4 py-3"><div className="h-3 w-28 bg-slate-200 rounded" /></td>
+                                                <td className="px-4 py-3"><div className="h-3 w-20 bg-slate-200 rounded" /></td>
+                                                <td className="px-4 py-3">
+                                                    <div className="h-3 w-32 bg-slate-200 rounded mb-1" />
+                                                    <div className="h-2 w-16 bg-slate-100 rounded" />
+                                                </td>
+                                                <td className="px-4 py-3"><div className="h-3 w-20 bg-slate-200 rounded" /></td>
+                                                <td className="px-4 py-3"><div className="h-5 w-20 bg-slate-200 rounded-full" /></td>
+                                                <td className="px-4 py-3"><div className="h-5 w-14 bg-slate-200 rounded" /></td>
+                                                <td className="px-4 py-3"><div className="h-3 w-16 bg-slate-200 rounded ml-auto" /></td>
+                                                <td className="px-4 py-3"><div className="h-3 w-14 bg-slate-200 rounded ml-auto" /></td>
+                                                <td className="px-4 py-3"><div className="h-3 w-14 bg-slate-200 rounded" /></td>
+                                                <td className="px-4 py-3"><div className="h-3 w-12 bg-slate-200 rounded" /></td>
+                                                <td className="px-4 py-3"><div className="flex justify-end gap-2">{Array.from({length:4}).map((_,j)=><div key={j} className="h-6 w-6 bg-slate-200 rounded" />)}</div></td>
+                                            </tr>
+                                        ))}
                                         {filteredInvoices.map((inv, index) => (
                                             <tr key={inv.id} className="hover:bg-slate-50 cursor-pointer group" onClick={() => handleLoadInvoice(inv)}>
                                                 <td className="px-4 py-3 text-center text-slate-400 font-mono font-medium">
@@ -3187,7 +3242,7 @@ const SalesInvoice = () => {
                                                 </td>
                                             </tr>
                                         ))}
-                                        {filteredInvoices.length === 0 && (
+                                        {!isListLoading && filteredInvoices.length === 0 && (
                                             <tr>
                                                 <td colSpan="11" className="text-center py-8 text-slate-400">No Invoices found.</td>
                                             </tr>
@@ -4495,6 +4550,7 @@ const SalesInvoice = () => {
                     currency={invoiceCurrency}
                     bankAccountOptions={bankAccountOptions}
                     isSaving={isSettlementSaving}
+                    hideCredit={!!(selectedCustomer?.code === 'WALKIN' || selectedCustomer?.name?.toLowerCase().includes('walk-in') || selectedCustomer?.name?.toLowerCase().includes('walkin'))}
                     onSkip={handleSettlementSkip}
                     onConfirm={handleSettlementConfirm}
                     onDone={handleSettlementDone}

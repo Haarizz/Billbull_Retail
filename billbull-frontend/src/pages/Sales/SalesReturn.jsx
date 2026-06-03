@@ -57,6 +57,7 @@ import {
 import { getAllSalesInvoices } from '../../api/salesInvoiceApi';
 import { getSalesSettings } from '../../api/salesSettingsApi';
 import { isAutoNumberingEnabled } from '../../utils/salesNumbering';
+import TableSkeleton from '../../components/common/TableSkeleton';
 
 // ==========================================
 // 1. CONFIGURATION
@@ -761,6 +762,7 @@ const SalesReturn = () => {
                               </tr>
                            </thead>
                            <tbody className="divide-y divide-slate-100">
+                              {isLoading && <TableSkeleton cols={9} rows={8} />}
                               {filteredReturns.map((ret) => (
                                  <tr key={ret.id} className="hover:bg-slate-50 cursor-pointer group" onClick={() => handleViewReturn(ret)}>
                                     <td className="px-4 py-3 font-bold text-slate-700">{ret.returnNumber}</td>

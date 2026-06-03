@@ -90,6 +90,7 @@ import ExportDropdown from '../../components/common/ExportDropdown';
 import { exportToExcel, exportToPDF } from '../../utils/exportUtils';
 import CurrencyAmount from '../../components/CurrencyAmount';
 import { formatCurrencyDisplay, resolveCurrencyDisplayCode } from '../../utils/countryCurrencyOptions';
+import TableSkeleton from '../../components/common/TableSkeleton';
 
 // ==========================================
 // 1. CONFIGURATION
@@ -1677,6 +1678,7 @@ const SalesOrders = () => {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-50">
+                {isListLoading && <TableSkeleton cols={10} rows={8} />}
                 {ordersList.map((order, idx) => (
                   <tr key={idx} className="hover:bg-slate-50 cursor-pointer" onClick={() => handleLoadOrder(order)}>
                     <td className="px-4 py-3 text-center text-slate-400 font-mono font-medium">

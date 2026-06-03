@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef } from "react";
+import TableSkeleton from '../../../components/common/TableSkeleton';
 import api from "../../../api/axiosConfig";
 import { useNavigate, useLocation } from "react-router-dom";
 import {
@@ -534,7 +535,7 @@ const SchedulePaymentModal = ({ invoice, onClose, onConfirm }) => {
 // SUB-COMPONENTS
 // ==========================================
 
-const InvoiceListView = ({ invoices, filteredInvoices, activeFilter, setActiveFilter, searchQuery, setSearchQuery, onView, onPrint, onPay, onRefresh, dateRange, setDateRange, vendorFilter, setVendorFilter, currentPage }) => {
+const InvoiceListView = ({ invoices, filteredInvoices, activeFilter, setActiveFilter, searchQuery, setSearchQuery, onView, onPrint, onPay, onRefresh, dateRange, setDateRange, vendorFilter, setVendorFilter, currentPage, isLoading = false }) => {
   const [showFilters, setShowFilters] = useState(false);
 
   const invoiceStats = useMemo(() => {
@@ -704,6 +705,7 @@ const InvoiceListView = ({ invoices, filteredInvoices, activeFilter, setActiveFi
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
+              {isLoading && <TableSkeleton cols={9} rows={8} />}
               {filteredInvoices.map((row, index) => (
                 <tr key={row.dbId} className="hover:bg-slate-50 group transition-colors">
                   <td className="px-3 py-4 text-center text-slate-400 font-mono font-medium whitespace-nowrap">{index + 1}</td>
@@ -2896,6 +2898,7 @@ const PurchaseInvoices = () => {
 
   // REAL STATE (No Mocks)
   const [invoices, setInvoices] = useState([]);
+  const [isLoading, setIsLoading] = useState(false);
   // Client-side pagination over filtered list (page exposes rich filters beyond
   // what /page supports — status tabs, date range, vendor).
   const [listPage, setListPage] = useState(0);
@@ -2940,6 +2943,7 @@ const PurchaseInvoices = () => {
   }, []);
 
   const loadInvoices = async () => {
+    setIsLoading(true);
     try {
       const res = await getInvoices();
       const list = Array.isArray(res) ? res : (res.data || []);
@@ -2962,6 +2966,8 @@ const PurchaseInvoices = () => {
       );
     } catch (err) {
       console.error("Failed to load invoices", err);
+    } finally {
+      setIsLoading(false);
     }
   };
 
@@ -3209,6 +3215,7 @@ const PurchaseInvoices = () => {
             vendorFilter={vendorFilter}
             setVendorFilter={setVendorFilter}
             currentPage={0}
+            isLoading={isLoading}
           />
           <PaginationFooter
             page={listPage}
@@ -3266,6 +3273,7 @@ const PurchaseInvoices = () => {
           setDateRange={setDateRange}
           vendorFilter={vendorFilter}
           setVendorFilter={setVendorFilter}
+          isLoading={isLoading}
         />;
     }
   };
