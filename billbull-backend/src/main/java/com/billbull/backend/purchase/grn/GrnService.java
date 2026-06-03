@@ -318,7 +318,7 @@ public class GrnService {
     public List<GrnListResponse> list() {
         List<GrnEntity> grns = new ArrayList<>(
                 branchAccessService.filterBranchScoped(grnRepo.findAll(), GrnEntity::getBranchId));
-        DocumentOrderingUtil.sortByDocumentDateAndNumberDesc(
+        DocumentOrderingUtil.sortByDocumentNumberAndDateDesc(
                 grns,
                 GrnEntity::getGrnDate,
                 GrnEntity::getGrnNo,

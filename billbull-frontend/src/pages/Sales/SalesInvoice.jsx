@@ -85,6 +85,8 @@ import { exportToExcel, exportToPDF } from '../../utils/exportUtils';
 import CurrencyAmount, { CurrencySymbol } from '../../components/CurrencyAmount';
 import { formatCurrencyDisplay } from '../../utils/countryCurrencyOptions';
 import { isAutoNumberingEnabled } from '../../utils/salesNumbering';
+import { compareDocumentValues } from '../../utils/documentOrdering';
+import { getListSerialNumber, withListSerialNumbers } from '../../utils/serialNumbering';
 
 // Round-off adjustment for an exact total, per the Sales Settings rounding rule.
 // Returns (rounded − exact) so net = exact + roundOff lands on a clean figure.
@@ -253,6 +255,10 @@ const SalesInvoice = () => {
                 if (sortConfig.key === 'invoiceTotal' || sortConfig.key === 'amountPaid' || sortConfig.key === 'balance') {
                     aValue = Number(aValue || 0);
                     bValue = Number(bValue || 0);
+                }
+
+                if (sortConfig.key === 'invoiceNumber') {
+                    return compareDocumentValues(aValue, bValue, sortConfig.direction);
                 }
 
                 if (aValue < bValue) {
@@ -3044,12 +3050,22 @@ const SalesInvoice = () => {
                                     <>
                                         <ExportDropdown
                                             onExportExcel={() => exportToExcel(
-                                                filteredInvoices.map((inv, index) => ({ ...inv, sNo: index + 1 })),
+                                                withListSerialNumbers(filteredInvoices, {
+                                                    documentNumberSelector: (inv) => inv.invoiceNumber,
+                                                    page: listPageMeta.page,
+                                                    size: listPageMeta.size,
+                                                    totalElements: listPageMeta.totalElements,
+                                                }),
                                                 SALES_INVOICE_COLUMNS,
                                                 'Sales_Invoices'
                                             )}
                                             onExportPdf={() => exportToPDF(
-                                                filteredInvoices.map((inv, index) => ({ ...inv, sNo: index + 1 })),
+                                                withListSerialNumbers(filteredInvoices, {
+                                                    documentNumberSelector: (inv) => inv.invoiceNumber,
+                                                    page: listPageMeta.page,
+                                                    size: listPageMeta.size,
+                                                    totalElements: listPageMeta.totalElements,
+                                                }),
                                                 SALES_INVOICE_COLUMNS,
                                                 'Sales Invoices',
                                                 'Sales_Invoices'
@@ -3171,7 +3187,12 @@ const SalesInvoice = () => {
                                         {filteredInvoices.map((inv, index) => (
                                             <tr key={inv.id} className="hover:bg-slate-50 cursor-pointer group" onClick={() => handleLoadInvoice(inv)}>
                                                 <td className="px-4 py-3 text-center text-slate-400 font-mono font-medium">
-                                                    {index + 1}
+                                                    {getListSerialNumber(index, {
+                                                        documentNumber: inv.invoiceNumber,
+                                                        page: listPageMeta.page,
+                                                        size: listPageMeta.size,
+                                                        totalElements: listPageMeta.totalElements,
+                                                    })}
                                                 </td>
                                                 <td className="px-4 py-3 font-medium text-slate-700">
                                                     <div className="flex items-center">

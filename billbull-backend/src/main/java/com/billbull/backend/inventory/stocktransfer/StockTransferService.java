@@ -14,6 +14,7 @@ import com.billbull.backend.inventory.warehouse.ZoneRepository;
 import com.billbull.backend.purchase.stockmovement.StockMovement;
 import com.billbull.backend.purchase.stockmovement.StockMovementRepository;
 import com.billbull.backend.purchase.stockmovement.StockSourceType;
+import com.billbull.backend.util.DocumentOrderingUtil;
 import org.springframework.cache.annotation.CacheEvict;
 import org.springframework.cache.annotation.Caching;
 import org.springframework.stereotype.Service;
@@ -22,6 +23,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.LocalDate;
+import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Objects;
@@ -67,7 +69,13 @@ public class StockTransferService {
     }
 
     public List<StockTransferResponse> list() {
-        return repository.findAll().stream().map(this::toResponse).toList();
+        List<StockTransfer> transfers = new ArrayList<>(repository.findAll());
+        DocumentOrderingUtil.sortByDocumentNumberAndDateDesc(
+                transfers,
+                StockTransfer::getTransferDate,
+                StockTransfer::getTransferNo,
+                StockTransfer::getId);
+        return transfers.stream().map(this::toResponse).toList();
     }
 
     public StockTransferResponse get(Long id) {

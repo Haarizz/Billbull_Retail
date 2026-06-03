@@ -120,7 +120,7 @@ public class LpoService {
         List<Lpo> lpos = new ArrayList<>(branchAccessService.filterBranchScoped((status == null)
                 ? repository.findAll()
                 : repository.findByStatus(status), Lpo::getBranchId));
-        DocumentOrderingUtil.sortByDocumentDateAndNumberDesc(
+        DocumentOrderingUtil.sortByDocumentNumberAndDateDesc(
                 lpos,
                 Lpo::getLpoDate,
                 Lpo::getLpoNumber,
@@ -713,7 +713,14 @@ public class LpoService {
 
     public java.util.List<PaymentVoucher> getAdvancePayments(Long lpoId) {
         getScopedLpoById(lpoId);
-        return paymentVoucherRepository.findByLpoIdOrderByPaymentDateDesc(lpoId);
+        List<PaymentVoucher> vouchers = new ArrayList<>(
+                paymentVoucherRepository.findByLpoIdOrderByPaymentDateDesc(lpoId));
+        DocumentOrderingUtil.sortByDocumentNumberAndDateDesc(
+                vouchers,
+                PaymentVoucher::getPaymentDate,
+                PaymentVoucher::getVoucherNumber,
+                PaymentVoucher::getId);
+        return vouchers;
     }
 
 }

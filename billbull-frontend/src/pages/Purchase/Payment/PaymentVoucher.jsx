@@ -42,6 +42,7 @@ import {
 import { formatCurrencyDisplay } from '../../../utils/countryCurrencyOptions';
 import CurrencyAmount, { CurrencySymbol } from '../../../components/CurrencyAmount';
 import PaginationFooter from '../../../components/common/PaginationFooter';
+import { getListSerialNumber } from '../../../utils/serialNumbering';
 
 // ==========================================
 // API IMPORTS
@@ -1221,7 +1222,14 @@ const PaymentVoucher = () => {
                                             <tr><td colSpan="11" className="p-6 text-center text-slate-400">No posted vouchers found.</td></tr>
                                         ) : pagedMainList.map((row, index) => (
                                             <tr key={row.dbId} className="hover:bg-slate-50 group transition-colors">
-                                                <td className="px-4 py-3 text-center text-slate-400 font-mono font-medium">{index + 1}</td>
+                                                <td className="px-4 py-3 text-center text-slate-400 font-mono font-medium">
+                                                    {getListSerialNumber(index, {
+                                                        documentNumber: row.id,
+                                                        page: listPage,
+                                                        size: LIST_PAGE_SIZE,
+                                                        totalElements: pageMeta.totalElements,
+                                                    })}
+                                                </td>
                                                 <td className="px-4 py-3 font-mono font-medium text-slate-700">{row.id}</td>
                                                 <td className="px-4 py-3 text-slate-500">{formatDisplayDate(row.date)}</td>
                                                 <td className="px-4 py-3">
@@ -1310,7 +1318,14 @@ const PaymentVoucher = () => {
                                             <tr><td colSpan="8" className="px-4 py-12 text-center text-slate-400">No vouchers pending approval.</td></tr>
                                         ) : pagedPendingList.map((row, index) => (
                                             <tr key={row.dbId} className="hover:bg-slate-50 group transition-colors">
-                                                <td className="px-4 py-3 text-center text-slate-400 font-mono font-medium">{index + 1}</td>
+                                                <td className="px-4 py-3 text-center text-slate-400 font-mono font-medium">
+                                                    {getListSerialNumber(index, {
+                                                        documentNumber: row.id,
+                                                        page: listPage,
+                                                        size: LIST_PAGE_SIZE,
+                                                        totalElements: pageMeta.totalElements,
+                                                    })}
+                                                </td>
                                                 <td className="px-4 py-3 font-mono font-medium text-slate-700">{row.id}</td>
                                                 <td className="px-4 py-3 text-slate-500">{formatDisplayDate(row.date)}</td>
                                                 <td className="px-4 py-3">
@@ -1389,7 +1404,14 @@ const PaymentVoucher = () => {
                                         <tr><td colSpan="8" className="p-6 text-center text-slate-400">No history found.</td></tr>
                                     ) : pagedHistoryList.map((row, index) => (
                                         <tr key={row.dbId} className="hover:bg-slate-50 transition-colors">
-                                            <td className="px-4 py-3 text-center text-slate-400 font-mono font-medium">{index + 1}</td>
+                                            <td className="px-4 py-3 text-center text-slate-400 font-mono font-medium">
+                                                {getListSerialNumber(index, {
+                                                    documentNumber: row.id,
+                                                    page: listPage,
+                                                    size: LIST_PAGE_SIZE,
+                                                    totalElements: pageMeta.totalElements,
+                                                })}
+                                            </td>
                                             <td className="px-4 py-3 font-mono font-medium text-slate-700">{row.id}</td>
                                             <td className="px-4 py-3 text-slate-500">{formatDisplayDate(row.date)}</td>
                                             <td className="px-4 py-3 text-slate-800">{row.vendor}</td>

@@ -37,6 +37,7 @@ import { getUnitConversionFactor } from "../../../utils/unitPricing";
 import ExportDropdown from '../../../components/common/ExportDropdown';
 import { exportToExcel, exportToPDF } from '../../../utils/exportUtils';
 import CurrencyAmount, { CurrencySymbol } from '../../../components/CurrencyAmount';
+import { getListSerialNumber, withListSerialNumbers } from '../../../utils/serialNumbering';
 
 // ==========================================
 // 1. CONFIGURATION
@@ -1968,7 +1969,7 @@ const Products = () => {
     try {
       setIsExporting(true);
       const exportRows = await loadProductsForExport();
-      const exportRowsWithSNo = exportRows.map((row, index) => ({ ...row, sNo: index + 1 }));
+      const exportRowsWithSNo = withListSerialNumbers(exportRows);
       await exportToExcel(exportRowsWithSNo, PRODUCT_COLUMNS, 'Products');
     } catch (err) {
       console.error("Failed to export products to Excel", err);
@@ -1982,7 +1983,7 @@ const Products = () => {
     try {
       setIsExporting(true);
       const exportRows = await loadProductsForExport();
-      const exportRowsWithSNo = exportRows.map((row, index) => ({ ...row, sNo: index + 1 }));
+      const exportRowsWithSNo = withListSerialNumbers(exportRows);
       await exportToPDF(exportRowsWithSNo, PRODUCT_COLUMNS, 'Products List', 'Products');
     } catch (err) {
       console.error("Failed to export products to PDF", err);
@@ -2403,7 +2404,13 @@ const Products = () => {
 
                   return (
                     <tr key={product.id} className="hover:bg-slate-50 border-b border-slate-100 transition-colors group">
-                      <td className="p-3 text-center text-slate-400 font-mono font-medium">{(currentPage * PAGE_SIZE) + index + 1}</td>
+                      <td className="p-3 text-center text-slate-400 font-mono font-medium">
+                        {getListSerialNumber(index, {
+                          page: currentPage,
+                          size: PAGE_SIZE,
+                          totalElements,
+                        })}
+                      </td>
                       <td className="p-3">
                         <div className="flex items-center gap-3">
                           <div className="h-10 w-10 rounded-md border border-slate-200 bg-white flex items-center justify-center overflow-hidden flex-shrink-0">

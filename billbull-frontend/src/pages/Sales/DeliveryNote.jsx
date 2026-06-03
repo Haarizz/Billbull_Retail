@@ -57,6 +57,8 @@ import { getActiveVatRate } from '../../api/taxApi';
 import CurrencyAmount from '../../components/CurrencyAmount';
 import BatchSelectionModal from '../../components/BatchSelectionModal';
 import { usePermissions } from '../../context/PermissionContext';
+import { compareDocumentValues } from '../../utils/documentOrdering';
+import { getListSerialNumber, withListSerialNumbers } from '../../utils/serialNumbering';
 
 // ==========================================
 // 1. CONFIGURATION
@@ -211,6 +213,10 @@ const DeliveryNote = () => {
                 if (sortConfig.key === 'lines' || sortConfig.key === 'qty' || sortConfig.key === 'boxes') {
                     aValue = Number(aValue || 0);
                     bValue = Number(bValue || 0);
+                }
+
+                if (['dnNo', 'soNo', 'piNo'].includes(sortConfig.key)) {
+                    return compareDocumentValues(aValue, bValue, sortConfig.direction);
                 }
 
                 if (aValue < bValue) {
@@ -2101,12 +2107,22 @@ const DeliveryNote = () => {
                                 </div>
                                 <ExportDropdown
                                     onExportExcel={() => exportToExcel(
-                                        filteredDeliveryNotes.map((dn, index) => ({ ...dn, sNo: index + 1 })),
+                                        withListSerialNumbers(filteredDeliveryNotes, {
+                                            documentNumberSelector: (dn) => dn.dnNo,
+                                            page: listPageMeta.page,
+                                            size: listPageMeta.size,
+                                            totalElements: listPageMeta.totalElements,
+                                        }),
                                         DELIVERY_NOTE_COLUMNS,
                                         'Delivery_Notes'
                                     )}
                                     onExportPdf={() => exportToPDF(
-                                        filteredDeliveryNotes.map((dn, index) => ({ ...dn, sNo: index + 1 })),
+                                        withListSerialNumbers(filteredDeliveryNotes, {
+                                            documentNumberSelector: (dn) => dn.dnNo,
+                                            page: listPageMeta.page,
+                                            size: listPageMeta.size,
+                                            totalElements: listPageMeta.totalElements,
+                                        }),
                                         DELIVERY_NOTE_COLUMNS,
                                         'Delivery Notes',
                                         'Delivery_Notes'
@@ -2164,7 +2180,14 @@ const DeliveryNote = () => {
                                         {isListLoading && <TableSkeleton cols={8} rows={8} />}
                                         {filteredDeliveryNotes.map((dn, index) => (
                                             <tr key={dn.id} className="hover:bg-slate-50 cursor-pointer group" onClick={() => handleRowClick(dn)}>
-                                                <td className="px-3 py-3 text-center text-slate-400 font-mono font-medium">{index + 1}</td>
+                                                <td className="px-3 py-3 text-center text-slate-400 font-mono font-medium">
+                                                    {getListSerialNumber(index, {
+                                                        documentNumber: dn.dnNo,
+                                                        page: listPageMeta.page,
+                                                        size: listPageMeta.size,
+                                                        totalElements: listPageMeta.totalElements,
+                                                    })}
+                                                </td>
                                                 <td className="px-4 py-3 font-medium text-slate-700">
                                                     <div className="flex items-center gap-2">
                                                         {dn.dnNo}

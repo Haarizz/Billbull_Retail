@@ -56,7 +56,7 @@ public class PaymentService {
     public List<Payment> getAllPayments() {
         List<Payment> payments = new ArrayList<>(
                 branchAccessService.filterBranchScopedByBranch(paymentRepository.findAll(), Payment::getBranch));
-        DocumentOrderingUtil.sortByDocumentDateAndNumberDesc(
+        DocumentOrderingUtil.sortByDocumentNumberAndDateDesc(
                 payments,
                 Payment::getPaymentDate,
                 Payment::getPaymentNumber,
@@ -71,7 +71,7 @@ public class PaymentService {
 
     public List<Payment> getPaymentsByCustomer(String customerCode) {
         List<Payment> payments = new ArrayList<>(paymentRepository.findByCustomerCode(customerCode));
-        DocumentOrderingUtil.sortByDocumentDateAndNumberDesc(
+        DocumentOrderingUtil.sortByDocumentNumberAndDateDesc(
                 payments,
                 Payment::getPaymentDate,
                 Payment::getPaymentNumber,
@@ -81,7 +81,7 @@ public class PaymentService {
 
     public List<Payment> getPaymentsByInvoice(String invoiceNumber) {
         List<Payment> payments = new ArrayList<>(paymentRepository.findByLinkedInvoice(invoiceNumber));
-        DocumentOrderingUtil.sortByDocumentDateAndNumberDesc(
+        DocumentOrderingUtil.sortByDocumentNumberAndDateDesc(
                 payments,
                 Payment::getPaymentDate,
                 Payment::getPaymentNumber,

@@ -33,7 +33,7 @@ public interface LpoRepository extends JpaRepository<Lpo, Long> {
             + "AND (:dateFrom IS NULL OR l.lpoDate >= :dateFrom) "
             + "AND (:dateTo IS NULL OR l.lpoDate <= :dateTo) "
             + "AND (:vendor = '' OR l.vendorName = :vendor OR l.vendorCode = :vendor) "
-            + "ORDER BY l.lpoDate DESC, l.id DESC")
+            + "ORDER BY l.id DESC")
     Page<Lpo> searchPage(@Param("allBranches") boolean allBranches,
             @Param("branchIds") Collection<Long> branchIds,
             @Param("status") LpoStatus status,

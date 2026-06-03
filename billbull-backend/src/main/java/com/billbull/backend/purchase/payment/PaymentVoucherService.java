@@ -36,7 +36,7 @@ public class PaymentVoucherService {
     public List<PaymentVoucher> getAllVouchers() {
         List<PaymentVoucher> vouchers = new ArrayList<>(
                 branchAccessService.filterBranchScopedByBranch(repository.findAll(), PaymentVoucher::getBranch));
-        DocumentOrderingUtil.sortByDocumentDateAndNumberDesc(
+        DocumentOrderingUtil.sortByDocumentNumberAndDateDesc(
                 vouchers,
                 PaymentVoucher::getPaymentDate,
                 PaymentVoucher::getVoucherNumber,

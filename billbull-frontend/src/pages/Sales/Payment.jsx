@@ -44,6 +44,7 @@ import { exportToExcel, exportToPDF } from '../../utils/exportUtils';
 import CurrencyAmount, { CurrencySymbol } from '../../components/CurrencyAmount';
 import { formatDisplayDate } from '../../utils/dateUtils';
 import { isAutoNumberingEnabled } from '../../utils/salesNumbering';
+import { getListSerialNumber, withListSerialNumbers } from '../../utils/serialNumbering';
 import TableSkeleton from '../../components/common/TableSkeleton';
 
 // ==========================================
@@ -801,12 +802,22 @@ const Payment = () => {
                                     <div className="flex gap-2">
                                         <ExportDropdown
                                             onExportExcel={() => exportToExcel(
-                                                filteredPayments.map((payment, index) => ({ ...payment, sNo: index + 1 })),
+                                                withListSerialNumbers(filteredPayments, {
+                                                    documentNumberSelector: (payment) => payment.paymentNo,
+                                                    page: listPageMeta.page,
+                                                    size: listPageMeta.size,
+                                                    totalElements: listPageMeta.totalElements,
+                                                }),
                                                 PAYMENT_COLUMNS,
                                                 'Sales_Payments'
                                             )}
                                             onExportPdf={() => exportToPDF(
-                                                filteredPayments.map((payment, index) => ({ ...payment, sNo: index + 1 })),
+                                                withListSerialNumbers(filteredPayments, {
+                                                    documentNumberSelector: (payment) => payment.paymentNo,
+                                                    page: listPageMeta.page,
+                                                    size: listPageMeta.size,
+                                                    totalElements: listPageMeta.totalElements,
+                                                }),
                                                 PAYMENT_COLUMNS,
                                                 'Sales Payments List',
                                                 'Sales_Payments'
@@ -844,7 +855,14 @@ const Payment = () => {
                                         {isLoading && <TableSkeleton cols={10} rows={8} />}
                                         {filteredPayments.map((payment, index) => (
                                             <tr key={payment.id} className="hover:bg-slate-50 cursor-pointer group" onClick={() => handleViewPayment(payment)}>
-                                                <td className="px-3 py-3 text-center text-slate-400 font-mono font-medium">{index + 1}</td>
+                                                <td className="px-3 py-3 text-center text-slate-400 font-mono font-medium">
+                                                    {getListSerialNumber(index, {
+                                                        documentNumber: payment.paymentNo,
+                                                        page: listPageMeta.page,
+                                                        size: listPageMeta.size,
+                                                        totalElements: listPageMeta.totalElements,
+                                                    })}
+                                                </td>
                                                 <td className="px-4 py-3 font-medium text-slate-700">{payment.paymentNo}</td>
                                                 <td className="px-4 py-3 text-slate-500">{formatDisplayDate(payment.date)}</td>
                                                 <td className="px-4 py-3">

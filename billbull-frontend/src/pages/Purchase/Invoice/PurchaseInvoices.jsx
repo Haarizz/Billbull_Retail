@@ -50,6 +50,8 @@ import ItemAddOnsModal from '../../../components/ItemAddOnsModal'; // BB-026
 import StockAvailabilityModal from '../../../components/StockAvailabilityModal';
 import { useCompany } from '../../../context/CompanyContext';
 import { formatDisplayDate } from '../../../utils/dateUtils';
+import { compareDocumentValues } from '../../../utils/documentOrdering';
+import { getListSerialNumber, withListSerialNumbers } from '../../../utils/serialNumbering';
 
 // Printing Utilities
 import { getTemplatesByCategory } from '../../../api/printTemplateApi';
@@ -128,6 +130,9 @@ const SOURCE = {
 const todayAsInputDate = () => new Date().toISOString().split('T')[0];
 
 const compareInvoiceRows = (left, right) => {
+  const documentNumberCompare = compareDocumentValues(left.id, right.id, 'desc');
+  if (documentNumberCompare !== 0) return documentNumberCompare;
+
   const documentDateCompare = (right.documentDate || "").localeCompare(left.documentDate || "");
   if (documentDateCompare !== 0) return documentDateCompare;
 
@@ -535,7 +540,7 @@ const SchedulePaymentModal = ({ invoice, onClose, onConfirm }) => {
 // SUB-COMPONENTS
 // ==========================================
 
-const InvoiceListView = ({ invoices, filteredInvoices, activeFilter, setActiveFilter, searchQuery, setSearchQuery, onView, onPrint, onPay, onRefresh, dateRange, setDateRange, vendorFilter, setVendorFilter, currentPage, isLoading = false }) => {
+const InvoiceListView = ({ invoices, filteredInvoices, activeFilter, setActiveFilter, searchQuery, setSearchQuery, onView, onPrint, onPay, onRefresh, dateRange, setDateRange, vendorFilter, setVendorFilter, currentPage, pageSize, totalElements, isLoading = false }) => {
   const [showFilters, setShowFilters] = useState(false);
 
   const invoiceStats = useMemo(() => {
@@ -708,7 +713,14 @@ const InvoiceListView = ({ invoices, filteredInvoices, activeFilter, setActiveFi
               {isLoading && <TableSkeleton cols={9} rows={8} />}
               {filteredInvoices.map((row, index) => (
                 <tr key={row.dbId} className="hover:bg-slate-50 group transition-colors">
-                  <td className="px-3 py-4 text-center text-slate-400 font-mono font-medium whitespace-nowrap">{index + 1}</td>
+                  <td className="px-3 py-4 text-center text-slate-400 font-mono font-medium whitespace-nowrap">
+                    {getListSerialNumber(index, {
+                      documentNumber: row.id,
+                      page: currentPage,
+                      size: pageSize,
+                      totalElements,
+                    })}
+                  </td>
                   <td onClick={() => onView(row)} className="px-6 py-4 font-mono font-medium text-[#F5C742] cursor-pointer hover:underline">{row.id}</td>
                   <td className="px-6 py-4 text-slate-600"><div className="flex items-center gap-1.5"><Calendar className="h-3 w-3 text-slate-400" /> {row.documentDate || '-'}</div></td>
                   <td className="px-6 py-4 text-slate-600"><div className="flex items-center gap-1.5"><Calendar className="h-3 w-3 text-slate-400" /> {row.vendorInvoiceDate || '-'}</div></td>
@@ -3132,7 +3144,9 @@ const PurchaseInvoices = () => {
 
   const handleExportExcel = () => {
     exportToExcel(
-      filteredInvoices.map((inv, index) => ({ ...inv, sNo: index + 1 })),
+      withListSerialNumbers(filteredInvoices, {
+        documentNumberSelector: (inv) => inv.id,
+      }),
       INVOICE_COLUMNS,
       'Purchase_Invoice_List'
     );
@@ -3140,7 +3154,9 @@ const PurchaseInvoices = () => {
 
   const handleExportPdf = () => {
     exportToPDF(
-      filteredInvoices.map((inv, index) => ({ ...inv, sNo: index + 1 })),
+      withListSerialNumbers(filteredInvoices, {
+        documentNumberSelector: (inv) => inv.id,
+      }),
       INVOICE_COLUMNS,
       'Purchase Invoices',
       'Purchase_Invoice_List'
@@ -3214,7 +3230,9 @@ const PurchaseInvoices = () => {
             setDateRange={setDateRange}
             vendorFilter={vendorFilter}
             setVendorFilter={setVendorFilter}
-            currentPage={0}
+            currentPage={listPage}
+            pageSize={LIST_PAGE_SIZE}
+            totalElements={filteredInvoices.length}
             isLoading={isLoading}
           />
           <PaginationFooter

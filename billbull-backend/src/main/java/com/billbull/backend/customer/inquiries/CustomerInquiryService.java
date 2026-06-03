@@ -20,6 +20,7 @@ import com.billbull.backend.inventory.product.ProductMediaRepository;
 import com.billbull.backend.inventory.product.ProductPricingRepository;
 import com.billbull.backend.inventory.product.ProductRepository;
 import com.billbull.backend.purchase.stockmovement.StockMovementRepository;
+import com.billbull.backend.util.DocumentOrderingUtil;
 
 @Service
 public class CustomerInquiryService {
@@ -56,7 +57,13 @@ public class CustomerInquiryService {
 
     @Transactional(readOnly = true)
     public List<CustomerInquiryResponse> list() {
-        return inquiryRepo.findAll().stream()
+        List<CustomerInquiry> inquiries = new ArrayList<>(inquiryRepo.findAll());
+        DocumentOrderingUtil.sortByDocumentNumberAndDateDesc(
+                inquiries,
+                CustomerInquiry::getCreatedDate,
+                CustomerInquiry::getInquiryNumber,
+                CustomerInquiry::getId);
+        return inquiries.stream()
                 .map(this::mapToResponseWithTimeline)
                 .collect(Collectors.toList());
     }
