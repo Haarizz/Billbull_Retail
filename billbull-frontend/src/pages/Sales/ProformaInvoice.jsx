@@ -58,6 +58,8 @@ import { summarizeSalesItems } from '../../utils/documentSummaryUtils';
 import billBullLogo from '../../assets/billBullLogo.png';
 import { useCompany } from '../../context/CompanyContext';
 import { formatCurrencyDisplay } from '../../utils/countryCurrencyOptions';
+import { compareDocumentValues } from '../../utils/documentOrdering';
+import { getListSerialNumber, withListSerialNumbers } from '../../utils/serialNumbering';
 
 // âœ… STEP 2: PROFORMA API IMPORTS
 import {
@@ -457,6 +459,10 @@ const ProformaInvoice = () => {
         if (sortConfig.key === 'total') {
           aValue = Number(a.total || 0);
           bValue = Number(b.total || 0);
+        }
+
+        if (sortConfig.key === 'piNumber') {
+          return compareDocumentValues(aValue, bValue, sortConfig.direction);
         }
 
         if (aValue < bValue) return sortConfig.direction === 'asc' ? -1 : 1;
@@ -1390,12 +1396,22 @@ const ProformaInvoice = () => {
                 </div>
                 <ExportDropdown
                   onExportExcel={() => exportToExcel(
-                    filteredProformas.map((pi, index) => ({ ...pi, sNo: index + 1 })),
+                    withListSerialNumbers(filteredProformas, {
+                      documentNumberSelector: (pi) => pi.piNumber,
+                      page: listPageMeta.page,
+                      size: listPageMeta.size,
+                      totalElements: listPageMeta.totalElements,
+                    }),
                     PROFORMA_COLUMNS,
                     'Proforma_Invoices'
                   )}
                   onExportPdf={() => exportToPDF(
-                    filteredProformas.map((pi, index) => ({ ...pi, sNo: index + 1 })),
+                    withListSerialNumbers(filteredProformas, {
+                      documentNumberSelector: (pi) => pi.piNumber,
+                      page: listPageMeta.page,
+                      size: listPageMeta.size,
+                      totalElements: listPageMeta.totalElements,
+                    }),
                     PROFORMA_COLUMNS,
                     'Proforma Invoices',
                     'Proforma_Invoices'
@@ -1440,7 +1456,12 @@ const ProformaInvoice = () => {
                       className="hover:bg-slate-50 cursor-pointer transition-colors"
                     >
                       <td className="px-4 py-3 text-center text-slate-400 font-mono font-medium">
-                        {index + 1}
+                        {getListSerialNumber(index, {
+                          documentNumber: pi.piNumber,
+                          page: listPageMeta.page,
+                          size: listPageMeta.size,
+                          totalElements: listPageMeta.totalElements,
+                        })}
                       </td>
                       <td className="px-4 py-3 text-blue-600 font-medium">{pi.piNumber}</td>
                       <td className="px-4 py-3 text-slate-600">{formatDisplayDate(pi.piDate)}</td>

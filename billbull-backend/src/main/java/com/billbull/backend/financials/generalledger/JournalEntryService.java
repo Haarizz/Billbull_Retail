@@ -3,6 +3,7 @@ package com.billbull.backend.financials.generalledger;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
 
@@ -14,6 +15,7 @@ import com.billbull.backend.financials.period.AccountingPeriodService;
 import com.billbull.backend.financials.chartofaccounts.Account;
 import com.billbull.backend.financials.chartofaccounts.AccountRepository;
 import com.billbull.backend.settings.branch.BranchAccessService;
+import com.billbull.backend.util.DocumentOrderingUtil;
 
 @Service
 public class JournalEntryService {
@@ -47,8 +49,14 @@ public class JournalEntryService {
     }
 
     public List<JournalEntry> getAllEntries() {
-        return branchAccessService.filterBranchScopedByBranch(
-                journalEntryRepository.findAll(), JournalEntry::getBranch);
+        List<JournalEntry> entries = new ArrayList<>(branchAccessService.filterBranchScopedByBranch(
+                journalEntryRepository.findAll(), JournalEntry::getBranch));
+        DocumentOrderingUtil.sortByDocumentNumberAndDateDesc(
+                entries,
+                JournalEntry::getDate,
+                JournalEntry::getEntryNumber,
+                JournalEntry::getId);
+        return entries;
     }
 
     public JournalEntry getEntryById(Long id) {

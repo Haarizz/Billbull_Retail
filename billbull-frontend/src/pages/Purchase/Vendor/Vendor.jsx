@@ -17,6 +17,7 @@ import CurrencyAmount from '../../../components/CurrencyAmount';
 import PaginationFooter from '../../../components/common/PaginationFooter';
 import { STATEMENT_EXPORT_COLUMNS, formatStatementEntryType, mapStatementEntriesForExport } from '../../../utils/statementUtils';
 import { formatDisplayDate } from '../../../utils/dateUtils';
+import { getListSerialNumber, withListSerialNumbers } from '../../../utils/serialNumbering';
 import { getTemplatesByCategory } from '../../../api/printTemplateApi';
 import { generatePrintHtmlAsync, printHtml } from '../../../utils/printGenerator';
 import {
@@ -1748,17 +1749,15 @@ const VendorListViewWithActions = ({ vendors, loading, onAddNew, onEdit, onDelet
 
 
   const handleExportExcel = () => {
-    exportToExcel(filteredVendors.map((vendor, index) => ({
+    exportToExcel(withListSerialNumbers(filteredVendors).map((vendor) => ({
       ...vendor,
-      sNo: index + 1,
       balance: formatCurrencyDisplay(vendor.balance, currencyLabel)
     })), VENDOR_COLUMNS, 'Vendor_List');
   };
 
   const handleExportPdf = () => {
-    exportToPDF(filteredVendors.map((vendor, index) => ({
+    exportToPDF(withListSerialNumbers(filteredVendors).map((vendor) => ({
       ...vendor,
-      sNo: index + 1,
       balance: formatCurrencyDisplay(vendor.balance, currencyLabel)
     })), VENDOR_COLUMNS, 'Vendor List', 'Vendor_List');
   };
@@ -1978,7 +1977,13 @@ const VendorListViewWithActions = ({ vendors, loading, onAddNew, onEdit, onDelet
                     ) : (
                       pagedVendors.map((vendor, index) => (
                         <tr key={vendor.id} className="hover:bg-slate-50 transition-colors">
-                          <td className="px-4 py-4 text-center text-slate-400 font-mono font-medium">{index + 1}</td>
+                          <td className="px-4 py-4 text-center text-slate-400 font-mono font-medium">
+                            {getListSerialNumber(index, {
+                              page: listPage,
+                              size: LIST_PAGE_SIZE,
+                              totalElements: filteredVendors.length,
+                            })}
+                          </td>
                           <td className="px-6 py-4 whitespace-nowrap"><div className="flex items-center gap-2"><span className="text-xs bg-gray-100 px-2 py-1 rounded font-mono text-slate-600">{vendor.code || 'N/A'}</span><span className="text-lg">{vendor.flag || '🏳️'}</span></div></td>
                           <td className="px-6 py-4"><div className="flex flex-col"><div className="font-medium text-slate-900 flex items-center gap-2">{vendor.name}{vendor.isPreferred && <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] bg-purple-100 text-purple-700 font-medium"><Star className="h-3 w-3 fill-purple-700" />Preferred</span>}</div><div className="text-xs text-gray-500">{vendor.email}</div></div></td>
                           <td className="px-6 py-4"><span className="text-xs px-2 py-1 rounded font-medium bg-blue-100 text-blue-700">{vendor.category}</span></td>

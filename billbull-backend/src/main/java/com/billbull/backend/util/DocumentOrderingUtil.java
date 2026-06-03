@@ -18,15 +18,24 @@ public final class DocumentOrderingUtil {
             Function<T, String> documentNumberExtractor,
             Function<T, Long> idExtractor) {
 
+        return sortByDocumentNumberAndDateDesc(items, dateExtractor, documentNumberExtractor, idExtractor);
+    }
+
+    public static <T> List<T> sortByDocumentNumberAndDateDesc(
+            List<T> items,
+            Function<T, ? extends Comparable<?>> dateExtractor,
+            Function<T, String> documentNumberExtractor,
+            Function<T, Long> idExtractor) {
+
         items.sort((left, right) -> {
-            int comparison = compareComparableDesc(dateExtractor.apply(left), dateExtractor.apply(right));
+            int comparison = compareDocumentNumberDesc(
+                    documentNumberExtractor.apply(left),
+                    documentNumberExtractor.apply(right));
             if (comparison != 0) {
                 return comparison;
             }
 
-            comparison = compareDocumentNumberDesc(
-                    documentNumberExtractor.apply(left),
-                    documentNumberExtractor.apply(right));
+            comparison = compareComparableDesc(dateExtractor.apply(left), dateExtractor.apply(right));
             if (comparison != 0) {
                 return comparison;
             }

@@ -7,6 +7,7 @@ import {
 import ExportDropdown from '../../../components/common/ExportDropdown';
 import PaginationFooter from '../../../components/common/PaginationFooter';
 import { exportToExcel, exportToPDF } from '../../../utils/exportUtils';
+import { getListSerialNumber, withListSerialNumbers } from '../../../utils/serialNumbering';
 
 // ==========================================
 // CONFIGURATION
@@ -411,8 +412,12 @@ const TransferHistoryView = ({ data, warehouses, onView, onSend, onPrint }) => {
                 </div>
                 <div className="flex gap-2">
                     <ExportDropdown
-                        onExportExcel={() => exportToExcel(data.map((row, index) => ({ ...row, sNo: index + 1 })), STOCK_TRANSFER_COLUMNS, 'StockTransfers')}
-                        onExportPdf={() => exportToPDF(data.map((row, index) => ({ ...row, sNo: index + 1 })), STOCK_TRANSFER_COLUMNS, 'Stock Transfer Records', 'StockTransfers')}
+                        onExportExcel={() => exportToExcel(withListSerialNumbers(data, {
+                            documentNumberSelector: (row) => row.transferNo,
+                        }), STOCK_TRANSFER_COLUMNS, 'StockTransfers')}
+                        onExportPdf={() => exportToPDF(withListSerialNumbers(data, {
+                            documentNumberSelector: (row) => row.transferNo,
+                        }), STOCK_TRANSFER_COLUMNS, 'Stock Transfer Records', 'StockTransfers')}
                     />
                     <div className="relative">
                         <input type="text" placeholder="Search transfers..." className="h-9 w-64 bg-slate-50 border border-slate-200 rounded-lg px-9 text-xs outline-none focus:bg-white focus:ring-1 focus:ring-[#F5C742] transition-all" />
@@ -437,7 +442,14 @@ const TransferHistoryView = ({ data, warehouses, onView, onSend, onPrint }) => {
                     <tbody className="divide-y divide-slate-50">
                         {pagedData.map((row, index) => (
                             <tr key={row.id} className="hover:bg-slate-50/80 transition-colors group">
-                                <td className="px-3 py-4 text-center text-slate-400 font-mono font-medium">{index + 1}</td>
+                                <td className="px-3 py-4 text-center text-slate-400 font-mono font-medium">
+                                    {getListSerialNumber(index, {
+                                        documentNumber: row.transferNo,
+                                        page: listPage,
+                                        size: LIST_PAGE_SIZE,
+                                        totalElements: data.length,
+                                    })}
+                                </td>
                                 <td className="px-6 py-4">
                                     <div className="flex flex-col">
                                         <span className="font-mono font-bold text-slate-800 text-xs">{row.transferNo}</span>

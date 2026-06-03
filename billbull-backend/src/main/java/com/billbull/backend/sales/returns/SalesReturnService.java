@@ -88,7 +88,7 @@ public class SalesReturnService {
     public List<SalesReturn> getAllReturns() {
         List<SalesReturn> returns = new ArrayList<>(
                 branchAccessService.filterBranchScopedByBranch(salesReturnRepository.findAll(), SalesReturn::getBranch));
-        DocumentOrderingUtil.sortByDocumentDateAndNumberDesc(
+        DocumentOrderingUtil.sortByDocumentNumberAndDateDesc(
                 returns,
                 SalesReturn::getReturnDate,
                 SalesReturn::getReturnNumber,

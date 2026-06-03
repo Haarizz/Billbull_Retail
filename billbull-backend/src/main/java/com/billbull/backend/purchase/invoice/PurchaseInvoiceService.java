@@ -686,7 +686,7 @@ public class PurchaseInvoiceService {
     public List<PurchaseInvoiceResponse> listAll() {
         List<PurchaseInvoice> invoices = new ArrayList<>(
                 branchAccessService.filterBranchScoped(repository.findAll(), PurchaseInvoice::getBranchId));
-        DocumentOrderingUtil.sortByDocumentDateAndNumberDesc(
+        DocumentOrderingUtil.sortByDocumentNumberAndDateDesc(
                 invoices,
                 PurchaseInvoice::getInvoiceDate,
                 PurchaseInvoice::getInvoiceNumber,
@@ -1059,7 +1059,7 @@ public class PurchaseInvoiceService {
     public List<PurchaseInvoiceResponse> getPostedInvoicesForPayment() {
         List<PurchaseInvoice> invoices = new ArrayList<>(
                 branchAccessService.filterBranchScoped(repository.findByStatus(InvoiceStatus.POSTED), PurchaseInvoice::getBranchId));
-        DocumentOrderingUtil.sortByDocumentDateAndNumberDesc(
+        DocumentOrderingUtil.sortByDocumentNumberAndDateDesc(
                 invoices,
                 PurchaseInvoice::getInvoiceDate,
                 PurchaseInvoice::getInvoiceNumber,

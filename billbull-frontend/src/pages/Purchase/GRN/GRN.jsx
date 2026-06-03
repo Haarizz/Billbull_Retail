@@ -93,6 +93,7 @@ import ExportDropdown from '../../../components/common/ExportDropdown';
 import { exportToExcel, exportToPDF } from '../../../utils/exportUtils';
 import { formatCurrencyDisplay, resolveCurrencyDisplayCode } from '../../../utils/countryCurrencyOptions';
 import CurrencyAmount from '../../../components/CurrencyAmount';
+import { getListSerialNumber } from '../../../utils/serialNumbering';
 import TableSkeleton from '../../../components/common/TableSkeleton';
 
 // ==========================================
@@ -147,7 +148,7 @@ const getStatusColor = (status) => {
 // ==========================================
 
 // --- LIST VIEW ---
-const GRNListView = ({ data, onView, onEdit, onDelete, onPost, onPrint, onProceedToInvoice, activeFilter, setActiveFilter, currencyLabel, isLoading = false }) => {
+const GRNListView = ({ data, onView, onEdit, onDelete, onPost, onPrint, onProceedToInvoice, activeFilter, setActiveFilter, currencyLabel, currentPage, pageSize, totalElements, isLoading = false }) => {
   const filteredData = data.filter(item => {
     if (activeFilter === "All GRNs") return true;
     if (activeFilter === "Today") {
@@ -216,7 +217,14 @@ const GRNListView = ({ data, onView, onEdit, onDelete, onPost, onPrint, onProcee
               {isLoading && <TableSkeleton cols={8} rows={8} />}
               {filteredData.map((row, index) => (
                 <tr key={row.id} className="hover:bg-slate-50 group transition-colors">
-                  <td className="px-3 py-4 text-center text-slate-400 font-mono font-medium whitespace-nowrap">{index + 1}</td>
+                  <td className="px-3 py-4 text-center text-slate-400 font-mono font-medium whitespace-nowrap">
+                    {getListSerialNumber(index, {
+                      documentNumber: row.idDisplay,
+                      page: currentPage,
+                      size: pageSize,
+                      totalElements,
+                    })}
+                  </td>
                   <td onClick={() => onView(row)} className="px-6 py-4 font-mono font-medium text-[#F5C742] cursor-pointer hover:underline">
                     {row.idDisplay}
                   </td>
@@ -2753,7 +2761,9 @@ const GRN = () => {
             activeFilter={activeFilter}
             setActiveFilter={setActiveFilter}
             currencyLabel={currencyLabel}
-            currentPage={0}
+            currentPage={listPage}
+            pageSize={LIST_PAGE_SIZE}
+            totalElements={filteredData.length}
             isLoading={isLoading}
           />
           <PaginationFooter

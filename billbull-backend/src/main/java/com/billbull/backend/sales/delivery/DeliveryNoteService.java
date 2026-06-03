@@ -279,7 +279,7 @@ public class DeliveryNoteService {
     public List<DeliveryNoteResponse> list() {
         List<DeliveryNote> deliveryNotes = new ArrayList<>(
                 branchAccessService.filterBranchScoped(repo.findAll(), DeliveryNote::getBranchId));
-        DocumentOrderingUtil.sortByDocumentDateAndNumberDesc(
+        DocumentOrderingUtil.sortByDocumentNumberAndDateDesc(
                 deliveryNotes,
                 DeliveryNote::getDnDate,
                 DeliveryNote::getDnNumber,
@@ -298,7 +298,7 @@ public class DeliveryNoteService {
         // modal
         List<DeliveryNote> deliveryNotes = new ArrayList<>(
                 repo.findUninvoicedByCustomer(customerCode, DeliveryNoteStatus.CANCELLED));
-        DocumentOrderingUtil.sortByDocumentDateAndNumberDesc(
+        DocumentOrderingUtil.sortByDocumentNumberAndDateDesc(
                 deliveryNotes,
                 DeliveryNote::getDnDate,
                 DeliveryNote::getDnNumber,

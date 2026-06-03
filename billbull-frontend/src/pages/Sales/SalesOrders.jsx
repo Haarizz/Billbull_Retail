@@ -90,6 +90,7 @@ import ExportDropdown from '../../components/common/ExportDropdown';
 import { exportToExcel, exportToPDF } from '../../utils/exportUtils';
 import CurrencyAmount from '../../components/CurrencyAmount';
 import { formatCurrencyDisplay, resolveCurrencyDisplayCode } from '../../utils/countryCurrencyOptions';
+import { getListSerialNumber, withListSerialNumbers } from '../../utils/serialNumbering';
 import TableSkeleton from '../../components/common/TableSkeleton';
 
 // ==========================================
@@ -1636,12 +1637,22 @@ const SalesOrders = () => {
                 {canExport('sales.order') && (
                   <ExportDropdown
                     onExportExcel={() => exportToExcel(
-                      exportOrdersList.map((order, index) => ({ ...order, sNo: index + 1 })),
+                      withListSerialNumbers(exportOrdersList, {
+                        documentNumberSelector: (order) => order.soNumber,
+                        page: listPageMeta.page,
+                        size: listPageMeta.size,
+                        totalElements: listPageMeta.totalElements,
+                      }),
                       SALES_ORDER_COLUMNS,
                       'Sales_Orders'
                     )}
                     onExportPdf={() => exportToPDF(
-                      exportOrdersList.map((order, index) => ({ ...order, sNo: index + 1 })),
+                      withListSerialNumbers(exportOrdersList, {
+                        documentNumberSelector: (order) => order.soNumber,
+                        page: listPageMeta.page,
+                        size: listPageMeta.size,
+                        totalElements: listPageMeta.totalElements,
+                      }),
                       SALES_ORDER_COLUMNS,
                       'Sales Orders',
                       'Sales_Orders'
@@ -1682,7 +1693,12 @@ const SalesOrders = () => {
                 {ordersList.map((order, idx) => (
                   <tr key={idx} className="hover:bg-slate-50 cursor-pointer" onClick={() => handleLoadOrder(order)}>
                     <td className="px-4 py-3 text-center text-slate-400 font-mono font-medium">
-                      {idx + 1}
+                      {getListSerialNumber(idx, {
+                        documentNumber: order.soNumber,
+                        page: listPageMeta.page,
+                        size: listPageMeta.size,
+                        totalElements: listPageMeta.totalElements,
+                      })}
                     </td>
                     <td className="px-4 py-3 font-medium text-slate-700">{order.soNumber}</td>
                     <td className="px-4 py-3 text-slate-500">{formatDisplayDate(order.orderDate)}</td>

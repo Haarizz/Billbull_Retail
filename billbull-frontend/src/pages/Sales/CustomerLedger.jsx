@@ -36,6 +36,7 @@ import { exportToExcel, exportToPDF } from '../../utils/exportUtils';
 import { generateSOAFilename } from '../../utils/filenameUtils';
 import { STATEMENT_EXPORT_COLUMNS, formatStatementEntryType, mapStatementEntriesForExport } from '../../utils/statementUtils';
 import { isAutoNumberingEnabled } from '../../utils/salesNumbering';
+import { getListSerialNumber, withListSerialNumbers } from '../../utils/serialNumbering';
 import { getTemplatesByCategory } from '../../api/printTemplateApi';
 import { generatePrintHtmlAsync, printHtml } from '../../utils/printGenerator';
 import {
@@ -2627,7 +2628,13 @@ const CustomerLedger = () => {
                                         {filteredCustomers.length > 0 ? (
                                             pagedCustomers.map((cust, index) => (
                                                 <tr key={cust.id} className="hover:bg-slate-50 transition-colors group">
-                                                    <td className="px-3 py-4 whitespace-nowrap text-xs font-mono text-slate-400 font-medium text-center align-top pt-5">{index + 1}</td>
+                                                    <td className="px-3 py-4 whitespace-nowrap text-xs font-mono text-slate-400 font-medium text-center align-top pt-5">
+                                                        {getListSerialNumber(index, {
+                                                            page: listPage,
+                                                            size: LIST_PAGE_SIZE,
+                                                            totalElements: filteredCustomers.length,
+                                                        })}
+                                                    </td>
                                                     <td className="px-6 py-4 whitespace-nowrap text-xs font-mono text-slate-500 align-top pt-5">{cust.code}</td>
 
                                                     <td className="px-2 py-4 whitespace-nowrap align-top pt-4 text-center">
@@ -2778,12 +2785,12 @@ const CustomerLedger = () => {
                             />
                             <ExportDropdown
                                 onExportExcel={() => exportToExcel(
-                                    filteredCustomers.map((cust, index) => ({ ...cust, sNo: index + 1 })),
+                                    withListSerialNumbers(filteredCustomers),
                                     CUSTOMER_COLUMNS,
                                     'Customers'
                                 )}
                                 onExportPdf={() => exportToPDF(
-                                    filteredCustomers.map((cust, index) => ({ ...cust, sNo: index + 1 })),
+                                    withListSerialNumbers(filteredCustomers),
                                     CUSTOMER_COLUMNS,
                                     'Customer List',
                                     'Customers'

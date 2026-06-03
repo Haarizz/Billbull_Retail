@@ -568,7 +568,7 @@ public class SalesInvoiceService {
     public List<SalesInvoice> getAll() {
         List<SalesInvoice> invoices = new ArrayList<>(
                 branchAccessService.filterBranchScoped(invoiceRepo.findAll(), SalesInvoice::getBranchId));
-        DocumentOrderingUtil.sortByDocumentDateAndNumberDesc(
+        DocumentOrderingUtil.sortByDocumentNumberAndDateDesc(
                 invoices,
                 SalesInvoice::getInvoiceDate,
                 SalesInvoice::getInvoiceNumber,

@@ -73,7 +73,7 @@ public interface PaymentVoucherRepository extends JpaRepository<PaymentVoucher, 
             + "AND (:search = '' OR LOWER(v.voucherNumber) LIKE CONCAT('%', :search, '%') "
             + "OR LOWER(v.vendorName) LIKE CONCAT('%', :search, '%') "
             + "OR LOWER(v.referenceNumber) LIKE CONCAT('%', :search, '%')) "
-            + "ORDER BY v.paymentDate DESC, v.id DESC")
+            + "ORDER BY v.id DESC")
     Page<PaymentVoucher> searchPage(@Param("allBranches") boolean allBranches,
             @Param("branchIds") Collection<Long> branchIds,
             @Param("allStatuses") boolean allStatuses,

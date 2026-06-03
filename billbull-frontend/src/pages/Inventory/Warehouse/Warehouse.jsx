@@ -11,6 +11,7 @@ import { getBranches } from '../../../api/branchApi';
 import { hasRole } from '../../../api/auth';
 import { useBranch } from '../../../context/BranchContext';
 import { getZones, createZone, updateZone, deleteZone, getLocators, createLocator, updateLocator, deleteLocator, getBins, createBin, updateBin, deleteBin, getBinStock, addBinStock, deleteBinStock } from '../../../api/warehouseLocationApi';
+import { getListSerialNumber } from '../../../utils/serialNumbering';
 
 // ─── Design tokens ────────────────────────────────────────────────────────────
 const TYPE_CONFIG = {
@@ -750,7 +751,9 @@ const WarehouseDetail = ({ warehouse, zones, onEdit, onDelete, onAddZone, onEdit
           ]}
           rows={zones.map((z, idx) => (
             <tr key={z.id} className="hover:bg-amber-50/30 transition-colors">
-              <td className="px-4 py-3 text-center text-slate-400 font-mono text-[11px]">{idx + 1}</td>
+              <td className="px-4 py-3 text-center text-slate-400 font-mono text-[11px]">
+                {getListSerialNumber(idx, { totalElements: zones.length })}
+              </td>
               <td className="px-4 py-3">
                 <span className="inline-flex items-center gap-1.5 px-2 py-0.5 bg-emerald-50 border border-emerald-200 text-emerald-700 rounded-md text-xs font-bold">{z.code}</span>
               </td>
@@ -823,7 +826,9 @@ const ZoneDetail = ({ zone, locators, onEdit, onAddLocator, onEditLocator, onDel
         ]}
         rows={locators.map((l, idx) => (
           <tr key={l.id} className="hover:bg-blue-50/30 transition-colors">
-            <td className="px-4 py-3 text-center text-slate-400 font-mono text-[11px]">{idx + 1}</td>
+            <td className="px-4 py-3 text-center text-slate-400 font-mono text-[11px]">
+              {getListSerialNumber(idx, { totalElements: locators.length })}
+            </td>
             <td className="px-4 py-3">
               <span className="inline-flex items-center gap-1.5 px-2 py-0.5 bg-blue-50 border border-blue-200 text-blue-700 rounded-md text-xs font-bold">{l.code}</span>
             </td>
@@ -934,9 +939,11 @@ const LocatorDetail = ({ locator, bins, onEdit, onAddBin, onEditBin, onDeleteBin
           { key: 'status', label: 'Status' },
           { key: 'actions', label: 'Actions', center: true },
         ]}
-        rows={bins.map((b, idx) => (
+          rows={bins.map((b, idx) => (
           <tr key={b.id} className="hover:bg-orange-50/30 transition-colors">
-            <td className="px-4 py-3 text-center text-slate-400 font-mono text-[11px]">{idx + 1}</td>
+            <td className="px-4 py-3 text-center text-slate-400 font-mono text-[11px]">
+              {getListSerialNumber(idx, { totalElements: bins.length })}
+            </td>
             <td className="px-4 py-3">
               <span className="inline-flex items-center gap-1.5 px-2 py-0.5 bg-orange-50 border border-orange-200 text-orange-700 rounded-md text-xs font-bold">{b.code}</span>
             </td>

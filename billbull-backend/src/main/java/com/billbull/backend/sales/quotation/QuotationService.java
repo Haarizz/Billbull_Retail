@@ -154,7 +154,7 @@ public class QuotationService {
     public List<Quotation> getAllQuotations() {
         List<Quotation> quotations = new ArrayList<>(
                 branchAccessService.filterBranchScoped(quotationRepo.findAll(), Quotation::getBranchId));
-        DocumentOrderingUtil.sortByDocumentDateAndNumberDesc(
+        DocumentOrderingUtil.sortByDocumentNumberAndDateDesc(
                 quotations,
                 Quotation::getDate,
                 Quotation::getQtnNo,

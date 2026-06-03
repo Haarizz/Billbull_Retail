@@ -102,7 +102,7 @@ public class ProformaService {
     public List<ProformaResponse> list() {
         List<ProformaInvoice> proformas = new ArrayList<>(
                 branchAccessService.filterBranchScopedByBranch(repo.findAll(), ProformaInvoice::getBranch));
-        DocumentOrderingUtil.sortByDocumentDateAndNumberDesc(
+        DocumentOrderingUtil.sortByDocumentNumberAndDateDesc(
                 proformas,
                 ProformaInvoice::getPiDate,
                 ProformaInvoice::getPiNumber,

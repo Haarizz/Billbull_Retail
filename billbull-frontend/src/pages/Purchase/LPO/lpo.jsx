@@ -75,6 +75,8 @@ import ExportDropdown from '../../../components/common/ExportDropdown';
 import { exportToExcel, exportToPDF } from '../../../utils/exportUtils';
 import { formatCurrencyDisplay, resolveCurrencyDisplayCode } from '../../../utils/countryCurrencyOptions';
 import CurrencyAmount from '../../../components/CurrencyAmount';
+import { compareDocumentValues } from '../../../utils/documentOrdering';
+import { getListSerialNumber, withListSerialNumbers } from '../../../utils/serialNumbering';
 
 // ==========================================
 // 1. MOCK DATA & CONFIGURATION
@@ -329,7 +331,7 @@ const MobileCard = ({ row, onView, currencyLabel }) => (
 // 3. VIEW COMPONENTS
 // ==========================================
 
-const ListView = ({ lpos, processedData, onEdit, onView, onPrint, activeFilter, onApprove, onReject, onStockApprove, onStockReject, onProceedToInvoice, onConvertToGrn, onAdvancePayment, onPrintPaymentVoucher, searchQuery, setSearchQuery, sortConfig, requestSort, showFilterPanel, setShowFilterPanel, dateRange, setDateRange, selectedVendor, setSelectedVendor, vendors, currencyLabel, currentPage, loading = false }) => {
+const ListView = ({ lpos, processedData, onEdit, onView, onPrint, activeFilter, onApprove, onReject, onStockApprove, onStockReject, onProceedToInvoice, onConvertToGrn, onAdvancePayment, onPrintPaymentVoucher, searchQuery, setSearchQuery, sortConfig, requestSort, showFilterPanel, setShowFilterPanel, dateRange, setDateRange, selectedVendor, setSelectedVendor, vendors, currencyLabel, currentPage, pageSize, totalElements, loading = false }) => {
   const formatDate = (dateString) => formatDisplayDate(dateString);
 
   return (
@@ -501,7 +503,14 @@ const ListView = ({ lpos, processedData, onEdit, onView, onPrint, activeFilter, 
               ) : processedData
                 .map((row, index) => (
                   <tr key={row.lpoNumber} className="hover:bg-slate-50 transition-colors group">
-                    <td className="px-3 py-3 text-center text-slate-400 font-mono font-medium">{index + 1}</td>
+                    <td className="px-3 py-3 text-center text-slate-400 font-mono font-medium">
+                      {getListSerialNumber(index, {
+                        documentNumber: row.lpoNumber,
+                        page: currentPage,
+                        size: pageSize,
+                        totalElements,
+                      })}
+                    </td>
                     <td
                       onClick={() => onView(row)} // View by default on click
                       className="px-4 py-3 font-mono font-medium text-[#F5C742] cursor-pointer hover:underline"
@@ -2899,12 +2908,15 @@ const LPOList = () => {
   };
 
   // Client-side sort applied to the current page only (the server already
-  // returns rows ordered by date desc; this lets a column header reorder the
-  // visible page without an extra round-trip).
+  // returns rows ordered by newest serial first; this lets a column header
+  // reorder the visible page without an extra round-trip).
   const visibleRows = useMemo(() => {
     const data = [...pageData.content];
     if (sortConfig && sortConfig.key) {
       data.sort((a, b) => {
+        if (sortConfig.key === 'lpoNumber') {
+          return compareDocumentValues(a.lpoNumber, b.lpoNumber, sortConfig.direction);
+        }
         if (a[sortConfig.key] < b[sortConfig.key]) return sortConfig.direction === 'asc' ? -1 : 1;
         if (a[sortConfig.key] > b[sortConfig.key]) return sortConfig.direction === 'asc' ? 1 : -1;
         return 0;
@@ -2927,9 +2939,10 @@ const LPOList = () => {
     if (dateRange.from) data = data.filter(l => l.date >= dateRange.from);
     if (dateRange.to) data = data.filter(l => l.date <= dateRange.to);
     if (selectedVendor) data = data.filter(l => l.vendorName === selectedVendor || l.vendorCode === selectedVendor);
-    return data.map((row, index) => ({
+    return withListSerialNumbers(data, {
+      documentNumberSelector: (row) => row.lpoNumber,
+    }).map((row) => ({
       ...row,
-      sNo: index + 1,
       totalValue: formatCurrencyDisplay(row.totalValue, currencyLabel),
     }));
   };
@@ -3082,7 +3095,9 @@ const LPOList = () => {
                 lpos={pageData.content}
                 processedData={visibleRows}
                 activeFilter={activeStatusTab}
-                currentPage={0}
+                currentPage={listPage}
+                pageSize={LIST_PAGE_SIZE}
+                totalElements={pageData.totalElements}
                 onEdit={handleEditLPO}
                 onView={handleViewLPO}
                 onApprove={handleApprove}

@@ -328,7 +328,7 @@ public class SalesOrderService {
 
         List<SalesOrder> orders = new ArrayList<>(
                 branchAccessService.filterBranchScopedByBranch(orderRepo.findAll(), SalesOrder::getBranch));
-        DocumentOrderingUtil.sortByDocumentDateAndNumberDesc(
+        DocumentOrderingUtil.sortByDocumentNumberAndDateDesc(
                 orders,
                 SalesOrder::getOrderDate,
                 SalesOrder::getSoNumber,
@@ -704,7 +704,14 @@ public class SalesOrderService {
     /** QA-032: Receipt Vouchers linked to a Sales Order (advance receipts). */
     @Transactional(readOnly = true)
     public List<com.billbull.backend.financials.receiptvoucher.ReceiptVoucher> getReceiptVouchersForOrder(Long orderId) {
-        return receiptVoucherRepository.findBySalesOrderIdOrderByDateDesc(orderId);
+        List<com.billbull.backend.financials.receiptvoucher.ReceiptVoucher> vouchers =
+                new ArrayList<>(receiptVoucherRepository.findBySalesOrderIdOrderByDateDesc(orderId));
+        DocumentOrderingUtil.sortByDocumentNumberAndDateDesc(
+                vouchers,
+                com.billbull.backend.financials.receiptvoucher.ReceiptVoucher::getDate,
+                com.billbull.backend.financials.receiptvoucher.ReceiptVoucher::getVoucherId,
+                com.billbull.backend.financials.receiptvoucher.ReceiptVoucher::getId);
+        return vouchers;
     }
 
     private void createAdvanceReceiptForOrder(SalesOrder order) {

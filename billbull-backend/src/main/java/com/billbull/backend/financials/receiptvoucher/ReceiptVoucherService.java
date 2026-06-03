@@ -6,6 +6,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.nio.file.StandardCopyOption;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 import java.util.UUID;
@@ -31,6 +32,7 @@ import com.billbull.backend.sales.invoice.SalesInvoice;
 import com.billbull.backend.sales.invoice.SalesInvoiceRepository;
 import com.billbull.backend.sales.invoice.SalesInvoiceStatus;
 import com.billbull.backend.settings.branch.BranchAccessService;
+import com.billbull.backend.util.DocumentOrderingUtil;
 
 @Service
 public class ReceiptVoucherService {
@@ -70,8 +72,14 @@ public class ReceiptVoucherService {
     }
 
     public List<ReceiptVoucher> getAllReceipts() {
-        return branchAccessService.filterBranchScopedByBranch(
-                repository.findAllByOrderByDateDesc(), ReceiptVoucher::getBranchEntity);
+        List<ReceiptVoucher> receipts = new ArrayList<>(branchAccessService.filterBranchScopedByBranch(
+                repository.findAll(), ReceiptVoucher::getBranchEntity));
+        DocumentOrderingUtil.sortByDocumentNumberAndDateDesc(
+                receipts,
+                ReceiptVoucher::getDate,
+                ReceiptVoucher::getVoucherId,
+                ReceiptVoucher::getId);
+        return receipts;
     }
 
     public ReceiptVoucher getReceiptById(Long id) {

@@ -14,6 +14,7 @@ import { exportToExcel, exportToPDF } from '../../../utils/exportUtils';
 import CurrencyAmount from '../../../components/CurrencyAmount';
 import PaginationFooter from '../../../components/common/PaginationFooter';
 import { formatDisplayDate } from '../../../utils/dateUtils';
+import { getListSerialNumber, withListSerialNumbers } from '../../../utils/serialNumbering';
 
 // ==========================================
 // CONFIGURATION
@@ -826,12 +827,16 @@ const ListView = ({
                     </button>
                     <ExportDropdown
                         onExportExcel={() => exportToExcel(
-                            filteredSessions.map((session, index) => ({ ...session, sNo: index + 1 })),
+                            withListSerialNumbers(filteredSessions, {
+                                documentNumberSelector: (session) => session.id,
+                            }),
                             STOCK_TAKING_COLUMNS,
                             'StockTaking'
                         )}
                         onExportPdf={() => exportToPDF(
-                            filteredSessions.map((session, index) => ({ ...session, sNo: index + 1 })),
+                            withListSerialNumbers(filteredSessions, {
+                                documentNumberSelector: (session) => session.id,
+                            }),
                             STOCK_TAKING_COLUMNS,
                             'Stock Taking Sessions',
                             'StockTaking'
@@ -889,7 +894,14 @@ const ListView = ({
                         <tbody className="divide-y divide-slate-100">
                             {pagedSessions.map((session, index) => (
                                 <tr key={session.id} className="hover:bg-slate-50/80 transition-colors group">
-                                    <td className="px-4 py-2 text-center text-slate-400 font-mono font-medium">{index + 1}</td>
+                                    <td className="px-4 py-2 text-center text-slate-400 font-mono font-medium">
+                                        {getListSerialNumber(index, {
+                                            documentNumber: session.id,
+                                            page: listPage,
+                                            size: LIST_PAGE_SIZE,
+                                            totalElements: filteredSessions.length,
+                                        })}
+                                    </td>
                                     <td className="px-4 py-2 whitespace-nowrap">
                                         <div className="space-y-1">
                                             <p className="font-bold text-slate-800 text-[13px]">{session.id}</p>

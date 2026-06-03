@@ -56,6 +56,8 @@ import {
 } from '../../api/quotationApi';
 import { getStockAvailability } from '../../api/stockAvailabilityApi';
 import { formatDisplayDate } from '../../utils/dateUtils';
+import { compareDocumentValues } from '../../utils/documentOrdering';
+import { getListSerialNumber, withListSerialNumbers } from '../../utils/serialNumbering';
 import { pickSalesItemPrice, isPolicyOverridingPackings } from '../../utils/salesPricing';
 import { computeLineTaxTotals, resolveLineTaxRate } from '../../utils/vatMath';
 import { getActiveVatRate } from '../../api/taxApi';
@@ -2677,6 +2679,10 @@ const Quotations = () => {
                     bValue = Number(b.total || 0);
                 }
 
+                if (sortConfig.key === 'qtnNo') {
+                    return compareDocumentValues(aValue, bValue, sortConfig.direction);
+                }
+
                 if (aValue < bValue) {
                     return sortConfig.direction === 'asc' ? -1 : 1;
                 }
@@ -2820,12 +2826,22 @@ const Quotations = () => {
 
                                 <ExportDropdown
                                     onExportExcel={() => exportToExcel(
-                                        filteredQuotations.map((qtn, index) => ({ ...qtn, sNo: index + 1 })),
+                                        withListSerialNumbers(filteredQuotations, {
+                                            documentNumberSelector: (qtn) => qtn.qtnNo,
+                                            page: listPageMeta.page,
+                                            size: listPageMeta.size,
+                                            totalElements: listPageMeta.totalElements,
+                                        }),
                                         QUOTATION_COLUMNS,
                                         'Quotations'
                                     )}
                                     onExportPdf={() => exportToPDF(
-                                        filteredQuotations.map((qtn, index) => ({ ...qtn, sNo: index + 1 })),
+                                        withListSerialNumbers(filteredQuotations, {
+                                            documentNumberSelector: (qtn) => qtn.qtnNo,
+                                            page: listPageMeta.page,
+                                            size: listPageMeta.size,
+                                            totalElements: listPageMeta.totalElements,
+                                        }),
                                         QUOTATION_COLUMNS,
                                         'Quotations List',
                                         'Quotations'
@@ -2895,7 +2911,12 @@ const Quotations = () => {
                                                 className="hover:bg-slate-50 cursor-pointer transition-colors"
                                             >
                                                 <td className="px-4 py-3 text-center text-slate-400 font-mono font-medium">
-                                                    {index + 1}
+                                                    {getListSerialNumber(index, {
+                                                        documentNumber: qtn.qtnNo,
+                                                        page: listPageMeta.page,
+                                                        size: listPageMeta.size,
+                                                        totalElements: listPageMeta.totalElements,
+                                                    })}
                                                 </td>
                                                 <td className="px-4 py-3 text-blue-600 font-medium flex items-center gap-2">
                                                     {qtn.revisions && qtn.revisions.length > 0 && (
