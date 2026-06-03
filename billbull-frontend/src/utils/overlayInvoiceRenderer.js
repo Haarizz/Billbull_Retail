@@ -348,14 +348,17 @@ export const generateOverlayInvoiceHtml = (template, data, options = {}) => {
 
     const allItems = Array.isArray(data.items) ? data.items : [];
     const itemsPerPage = Number(settings.itemsPerPage) || 0;
-    const pageMarginMm = Number(settings.pageMargin) || 0;
+    const rawPageMarginMm = Number(settings.pageMargin);
+    const continuationTopGapMm = Number.isFinite(rawPageMarginMm) && rawPageMarginMm > 0
+        ? rawPageMarginMm
+        : 4;
 
     const renderTableDiv = (pageItems, isFirst, indexOffset) => {
         if (!tableField) return '';
         const x = num(tableField.x);
         // On continuation pages, add the configured page margin as extra top offset
         const yBase = num(tableField.y);
-        const y = isFirst ? yBase : yBase + pageMarginMm;
+        const y = isFirst ? yBase : yBase + continuationTopGapMm;
         const width = num(tableField.width) || 60;
         const styleBits = [
             'position:absolute',
