@@ -2687,7 +2687,7 @@ const SalesInvoice = () => {
     // Async source for the review preview modal — renders the current editor
     // form through the default print template, stamped DRAFT / TAX INVOICE.
     const getPreviewHtml = async () => {
-        const titleOverride = previewMode === 'Confirmed' ? 'TAX INVOICE' : 'DRAFT INVOICE';
+        const titleOverride = 'TAX INVOICE';
         return buildInvoiceHtml(buildCurrentFormPrintSource(), { titleOverride });
     };
 
