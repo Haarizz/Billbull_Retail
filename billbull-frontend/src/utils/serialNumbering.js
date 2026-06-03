@@ -35,14 +35,9 @@ export const descendingSerialNumber = (index, {
   return safeIndex + 1;
 };
 
-export const getListSerialNumber = (index, {
-  documentNumber,
-  maxDocumentSerialDigits = DEFAULT_MAX_DOCUMENT_SERIAL_DIGITS,
-  ...pagination
-} = {}) => {
-  const documentSerial = extractTrailingSerialNumber(documentNumber, maxDocumentSerialDigits);
-  return documentSerial ?? descendingSerialNumber(index, pagination);
-};
+export const getListSerialNumber = (index, pagination = {}) => (
+  descendingSerialNumber(index, pagination)
+);
 
 export const withListSerialNumbers = (rows, {
   documentNumberSelector,
