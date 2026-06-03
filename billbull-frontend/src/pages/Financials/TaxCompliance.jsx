@@ -855,7 +855,7 @@ export default function TaxCompliance() {
                                     <p className="text-sm text-slate-400 italic">No filed returns yet.</p>
                                 ) : (
                                     <div className="overflow-x-auto">
-                                        <table className="w-full text-xs text-left">
+                                        <table className="bb-nowrap-table w-full text-xs text-left">
                                             <thead className="text-[10px] text-slate-500 font-semibold border-b border-slate-200 bg-slate-50 uppercase">
                                                 <tr>
                                                     <th className="py-2 pl-4">Tax Type</th>
@@ -1035,7 +1035,7 @@ export default function TaxCompliance() {
                                 </div>
 
                                 <div className="overflow-x-auto">
-                                    <table className="w-full text-xs text-left">
+                                    <table className="bb-nowrap-table w-full text-xs text-left">
                                         <thead className="text-[10px] text-slate-500 font-semibold border-b border-slate-200 bg-slate-50 uppercase">
                                             <tr>
                                                 <th className="py-2 pl-4">Tax Type</th>
@@ -1096,7 +1096,7 @@ export default function TaxCompliance() {
                                     </div>
 
                                     <div className="overflow-x-auto">
-                                        <table className="w-full text-xs text-left">
+                                        <table className="bb-nowrap-table w-full text-xs text-left">
                                             <thead className="text-[10px] text-slate-500 font-semibold border-b border-slate-200 bg-slate-50 uppercase">
                                                 <tr>
                                                     <th className="py-2 pl-4">Document</th>
@@ -1247,7 +1247,7 @@ export default function TaxCompliance() {
                     </div>
 
                     <div className="overflow-x-auto rounded-lg border border-slate-200">
-                        <table className="w-full text-xs text-left">
+                        <table className="bb-nowrap-table w-full text-xs text-left">
                             <thead className="text-[10px] text-slate-500 font-bold border-b border-slate-200 bg-slate-50 uppercase tracking-wider">
                                 <tr>
                                     <th className="py-3 pl-4">Tax Type</th>

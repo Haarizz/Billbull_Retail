@@ -147,7 +147,7 @@ const SectionCard = ({ title, subtitle, action, children }) => (
 // ─── Data Table ───────────────────────────────────────────────────────────────
 const DataTable = ({ cols, rows, empty }) => (
   <div className="overflow-x-auto">
-    <table className="w-full text-xs">
+    <table className="bb-nowrap-table w-full text-xs">
       <thead className="bg-slate-50 text-slate-500 border-b border-slate-100">
         <tr>{cols.map(c => <th key={c.key} className={`px-4 py-3 font-semibold uppercase tracking-wide text-[10px] whitespace-nowrap ${c.center ? 'text-center' : 'text-left'}`}>{c.label}</th>)}</tr>
       </thead>

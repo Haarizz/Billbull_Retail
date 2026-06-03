@@ -747,7 +747,7 @@ const SalesReturn = () => {
 
                      {/* TABLE */}
                      <div className="overflow-x-auto">
-                        <table className="w-full text-left text-xs">
+                        <table className="bb-nowrap-table w-full text-left text-xs">
                            <thead className="bg-[#F8FAFC] text-slate-600 font-semibold border-b border-slate-200">
                               <tr>
                                  <th className="px-4 py-3">Return No</th>
@@ -963,7 +963,7 @@ const SalesReturn = () => {
                            </div>
 
                            <div className="overflow-x-auto">
-                              <table className="w-full text-xs">
+                              <table className="bb-nowrap-table w-full text-xs">
                                  <thead className="bg-[#F8FAFC] text-slate-600 font-semibold border-b border-slate-200">
                                     <tr>
                                        <th className="p-3 text-left">Item Details</th>
@@ -1187,7 +1187,7 @@ const SalesReturn = () => {
                      {/* Item Table */}
                      <div className="bg-white rounded-lg border border-slate-100 overflow-hidden">
                         <h4 className="px-4 py-3 text-xs font-bold text-slate-700 bg-slate-50 border-b border-slate-100 uppercase tracking-wider">Returned Items</h4>
-                        <table className="w-full text-[11px] text-left">
+                        <table className="bb-nowrap-table w-full text-[11px] text-left">
                            <thead className="bg-[#fcfdfe] text-slate-500 font-semibold border-b border-slate-100">
                               <tr>
                                  <th className="px-4 py-2">Item</th>
@@ -1257,7 +1257,7 @@ const SalesReturn = () => {
                            No returnable batches found for this item. All units may have been returned already.
                         </div>
                      ) : (
-                        <table className="w-full text-xs">
+                        <table className="bb-nowrap-table w-full text-xs">
                            <thead className="bg-slate-50 text-slate-500">
                               <tr>
                                  <th className="p-2 text-left">Batch #</th>

@@ -2895,7 +2895,7 @@ const Employees = () => {
                   /* ==================================== */
                   /* APPROVAL WORKFLOW TABLE VIEW         */
                   /* ==================================== */
-                  <table className="w-full text-sm text-left">
+                  <table className="bb-nowrap-table w-full text-sm text-left">
                     <thead className="bg-[#F7F7FA] text-slate-500 border-b border-slate-200">
                       <tr>
                         <th className="px-6 py-4 font-semibold text-xs uppercase whitespace-nowrap">Pending Employee</th>
@@ -2974,7 +2974,7 @@ const Employees = () => {
                   /* ==================================== */
                   /* STANDARD EMPLOYEE TABLE VIEW         */
                   /* ==================================== */
-                  <table className="w-full text-sm text-left">
+                  <table className="bb-nowrap-table w-full text-sm text-left">
                     <thead className="bg-[#F7F7FA] text-slate-500 border-b border-slate-200">
                       <tr>
                         <th className="px-6 py-4 font-semibold text-xs uppercase whitespace-nowrap">Employee</th>

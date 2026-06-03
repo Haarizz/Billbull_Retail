@@ -195,7 +195,7 @@ const GRNListView = ({ data, onView, onEdit, onDelete, onPost, onPrint, onProcee
 
         {/* Table */}
         <div className="overflow-x-auto">
-          <table className="w-full text-xs text-left">
+          <table className="bb-nowrap-table w-full text-xs text-left">
             <thead className="bg-[#F7F7FA] text-slate-500 font-medium border-b border-slate-200">
               <tr>
                 <th className="px-3 py-3 text-center text-slate-500 w-12 select-none uppercase whitespace-nowrap">S.No.</th>
@@ -334,7 +334,7 @@ const QCQueueView = ({ queue, onApprove }) => (
       </div>
 
       <div className="overflow-x-auto">
-        <table className="w-full text-xs text-left">
+        <table className="bb-nowrap-table w-full text-xs text-left">
           <thead className="bg-slate-50 border-b border-slate-100 text-slate-500">
             <tr>
               <th className="p-3 font-medium">GRN No</th>
@@ -453,7 +453,7 @@ const BatchModal = ({ isOpen, onClose, item, disabled }) => {
         {/* Content */}
         <div className="p-6 bg-slate-50/50">
           <div className="bg-white border border-slate-200 rounded-lg overflow-hidden">
-            <table className="w-full text-xs text-left">
+            <table className="bb-nowrap-table w-full text-xs text-left">
               <thead className="bg-slate-50 border-b border-slate-100 text-slate-500 font-medium">
                 <tr>
                   <th className="p-3">Batch No</th>
@@ -542,7 +542,7 @@ const CompareLPOModal = ({ isOpen, onClose, items }) => {
         {/* Content */}
         <div className="p-6 bg-slate-50/50">
           <div className="bg-white border border-slate-200 rounded-lg overflow-hidden">
-            <table className="w-full text-xs text-left">
+            <table className="bb-nowrap-table w-full text-xs text-left">
               <thead className="bg-slate-50 border-b border-slate-100 text-slate-500 font-medium">
                 <tr>
                   <th className="p-3">Item</th>
@@ -1916,7 +1916,7 @@ const EditorView = ({ initialData, onSaveDraft, onSubmitQC, onPost, onPrint, grn
 
             {/* Table */}
             <div className="overflow-auto" style={{ maxHeight: 'calc(4 * 115px + 44px)' }}>
-              <table className="w-full text-xs text-left min-w-[900px]">
+              <table className="bb-nowrap-table w-full text-xs text-left min-w-[900px]">
                 <thead className="bg-slate-50 border-b border-slate-100 text-slate-500 sticky top-0 z-10">
                   <tr>
                     <th className="p-3 font-medium w-10 text-center text-slate-400">#</th>

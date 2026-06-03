@@ -1429,7 +1429,7 @@ const ProformaInvoice = () => {
 
             {/* Desktop Table */}
             <div className="overflow-x-auto">
-              <table className="w-full text-sm text-left hidden md:table">
+              <table className="bb-nowrap-table w-full text-sm text-left hidden md:table">
                 <thead className="bg-slate-50 text-slate-600 border-b border-slate-200/50">
                   <tr>
                     <th className="px-4 py-3 text-center text-slate-500 w-16 select-none">
@@ -1749,7 +1749,7 @@ const ProformaInvoice = () => {
                     className="overflow-auto"
                     style={items.length > 5 ? { maxHeight: '380px', overflowY: 'auto' } : {}}
                   >
-                    <table className="w-full text-xs text-left min-w-[800px]">
+                    <table className="bb-nowrap-table w-full text-xs text-left min-w-[800px]">
                       <thead className="sticky top-0 z-10 bg-white border-b border-slate-100/80 text-[11px] font-semibold text-slate-500">
                         <tr>
                           <th className="p-2 w-8 text-center text-slate-400">#</th>

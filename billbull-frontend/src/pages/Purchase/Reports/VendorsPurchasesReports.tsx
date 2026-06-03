@@ -179,7 +179,7 @@ const PIE_COLORS = ["#F5C742", "#3b82f6", "#10b981", "#f97316", "#8b5cf6", "#ef4
 function Tbl({ children }: { children: React.ReactNode }) {
   return (
     <div className="overflow-x-auto rounded-lg border border-slate-200">
-      <table className="w-full text-[11px] text-left">{children}</table>
+      <table className="bb-nowrap-table w-full text-[11px] text-left">{children}</table>
     </div>
   );
 }
@@ -921,7 +921,7 @@ function VendorMasterReport() {
       </Card>
       <div className="overflow-x-auto rounded-lg border border-slate-200">
         <div className="max-h-[320px] overflow-y-auto">
-          <table className="w-full text-[11px] text-left">
+          <table className="bb-nowrap-table w-full text-[11px] text-left">
             <thead className="sticky top-0 z-10 bg-slate-50">
               <tr>
                 <Th>Code</Th>

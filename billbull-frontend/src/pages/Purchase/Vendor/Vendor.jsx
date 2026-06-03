@@ -543,7 +543,7 @@ const PayInvoices = ({ vendors, initialVendor }) => {
                   <Loader2 className="w-6 h-6 animate-spin text-slate-400" />
                 </div>
               ) : (
-                <table className="w-full text-sm text-left">
+                <table className="bb-nowrap-table w-full text-sm text-left">
                   <thead className="bg-[#F7F7FA] text-slate-500 border-b border-slate-200">
                     <tr>
                       <th className="px-4 py-3 w-10 text-center">
@@ -1073,7 +1073,7 @@ const VendorSoA = ({ vendors }) => {
           </div>
 
           <div className="overflow-x-auto">
-            <table className="w-full text-xs">
+            <table className="bb-nowrap-table w-full text-xs">
               <thead className="bg-gray-50 border-y border-slate-200">
                 <tr>
                   <th className="px-4 py-2 text-left font-medium text-gray-500">DATE</th>
@@ -1954,7 +1954,7 @@ const VendorListViewWithActions = ({ vendors, loading, onAddNew, onEdit, onDelet
               </div>
 
               <div className="overflow-x-auto">
-                <table className="w-full text-sm">
+                <table className="bb-nowrap-table w-full text-sm">
                   <thead className="bg-gray-50 border-b border-slate-200">
                     <tr>
                       <th className="px-4 py-3 text-center font-medium text-gray-500 uppercase w-16 select-none">S.No.</th>
