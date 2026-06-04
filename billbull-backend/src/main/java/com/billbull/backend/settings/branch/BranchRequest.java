@@ -16,6 +16,10 @@ public class BranchRequest {
     private String trnNumber;
     private String logoUrl;
     private String stampUrl;
+    private String bankName;
+    private String bankAccountNumber;
+    private String bankIban;
+    private String bankSwift;
     private Integer sortOrder;
     private Boolean isHeadquarters;
     private BranchType type;
@@ -62,6 +66,18 @@ public class BranchRequest {
 
     public String getStampUrl() { return stampUrl; }
     public void setStampUrl(String stampUrl) { this.stampUrl = stampUrl; }
+
+    public String getBankName() { return bankName; }
+    public void setBankName(String bankName) { this.bankName = bankName; }
+
+    public String getBankAccountNumber() { return bankAccountNumber; }
+    public void setBankAccountNumber(String bankAccountNumber) { this.bankAccountNumber = bankAccountNumber; }
+
+    public String getBankIban() { return bankIban; }
+    public void setBankIban(String bankIban) { this.bankIban = bankIban; }
+
+    public String getBankSwift() { return bankSwift; }
+    public void setBankSwift(String bankSwift) { this.bankSwift = bankSwift; }
 
     public Integer getSortOrder() { return sortOrder; }
     public void setSortOrder(Integer sortOrder) { this.sortOrder = sortOrder; }

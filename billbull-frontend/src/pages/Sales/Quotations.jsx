@@ -35,7 +35,8 @@ import {
     SlidersHorizontal,
     MoreVertical,
     AlertCircle,
-    Zap
+    Zap,
+    Download
 } from 'lucide-react';
 
 // ✅ API IMPORTS
@@ -94,7 +95,7 @@ import useShortcuts from '../../hooks/useShortcuts';
 // ✅ LOGO IMPORTS FOR PRINT
 import billBullLogo from '../../assets/billBullLogo.png';
 import { getTemplatesByCategory } from '../../api/printTemplateApi';
-import { generatePrintHtmlAsync, generateEmailHtml, printHtml } from '../../utils/printGenerator';
+import { generatePrintHtmlAsync, generateEmailHtml, printHtml, downloadPdf } from '../../utils/printGenerator';
 import { buildDocumentHeaderProfile } from '../../utils/branchPrintProfile';
 import { buildEmailBody } from '../../utils/emailImageInliner';
 import { getImageUrl } from '../../utils/urlUtils';
@@ -2228,6 +2229,23 @@ const Quotations = () => {
         }
     };
 
+    const handleListingDownload = async (qtn, e) => {
+        e.stopPropagation();
+        closeActionMenu();
+        try {
+            const templates = await getTemplatesByCategory('Quotation');
+            const defaultTemplate = templates.find(t => t.isDefault);
+            if (!defaultTemplate) return;
+            const resolvedBillDiscount = Number(qtn.billDiscount || 0);
+            const resolvedSummary = summarizeSalesItems(qtn.items || [], resolvedBillDiscount);
+            const fullCustomer = customersList.find(c => c.code === qtn.customerCode);
+            const printData = { title: 'QUOTATION', docNo: qtn.qtnNo, date: qtn.date, customer: { name: qtn.customer, address: fullCustomer?.address || fullCustomer?.billingAddress || '', shippingAddress: qtn.shippingAddress || '', phone: qtn.customerMobile || qtn.customerPhone || fullCustomer?.mobile || fullCustomer?.phone || '', email: qtn.customerEmail || fullCustomer?.email || '', trn: fullCustomer?.trn || '' }, items: (qtn.items || []).filter(i => i.code || i.desc).map(i => ({ code: i.code, name: i.name || i.productName || '', desc: i.desc || '', remarks: i.remarks || '', sku: i.sku || i.productSku || '', brand: i.brand || i.brandName || '', shortDesc: i.shortDesc || '', detailedDesc: i.detailedDesc || '', localName: i.localName || i.productLocalName || '', barcode: i.barcode || '', batchNumber: i.batchNumber || '', batchSelections: Array.isArray(i.batchSelections) ? i.batchSelections : [], unit: i.unit, qty: Number(i.qty), price: Number(i.price), disc: Number(i.disc), tax: Number(i.tax), taxAmt: Number(i.taxAmt || 0), total: Number(i.total), image: i.image ? getImageUrl(i.image) : '' })), totals: { subTotal: resolvedSummary.subTotal, tax: resolvedSummary.tax, grandTotal: resolvedSummary.grandTotal, currency: getDisplayCurrencyProps(qtn.currency).currency, billDiscount: resolvedBillDiscount, billDiscountAmount: resolvedSummary.billDiscountAmount }, meta: { validTill: qtn.validTill, paymentTerm: qtn.paymentTerms || qtn.paymentTerm, status: qtn.status, notes: qtn.notesToCustomer, reference: qtn.branchCode || '', location: qtn.branchLocation || qtn.branchName || '', locationStore: qtn.branchName || qtn.branchCode || '', warehouse: qtn.branchLocation || '', deliveryTerms: qtn.deliveryType || '', salesPerson: '' } };
+            const html = await generatePrintHtmlAsync(defaultTemplate, printData, { companyProfile: buildDocumentHeaderProfile({ company, branches: availableBranches || [], branchId: qtn.branchId ?? activeBranch?.id }), billBullLogo });
+            await downloadPdf(html, qtn.qtnNo || 'Quotation');
+        } catch { /* silent */ }
+    };
+
+
     const handleActionMenuToggle = (quotationId, e) => {
         e.stopPropagation();
 
@@ -3035,6 +3053,9 @@ const Quotations = () => {
                                                                 <div className="border-t border-slate-100 my-1" />
                                                                 <button onClick={(e) => handleListingPrint(qtn, e)} className="w-full text-left px-4 py-2 hover:bg-slate-50 flex items-center gap-2 text-slate-700">
                                                                     <Printer size={13} /> Print
+                                                                </button>
+                                                                <button onClick={(e) => handleListingDownload(qtn, e)} className="w-full text-left px-4 py-2 hover:bg-slate-50 flex items-center gap-2 text-slate-700">
+                                                                    <Download size={13} /> Download PDF
                                                                 </button>
                                                             </div>
                                                         )}

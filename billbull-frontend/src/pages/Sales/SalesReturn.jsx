@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { generatePrintHtmlAsync, printHtml } from '../../utils/printGenerator';
+import { generatePrintHtmlAsync, printHtml, downloadPdf } from '../../utils/printGenerator';
 import { buildDocumentHeaderProfile } from '../../utils/branchPrintProfile';
 import { getTemplatesByCategory } from '../../api/printTemplateApi';
 import { useCompany } from '../../context/CompanyContext';
@@ -31,7 +31,8 @@ import {
    Trash2,
    Box,
    RefreshCw,
-   Mail
+   Mail,
+   Download
 } from 'lucide-react';
 import ExportDropdown from '../../components/common/ExportDropdown';
 import PaginationFooter from '../../components/common/PaginationFooter';
@@ -581,6 +582,22 @@ const SalesReturn = () => {
       }
    };
 
+   const handleDownload = async (ret) => {
+      if (!ret) return;
+      try {
+         const templates = await getTemplatesByCategory('Sales Return');
+         const defaultTemplate = (templates && templates.find(t => t.isDefault)) || { category: 'Sales Return', paperSize: 'A4', orientation: 'Portrait', headerContent: '', footerContent: '', termsContent: '', displayOptions: { showLogo: true, showCompanyDetails: true, showCustomerDetails: true, showTerms: false, showItemImage: false }, columns: { qty: true, unitPrice: true, taxableAmount: true, tax: true, discount: false, total: true } };
+         const subTotal = Number(ret.subTotal) || (ret.items || []).reduce((s, i) => s + Number(i.price) * Number(i.returnQty), 0);
+         const taxAmt = Number(ret.taxAmount) || 0;
+         const grandTotal = Number(ret.totalAmount) || subTotal + taxAmt;
+         const returnBranchId = loadedReturnBranchId ?? ret.branch?.id ?? activeBranch?.id;
+         const printBranch = availableBranches?.find(b => b.id === returnBranchId) || ret.branch || activeBranch || {};
+         const printData = { title: 'CREDIT NOTE', docNo: ret.returnNumber, date: ret.returnDate, customer: { name: ret.customerName || '', address: '', shippingAddress: '', phone: '', email: '', trn: '' }, items: (ret.items || []).map(item => ({ name: item.itemName || item.itemCode || '', description: { title: item.itemName || item.itemCode || '', details: item.itemCode ? [`Code: ${item.itemCode}`] : [] }, code: item.itemCode || '', unit: item.unit || 'PCS', qty: Number(item.returnQty), price: Number(item.price), taxableAmount: Number(item.price) * Number(item.returnQty), taxAmt: 0, taxPercent: 0, total: Number(item.total) })), totals: { subTotal, tax: taxAmt, grandTotal, currency: company?.currencySymbol || company?.currency || 'AED', billDiscount: 0, billDiscountAmount: 0 }, meta: { status: ret.status || '', paymentTerm: '', validTill: '', validTillLabel: 'Original Invoice', notes: `Original Invoice: ${ret.linkedInvoice || '-'}${ret.reason ? `\nReason: ${ret.reason}` : ''}`, location: printBranch.name || '', locationStore: printBranch.name || printBranch.code || '', warehouse: printBranch.defaultWarehouseName || '', deliveryTerms: '', salesPerson: '' } };
+         const html = await generatePrintHtmlAsync(defaultTemplate, printData, { companyProfile: buildDocumentHeaderProfile({ company, branches: availableBranches || [], branchId: loadedReturnBranchId ?? selectedReturn?.branch?.id ?? activeBranch?.id }), billBullLogo });
+         await downloadPdf(html, ret.returnNumber || 'Credit-Note');
+      } catch (err) { console.error('Download error', err); }
+   };
+
    // ==========================================
    // RENDER HELPERS
    // ==========================================
@@ -793,7 +810,8 @@ const SalesReturn = () => {
                                        <div className="flex justify-center gap-1" onClick={(e) => e.stopPropagation()}>
                                           <button onClick={() => handleViewReturn(ret)} className="p-1 hover:bg-slate-200 rounded text-slate-500"><Eye size={14} /></button>
                                           <button onClick={() => handleLoadReturn(ret)} className="p-1 hover:bg-slate-200 rounded text-slate-500"><Edit size={14} /></button>
-                                          <button onClick={() => handlePrint(ret)} className="p-1 hover:bg-slate-200 rounded text-slate-500"><Printer size={14} /></button>
+                                          <button onClick={() => handlePrint(ret)} className="p-1 hover:bg-slate-200 rounded text-slate-500" title="Print"><Printer size={14} /></button>
+                                          <button onClick={() => handleDownload(ret)} className="p-1 hover:bg-slate-200 rounded text-slate-500" title="Download PDF"><Download size={14} /></button>
                                           <button onClick={() => { if (window.confirm('Delete this record?')) deleteSalesReturn(ret.id).then(fetchReturns); }} className="p-1 hover:bg-red-50 rounded text-slate-400 hover:text-red-500"><Trash2 size={14} /></button>
                                        </div>
                                     </td>

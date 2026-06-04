@@ -54,6 +54,18 @@ public class Branch {
     @Column(name = "stamp_url", length = 500)
     private String stampUrl;
 
+    @Column(name = "bank_name", length = 150)
+    private String bankName;
+
+    @Column(name = "bank_account_number", length = 60)
+    private String bankAccountNumber;
+
+    @Column(name = "bank_iban", length = 60)
+    private String bankIban;
+
+    @Column(name = "bank_swift", length = 30)
+    private String bankSwift;
+
     @Column(name = "sort_order", nullable = false, columnDefinition = "integer not null default 0")
     private int sortOrder = 0;
 
@@ -118,6 +130,18 @@ public class Branch {
 
     public String getStampUrl() { return stampUrl; }
     public void setStampUrl(String stampUrl) { this.stampUrl = stampUrl; }
+
+    public String getBankName() { return bankName; }
+    public void setBankName(String bankName) { this.bankName = bankName; }
+
+    public String getBankAccountNumber() { return bankAccountNumber; }
+    public void setBankAccountNumber(String bankAccountNumber) { this.bankAccountNumber = bankAccountNumber; }
+
+    public String getBankIban() { return bankIban; }
+    public void setBankIban(String bankIban) { this.bankIban = bankIban; }
+
+    public String getBankSwift() { return bankSwift; }
+    public void setBankSwift(String bankSwift) { this.bankSwift = bankSwift; }
 
     public int getSortOrder() { return sortOrder; }
     public void setSortOrder(int sortOrder) { this.sortOrder = sortOrder; }

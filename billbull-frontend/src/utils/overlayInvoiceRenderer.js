@@ -182,8 +182,9 @@ const resolveFieldValue = (id, data, company) => {
         case 'terms': return firstOf(m.terms, m.termsAndConditions) || '';
         case 'notes': return m.notes || '';
         case 'bank_name': return company.bankName || company.bankAccountName || '';
-        case 'account_number': return company.accountNumber || company.bankAccountNumber || '';
-        case 'iban': return company.iban || '';
+        case 'account_number': return company.bankAccountNumber || company.accountNumber || '';
+        case 'iban': return company.bankIban || company.iban || '';
+        case 'bank_swift': return company.bankSwift || '';
         case 'signature': return '________________________';
         default: return '';
     }
