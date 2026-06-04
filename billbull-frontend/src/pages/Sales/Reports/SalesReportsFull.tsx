@@ -35,6 +35,10 @@ import { Separator } from "./ui/separator";
 import { Input } from "./ui/input";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, PieChart, Pie, Cell, LineChart, Line, Area, AreaChart } from "recharts";
 import { getSalesReportData } from "../../../api/salesReportsApi";
+import { exportToPDF, exportToExcel } from "../../../utils/exportUtils";
+import { generateReportPrintHtml, printHtml } from "../../../utils/printGenerator";
+import { getCompanyProfile } from "../../../api/companyProfileApi";
+import ExportDropdown from "../../../components/common/ExportDropdown";
 
 type ReportGroupId =
   | "summary"
@@ -1764,6 +1768,11 @@ export function SalesReports({ onNavigate }: SalesReportsProps) {
   const [branch, setBranch] = useState("All");
   const [channel, setChannel] = useState("All");
   const [cashier, setCashier] = useState("All");
+  const [companyProfile, setCompanyProfile] = useState<any>(null);
+
+  useEffect(() => {
+    getCompanyProfile().then((res) => setCompanyProfile(res.data)).catch(() => {});
+  }, []);
 
   const activeDef = useMemo(
     () => REPORTS.find((r) => r.id === activeReport)!,
@@ -1837,7 +1846,37 @@ export function SalesReports({ onNavigate }: SalesReportsProps) {
     return () => controller.abort();
   }, [activeReport]);
 
-  function exportActiveReport() {
+  function getExportData() {
+    const rows = getCurrentExportRows(activeReport);
+    const cols = rows.length
+      ? Object.keys(rows[0]).map((key) => ({
+          header: key.replace(/([A-Z])/g, " $1").replace(/[_-]/g, " ").replace(/^\w/, (c) => c.toUpperCase()).trim(),
+          key,
+          width: 18,
+        }))
+      : [];
+    return { rows, cols };
+  }
+
+  const exportMeta = () => ({ dateFrom, dateTo, branch, companyProfile });
+
+  function handleExportPdf() {
+    const { rows, cols } = getExportData();
+    exportToPDF(rows, cols, activeDef.label, activeDef.label.replace(/\s+/g, "_"), exportMeta());
+  }
+
+  function handleExportExcel() {
+    const { rows, cols } = getExportData();
+    exportToExcel(rows, cols, activeDef.label.replace(/\s+/g, "_"), exportMeta());
+  }
+
+  function handlePrint() {
+    const { rows, cols } = getExportData();
+    const html = generateReportPrintHtml({}, activeDef.label, cols, rows, companyProfile || {}, exportMeta());
+    printHtml(html);
+  }
+
+  function handleDownloadCsv() {
     downloadCsv(activeDef.label, getCurrentExportRows(activeReport));
   }
 
@@ -1845,13 +1884,10 @@ export function SalesReports({ onNavigate }: SalesReportsProps) {
     const button = (event.target as HTMLElement).closest("button");
     if (!button) return;
     const label = (button.textContent || "").trim().toLowerCase();
-    if (label === "pdf" || label === "print") {
-      window.print();
-      return;
-    }
-    if (label === "excel" || label.includes("export")) {
+    if (label === "pdf" || label === "print" || label === "excel" || label === "export" || label.includes("download")) return;
+    if (label.includes("export")) {
       event.preventDefault();
-      exportActiveReport();
+      handleExportExcel();
     }
   }
 
@@ -1906,32 +1942,12 @@ export function SalesReports({ onNavigate }: SalesReportsProps) {
           <span className="font-medium text-slate-700">Reports</span>
         </div>
 
-        <div className="flex items-center gap-2">
-          <Button
-            variant="ghost"
-            size="sm"
-            className="text-[11px] text-slate-600 flex items-center gap-1"
-          >
-            <FileText className="h-3 w-3" />
-            PDF
-          </Button>
-          <Button
-            variant="ghost"
-            size="sm"
-            className="text-[11px] text-slate-600 flex items-center gap-1"
-          >
-            <FileSpreadsheet className="h-3 w-3" />
-            Excel
-          </Button>
-          <Button
-            variant="ghost"
-            size="sm"
-            className="text-[11px] text-slate-600 flex items-center gap-1"
-          >
-            <Printer className="h-3 w-3" />
-            Print
-          </Button>
-        </div>
+        <ExportDropdown
+          onExportPdf={handleExportPdf}
+          onExportExcel={handleExportExcel}
+          onPrint={handlePrint}
+          onDownload={handleDownloadCsv}
+        />
       </div>
 
       <div className="grid grid-cols-1 xl:grid-cols-[0.95fr_2.05fr] gap-4">

@@ -10,6 +10,8 @@
 // The designer's background image is intentionally NOT printed: it represents
 // the physical paper already loaded in the tray. It is only a design guide.
 
+import { UAE_DIRHAM_SYMBOL_IMAGE, resolveCurrencyDisplayConfig } from './countryCurrencyOptions';
+
 const PAPER_DIMS = {
     'A4-portrait': { w: 210, h: 297 },
     'A4-landscape': { w: 297, h: 210 },
@@ -36,6 +38,31 @@ const fmt2 = (value) => num(value).toLocaleString(undefined, {
 });
 
 const fmtMoney = (value, currency) => `${currency ? currency + ' ' : ''}${fmt2(value)}`;
+
+const currencySymbolHtml = (currency) => {
+    if (!currency) return '';
+    const cfg = resolveCurrencyDisplayConfig(currency);
+    if (cfg.hasImage) {
+        return `<img src="${UAE_DIRHAM_SYMBOL_IMAGE}" alt="${escapeHtml(cfg.ariaLabel)}" style="height:0.82em;width:auto;display:inline-block;vertical-align:-0.08em;margin:0 0.1em;" />`;
+    }
+    return escapeHtml(cfg.label);
+};
+
+const TOTALS_NUMERIC_FIELDS = new Set(['taxable_total', 'subtotal', 'discount_total', 'tax_amount', 'delivery_charge', 'round_off', 'grand_total']);
+
+const resolveFieldNumericValue = (id, data) => {
+    const t = data.totals || {};
+    switch (id) {
+        case 'taxable_total': return fmt2(t.taxableAmount ?? t.subTotal ?? 0);
+        case 'subtotal': return fmt2(t.subTotal ?? 0);
+        case 'discount_total': return fmt2(t.billDiscountAmount ?? t.discount ?? 0);
+        case 'tax_amount': return fmt2(t.tax ?? 0);
+        case 'delivery_charge': return fmt2(t.deliveryCharge ?? 0);
+        case 'round_off': return fmt2(t.roundOff ?? 0);
+        case 'grand_total': return fmt2(t.grandTotal ?? 0);
+        default: return null;
+    }
+};
 
 // Compact integer-to-words for the "amount in words" field. Handles the
 // magnitudes an invoice realistically reaches; falls back gracefully.
@@ -290,9 +317,33 @@ const renderField = (f, data, company, printOnlyValues, logoUrl, stampUrl) => {
     }
     if (f.id === 'qr_code') return '';
 
-    const value = resolveFieldValue(f.id, data, company);
+    const resolved = resolveFieldValue(f.id, data, company);
+    // customText on the field overrides the resolved invoice value (useful for
+    // static labels like "BILL TO", section headings, etc.).
+    const value = f.customText?.trim() || resolved;
     if (value === '' || value == null) return '';
+
     const showLabel = !printOnlyValues && f.printLabel;
+    const isTotalsNumeric = TOTALS_NUMERIC_FIELDS.has(f.id) && !f.customText?.trim();
+
+    if (isTotalsNumeric) {
+        const t = data.totals || {};
+        const currency = t.currency || '';
+        const symHtml = currencySymbolHtml(currency);
+        const numericStr = resolveFieldNumericValue(f.id, data) ?? fmt2(0);
+
+        if (showLabel) {
+            // 3-column: label | symbol | amount — fixed widths keep all rows aligned
+            return `<div style="${styleBits};display:flex;align-items:baseline;">
+                <span style="flex:1;text-align:right;white-space:nowrap;overflow:hidden;padding-right:2mm;font-weight:400;color:#6b7a8a;">${escapeHtml(f.label)}</span>
+                <span style="width:9mm;flex-shrink:0;text-align:right;white-space:nowrap;padding-right:2mm;">${symHtml}</span>
+                <span style="width:22mm;flex-shrink:0;text-align:right;white-space:nowrap;font-weight:${f.bold ? '700' : '400'};">${escapeHtml(numericStr)}</span>
+            </div>`;
+        }
+        // Preprinted mode: symbol + amount only
+        return `<div style="${styleBits}">${symHtml} ${escapeHtml(numericStr)}</div>`;
+    }
+
     const label = showLabel ? `<span style="font-weight:400;color:#6b7a8a;">${escapeHtml(f.label)}: </span>` : '';
     return `<div style="${styleBits}">${label}${escapeHtml(value)}</div>`;
 };
@@ -330,6 +381,13 @@ export const generateOverlayInvoiceHtml = (template, data, options = {}) => {
     // Find the items_table field config
     const tableField = fields.find((f) => f.id === 'items_table' && f.enabled !== false);
 
+    // Auto-compute items-per-page from the table's dragged height when available.
+    // Falls back to the legacy manual setting.
+    const rowHeightEstMm = (num(tableField?.fontSize) || 9) * 0.3528 + 4;
+    const itemsPerPageFromHeight = tableField && num(tableField.tableHeight) > 0
+        ? Math.max(1, Math.floor(num(tableField.tableHeight) / rowHeightEstMm))
+        : 0;
+
     // Separate fields into header (page 1 only), table (all pages), and
     // last-page fields (totals + footer — appear only on the final page).
     const LAST_PAGE_CATS = new Set(['totals', 'footer']);
@@ -347,18 +405,30 @@ export const generateOverlayInvoiceHtml = (template, data, options = {}) => {
         .join('');
 
     const allItems = Array.isArray(data.items) ? data.items : [];
-    const itemsPerPage = Number(settings.itemsPerPage) || 0;
+    const itemsPerPage = itemsPerPageFromHeight || Number(settings.itemsPerPage) || 0;
     const rawPageMarginMm = Number(settings.pageMargin);
     const continuationTopGapMm = Number.isFinite(rawPageMarginMm) && rawPageMarginMm > 0
         ? rawPageMarginMm
         : 4;
 
+    // Whether the continuation page has an explicit Y override
+    const hasContinuationY = tableField &&
+        tableField.continuationY !== undefined &&
+        tableField.continuationY !== null &&
+        String(tableField.continuationY).trim() !== '';
+
     const renderTableDiv = (pageItems, isFirst, indexOffset) => {
         if (!tableField) return '';
         const x = num(tableField.x);
-        // On continuation pages, add the configured page margin as extra top offset
         const yBase = num(tableField.y);
-        const y = isFirst ? yBase : yBase + continuationTopGapMm;
+        let y;
+        if (isFirst) {
+            y = yBase;
+        } else if (hasContinuationY) {
+            y = num(tableField.continuationY);
+        } else {
+            y = yBase + continuationTopGapMm;
+        }
         const width = num(tableField.width) || 60;
         const styleBits = [
             'position:absolute',
@@ -370,15 +440,38 @@ export const generateOverlayInvoiceHtml = (template, data, options = {}) => {
             `color:${tableField.color || '#0f1923'}`,
         ].join(';');
         const pageData = { ...data, items: pageItems };
-        return `<div style="${styleBits}">${renderItemsTable(tableField, pageData, { showHeader: isFirst, indexOffset })}</div>`;
+        // Show column header on page 1 per the field setting; on continuation pages
+        // honour repeatHeaderOnContinuation (defaults true for letterhead, false for preprinted).
+        const defaultRepeatHeader = !isPreprinted;
+        const showHdr = isFirst
+            ? tableField.showHeader !== false
+            : (tableField.repeatHeaderOnContinuation ?? defaultRepeatHeader);
+        return `<div style="${styleBits}">${renderItemsTable(tableField, pageData, { showHeader: showHdr, indexOffset })}</div>`;
     };
 
+    const showContinuationText = Boolean(settings.showContinuationText);
+
     // Build one HTML page-div per chunk of items
-    const buildPageDiv = (pageItems, isFirst, isLast, indexOffset) => {
+    const buildPageDiv = (pageItems, isFirst, isLast, indexOffset, pageNumber, totalPages) => {
         let content = drawingHtml;
         if (isFirst) content += headerFieldsHtml;
         content += renderTableDiv(pageItems, isFirst, indexOffset);
         if (isLast) content += lastPageFieldsHtml;
+        if (!isLast && showContinuationText) {
+            const continuationStyle = [
+                'position:absolute',
+                `left:0`,
+                `bottom:6mm`,
+                `width:${dims.w}mm`,
+                'text-align:right',
+                'font-size:8pt',
+                'font-family:Inter,sans-serif',
+                'color:#6b7a8a',
+                'font-style:italic',
+                'padding-right:8mm',
+            ].join(';');
+            content += `<div style="${continuationStyle}">Continued on Page ${pageNumber + 1} of ${totalPages}</div>`;
+        }
         return `<div class="ov-page">${content}</div>`;
     };
 
@@ -391,12 +484,12 @@ export const generateOverlayInvoiceHtml = (template, data, options = {}) => {
             const chunk = allItems.slice(i, i + itemsPerPage);
             const isFirst = chunkIndex === 0;
             const isLast = chunkIndex === totalChunks - 1;
-            pages.push(buildPageDiv(chunk, isFirst, isLast, i));
+            pages.push(buildPageDiv(chunk, isFirst, isLast, i, chunkIndex + 1, totalChunks));
         }
         pagesHtml = pages.join('\n');
     } else {
         // Single page — show everything
-        pagesHtml = buildPageDiv(allItems, true, true, 0);
+        pagesHtml = buildPageDiv(allItems, true, true, 0, 1, 1);
     }
 
     const title = `${data.title || 'Sales Invoice'} ${data.docNo || ''}`.trim();

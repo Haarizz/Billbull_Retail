@@ -27,8 +27,9 @@ const PURCHASE_TEMPLATE_CATEGORIES = new Set([
     'Cheque'
 ]);
 
-const LEFT_META_LABEL_PATTERNS = /^(P\.O|PO Number|Purchase Order|Account Executive|Salesperson|Sales Person|Buyer|Prepared By)$/i;
+const LEFT_META_LABEL_PATTERNS = /^(P\.O|PO Number|Purchase Order|Buyer|Prepared By)$/i;
 const HIDDEN_HEADER_LABEL_PATTERNS = /^(Status|Approval Status|QC Status|Posted)$/i;
+const RIGHT_META_FORCE_PATTERNS = /^(Sales Person|Salesperson|Account Executive|Amount in Words)$/i;
 
 const DOC_NO_LABELS = {
     'Quotation': 'Quote Number',
@@ -922,7 +923,7 @@ const buildItemsTable = (layout) => {
     `;
 };
 
-const buildTotalsTable = (layout) => {
+const buildTotalsTable = (layout, amountInWordsText = null) => {
     if (!layout.showTotalsSection) return '';
 
     const discountAmount = asNumber(layout.totals.billDiscountAmount ?? layout.totals.discountAmount ?? 0);
@@ -931,20 +932,13 @@ const buildTotalsTable = (layout) => {
     const roundOff = asNumber(layout.totals.roundOff ?? 0);
     const amountPaid = asNumber(layout.totals.amountPaid ?? 0);
     const balanceDue = asNumber(layout.totals.balanceDue ?? Math.max(asNumber(layout.totals.grandTotal) - amountPaid, 0));
-    const currency = renderCurrencyForLayout(layout.currency, layout.displayOptions);
+    const currency = renderCurrencySymbolHtml(layout.currency);
 
-    const row = (label, amount, className = '') => layout.isPurchaseDesigner
-        ? `
+    const row = (label, amount, className = '') => `
             <tr class="${className}">
                 <td class="tot-label">${label}</td>
                 <td class="tot-currency">${currency}</td>
                 <td class="tot-amount">${formatNumber(amount)}</td>
-            </tr>
-        `
-        : `
-            <tr class="${className}">
-                <td class="tot-label">${label}</td>
-                <td class="tot-amount">${currency} ${formatNumber(amount)}</td>
             </tr>
         `;
     const visibility = {
@@ -963,20 +957,13 @@ const buildTotalsTable = (layout) => {
     const rows = [
         visibility.taxable ? row('Taxable Amount', layout.totals.subTotal) : '',
         visibility.subTotal ? row('Sub Total', layout.totals.subTotal) : '',
-        visibility.discount && discountAmount > 0 ? (layout.isPurchaseDesigner
-            ? `
+        visibility.discount && discountAmount > 0 ? `
                 <tr class="amount-negative">
                     <td class="tot-label">Discount${discountPercent > 0 ? ` (${formatNumber(discountPercent, 0)}%)` : ''}</td>
                     <td class="tot-currency">${currency}</td>
                     <td class="tot-amount">- ${formatNumber(discountAmount)}</td>
                 </tr>
-            `
-            : `
-                <tr class="amount-negative">
-                    <td class="tot-label">Discount${discountPercent > 0 ? ` (${formatNumber(discountPercent, 0)}%)` : ''}</td>
-                    <td class="tot-amount">${currency} - ${formatNumber(discountAmount)}</td>
-                </tr>
-            `) : '',
+            ` : '',
         visibility.tax ? row('Total VAT', layout.totals.tax) : '',
         visibility.deliveryCharge && deliveryCharge > 0 ? row('Delivery Charge', deliveryCharge) : '',
         visibility.roundOff && roundOff !== 0 ? row('Round Off', roundOff) : '',
@@ -987,10 +974,18 @@ const buildTotalsTable = (layout) => {
 
     if (!rows) return '';
 
+    // The "amount in words" row spans the full table so it stays visually
+    // aligned with the totals column rather than spanning the whole page.
+    const colSpan = 3;
+    const wordsRow = amountInWordsText
+        ? `<tr><td colspan="${colSpan}" class="tot-words">${escapeHtml(amountInWordsText)}</td></tr>`
+        : '';
+
     return `
         <table class="totals-table">
             <tbody>
                 ${rows}
+                ${wordsRow}
             </tbody>
         </table>
     `;
@@ -1019,16 +1014,16 @@ const buildSummarySection = (layout, renderTarget = 'print') => {
     const showNotes = layout.showNotesSection !== false;
     const hasNotes = showNotes;
     const hasTerms = Boolean(layout.displayOptions.showTerms !== false && layout.terms);
-    const totalsTable = buildTotalsTable(layout);
     const showAmountInWords = Boolean(layout.showAmountInWords && layout.highlight?.value);
+    const amountInWordsText = showAmountInWords
+        ? `In Words: ${formatAmountInWords(layout.highlight.value, layout.currency)}`
+        : null;
+    const totalsTable = buildTotalsTable(layout, amountInWordsText);
     const bankRows = Array.isArray(layout.bankRows) ? layout.bankRows.filter((row) => row?.value) : [];
 
-    if (!showNotes && !hasTerms && !totalsTable && !showAmountInWords && bankRows.length === 0) return '';
+    if (!showNotes && !hasTerms && !totalsTable && bankRows.length === 0) return '';
 
     const notesHtml = `
-        ${showAmountInWords ? `
-            <div class="amount-words">In Words: ${escapeHtml(formatAmountInWords(layout.highlight.value, layout.currency))}</div>
-        ` : ''}
         ${bankRows.length > 0 ? `
             <div class="bank-box">
                 <div class="summary-label summary-label-bank">Bank Details</div>
@@ -1191,7 +1186,7 @@ const buildGrandTotal = (layout) => {
     // issues in print iframe contexts (where em always resolves to body 9px).
     const gtFontPx = (layout.theme?.fontSize || 9) + 22;
     const imgPx = Math.round(gtFontPx * 0.73);
-    const currHtml = renderCurrencyForLayout(layout.currency, layout.displayOptions, `${imgPx}px`);
+    const currHtml = renderCurrencySymbolHtml(layout.currency, `${imgPx}px`);
     return `
         <div class="grand-total-display">
             <div class="grand-total-label">${escapeHtml(layout.highlight.label || 'Grand Total')}</div>
@@ -1227,10 +1222,16 @@ const buildHeader = (layout, renderTarget = 'print') => {
         : [
             ...visibleHeaderRows,
             ...visibleReferenceRows
-        ].filter((row) => LEFT_META_LABEL_PATTERNS.test(asText(row.label).trim()));
+        ].filter((row) => {
+            const label = asText(row.label).trim();
+            return LEFT_META_LABEL_PATTERNS.test(label) && !RIGHT_META_FORCE_PATTERNS.test(label);
+        });
     const centerMetaRows = layout.isPurchaseDesigner
         ? visibleReferenceRows
-        : visibleReferenceRows.filter((row) => !LEFT_META_LABEL_PATTERNS.test(asText(row.label).trim()));
+        : visibleReferenceRows.filter((row) => {
+            const label = asText(row.label).trim();
+            return !LEFT_META_LABEL_PATTERNS.test(label) || RIGHT_META_FORCE_PATTERNS.test(label);
+        });
     const centerHeaderRows = visibleHeaderRows.filter((row) => !LEFT_META_LABEL_PATTERNS.test(asText(row.label).trim()));
 
     const centerItems = [
@@ -1702,7 +1703,7 @@ const buildCoreStyles = () => `
         margin-bottom: 0;
     }
     .document-table thead {
-        display: table-row-group;
+        display: table-header-group;
     }
     .document-table thead th {
         padding: 7px 5px;
@@ -1881,6 +1882,17 @@ const buildCoreStyles = () => `
         margin: 0 0 14px;
         text-align: right;
         color: #374151;
+    }
+    .tot-words {
+        padding: 6px 0 0 0 !important;
+        border-top: 1px solid #e5e7eb !important;
+        font-style: italic;
+        color: #374151;
+        font-size: 0.88em;
+        text-align: right;
+        white-space: normal;
+        word-break: break-word;
+        line-height: 1.4;
     }
     .bank-box,
     .terms-box {
@@ -2417,7 +2429,7 @@ const buildPrintStyles = (paperSize = 'A4', orientation = 'Portrait', layout = {
                 line-height: 1.35 !important;
             }
             .document-table thead {
-                display: table-row-group !important;
+                display: table-header-group !important;
             }
             .header-center {
                 padding-top: 48px !important;
@@ -2485,6 +2497,10 @@ const buildPrintStyles = (paperSize = 'A4', orientation = 'Portrait', layout = {
             .summary-totals {
                 justify-content: flex-end !important;
             }
+            .tot-words {
+                text-align: right !important;
+                white-space: normal !important;
+            }
             .tot-label {
                 text-align: right !important;
                 padding-right: 12px !important;
@@ -2549,8 +2565,9 @@ const buildEmailStyles = () => `
         width: auto !important;
     }
     .totals-table td.tot-label,
+    .totals-table td.tot-currency,
     .totals-table td.tot-amount {
-        padding: 4px 0 4px 16px !important;
+        padding: 4px 0 4px 8px !important;
     }
 `;
 
@@ -2872,7 +2889,7 @@ const normaliseSalesDesignerLayout = (template, data, companyProfile, renderTarg
         status: asText(data.meta?.status || ''),
         company,
         currency,
-        isPurchaseDesigner: true,
+        isPurchaseDesigner: false,
         logoUrl: templateLogoUrl || company.logoUrl,
         stampUrl: templateStampUrl || company.stampUrl,
         companyVisibility,

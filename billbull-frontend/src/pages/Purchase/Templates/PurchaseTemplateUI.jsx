@@ -139,8 +139,12 @@ export function TabsTrigger({ value, className = "", children }) {
 
 export function TabsContent({ value, className = "", children }) {
     const ctx = useContext(TabsContext);
-    if (ctx?.activeValue !== value) return null;
-    return <div className={className}>{children}</div>;
+    const isActive = ctx?.activeValue === value;
+    return (
+        <div className={className} style={isActive ? undefined : { display: "none" }}>
+            {children}
+        </div>
+    );
 }
 
 const SelectContext = createContext(null);

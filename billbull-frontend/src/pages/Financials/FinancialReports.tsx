@@ -34,6 +34,10 @@ import {
   Activity,
 } from "lucide-react";
 import { getProfitLoss, getBalanceSheet, getTrialBalance, getCashFlow, getTaxDashboard, getTaxReconciliation, getARAgingReport, getAPAgingReport } from "../../api/financialReportsBackendApi";
+import { exportToPDF, exportToExcel } from "../../utils/exportUtils";
+import { generateReportPrintHtml, printHtml } from "../../utils/printGenerator";
+import { getCompanyProfile } from "../../api/companyProfileApi";
+import ExportDropdown from "../../components/common/ExportDropdown";
 
 let mockProfitLossSections: any = null;
 let mockGrossProfitRows: any = null;
@@ -155,6 +159,166 @@ function applyLiveReportData(reportId: ReportId, data: any) {
   }
 }
 
+
+// ─── Export helpers ───────────────────────────────────────────────────────────
+
+function flattenSections(sections: any[] | null, labelKey = "name", amtKey = "cur", priorKey = "prior"): any[] {
+  if (!sections) return [];
+  const rows: any[] = [];
+  for (const sec of sections) {
+    rows.push({ account: `— ${sec.label} —`, amount: "", prior: "" });
+    for (const row of sec.rows || []) {
+      rows.push({ account: row[labelKey] || row.name, amount: row[amtKey] ?? row.amount ?? "", prior: row[priorKey] ?? "" });
+    }
+  }
+  return rows;
+}
+
+function flattenBalanceSheet(sections: any[] | null): any[] {
+  if (!sections) return [];
+  const rows: any[] = [];
+  for (const sec of sections) {
+    rows.push({ account: `— ${sec.section} —`, amount: "" });
+    for (const row of sec.rows || []) {
+      rows.push({ account: row.name, amount: row.amount ?? "" });
+    }
+  }
+  return rows;
+}
+
+function getFinancialExportData(reportId: ReportId): { title: string; cols: any[]; rows: any[] } {
+  switch (reportId) {
+    case "profit_loss":
+    case "gross_profit":
+    case "departmental_pl":
+    case "comparative_pl": {
+      const rows = flattenSections(mockProfitLossSections);
+      return {
+        title: "Statement of Profit or Loss",
+        cols: [
+          { header: "Account", key: "account", width: 40 },
+          { header: "Current Period (AED)", key: "amount", width: 22 },
+          { header: "Prior Period (AED)", key: "prior", width: 22 },
+        ],
+        rows,
+      };
+    }
+    case "balance_sheet": {
+      const rows = [
+        ...flattenBalanceSheet(mockBalanceSheetAssets),
+        ...flattenBalanceSheet(mockBalanceSheetEqLiab),
+      ];
+      return {
+        title: "Statement of Financial Position",
+        cols: [
+          { header: "Account", key: "account", width: 40 },
+          { header: "Amount (AED)", key: "amount", width: 22 },
+        ],
+        rows,
+      };
+    }
+    case "trial_balance": {
+      const rows = mockTrialBalanceRows || [];
+      return {
+        title: "Trial Balance",
+        cols: [
+          { header: "Code", key: "code", width: 14 },
+          { header: "Account Name", key: "name", width: 38 },
+          { header: "Debit (AED)", key: "debit", width: 20 },
+          { header: "Credit (AED)", key: "credit", width: 20 },
+        ],
+        rows,
+      };
+    }
+    case "cash_flow_statement": {
+      const d = mockCashFlowData;
+      const rows: any[] = [];
+      if (d) {
+        rows.push({ activity: "— Operating Activities —", amount: "" });
+        (d.ops || []).forEach((r: any) => rows.push({ activity: r.name, amount: r.amount }));
+        rows.push({ activity: "Net Operating", amount: d.totalOperating });
+        rows.push({ activity: "— Investing Activities —", amount: "" });
+        (d.inv || []).forEach((r: any) => rows.push({ activity: r.name, amount: r.amount }));
+        rows.push({ activity: "Net Investing", amount: d.totalInvesting });
+        rows.push({ activity: "— Financing Activities —", amount: "" });
+        (d.fin || []).forEach((r: any) => rows.push({ activity: r.name, amount: r.amount }));
+        rows.push({ activity: "Net Financing", amount: d.totalFinancing });
+        rows.push({ activity: "Net Cash Flow", amount: d.netCashFlow });
+      }
+      return {
+        title: "Statement of Cash Flows",
+        cols: [
+          { header: "Activity", key: "activity", width: 42 },
+          { header: "Amount (AED)", key: "amount", width: 22 },
+        ],
+        rows,
+      };
+    }
+    case "customer_aging": {
+      return {
+        title: "Customer Aging Report",
+        cols: [
+          { header: "Customer", key: "customer", width: 30 },
+          { header: "Current", key: "current", width: 16 },
+          { header: "1-30 Days", key: "d30", width: 16 },
+          { header: "31-60 Days", key: "d60", width: 16 },
+          { header: "61-90 Days", key: "d90", width: 16 },
+          { header: "90+ Days", key: "d90plus", width: 16 },
+          { header: "Total (AED)", key: "total", width: 18 },
+        ],
+        rows: mockCustomerAgingRows || [],
+      };
+    }
+    case "vendor_aging": {
+      return {
+        title: "Vendor Aging Report",
+        cols: [
+          { header: "Vendor", key: "vendor", width: 30 },
+          { header: "Current", key: "current", width: 16 },
+          { header: "1-30 Days", key: "d30", width: 16 },
+          { header: "31-60 Days", key: "d60", width: 16 },
+          { header: "61-90 Days", key: "d90", width: 16 },
+          { header: "90+ Days", key: "d90plus", width: 16 },
+          { header: "Total (AED)", key: "total", width: 18 },
+        ],
+        rows: mockVendorAgingRows || [],
+      };
+    }
+    case "vat_return_summary":
+    case "vat_output_register": {
+      return {
+        title: "VAT Output Register",
+        cols: [
+          { header: "Invoice No", key: "invoiceNo", width: 18 },
+          { header: "Date", key: "date", width: 14 },
+          { header: "Customer", key: "customer", width: 26 },
+          { header: "Taxable (AED)", key: "taxableAmt", width: 18 },
+          { header: "VAT Rate", key: "vatRate", width: 12 },
+          { header: "VAT (AED)", key: "vatAmt", width: 16 },
+          { header: "Total (AED)", key: "totalAmt", width: 16 },
+        ],
+        rows: mockVatOutputLines || [],
+      };
+    }
+    case "vat_input_register": {
+      return {
+        title: "VAT Input Register",
+        cols: [
+          { header: "Invoice No", key: "invoiceNo", width: 18 },
+          { header: "Date", key: "date", width: 14 },
+          { header: "Vendor", key: "vendor", width: 26 },
+          { header: "Taxable (AED)", key: "taxableAmt", width: 18 },
+          { header: "VAT Rate", key: "vatRate", width: 12 },
+          { header: "VAT (AED)", key: "vatAmt", width: 16 },
+          { header: "Total (AED)", key: "totalAmt", width: 16 },
+        ],
+        rows: mockVatInputLines || [],
+      };
+    }
+    default:
+      return { title: "Financial Report", cols: [], rows: [] };
+  }
+}
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -3224,6 +3388,11 @@ export default function FinancialReports({ onNavigate }: { onNavigate?: (s: stri
   const [fetchKey, setFetchKey] = useState(0);
   const [fetchError, setFetchError] = useState<string | null>(null);
   const [fetching, setFetching] = useState(false);
+  const [companyProfile, setCompanyProfile] = useState<any>(null);
+
+  useEffect(() => {
+    getCompanyProfile().then((res) => setCompanyProfile(res.data)).catch(() => {});
+  }, []);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -3283,6 +3452,36 @@ export default function FinancialReports({ onNavigate }: { onNavigate?: (s: stri
     () => REPORTS.find((r) => r.id === activeReport)!,
     [activeReport]
   );
+
+  const exportMeta = () => ({ dateFrom, dateTo, branch, companyProfile });
+
+  function handleExportPdf() {
+    const { title, cols, rows } = getFinancialExportData(activeReport);
+    exportToPDF(rows, cols, title, title.replace(/\s+/g, "_"), exportMeta());
+  }
+
+  function handleExportExcel() {
+    const { title, cols, rows } = getFinancialExportData(activeReport);
+    exportToExcel(rows, cols, title.replace(/\s+/g, "_"), exportMeta());
+  }
+
+  function handlePrint() {
+    const { title, cols, rows } = getFinancialExportData(activeReport);
+    const html = generateReportPrintHtml({}, title, cols, rows, companyProfile || {}, exportMeta());
+    printHtml(html);
+  }
+
+  function handleDownloadCsv() {
+    const { title, cols, rows } = getFinancialExportData(activeReport);
+    if (!rows.length) return;
+    const keys = cols.map((c: any) => c.key);
+    const headers = cols.map((c: any) => c.header);
+    const csv = [headers.join(","), ...rows.map((r: any) => keys.map((k: string) => `"${String(r[k] ?? "").replace(/"/g, '""')}"`).join(","))].join("\n");
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a"); a.href = url; a.download = `${title.replace(/\s+/g, "_")}.csv`;
+    document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
+  }
 
   const filteredReports = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -3406,32 +3605,12 @@ export default function FinancialReports({ onNavigate }: { onNavigate?: (s: stri
           <span className="font-medium text-slate-700">Reports</span>
         </div>
 
-        <div className="flex items-center gap-2">
-          <Button
-            variant="ghost"
-            size="sm"
-            className="text-[11px] text-slate-600 flex items-center gap-1"
-          >
-            <FileText className="h-3 w-3" />
-            PDF
-          </Button>
-          <Button
-            variant="ghost"
-            size="sm"
-            className="text-[11px] text-slate-600 flex items-center gap-1"
-          >
-            <FileSpreadsheet className="h-3 w-3" />
-            Excel
-          </Button>
-          <Button
-            variant="ghost"
-            size="sm"
-            className="text-[11px] text-slate-600 flex items-center gap-1"
-          >
-            <Printer className="h-3 w-3" />
-            Print
-          </Button>
-        </div>
+        <ExportDropdown
+          onExportPdf={handleExportPdf}
+          onExportExcel={handleExportExcel}
+          onPrint={handlePrint}
+          onDownload={handleDownloadCsv}
+        />
       </div>
 
       <div className="grid grid-cols-1 xl:grid-cols-[0.95fr_2.05fr] gap-4">

@@ -1,138 +1,124 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { FaDownload, FaFileExcel, FaFilePdf, FaPrint } from 'react-icons/fa';
+import {
+    Download,
+    FileText,
+    FileSpreadsheet,
+    Printer,
+    ChevronDown,
+    FileDown,
+} from 'lucide-react';
 
-const ExportDropdown = ({ onExportExcel, onExportPdf, onPrint, disabled = false, style = {} }) => {
-    const [isOpen, setIsOpen] = useState(false);
-    const dropdownRef = useRef(null);
+/**
+ * A branded export dropdown for report pages.
+ *
+ * Props:
+ *   onExportPdf    () => void   — export to PDF
+ *   onExportExcel  () => void   — export to Excel (.xlsx)
+ *   onPrint        () => void   — open print dialog
+ *   onDownload     () => void   — download as CSV (optional)
+ *   disabled       boolean      — disable the button
+ *   className      string       — extra classes for the trigger button
+ */
+const ExportDropdown = ({
+    onExportPdf,
+    onExportExcel,
+    onPrint,
+    onDownload,
+    disabled = false,
+    className = '',
+}) => {
+    const [open, setOpen] = useState(false);
+    const ref = useRef(null);
 
-    // Close when clicking outside
     useEffect(() => {
-        const handleClickOutside = (event) => {
-            if (dropdownRef.current && !dropdownRef.current.contains(event.target)) {
-                setIsOpen(false);
-            }
+        const onOutside = (e) => {
+            if (ref.current && !ref.current.contains(e.target)) setOpen(false);
         };
-        document.addEventListener('mousedown', handleClickOutside);
-        return () => document.removeEventListener('mousedown', handleClickOutside);
+        document.addEventListener('mousedown', onOutside);
+        return () => document.removeEventListener('mousedown', onOutside);
     }, []);
 
-    const toggleOpen = () => {
-        if (!disabled) setIsOpen(!isOpen);
+    const close = (fn) => () => {
+        setOpen(false);
+        fn?.();
     };
 
     return (
-        <div ref={dropdownRef} style={{ position: 'relative', display: 'inline-block' }}>
+        <div ref={ref} className="relative inline-block">
+            {/* Trigger button */}
             <button
-                onClick={toggleOpen}
+                type="button"
                 disabled={disabled}
-                style={{
-                    padding: '8px 14px',
-                    border: '1px solid #e5e7eb',
-                    borderRadius: 8,
-                    background: '#fff',
-                    fontSize: 13,
-                    cursor: disabled ? 'not-allowed' : 'pointer',
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: 6,
-                    color: disabled ? '#9ca3af' : '#374151',
-                    opacity: disabled ? 0.7 : 1,
-                    transition: 'all 0.2s ease',
-                    ...style
-                }}
+                onClick={() => !disabled && setOpen((v) => !v)}
+                className={[
+                    'inline-flex items-center gap-1.5 px-3 py-1.5',
+                    'text-[11px] font-medium text-slate-600',
+                    'bg-white border border-slate-200 rounded-md shadow-sm',
+                    'hover:bg-[#FFF8E7] hover:border-[#FDE6A9] hover:text-slate-800',
+                    'disabled:opacity-50 disabled:cursor-not-allowed',
+                    'transition-colors duration-150',
+                    className,
+                ].join(' ')}
             >
-                <FaDownload style={{ color: '#9ca3af' }} /> Export
+                <Download className="h-3.5 w-3.5 text-slate-400" />
+                Export
+                <ChevronDown
+                    className={`h-3 w-3 text-slate-400 transition-transform duration-150 ${open ? 'rotate-180' : ''}`}
+                />
             </button>
 
-            {isOpen && (
-                <div style={{
-                    position: 'absolute',
-                    top: '100%',
-                    right: 0,
-                    marginTop: 4,
-                    minWidth: 160,
-                    background: '#fff',
-                    border: '1px solid #e5e7eb',
-                    borderRadius: 8,
-                    boxShadow: '0 4px 6px -1px rgba(0,0,0,0.1), 0 2px 4px -1px rgba(0,0,0,0.06)',
-                    zIndex: 50,
-                    padding: '4px'
-                }}>
-                    <button
-                        onClick={() => { setIsOpen(false); onExportExcel(); }}
-                        style={{
-                            display: 'flex',
-                            alignItems: 'center',
-                            width: '100%',
-                            gap: 8,
-                            padding: '8px 12px',
-                            border: 'none',
-                            background: 'transparent',
-                            color: '#374151',
-                            fontSize: 13,
-                            fontWeight: 500,
-                            borderRadius: 6,
-                            cursor: 'pointer',
-                            textAlign: 'left'
-                        }}
-                        onMouseEnter={e => e.currentTarget.style.background = '#f3f4f6'}
-                        onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
-                    >
-                        <FaFileExcel style={{ color: '#16a34a', fontSize: 14 }} /> Excel (.xlsx)
-                    </button>
+            {/* Dropdown panel */}
+            {open && (
+                <div className="absolute right-0 top-full mt-1.5 w-48 bg-white rounded-lg border border-slate-200 shadow-lg z-200 overflow-hidden">
+                    {/* PDF */}
+                    <MenuItem
+                        icon={<FileText className="h-3.5 w-3.5 text-red-500" />}
+                        label="PDF (.pdf)"
+                        onClick={close(onExportPdf)}
+                    />
 
-                    <button
-                        onClick={() => { setIsOpen(false); onExportPdf(); }}
-                        style={{
-                            display: 'flex',
-                            alignItems: 'center',
-                            width: '100%',
-                            gap: 8,
-                            padding: '8px 12px',
-                            border: 'none',
-                            background: 'transparent',
-                            color: '#374151',
-                            fontSize: 13,
-                            fontWeight: 500,
-                            borderRadius: 6,
-                            cursor: 'pointer',
-                            textAlign: 'left'
-                        }}
-                        onMouseEnter={e => e.currentTarget.style.background = '#f3f4f6'}
-                        onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
-                    >
-                        <FaFilePdf style={{ color: '#ef4444', fontSize: 14 }} /> PDF (.pdf)
-                    </button>
+                    {/* Excel */}
+                    <MenuItem
+                        icon={<FileSpreadsheet className="h-3.5 w-3.5 text-emerald-600" />}
+                        label="Excel (.xlsx)"
+                        onClick={close(onExportExcel)}
+                    />
 
-                    {onPrint && (
-                        <button
-                            onClick={() => { setIsOpen(false); onPrint(); }}
-                            style={{
-                                display: 'flex',
-                                alignItems: 'center',
-                                width: '100%',
-                                gap: 8,
-                                padding: '8px 12px',
-                                border: 'none',
-                                background: 'transparent',
-                                color: '#374151',
-                                fontSize: 13,
-                                fontWeight: 500,
-                                borderRadius: 6,
-                                cursor: 'pointer',
-                                textAlign: 'left',
-                                borderTop: '1px solid #f3f4f6'
-                            }}
-                            onMouseEnter={e => e.currentTarget.style.background = '#f3f4f6'}
-                            onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
-                        >
-                            <FaPrint style={{ color: '#3b82f6', fontSize: 14 }} /> Print
-                        </button>
+                    {/* Print */}
+                    <MenuItem
+                        icon={<Printer className="h-3.5 w-3.5 text-blue-500" />}
+                        label="Print"
+                        onClick={close(onPrint)}
+                    />
+
+                    {/* Download (CSV) — shown only when handler provided */}
+                    {onDownload && (
+                        <>
+                            <div className="my-0.5 mx-2 border-t border-slate-100" />
+                            <MenuItem
+                                icon={<FileDown className="h-3.5 w-3.5 text-slate-500" />}
+                                label="Download (.csv)"
+                                onClick={close(onDownload)}
+                            />
+                        </>
                     )}
                 </div>
             )}
         </div>
     );
 };
+
+function MenuItem({ icon, label, onClick }) {
+    return (
+        <button
+            type="button"
+            onClick={onClick}
+            className="w-full flex items-center gap-2.5 px-3 py-2 text-[12px] font-medium text-slate-700 hover:bg-[#FFF8E7] transition-colors duration-100 text-left"
+        >
+            {icon}
+            {label}
+        </button>
+    );
+}
 
 export default ExportDropdown;
