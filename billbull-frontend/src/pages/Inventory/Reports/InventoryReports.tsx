@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { motion } from "framer-motion";
 import {
   Search,
@@ -29,6 +29,10 @@ import { Input } from "../../Sales/Reports/ui/input";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, PieChart, Pie, Cell } from "recharts";
 import { getInventoryReportData } from "../../../api/inventoryReportsApi";
 import { getWarehouses } from "../../../api/warehouseApi";
+import { exportToPDF, exportToExcel } from "../../../utils/exportUtils";
+import { generateReportPrintHtml, printHtml } from "../../../utils/printGenerator";
+import { getCompanyProfile } from "../../../api/companyProfileApi";
+import ExportDropdown from "../../../components/common/ExportDropdown";
 
 type ReportGroupId =
   | "stock"
@@ -883,6 +887,45 @@ function applyLiveReportData(reportId: ReportId, data: any) {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Export helpers
+// ---------------------------------------------------------------------------
+
+function getInventoryExportRows(reportId: ReportId): any[] {
+  switch (reportId) {
+    case "soh": return mockSOH;
+    case "low_stock": return mockLowStock;
+    case "out_of_stock": return mockOutOfStock;
+    case "negative_stock": return mockNegativeStock;
+    case "valuation": return mockRowsValuation;
+    case "expiry": return mockExpiry;
+    case "movement_ledger": return mockMovementLedger;
+    case "transfer": return mockTransfers;
+    case "reconciliation": return mockReconciliation;
+    case "wastage": return mockWastage;
+    case "in_out_summary": return mockInflowOutflow;
+    case "price_audit": return mockPriceAudit;
+    case "cost_variance": return mockCostVariance;
+    case "margin": return mockItemMargin;
+    case "master_completeness": return mockMasterCompleteness;
+    case "barcode_audit": return mockBarcodeAudit;
+    case "scale_export": return mockScaleExport;
+    case "dead_stock": return mockDeadStock;
+    case "fast_moving": return mockFastMoving;
+    case "bin_stock": return mockBinStock;
+    default: return [];
+  }
+}
+
+function toExportColumns(rows: any[]) {
+  if (!rows.length) return [];
+  return Object.keys(rows[0]).map((key) => ({
+    header: key.replace(/([A-Z])/g, " $1").replace(/[_-]/g, " ").replace(/^\w/, (c: string) => c.toUpperCase()).trim(),
+    key,
+    width: 18,
+  }));
+}
+
 interface InventoryReportsProps {
   onNavigate?: (section: string) => void;
 }
@@ -908,6 +951,11 @@ export default function InventoryReports({ onNavigate }: InventoryReportsProps) 
   const [itemSearch, setItemSearch] = useState("");
   const [onlyPositiveStock, setOnlyPositiveStock] = useState(true);
   const [, setDataRevision] = useState(0);
+  const [companyProfile, setCompanyProfile] = useState<any>(null);
+
+  useEffect(() => {
+    getCompanyProfile().then((res) => setCompanyProfile(res.data)).catch(() => {});
+  }, []);
 
   async function loadReport(signal?: AbortSignal) {
     clearLiveReportData(activeReport);
@@ -962,6 +1010,38 @@ export default function InventoryReports({ onNavigate }: InventoryReportsProps) 
     () => REPORTS.find((r) => r.id === activeReport)!,
     [activeReport]
   );
+
+  const exportMeta = () => ({ dateFrom, dateTo, branch: warehouse, companyProfile });
+
+  function handleExportPdf() {
+    const rows = getInventoryExportRows(activeReport);
+    const cols = toExportColumns(rows);
+    exportToPDF(rows, cols, activeDef.label, activeDef.label.replace(/\s+/g, "_"), exportMeta());
+  }
+
+  function handleExportExcel() {
+    const rows = getInventoryExportRows(activeReport);
+    const cols = toExportColumns(rows);
+    exportToExcel(rows, cols, activeDef.label.replace(/\s+/g, "_"), exportMeta());
+  }
+
+  function handlePrint() {
+    const rows = getInventoryExportRows(activeReport);
+    const cols = toExportColumns(rows);
+    const html = generateReportPrintHtml({}, activeDef.label, cols, rows, companyProfile || {}, exportMeta());
+    printHtml(html);
+  }
+
+  function handleDownloadCsv() {
+    const rows = getInventoryExportRows(activeReport);
+    if (!rows.length) return;
+    const keys = Object.keys(rows[0]);
+    const csv = [keys.join(","), ...rows.map((r: any) => keys.map((k: string) => `"${String(r[k] ?? "").replace(/"/g, '""')}"`).join(","))].join("\n");
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a"); a.href = url; a.download = `${activeDef.label.replace(/\s+/g, "_")}.csv`;
+    document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
+  }
 
   const grouped = useMemo(() => {
     const byGroup: Record<ReportGroupId, ReportDef[]> = {
@@ -1045,32 +1125,12 @@ export default function InventoryReports({ onNavigate }: InventoryReportsProps) 
           <span className="font-medium text-slate-700">Reports</span>
         </div>
 
-        <div className="flex items-center gap-2">
-          <Button
-            variant="ghost"
-            size="sm"
-            className="text-[11px] text-slate-600 flex items-center gap-1"
-          >
-            <FileText className="h-3 w-3" />
-            PDF
-          </Button>
-          <Button
-            variant="ghost"
-            size="sm"
-            className="text-[11px] text-slate-600 flex items-center gap-1"
-          >
-            <FileSpreadsheet className="h-3 w-3" />
-            Excel
-          </Button>
-          <Button
-            variant="ghost"
-            size="sm"
-            className="text-[11px] text-slate-600 flex items-center gap-1"
-          >
-            <Printer className="h-3 w-3" />
-            Print
-          </Button>
-        </div>
+        <ExportDropdown
+          onExportPdf={handleExportPdf}
+          onExportExcel={handleExportExcel}
+          onPrint={handlePrint}
+          onDownload={handleDownloadCsv}
+        />
       </div>
 
       <div className="grid grid-cols-1 xl:grid-cols-[0.95fr_2.05fr] gap-4">

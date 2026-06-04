@@ -101,12 +101,27 @@ class ErrorBoundary extends React.Component {
   constructor(props) {
     super(props);
     this.state = { hasError: false, error: null };
+    this._domErrorRetries = 0;
   }
   static getDerivedStateFromError(error) {
     return { hasError: true, error };
   }
   componentDidCatch(error, info) {
     console.error('App ErrorBoundary caught:', error, info);
+    // Browser extensions (e.g. Adobe Acrobat) occasionally inject DOM nodes that
+    // desync React's virtual DOM, producing transient removeChild / insertBefore
+    // NotFoundErrors. These are recoverable — reset the boundary silently so the
+    // user doesn't see the crash page.
+    const isDomError =
+      error?.name === 'NotFoundError' &&
+      (error?.message?.includes('removeChild') || error?.message?.includes('insertBefore'));
+    if (isDomError && this._domErrorRetries < 10) {
+      this._domErrorRetries += 1;
+      // Exponential back-off (50ms, 100ms, 200ms …) lets React fully finish its
+      // current commit before we request a remount.
+      const delay = Math.min(50 * Math.pow(2, this._domErrorRetries - 1), 1000);
+      setTimeout(() => this.setState({ hasError: false, error: null }), delay);
+    }
   }
   render() {
     if (this.state.hasError) {
@@ -115,7 +130,7 @@ class ErrorBoundary extends React.Component {
           <h2 style={{ color: '#e53e3e' }}>Something went wrong</h2>
           <p style={{ color: '#718096', marginBottom: '16px' }}>{this.state.error?.message}</p>
           <button
-            onClick={() => { this.setState({ hasError: false, error: null }); window.location.reload(); }}
+            onClick={() => { this._domErrorRetries = 0; this.setState({ hasError: false, error: null }); window.location.reload(); }}
             style={{ padding: '8px 20px', background: '#F5C742', border: 'none', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold' }}
           >
             Reload Page

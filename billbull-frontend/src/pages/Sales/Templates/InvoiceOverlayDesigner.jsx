@@ -18,6 +18,7 @@ import {
   TabsTrigger
 } from "../../Purchase/Templates/PurchaseTemplateUI";
 import toast from "react-hot-toast";
+import { UAE_DIRHAM_SYMBOL_IMAGE } from "../../../utils/countryCurrencyOptions";
 import {
   ArrowLeft,
   Download,
@@ -59,7 +60,7 @@ const Card = ({ className = "", ...props }) => <div className={`rounded-lg bg-wh
 const CardHeader = ({ className = "", ...props }) => <div className={`px-3.5 pt-3 pb-2 ${className}`} {...props} />;
 const CardContent = ({ className = "", ...props }) => <div className={`px-3.5 pb-3.5 pt-0 ${className}`} {...props} />;
 const CardTitle = ({ className = "", ...props }) => <h3 className={`text-[13px] font-semibold text-slate-800 ${className}`} {...props} />;
-const CardDescription = ({ className = "", ...props }) => <p className={`text-[11px] text-slate-500 leading-snug ${className}`} {...props} />;
+const CardDescription = ({ className = "", ...props }) => <div className={`text-[11px] text-slate-500 leading-snug ${className}`} {...props} />;
 const PAPER_DIMS = {
   "A4-portrait": { w: 210, h: 297 },
   "A4-landscape": { w: 297, h: 210 },
@@ -117,6 +118,7 @@ const OVERLAY_TABLE_COLUMNS = [
   { key: "total", label: "Line Total", align: "right", flex: 1 }
 ];
 const DEFAULT_TABLE_COLUMNS = { lineNo: true, name: true, description: true, qty: true, price: true, taxAmt: true, total: true };
+const TOTALS_NUMERIC_IDS = new Set(['taxable_total', 'subtotal', 'discount_total', 'tax_amount', 'delivery_charge', 'round_off', 'grand_total']);
 // Sample item row used to render a realistic preview inside the designer canvas.
 const SAMPLE_TABLE_ROW = {
   lineNo: "1", image: "", code: "JSW-POS-001", name: "JASEWAY POS Machine",
@@ -399,6 +401,23 @@ function InvoiceOverlayDesigner({ mode, templateName, initialSettings, onClose, 
       document.removeEventListener("mouseup", onUp);
     };
   }, [drawingInProgress, drawTool, zoom, scale, settings.snapToGrid, settings.gridSize]);
+  const [resizingTable, setResizingTable] = useState(null); // { startMouseY, startHeight }
+  useEffect(() => {
+    if (!resizingTable) return;
+    const onMove = (e) => {
+      const dy = (e.clientY - resizingTable.startMouseY) / zoom / scale;
+      const newH = Math.max(20, snap(resizingTable.startHeight + dy));
+      updateField('items_table', { tableHeight: newH });
+    };
+    const onUp = () => setResizingTable(null);
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+    return () => {
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+    };
+  }, [resizingTable, zoom, scale, settings.snapToGrid, settings.gridSize]);
+
   const [uploadedImageNaturalDims, setUploadedImageNaturalDims] = useState(null);
   const handleImageUpload = (e) => {
     const file = e.target.files?.[0];
@@ -449,10 +468,14 @@ function InvoiceOverlayDesigner({ mode, templateName, initialSettings, onClose, 
     a.click();
     toast.success("Template exported");
   };
-  const selectedF = selectedField ? settings.fields.find((f) => f.id === selectedField) : null;
+  const selectedF = selectedField ? (settings.fields.find((f) => f.id === selectedField) ?? null) : null;
   const selectedD = selectedDrawing ? settings.drawings.find((d) => d.id === selectedDrawing) : null;
   const categories = ["all", ...Array.from(new Set(DEFAULT_FIELDS.map((f) => f.category)))];
-  const visibleFields = settings.fields.filter((f) => f.enabled && (filterCategory === "all" || f.category === filterCategory));
+  // Always include ALL fields so no canvas div is ever removed from the DOM
+  // (prevents Acrobat-extension removeChild crashes when toggling enabled).
+  // CSS display:none hides disabled / category-filtered fields instead.
+  const visibleFields = settings.fields;
+  const isFieldVisible = (f) => f.enabled && (filterCategory === "all" || f.category === filterCategory);
   const isPreprinted = mode === "preprinted";
   const ghost = drawingInProgress ? (() => {
     const x1 = Math.min(drawingInProgress.startX, drawingInProgress.currentX);
@@ -481,9 +504,9 @@ function InvoiceOverlayDesigner({ mode, templateName, initialSettings, onClose, 
               <h1 className="text-sm font-semibold leading-tight truncate text-slate-800">
                 {isPreprinted ? "Pre-printed Invoice Designer" : "Letterhead Invoice Designer"}
               </h1>
-              <p className="text-[11px] text-slate-500 truncate leading-tight">
+              <div className="text-[11px] text-slate-500 truncate leading-tight">
                 {isPreprinted ? "Position values onto your pre-printed stationery" : "Lay the invoice out on top of your letterhead"}
-              </p>
+              </div>
             </div>
           </div>
         </div>
@@ -567,10 +590,10 @@ function InvoiceOverlayDesigner({ mode, templateName, initialSettings, onClose, 
                       </div>
 
                       {settings.paperSize === "Custom" && <div className="space-y-3 p-3 bg-amber-50 border border-amber-200 rounded-lg">
-                          <p className="text-xs text-amber-800 font-medium flex items-center gap-1.5">
+                          <div className="text-xs text-amber-800 font-medium flex items-center gap-1.5">
                             <RectangleHorizontal className="h-3.5 w-3.5" />
                             Custom paper dimensions
-                          </p>
+                          </div>
                           <div className="grid grid-cols-2 gap-3">
                             <div className="space-y-1">
                               <Label className="text-xs">Width (mm)</Label>
@@ -641,9 +664,9 @@ function InvoiceOverlayDesigner({ mode, templateName, initialSettings, onClose, 
                           <div className="flex items-center justify-between p-2 border rounded bg-amber-50">
                             <div>
                               <Label className="font-normal">Print Values Only</Label>
-                              <p className="text-xs text-muted-foreground mt-0.5">
+                              <div className="text-xs text-muted-foreground mt-0.5">
                                 {settings.printOnlyValues ? 'Only data values are printed (no field labels)' : 'Field labels + values are both printed'}
-                              </p>
+                              </div>
                             </div>
                             <Switch checked={!!settings.printOnlyValues} onCheckedChange={(v) => update("printOnlyValues", v)} />
                           </div>
@@ -651,32 +674,10 @@ function InvoiceOverlayDesigner({ mode, templateName, initialSettings, onClose, 
                       <Separator />
                       <div className="flex items-center justify-between p-2 border rounded bg-slate-50">
                         <div>
-                          <Label className="font-normal">Items Per Page</Label>
-                          <p className="text-xs text-muted-foreground mt-0.5">Max rows per page — overflow prints on next page (0 = no limit)</p>
+                          <Label className="font-normal">Continued on Next Page</Label>
+                          <div className="text-xs text-muted-foreground mt-0.5">Show "Continued on Page N" at the bottom of each non-last page</div>
                         </div>
-                        <input
-                          type="number"
-                          min="0"
-                          max="100"
-                          value={settings.itemsPerPage ?? 0}
-                          onChange={(e) => update("itemsPerPage", Math.max(0, parseInt(e.target.value) || 0))}
-                          className="w-16 text-sm text-center border rounded px-2 py-1 outline-none focus:border-[#F5C742]"
-                        />
-                      </div>
-                      <Separator />
-                      <div className="flex items-center justify-between p-2 border rounded bg-slate-50">
-                        <div>
-                          <Label className="font-normal">Page Margin (mm)</Label>
-                          <p className="text-xs text-muted-foreground mt-0.5">Margin inside each page — adds spacing around content (0 = no margin)</p>
-                        </div>
-                        <input
-                          type="number"
-                          min="0"
-                          max="30"
-                          value={settings.pageMargin ?? 0}
-                          onChange={(e) => update("pageMargin", Math.max(0, parseInt(e.target.value) || 0))}
-                          className="w-16 text-sm text-center border rounded px-2 py-1 outline-none focus:border-[#F5C742]"
-                        />
+                        <Switch checked={!!settings.showContinuationText} onCheckedChange={(v) => update("showContinuationText", v)} />
                       </div>
                     </CardContent>
                   </Card>
@@ -721,10 +722,10 @@ function InvoiceOverlayDesigner({ mode, templateName, initialSettings, onClose, 
   }
                           <div className="space-y-3 p-3 bg-slate-50 border border-slate-200 rounded-lg">
                             <div className="flex items-center justify-between">
-                              <p className="text-xs font-semibold text-slate-700 flex items-center gap-1.5">
+                              <div className="text-xs font-semibold text-slate-700 flex items-center gap-1.5">
                                 <LayoutGrid className="h-3.5 w-3.5" />
                                 Paper size for this scan
-                              </p>
+                              </div>
                               {uploadedImageNaturalDims && (() => {
     const suggestion = suggestPaperFromPixels(uploadedImageNaturalDims.w, uploadedImageNaturalDims.h);
     if (!suggestion) return null;
@@ -747,13 +748,13 @@ function InvoiceOverlayDesigner({ mode, templateName, initialSettings, onClose, 
                                   </button>;
   })()}
                             </div>
-                            {uploadedImageNaturalDims && <p className="text-[10px] text-slate-500">
+                            {uploadedImageNaturalDims && <div className="text-[10px] text-slate-500">
                                 Image: {uploadedImageNaturalDims.w} × {uploadedImageNaturalDims.h} px
                                 {uploadedImageNaturalDims.w > 0 && (() => {
     const s = suggestPaperFromPixels(uploadedImageNaturalDims.w, uploadedImageNaturalDims.h);
     return s ? ` \u2014 matches ${s.size === "Custom" ? "custom" : s.size} ${s.orientation}` : "";
   })()}
-                              </p>}
+                              </div>}
                             <div className="grid grid-cols-2 gap-2">
                               <div className="space-y-1">
                                 <Label className="text-xs">Paper Size</Label>
@@ -806,9 +807,9 @@ function InvoiceOverlayDesigner({ mode, templateName, initialSettings, onClose, 
   />
                                 </div>
                               </div>}
-                            <p className="text-[10px] text-slate-500">
+                            <div className="text-[10px] text-slate-500">
                               Canvas: <strong>{dims.w} × {dims.h} mm</strong> — fields positioned against these dimensions
-                            </p>
+                            </div>
                           </div>
 
                           <div className="flex items-center gap-2 text-xs text-green-700 bg-green-50 p-2 rounded border border-green-200">
@@ -897,8 +898,8 @@ function InvoiceOverlayDesigner({ mode, templateName, initialSettings, onClose, 
                                 <Switch checked={field.enabled} onCheckedChange={(v) => updateField(field.id, { enabled: v })} onClick={(e) => e.stopPropagation()} />
                               </div>
 
-                              { /* inline editor — only for the selected, enabled field */ }
-                              {isSel && field.enabled && <div className="px-2.5 pb-2.5 pt-1.5 border-t border-dashed border-gray-200" onClick={(e) => e.stopPropagation()}>
+                              { /* inline editor — always mounted, hidden via CSS to prevent Acrobat-extension removeChild errors */ }
+                              <div className="px-2.5 pb-2.5 pt-1.5 border-t border-dashed border-gray-200" style={{ display: isSel && field.enabled ? undefined : "none" }} onClick={(e) => e.stopPropagation()}>
                                   <div className={isImageField(field.id) ? "grid grid-cols-3 gap-1.5" : "grid grid-cols-4 gap-1.5"}>
                                     <div className="space-y-0.5">
                                       <Label className="text-[10px] text-muted-foreground">X mm</Label>
@@ -945,7 +946,18 @@ function InvoiceOverlayDesigner({ mode, templateName, initialSettings, onClose, 
                                       </div>
                                       <div className="flex items-center justify-between mt-1.5 px-2 py-1.5 border rounded">
                                         <Label className="text-[11px] font-normal">Zebra Striping</Label>
-                                        <Switch checked={Boolean(field.zebra)} onCheckedChange={(v) => updateField("items_table", { zebra: v })} />
+                                        <Switch checked={Boolean(field.zebra)} onCheckedChange={(v) => updateField("items_table", { zebra: v })} onClick={(e) => e.stopPropagation()} />
+                                      </div>
+                                      <div className="mt-2 pt-2 border-t border-dashed border-gray-200 space-y-1.5">
+                                        <Label className="text-[11px] font-semibold text-blue-700">Continuation Pages</Label>
+                                        <div className="flex items-center justify-between px-2 py-1.5 border rounded">
+                                          <Label className="text-[11px] font-normal">Repeat column header</Label>
+                                          <Switch checked={field.repeatHeaderOnContinuation !== false} onCheckedChange={(v) => updateField("items_table", { repeatHeaderOnContinuation: v })} onClick={(e) => e.stopPropagation()} />
+                                        </div>
+                                        <div className="space-y-0.5">
+                                          <Label className="text-[10px] text-muted-foreground">Table Y on page 2+ (mm)</Label>
+                                          <Input type="number" step="1" value={field.continuationY ?? ""} placeholder={`${field.y ?? 0} (same as p1)`} onChange={(e) => updateField("items_table", { continuationY: e.target.value !== "" ? +e.target.value : undefined })} className="h-7 text-xs px-1.5" />
+                                        </div>
                                       </div>
                                     </div>;
   })()}
@@ -956,7 +968,7 @@ function InvoiceOverlayDesigner({ mode, templateName, initialSettings, onClose, 
     >
                                       Font, color & alignment ›
                                     </button>}
-                                </div>}
+                                </div>
                             </div>;
   })}
                         </CardContent>
@@ -1122,7 +1134,7 @@ function InvoiceOverlayDesigner({ mode, templateName, initialSettings, onClose, 
                         <div className="flex items-center justify-between p-2 border rounded">
                           <div>
                             <Label className="text-xs font-medium">Dashed Line</Label>
-                            <p className="text-[10px] text-muted-foreground">Draw as dashed / dotted</p>
+                            <div className="text-[10px] text-muted-foreground">Draw as dashed / dotted</div>
                           </div>
                           <Switch checked={selectedD.dashed} onCheckedChange={(v) => updateDrawing(selectedD.id, { dashed: v })} />
                         </div>
@@ -1169,6 +1181,8 @@ function InvoiceOverlayDesigner({ mode, templateName, initialSettings, onClose, 
     /* ── Style tab (field style editor) ── */
   }
                 <TabsContent value="style" className="space-y-3">
+                  {/* Always mount both branches; show/hide via CSS to prevent Acrobat-extension removeChild errors */}
+                  <div style={{ display: selectedF ? undefined : "none" }}>
                   {selectedF ? <>
                       {selectedF.id === "items_table" && <Card>
                           <CardHeader>
@@ -1199,11 +1213,49 @@ function InvoiceOverlayDesigner({ mode, templateName, initialSettings, onClose, 
                               <Label className="text-xs font-normal">Zebra Striping</Label>
                               <Switch checked={Boolean(selectedF.zebra)} onCheckedChange={(v) => updateField("items_table", { zebra: v })} />
                             </div>
-                            <p className="text-[11px] text-muted-foreground">
-                              {OVERLAY_TABLE_COLUMNS.filter((c) => (selectedF.columns || DEFAULT_TABLE_COLUMNS)[c.key]).length} of {OVERLAY_TABLE_COLUMNS.length} columns enabled. Drag the table block on the canvas to reposition it.
-                            </p>
+                            <div className="text-[11px] text-muted-foreground">
+                              {OVERLAY_TABLE_COLUMNS.filter((c) => (selectedF.columns || DEFAULT_TABLE_COLUMNS)[c.key]).length} of {OVERLAY_TABLE_COLUMNS.length} columns enabled. Drag the ▬ handle on the canvas to set table height.
+                            </div>
                           </CardContent>
                         </Card>}
+
+                      {/* ── Continuation-page settings (items_table only) ── */}
+                      {selectedF.id === "items_table" && (
+                        <Card>
+                          <CardHeader>
+                            <CardTitle className="text-sm flex items-center gap-2"><LayoutGrid className="h-4 w-4 text-[#9a7a00]" />Multi-Page / Continuation</CardTitle>
+                            <CardDescription>Control how the items table behaves when it overflows to the next page</CardDescription>
+                          </CardHeader>
+                          <CardContent className="space-y-3">
+                            <div className="space-y-1">
+                              <Label className="text-xs">Table height on page 1 (mm)</Label>
+                              <div className="flex gap-2 items-center">
+                                <Input type="number" step="1" min="20" value={selectedF.tableHeight || ""} placeholder="Drag ▬ on canvas" onChange={(e) => updateField("items_table", { tableHeight: e.target.value ? +e.target.value : undefined })} className="h-8 text-xs" />
+                                {selectedF.tableHeight > 0 && (
+                                  <span className="text-[10px] text-orange-600 whitespace-nowrap">
+                                    ~{Math.max(1, Math.floor(selectedF.tableHeight / ((selectedF.fontSize || 9) * 0.353 + 4)))} rows
+                                  </span>
+                                )}
+                              </div>
+                              <div className="text-[10px] text-muted-foreground">Or drag the brown ▬ handle at the bottom of the table block on the canvas.</div>
+                            </div>
+                            <Separator />
+                            <div className="flex items-center justify-between p-2 border rounded">
+                              <div>
+                                <Label className="text-xs font-normal">Repeat column header on continuation pages</Label>
+                                <div className="text-[10px] text-muted-foreground mt-0.5">Show #, Item Name, Qty… row at top of page 2+</div>
+                              </div>
+                              <Switch checked={selectedF.repeatHeaderOnContinuation !== false} onCheckedChange={(v) => updateField("items_table", { repeatHeaderOnContinuation: v })} />
+                            </div>
+                            <div className="space-y-1">
+                              <Label className="text-xs">Table Y on continuation pages (mm)</Label>
+                              <Input type="number" step="1" value={selectedF.continuationY ?? ""} placeholder={`Same as page 1 (${selectedF.y ?? 0} mm)`} onChange={(e) => updateField("items_table", { continuationY: e.target.value !== "" ? +e.target.value : undefined })} className="h-8 text-xs" />
+                              <div className="text-[10px] text-muted-foreground">Where items start on page 2 onwards. Use a smaller Y so items start higher on the blank continuation page. A blue dashed line appears on the canvas when set.</div>
+                            </div>
+                          </CardContent>
+                        </Card>
+                      )}
+
                       <Card>
                         <CardHeader>
                           <CardTitle className="flex items-center gap-2">
@@ -1213,6 +1265,22 @@ function InvoiceOverlayDesigner({ mode, templateName, initialSettings, onClose, 
                           <CardDescription>Style and position this field</CardDescription>
                         </CardHeader>
                         <CardContent className="space-y-3">
+                          {/* ── Enable/Disable ── */}
+                          <div className="flex items-center justify-between px-2 py-1.5 border border-slate-200 rounded-md bg-slate-50">
+                            <div>
+                              <Label className="text-xs font-medium">Field Enabled</Label>
+                              <div className="text-[10px] text-muted-foreground mt-0.5">Show or hide this field on the document</div>
+                            </div>
+                            <Switch checked={selectedF.enabled !== false} onCheckedChange={(v) => updateField(selectedF.id, { enabled: v })} />
+                          </div>
+                          {/* ── Label text ── */}
+                          {!isImageField(selectedF.id) && (
+                            <div className="space-y-1">
+                              <Label className="text-[11px] text-muted-foreground">Label Text</Label>
+                              <Input value={selectedF.label} onChange={(e) => updateField(selectedF.id, { label: e.target.value })} className="h-8 text-xs" placeholder="e.g. In Words:" />
+                              <div className="text-[10px] text-muted-foreground">Renames this field everywhere: canvas, Fields list, and the prefix printed when "Print Label Text" is on.</div>
+                            </div>
+                          )}
                           <div className="grid grid-cols-2 gap-2.5">
                             <div className="space-y-1"><Label className="text-[11px] text-muted-foreground">X Position (mm)</Label><Input type="number" step="0.5" value={selectedF.x} onChange={(e) => updateField(selectedF.id, { x: +e.target.value })} className="h-8 text-xs" /></div>
                             <div className="space-y-1"><Label className="text-[11px] text-muted-foreground">Y Position (mm)</Label><Input type="number" step="0.5" value={selectedF.y} onChange={(e) => updateField(selectedF.id, { y: +e.target.value })} className="h-8 text-xs" /></div>
@@ -1246,11 +1314,20 @@ function InvoiceOverlayDesigner({ mode, templateName, initialSettings, onClose, 
                               <Input value={selectedF.color} onChange={(e) => updateField(selectedF.id, { color: e.target.value })} className="h-8 text-xs" />
                             </div>
                           </div>
+                          {/* ── Custom print text ── */}
+                          {!isImageField(selectedF.id) && selectedF.id !== "items_table" && <>
+                            <Separator />
+                            <div className="space-y-1">
+                              <Label className="text-[11px] text-muted-foreground">Custom Print Text</Label>
+                              <Input value={selectedF.customText || ""} onChange={(e) => updateField(selectedF.id, { customText: e.target.value || undefined })} placeholder={selectedF.sampleValue || "Use invoice data value…"} className="h-8 text-xs" />
+                              <div className="text-[10px] text-muted-foreground">Override what prints for this field. Leave empty to use the live invoice value.</div>
+                            </div>
+                          </>}
                           <Separator />
                           <div className="flex items-center justify-between px-2 py-1.5 border border-slate-200 rounded-md">
                             <div>
                               <Label className="text-xs font-normal">Print Label Text</Label>
-                              <p className="text-[10px] text-muted-foreground mt-0.5">"Invoice No:" before the value</p>
+                              <div className="text-[10px] text-muted-foreground mt-0.5">"Invoice No:" before the value</div>
                             </div>
                             <Switch checked={selectedF.printLabel} onCheckedChange={(v) => updateField(selectedF.id, { printLabel: v })} />
                           </div>
@@ -1261,16 +1338,18 @@ function InvoiceOverlayDesigner({ mode, templateName, initialSettings, onClose, 
                         </CardContent>
                       </Card>
                       <div className="p-2.5 bg-[#FFFBF0] rounded-lg border border-[#FDE6A9] text-xs text-slate-600 space-y-1">
-                        <p className="font-semibold text-[11px] text-[#9a7a00] uppercase tracking-wide">Sample Value Preview</p>
-                        <p style={{ fontFamily: selectedF.fontFamily, fontSize: `${selectedF.fontSize}pt`, fontWeight: selectedF.bold ? 700 : 400, fontStyle: selectedF.italic ? "italic" : "normal", color: selectedF.color, textAlign: selectedF.align }}>
-                          {selectedF.printLabel ? `${selectedF.label}: ` : ""}{selectedF.sampleValue}
-                        </p>
+                        <div className="font-semibold text-[11px] text-[#9a7a00] uppercase tracking-wide">Sample Value Preview</div>
+                        <div style={{ fontFamily: selectedF.fontFamily, fontSize: `${selectedF.fontSize}pt`, fontWeight: selectedF.bold ? 700 : 400, fontStyle: selectedF.italic ? "italic" : "normal", color: selectedF.color, textAlign: selectedF.align }}>
+                          {selectedF.printLabel ? `${selectedF.label}: ` : ""}{selectedF.customText || selectedF.sampleValue}
+                        </div>
                       </div>
-                    </> : <div className="flex flex-col items-center justify-center py-16 text-center text-muted-foreground space-y-3">
-                      <Layers className="h-12 w-12" />
-                      <p className="font-medium">No field selected</p>
-                      <p className="text-sm">Click a field on the canvas or in the Fields tab to edit its style and position</p>
-                    </div>}
+                    </> : null}
+                  </div>
+                  <div style={{ display: selectedF ? "none" : undefined }} className="flex flex-col items-center justify-center py-16 text-center text-muted-foreground space-y-3">
+                    <Layers className="h-12 w-12" />
+                    <div className="font-medium text-sm">No field selected</div>
+                    <div className="text-sm">Click a field on the canvas or in the Fields tab to edit its style and position</div>
+                  </div>
                 </TabsContent>
               </Tabs>
             </div>
@@ -1481,30 +1560,65 @@ function InvoiceOverlayDesigner({ mode, templateName, initialSettings, onClose, 
                   </div>}
 
                 {
+    /* Alignment guide lines — crosshair at the selected field/drawing position */
+  }
+                {(() => {
+    const af = selectedF || (selectedD ? { x: selectedD.x, y: selectedD.y, width: selectedD.width || 0 } : null);
+    if (!af || drawTool !== "select") return null;
+    const guideColor = "rgba(59,130,246,0.55)";
+    const labelStyle = {
+      position: "absolute", background: "rgba(59,130,246,0.82)", color: "#fff",
+      fontSize: "6px", padding: "1px 3px", borderRadius: "2px", whiteSpace: "nowrap", pointerEvents: "none"
+    };
+    return <>
+      {/* horizontal line at field's top edge */}
+      <div style={{ position: "absolute", left: 0, right: 0, top: af.y * scale, height: 0, borderTop: `1px dashed ${guideColor}`, pointerEvents: "none", zIndex: 8 }}>
+        <span style={{ ...labelStyle, left: 2, top: -10 }}>{af.y.toFixed(1)} mm</span>
+      </div>
+      {/* vertical line at field's left edge */}
+      <div style={{ position: "absolute", top: 0, bottom: 0, left: af.x * scale, width: 0, borderLeft: `1px dashed ${guideColor}`, pointerEvents: "none", zIndex: 8 }}>
+        <span style={{ ...labelStyle, top: 2, left: 3 }}>{af.x.toFixed(1)} mm</span>
+      </div>
+      {/* vertical line at field's right edge */}
+      {af.width > 0 && <div style={{ position: "absolute", top: 0, bottom: 0, left: (af.x + af.width) * scale, width: 0, borderLeft: `1px dashed ${guideColor}`, opacity: 0.55, pointerEvents: "none", zIndex: 8 }}>
+        <span style={{ ...labelStyle, top: 18, left: 3 }}>{(af.x + af.width).toFixed(1)}</span>
+      </div>}
+    </>;
+  })()}
+
+                {
     /* Data fields */
   }
                 {visibleFields.map((field) => {
     const isSelected = selectedField === field.id;
-    const text = showSampleValues ? field.printLabel ? `${field.label}: ${field.sampleValue}` : field.sampleValue : field.label;
+    const displayText = field.customText?.trim() || field.sampleValue;
+    const text = showSampleValues ? field.printLabel ? `${field.label}: ${displayText}` : displayText : field.label;
+    const isTotalsNumeric = TOTALS_NUMERIC_IDS.has(field.id) && showSampleValues && field.printLabel && !field.customText?.trim();
+    const numericSampleText = isTotalsNumeric ? (displayText || '').replace(/^[A-Z]{2,4}\s+/, '') : '';
     const isTableField = field.id === "items_table";
     const isImg = isImageField(field.id);
     const isQR = field.id === "qr_code";
     const tableCols = isTableField ? OVERLAY_TABLE_COLUMNS.filter((c) => (field.columns || DEFAULT_TABLE_COLUMNS)[c.key]) : [];
     const tableGrid = tableCols.map((c) => `${c.flex}fr`).join(" ");
+    const tableHeightPx = isTableField && field.tableHeight > 0 ? field.tableHeight * scale : null;
+    const fieldVisible = isFieldVisible(field);
     return <div
       key={field.id}
-      onMouseDown={(e) => handleFieldMouseDown(e, field.id)}
+      onMouseDown={(e) => fieldVisible ? handleFieldMouseDown(e, field.id) : undefined}
       onClick={(e) => {
+        if (!fieldVisible) return;
         e.stopPropagation();
         setSelectedField(field.id);
         setSelectedDrawing(null);
         setActiveTab("style");
       }}
       style={{
+        display: fieldVisible ? undefined : "none",
         position: "absolute",
         left: field.x * scale,
         top: field.y * scale,
         width: field.width * scale,
+        ...(tableHeightPx ? { height: tableHeightPx, overflow: "hidden" } : {}),
         cursor: field.locked ? "not-allowed" : drawTool === "select" ? "grab" : "crosshair",
         userSelect: "none",
         zIndex: isSelected ? 20 : 10,
@@ -1526,12 +1640,38 @@ function InvoiceOverlayDesigner({ mode, templateName, initialSettings, onClose, 
                         </div> : isImg ? <div style={{ width: field.width * scale, height: field.width * scale, border: `1px dashed ${isSelected ? CATEGORY_COLORS[field.category] : "#cbd5e1"}`, borderRadius: "4px", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", background: isSelected ? "rgba(156, 163, 175, 0.15)" : "rgba(156, 163, 175, 0.06)", gap: "3px" }}>
                           {isQR ? <div style={{ width: "60%", height: "60%", background: "repeating-conic-gradient(#0f1923 0% 25%, #fff 0% 50%) 0 0 / 5px 5px", borderRadius: "2px" }} /> : <FileImage style={{ width: "40%", height: "40%", color: "#94a3b8" }} />}
                           <div style={{ fontSize: "6px", color: "#6b7a8a" }}>{IMAGE_FIELD_LABELS[field.id]}</div>
-                        </div> : <div style={{ fontSize: `${field.fontSize}pt`, fontFamily: field.fontFamily, fontWeight: field.bold ? 700 : 400, fontStyle: field.italic ? "italic" : "normal", color: showSampleValues ? field.color : CATEGORY_COLORS[field.category], textAlign: field.align, borderBottom: isSelected ? `1px solid ${CATEGORY_COLORS[field.category]}` : "1px dashed transparent", padding: "1px 2px", whiteSpace: "nowrap", overflow: "hidden", lineHeight: 1.3 }}>
+                        </div> : isTotalsNumeric
+                        ? <div style={{ display: "flex", alignItems: "baseline", width: "100%", fontSize: `${field.fontSize}pt`, fontFamily: field.fontFamily, fontStyle: field.italic ? "italic" : "normal", color: showSampleValues ? field.color : CATEGORY_COLORS[field.category], borderBottom: isSelected ? `1px solid ${CATEGORY_COLORS[field.category]}` : "1px dashed transparent", lineHeight: 1.3, overflow: "hidden" }}>
+                            <span style={{ flex: 1, textAlign: "right", whiteSpace: "nowrap", overflow: "hidden", paddingRight: `${2 * scale}px`, fontWeight: 400, color: "#6b7a8a" }}>{field.label}</span>
+                            <img src={UAE_DIRHAM_SYMBOL_IMAGE} alt="AED" style={{ height: "0.85em", width: "auto", flexShrink: 0, verticalAlign: "-0.07em", marginRight: `${2 * scale}px` }} />
+                            <span style={{ width: `${22 * scale}px`, flexShrink: 0, textAlign: "right", whiteSpace: "nowrap", fontWeight: field.bold ? 700 : 400 }}>{numericSampleText}</span>
+                          </div>
+                        : <div style={{ fontSize: `${field.fontSize}pt`, fontFamily: field.fontFamily, fontWeight: field.bold ? 700 : 400, fontStyle: field.italic ? "italic" : "normal", color: showSampleValues ? field.color : CATEGORY_COLORS[field.category], textAlign: field.align, borderBottom: isSelected ? `1px solid ${CATEGORY_COLORS[field.category]}` : "1px dashed transparent", padding: "1px 2px", whiteSpace: "nowrap", overflow: "hidden", lineHeight: 1.3 }}>
                           {text}
                         </div>}
                       {field.locked && <div style={{ position: "absolute", top: -6, right: -6 }}>
                           <Lock style={{ width: "10px", height: "10px", color: "#f59e0b" }} />
                         </div>}
+                      {/* Table resize handle — drag to set tableHeight */}
+                      {isTableField && isSelected && drawTool === "select" && !field.locked && (
+                        <div
+                          style={{ position: "absolute", bottom: -8, left: 0, right: 0, height: 14, cursor: "ns-resize", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 30, pointerEvents: "auto" }}
+                          title="Drag to set table height (rows per page)"
+                          onMouseDown={(e) => {
+                            e.stopPropagation();
+                            const curH = field.tableHeight > 0 ? field.tableHeight : Math.max(40, (dims.h - field.y) * 0.6);
+                            setResizingTable({ startMouseY: e.clientY, startHeight: curH });
+                          }}
+                        >
+                          <div style={{ width: 40, height: 5, borderRadius: 3, background: "#b45309", opacity: 0.85, boxShadow: "0 1px 3px rgba(0,0,0,0.25)" }} />
+                        </div>
+                      )}
+                      {/* Continuation-Y dashed indicator */}
+                      {isTableField && isSelected && field.continuationY > 0 && (
+                        <div style={{ position: "absolute", left: 0, right: 0, top: (field.continuationY - field.y) * scale, borderTop: "1.5px dashed #1a56db", pointerEvents: "none", zIndex: 28 }}>
+                          <span style={{ position: "absolute", left: 2, top: -9, fontSize: "7px", color: "#1a56db", background: "rgba(255,255,255,0.85)", padding: "0 2px", borderRadius: 2 }}>page 2+ start</span>
+                        </div>
+                      )}
                     </div>;
   })}
 
@@ -1556,7 +1696,18 @@ function InvoiceOverlayDesigner({ mode, templateName, initialSettings, onClose, 
             {selectedF && <span className="text-[#9a7a00] font-medium">{selectedF.label} · ({selectedF.x.toFixed(1)}, {selectedF.y.toFixed(1)}) mm</span>}
             {selectedD && <span className="text-[#9a7a00] font-medium">{selectedD.label} · ({selectedD.x.toFixed(1)}, {selectedD.y.toFixed(1)}) mm</span>}
             <span className="w-px h-3.5 bg-gray-200" /><span className="text-blue-600">{settings.printOnlyValues ? "Values only" : "Labels + values"}</span>
-            {(settings.itemsPerPage > 0) && <><span className="w-px h-3.5 bg-gray-200" /><span className="text-emerald-600">{settings.itemsPerPage} rows/page</span></>}
+            {(() => {
+              const tf = settings.fields.find((f) => f.id === "items_table");
+              if (!tf) return null;
+              if (tf.tableHeight > 0) {
+                const est = Math.max(1, Math.floor(tf.tableHeight / ((tf.fontSize || 9) * 0.353 + 4)));
+                return <><span className="w-px h-3.5 bg-gray-200" /><span className="text-orange-600">~{est} rows/pg</span></>;
+              }
+              if (settings.itemsPerPage > 0) {
+                return <><span className="w-px h-3.5 bg-gray-200" /><span className="text-emerald-600">{settings.itemsPerPage} rows/pg (manual)</span></>;
+              }
+              return null;
+            })()}
           </div>
         </div>
       </div>

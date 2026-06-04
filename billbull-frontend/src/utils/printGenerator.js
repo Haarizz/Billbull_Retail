@@ -3,7 +3,6 @@ import {
     generateDocumentEmailHtml,
     generateDocumentPrintHtml
 } from './documentTemplateRenderer';
-import { generateReportFilename } from './filenameUtils';
 import {
     resolveCurrencyDisplayConfig,
     UAE_DIRHAM_SYMBOL_IMAGE
@@ -161,131 +160,254 @@ export const generatePrintHtmlAsync = async (template, data, options = {}) => {
     return generateDocumentPrintHtml(template, data, options);
 };
 
-export const generateReportPrintHtml = (_template, reportTitle, columns, data, companyProfile = {}) => {
+export const generateReportPrintHtml = (_template, reportTitle, columns, data, companyProfile = {}, meta = {}) => {
     const generatedAt = new Date().toLocaleString();
+    const companyName = escapeHtml(companyProfile.companyName || 'BillBull ERP');
+    const address = escapeHtml(companyProfile.address || '');
+    const email = escapeHtml(companyProfile.email || '');
+    const phone = escapeHtml(companyProfile.phone || '');
+    const trn = escapeHtml(companyProfile.trn || '');
+
+    let metaBadges = `<span class="pill">Generated: ${escapeHtml(generatedAt)}</span>`;
+    metaBadges += `<span class="pill">Records: ${data.length}</span>`;
+    if (meta.dateFrom || meta.dateTo) {
+        metaBadges += `<span class="pill">Period: ${escapeHtml(meta.dateFrom || '—')} → ${escapeHtml(meta.dateTo || '—')}</span>`;
+    }
+    if (meta.branch && meta.branch !== 'All') {
+        metaBadges += `<span class="pill">Branch: ${escapeHtml(meta.branch)}</span>`;
+    }
 
     const pageStyles = `
-        @page { size: A4 Landscape; margin: 20mm; }
+        @page { size: A4 landscape; margin: 0; }
+        * { box-sizing: border-box; }
         body {
             margin: 0;
             padding: 0;
-            font-family: 'Helvetica Neue', Arial, sans-serif;
+            font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
             color: #1e293b;
-            font-size: 10pt;
-            line-height: 1.5;
+            font-size: 9.5pt;
+            line-height: 1.45;
+            background: #fff;
         }
-        .header {
+
+        /* ── Amber header bar ── */
+        .header-bar {
+            background: linear-gradient(90deg, #F5C742 0%, #E5B426 100%);
+            padding: 10px 24px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .header-bar .brand {
+            font-size: 15px;
+            font-weight: 800;
+            color: #1a1200;
+            letter-spacing: 0.04em;
+        }
+        .header-bar .badge {
+            background: rgba(255,255,255,0.35);
+            color: #1a1200;
+            font-size: 9px;
+            font-weight: 700;
+            padding: 3px 10px;
+            border-radius: 20px;
+            letter-spacing: 0.07em;
+        }
+
+        /* ── Meta / company section ── */
+        .meta-section {
             display: flex;
             justify-content: space-between;
             align-items: flex-start;
-            border-bottom: 2px solid #e2e8f0;
-            padding-bottom: 16px;
-            margin-bottom: 24px;
+            padding: 14px 24px 10px;
+            border-bottom: 2px solid #FDE6A9;
+            background: #FFFBF0;
         }
-        .company-info h2 {
-            margin: 0;
-            font-size: 18px;
+        .company-block {
+            max-width: 50%;
+        }
+        .company-block h2 {
+            margin: 0 0 3px;
+            font-size: 15px;
+            font-weight: 700;
             color: #111827;
         }
-        .company-info p {
-            margin: 2px 0;
-            font-size: 11px;
+        .company-block p {
+            margin: 1px 0;
+            font-size: 9px;
             color: #64748b;
         }
-        .report-meta {
+        .report-block {
             text-align: right;
         }
-        .report-meta h1 {
-            margin: 0;
-            font-size: 24px;
+        .report-block h1 {
+            margin: 0 0 6px;
+            font-size: 19px;
+            font-weight: 700;
             color: #111827;
         }
-        .report-meta p {
-            margin: 4px 0 0;
-            font-size: 11px;
-            color: #64748b;
+        .pills {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 4px;
+            justify-content: flex-end;
+        }
+        .pill {
+            display: inline-block;
+            background: #FFF8E7;
+            border: 1px solid #FDE6A9;
+            border-radius: 20px;
+            padding: 2px 9px;
+            font-size: 8.5px;
+            color: #92400e;
+            white-space: nowrap;
+        }
+
+        /* ── Table ── */
+        .table-wrap {
+            padding: 14px 24px;
         }
         table {
             width: 100%;
             border-collapse: collapse;
+            border-spacing: 0;
         }
-        th {
-            background: #f8fafc;
-            text-align: left;
-            padding: 10px;
-            font-size: 10px;
-            text-transform: uppercase;
-            letter-spacing: 0.08em;
-            color: #475569;
+        thead th {
+            background: #F5C742;
+            color: #1a1200;
             font-weight: 700;
-            border: 1px solid #e2e8f0;
+            font-size: 8.5px;
+            text-transform: uppercase;
+            letter-spacing: 0.06em;
+            padding: 7px 9px;
+            text-align: left;
+            border: 1px solid #E5B426;
         }
-        td {
-            padding: 10px;
-            font-size: 11px;
-            border: 1px solid #e2e8f0;
+        thead th.num { text-align: right; }
+        tbody tr:nth-child(even) { background: #FFFBF0; }
+        tbody tr:nth-child(odd)  { background: #ffffff; }
+        tbody td {
+            padding: 6px 9px;
+            font-size: 9px;
+            border: 1px solid #f1f5f9;
             color: #334155;
+            vertical-align: middle;
         }
-        .text-right {
-            text-align: right;
+        tbody td.num { text-align: right; }
+        tbody tr:last-child td { border-bottom: 1px solid #FDE6A9; }
+
+        /* ── Summary row ── */
+        tfoot td {
+            padding: 6px 9px;
+            font-size: 9px;
+            font-weight: 700;
+            background: #FFF8E7;
+            border-top: 2px solid #E5B426;
+            color: #92400e;
         }
+        tfoot td.num { text-align: right; }
+
+        /* ── Footer ── */
         .footer {
-            margin-top: 28px;
-            border-top: 1px solid #e2e8f0;
-            padding-top: 10px;
-            text-align: center;
-            font-size: 10px;
+            padding: 8px 24px;
+            border-top: 1px solid #FDE6A9;
+            display: flex;
+            justify-content: space-between;
+            font-size: 8px;
             color: #94a3b8;
+        }
+
+        /* ── Print page break ── */
+        @media print {
+            .header-bar { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+            .meta-section { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+            thead th { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+            tbody tr:nth-child(even) { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+            tfoot td { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+            table { page-break-inside: auto; }
+            tr { page-break-inside: avoid; }
         }
     `;
 
-    const headers = columns.map((column) => `<th>${renderTextWithCurrencySymbols(column.header, companyProfile)}</th>`).join('');
-    const rows = data.map((row) => `
+    // Detect numeric columns for right-alignment
+    const numericKeys = new Set();
+    data.slice(0, 5).forEach(row => {
+        columns.forEach(col => {
+            if (typeof row[col.key] === 'number') numericKeys.add(col.key);
+        });
+    });
+
+    const headers = columns.map(col =>
+        `<th class="${numericKeys.has(col.key) ? 'num' : ''}">${renderTextWithCurrencySymbols(col.header, companyProfile)}</th>`
+    ).join('');
+
+    const rows = data.map(row => `
         <tr>
-            ${columns.map((column) => {
-        const value = row[column.key];
-        const isNumeric = typeof value === 'number';
-        return `<td class="${isNumeric ? 'text-right' : ''}">${value !== null && value !== undefined ? renderTextWithCurrencySymbols(value, companyProfile) : '-'}</td>`;
-    }).join('')}
+            ${columns.map(col => {
+                const value = row[col.key];
+                const isNum = numericKeys.has(col.key);
+                const display = value !== null && value !== undefined ? renderTextWithCurrencySymbols(String(value), companyProfile) : '—';
+                return `<td class="${isNum ? 'num' : ''}">${display}</td>`;
+            }).join('')}
         </tr>
     `).join('');
 
-    return `
-        <!DOCTYPE html>
-        <html lang="en">
-        <head>
-            <meta charset="UTF-8" />
-            <title>${escapeHtml(generateReportFilename(reportTitle))}</title>
-            <style>${pageStyles}</style>
-        </head>
-        <body>
-            <div class="header">
-                <div class="company-info">
-                    <h2>${escapeHtml(companyProfile.companyName || '')}</h2>
-                    <p>${escapeHtml(companyProfile.address || '')}</p>
-                    <p>Email: ${escapeHtml(companyProfile.email || '')} | Phone: ${escapeHtml(companyProfile.phone || '')}</p>
-                    <p>TRN: ${escapeHtml(companyProfile.trn || '')}</p>
-                </div>
-                <div class="report-meta">
-                    <h1>${escapeHtml(reportTitle)}</h1>
-                    <p>Generated on: ${escapeHtml(generatedAt)}</p>
-                    <p>Total Records: ${data.length}</p>
-                </div>
-            </div>
+    // Compute numeric totals for footer
+    const numericCols = columns.filter(col => numericKeys.has(col.key));
+    const footerRow = numericCols.length > 0 ? (() => {
+        const totals = {};
+        numericCols.forEach(col => {
+            totals[col.key] = data.reduce((sum, row) => sum + (Number(row[col.key]) || 0), 0);
+        });
+        const cells = columns.map(col => {
+            if (numericKeys.has(col.key)) {
+                return `<td class="num">${totals[col.key].toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>`;
+            }
+            return col === columns[0] ? `<td><strong>TOTALS</strong></td>` : '<td></td>';
+        });
+        return `<tfoot><tr>${cells.join('')}</tr></tfoot>`;
+    })() : '';
 
-            <table>
-                <thead>
-                    <tr>${headers}</tr>
-                </thead>
-                <tbody>${rows}</tbody>
-            </table>
+    return `<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <title>${escapeHtml(reportTitle)}</title>
+    <style>${pageStyles}</style>
+</head>
+<body>
+    <div class="header-bar">
+        <span class="brand">${companyName}${meta.branch && meta.branch !== 'All' ? ` &nbsp;—&nbsp; ${escapeHtml(meta.branch)}` : ''}</span>
+        <span class="badge">OFFICIAL REPORT</span>
+    </div>
 
-            <div class="footer">
-                Generated by BillBull ERP
-            </div>
-        </body>
-        </html>
-    `;
+    <div class="meta-section">
+        <div class="company-block">
+            <h2>${companyName}</h2>
+            ${address ? `<p>${address}</p>` : ''}
+            ${(email || phone) ? `<p>${email ? `Email: ${email}` : ''}${email && phone ? ' &nbsp;|&nbsp; ' : ''}${phone ? `Phone: ${phone}` : ''}</p>` : ''}
+            ${trn ? `<p>TRN: ${trn}</p>` : ''}
+        </div>
+        <div class="report-block">
+            <h1>${escapeHtml(reportTitle)}</h1>
+            <div class="pills">${metaBadges}</div>
+        </div>
+    </div>
+
+    <div class="table-wrap">
+        <table>
+            <thead><tr>${headers}</tr></thead>
+            <tbody>${rows}</tbody>
+            ${footerRow}
+        </table>
+    </div>
+
+    <div class="footer">
+        <span>Generated by BillBull ERP &nbsp;|&nbsp; Confidential</span>
+        <span>${escapeHtml(generatedAt)}</span>
+    </div>
+</body>
+</html>`;
 };
 
 export const printHtml = (htmlContent) => {

@@ -48,6 +48,10 @@ import {
   Cell,
 } from "recharts";
 import { getPurchaseReportData } from "../../../api/purchaseReportsApi";
+import { exportToPDF, exportToExcel } from "../../../utils/exportUtils";
+import { generateReportPrintHtml, printHtml } from "../../../utils/printGenerator";
+import { getCompanyProfile } from "../../../api/companyProfileApi";
+import ExportDropdown from "../../../components/common/ExportDropdown";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -961,8 +965,8 @@ function VendorAgingReport() {
       <ReportHeader title="Vendor Outstanding & Aging" subtitle="Payable aging analysis across all vendors" count={mockVendorAging.length} />
       <div className="grid grid-cols-4 gap-3">
         <KpiCard label="Total Payable" value={`AED ${totals.total.toLocaleString()}`} sub="All vendors" accent />
-        <KpiCard label="0â€“30 Days" value={`AED ${totals.d30.toLocaleString()}`} sub="Current" />
-        <KpiCard label="31â€“90 Days" value={`AED ${(totals.d60 + totals.d90).toLocaleString()}`} sub="Moderate" />
+        <KpiCard label="0–30 Days" value={`AED ${totals.d30.toLocaleString()}`} sub="Current" />
+        <KpiCard label="31–90 Days" value={`AED ${(totals.d60 + totals.d90).toLocaleString()}`} sub="Moderate" />
         <KpiCard label="90+ Days" value={`AED ${totals.d90plus.toLocaleString()}`} sub="Overdue" />
       </div>
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">
@@ -1145,7 +1149,7 @@ function VendorContractComplianceReport() {
               <Td>{r.item}</Td>
               <Td right>{r.contractPrice.toLocaleString()}</Td>
               <Td right>{r.actualPrice.toLocaleString()}</Td>
-              <Td right>{r.variance !== 0 ? amtBadge(r.variance) : "â€”"}</Td>
+              <Td right>{r.variance !== 0 ? amtBadge(r.variance) : "—"}</Td>
               <Td right><span className={r.variancePct > 0 ? "text-red-600 font-semibold" : r.variancePct < 0 ? "text-emerald-700 font-semibold" : "text-slate-500"}>{r.variancePct > 0 ? "+" : ""}{r.variancePct.toFixed(2)}%</span></Td>
               <Td>{r.penaltyApplied ? <Badge variant="outline" className="bg-red-100 text-red-700 border-red-300 text-[10px]">Applied</Badge> : <Badge variant="outline" className="bg-slate-100 text-slate-600 border-slate-300 text-[10px]">None</Badge>}</Td>
               <Td>{statusBadge(r.status === "Breached" ? "Overdue" : "Active")}</Td>
@@ -1703,7 +1707,7 @@ function GrvDebitNoteMappingReport() {
               <Td>{r.vendor}</Td>
               <Td right bold>{r.grvValue.toLocaleString()}</Td>
               <Td muted>{r.debitNote}</Td>
-              <Td right>{r.dnValue > 0 ? r.dnValue.toLocaleString() : "â€”"}</Td>
+              <Td right>{r.dnValue > 0 ? r.dnValue.toLocaleString() : "—"}</Td>
               <Td>{r.matched ? <Badge variant="outline" className="bg-emerald-100 text-emerald-700 border-emerald-300 text-[10px]">Yes</Badge> : <Badge variant="outline" className="bg-red-100 text-red-700 border-red-300 text-[10px]">No</Badge>}</Td>
               <Td muted>{r.settledDate}</Td>
               <Td>{statusBadge(r.status)}</Td>
@@ -1793,7 +1797,7 @@ function InvoiceGrnVarianceReport() {
                 <Td right>{r.qtyVar}</Td>
                 <Td right>{r.invRate.toFixed(2)}</Td>
                 <Td right>{r.grnRate.toFixed(2)}</Td>
-                <Td right>{r.valueVar !== 0 ? amtBadge(r.valueVar) : "â€”"}</Td>
+                <Td right>{r.valueVar !== 0 ? amtBadge(r.valueVar) : "—"}</Td>
                 <Td>{statusBadge(r.status === "Variance" ? "Overdue" : "Active")}</Td>
               </tr>
             ))}
@@ -2281,7 +2285,7 @@ function VatInputRegisterReport() {
   const totalVat = mockVatInput.reduce((s, r) => s + r.vatAmt, 0);
   return (
     <div className="space-y-3">
-      <ReportHeader title="VAT Input Register (UAE)" subtitle="Input tax register for FTA filing â€” all taxable purchases" count={mockVatInput.length} />
+      <ReportHeader title="VAT Input Register (UAE)" subtitle="Input tax register for FTA filing — all taxable purchases" count={mockVatInput.length} />
       <div className="grid grid-cols-3 gap-3">
         <KpiCard label="Total Taxable Value" value={`AED ${totalTaxable.toLocaleString()}`} sub="Excl. VAT" accent />
         <KpiCard label="Total Input VAT" value={`AED ${totalVat.toLocaleString()}`} sub="Recoverable @ 5%" />
@@ -2440,13 +2444,64 @@ function AuditTrailReport() {
               <Td muted>{r.refNo}</Td>
               <Td muted>{r.field}</Td>
               <Td muted>{r.before}</Td>
-              <Td>{r.after !== "-" ? <span className="text-emerald-700 font-semibold">{r.after}</span> : "â€”"}</Td>
+              <Td>{r.after !== "-" ? <span className="text-emerald-700 font-semibold">{r.after}</span> : "—"}</Td>
             </tr>
           ))}
         </tbody>
       </Tbl>
     </div>
   );
+}
+
+// ---------------------------------------------------------------------------
+// Export helpers
+// ---------------------------------------------------------------------------
+
+function getPurchaseExportRows(reportId: ReportId): any[] {
+  switch (reportId) {
+    case "vendor-master": return mockVendorMaster;
+    case "vendor-aging": return mockVendorAging;
+    case "vendor-performance": return mockVendorPerf;
+    case "vendor-price-history": return mockPriceHistory;
+    case "vendor-contract-compliance": return mockContractCompliance;
+    case "lpo-register": return mockLpoRegister;
+    case "lpo-fulfillment": return mockLpoFulfillment;
+    case "lpo-aging": return mockLpoAging;
+    case "lpo-cancelled": return mockLpoCancelled;
+    case "grn-register": return mockGrnRegister;
+    case "grn-variance": return mockGrnVariance;
+    case "grn-batch-expiry": return mockBatchExpiry;
+    case "grn-qc-rejection": return mockQcRejection;
+    case "grv-register": return mockGrvRegister;
+    case "grv-reason-analysis": return mockGrvReasonChart;
+    case "grv-replacement-pending": return mockGrvPending;
+    case "grv-debit-note-mapping": return mockGrvDebitNote;
+    case "invoice-register": return mockInvoiceRegister;
+    case "invoice-grn-variance": return mockInvGrnVariance;
+    case "invoice-landed-cost": return mockLandedCost;
+    case "invoice-backdated": return mockBackdatedInv;
+    case "payment-register": return mockPaymentRegister;
+    case "payment-aging": return mockPaymentAging;
+    case "payment-cheque-tracking": return mockChequeTracking;
+    case "payment-advance": return mockAdvancePayment;
+    case "debit-note-register": return mockDebitNoteRegister;
+    case "claim-settlement": return mockClaimSettlement;
+    case "vendor-claim-history": return mockVendorClaimHistory;
+    case "vat-input-register": return mockVatInput;
+    case "period-lock-violations": return mockPeriodLockViolations;
+    case "missing-documents": return mockMissingDocuments;
+    case "audit-trail": return mockAuditTrail;
+    default: return [];
+  }
+}
+
+function toExportColumns(rows: any[]) {
+  if (!rows.length) return [];
+  return Object.keys(rows[0]).map((key) => ({
+    header: key.replace(/([A-Z])/g, " $1").replace(/[_-]/g, " ").replace(/^\w/, (c: string) => c.toUpperCase()).trim(),
+    key,
+    width: 18,
+  }));
 }
 
 // ---------------------------------------------------------------------------
@@ -2474,6 +2529,11 @@ export default function VendorsPurchasesReports({ onNavigate }: { onNavigate?: (
   const [branch, setBranch] = useState("All");
   const [searchText, setSearchText] = useState("");
   const [, setDataRevision] = useState(0);
+  const [companyProfile, setCompanyProfile] = useState<any>(null);
+
+  useEffect(() => {
+    getCompanyProfile().then((res) => setCompanyProfile(res.data)).catch(() => {});
+  }, []);
 
   async function loadReport(signal?: AbortSignal) {
     try {
@@ -2501,6 +2561,38 @@ export default function VendorsPurchasesReports({ onNavigate }: { onNavigate?: (
   }, [activeReport]);
 
   const activeDef = useMemo(() => REPORTS.find((r) => r.id === activeReport)!, [activeReport]);
+
+  const exportMeta = () => ({ dateFrom, dateTo, branch, companyProfile });
+
+  function handleExportPdf() {
+    const rows = getPurchaseExportRows(activeReport);
+    const cols = toExportColumns(rows);
+    exportToPDF(rows, cols, activeDef.label, activeDef.label.replace(/\s+/g, "_"), exportMeta());
+  }
+
+  function handleExportExcel() {
+    const rows = getPurchaseExportRows(activeReport);
+    const cols = toExportColumns(rows);
+    exportToExcel(rows, cols, activeDef.label.replace(/\s+/g, "_"), exportMeta());
+  }
+
+  function handlePrint() {
+    const rows = getPurchaseExportRows(activeReport);
+    const cols = toExportColumns(rows);
+    const html = generateReportPrintHtml({}, activeDef.label, cols, rows, companyProfile || {}, exportMeta());
+    printHtml(html);
+  }
+
+  function handleDownloadCsv() {
+    const rows = getPurchaseExportRows(activeReport);
+    if (!rows.length) return;
+    const keys = Object.keys(rows[0]);
+    const csv = [keys.join(","), ...rows.map((r: any) => keys.map((k) => `"${String(r[k] ?? "").replace(/"/g, '""')}"`).join(","))].join("\n");
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a"); a.href = url; a.download = `${activeDef.label.replace(/\s+/g, "_")}.csv`;
+    document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
+  }
 
   const groupMeta: Record<ReportGroupId, { label: string; icon: React.ReactNode }> = {
     vendor: { label: "Vendor Management", icon: <Users className="h-4 w-4" /> },
@@ -2585,20 +2677,12 @@ export default function VendorsPurchasesReports({ onNavigate }: { onNavigate?: (
           <span className="font-medium text-slate-700">Reports</span>
         </div>
 
-        <div className="flex items-center gap-2">
-          <Button variant="ghost" size="sm" className="text-[11px] text-slate-600 flex items-center gap-1">
-            <FileText className="h-3 w-3" />
-            PDF
-          </Button>
-          <Button variant="ghost" size="sm" className="text-[11px] text-slate-600 flex items-center gap-1">
-            <FileSpreadsheet className="h-3 w-3" />
-            Excel
-          </Button>
-          <Button variant="ghost" size="sm" className="text-[11px] text-slate-600 flex items-center gap-1">
-            <Printer className="h-3 w-3" />
-            Print
-          </Button>
-        </div>
+        <ExportDropdown
+          onExportPdf={handleExportPdf}
+          onExportExcel={handleExportExcel}
+          onPrint={handlePrint}
+          onDownload={handleDownloadCsv}
+        />
       </div>
 
       <div className="grid grid-cols-1 xl:grid-cols-[0.95fr_2.05fr] gap-4">
@@ -2615,7 +2699,7 @@ export default function VendorsPurchasesReports({ onNavigate }: { onNavigate?: (
                 Vendors &amp; Purchases Reports
               </CardTitle>
               <span className="text-[10px] text-slate-500">
-                Vendor â€¢ LPO â€¢ GRN â€¢ GRV â€¢ Invoice â€¢ Payment â€¢ Compliance
+                Vendor • LPO • GRN • GRV • Invoice • Payment • Compliance
               </span>
             </CardHeader>
             <CardContent className="px-3 pb-3 space-y-2">
@@ -2624,7 +2708,7 @@ export default function VendorsPurchasesReports({ onNavigate }: { onNavigate?: (
                 <Input
                   value={query}
                   onChange={(e) => setQuery(e.target.value)}
-                  placeholder="Search reportsâ€¦"
+                  placeholder="Search reports…"
                   className="pl-8 pr-3 py-1 h-9 rounded-full text-xs bg-slate-50 border-none focus-visible:ring-0 focus-visible:ring-offset-0"
                 />
               </div>
@@ -2832,7 +2916,7 @@ export default function VendorsPurchasesReports({ onNavigate }: { onNavigate?: (
                   <Input
                     value={searchText}
                     onChange={(e) => setSearchText(e.target.value)}
-                    placeholder="Search item name or SKUâ€¦"
+                    placeholder="Search item name or SKU…"
                     className="h-8 text-[11px] bg-slate-50 border-slate-200"
                   />
                 </div>
