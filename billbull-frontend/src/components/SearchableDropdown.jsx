@@ -152,8 +152,6 @@ const SearchableDropdown = ({
                                                         onError={(e) => {
                                                             e.target.style.display = 'none';
                                                             e.target.parentNode.classList.add('bg-slate-50');
-                                                            // Show package icon sibling if possible, or just hide image
-                                                            e.target.parentNode.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-slate-300"><path d="m7.5 4.27 9 5.15"></path><path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z"></path><path d="m3.3 7 8.7 5 8.7-5"></path><path d="M12 22v-10"></path></svg>';
                                                         }}
                                                     />
                                                 ) : (
