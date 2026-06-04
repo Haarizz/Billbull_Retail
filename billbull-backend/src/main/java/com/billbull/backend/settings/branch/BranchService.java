@@ -184,6 +184,10 @@ public class BranchService {
         branch.setTrnNumber(normalizeOptional(req.getTrnNumber()));
         branch.setLogoUrl(normalizeOptional(req.getLogoUrl()));
         branch.setStampUrl(normalizeOptional(req.getStampUrl()));
+        branch.setBankName(normalizeOptional(req.getBankName()));
+        branch.setBankAccountNumber(normalizeOptional(req.getBankAccountNumber()));
+        branch.setBankIban(normalizeOptional(req.getBankIban()));
+        branch.setBankSwift(normalizeOptional(req.getBankSwift()));
         if (req.getSortOrder() != null) {
             branch.setSortOrder(req.getSortOrder());
         }

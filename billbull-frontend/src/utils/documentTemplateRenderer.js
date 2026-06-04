@@ -1317,7 +1317,7 @@ const buildHeader = (layout, renderTarget = 'print') => {
             <div class="doc-meta-value">${escapeHtml(item.value)}</div>
         </div>
     `).join('');
-    const centerContent = layout.isPurchaseDesigner
+    const centerContent = (layout.isPurchaseDesigner || layout.isSalesDesigner)
         ? `<div class="designer-meta-grid">${centerItemHtml}</div>`
         : centerItemHtml;
 
@@ -1359,8 +1359,10 @@ const buildHeader = (layout, renderTarget = 'print') => {
         `;
     }
 
+    const headerExtraClass = layout.isPurchaseDesigner ? ' document-header-designer'
+        : layout.isSalesDesigner ? ' document-header-sales' : '';
     return `
-        <header class="document-header${layout.isPurchaseDesigner ? ' document-header-designer' : ''}">
+        <header class="document-header${headerExtraClass}">
             <div class="header-left">${leftContent}</div>
             <div class="header-center">${centerContent}</div>
             <div class="header-right">${rightContent}</div>
@@ -1450,6 +1452,65 @@ const buildCoreStyles = () => `
     }
     .document-header-designer .header-right {
         flex: 0 0 170px;
+    }
+    /* Sales designer header — matches ClassicPreview flex layout */
+    .document-header-sales {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        gap: 16px;
+        margin-bottom: 18px;
+    }
+    .document-header-sales .header-left {
+        flex: 1 1 0;
+        min-width: 0;
+    }
+    .document-header-sales .header-center {
+        display: block;
+        flex: 0 0 auto;
+        align-self: flex-end;
+        padding-top: 0;
+        padding-bottom: 2px;
+        text-align: left;
+        justify-items: stretch;
+    }
+    .document-header-sales .header-right {
+        flex: 0 0 170px;
+    }
+    .document-header-sales .document-title {
+        margin: 0 0 14px;
+        white-space: nowrap;
+        word-break: keep-all;
+        letter-spacing: -0.5px;
+        line-height: 1.35;
+    }
+    .document-header-sales .doc-meta-item {
+        justify-items: start;
+        text-align: left;
+    }
+    .document-header-sales .doc-meta-label {
+        font-size: 8px;
+        line-height: 1.2;
+        color: #999999;
+        font-weight: 500;
+    }
+    .document-header-sales .doc-meta-value {
+        font-size: 9px;
+        line-height: 1.2;
+        font-weight: 700;
+    }
+    .document-header-sales .bill-to-eyebrow {
+        margin-bottom: 4px;
+        color: #888888;
+        text-transform: uppercase;
+    }
+    .document-header-sales .bill-to-name {
+        margin: 0 0 2px;
+    }
+    .document-header-sales .bill-to-line {
+        color: #444444;
+        line-height: 1.65;
+        white-space: pre-line;
     }
     .document-title {
         font-size: 20px;
@@ -1652,6 +1713,13 @@ const buildCoreStyles = () => `
     }
     .document-shell-designer .content-stack {
         display: block;
+    }
+    /* Footer block keeps totals/bank/terms/stamp together; flows after the
+       table and moves to a new page as a unit if it can't fit. */
+    .document-footer-group {
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
     }
     .info-card,
     .signature-card {
@@ -2273,7 +2341,7 @@ const buildTemplateThemeStyles = (layout) => {
         .signature-line {
             border-top-color: ${theme.accentColor};
         }
-        ${layout.isPurchaseDesigner ? '' : `.grand-total-display { border-top: 2px solid ${theme.accentColor}; }`}
+        ${(layout.isPurchaseDesigner || layout.isSalesDesigner) ? '' : `.grand-total-display { border-top: 2px solid ${theme.accentColor}; }`}
         .stamp-placeholder {
             border-color: ${theme.accentColor};
             background: ${accentSoft};
@@ -2456,6 +2524,47 @@ const buildPrintStyles = (paperSize = 'A4', orientation = 'Portrait', layout = {
             .document-header-designer .doc-meta-item {
                 text-align: left !important;
                 justify-items: start !important;
+            }
+            /* Sales designer print overrides — keep header matching ClassicPreview */
+            .document-header-sales {
+                display: flex !important;
+                justify-content: space-between !important;
+                align-items: flex-start !important;
+                gap: 16px !important;
+                margin-bottom: 18px !important;
+            }
+            .document-header-sales .header-left {
+                flex: 1 1 0 !important;
+                min-width: 0 !important;
+            }
+            .document-header-sales .header-center {
+                display: block !important;
+                flex: 0 0 auto !important;
+                align-self: flex-end !important;
+                padding-top: 0 !important;
+                padding-bottom: 2px !important;
+                text-align: left !important;
+                justify-items: start !important;
+            }
+            .document-header-sales .header-right {
+                flex: 0 0 170px !important;
+            }
+            .document-header-sales .designer-meta-grid {
+                display: grid !important;
+                grid-template-columns: repeat(2, minmax(118px, 1fr)) !important;
+                gap: 10px 20px !important;
+            }
+            .document-header-sales .doc-meta-item {
+                text-align: left !important;
+                justify-items: start !important;
+            }
+            /* Footer block (totals + bank + terms + signature + stamp/QR) flows
+               right after the items table. Kept together so it never splits
+               across pages — if it can't fit on the page where the table ends,
+               the whole block moves to the next page. */
+            .document-footer-group {
+                break-inside: avoid !important;
+                page-break-inside: avoid !important;
             }
             .header-right {
                 padding-top: 0 !important;
@@ -2755,12 +2864,15 @@ const normalisePurchaseLayout = (template, data, companyProfile, renderTarget, o
         showNotesSection: pickSetting(designerSettings, ['showNotes', 'showNote'], true),
         notesLabel: asText(designerSettings.notesLabel || 'Notes'),
         showAmountInWords: pickSetting(designerSettings, ['showAmountInWords'], false),
-        bankRows: pickSetting(designerSettings, ['showBankDetails'], false)
+        // Bank details: branch (company profile) is the source of truth; the
+        // template designer fields are only a fallback. Section renders whenever
+        // any value resolves, unless the template explicitly disables it.
+        bankRows: pickSetting(designerSettings, ['showBankDetails'], true) !== false
             ? [
-                { label: 'Bank', value: designerSettings.bankName },
-                { label: 'Account', value: designerSettings.bankAccount },
-                { label: 'IBAN', value: designerSettings.bankIBAN },
-                { label: 'SWIFT / BIC', value: designerSettings.bankSWIFT },
+                { label: 'Bank', value: firstNonEmpty(company.bankName, designerSettings.bankName) },
+                { label: 'Account', value: firstNonEmpty(company.bankAccountNumber, designerSettings.bankAccount) },
+                { label: 'IBAN', value: firstNonEmpty(company.bankIban, designerSettings.bankIBAN) },
+                { label: 'SWIFT / BIC', value: firstNonEmpty(company.bankSwift, designerSettings.bankSWIFT) },
             ].filter((row) => row.value)
             : [],
         showItemTable: items.length > 0 && pickSetting(designerSettings, ['showItemsTable', 'showItemTable'], true),
@@ -2896,6 +3008,7 @@ const normaliseSalesDesignerLayout = (template, data, companyProfile, renderTarg
         company,
         currency,
         isPurchaseDesigner: false,
+        isSalesDesigner: true,
         logoUrl: templateLogoUrl || company.logoUrl,
         stampUrl: templateStampUrl || company.stampUrl,
         companyVisibility,
@@ -2932,12 +3045,15 @@ const normaliseSalesDesignerLayout = (template, data, companyProfile, renderTarg
         displayOptions,
         showNotesSection: pickSetting(designerSettings, ['showNotes', 'showNote'], true),
         showAmountInWords: pickSetting(designerSettings, ['showAmountInWords'], false),
-        bankRows: pickSetting(designerSettings, ['showBankDetails'], false)
+        // Bank details: branch (company profile) is the source of truth; the
+        // template designer fields are only a fallback. Section renders whenever
+        // any value resolves, unless the template explicitly disables it.
+        bankRows: pickSetting(designerSettings, ['showBankDetails'], true) !== false
             ? [
-                { label: 'Bank', value: designerSettings.bankName },
-                { label: 'Account', value: designerSettings.bankAccount },
-                { label: 'IBAN', value: designerSettings.bankIBAN },
-                { label: 'SWIFT / BIC', value: designerSettings.bankSWIFT },
+                { label: 'Bank', value: firstNonEmpty(company.bankName, designerSettings.bankName) },
+                { label: 'Account', value: firstNonEmpty(company.bankAccountNumber, designerSettings.bankAccount) },
+                { label: 'IBAN', value: firstNonEmpty(company.bankIban, designerSettings.bankIBAN) },
+                { label: 'SWIFT / BIC', value: firstNonEmpty(company.bankSwift, designerSettings.bankSWIFT) },
             ].filter((row) => row.value)
             : [],
         showItemTable: items.length > 0 && pickSetting(designerSettings, ['showItemsTable', 'showItemTable'], true),
@@ -4113,9 +4229,11 @@ const buildDocumentHtml = (template, data, options = {}, renderTarget = 'print')
                 <main class="content-stack">
                     ${buildPaymentCard(layout)}
                     ${buildItemsTable(layout)}
-                    ${buildSummarySection(layout, renderTarget)}
-                    ${buildSignatureBlock(layout)}
-                    ${buildStampBlock(layout, renderTarget)}
+                    <div class="document-footer-group">
+                        ${buildSummarySection(layout, renderTarget)}
+                        ${buildSignatureBlock(layout)}
+                        ${buildStampBlock(layout, renderTarget)}
+                    </div>
                     ${buildPrintDateStamp(layout, renderTarget)}
                     ${buildPageNumbers(layout, renderTarget)}
                 </main>

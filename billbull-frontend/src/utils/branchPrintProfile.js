@@ -44,6 +44,12 @@ export const buildDocumentHeaderProfile = ({ company = {}, branches = [], branch
         trn: branch.trnNumber || company.trn,
         fax: branch.fax || company.fax,
         logoUrl: branch.logoUrl || company.logoUrl,
+        // Bank details for the document footer come from the branch first;
+        // company values fill any gaps so an unset branch still prints something.
+        bankName: branch.bankName || company.bankName,
+        bankAccountNumber: branch.bankAccountNumber || company.bankAccountNumber,
+        bankIban: branch.bankIban || company.bankIban,
+        bankSwift: branch.bankSwift || company.bankSwift,
         // Carry useful context the templates may reference.
         branchName: branch.name,
         branchCode: branch.code,

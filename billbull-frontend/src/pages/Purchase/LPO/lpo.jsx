@@ -62,7 +62,7 @@ import { formatDisplayDate } from '../../../utils/dateUtils';
 
 // Printing Utilities
 import { getTemplatesByCategory } from '../../../api/printTemplateApi';
-import { generatePrintHtmlAsync, printHtml } from '../../../utils/printGenerator';
+import { generatePrintHtmlAsync, printHtml, downloadPdf } from '../../../utils/printGenerator';
 import { buildDocumentHeaderProfile } from '../../../utils/branchPrintProfile';
 import billBullLogo from '../../../assets/billBullLogo.png';
 import {
@@ -660,6 +660,13 @@ const ListView = ({ lpos, processedData, onEdit, onView, onPrint, activeFilter, 
                           onClick={() => onPrint(row)}
                         >
                           <Printer className="h-3.5 w-3.5" />
+                        </button>
+                        <button
+                          className="p-1.5 rounded hover:bg-slate-100 text-slate-500 hover:text-slate-900"
+                          title="Download PDF"
+                          onClick={(e) => { e.stopPropagation(); onDownload && onDownload(row); }}
+                        >
+                          <Download className="h-3.5 w-3.5" />
                         </button>
                         <button
                           className="p-1.5 rounded hover:bg-amber-100 text-amber-600 hover:text-amber-700 border border-transparent hover:border-amber-200"
@@ -2651,6 +2658,30 @@ const LPOList = () => {
     }
   };
 
+  const handleDownloadLPO = async (lpo) => {
+    const loadingToast = toast.loading('Preparing download...');
+    try {
+      setLoading(true);
+      const detailedLpo = await getLpoByNumber(lpo.lpoNumber);
+      const [templates, latestVendors] = await Promise.all([getTemplatesByCategory('Local Purchase Order'), getVendors().catch(() => vendors || [])]);
+      const defaultTemplate = resolvePurchasePrintTemplate('Local Purchase Order', templates);
+      if (defaultTemplate) {
+        const fullVendor = findVendorRecord(latestVendors, detailedLpo, detailedLpo?.vendorName);
+        const printData = buildLpoPrintData(detailedLpo, fullVendor, company);
+        const html = await generatePrintHtmlAsync(defaultTemplate, printData, { companyProfile: buildDocumentHeaderProfile({ company, branches: availableBranches || [], branchId: detailedLpo?.branchId ?? activeBranch?.id }), billBullLogo });
+        await downloadPdf(html, detailedLpo?.lpoNumber || lpo?.lpoNumber || 'LPO');
+      } else {
+        toast.error("No default template for LPO found.");
+      }
+    } catch (error) {
+      console.error("Download error:", error);
+      toast.error("Failed to generate download.");
+    } finally {
+      toast.dismiss(loadingToast);
+      setLoading(false);
+    }
+  };
+
   const handleReviewAuto = (suggestion) => {
     const newLPO = {
       lpoNumber: `AUTO-${Date.now()}`,
@@ -3107,6 +3138,7 @@ const LPOList = () => {
                 onProceedToInvoice={handleProceedToInvoice}
                 onConvertToGrn={handleConvertToGrn}
                 onPrint={handlePrintLPO}
+                onDownload={handleDownloadLPO}
                 onAdvancePayment={handleOpenAdvancePaymentModal}
                 onPrintPaymentVoucher={handlePrintPaymentVoucher}
                 searchQuery={searchQuery}
@@ -3147,6 +3179,7 @@ const LPOList = () => {
                 onSave={handleSaveDraft}
                 onSubmit={handleSubmitForApproval}
                 onPrint={handlePrintLPO}
+                onDownload={handleDownloadLPO}
                 onRevert={handleRevertLPO}
                 isReadOnly={isViewOnly}
                 followUpNotes={isViewOnly ? followUpNotes : undefined}

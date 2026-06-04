@@ -410,6 +410,83 @@ export const generateReportPrintHtml = (_template, reportTitle, columns, data, c
 </html>`;
 };
 
+// Renders the generated HTML to a real PDF file and downloads it directly —
+// no print dialog, no new tab. Uses a hidden iframe for layout fidelity, then
+// html2canvas to rasterise each A4 page, assembled by jsPDF.
+export const downloadPdf = async (htmlContent, filename = 'document') => {
+    const [{ default: html2canvas }, { default: jsPDF }] = await Promise.all([
+        import('html2canvas'),
+        import('jspdf'),
+    ]);
+
+    const A4_W_MM = 210;
+    const A4_H_MM = 297;
+
+    // Render in a hidden off-screen iframe so all inline styles and @font-face
+    // rules apply correctly (can't do this with a plain div).
+    const iframe = document.createElement('iframe');
+    iframe.style.cssText =
+        'position:fixed;left:-9999px;top:0;width:794px;height:1123px;' +
+        'border:none;visibility:hidden;background:#fff;';
+    document.body.appendChild(iframe);
+
+    try {
+        await new Promise((resolve, reject) => {
+            iframe.onload = resolve;
+            iframe.onerror = reject;
+            iframe.srcdoc = htmlContent;
+        });
+
+        // Allow fonts / images to finish loading
+        await new Promise(r => setTimeout(r, 1200));
+
+        const iframeDoc = iframe.contentDocument || iframe.contentWindow.document;
+        const totalH = iframeDoc.documentElement.scrollHeight;
+        iframe.style.height = `${totalH}px`;
+
+        // Re-allow layout to settle at the new height
+        await new Promise(r => setTimeout(r, 200));
+
+        const fullCanvas = await html2canvas(iframeDoc.body, {
+            scale: 2,
+            useCORS: true,
+            allowTaint: true,
+            backgroundColor: '#ffffff',
+            width: 794,
+            height: totalH,
+            windowWidth: 794,
+            logging: false,
+        });
+
+        const pdf = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+        const canvasW = fullCanvas.width;
+        // How many canvas pixels equal one A4 page in height?
+        const a4PagePx = Math.round(canvasW * (A4_H_MM / A4_W_MM));
+        const totalPages = Math.ceil(fullCanvas.height / a4PagePx);
+
+        for (let page = 0; page < totalPages; page++) {
+            if (page > 0) pdf.addPage();
+
+            const srcY = page * a4PagePx;
+            const srcH = Math.min(a4PagePx, fullCanvas.height - srcY);
+
+            const pageCanvas = document.createElement('canvas');
+            pageCanvas.width = canvasW;
+            pageCanvas.height = a4PagePx;
+            const ctx = pageCanvas.getContext('2d');
+            ctx.fillStyle = '#ffffff';
+            ctx.fillRect(0, 0, canvasW, a4PagePx);
+            ctx.drawImage(fullCanvas, 0, srcY, canvasW, srcH, 0, 0, canvasW, srcH);
+
+            pdf.addImage(pageCanvas.toDataURL('image/jpeg', 0.92), 'JPEG', 0, 0, A4_W_MM, A4_H_MM);
+        }
+
+        pdf.save(`${filename}.pdf`);
+    } finally {
+        if (iframe.parentNode) iframe.parentNode.removeChild(iframe);
+    }
+};
+
 export const printHtml = (htmlContent) => {
     // Remove any previous print frame
     const existing = document.getElementById('__bb_print_frame__');

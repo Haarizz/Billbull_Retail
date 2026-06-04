@@ -80,7 +80,7 @@ import useShortcuts from '../../../hooks/useShortcuts';
 
 // Printing Utilities
 import { getTemplatesByCategory } from '../../../api/printTemplateApi';
-import { generatePrintHtmlAsync, printHtml } from '../../../utils/printGenerator';
+import { generatePrintHtmlAsync, printHtml, downloadPdf } from '../../../utils/printGenerator';
 import { buildDocumentHeaderProfile } from '../../../utils/branchPrintProfile';
 import billBullLogo from '../../../assets/billBullLogo.png';
 import toast from 'react-hot-toast';
@@ -309,6 +309,7 @@ const GRNListView = ({ data, onView, onEdit, onDelete, onPost, onPrint, onProcee
                       )}
 
                       <button onClick={(e) => { e.stopPropagation(); onPrint && onPrint(row); }} className="p-1.5 hover:bg-slate-100 rounded text-slate-500 hover:text-slate-800" title="Print"><Printer className="h-3.5 w-3.5" /></button>
+                      <button onClick={(e) => { e.stopPropagation(); onDownload && onDownload(row); }} className="p-1.5 hover:bg-slate-100 rounded text-slate-500 hover:text-slate-800" title="Download PDF"><Download className="h-3.5 w-3.5" /></button>
                     </div>
                   </td>
                 </tr>
@@ -2741,6 +2742,29 @@ const GRN = () => {
     }
   };
 
+  const handleDownload = async (grn) => {
+    const loadingToast = toast.loading('Preparing download...');
+    try {
+      const [templates, vendorData] = await Promise.all([getTemplatesByCategory('Goods Receipt Note').catch(() => []), getVendors().catch(() => [])]);
+      const defaultTemplate = resolvePurchasePrintTemplate('Goods Receipt Note', templates);
+      let fullGrn = grn;
+      const grnId = grn?.dbId ?? grn?.id;
+      if ((!grn?.items || grn.items.length === 0) && grnId != null) {
+        try { fullGrn = await getGrnById(grnId); } catch { /* use what we have */ }
+      }
+      const fullVendor = findVendorRecord(vendorData, fullGrn, fullGrn?.vendor, fullGrn?.vendorName);
+      const printData = buildGrnPrintData(fullGrn, fullVendor, company);
+      const grnBranchId = fullGrn?.branchId ?? grn?.branchId ?? activeBranch?.id;
+      const html = await generatePrintHtmlAsync(defaultTemplate, printData, { companyProfile: buildDocumentHeaderProfile({ company, branches: availableBranches || [], branchId: grnBranchId }), billBullLogo });
+      await downloadPdf(html, fullGrn?.grnNumber || grn?.grnNumber || 'GRN');
+    } catch (error) {
+      console.error("Error downloading GRN:", error);
+      toast.error('Failed to generate download');
+    } finally {
+      toast.dismiss(loadingToast);
+    }
+  };
+
   const handleNewGRN = () => {
     setCurrentGrnData(null);
     setActiveNavTab('editor');
@@ -2757,6 +2781,7 @@ const GRN = () => {
             onDelete={handleDelete}
             onPost={handlePost}
             onPrint={handlePrint}
+            onDownload={handleDownload}
             onProceedToInvoice={handleProceedToInvoice}
             activeFilter={activeFilter}
             setActiveFilter={setActiveFilter}
@@ -2781,6 +2806,7 @@ const GRN = () => {
           onSubmitQC={handleSubmitQC}
           onPost={handlePost}
           onPrint={handlePrint}
+            onDownload={handleDownload}
           grnType={grnType}
           setGrnType={setGrnType}
         />;
@@ -2799,6 +2825,7 @@ const GRN = () => {
         onDelete={handleDelete}
         onPost={handlePost}
         onPrint={handlePrint}
+            onDownload={handleDownload}
         onProceedToInvoice={handleProceedToInvoice}
         activeFilter={activeFilter}
         setActiveFilter={setActiveFilter}

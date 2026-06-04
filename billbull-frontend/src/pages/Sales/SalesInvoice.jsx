@@ -66,7 +66,7 @@ import { computeLineTaxTotals, resolveLineTaxRate } from '../../utils/vatMath';
 import { getActiveVatRate } from '../../api/taxApi';
 import { getWarehouses } from '../../api/warehouseApi';
 import { getTemplatesByCategory, getTemplateFamily } from '../../api/printTemplateApi';
-import { generatePrintHtmlAsync, printHtml } from '../../utils/printGenerator';
+import { generatePrintHtmlAsync, printHtml, downloadPdf } from '../../utils/printGenerator';
 import { generateOverlayInvoiceHtml } from '../../utils/overlayInvoiceRenderer';
 import { buildDocumentHeaderProfile } from '../../utils/branchPrintProfile';
 import SendDocumentEmailModal from '../../components/SendDocumentEmailModal';
@@ -2691,6 +2691,21 @@ const SalesInvoice = () => {
         return buildInvoiceHtml(buildCurrentFormPrintSource(), { titleOverride });
     };
 
+    const handleDownloadClick = async (invoice = null) => {
+        const isListView = invoice && invoice.invoiceNumber;
+        const dataToPrint = isListView ? invoice : buildCurrentFormPrintSource();
+        if (!dataToPrint.items || dataToPrint.items.length === 0) return;
+        const printStatus = (isListView ? invoice.status : status) || 'DRAFT';
+        const FINALIZED = ['CONFIRMED', 'POSTED', 'PAID', 'PARTIALLY_PAID', 'COMPLETED', 'OVERDUE'];
+        const titleOverride = FINALIZED.includes(printStatus.toUpperCase()) ? 'TAX INVOICE' : 'SALES INVOICE';
+        setIsPrinting(true);
+        try {
+            const html = await buildInvoiceHtml(dataToPrint, { titleOverride });
+            if (html) await downloadPdf(html, dataToPrint.invoiceNumber || 'Sales-Invoice');
+        } catch (e) { console.error('Download error:', e); }
+        finally { setIsPrinting(false); }
+    };
+
     const handlePrintClick = async (invoice = null, chosenTemplate = null) => {
         const isListView = invoice && invoice.invoiceNumber;
         const dataToPrint = isListView ? invoice : buildCurrentFormPrintSource();
@@ -3250,6 +3265,7 @@ const SalesInvoice = () => {
                                                     <div className="flex justify-end gap-2 whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
                                                         <button onClick={() => handleLoadInvoice(inv)} className="p-1 hover:bg-slate-200 rounded text-slate-500" title="Edit"><Edit size={14} /></button>
                                                         <button onClick={() => handlePrintClick(inv)} disabled={isPrinting} className="p-1 hover:bg-slate-200 rounded text-slate-500 disabled:opacity-50" title="Print"><Printer size={14} /></button>
+                                                        <button onClick={() => handleDownloadClick(inv)} disabled={isPrinting} className="p-1 hover:bg-slate-200 rounded text-slate-500 disabled:opacity-50" title="Download PDF"><Download size={14} /></button>
                                                         <button
                                                             onClick={() => handleViewReceipts(inv)}
                                                             className="p-1 hover:bg-indigo-100 rounded text-indigo-600"

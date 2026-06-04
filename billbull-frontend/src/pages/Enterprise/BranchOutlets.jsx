@@ -31,6 +31,10 @@ const EMPTY_FORM = {
     email: '',
     website: '',
     trnNumber: '',
+    bankName: '',
+    bankAccountNumber: '',
+    bankIban: '',
+    bankSwift: '',
     logoUrl: '',
     stampUrl: '',
     logoFile: null,
@@ -155,6 +159,10 @@ const BranchOutlets = () => {
             email: b.email || '',
             website: b.website || '',
             trnNumber: b.trnNumber || '',
+            bankName: b.bankName || '',
+            bankAccountNumber: b.bankAccountNumber || '',
+            bankIban: b.bankIban || '',
+            bankSwift: b.bankSwift || '',
             logoUrl: b.logoUrl || '',
             stampUrl: b.stampUrl || '',
             logoFile: null,
@@ -221,6 +229,10 @@ const BranchOutlets = () => {
                 email: form.email.trim() || null,
                 website: form.website?.trim() || null,
                 trnNumber: form.trnNumber.trim() || null,
+                bankName: form.bankName?.trim() || null,
+                bankAccountNumber: form.bankAccountNumber?.trim() || null,
+                bankIban: form.bankIban?.trim() || null,
+                bankSwift: form.bankSwift?.trim() || null,
                 sortOrder: Number(form.sortOrder) || 0,
                 defaultWarehouseId: editId && form.defaultWarehouseId ? Number(form.defaultWarehouseId) : null,
                 status: form.status,
@@ -318,6 +330,10 @@ const BranchOutlets = () => {
                 email: branch.email,
                 website: branch.website,
                 trnNumber: branch.trnNumber,
+                bankName: branch.bankName,
+                bankAccountNumber: branch.bankAccountNumber,
+                bankIban: branch.bankIban,
+                bankSwift: branch.bankSwift,
                 logoUrl: branch.logoUrl,
                 sortOrder: branch.sortOrder,
                 defaultWarehouseId: branch.defaultWarehouseId,
@@ -1047,6 +1063,35 @@ const BranchOutlets = () => {
                                             <input type="text" value={form.logoUrl}
                                                 onChange={e => setForm(f => ({ ...f, logoUrl: e.target.value }))}
                                                 className={inputCls} placeholder="/uploads/logos/branch-x.png" />
+                                        </div>
+
+                                        <div className="col-span-2 mt-2 pt-4 border-t border-slate-100">
+                                            <h4 className="text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">Bank Details</h4>
+                                            <p className="text-[11px] text-slate-400 mb-3">Printed in the document footer (Bank Details section) for this branch's transactions.</p>
+                                        </div>
+                                        <div>
+                                            <label className="block text-xs font-medium text-slate-600 mb-1">Bank Name</label>
+                                            <input type="text" value={form.bankName}
+                                                onChange={e => setForm(f => ({ ...f, bankName: e.target.value }))}
+                                                className={inputCls} placeholder="Emirates NBD" />
+                                        </div>
+                                        <div>
+                                            <label className="block text-xs font-medium text-slate-600 mb-1">Account Number</label>
+                                            <input type="text" value={form.bankAccountNumber}
+                                                onChange={e => setForm(f => ({ ...f, bankAccountNumber: e.target.value }))}
+                                                className={inputCls} placeholder="1012345678" />
+                                        </div>
+                                        <div>
+                                            <label className="block text-xs font-medium text-slate-600 mb-1">IBAN</label>
+                                            <input type="text" value={form.bankIban}
+                                                onChange={e => setForm(f => ({ ...f, bankIban: e.target.value }))}
+                                                className={inputCls} placeholder="AE07 0330 0000 0102 1450 801" />
+                                        </div>
+                                        <div>
+                                            <label className="block text-xs font-medium text-slate-600 mb-1">SWIFT / BIC</label>
+                                            <input type="text" value={form.bankSwift}
+                                                onChange={e => setForm(f => ({ ...f, bankSwift: e.target.value }))}
+                                                className={inputCls} placeholder="EBILAEAD" />
                                         </div>
                                     </div>
                                 )}

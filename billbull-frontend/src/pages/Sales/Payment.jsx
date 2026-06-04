@@ -23,7 +23,8 @@ import {
     Receipt,
     ArrowUpRight,
     ArrowDownRight,
-    Banknote
+    Banknote,
+    Download
 } from 'lucide-react';
 
 // API Imports
@@ -35,7 +36,7 @@ import { getAllCustomers, getOpeningInvoicesByCustomerCode } from '../../api/cus
 import { getBankAccounts } from '../../api/ledgerApi';
 import { getSalesSettings } from '../../api/salesSettingsApi';
 import { getTemplatesByCategory } from '../../api/printTemplateApi';
-import { generatePrintHtmlAsync, printHtml } from '../../utils/printGenerator';
+import { generatePrintHtmlAsync, printHtml, downloadPdf } from '../../utils/printGenerator';
 import { buildDocumentHeaderProfile } from '../../utils/branchPrintProfile';
 import { useCompany } from '../../context/CompanyContext';
 import { useBranch } from '../../context/BranchContext';
@@ -357,7 +358,19 @@ const Payment = () => {
         }
     };
 
-
+    const handleDownload = async (payment) => {
+        if (!payment) return;
+        try {
+            const templates = await getTemplatesByCategory('Receipt Voucher');
+            const defaultTemplate = (templates && templates.find(t => t.isDefault)) || { category: 'Receipt Voucher', paperSize: 'A4', orientation: 'Portrait', headerContent: '', footerContent: '', termsContent: '', displayOptions: { showLogo: true, showCompanyDetails: true, showCustomerDetails: true, showTerms: false }, columns: { qty: false, unitPrice: false, taxableAmount: false, tax: false, discount: false, total: true } };
+            const amount = Number(payment.amount) || 0;
+            const invoiceAmt = Number(payment.invoiceAmount) || amount;
+            const branchProfile = buildDocumentHeaderProfile({ company, branches: availableBranches || [], branchId: payment?.branchId ?? activeBranch?.id });
+            const printData = { receiptData: { receiptNumber: payment.paymentNo || '', date: payment.date || '', status: payment.status || 'Completed', session: null, invoiceCount: payment.invoiceNo ? '1 invoice' : null, account: null, bankAccount: payment.bankName || null }, customerData: { name: payment.customerName || '', code: payment.customerCode || '', address: '', phone: '', email: '', trn: '', crn: '' }, invoices: payment.invoiceNo ? [{ ref: payment.invoiceNo, soRef: '', date: payment.date || '', total: invoiceAmt, outstanding: invoiceAmt, received: amount, balance: Math.max(invoiceAmt - amount, 0), status: Math.max(invoiceAmt - amount, 0) <= 0 ? 'Fully paid' : 'Partial' }] : [], summary: { totalOutstanding: invoiceAmt, discount: 0, remaining: Math.max(invoiceAmt - amount, 0), totalReceived: amount }, payment: { method: payment.mode || '', depositedTo: payment.bankName || '', chequeRef: payment.reference || '', chequeDate: payment.chequeDate || '' }, note: payment.notes || '', title: 'PAYMENT RECEIPT', docNo: payment.paymentNo, date: payment.date, customer: { name: payment.customerName || '' }, totals: { subTotal: amount, tax: 0, grandTotal: amount, currency: company?.currencySymbol || company?.currency || 'AED' }, meta: { status: payment.status || 'Completed', paymentMode: payment.mode || '' } };
+            const html = await generatePrintHtmlAsync(defaultTemplate, printData, { companyProfile: branchProfile, billBullLogo });
+            await downloadPdf(html, payment.paymentNo || 'Payment-Receipt');
+        } catch (err) { console.error('Download error', err); }
+    };
 
     // ==========================================
     // HANDLERS
@@ -893,6 +906,7 @@ const Payment = () => {
                                                             <button onClick={() => handleLoadPayment(payment)} title="Edit" className="p-1 hover:bg-slate-200 rounded text-slate-500"><Edit size={14} /></button>
                                                         )}
                                                         <button onClick={() => handlePrint(payment)} title="Print" className="p-1 hover:bg-slate-200 rounded text-slate-500"><Printer size={14} /></button>
+                                                        <button onClick={() => handleDownload(payment)} title="Download PDF" className="p-1 hover:bg-slate-200 rounded text-slate-500"><Download size={14} /></button>
                                                     </div>
                                                 </td>
                                             </tr>

@@ -19,6 +19,10 @@ public class BranchResponse {
     private String trnNumber;
     private String logoUrl;
     private String stampUrl;
+    private String bankName;
+    private String bankAccountNumber;
+    private String bankIban;
+    private String bankSwift;
     private int sortOrder;
     private boolean isDefault;
     private boolean isHeadquarters;
@@ -46,6 +50,10 @@ public class BranchResponse {
         r.trnNumber = b.getTrnNumber();
         r.logoUrl = b.getLogoUrl();
         r.stampUrl = b.getStampUrl();
+        r.bankName = b.getBankName();
+        r.bankAccountNumber = b.getBankAccountNumber();
+        r.bankIban = b.getBankIban();
+        r.bankSwift = b.getBankSwift();
         r.sortOrder = b.getSortOrder();
         r.isDefault = b.isDefault();
         r.isHeadquarters = b.isHeadquarters();
@@ -104,6 +112,18 @@ public class BranchResponse {
 
     public String getStampUrl() { return stampUrl; }
     public void setStampUrl(String stampUrl) { this.stampUrl = stampUrl; }
+
+    public String getBankName() { return bankName; }
+    public void setBankName(String bankName) { this.bankName = bankName; }
+
+    public String getBankAccountNumber() { return bankAccountNumber; }
+    public void setBankAccountNumber(String bankAccountNumber) { this.bankAccountNumber = bankAccountNumber; }
+
+    public String getBankIban() { return bankIban; }
+    public void setBankIban(String bankIban) { this.bankIban = bankIban; }
+
+    public String getBankSwift() { return bankSwift; }
+    public void setBankSwift(String bankSwift) { this.bankSwift = bankSwift; }
 
     public int getSortOrder() { return sortOrder; }
     public void setSortOrder(int sortOrder) { this.sortOrder = sortOrder; }

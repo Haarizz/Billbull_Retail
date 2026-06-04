@@ -31,7 +31,7 @@ import { formatDisplayDate } from '../../../utils/dateUtils';
 
 // Printing Utilities
 import { getTemplatesByCategory } from '../../../api/printTemplateApi';
-import { generatePrintHtmlAsync, printHtml } from '../../../utils/printGenerator';
+import { generatePrintHtmlAsync, printHtml, downloadPdf } from '../../../utils/printGenerator';
 import billBullLogo from '../../../assets/billBullLogo.png';
 import toast from 'react-hot-toast';
 import {
@@ -616,6 +616,24 @@ const PaymentVoucher = () => {
         } catch (error) {
             console.error("Error printing Voucher:", error);
             toast.error('Failed to generate print layout');
+        } finally {
+            toast.dismiss(loadingToast);
+        }
+    };
+
+    const handleDownloadVoucher = async (voucher) => {
+        const loadingToast = toast.loading('Preparing download...');
+        try {
+            const [templates, voucherDetail] = await Promise.all([getTemplatesByCategory('Payment Voucher').catch(() => []), getPaymentVoucherById(voucher.dbId)]);
+            const defaultTemplate = resolvePurchasePrintTemplate('Payment Voucher', templates);
+            const fullVendor = findVendorRecord(vendors, voucherDetail, voucherDetail?.vendorName);
+            const linkedInvoice = purchaseInvoices.find((invoice) => Number(invoice.id ?? invoice.dbId) === Number(voucherDetail.invoiceId) || Number(invoice.dbId) === Number(voucherDetail.invoiceId) || String(invoice.invoiceNumber || '') === String(voucherDetail.invoiceId || '')) || null;
+            const printData = buildPaymentVoucherPrintData(voucherDetail, fullVendor, company, linkedInvoice);
+            const html = await generatePrintHtmlAsync(defaultTemplate, printData, { companyProfile: buildDocumentHeaderProfile({ company, branches: availableBranches || [], branchId: voucherDetail?.branch?.id ?? voucher?.branchId ?? activeBranch?.id }), billBullLogo });
+            await downloadPdf(html, voucherDetail?.voucherNumber || voucher?.voucherNumber || 'Payment-Voucher');
+        } catch (error) {
+            console.error("Error downloading Voucher:", error);
+            toast.error('Failed to generate download');
         } finally {
             toast.dismiss(loadingToast);
         }
@@ -1265,6 +1283,9 @@ const PaymentVoucher = () => {
                                                         </button>
                                                         <button onClick={() => handlePrintVoucher(row)} className="p-1.5 border border-slate-200 rounded hover:bg-slate-100 text-slate-500" title="Print">
                                                             <Printer className="w-3 h-3" />
+                                                        </button>
+                                                        <button onClick={() => handleDownloadVoucher(row)} className="p-1.5 border border-slate-200 rounded hover:bg-slate-100 text-slate-500" title="Download PDF">
+                                                            <Download className="w-3 h-3" />
                                                         </button>
                                                     </div>
                                                 </td>

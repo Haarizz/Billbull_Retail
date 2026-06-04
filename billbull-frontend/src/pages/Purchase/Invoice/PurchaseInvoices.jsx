@@ -55,7 +55,7 @@ import { getListSerialNumber, withListSerialNumbers } from '../../../utils/seria
 
 // Printing Utilities
 import { getTemplatesByCategory } from '../../../api/printTemplateApi';
-import { generatePrintHtmlAsync, printHtml } from '../../../utils/printGenerator';
+import { generatePrintHtmlAsync, printHtml, downloadPdf } from '../../../utils/printGenerator';
 import { buildDocumentHeaderProfile } from '../../../utils/branchPrintProfile';
 import billBullLogo from '../../../assets/billBullLogo.png';
 import toast from 'react-hot-toast';
@@ -746,6 +746,7 @@ const InvoiceListView = ({ invoices, filteredInvoices, activeFilter, setActiveFi
                     <div className="flex items-center justify-center gap-1 opacity-100">
                       <button onClick={() => onView(row)} className="p-1.5 rounded hover:bg-slate-100 text-slate-500 hover:text-slate-900" title="View"><Eye className="h-3 w-3" /></button>
                       <button onClick={() => onPrint(row)} className="p-1.5 rounded hover:bg-slate-100 text-slate-500 hover:text-slate-900" title="Print"><Printer className="h-3 w-3" /></button>
+                      <button onClick={() => onDownload && onDownload(row)} className="p-1.5 rounded hover:bg-slate-100 text-slate-500 hover:text-slate-900" title="Download PDF"><Download className="h-3 w-3" /></button>
                       {row.payment !== 'PAID' && row.status !== 'DRAFT' && row.status !== 'Draft' && (
                         <button onClick={() => onPay(row)} className="p-1.5 rounded hover:bg-slate-100 text-slate-500 hover:text-slate-900" title="Pay"><CreditCard className="h-3 w-3" /></button>
                       )}
@@ -3094,6 +3095,30 @@ const PurchaseInvoices = () => {
     }
   };
 
+  const handleDownload = async (invoice) => {
+    const loadingToast = toast.loading('Preparing download...');
+    try {
+      const templatesPromise = getTemplatesByCategory('Purchase Invoice').catch(() => []);
+      const vendorsPromise = getVendors().catch(() => []);
+      let printableInvoice = invoice;
+      if (invoice?.dbId) {
+        try { printableInvoice = await getInvoiceById(invoice.dbId); } catch { /* use what we have */ }
+      }
+      const [templates, vendorData] = await Promise.all([templatesPromise, vendorsPromise]);
+      const defaultTemplate = resolvePurchasePrintTemplate('Purchase Invoice', templates);
+      const fullVendor = findVendorRecord(vendorData, printableInvoice, printableInvoice?.vendorName, printableInvoice?.vendor);
+      const printData = buildPurchaseInvoicePrintData(printableInvoice, fullVendor, company);
+      const piBranchId = printableInvoice?.branchId ?? invoice?.branchId ?? activeBranch?.id;
+      const html = await generatePrintHtmlAsync(defaultTemplate, printData, { companyProfile: buildDocumentHeaderProfile({ company, branches: availableBranches || [], branchId: piBranchId }), billBullLogo });
+      await downloadPdf(html, printableInvoice?.invoiceNumber || invoice?.invoiceNumber || 'Purchase-Invoice');
+    } catch (error) {
+      console.error("Error downloading Invoice:", error);
+      toast.error('Failed to generate download');
+    } finally {
+      toast.dismiss(loadingToast);
+    }
+  };
+
   const handleOpenPayment = (invoice) => {
     setPaymentInvoice(invoice);
   };
@@ -3224,6 +3249,7 @@ const PurchaseInvoices = () => {
             setSearchQuery={setSearchQuery}
             onView={handleView}
             onPrint={handlePrint}
+            onDownload={handleDownload}
             onPay={handleOpenPayment}
             onRefresh={loadInvoices}
             dateRange={dateRange}
@@ -3255,6 +3281,7 @@ const PurchaseInvoices = () => {
           onSchedulePayment={handleOpenSchedule}
           editInvoice={editInvoice} // Pass Prop
           onPrint={handlePrint}
+            onDownload={handleDownload}
           mode={editorMode}
           onBackToList={() => {
             setActiveNavTab("list");
@@ -3285,6 +3312,7 @@ const PurchaseInvoices = () => {
           setSearchQuery={setSearchQuery}
           onView={handleView}
           onPrint={handlePrint}
+            onDownload={handleDownload}
           onPay={handleOpenPayment}
           onRefresh={loadInvoices}
           dateRange={dateRange}
