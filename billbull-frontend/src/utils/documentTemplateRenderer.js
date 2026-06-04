@@ -2286,6 +2286,11 @@ const buildTemplateThemeStyles = (layout) => {
         .document-watermark span {
             color: ${theme.accentColor};
         }
+        ${layout.showRowLines === false ? `
+        .document-table { border-top: 0; }
+        .document-table thead th { border-bottom: 0; }
+        .table-cell, .table-empty { border-bottom: 0; }
+        ` : ''}
     `;
 };
 
@@ -2772,6 +2777,7 @@ const normalisePurchaseLayout = (template, data, companyProfile, renderTarget, o
         showWatermark: pickSetting(designerSettings, ['showWatermark'], false),
         hasDesignerWatermarkToggle: Object.prototype.hasOwnProperty.call(designerSettings, 'showWatermark'),
         watermarkText: asText(designerSettings.watermarkText || 'ORIGINAL'),
+        showRowLines: pickSetting(designerSettings, ['showRowLines'], true),
         highlight: {
             label: summaryLabel,
             value: asNumber(summaryValue)
@@ -2947,6 +2953,7 @@ const normaliseSalesDesignerLayout = (template, data, companyProfile, renderTarg
         showWatermark: pickSetting(designerSettings, ['showWatermark'], false),
         hasDesignerWatermarkToggle: Object.prototype.hasOwnProperty.call(designerSettings, 'showWatermark'),
         watermarkText: asText(designerSettings.watermarkText || 'ORIGINAL'),
+        showRowLines: pickSetting(designerSettings, ['showRowLines'], true),
         highlight: {
             label: totals.balanceDue > 0 ? 'Balance Due' : 'Grand Total',
             value: asNumber(summaryValue)

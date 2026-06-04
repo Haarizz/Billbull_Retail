@@ -74,6 +74,7 @@ function defaultSettings(docType) {
     paperSize: "A4",
     logoUrl: "",
     stampUrl: "",
+    showRowLines: true,
     showLogo: true,
     showCompanyName: true,
     showCompanyAddress: true,
@@ -750,6 +751,7 @@ function DocumentTemplateDesigner({ docType, templateName, initialSettings, onCl
   }
             {tab === "table" && <>
               <SectionLabel icon={<Table className="h-3 w-3" />} label="Table Columns" />
+              <Row label="Row Separator Lines"><Toggle value={s.showRowLines !== false} onChange={(v) => upd("showRowLines", v)} /></Row>
               <Row label="# Line No."><Toggle value={s.colNo} onChange={(v) => upd("colNo", v)} /></Row>
               <Row label="Product Image"><Toggle value={s.colProductImage} onChange={(v) => upd("colProductImage", v)} /></Row>
               <Row label="Item Code / Name"><Toggle value={s.colItemCode} onChange={(v) => upd("colItemCode", v)} /></Row>

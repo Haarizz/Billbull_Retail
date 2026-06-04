@@ -1220,6 +1220,10 @@ function InvoiceOverlayDesigner({ mode, templateName, initialSettings, onClose, 
                               <Label className="text-xs font-normal">Zebra Striping</Label>
                               <Switch checked={Boolean(selectedF.zebra)} onCheckedChange={(v) => updateField("items_table", { zebra: v })} />
                             </div>
+                            <div className="flex items-center justify-between p-2 border rounded">
+                              <Label className="text-xs font-normal">Row Separator Lines</Label>
+                              <Switch checked={selectedF.showRowLines !== false} onCheckedChange={(v) => updateField("items_table", { showRowLines: v })} />
+                            </div>
                             <div className="text-[11px] text-muted-foreground">
                               {OVERLAY_TABLE_COLUMNS.filter((c) => (selectedF.columns || DEFAULT_TABLE_COLUMNS)[c.key]).length} of {OVERLAY_TABLE_COLUMNS.length} columns enabled. Drag the ▬ handle on the canvas to set table height.
                             </div>
@@ -1649,7 +1653,7 @@ function InvoiceOverlayDesigner({ mode, templateName, initialSettings, onClose, 
                           <div style={{ fontSize: "6px", color: "#6b7a8a" }}>{IMAGE_FIELD_LABELS[field.id]}</div>
                         </div> : <>
                         <div style={{ display: isTotalsNumeric ? "flex" : "none", alignItems: "baseline", width: "100%", fontSize: `${field.fontSize}pt`, fontFamily: field.fontFamily, fontStyle: field.italic ? "italic" : "normal", color: showSampleValues ? field.color : CATEGORY_COLORS[field.category], borderBottom: isSelected ? `1px solid ${CATEGORY_COLORS[field.category]}` : "1px dashed transparent", lineHeight: 1.3, overflow: "hidden" }}>
-                            <span style={{ flex: 1, textAlign: "right", whiteSpace: "nowrap", overflow: "hidden", paddingRight: `${2 * scale}px`, fontWeight: 400, color: "#6b7a8a" }}>{field.label}</span>
+                            <span style={{ flex: 1, textAlign: field.align || "right", whiteSpace: "nowrap", overflow: "hidden", paddingRight: `${2 * scale}px`, fontWeight: 400, color: "#6b7a8a" }}>{field.label}</span>
                             <img src={UAE_DIRHAM_SYMBOL_IMAGE} alt="AED" style={{ height: "0.85em", width: "auto", flexShrink: 0, verticalAlign: "-0.07em", marginRight: `${2 * scale}px` }} />
                             <span style={{ width: `${22 * scale}px`, flexShrink: 0, textAlign: "right", whiteSpace: "nowrap", fontWeight: field.bold ? 700 : 400 }}>{numericSampleText}</span>
                           </div>

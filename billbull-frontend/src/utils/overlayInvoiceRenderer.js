@@ -245,17 +245,20 @@ const renderItemsTable = (field, data, options = {}) => {
     if (cols.length === 0) return '';
     const showHeader = options.showHeader !== false && field.showHeader !== false;
     const zebra = Boolean(field.zebra);
+    const showRowLines = field.showRowLines !== false;
     const totalFlex = cols.reduce((sum, c) => sum + c.flex, 0);
     const indexOffset = options.indexOffset || 0;
 
     const colGroup = cols.map((c) => `<col style="width:${(c.flex / totalFlex * 100).toFixed(2)}%;" />`).join('');
 
-    const headerCells = cols.map((c) => `<th style="padding:1mm 1.5mm;border-bottom:0.4mm solid #333;text-align:${c.align};white-space:nowrap;">${escapeHtml(c.label)}</th>`).join('');
+    const headerBorder = showRowLines ? 'border-bottom:0.4mm solid #333;' : '';
+    const headerCells = cols.map((c) => `<th style="padding:1mm 1.5mm;${headerBorder}text-align:${c.align};white-space:nowrap;">${escapeHtml(c.label)}</th>`).join('');
 
     const rows = items.map((it, idx) => {
         const globalIdx = idx + indexOffset;
         const bg = zebra && globalIdx % 2 === 1 ? 'background:rgba(0,0,0,0.035);' : '';
-        const cells = cols.map((c) => `<td style="padding:1mm 1.5mm;border-bottom:0.2mm solid #ccc;text-align:${c.align};${bg}">${cellValue(c.key, it, globalIdx)}</td>`).join('');
+        const rowBorder = showRowLines ? 'border-bottom:0.2mm solid #ccc;' : '';
+        const cells = cols.map((c) => `<td style="padding:1mm 1.5mm;${rowBorder}text-align:${c.align};${bg}">${cellValue(c.key, it, globalIdx)}</td>`).join('');
         return `<tr>${cells}</tr>`;
     }).join('');
 
@@ -334,8 +337,9 @@ const renderField = (f, data, company, printOnlyValues, logoUrl, stampUrl) => {
 
         if (showLabel) {
             // 3-column: label | symbol | amount — fixed widths keep all rows aligned
+            const labelAlign = f.align || 'right';
             return `<div style="${styleBits};display:flex;align-items:baseline;">
-                <span style="flex:1;text-align:right;white-space:nowrap;overflow:hidden;padding-right:2mm;font-weight:400;color:#6b7a8a;">${escapeHtml(f.label)}</span>
+                <span style="flex:1;text-align:${labelAlign};white-space:nowrap;overflow:hidden;padding-right:2mm;font-weight:400;color:#6b7a8a;">${escapeHtml(f.label)}</span>
                 <span style="width:9mm;flex-shrink:0;text-align:right;white-space:nowrap;padding-right:2mm;">${symHtml}</span>
                 <span style="width:22mm;flex-shrink:0;text-align:right;white-space:nowrap;font-weight:${f.bold ? '700' : '400'};">${escapeHtml(numericStr)}</span>
             </div>`;
