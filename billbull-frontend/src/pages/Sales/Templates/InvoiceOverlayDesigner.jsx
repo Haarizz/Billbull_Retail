@@ -1644,18 +1644,19 @@ function InvoiceOverlayDesigner({ mode, templateName, initialSettings, onClose, 
                         </div> : isImg ? <div style={{ width: field.width * scale, height: field.width * scale, border: `1px dashed ${isSelected ? CATEGORY_COLORS[field.category] : "#cbd5e1"}`, borderRadius: "4px", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", background: isSelected ? "rgba(156, 163, 175, 0.15)" : "rgba(156, 163, 175, 0.06)", gap: "3px" }}>
                           {isQR ? <div style={{ width: "60%", height: "60%", background: "repeating-conic-gradient(#0f1923 0% 25%, #fff 0% 50%) 0 0 / 5px 5px", borderRadius: "2px" }} /> : <FileImage style={{ width: "40%", height: "40%", color: "#94a3b8" }} />}
                           <div style={{ fontSize: "6px", color: "#6b7a8a" }}>{IMAGE_FIELD_LABELS[field.id]}</div>
-                        </div> : isTotalsNumeric
-                        ? <div style={{ display: "flex", alignItems: "baseline", width: "100%", fontSize: `${field.fontSize}pt`, fontFamily: field.fontFamily, fontStyle: field.italic ? "italic" : "normal", color: showSampleValues ? field.color : CATEGORY_COLORS[field.category], borderBottom: isSelected ? `1px solid ${CATEGORY_COLORS[field.category]}` : "1px dashed transparent", lineHeight: 1.3, overflow: "hidden" }}>
+                        </div> : <>
+                        <div style={{ display: isTotalsNumeric ? "flex" : "none", alignItems: "baseline", width: "100%", fontSize: `${field.fontSize}pt`, fontFamily: field.fontFamily, fontStyle: field.italic ? "italic" : "normal", color: showSampleValues ? field.color : CATEGORY_COLORS[field.category], borderBottom: isSelected ? `1px solid ${CATEGORY_COLORS[field.category]}` : "1px dashed transparent", lineHeight: 1.3, overflow: "hidden" }}>
                             <span style={{ flex: 1, textAlign: field.align || "right", whiteSpace: "nowrap", overflow: "hidden", paddingRight: `${2 * scale}px`, fontWeight: 400, color: "#6b7a8a" }}>{field.label}</span>
                             <img src={UAE_DIRHAM_SYMBOL_IMAGE} alt="AED" style={{ height: "0.85em", width: "auto", flexShrink: 0, verticalAlign: "-0.07em", marginRight: `${2 * scale}px` }} />
                             <span style={{ width: `${22 * scale}px`, flexShrink: 0, textAlign: "right", whiteSpace: "nowrap", fontWeight: field.bold ? 700 : 400 }}>{numericSampleText}</span>
                           </div>
-                        : <div style={{ fontSize: `${field.fontSize}pt`, fontFamily: field.fontFamily, fontWeight: field.bold ? 700 : 400, fontStyle: field.italic ? "italic" : "normal", color: showSampleValues ? field.color : CATEGORY_COLORS[field.category], textAlign: field.align, borderBottom: isSelected ? `1px solid ${CATEGORY_COLORS[field.category]}` : "1px dashed transparent", padding: "1px 2px", whiteSpace: "nowrap", overflow: "hidden", lineHeight: 1.3 }}>
+                        <div style={{ display: isTotalsNumeric ? "none" : undefined, fontSize: `${field.fontSize}pt`, fontFamily: field.fontFamily, fontWeight: field.bold ? 700 : 400, fontStyle: field.italic ? "italic" : "normal", color: showSampleValues ? field.color : CATEGORY_COLORS[field.category], textAlign: field.align, borderBottom: isSelected ? `1px solid ${CATEGORY_COLORS[field.category]}` : "1px dashed transparent", padding: "1px 2px", whiteSpace: "nowrap", overflow: "hidden", lineHeight: 1.3 }}>
                           {text}
-                        </div>}
-                      {field.locked && <div style={{ position: "absolute", top: -6, right: -6 }}>
+                        </div>
+                        </>}
+                      <div style={{ position: "absolute", top: -6, right: -6, display: field.locked ? undefined : "none" }}>
                           <Lock style={{ width: "10px", height: "10px", color: "#f59e0b" }} />
-                        </div>}
+                        </div>
                       {/* Table resize handle — drag to set tableHeight */}
                       {isTableField && isSelected && drawTool === "select" && !field.locked && (
                         <div
