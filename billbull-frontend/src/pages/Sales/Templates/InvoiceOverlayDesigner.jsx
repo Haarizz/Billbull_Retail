@@ -485,7 +485,7 @@ function InvoiceOverlayDesigner({ mode, templateName, initialSettings, onClose, 
     return { x1, y1, w, h };
   })() : null;
   const drawToolCursor = drawTool === "select" ? "default" : "crosshair";
-  return <div className="fixed inset-0 bg-[#F0F0F3] z-50 overflow-hidden flex flex-col">
+  return <div className="fixed inset-0 bg-[#F0F0F3] z-50 overflow-hidden flex flex-col notranslate" translate="no">
 
       {
     /* ── Top bar ── */
@@ -883,8 +883,15 @@ function InvoiceOverlayDesigner({ mode, templateName, initialSettings, onClose, 
     >
                                 <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: field.enabled ? CATEGORY_COLORS[field.category] : "#cbd5e1" }} />
                                 <span className={`text-xs font-medium flex-1 truncate ${field.enabled ? "text-gray-700" : "text-gray-400"}`}>{field.label}</span>
-                                {field.enabled && !isSel && <span className="text-[10px] text-muted-foreground tabular-nums hidden sm:inline">{field.x},{field.y}</span>}
-                                {field.locked && <Lock className="h-3 w-3 text-amber-500 flex-shrink-0" />}
+                                <span
+                                  className="w-11 text-right text-[10px] text-muted-foreground tabular-nums hidden sm:inline-block"
+                                  style={{ visibility: field.enabled && !isSel ? "visible" : "hidden" }}
+                                >
+                                  {field.x},{field.y}
+                                </span>
+                                <span className="h-3 w-3 flex-shrink-0" style={{ visibility: field.locked ? "visible" : "hidden" }}>
+                                  <Lock className="h-3 w-3 text-amber-500" />
+                                </span>
                                 <button
       title={field.locked ? "Unlock position" : "Lock position"}
       onClick={(e) => {
