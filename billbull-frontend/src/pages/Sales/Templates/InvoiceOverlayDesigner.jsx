@@ -83,6 +83,7 @@ const makeLine = (type, x, y, w, h) => ({
   dashPattern: "4,2",
   fillColor: "#ffffff",
   fillOpacity: 0,
+  repeatOnContinuation: false,
   locked: false
 });
 // Image-style fields render as a placeholder box on the canvas and pull a real
@@ -1171,6 +1172,13 @@ function InvoiceOverlayDesigner({ mode, templateName, initialSettings, onClose, 
                         <div className="flex items-center justify-between p-2 border rounded">
                           <Label className="text-xs font-normal">Lock Position</Label>
                           <Switch checked={selectedD.locked} onCheckedChange={(v) => updateDrawing(selectedD.id, { locked: v })} />
+                        </div>
+                        <div className="flex items-center justify-between p-2 border rounded">
+                          <div>
+                            <Label className="text-xs font-medium">Show on Page 2+</Label>
+                            <div className="text-[10px] text-muted-foreground">Repeat this drawing on continuation pages</div>
+                          </div>
+                          <Switch checked={Boolean(selectedD.repeatOnContinuation)} onCheckedChange={(v) => updateDrawing(selectedD.id, { repeatOnContinuation: v })} />
                         </div>
                         <div className="flex gap-2">
                           <Button size="sm" variant="outline" className="flex-1" onClick={() => duplicateDrawing(selectedD.id)}>

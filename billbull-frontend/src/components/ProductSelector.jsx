@@ -8,6 +8,7 @@ import { getUnits } from '../api/unitsApi';
 import CurrencyAmount from './CurrencyAmount';
 import toast from 'react-hot-toast';
 import { pickSalesItemPrice } from '../utils/salesPricing';
+import { useBranch } from '../context/BranchContext';
 const PAGE_SIZE = 15;
 const RECENT_KEY = 'billbull_recent_products';
 const MAX_RECENT = 5;
@@ -59,6 +60,7 @@ const getRecentIds = () => {
 
 const normalizeRecentProduct = (product, detail = null) => {
     const detailProduct = detail?.product || {};
+    const detailPricing = detail?.effectivePricing || detail?.pricing || null;
     const primaryUnitName = detail?.inventory?.defaultUnit?.name || '';
     const detailPackings = Array.isArray(detail?.inventory?.packings) ? detail.inventory.packings : [];
     const derivedUnits = detailPackings
@@ -106,13 +108,13 @@ const normalizeRecentProduct = (product, detail = null) => {
         image: primaryImage,
         primaryImage,
         barcode: product?.barcode || primaryBarcode || '',
-        cost: detail?.pricing?.cost ?? product?.cost ?? null,
-        retailPrice: detail?.pricing?.retailPrice ?? product?.retailPrice ?? product?.sellingPrice ?? null,
-        sellingPrice: detail?.pricing?.retailPrice ?? product?.sellingPrice ?? product?.retailPrice ?? null,
+        cost: detailPricing?.cost ?? product?.cost ?? null,
+        retailPrice: detailPricing?.retailPrice ?? product?.retailPrice ?? product?.sellingPrice ?? null,
+        sellingPrice: detailPricing?.retailPrice ?? product?.sellingPrice ?? product?.retailPrice ?? null,
         // Expose min/max sale prices so the configured Sales Item Price
         // Policy (RETAIL / MAX_SALE / MIN_SALE) can pick the right default.
-        minPrice: detail?.pricing?.minPrice ?? product?.minPrice ?? null,
-        maxPrice: detail?.pricing?.maxPrice ?? product?.maxPrice ?? null,
+        minPrice: detailPricing?.minPrice ?? product?.minPrice ?? null,
+        maxPrice: detailPricing?.maxPrice ?? product?.maxPrice ?? null,
         stock: product?.stock ?? detailProduct?.stock ?? 0,
         category:
             product?.category ||
@@ -126,7 +128,7 @@ const normalizeRecentProduct = (product, detail = null) => {
         unitConversions: product?.unitConversions || derivedConversions,
         unitPrices: product?.unitPrices || derivedPrices,
         unitCosts: product?.unitCosts || derivedCosts,
-        pricing: detail?.pricing || product?.pricing || null,
+        pricing: detailPricing || product?.pricing || null,
         inventory: detail?.inventory || product?.inventory || null,
         packings: product?.packings || detail?.inventory?.packings || [],
     };
@@ -335,6 +337,7 @@ const ProductSelector = ({
     const [entryQty, setEntryQty] = useState('1');
     const [entryPrice, setEntryPrice] = useState('');
     const [entryDisc, setEntryDisc] = useState('0');
+    const { activeBranchId } = useBranch();
 
     const debounceRef = useRef(null);
     const abortRef = useRef(null);   // AbortController for current in-flight request
@@ -532,7 +535,7 @@ const ProductSelector = ({
         return () => {
             active = false;
         };
-    }, [isOpen, warehouseId, loadRecentProducts]); // eslint-disable-line react-hooks/exhaustive-deps
+    }, [isOpen, warehouseId, activeBranchId, loadRecentProducts]); // eslint-disable-line react-hooks/exhaustive-deps
 
     // Debounce search → always reset to page 0
     useEffect(() => {
@@ -543,7 +546,7 @@ const ProductSelector = ({
             fetchProducts(searchQuery, 0, warehouseId);
         }, 350);
         return () => clearTimeout(debounceRef.current);
-    }, [searchQuery, isOpen]); // eslint-disable-line react-hooks/exhaustive-deps
+    }, [searchQuery, isOpen, activeBranchId]); // eslint-disable-line react-hooks/exhaustive-deps
 
     // ── Keyboard navigation ──────────────────────────────────────────────────
     const handleKeyDown = (e) => {
