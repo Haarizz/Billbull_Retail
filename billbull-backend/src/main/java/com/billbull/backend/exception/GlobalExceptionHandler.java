@@ -2,6 +2,7 @@ package com.billbull.backend.exception;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.slf4j.MDC;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.AccessDeniedException;
@@ -9,6 +10,7 @@ import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 
 import com.billbull.backend.financials.generalledger.postingengine.PostingException;
+import com.billbull.backend.logging.RequestLoggingFilter;
 
 import java.util.Map;
 
@@ -23,20 +25,21 @@ public class GlobalExceptionHandler {
      */
     @ExceptionHandler(PostingException.class)
     public ResponseEntity<Map<String, String>> handlePosting(PostingException ex) {
-        log.warn("PostingException [{}]: {}", ex.getCode(), ex.getMessage());
+        log.warn("PostingException [{}] requestId={}: {}", ex.getCode(), requestId(), ex.getMessage());
         return ResponseEntity
                 .unprocessableEntity()
                 .body(Map.of(
                         "code", ex.getCode().name(),
-                        "message", ex.getMessage() != null ? ex.getMessage() : ex.getCode().name()));
+                        "message", ex.getMessage() != null ? ex.getMessage() : ex.getCode().name(),
+                        "requestId", requestId()));
     }
 
     @ExceptionHandler(RuntimeException.class)
     public ResponseEntity<Map<String, String>> handleRuntime(RuntimeException ex) {
-        log.error("RuntimeException caught: {}", ex.getMessage(), ex);
+        log.error("RuntimeException caught requestId={}: {}", requestId(), ex.getMessage(), ex);
         return ResponseEntity
                 .badRequest()
-                .body(Map.of("message", ex.getMessage() != null ? ex.getMessage() : "Bad request"));
+                .body(errorBody(ex.getMessage() != null ? ex.getMessage() : "Bad request"));
     }
 
     /**
@@ -44,9 +47,10 @@ public class GlobalExceptionHandler {
      */
     @ExceptionHandler(IllegalStateException.class)
     public ResponseEntity<Map<String, String>> handleIllegalState(IllegalStateException ex) {
+        log.warn("IllegalStateException requestId={}: {}", requestId(), ex.getMessage());
         return ResponseEntity
                 .status(HttpStatus.CONFLICT)
-                .body(Map.of("message", ex.getMessage() != null ? ex.getMessage() : "Conflict"));
+                .body(errorBody(ex.getMessage() != null ? ex.getMessage() : "Conflict"));
     }
 
     /**
@@ -54,8 +58,20 @@ public class GlobalExceptionHandler {
      */
     @ExceptionHandler(AccessDeniedException.class)
     public ResponseEntity<Map<String, String>> handleAccessDenied(AccessDeniedException ex) {
+        log.warn("AccessDeniedException requestId={}: {}", requestId(), ex.getMessage());
         return ResponseEntity
                 .status(HttpStatus.FORBIDDEN)
-                .body(Map.of("message", "Access denied"));
+                .body(errorBody("Access denied"));
+    }
+
+    private Map<String, String> errorBody(String message) {
+        return Map.of(
+                "message", message,
+                "requestId", requestId());
+    }
+
+    private String requestId() {
+        String requestId = MDC.get(RequestLoggingFilter.REQUEST_ID_MDC_KEY);
+        return requestId == null || requestId.isBlank() ? "" : requestId;
     }
 }

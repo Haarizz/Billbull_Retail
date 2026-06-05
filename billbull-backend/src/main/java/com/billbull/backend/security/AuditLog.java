@@ -42,6 +42,30 @@ public class AuditLog extends BaseEntity {
     @Column(nullable = false)
     private LocalDateTime accessTime;
 
+    @Column(length = 120)
+    private String requestId;
+
+    private Long branchId;
+
+    @Column(length = 60)
+    private String eventType;
+
+    @Column(length = 120)
+    private String entityType;
+
+    @Column(length = 120)
+    private String entityId;
+
+    @Column(columnDefinition = "TEXT")
+    private String details;
+
+    private Integer httpStatus;
+
+    private Long durationMs;
+
+    @Column(length = 200)
+    private String clientHost;
+
     // Getters and Setters
 
     public Long getId() {
@@ -126,5 +150,77 @@ public class AuditLog extends BaseEntity {
 
     public void setAccessTime(LocalDateTime accessTime) {
         this.accessTime = accessTime;
+    }
+
+    public String getRequestId() {
+        return requestId;
+    }
+
+    public void setRequestId(String requestId) {
+        this.requestId = requestId;
+    }
+
+    public Long getBranchId() {
+        return branchId;
+    }
+
+    public void setBranchId(Long branchId) {
+        this.branchId = branchId;
+    }
+
+    public String getEventType() {
+        return eventType;
+    }
+
+    public void setEventType(String eventType) {
+        this.eventType = eventType;
+    }
+
+    public String getEntityType() {
+        return entityType;
+    }
+
+    public void setEntityType(String entityType) {
+        this.entityType = entityType;
+    }
+
+    public String getEntityId() {
+        return entityId;
+    }
+
+    public void setEntityId(String entityId) {
+        this.entityId = entityId;
+    }
+
+    public String getDetails() {
+        return details;
+    }
+
+    public void setDetails(String details) {
+        this.details = details;
+    }
+
+    public Integer getHttpStatus() {
+        return httpStatus;
+    }
+
+    public void setHttpStatus(Integer httpStatus) {
+        this.httpStatus = httpStatus;
+    }
+
+    public Long getDurationMs() {
+        return durationMs;
+    }
+
+    public void setDurationMs(Long durationMs) {
+        this.durationMs = durationMs;
+    }
+
+    public String getClientHost() {
+        return clientHost;
+    }
+
+    public void setClientHost(String clientHost) {
+        this.clientHost = clientHost;
     }
 }

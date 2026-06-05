@@ -1,5 +1,7 @@
 package com.billbull.backend.financials.audit;
 
+import com.billbull.backend.logging.LogContext;
+
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
@@ -29,6 +31,7 @@ public class FinancialAuditService {
         log.setUsername(username);
         log.setTimestamp(LocalDateTime.now());
         log.setDetails(details);
+        applyContext(log);
         repository.save(log);
     }
 
@@ -45,6 +48,7 @@ public class FinancialAuditService {
         log.setTimestamp(LocalDateTime.now());
         log.setDetails(details);
         log.setPreviousState(previousState);
+        applyContext(log);
         repository.save(log);
     }
 
@@ -74,5 +78,15 @@ public class FinancialAuditService {
      */
     public List<FinancialAuditLog> getAllLogs() {
         return repository.findAllByOrderByTimestampDesc();
+    }
+
+    private void applyContext(FinancialAuditLog log) {
+        log.setRequestId(LogContext.get(LogContext.REQUEST_ID));
+        log.setBranchId(LogContext.getLong(LogContext.BRANCH_ID));
+        log.setClientHost(LogContext.get(LogContext.CLIENT_HOST));
+        if ((log.getUsername() == null || log.getUsername().isBlank() || "System".equalsIgnoreCase(log.getUsername()))
+                && !LogContext.get(LogContext.USERNAME).isBlank()) {
+            log.setUsername(LogContext.get(LogContext.USERNAME));
+        }
     }
 }

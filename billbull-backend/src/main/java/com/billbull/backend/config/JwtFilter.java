@@ -11,6 +11,8 @@ import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.core.context.SecurityContextHolder;
@@ -19,9 +21,12 @@ import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
 
 import com.billbull.backend.security.BranchContextHolder;
+import com.billbull.backend.logging.LogContext;
 
 @Component
 public class JwtFilter extends OncePerRequestFilter {
+
+    private static final Logger log = LoggerFactory.getLogger(JwtFilter.class);
 
     private final JwtUtil jwtUtil;
 
@@ -46,13 +51,14 @@ public class JwtFilter extends OncePerRequestFilter {
             if (jwtUtil.isTokenValid(token)) {
 
                 String username = jwtUtil.extractUsername(token);
+                Long userId = jwtUtil.extractUserId(token);
                 List<String> roles = jwtUtil.extractRoles(token);
-                System.out.println("JWT Filter - Username: " + username + " Roles: " + roles);
+                log.debug("JWT authenticated username={} roles={}", username, roles);
 
                 List<SimpleGrantedAuthority> authorities = roles != null ? roles.stream()
                         .map(r -> new SimpleGrantedAuthority("ROLE_" + r))
                         .collect(Collectors.toList()) : List.of();
-                System.out.println("JWT Filter - Authorities: " + authorities);
+                log.debug("JWT authorities={}", authorities);
 
                 UsernamePasswordAuthenticationToken authentication = new UsernamePasswordAuthenticationToken(
                         username,
@@ -75,6 +81,12 @@ public class JwtFilter extends OncePerRequestFilter {
                 }
 
                 Long activeBranchId = resolveActiveBranchId(request, jwtBranchId, isAllBranches, allowed);
+
+                LogContext.put(LogContext.USER_ID, userId);
+                LogContext.put(LogContext.USERNAME, username);
+                LogContext.put(LogContext.ROLES, roles != null ? String.join(",", roles) : "NONE");
+                LogContext.put(LogContext.BRANCH_ID, activeBranchId != null ? activeBranchId : "ALL");
+                LogContext.put(LogContext.ALL_BRANCHES, isAllBranches);
 
                 BranchContextHolder.set(new BranchContextHolder.BranchContext(
                         activeBranchId,

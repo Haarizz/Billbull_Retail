@@ -1,7 +1,10 @@
 package com.billbull.backend.security;
 
+import com.billbull.backend.logging.LogContext;
 import com.billbull.backend.user.UserRepository;
+
 import jakarta.servlet.http.HttpServletRequest;
+
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
@@ -10,12 +13,16 @@ import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
+import java.util.Locale;
 
 /**
- * Service for logging all RBAC access attempts.
+ * Service for RBAC access logs and ERP business audit events.
  */
 @Service
 public class AuditLogService {
+
+    private static final Long SYSTEM_USER_ID = -1L;
+    private static final int MAX_DETAIL_LENGTH = 4000;
 
     private final AuditLogRepository auditLogRepository;
 
@@ -26,9 +33,6 @@ public class AuditLogService {
         this.auditLogRepository = auditLogRepository;
     }
 
-    /**
-     * Log an access attempt (allowed or denied).
-     */
     @Transactional
     public void logAccess(
             Long userId,
@@ -40,50 +44,45 @@ public class AuditLogService {
             String denialReason,
             HttpServletRequest request) {
         AuditLog log = new AuditLog();
-        log.setUserId(userId);
-        log.setUsername(username);
-        log.setRole(role);
-        log.setEndpoint(endpoint);
-        log.setHttpMethod(httpMethod);
+        log.setUserId(resolveUserId(userId, username));
+        log.setUsername(safe(username, currentUsername()));
+        log.setRole(safe(role, currentRoles()));
+        log.setEndpoint(safe(endpoint, "-"));
+        log.setHttpMethod(safe(httpMethod, "-"));
         log.setAction(allowed ? "ALLOWED" : "DENIED");
-        log.setDenialReason(denialReason);
+        log.setDenialReason(truncate(denialReason));
         log.setIpAddress(getClientIp(request));
-        log.setUserAgent(request.getHeader("User-Agent"));
+        log.setUserAgent(request != null ? request.getHeader("User-Agent") : null);
         log.setAccessTime(LocalDateTime.now());
+        log.setEventType("ACCESS");
+        applyRequestContext(log, request);
 
         auditLogRepository.save(log);
     }
 
-    /**
-     * Log allowed access from current authentication context.
-     */
     @Transactional
     public void logAllowedAccess(String endpoint, String httpMethod, HttpServletRequest request) {
         Authentication auth = SecurityContextHolder.getContext().getAuthentication();
-        if (auth != null && auth.getPrincipal() instanceof org.springframework.security.core.userdetails.User) {
-            org.springframework.security.core.userdetails.User userDetails = (org.springframework.security.core.userdetails.User) auth
-                    .getPrincipal();
-
-            String roles = userDetails.getAuthorities().stream()
-                    .map(Object::toString)
-                    .reduce((a, b) -> a + "," + b)
-                    .orElse("NONE");
-
-            logAccess(
-                    null, // userId not easily available from UserDetails
-                    userDetails.getUsername(),
-                    roles,
-                    endpoint,
-                    httpMethod,
-                    true,
-                    null,
-                    request);
+        if (auth == null || !auth.isAuthenticated()) {
+            return;
         }
+
+        String roles = auth.getAuthorities().stream()
+                .map(Object::toString)
+                .reduce((a, b) -> a + "," + b)
+                .orElse("NONE");
+
+        logAccess(
+                LogContext.getLong(LogContext.USER_ID),
+                auth.getName(),
+                roles,
+                endpoint,
+                httpMethod,
+                true,
+                null,
+                request);
     }
 
-    /**
-     * Log denied access.
-     */
     @Transactional
     public void logDeniedAccess(
             String username,
@@ -102,56 +101,158 @@ public class AuditLogService {
                 request);
     }
 
-    /**
-     * Log a domain event (no HTTP context) — for service-layer audit such as
-     * Branch CRUD, HQ-change, and user-branch-assignment changes (PDF §11.3).
-     *
-     * Uses REQUIRES_NEW so an audit-log insert failure (NOT-NULL violations,
-     * stale repo lookup, etc.) doesn't roll back the caller's business
-     * transaction. The caller wraps this in try/catch as a second line of
-     * defense.
-     */
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void logDomainEvent(String entityType, String entityId, String action, String detail) {
-        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
-        String username = auth != null && auth.getName() != null ? auth.getName() : "SYSTEM";
-
-        Long userId = null;
-        if (userRepository != null && !"SYSTEM".equals(username)) {
-            try {
-                userId = userRepository.findByUsername(username).map(u -> u.getId()).orElse(null);
-            } catch (Exception ignored) {
-                // best-effort lookup
-            }
-        }
-        // audit_logs.user_id is NOT NULL — fall back to a sentinel that won't
-        // collide with a real user (0 would conflict with sequence; use -1
-        // which the schema accepts as a Long but never matches a real PK).
-        if (userId == null) {
-            userId = -1L;
-        }
-
         AuditLog log = new AuditLog();
-        log.setUserId(userId);
-        log.setUsername(username);
+        log.setUserId(resolveUserId(null, currentUsername()));
+        log.setUsername(currentUsername());
         log.setRole("DOMAIN");
-        log.setEndpoint(entityType + ":" + (entityId != null ? entityId : "-"));
-        log.setHttpMethod(action);
+        log.setEndpoint(safe(entityType, "ENTITY") + ":" + safe(entityId, "-"));
+        log.setHttpMethod(safe(action, "EVENT"));
         log.setAction("ALLOWED");
-        log.setDenialReason(detail);
+        log.setDenialReason(truncate(detail));
+        log.setEventType("BUSINESS");
+        log.setEntityType(safe(entityType, "ENTITY"));
+        log.setEntityId(safe(entityId, "-"));
+        log.setDetails(truncate(detail));
         log.setAccessTime(LocalDateTime.now());
+        applyRequestContext(log, null);
 
         auditLogRepository.save(log);
     }
 
-    /**
-     * Extract client IP address from request.
-     */
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public void logApiRequestEvent(HttpServletRequest request, int status, long durationMs) {
+        AuditLog log = new AuditLog();
+        log.setUserId(resolveUserId(LogContext.getLong(LogContext.USER_ID), currentUsername()));
+        log.setUsername(currentUsername());
+        log.setRole(currentRoles());
+        log.setEndpoint(request != null ? request.getRequestURI() : LogContext.getOrDefault(LogContext.HTTP_PATH, "-"));
+        log.setHttpMethod(request != null ? request.getMethod() : LogContext.getOrDefault(LogContext.HTTP_METHOD, "-"));
+        log.setAction(status >= 400 ? "FAILED" : "SUCCESS");
+        log.setEventType("API_MUTATION");
+        log.setEntityType("API");
+        log.setEntityId(log.getEndpoint());
+        log.setHttpStatus(status);
+        log.setDurationMs(durationMs);
+        log.setDenialReason(status >= 400 ? "HTTP " + status : null);
+        log.setDetails("status=" + status + ", durationMs=" + durationMs);
+        log.setIpAddress(getClientIp(request));
+        log.setUserAgent(request != null ? request.getHeader("User-Agent") : null);
+        log.setAccessTime(LocalDateTime.now());
+        applyRequestContext(log, request);
+
+        auditLogRepository.save(log);
+    }
+
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public void logClientIssueEvent(String level, String message, String url, String details, HttpServletRequest request) {
+        String normalizedLevel = safe(level, "INFO").toUpperCase(Locale.ROOT);
+        if (!"ERROR".equals(normalizedLevel) && !"WARN".equals(normalizedLevel) && !"WARNING".equals(normalizedLevel)) {
+            return;
+        }
+
+        AuditLog log = new AuditLog();
+        log.setUserId(resolveUserId(LogContext.getLong(LogContext.USER_ID), currentUsername()));
+        log.setUsername(currentUsername());
+        log.setRole(currentRoles());
+        log.setEndpoint(safe(url, "/api/client-logs"));
+        log.setHttpMethod("CLIENT");
+        log.setAction("WARNING".equals(normalizedLevel) ? "WARN" : normalizedLevel);
+        log.setEventType("CLIENT_ISSUE");
+        log.setEntityType("CLIENT_LOG");
+        log.setEntityId(LogContext.getOrDefault(LogContext.REQUEST_ID, "-"));
+        log.setDenialReason(truncate(message));
+        log.setDetails(truncate(details));
+        log.setIpAddress(getClientIp(request));
+        log.setUserAgent(request != null ? request.getHeader("User-Agent") : null);
+        log.setAccessTime(LocalDateTime.now());
+        applyRequestContext(log, request);
+
+        auditLogRepository.save(log);
+    }
+
+    private void applyRequestContext(AuditLog log, HttpServletRequest request) {
+        log.setRequestId(LogContext.get(LogContext.REQUEST_ID));
+        log.setBranchId(LogContext.getLong(LogContext.BRANCH_ID));
+        log.setClientHost(LogContext.getOrDefault(LogContext.CLIENT_HOST, request != null ? request.getServerName() : null));
+    }
+
+    private Long resolveUserId(Long explicitUserId, String username) {
+        if (explicitUserId != null) {
+            return explicitUserId;
+        }
+
+        Long mdcUserId = LogContext.getLong(LogContext.USER_ID);
+        if (mdcUserId != null) {
+            return mdcUserId;
+        }
+
+        if (userRepository != null && username != null
+                && !"SYSTEM".equalsIgnoreCase(username)
+                && !"anonymous".equalsIgnoreCase(username)
+                && !"ANONYMOUS".equalsIgnoreCase(username)) {
+            try {
+                return userRepository.findByUsername(username).map(u -> u.getId()).orElse(SYSTEM_USER_ID);
+            } catch (Exception ignored) {
+                // best-effort lookup
+            }
+        }
+
+        return SYSTEM_USER_ID;
+    }
+
+    private String currentUsername() {
+        String username = LogContext.get(LogContext.USERNAME);
+        if (!username.isBlank()) {
+            return username;
+        }
+
+        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+        if (auth != null && auth.getName() != null) {
+            return auth.getName();
+        }
+
+        return "SYSTEM";
+    }
+
+    private String currentRoles() {
+        String roles = LogContext.get(LogContext.ROLES);
+        if (!roles.isBlank()) {
+            return roles;
+        }
+
+        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+        if (auth != null && auth.getAuthorities() != null) {
+            return auth.getAuthorities().stream()
+                    .map(Object::toString)
+                    .reduce((a, b) -> a + "," + b)
+                    .orElse("NONE");
+        }
+
+        return "NONE";
+    }
+
     private String getClientIp(HttpServletRequest request) {
+        if (request == null) {
+            return null;
+        }
         String xForwardedFor = request.getHeader("X-Forwarded-For");
         if (xForwardedFor != null && !xForwardedFor.isEmpty()) {
             return xForwardedFor.split(",")[0].trim();
         }
         return request.getRemoteAddr();
+    }
+
+    private String safe(String value, String fallback) {
+        return value == null || value.isBlank() ? fallback : value;
+    }
+
+    private String truncate(String value) {
+        if (value == null) {
+            return null;
+        }
+        String text = value.trim();
+        return text.length() <= MAX_DETAIL_LENGTH ? text : text.substring(0, MAX_DETAIL_LENGTH) + "...";
     }
 }
