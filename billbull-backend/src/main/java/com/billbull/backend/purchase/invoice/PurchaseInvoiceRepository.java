@@ -26,12 +26,24 @@ public interface PurchaseInvoiceRepository
 
         List<PurchaseInvoice> findByLpoIdOrReferenceNo(Long lpoId, String referenceNo);
 
-        @Query("SELECT DISTINCT i FROM PurchaseInvoice i LEFT JOIN FETCH i.items "
-                        + "WHERE (:dateFrom IS NULL OR i.invoiceDate >= :dateFrom) "
-                        + "AND (:dateTo IS NULL OR i.invoiceDate <= :dateTo) "
-                        + "ORDER BY i.invoiceDate DESC")
-        List<PurchaseInvoice> findForReports(@Param("dateFrom") java.time.LocalDate dateFrom,
-                        @Param("dateTo") java.time.LocalDate dateTo);
+        @Query("SELECT DISTINCT i FROM PurchaseInvoice i LEFT JOIN FETCH i.items WHERE i.invoiceDate >= :dateFrom AND i.invoiceDate <= :dateTo ORDER BY i.invoiceDate DESC")
+        List<PurchaseInvoice> findForReportsBounded(@Param("dateFrom") java.time.LocalDate dateFrom, @Param("dateTo") java.time.LocalDate dateTo);
+
+        @Query("SELECT DISTINCT i FROM PurchaseInvoice i LEFT JOIN FETCH i.items WHERE i.invoiceDate >= :dateFrom ORDER BY i.invoiceDate DESC")
+        List<PurchaseInvoice> findForReportsFromDate(@Param("dateFrom") java.time.LocalDate dateFrom);
+
+        @Query("SELECT DISTINCT i FROM PurchaseInvoice i LEFT JOIN FETCH i.items WHERE i.invoiceDate <= :dateTo ORDER BY i.invoiceDate DESC")
+        List<PurchaseInvoice> findForReportsToDate(@Param("dateTo") java.time.LocalDate dateTo);
+
+        @Query("SELECT DISTINCT i FROM PurchaseInvoice i LEFT JOIN FETCH i.items ORDER BY i.invoiceDate DESC")
+        List<PurchaseInvoice> findForReportsAll();
+
+        default List<PurchaseInvoice> findForReports(java.time.LocalDate dateFrom, java.time.LocalDate dateTo) {
+                if (dateFrom != null && dateTo != null) return findForReportsBounded(dateFrom, dateTo);
+                if (dateFrom != null) return findForReportsFromDate(dateFrom);
+                if (dateTo != null) return findForReportsToDate(dateTo);
+                return findForReportsAll();
+        }
 
         // --- STATEMENT QUERIES ---
         @org.springframework.data.jpa.repository.Query("SELECT SUM(s.grandTotal) FROM PurchaseInvoice s WHERE s.vendorName = :vendorName AND s.invoiceDate < :startDate AND s.status <> 'CANCELLED'")

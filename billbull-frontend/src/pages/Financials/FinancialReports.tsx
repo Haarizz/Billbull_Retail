@@ -37,6 +37,8 @@ import { getProfitLoss, getBalanceSheet, getTrialBalance, getCashFlow, getTaxDas
 import { exportToPDF, exportToExcel } from "../../utils/exportUtils";
 import { generateReportPrintHtml, printHtml } from "../../utils/printGenerator";
 import { getCompanyProfile } from "../../api/companyProfileApi";
+import { getBranches } from "../../api/branchApi";
+import { getAccounts, getCostCenters } from "../../api/ledgerApi";
 import ExportDropdown from "../../components/common/ExportDropdown";
 
 let mockProfitLossSections: any = null;
@@ -3384,14 +3386,32 @@ export default function FinancialReports({ onNavigate }: { onNavigate?: (s: stri
   const [dateTo, setDateTo] = useState(today);
   const [branch, setBranch] = useState("All");
   const [accountSearch, setAccountSearch] = useState("");
+  const [accountOpen, setAccountOpen] = useState(false);
+  const [selectedAccount, setSelectedAccount] = useState("All");
   const [, setDataRevision] = useState(0);
   const [fetchKey, setFetchKey] = useState(0);
   const [fetchError, setFetchError] = useState<string | null>(null);
   const [fetching, setFetching] = useState(false);
   const [companyProfile, setCompanyProfile] = useState<any>(null);
+  const [branches, setBranches] = useState<{ id: number; name: string }[]>([]);
+  const [accountOptions, setAccountOptions] = useState<{ value: string; label: string }[]>([]);
 
   useEffect(() => {
     getCompanyProfile().then((res) => setCompanyProfile(res.data)).catch(() => {});
+    getBranches()
+      .then((data: any[]) => setBranches(data.filter((b: any) => b.isActive !== false)))
+      .catch(() => {});
+    Promise.all([getAccounts(), getCostCenters()])
+      .then(([accs, ccs]: [any[], any[]]) => {
+        const accOpts = (accs || [])
+          .filter((a: any) => !a.archived && !a.isGroup)
+          .map((a: any) => ({ value: a.code, label: `${a.code} – ${a.name}` }));
+        const ccOpts = (ccs || [])
+          .filter((c: any) => c.status !== "archived")
+          .map((c: any) => ({ value: c.code, label: `CC: ${c.code} – ${c.name}` }));
+        setAccountOptions([...accOpts, ...ccOpts]);
+      })
+      .catch(() => {});
   }, []);
 
   useEffect(() => {
@@ -3819,25 +3839,49 @@ export default function FinancialReports({ onNavigate }: { onNavigate?: (s: stri
                     onChange={(e) => setBranch(e.target.value)}
                     className="w-full h-8 text-[11px] rounded-lg border border-slate-200 bg-slate-50 px-2"
                   >
-                    <option>All</option>
-                    <option>Main Branch</option>
-                    <option>Downtown Branch</option>
-                    <option>Marina Branch</option>
-                    <option>DIFC Branch</option>
+                    <option value="All">All</option>
+                    {branches.map((b) => (
+                      <option key={b.id} value={String(b.id)}>{b.name}</option>
+                    ))}
                   </select>
                 </div>
 
-                <div className="space-y-1.5">
+                <div className="space-y-1.5 relative">
                   <label className="text-[11px] text-slate-600 flex items-center gap-1">
                     <Activity className="h-3.5 w-3.5" />
                     Account / Cost Centre
                   </label>
-                  <Input
-                    placeholder="Search account or cost centre..."
-                    value={accountSearch}
-                    onChange={(e) => setAccountSearch(e.target.value)}
-                    className="h-8 text-[11px] bg-slate-50 border-slate-200"
-                  />
+                  <div className="relative">
+                    <input
+                      type="text"
+                      value={accountOpen ? accountSearch : (selectedAccount === "All" ? "" : selectedAccount)}
+                      placeholder={selectedAccount === "All" ? "All accounts" : selectedAccount}
+                      onFocus={() => { setAccountOpen(true); setAccountSearch(""); }}
+                      onChange={(e) => { setAccountSearch(e.target.value); setAccountOpen(true); }}
+                      onBlur={() => setTimeout(() => setAccountOpen(false), 150)}
+                      className="w-full h-8 text-[11px] rounded-lg border border-slate-200 bg-slate-50 px-2 pr-6"
+                    />
+                    <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 h-3 w-3 text-slate-400 pointer-events-none" />
+                    {accountOpen && (
+                      <div className="absolute z-50 top-full left-0 right-0 mt-0.5 bg-white border border-slate-200 rounded-lg shadow-lg max-h-56 overflow-y-auto">
+                        {[{ value: "All", label: "All accounts" }, ...accountOptions]
+                          .filter(o => !accountSearch || o.label.toLowerCase().includes(accountSearch.toLowerCase()))
+                          .map(o => (
+                            <button
+                              key={o.value}
+                              type="button"
+                              onMouseDown={() => { setSelectedAccount(o.value); setAccountSearch(""); setAccountOpen(false); }}
+                              className={`w-full text-left px-3 py-1.5 text-[11px] hover:bg-[#FFF6D8] ${selectedAccount === o.value ? "bg-[#FFF6D8] font-semibold text-slate-900" : "text-slate-700"}`}
+                            >
+                              {o.label}
+                            </button>
+                          ))}
+                        {accountOptions.filter(o => !accountSearch || o.label.toLowerCase().includes(accountSearch.toLowerCase())).length === 0 && accountSearch && (
+                          <div className="px-3 py-2 text-[11px] text-slate-400">No matches</div>
+                        )}
+                      </div>
+                    )}
+                  </div>
                 </div>
 
                 <div className="flex items-end gap-2 md:col-span-2 xl:col-span-4">
@@ -3846,6 +3890,7 @@ export default function FinancialReports({ onNavigate }: { onNavigate?: (s: stri
                   </Button>
                   <Button
                     variant="ghost"
+                    onClick={handleExportExcel}
                     className="h-8 text-[11px] text-slate-600 flex items-center gap-1"
                   >
                     <Download className="h-3.5 w-3.5" />

@@ -51,6 +51,8 @@ import { getPurchaseReportData } from "../../../api/purchaseReportsApi";
 import { exportToPDF, exportToExcel } from "../../../utils/exportUtils";
 import { generateReportPrintHtml, printHtml } from "../../../utils/printGenerator";
 import { getCompanyProfile } from "../../../api/companyProfileApi";
+import { getBranches } from "../../../api/branchApi";
+import { getVendors } from "../../../api/vendorsApi";
 import ExportDropdown from "../../../components/common/ExportDropdown";
 
 // ---------------------------------------------------------------------------
@@ -2522,17 +2524,30 @@ export default function VendorsPurchasesReports({ onNavigate }: { onNavigate?: (
     compliance: false,
   });
 
-  // Filters
-  const [dateFrom, setDateFrom] = useState("");
-  const [dateTo, setDateTo] = useState("");
+  // Filters — default to current month
+  const _today = new Date();
+  const _firstOfMonth = new Date(_today.getFullYear(), _today.getMonth(), 1).toISOString().split("T")[0];
+  const _todayStr = _today.toISOString().split("T")[0];
+  const [dateFrom, setDateFrom] = useState(_firstOfMonth);
+  const [dateTo, setDateTo] = useState(_todayStr);
   const [vendor, setVendor] = useState("All");
   const [branch, setBranch] = useState("All");
   const [searchText, setSearchText] = useState("");
   const [, setDataRevision] = useState(0);
   const [companyProfile, setCompanyProfile] = useState<any>(null);
+  const [branches, setBranches] = useState<{ id: number; name: string }[]>([]);
+  const [vendorList, setVendorList] = useState<{ id: number; name: string }[]>([]);
+  const [vendorSearch, setVendorSearch] = useState("");
+  const [vendorOpen, setVendorOpen] = useState(false);
 
   useEffect(() => {
     getCompanyProfile().then((res) => setCompanyProfile(res.data)).catch(() => {});
+    getBranches()
+      .then((data: any[]) => setBranches(data.filter((b: any) => b.isActive !== false)))
+      .catch(() => {});
+    getVendors()
+      .then((data: any[]) => setVendorList(data.filter((v: any) => v.isActive !== false).map((v: any) => ({ id: v.id, name: v.name || v.vendorName || String(v.id) }))))
+      .catch(() => {});
   }, []);
 
   async function loadReport(signal?: AbortSignal) {
@@ -2872,24 +2887,42 @@ export default function VendorsPurchasesReports({ onNavigate }: { onNavigate?: (
                   />
                 </div>
 
-                <div className="space-y-1.5">
+                <div className="space-y-1.5 relative">
                   <label className="text-[11px] text-slate-600 flex items-center gap-1">
                     <Truck className="h-3.5 w-3.5" />
                     Vendor
                   </label>
-                  <select
-                    value={vendor}
-                    onChange={(e) => setVendor(e.target.value)}
-                    className="w-full h-8 text-[11px] rounded-lg border border-slate-200 bg-slate-50 px-2"
-                  >
-                    <option>All</option>
-                    <option>Gulf FMCG Co.</option>
-                    <option>Global Supplies LLC</option>
-                    <option>Metro Traders</option>
-                    <option>Tech Solutions Ltd</option>
-                    <option>Desert Frozen Foods</option>
-                    <option>Prime Distributors</option>
-                  </select>
+                  <div className="relative">
+                    <input
+                      type="text"
+                      value={vendorOpen ? vendorSearch : (vendor === "All" ? "" : vendor)}
+                      placeholder={vendor === "All" ? "All" : vendor}
+                      onFocus={() => { setVendorOpen(true); setVendorSearch(""); }}
+                      onChange={(e) => { setVendorSearch(e.target.value); setVendorOpen(true); }}
+                      onBlur={() => setTimeout(() => setVendorOpen(false), 150)}
+                      className="w-full h-8 text-[11px] rounded-lg border border-slate-200 bg-slate-50 px-2 pr-6"
+                    />
+                    <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 h-3 w-3 text-slate-400 pointer-events-none" />
+                    {vendorOpen && (
+                      <div className="absolute z-50 top-full left-0 right-0 mt-0.5 bg-white border border-slate-200 rounded-lg shadow-lg max-h-48 overflow-y-auto">
+                        {[{ id: 0, name: "All" }, ...vendorList]
+                          .filter(o => !vendorSearch || o.name.toLowerCase().includes(vendorSearch.toLowerCase()))
+                          .map(o => (
+                            <button
+                              key={o.id}
+                              type="button"
+                              onMouseDown={() => { setVendor(o.name); setVendorOpen(false); setVendorSearch(""); }}
+                              className={`w-full text-left px-3 py-1.5 text-[11px] hover:bg-[#FFF6D8] ${vendor === o.name ? "bg-[#FFF6D8] font-semibold text-slate-900" : "text-slate-700"}`}
+                            >
+                              {o.name}
+                            </button>
+                          ))}
+                        {vendorList.filter(o => !vendorSearch || o.name.toLowerCase().includes(vendorSearch.toLowerCase())).length === 0 && vendorSearch && (
+                          <div className="px-3 py-2 text-[11px] text-slate-400">No matches</div>
+                        )}
+                      </div>
+                    )}
+                  </div>
                 </div>
 
                 <div className="space-y-1.5">
@@ -2902,10 +2935,10 @@ export default function VendorsPurchasesReports({ onNavigate }: { onNavigate?: (
                     onChange={(e) => setBranch(e.target.value)}
                     className="w-full h-8 text-[11px] rounded-lg border border-slate-200 bg-slate-50 px-2"
                   >
-                    <option>All</option>
-                    <option>Main Branch</option>
-                    <option>Dubai Branch</option>
-                    <option>Abu Dhabi Branch</option>
+                    <option value="All">All</option>
+                    {branches.map((b) => (
+                      <option key={b.id} value={String(b.id)}>{b.name}</option>
+                    ))}
                   </select>
                 </div>
 
@@ -2925,7 +2958,7 @@ export default function VendorsPurchasesReports({ onNavigate }: { onNavigate?: (
                   <Button onClick={() => loadReport()} className="flex-1 h-8 text-[11px] bg-[#F5C742] hover:bg-[#e4b82e] text-slate-900">
                     Generate
                   </Button>
-                  <Button variant="ghost" className="h-8 text-[11px] text-slate-600 flex items-center gap-1">
+                  <Button variant="ghost" onClick={handleExportExcel} className="h-8 text-[11px] text-slate-600 flex items-center gap-1">
                     <Download className="h-3.5 w-3.5" />
                     Export
                   </Button>

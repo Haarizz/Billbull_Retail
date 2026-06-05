@@ -313,6 +313,18 @@ public class SalesInvoiceService {
         // ENFORCE INTEGRITY: Invoices never deduct stock directly; we defer to Delivery
         // Notes
 
+        // Capture salesperson from audit createdBy when not explicitly set
+        if (invoice.getId() == null && (invoice.getSalesperson() == null || invoice.getSalesperson().isBlank())) {
+            String principal = org.springframework.security.core.context.SecurityContextHolder
+                    .getContext().getAuthentication() != null
+                    ? org.springframework.security.core.context.SecurityContextHolder
+                            .getContext().getAuthentication().getName()
+                    : null;
+            if (principal != null && !principal.isBlank()) {
+                invoice.setSalesperson(principal);
+            }
+        }
+
         SalesInvoice saved = invoiceRepo.save(invoice);
 
         if (shouldCreateDraftPickingNote(saved, settings)) {

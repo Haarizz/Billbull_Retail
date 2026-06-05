@@ -90,10 +90,22 @@ public interface PaymentVoucherRepository extends JpaRepository<PaymentVoucher, 
     List<Object[]> sumPostedByModeScoped(@Param("allBranches") boolean allBranches,
             @Param("branchIds") Collection<Long> branchIds);
 
-    @Query("SELECT v FROM PaymentVoucher v WHERE "
-            + "(:dateFrom IS NULL OR v.paymentDate >= :dateFrom) "
-            + "AND (:dateTo IS NULL OR v.paymentDate <= :dateTo) "
-            + "ORDER BY v.paymentDate DESC, v.id DESC")
-    List<PaymentVoucher> findForReports(@Param("dateFrom") java.time.LocalDate dateFrom,
-            @Param("dateTo") java.time.LocalDate dateTo);
+    @Query("SELECT v FROM PaymentVoucher v WHERE v.paymentDate >= :dateFrom AND v.paymentDate <= :dateTo ORDER BY v.paymentDate DESC, v.id DESC")
+    List<PaymentVoucher> findForReportsBounded(@Param("dateFrom") java.time.LocalDate dateFrom, @Param("dateTo") java.time.LocalDate dateTo);
+
+    @Query("SELECT v FROM PaymentVoucher v WHERE v.paymentDate >= :dateFrom ORDER BY v.paymentDate DESC, v.id DESC")
+    List<PaymentVoucher> findForReportsFromDate(@Param("dateFrom") java.time.LocalDate dateFrom);
+
+    @Query("SELECT v FROM PaymentVoucher v WHERE v.paymentDate <= :dateTo ORDER BY v.paymentDate DESC, v.id DESC")
+    List<PaymentVoucher> findForReportsToDate(@Param("dateTo") java.time.LocalDate dateTo);
+
+    @Query("SELECT v FROM PaymentVoucher v ORDER BY v.paymentDate DESC, v.id DESC")
+    List<PaymentVoucher> findForReportsAll();
+
+    default List<PaymentVoucher> findForReports(java.time.LocalDate dateFrom, java.time.LocalDate dateTo) {
+        if (dateFrom != null && dateTo != null) return findForReportsBounded(dateFrom, dateTo);
+        if (dateFrom != null) return findForReportsFromDate(dateFrom);
+        if (dateTo != null) return findForReportsToDate(dateTo);
+        return findForReportsAll();
+    }
 }
