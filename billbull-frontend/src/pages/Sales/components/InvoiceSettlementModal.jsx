@@ -15,8 +15,8 @@ import { getNextSalesPaymentNumber } from '../../../api/salesPaymentApi';
 // returned.
 
 const ALL_QUICK_MODES = ['Cash', 'Card', 'Bank Transfer', 'Cheque', 'Credit'];
-const ENTRY_MODES = ['Cash', 'Card', 'Bank Transfer', 'Cheque'];
-const MODE_EMOJI = { Cash: '💵', Card: '💳', 'Bank Transfer': '🏦', Cheque: '🧾' };
+const ENTRY_MODES = ['Cash', 'Card', 'Bank Transfer', 'Cheque', 'Credit'];
+const MODE_EMOJI = { Cash: '💵', Card: '💳', 'Bank Transfer': '🏦', Cheque: '🧾', Credit: '🔑' };
 const today = () => new Date().toISOString().slice(0, 10);
 
 const InvoiceSettlementModal = ({
@@ -68,16 +68,12 @@ const InvoiceSettlementModal = ({
 
     const handleQuickMode = (mode) => {
         setQuickMode(mode);
-        if (mode === 'Credit') {
-            setEntries([{ mode: 'Cash', amount: '0', reference: '', bankAccount: '', chequeDate: today() }]);
-        } else {
-            setEntries(prev => {
-                if (prev.length === 0) {
-                    return [{ mode, amount: invoiceAmount > 0 ? invoiceAmount.toFixed(2) : '0', reference: '', bankAccount: '', chequeDate: today() }];
-                }
-                return prev.map((e, i) => (i === 0 ? { ...e, mode } : e));
-            });
-        }
+        setEntries(prev => {
+            if (prev.length === 0) {
+                return [{ mode, amount: invoiceAmount > 0 ? invoiceAmount.toFixed(2) : '0', reference: '', bankAccount: '', chequeDate: today() }];
+            }
+            return prev.map((e, i) => (i === 0 ? { ...e, mode } : e));
+        });
     };
 
     const addEntry = () => {
@@ -173,9 +169,6 @@ const InvoiceSettlementModal = ({
                                         </button>
                                     ))}
                                 </div>
-                                {quickMode === 'Credit' && (
-                                    <p className="text-[11px] text-slate-500 mt-2">No payment captured — use <strong>Skip Settlement</strong> to leave this invoice on credit.</p>
-                                )}
                             </div>
 
                             {/* Payment entries */}
@@ -215,7 +208,7 @@ const InvoiceSettlementModal = ({
                                     </div>
 
                                     {/* Bank Account — shown for modes that require bank selection */}
-                                    {entry.mode !== 'Cash' && entry.mode !== 'Card' && (
+                                    {entry.mode !== 'Cash' && entry.mode !== 'Card' && entry.mode !== 'Credit' && (
                                         <div className="mt-3 grid grid-cols-2 gap-4">
                                             <div className={entry.mode === 'Cheque' ? '' : 'col-span-2'}>
                                                 <label className="block text-[11px] font-bold text-slate-600 mb-1">Bank Account</label>

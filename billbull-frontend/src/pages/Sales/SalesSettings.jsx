@@ -13,7 +13,8 @@ import {
     Save,
     Settings,
     Tag,
-    Zap
+    Zap,
+    DollarSign
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { getSalesSettings, saveSalesSettings } from '../../api/salesSettingsApi';
@@ -149,6 +150,33 @@ const roundingPrecisions = [
     { value: 0.05, label: '0.05' }
 ];
 
+const zeroPricePolicies = [
+    {
+        value: 'BLOCK',
+        label: 'Block',
+        description: 'Saving or posting is rejected until every line carries a price greater than zero. No exceptions.',
+        icon: Ban,
+        tint: 'bg-rose-100 text-rose-700',
+        badge: 'Default'
+    },
+    {
+        value: 'WARN',
+        label: 'Warn',
+        description: 'A confirmation prompt appears when any item has a zero price. The cashier can still proceed after acknowledging.',
+        icon: AlertTriangle,
+        tint: 'bg-amber-100 text-amber-700',
+        badge: null
+    },
+    {
+        value: 'ALLOW',
+        label: 'Allow',
+        description: 'Zero-price lines are saved freely. Useful for free gifts, promotional items, samples, or bundled giveaways.',
+        icon: Check,
+        tint: 'bg-emerald-100 text-emerald-700',
+        badge: null
+    }
+];
+
 const sectionMeta = {
     stockCheck: {
         title: 'Stock Check',
@@ -191,6 +219,13 @@ const sectionMeta = {
         description: 'Choose how the sales invoice net total is rounded and the rounding step.',
         icon: Settings,
         tint: 'bg-rose-100 text-rose-700'
+    },
+    zeroPrice: {
+        title: 'Zero-Price Item Policy',
+        subtitle: 'Control zero-priced lines on sales documents',
+        description: 'Decide whether items with a unit price of zero can be saved on invoices, orders, and quotations.',
+        icon: DollarSign,
+        tint: 'bg-violet-100 text-violet-700'
     }
 };
 
@@ -331,6 +366,7 @@ const SalesSettings = () => {
     const [salesItemPricePolicy, setSalesItemPricePolicy] = useState('RETAIL');
     const [roundingMode, setRoundingMode] = useState('NEAREST');
     const [roundingPrecision, setRoundingPrecision] = useState(1);
+    const [zeroPricePolicy, setZeroPricePolicy] = useState('BLOCK');
     const [documentNumbering, setDocumentNumbering] = useState(DEFAULT_DOCUMENT_NUMBERING.map((setting) => ({
         ...setting,
         preview: buildPreview(setting)
@@ -346,6 +382,7 @@ const SalesSettings = () => {
                 setSalesItemPricePolicy(data.salesItemPricePolicy ?? 'RETAIL');
                 setRoundingMode(data.roundingMode ?? 'NEAREST');
                 setRoundingPrecision(Number(data.roundingPrecision) > 0 ? Number(data.roundingPrecision) : 1);
+                setZeroPricePolicy(data.zeroPricePolicy ?? 'BLOCK');
                 setDocumentNumbering(normalizeDocumentNumbering(data.documentNumbering));
             } catch (err) {
                 console.error('Failed to load sales settings', err);
@@ -367,6 +404,7 @@ const SalesSettings = () => {
                 salesItemPricePolicy,
                 roundingMode,
                 roundingPrecision,
+                zeroPricePolicy,
                 documentNumbering
             });
             toast.success('Configure & customize saved successfully');
@@ -406,6 +444,7 @@ const SalesSettings = () => {
     const roundingSummary = roundingMode === 'NONE'
         ? 'No rounding'
         : `${roundingModes.find((mode) => mode.value === roundingMode)?.label || 'Nearest'} · step ${Number(roundingPrecision).toFixed(2)}`;
+    const zeroPriceSummary = zeroPricePolicies.find((p) => p.value === zeroPricePolicy)?.label || 'Allow';
 
     const stockCheckModal = showStockCheckModal ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/30 p-4 backdrop-blur-sm">
@@ -511,6 +550,7 @@ const SalesSettings = () => {
                         <HubCard meta={sectionMeta.creditLimit} value={creditSummary} onClick={() => setActiveScreen('creditLimit')} />
                         <HubCard meta={sectionMeta.executionMode} value={modeSummary} onClick={() => setActiveScreen('executionMode')} />
                         <HubCard meta={sectionMeta.itemPrice} value={priceSummary} onClick={() => setActiveScreen('itemPrice')} />
+                        <HubCard meta={sectionMeta.zeroPrice} value={zeroPriceSummary} onClick={() => setActiveScreen('zeroPrice')} />
                         <HubCard meta={sectionMeta.rounding} value={roundingSummary} onClick={() => setActiveScreen('rounding')} />
                         <HubCard meta={sectionMeta.numbering} value={numberingSummary} onClick={() => setActiveScreen('numbering')} />
                     </section>
@@ -599,6 +639,53 @@ const SalesSettings = () => {
 
                     <div className="mt-5 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4 text-sm leading-6 text-slate-700">
                         Users can still edit the price on the document line. This screen controls the default price that appears first when the item is selected.
+                    </div>
+                </SectionShell>
+                {stockCheckModal}
+            </>
+        );
+    }
+
+    if (activeScreen === 'zeroPrice') {
+        return (
+            <>
+                <SectionShell meta={sectionMeta.zeroPrice} onBack={() => setActiveScreen('hub')} onSave={persistSettings} isSaving={isSaving}>
+                    <div className="space-y-4">
+                        {zeroPricePolicies.map((policy) => (
+                            <OptionCard
+                                key={policy.value}
+                                active={zeroPricePolicy === policy.value}
+                                label={policy.label}
+                                description={policy.description}
+                                badge={zeroPricePolicy === policy.value ? 'Active' : (policy.badge || null)}
+                                icon={policy.icon}
+                                tint={policy.tint}
+                                onClick={() => setZeroPricePolicy(policy.value)}
+                            />
+                        ))}
+                    </div>
+
+                    {/* Live example panel */}
+                    <div className="mt-6 rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                        <h3 className="mb-3 text-sm font-bold text-slate-900">How this applies in retail</h3>
+                        <div className="grid grid-cols-1 gap-3 text-sm text-slate-700 sm:grid-cols-3">
+                            <div className="rounded-xl border border-emerald-200 bg-white p-3">
+                                <p className="mb-1 font-semibold text-emerald-700">Allow</p>
+                                <p className="text-xs leading-5 text-slate-600">Cashier adds a free promotional item at checkout. Invoice saves without interruption.</p>
+                            </div>
+                            <div className="rounded-xl border border-amber-200 bg-white p-3">
+                                <p className="mb-1 font-semibold text-amber-700">Warn</p>
+                                <p className="text-xs leading-5 text-slate-600">A confirmation appears: "Item X has a zero price — continue?" Cashier decides.</p>
+                            </div>
+                            <div className="rounded-xl border border-rose-200 bg-white p-3">
+                                <p className="mb-1 font-semibold text-rose-700">Block</p>
+                                <p className="text-xs leading-5 text-slate-600">Saving is blocked. Every line must have a price before the invoice can be posted.</p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div className="mt-5 rounded-2xl border border-violet-100 bg-violet-50 px-4 py-4 text-sm leading-6 text-violet-800">
+                        This policy applies to Sales Invoices, Sales Orders, Quotations, and Proforma Invoices. Draft saves follow the same rule so zero-price lines are caught early.
                     </div>
                 </SectionShell>
                 {stockCheckModal}

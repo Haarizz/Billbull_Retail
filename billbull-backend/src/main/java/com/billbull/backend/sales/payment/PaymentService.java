@@ -61,6 +61,7 @@ public class PaymentService {
                 Payment::getPaymentDate,
                 Payment::getPaymentNumber,
                 Payment::getId);
+        recomputeInvoiceBalances(payments);
         return payments;
     }
 
@@ -72,12 +73,19 @@ public class PaymentService {
                 Payment::getPaymentDate,
                 Payment::getPaymentNumber,
                 Payment::getId);
+        recomputeInvoiceBalances(payments);
         return payments;
     }
 
     public Payment getPaymentById(Long id) {
-        return paymentRepository.findById(id)
+        Payment payment = paymentRepository.findById(id)
                 .orElseThrow(() -> new RuntimeException("Payment not found with ID: " + id));
+        if (payment.getLinkedInvoice() != null && !payment.getLinkedInvoice().isBlank()) {
+            recomputeInvoiceBalances(new ArrayList<>(paymentRepository.findByLinkedInvoice(payment.getLinkedInvoice())))
+                    .stream().filter(p -> p.getId().equals(id)).findFirst()
+                    .ifPresent(p -> payment.setInvoiceBalance(p.getInvoiceBalance()));
+        }
+        return payment;
     }
 
     public List<Payment> getPaymentsByCustomer(String customerCode) {
@@ -87,6 +95,7 @@ public class PaymentService {
                 Payment::getPaymentDate,
                 Payment::getPaymentNumber,
                 Payment::getId);
+        recomputeInvoiceBalances(payments);
         return payments;
     }
 
@@ -97,6 +106,38 @@ public class PaymentService {
                 Payment::getPaymentDate,
                 Payment::getPaymentNumber,
                 Payment::getId);
+        recomputeInvoiceBalances(payments);
+        return payments;
+    }
+
+    /**
+     * Recomputes invoiceBalance on each payment as the running remaining balance
+     * after each payment, ordered oldest-first per invoice.
+     * Oldest payment: remaining = invoiceAmount - thisPayment
+     * Each subsequent payment: remaining = previousRemaining - thisPayment
+     * This fixes stale/wrong invoiceBalance values stored in the DB.
+     */
+    private List<Payment> recomputeInvoiceBalances(List<Payment> payments) {
+        // Group by linkedInvoice, process oldest-first (reverse of the desc-sorted list)
+        java.util.Map<String, List<Payment>> byInvoice = new java.util.LinkedHashMap<>();
+        for (Payment p : payments) {
+            String inv = p.getLinkedInvoice();
+            if (inv != null && !inv.isBlank()) {
+                byInvoice.computeIfAbsent(inv, k -> new ArrayList<>()).add(p);
+            }
+        }
+        for (List<Payment> group : byInvoice.values()) {
+            // group is desc-sorted; reverse to process oldest first
+            List<Payment> asc = new ArrayList<>(group);
+            java.util.Collections.reverse(asc);
+            double invoiceTotal = asc.isEmpty() ? 0 : (asc.get(0).getInvoiceAmount() != null ? asc.get(0).getInvoiceAmount() : 0);
+            double running = invoiceTotal;
+            for (Payment p : asc) {
+                double paid = p.getAmount() != null ? p.getAmount() : 0;
+                running = Math.max(running - paid, 0);
+                p.setInvoiceBalance(running);
+            }
+        }
         return payments;
     }
 

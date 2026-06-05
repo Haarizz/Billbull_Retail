@@ -494,7 +494,10 @@ export const printHtml = (htmlContent) => {
 
     const iframe = document.createElement('iframe');
     iframe.id = '__bb_print_frame__';
-    iframe.style.cssText = 'position:fixed;top:0;left:0;width:1px;height:1px;opacity:0;border:none;pointer-events:none;';
+    // Must be wide enough (A4 = ~794px at 96dpi) so that getBoundingClientRect()
+    // inside the document script returns real layout dimensions for the footer
+    // spacer calculation. Positioned off-screen so it is invisible to the user.
+    iframe.style.cssText = 'position:fixed;top:0;left:-9999px;width:794px;height:1123px;opacity:0;border:none;pointer-events:none;';
     document.body.appendChild(iframe);
 
     const cleanup = () => {
@@ -521,6 +524,6 @@ export const printHtml = (htmlContent) => {
     doc.write(htmlContent);
     doc.close();
 
-    iframe.onload = () => setTimeout(runPrint, 250);
-    setTimeout(runPrint, 800);
+    iframe.onload = () => setTimeout(runPrint, 350);
+    setTimeout(runPrint, 900);
 };

@@ -1469,16 +1469,12 @@ const ProformaInvoice = () => {
                       </td>
                       <td className="px-4 py-3 text-blue-600 font-medium">{pi.piNumber}</td>
                       <td className="px-4 py-3 text-slate-600">{formatDisplayDate(pi.piDate)}</td>
-                      <td className="px-4 py-3 text-slate-700 font-medium">{pi.customerName}</td>
-                      <td className="px-4 py-3 text-slate-600 text-[11px]">
-                        {pi.branch?.name ? (
-                          <>
-                            <div className="font-medium">{pi.branch.name}</div>
-                            {pi.branch.code && <div className="text-slate-400">{pi.branch.code}</div>}
-                          </>
-                        ) : (
-                          <span className="text-slate-300">—</span>
-                        )}
+                      <td className="px-4 py-3">
+                        <div className="font-medium text-slate-700">{pi.customerName}</div>
+                        {pi.customerCode && <div className="text-[10px] text-slate-400">{pi.customerCode}</div>}
+                      </td>
+                      <td className="px-4 py-3 text-[11px] text-slate-600">
+                        {pi.branch?.code ? pi.branch.code : <span className="text-slate-300">—</span>}
                       </td>
                       <td className="px-4 py-3 text-right font-bold text-slate-800"><CurrencyAmount value={pi.grandTotal || 0} currency={currency} /></td>
                       <td className="px-4 py-3 text-right">{renderStatusBadge(pi.status)}</td>

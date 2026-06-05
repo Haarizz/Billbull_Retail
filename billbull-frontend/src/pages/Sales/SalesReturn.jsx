@@ -786,17 +786,10 @@ const SalesReturn = () => {
                                     <td className="px-4 py-3 text-slate-500">{formatDisplayDate(ret.returnDate)}</td>
                                     <td className="px-4 py-3">
                                        <div className="font-medium text-slate-700">{ret.customerName}</div>
-                                       <div className="text-[10px] text-slate-400">{ret.customerCode}</div>
+                                       {ret.customerCode && <div className="text-[10px] text-slate-400">{ret.customerCode}</div>}
                                     </td>
-                                    <td className="px-4 py-3 text-slate-600 text-[11px]">
-                                       {ret.branch?.name ? (
-                                          <>
-                                             <div className="font-medium">{ret.branch.name}</div>
-                                             {ret.branch.code && <div className="text-slate-400">{ret.branch.code}</div>}
-                                          </>
-                                       ) : (
-                                          <span className="text-slate-300">—</span>
-                                       )}
+                                    <td className="px-4 py-3 text-[11px] text-slate-600">
+                                       {ret.branch?.code ? ret.branch.code : <span className="text-slate-300">—</span>}
                                     </td>
                                     <td className="px-4 py-3">
                                        <span className="px-2 py-0.5 bg-blue-50 text-blue-600 rounded-md font-medium border border-blue-100">

@@ -195,6 +195,7 @@ const Payment = () => {
                 branchCode: p.branch?.code || '',
                 invoiceNo: p.linkedInvoice || '',
                 invoiceAmount: p.invoiceAmount || 0,
+                invoiceBalance: p.invoiceBalance != null ? p.invoiceBalance : null,
                 amount: p.amount || 0, // This is the paid amount for this record
                 mode: p.paymentMode,
                 reference: p.referenceNumber || '',
@@ -273,84 +274,84 @@ const Payment = () => {
         }
     };
 
+    const buildPaymentPrintData = (payment) => {
+        const amount = Number(payment.amount) || 0;
+        const invoiceAmt = Number(payment.invoiceAmount) || amount;
+        const balance = payment.invoiceBalance != null ? Math.max(Number(payment.invoiceBalance), 0) : Math.max(invoiceAmt - amount, 0);
+        const invoiceNos = payment.invoiceNo
+            ? payment.invoiceNo.split(',').map(s => s.trim()).filter(Boolean)
+            : [];
+        const perInvoiceAmount = invoiceNos.length > 1 ? amount / invoiceNos.length : amount;
+        return {
+            receiptData: {
+                receiptNumber: payment.paymentNo || '',
+                date: payment.date || '',
+                status: payment.status || 'Completed',
+                session: null,
+                invoiceCount: invoiceNos.length > 0 ? `${invoiceNos.length} invoice${invoiceNos.length > 1 ? 's' : ''}` : null,
+                account: null,
+                bankAccount: payment.bankName || null,
+            },
+            customerData: {
+                name: payment.customerName || '',
+                code: payment.customerCode || '',
+                address: '',
+                phone: '',
+                email: '',
+                trn: '',
+                crn: '',
+            },
+            invoices: invoiceNos.map(inv => ({
+                ref: inv,
+                soRef: '',
+                date: payment.date || '',
+                total: invoiceAmt / Math.max(invoiceNos.length, 1),
+                outstanding: invoiceAmt / Math.max(invoiceNos.length, 1),
+                received: perInvoiceAmount,
+                balance: balance / Math.max(invoiceNos.length, 1),
+                status: (balance / Math.max(invoiceNos.length, 1)) <= 0 ? 'Fully paid' : 'Partial',
+            })),
+            summary: {
+                totalOutstanding: invoiceAmt,
+                discount: 0,
+                remaining: balance,
+                totalReceived: amount,
+            },
+            payment: {
+                method: payment.mode || '',
+                depositedTo: payment.bankName || '',
+                chequeRef: payment.reference || '',
+                chequeDate: payment.chequeDate || '',
+            },
+            note: payment.notes || '',
+        };
+    };
+
+    const resolveReceiptTemplate = (templates) =>
+        (templates && templates.find(t => t.isDefault)) || {
+            category: 'Receipt Voucher',
+            paperSize: 'A4',
+            orientation: 'Portrait',
+            headerContent: '',
+            footerContent: '',
+            termsContent: '',
+            displayOptions: '{}',
+            columns: '{}',
+        };
+
     const handlePrint = async (payment) => {
         if (!payment) return;
         try {
             const templates = await getTemplatesByCategory('Receipt Voucher');
-            const defaultTemplate = (templates && templates.find(t => t.isDefault)) || {
-                category: 'Receipt Voucher',
-                paperSize: 'A4',
-                orientation: 'Portrait',
-                headerContent: '',
-                footerContent: '',
-                termsContent: '',
-                displayOptions: { showLogo: true, showCompanyDetails: true, showCustomerDetails: true, showTerms: false },
-                columns: { qty: false, unitPrice: false, taxableAmount: false, tax: false, discount: false, total: true },
-            };
-
-            const amount = Number(payment.amount) || 0;
-            const invoiceAmt = Number(payment.invoiceAmount) || amount;
-            const paymentBranchId = payment?.branchId ?? activeBranch?.id;
+            const defaultTemplate = resolveReceiptTemplate(templates);
             const branchProfile = buildDocumentHeaderProfile({
                 company,
                 branches: availableBranches || [],
-                branchId: paymentBranchId,
+                branchId: payment?.branchId ?? activeBranch?.id,
             });
-
-            const printData = {
-                receiptData: {
-                    receiptNumber: payment.paymentNo || '',
-                    date: payment.date || '',
-                    status: payment.status || 'Completed',
-                    session: null,
-                    invoiceCount: payment.invoiceNo ? '1 invoice' : null,
-                    account: null,
-                    bankAccount: payment.bankName || null,
-                },
-                customerData: {
-                    name: payment.customerName || '',
-                    code: payment.customerCode || '',
-                    address: '',
-                    phone: '',
-                    email: '',
-                    trn: '',
-                    crn: '',
-                },
-                invoices: payment.invoiceNo ? [{
-                    ref: payment.invoiceNo,
-                    soRef: '',
-                    date: payment.date || '',
-                    total: invoiceAmt,
-                    outstanding: invoiceAmt,
-                    received: amount,
-                    balance: Math.max(invoiceAmt - amount, 0),
-                    status: Math.max(invoiceAmt - amount, 0) <= 0 ? 'Fully paid' : 'Partial',
-                }] : [],
-                summary: {
-                    totalOutstanding: invoiceAmt,
-                    discount: 0,
-                    remaining: Math.max(invoiceAmt - amount, 0),
-                    totalReceived: amount,
-                },
-                payment: {
-                    method: payment.mode || '',
-                    depositedTo: payment.bankName || '',
-                    chequeRef: payment.reference || '',
-                    chequeDate: payment.chequeDate || '',
-                },
-                note: payment.notes || '',
-                // Fallback fields for generic renderer
-                title: 'PAYMENT RECEIPT',
-                docNo: payment.paymentNo,
-                date: payment.date,
-                customer: { name: payment.customerName || '' },
-                totals: { subTotal: amount, tax: 0, grandTotal: amount, currency: company?.currencySymbol || company?.currency || 'AED' },
-                meta: { status: payment.status || 'Completed', paymentMode: payment.mode || '' },
-            };
-
-            const html = await generatePrintHtmlAsync(defaultTemplate, printData, {
+            const html = await generatePrintHtmlAsync(defaultTemplate, buildPaymentPrintData(payment), {
                 companyProfile: branchProfile,
-                billBullLogo
+                billBullLogo,
             });
             printHtml(html);
         } catch (err) {
@@ -362,12 +363,9 @@ const Payment = () => {
         if (!payment) return;
         try {
             const templates = await getTemplatesByCategory('Receipt Voucher');
-            const defaultTemplate = (templates && templates.find(t => t.isDefault)) || { category: 'Receipt Voucher', paperSize: 'A4', orientation: 'Portrait', headerContent: '', footerContent: '', termsContent: '', displayOptions: { showLogo: true, showCompanyDetails: true, showCustomerDetails: true, showTerms: false }, columns: { qty: false, unitPrice: false, taxableAmount: false, tax: false, discount: false, total: true } };
-            const amount = Number(payment.amount) || 0;
-            const invoiceAmt = Number(payment.invoiceAmount) || amount;
+            const defaultTemplate = resolveReceiptTemplate(templates);
             const branchProfile = buildDocumentHeaderProfile({ company, branches: availableBranches || [], branchId: payment?.branchId ?? activeBranch?.id });
-            const printData = { receiptData: { receiptNumber: payment.paymentNo || '', date: payment.date || '', status: payment.status || 'Completed', session: null, invoiceCount: payment.invoiceNo ? '1 invoice' : null, account: null, bankAccount: payment.bankName || null }, customerData: { name: payment.customerName || '', code: payment.customerCode || '', address: '', phone: '', email: '', trn: '', crn: '' }, invoices: payment.invoiceNo ? [{ ref: payment.invoiceNo, soRef: '', date: payment.date || '', total: invoiceAmt, outstanding: invoiceAmt, received: amount, balance: Math.max(invoiceAmt - amount, 0), status: Math.max(invoiceAmt - amount, 0) <= 0 ? 'Fully paid' : 'Partial' }] : [], summary: { totalOutstanding: invoiceAmt, discount: 0, remaining: Math.max(invoiceAmt - amount, 0), totalReceived: amount }, payment: { method: payment.mode || '', depositedTo: payment.bankName || '', chequeRef: payment.reference || '', chequeDate: payment.chequeDate || '' }, note: payment.notes || '', title: 'PAYMENT RECEIPT', docNo: payment.paymentNo, date: payment.date, customer: { name: payment.customerName || '' }, totals: { subTotal: amount, tax: 0, grandTotal: amount, currency: company?.currencySymbol || company?.currency || 'AED' }, meta: { status: payment.status || 'Completed', paymentMode: payment.mode || '' } };
-            const html = await generatePrintHtmlAsync(defaultTemplate, printData, { companyProfile: branchProfile, billBullLogo });
+            const html = await generatePrintHtmlAsync(defaultTemplate, buildPaymentPrintData(payment), { companyProfile: branchProfile, billBullLogo });
             await downloadPdf(html, payment.paymentNo || 'Payment-Receipt');
         } catch (err) { console.error('Download error', err); }
     };
@@ -549,7 +547,7 @@ const Payment = () => {
                     customerName: selectedCustomer.name,
                     linkedInvoice: invNo,
                     invoiceAmount: invTotal,
-                    invoiceBalance: invBalance,
+                    invoiceBalance: Math.max(invBalance - amountToSettle, 0),
                     amount: amountToSettle,
                     paymentMode: paymentMode,
                     referenceNumber: referenceNo,
@@ -877,17 +875,10 @@ const Payment = () => {
                                                 <td className="px-4 py-3 text-slate-500">{formatDisplayDate(payment.date)}</td>
                                                 <td className="px-4 py-3">
                                                     <div className="font-medium text-slate-700">{payment.customerName}</div>
-                                                    <div className="text-[10px] text-slate-400">{payment.customerCode}</div>
+                                                    {payment.customerCode && <div className="text-[10px] text-slate-400">{payment.customerCode}</div>}
                                                 </td>
-                                                <td className="px-4 py-3 text-slate-600 text-[11px]">
-                                                    {payment.branchName ? (
-                                                        <>
-                                                            <div className="font-medium">{payment.branchName}</div>
-                                                            {payment.branchCode && <div className="text-slate-400">{payment.branchCode}</div>}
-                                                        </>
-                                                    ) : (
-                                                        <span className="text-slate-300">—</span>
-                                                    )}
+                                                <td className="px-4 py-3 text-[11px] text-slate-600">
+                                                    {payment.branchCode ? payment.branchCode : <span className="text-slate-300">—</span>}
                                                 </td>
                                                 <td className="px-4 py-3 text-blue-600 font-medium">{payment.invoiceNo}</td>
                                                 <td className="px-4 py-3 text-right text-slate-600"><CurrencyAmount value={payment.invoiceAmount} currency={currency} /></td>
@@ -1291,10 +1282,59 @@ const Payment = () => {
                                     </div>
                                     <div>
                                         <p className="text-[10px] text-slate-400">Remaining</p>
-                                        <CurrencyAmount value={selectedPayment.invoiceAmount - selectedPayment.amount} currency={currency} className="text-xs font-bold text-red-600" />
+                                        <CurrencyAmount value={selectedPayment.invoiceBalance != null ? selectedPayment.invoiceBalance : Math.max(selectedPayment.invoiceAmount - selectedPayment.amount, 0)} currency={currency} className="text-xs font-bold text-red-600" />
                                     </div>
                                 </div>
                             </div>
+
+                            {/* Payment History for the same invoice */}
+                            {(() => {
+                                if (!selectedPayment.invoiceNo) return null;
+                                const siblings = paymentsList
+                                    .filter(p => p.invoiceNo === selectedPayment.invoiceNo)
+                                    .sort((a, b) => (a.id > b.id ? 1 : -1));
+                                if (siblings.length <= 1) return null;
+                                const totalPaid = siblings.reduce((s, p) => s + (Number(p.amount) || 0), 0);
+                                return (
+                                    <div className="mb-6">
+                                        <h4 className="text-xs font-bold text-slate-700 mb-3 border-b border-slate-100 pb-2">
+                                            Payment History — {selectedPayment.invoiceNo}
+                                        </h4>
+                                        <div className="rounded-lg border border-slate-100 overflow-hidden">
+                                            {siblings.map((p, i) => {
+                                                const isCurrent = p.id === selectedPayment.id;
+                                                return (
+                                                    <div
+                                                        key={p.id}
+                                                        className={`flex items-center gap-3 px-3 py-2.5 text-xs ${isCurrent ? 'bg-[#FFF8E7] border-l-2 border-[#F5C742]' : 'bg-white hover:bg-slate-50 cursor-pointer'} ${i > 0 ? 'border-t border-slate-100' : ''}`}
+                                                        onClick={() => !isCurrent && handleViewPayment(p)}
+                                                    >
+                                                        <div className="flex-1 min-w-0">
+                                                            <div className="flex items-center gap-1.5">
+                                                                <span className={`font-bold ${isCurrent ? 'text-amber-700' : 'text-blue-600'}`}>{p.paymentNo}</span>
+                                                                {isCurrent && <span className="text-[9px] font-bold bg-[#F5C742] text-slate-800 px-1.5 py-0.5 rounded-full">Current</span>}
+                                                            </div>
+                                                            <div className="text-slate-400 mt-0.5">{formatDisplayDate(p.date)} · {p.mode}</div>
+                                                        </div>
+                                                        <div className="text-right shrink-0">
+                                                            <CurrencyAmount value={p.amount} currency={currency} className={`font-bold ${isCurrent ? 'text-amber-700' : 'text-emerald-600'}`} />
+                                                            <div className="text-[10px] text-slate-400 mt-0.5">
+                                                                {p.invoiceBalance != null
+                                                                    ? <><span className="text-slate-300">rem </span><CurrencyAmount value={p.invoiceBalance} currency={currency} className="text-slate-500" /></>
+                                                                    : null}
+                                                            </div>
+                                                        </div>
+                                                    </div>
+                                                );
+                                            })}
+                                            <div className="flex justify-between items-center px-3 py-2 bg-slate-50 border-t border-slate-200">
+                                                <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Total Collected</span>
+                                                <CurrencyAmount value={totalPaid} currency={currency} className="text-xs font-bold text-slate-700" />
+                                            </div>
+                                        </div>
+                                    </div>
+                                );
+                            })()}
                         </div>
 
                         {/* Drawer Footer */}

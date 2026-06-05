@@ -64,6 +64,16 @@ public class SalesSettings {
     @Column(nullable = false, columnDefinition = "double precision default 1.0")
     private double roundingPrecision = 1.0;
 
+    /**
+     * What to do when a sales document line has a unit price of zero.
+     * BLOCK (default) rejects the save until every line carries a price > 0.
+     * WARN  shows a confirmation dialog but still allows saving.
+     * ALLOW permits zero-price lines (free gifts, samples, promotions).
+     */
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false, length = 10, columnDefinition = "varchar(10) default 'BLOCK'")
+    private ZeroPricePolicy zeroPricePolicy = ZeroPricePolicy.BLOCK;
+
     @Transient
     private List<SalesDocumentNumberSetting> documentNumbering = new ArrayList<>();
 
@@ -125,6 +135,14 @@ public class SalesSettings {
 
     public void setRoundingPrecision(double roundingPrecision) {
         this.roundingPrecision = roundingPrecision;
+    }
+
+    public ZeroPricePolicy getZeroPricePolicy() {
+        return zeroPricePolicy;
+    }
+
+    public void setZeroPricePolicy(ZeroPricePolicy zeroPricePolicy) {
+        this.zeroPricePolicy = zeroPricePolicy;
     }
 
     public List<SalesDocumentNumberSetting> getDocumentNumbering() {

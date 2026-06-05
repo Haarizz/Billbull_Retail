@@ -118,7 +118,9 @@ function ReceiptPreview({ s }) {
     s.showAccountCurrency && ["Account", MOCK.account.currency],
     s.showBankAccount && ["Cash / Bank", MOCK.account.bank]
   ].filter(Boolean);
-  return <div style={{ fontFamily: s.fontFamily, fontSize: `${f}px`, background: "#fff", color: "#1a1a2e", padding: "28px 32px", position: "relative" }}>
+  return <div style={{ fontFamily: s.fontFamily, fontSize: `${f}px`, background: "#fff", color: "#1a1a2e", padding: "28px 32px", position: "relative", minHeight: 1067, display: "flex", flexDirection: "column" }}>
+      {/* ── BODY: grows to fill page ── */}
+      <div style={{ flex: 1 }}>
 
       {
     /* ── HEADER: 3 columns — Customer | Doc Info | Logo + Company ── */
@@ -244,6 +246,11 @@ function ReceiptPreview({ s }) {
         </tbody>
       </table>
 
+      </div>{/* end flex:1 body */}
+
+      {/* ── FOOTER GROUP: pinned to bottom ── */}
+      <div style={{ marginTop: "auto" }}>
+
       {
     /* ── SUMMARY (right-aligned) ── */
   }
@@ -341,6 +348,8 @@ function ReceiptPreview({ s }) {
               <span style={{ borderBottom: "1px solid #94a3b8", display: "inline-block", minWidth: 90 }}>&nbsp;</span>
             </div>}
         </div>}
+
+      </div>{/* end footer group */}
     </div>;
 }
 function SLabel({ label }) {

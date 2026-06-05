@@ -44,6 +44,7 @@ export const buildDocumentHeaderProfile = ({ company = {}, branches = [], branch
         trn: branch.trnNumber || company.trn,
         fax: branch.fax || company.fax,
         logoUrl: branch.logoUrl || company.logoUrl,
+        stampUrl: branch.stampUrl || company.stampUrl,
         // Bank details for the document footer come from the branch first;
         // company values fill any gaps so an unset branch still prints something.
         bankName: branch.bankName || company.bankName,

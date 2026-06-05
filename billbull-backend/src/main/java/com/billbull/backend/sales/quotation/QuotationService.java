@@ -154,11 +154,9 @@ public class QuotationService {
     public List<Quotation> getAllQuotations() {
         List<Quotation> quotations = new ArrayList<>(
                 branchAccessService.filterBranchScoped(quotationRepo.findAll(), Quotation::getBranchId));
-        DocumentOrderingUtil.sortByDocumentNumberAndDateDesc(
-                quotations,
-                Quotation::getDate,
-                Quotation::getQtnNo,
-                Quotation::getId);
+        quotations.sort((a, b) -> Long.compare(
+                b.getId() == null ? 0 : b.getId(),
+                a.getId() == null ? 0 : a.getId()));
         quotations.forEach(this::initialize);
         enrichQuotationImages(quotations);
         return quotations;
@@ -168,11 +166,9 @@ public class QuotationService {
     public List<Quotation> getAllByDateRange(java.time.LocalDate from, java.time.LocalDate to) {
         List<Quotation> quotations = new ArrayList<>(
                 branchAccessService.filterBranchScoped(quotationRepo.findByDateBetween(from, to), Quotation::getBranchId));
-        DocumentOrderingUtil.sortByDocumentDateAndNumberDesc(
-                quotations,
-                Quotation::getDate,
-                Quotation::getQtnNo,
-                Quotation::getId);
+        quotations.sort((a, b) -> Long.compare(
+                b.getId() == null ? 0 : b.getId(),
+                a.getId() == null ? 0 : a.getId()));
         quotations.forEach(this::initialize);
         enrichQuotationImages(quotations);
         return quotations;
