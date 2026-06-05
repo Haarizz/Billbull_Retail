@@ -293,6 +293,64 @@ const renderDrawing = (d) => {
     return `<div style="position:absolute;left:${x}mm;top:${y}mm;width:${w}mm;height:${h}mm;border:${thickness * 0.35}mm ${borderStyle} ${color};background:${fill};"></div>`;
 };
 
+const drawingBounds = (d) => {
+    const x = num(d.x);
+    const y = num(d.y);
+    const lineSize = Math.max(0.5, (num(d.thickness) || 1) * 0.35);
+    if (d.type === 'h-line') {
+        return { top: y, bottom: y + lineSize, left: x, right: x + Math.max(1, num(d.width)) };
+    }
+    if (d.type === 'v-line') {
+        return { top: y, bottom: y + Math.max(1, num(d.height)), left: x, right: x + lineSize };
+    }
+    return {
+        top: y,
+        bottom: y + Math.max(1, num(d.height)),
+        left: x,
+        right: x + Math.max(1, num(d.width)),
+    };
+};
+
+const fieldBounds = (f) => {
+    const x = num(f.x);
+    const y = num(f.y);
+    const width = num(f.width) || 60;
+    const height = isImageFieldId(f.id)
+        ? width
+        : Math.max(4, (num(f.fontSize) || 10) * 0.3528 * 1.35);
+    return { top: y, bottom: y + height, left: x, right: x + width };
+};
+
+const isImageFieldId = (id) => id === 'company_logo' || id === 'company_stamp' || id === 'qr_code';
+
+const overlaps = (a, b, padding = 0) => (
+    a.left <= b.right + padding &&
+    a.right >= b.left - padding &&
+    a.top <= b.bottom + padding &&
+    a.bottom >= b.top - padding
+);
+
+const isRepeatingDrawing = (d) => Boolean(
+    d.repeatOnContinuation ||
+    d.repeatOnPages ||
+    d.pageScope === 'all' ||
+    d.pageScope === 'every'
+);
+
+const isFinalPageDrawing = (d, lastPageFields) => {
+    if (d.pageScope === 'last' || d.showOnFinalPage || d.repeatOnLastPage) return true;
+    if (d.pageScope === 'first' || isRepeatingDrawing(d)) return false;
+    if (!lastPageFields.length) return false;
+
+    const bounds = drawingBounds(d);
+    const finalFieldBounds = lastPageFields.map(fieldBounds);
+    const finalAreaStart = Math.min(...finalFieldBounds.map((b) => b.top)) - 8;
+    const drawingCenterY = (bounds.top + bounds.bottom) / 2;
+
+    return drawingCenterY >= finalAreaStart ||
+        finalFieldBounds.some((b) => overlaps(bounds, b, 4));
+};
+
 // Render a single field into its absolute-position HTML.
 const renderField = (f, data, company, printOnlyValues, logoUrl, stampUrl) => {
     if (f.enabled === false) return '';
@@ -381,8 +439,6 @@ export const generateOverlayInvoiceHtml = (template, data, options = {}) => {
     const logoUrl = firstOf(company.logoUrl, company.logo, company.companyLogo, company.logoPath);
     const stampUrl = firstOf(company.stampUrl, company.stamp, company.stampPath);
 
-    const drawingHtml = drawings.map(renderDrawing).join('');
-
     // Find the items_table field config
     const tableField = fields.find((f) => f.id === 'items_table' && f.enabled !== false);
 
@@ -398,6 +454,13 @@ export const generateOverlayInvoiceHtml = (template, data, options = {}) => {
     const LAST_PAGE_CATS = new Set(['totals', 'footer']);
     const headerFields = fields.filter((f) => f.id !== 'items_table' && !LAST_PAGE_CATS.has(f.category));
     const lastPageFields = fields.filter((f) => f.enabled !== false && LAST_PAGE_CATS.has(f.category));
+    const repeatingDrawings = drawings.filter(isRepeatingDrawing);
+    const finalPageDrawings = drawings.filter((d) => !isRepeatingDrawing(d) && isFinalPageDrawing(d, lastPageFields));
+    const firstPageDrawings = drawings.filter((d) => !isRepeatingDrawing(d) && !isFinalPageDrawing(d, lastPageFields));
+
+    const firstPageDrawingHtml = firstPageDrawings.map(renderDrawing).join('');
+    const finalPageDrawingHtml = finalPageDrawings.map(renderDrawing).join('');
+    const repeatingDrawingHtml = repeatingDrawings.map(renderDrawing).join('');
 
     const headerFieldsHtml = headerFields
         .map((f) => renderField(f, data, company, printOnlyValues, logoUrl, stampUrl))
@@ -458,9 +521,11 @@ export const generateOverlayInvoiceHtml = (template, data, options = {}) => {
 
     // Build one HTML page-div per chunk of items
     const buildPageDiv = (pageItems, isFirst, isLast, indexOffset, pageNumber, totalPages) => {
-        let content = drawingHtml;
+        let content = repeatingDrawingHtml;
+        if (isFirst) content += firstPageDrawingHtml;
         if (isFirst) content += headerFieldsHtml;
         content += renderTableDiv(pageItems, isFirst, indexOffset);
+        if (isLast) content += finalPageDrawingHtml;
         if (isLast) content += lastPageFieldsHtml;
         if (!isLast && showContinuationText) {
             const continuationStyle = [

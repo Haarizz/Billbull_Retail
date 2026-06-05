@@ -8,7 +8,7 @@ import {
   Printer, Sparkles, Image as ImageIcon, Globe,
   Calculator, AlertCircle, Filter, MoreHorizontal,
   Clock, DollarSign, TrendingUp, ScanLine, TrendingDown,
-  PlusCircle, Loader2
+  PlusCircle, Loader2, Building2
 } from 'lucide-react';
 
 // Import API Methods
@@ -33,11 +33,13 @@ import { getWarehouses } from "../../../api/warehouseApi";
 import ClassificationDropdown from "../../../components/ClassificationDropdown";
 import { getZones, getLocators, getBins } from "../../../api/warehouseLocationApi";
 import { getVendors } from "../../../api/vendorsApi";
+import { getBranches } from "../../../api/branchApi";
 import { getUnitConversionFactor } from "../../../utils/unitPricing";
 import ExportDropdown from '../../../components/common/ExportDropdown';
 import { exportToExcel, exportToPDF } from '../../../utils/exportUtils';
 import CurrencyAmount, { CurrencySymbol } from '../../../components/CurrencyAmount';
 import { getListSerialNumber, withListSerialNumbers } from '../../../utils/serialNumbering';
+import { useBranch } from '../../../context/BranchContext';
 
 // ==========================================
 // 1. CONFIGURATION
@@ -64,7 +66,7 @@ const mapProductListItem = (d) => ({
   sku: d.sku || '',
   localName: d.localName,
   description: d.description || d.shortDesc || '',
-  status: d.status,
+  status: d.branchStatus || d.status,
   brandName: d.brandName || '',
   brand: d.brandId || '',
   departmentName: d.departmentName || '',
@@ -167,7 +169,8 @@ const INITIAL_FORM_STATE = {
   autoAssign: true,
   perBranch: false,
   includePrice: false,
-  labelLayout: 'Shelf Label'
+  labelLayout: 'Shelf Label',
+  branchPrices: []
 };
 
 const STEPS = [
@@ -176,7 +179,57 @@ const STEPS = [
   { id: 3, key: 'inventory', label: 'Inventory & Tracking', icon: <Layers className="h-4 w-4" /> },
   { id: 4, key: 'packings', label: 'Packings & Units', icon: <Box className="h-4 w-4" /> },
   { id: 5, key: 'barcode', label: 'Barcode & Printing', icon: <Barcode className="h-4 w-4" /> },
+  { id: 6, key: 'branches', label: 'Branches & Status', icon: <Building2 className="h-4 w-4" /> },
 ];
+
+const toMoneyNumber = (value) => {
+  const parsed = parseFloat(value);
+  return Number.isFinite(parsed) ? parsed : 0;
+};
+
+const calculateGpPercent = (cost, retailPrice) => {
+  const c = toMoneyNumber(cost);
+  const p = toMoneyNumber(retailPrice);
+  if (c <= 0 || p <= 0) return 0;
+  return ((p - c) / p * 100);
+};
+
+const makeBranchPriceRow = (branch, formData, existing = {}) => {
+  const cost = existing.cost ?? formData.cost ?? 0;
+  const retailPrice = existing.retailPrice ?? formData.retailPrice ?? 0;
+  return {
+    id: existing.id ?? null,
+    branchId: branch.id,
+    branchName: branch.name || `Branch ${branch.id}`,
+    branchCode: branch.code || '',
+    cost,
+    markup: existing.markup ?? formData.markup ?? 0,
+    gp: existing.gp ?? calculateGpPercent(cost, retailPrice).toFixed(2),
+    retailPrice,
+    minPrice: existing.minPrice ?? formData.minPrice ?? 0,
+    maxPrice: existing.maxPrice ?? formData.maxPrice ?? 0,
+    wholesalePrice: existing.wholesalePrice ?? formData.wholesalePrice ?? 0,
+    onlinePrice: existing.onlinePrice ?? formData.onlinePrice ?? 0,
+    status: existing.status || 'ACTIVE',
+    overridden: existing.overridden != null ? Boolean(existing.overridden) : Boolean(existing.id)
+  };
+};
+
+const branchPriceSnapshot = (source = {}) => {
+  const cost = source.cost ?? 0;
+  const retailPrice = source.retailPrice ?? 0;
+  return {
+    cost,
+    markup: source.markup ?? 0,
+    gp: source.gp ?? calculateGpPercent(cost, retailPrice).toFixed(2),
+    retailPrice,
+    minPrice: source.minPrice ?? 0,
+    maxPrice: source.maxPrice ?? 0,
+    wholesalePrice: source.wholesalePrice ?? 0,
+    onlinePrice: source.onlinePrice ?? 0,
+    status: source.status || 'ACTIVE'
+  };
+};
 
 const buildProductPayload = (formData) => {
   return {
@@ -243,12 +296,26 @@ const buildProductPayload = (formData) => {
         cost: idx === 0 ? parseFloat(formData.cost || 0) : pkg.cost,
         price: idx === 0 ? parseFloat(formData.retailPrice || 0) : pkg.price,
       }))
-    }
+    },
+    branchPrices: (formData.branchPrices || []).map(row => ({
+      id: row.id || null,
+      branch: row.branchId ? { id: Number(row.branchId) } : null,
+      cost: row.cost,
+      markup: row.markup,
+      gp: row.gp,
+      retailPrice: row.retailPrice,
+      minPrice: row.minPrice,
+      maxPrice: row.maxPrice,
+      wholesalePrice: row.wholesalePrice,
+      onlinePrice: row.onlinePrice,
+      status: (row.status || 'ACTIVE').toUpperCase()
+    })).filter(row => row.branch)
   };
 };
 
-const AddProductWizard = ({ onCancel, onSave, initialData, brands: initialBrands, departments: initialDepts, units: initialUnits, warehouses, vendors }) => {
+const AddProductWizard = ({ onCancel, onSave, initialData, brands: initialBrands, departments: initialDepts, units: initialUnits, warehouses, vendors, branches }) => {
   const { hasAnyRole } = usePermissions();
+  const { activeBranchId } = useBranch();
   const isAdmin = hasAnyRole('ADMIN');
   const [currentStep, setCurrentStep] = useState(1);
   const [subDepartments, setSubDepartments] = useState([]);
@@ -281,6 +348,27 @@ const AddProductWizard = ({ onCancel, onSave, initialData, brands: initialBrands
       ]
     };
   });
+
+  useEffect(() => {
+    if (!Array.isArray(branches) || branches.length === 0) return;
+    setFormData(prev => {
+      const existingByBranch = new Map((prev.branchPrices || []).map(row => [String(row.branchId), row]));
+      const nextRows = branches.map(branch => {
+        const existing = existingByBranch.get(String(branch.id));
+        if (!existing) return makeBranchPriceRow(branch, prev);
+        if (existing.overridden) {
+          return {
+            ...existing,
+            branchName: branch.name || existing.branchName,
+            branchCode: branch.code || existing.branchCode || ''
+          };
+        }
+        return makeBranchPriceRow(branch, prev, existing);
+      });
+      if (JSON.stringify(prev.branchPrices || []) === JSON.stringify(nextRows)) return prev;
+      return { ...prev, branchPrices: nextRows };
+    });
+  }, [branches, formData.cost, formData.markup, formData.gp, formData.retailPrice, formData.minPrice, formData.maxPrice, formData.wholesalePrice, formData.onlinePrice]);
 
   const fileInputRef = useRef(null);
 
@@ -442,6 +530,71 @@ const AddProductWizard = ({ onCancel, onSave, initialData, brands: initialBrands
       }
       return newData;
     });
+  };
+
+  const handleBranchPriceChange = (branchId, field, value) => {
+    setFormData(prev => ({
+      ...prev,
+      branchPrices: (prev.branchPrices || []).map(row => {
+        if (String(row.branchId) !== String(branchId)) return row;
+        const next = { ...row, [field]: value, overridden: true };
+        const cost = toMoneyNumber(field === 'cost' ? value : next.cost);
+
+        if (field === 'markup') {
+          const markupPct = toMoneyNumber(value);
+          const retailPrice = cost + (cost * (markupPct / 100));
+          next.retailPrice = retailPrice.toFixed(2);
+          next.gp = retailPrice > 0 ? (((retailPrice - cost) / retailPrice) * 100).toFixed(2) : 0;
+        } else if (field === 'retailPrice') {
+          const retailPrice = toMoneyNumber(value);
+          if (cost > 0 && retailPrice > 0) {
+            next.markup = (((retailPrice - cost) / cost) * 100).toFixed(2);
+            next.gp = (((retailPrice - cost) / retailPrice) * 100).toFixed(2);
+          } else {
+            next.gp = 0;
+          }
+        } else if (field === 'cost') {
+          const markupPct = toMoneyNumber(next.markup);
+          const retailPrice = cost + (cost * (markupPct / 100));
+          next.retailPrice = retailPrice.toFixed(2);
+          next.gp = retailPrice > 0 ? (((retailPrice - cost) / retailPrice) * 100).toFixed(2) : 0;
+        }
+        return next;
+      })
+    }));
+  };
+
+  const overrideBranchPrice = (branchId) => {
+    setFormData(prev => ({
+      ...prev,
+      branchPrices: (prev.branchPrices || []).map(row => {
+        if (String(row.branchId) !== String(branchId)) return row;
+
+        const activeId = activeBranchId && activeBranchId !== 'ALL'
+          ? String(activeBranchId)
+          : null;
+        const sourceRow = activeId
+          ? (prev.branchPrices || []).find(item => String(item.branchId) === activeId)
+          : null;
+        const source = sourceRow || {
+          cost: prev.cost,
+          markup: prev.markup,
+          gp: prev.gp,
+          retailPrice: prev.retailPrice,
+          minPrice: prev.minPrice,
+          maxPrice: prev.maxPrice,
+          wholesalePrice: prev.wholesalePrice,
+          onlinePrice: prev.onlinePrice,
+          status: row.status || 'ACTIVE'
+        };
+
+        return {
+          ...row,
+          ...branchPriceSnapshot(source),
+          overridden: true
+        };
+      })
+    }));
   };
 
 
@@ -636,7 +789,7 @@ const AddProductWizard = ({ onCancel, onSave, initialData, brands: initialBrands
   };
 
   const handleNext = () => {
-    if (currentStep < 5 && isStepValid()) setCurrentStep(curr => curr + 1);
+    if (currentStep < STEPS.length && isStepValid()) setCurrentStep(curr => curr + 1);
   };
 
   const handleSaveActive = () => onSave({ ...formData, status: 'Active' });
@@ -684,7 +837,7 @@ const AddProductWizard = ({ onCancel, onSave, initialData, brands: initialBrands
         </div>
       </div >
 
-      <div className="p-6 max-w-[1600px] mx-auto space-y-6">
+      <div className={`p-6 mx-auto space-y-6 ${currentStep === 6 ? 'w-full' : 'max-w-[1600px]'}`}>
         {currentStep === 1 && (
           <div className="grid grid-cols-12 gap-6 animate-in fade-in duration-300">
             <div className="col-span-12 lg:col-span-8 space-y-6">
@@ -1388,6 +1541,134 @@ const AddProductWizard = ({ onCancel, onSave, initialData, brands: initialBrands
             </div>
           </div>
         )}
+
+        {currentStep === 6 && (
+          <div className="space-y-6 animate-in fade-in duration-300">
+            <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
+              <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between mb-6">
+                <div>
+                  <h3 className="font-semibold text-lg flex items-center gap-2"><Building2 className="h-5 w-5 text-slate-400" /> Branch-wise Cost & Price Status</h3>
+                  <p className="text-sm text-slate-500">Set selling prices per branch. The active branch selector will use that branch's retail/min/max prices in sales screens.</p>
+                </div>
+                <span className="text-xs font-semibold text-slate-500 bg-slate-50 border border-slate-200 rounded-full px-3 py-1">
+                  {formData.branchPrices?.length || 0} branch{(formData.branchPrices?.length || 0) === 1 ? '' : 'es'}
+                </span>
+              </div>
+
+              {(!branches || branches.length === 0) ? (
+                <div className="py-14 text-center text-slate-400 border border-dashed border-slate-200 rounded-xl bg-slate-50">
+                  <Building2 className="h-9 w-9 mx-auto mb-3 text-slate-300" />
+                  <p className="font-medium text-slate-600">No branches available</p>
+                  <p className="text-xs mt-1">Create branches first, then return here to set branch pricing.</p>
+                </div>
+              ) : (
+                <div className="overflow-x-auto rounded-lg border border-slate-200">
+                  <table className="bb-nowrap-table w-full text-sm text-left">
+                    <thead className="bg-slate-50 text-slate-600 font-semibold border-b">
+                      <tr>
+                        <th className="p-3 min-w-[180px]">Branch</th>
+                        <th className="p-3 min-w-[120px]">Cost</th>
+                        <th className="p-3 min-w-[120px]">Markup %</th>
+                        <th className="p-3 min-w-[110px]">GP %</th>
+                        <th className="p-3 min-w-[130px]">Retail Price</th>
+                        <th className="p-3 min-w-[130px]">Min Sale Price</th>
+                        <th className="p-3 min-w-[130px]">Max Sale Price</th>
+                        <th className="p-3 min-w-[130px]">Wholesale Price</th>
+                        <th className="p-3 min-w-[130px]">Online Price</th>
+                        <th className="p-3 min-w-[110px]">Status</th>
+                        <th className="p-3 min-w-[110px] text-right">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {(formData.branchPrices || []).map(row => (
+                        <tr key={row.branchId} className="border-b last:border-0 hover:bg-slate-50 transition-colors">
+                          <td className="p-3">
+                            <div className="font-semibold text-slate-900">{row.branchName}</div>
+                            {row.branchCode && <div className="text-[11px] text-slate-400 font-mono">{row.branchCode}</div>}
+                          </td>
+                          <td className="p-3">
+                            <div className="flex items-center gap-2">
+                              <CurrencySymbol />
+                              <input type="number" step="0.01" value={row.cost ?? ''} onChange={(e) => handleBranchPriceChange(row.branchId, 'cost', e.target.value)} className="w-24 border border-slate-200 rounded-md px-2 py-1.5 text-sm outline-none focus:ring-2 focus:ring-[#F5C742]/50" />
+                            </div>
+                          </td>
+                          <td className="p-3">
+                            <div className="flex items-center gap-2">
+                              <input type="number" step="0.01" value={row.markup ?? ''} onChange={(e) => handleBranchPriceChange(row.branchId, 'markup', e.target.value)} className="w-20 border border-slate-200 rounded-md px-2 py-1.5 text-sm outline-none focus:ring-2 focus:ring-[#F5C742]/50" />
+                              <span className="text-slate-400">%</span>
+                            </div>
+                          </td>
+                          <td className="p-3">
+                            <div className="flex items-center gap-2">
+                              <input type="number" step="0.01" value={row.gp ?? ''} onChange={(e) => handleBranchPriceChange(row.branchId, 'gp', e.target.value)} className="w-20 border border-slate-200 rounded-md px-2 py-1.5 text-sm outline-none focus:ring-2 focus:ring-[#F5C742]/50" />
+                              <span className="text-slate-400">%</span>
+                            </div>
+                          </td>
+                          <td className="p-3 font-bold text-slate-900">
+                            <div className="flex items-center gap-2">
+                              <CurrencySymbol />
+                              <input type="number" step="0.01" value={row.retailPrice ?? ''} onChange={(e) => handleBranchPriceChange(row.branchId, 'retailPrice', e.target.value)} className="w-24 border border-slate-200 rounded-md px-2 py-1.5 text-sm font-bold outline-none focus:ring-2 focus:ring-[#F5C742]/50" />
+                            </div>
+                          </td>
+                          <td className="p-3">
+                            <div className="flex items-center gap-2">
+                              <CurrencySymbol />
+                              <input type="number" step="0.01" value={row.minPrice ?? ''} onChange={(e) => handleBranchPriceChange(row.branchId, 'minPrice', e.target.value)} className="w-24 border border-slate-200 rounded-md px-2 py-1.5 text-sm outline-none focus:ring-2 focus:ring-[#F5C742]/50" />
+                            </div>
+                          </td>
+                          <td className="p-3">
+                            <div className="flex items-center gap-2">
+                              <CurrencySymbol />
+                              <input type="number" step="0.01" value={row.maxPrice ?? ''} onChange={(e) => handleBranchPriceChange(row.branchId, 'maxPrice', e.target.value)} className="w-24 border border-slate-200 rounded-md px-2 py-1.5 text-sm outline-none focus:ring-2 focus:ring-[#F5C742]/50" />
+                            </div>
+                          </td>
+                          <td className="p-3">
+                            <div className="flex items-center gap-2">
+                              <CurrencySymbol />
+                              <input type="number" step="0.01" value={row.wholesalePrice ?? ''} onChange={(e) => handleBranchPriceChange(row.branchId, 'wholesalePrice', e.target.value)} className="w-24 border border-slate-200 rounded-md px-2 py-1.5 text-sm outline-none focus:ring-2 focus:ring-[#F5C742]/50" />
+                            </div>
+                          </td>
+                          <td className="p-3">
+                            <div className="flex items-center gap-2">
+                              <CurrencySymbol />
+                              <input type="number" step="0.01" value={row.onlinePrice ?? ''} onChange={(e) => handleBranchPriceChange(row.branchId, 'onlinePrice', e.target.value)} className="w-24 border border-slate-200 rounded-md px-2 py-1.5 text-sm outline-none focus:ring-2 focus:ring-[#F5C742]/50" />
+                            </div>
+                          </td>
+                          <td className="p-3">
+                            <select value={row.status || 'ACTIVE'} onChange={(e) => handleBranchPriceChange(row.branchId, 'status', e.target.value)} className={`border rounded-md px-2 py-1.5 text-xs font-bold outline-none ${row.status === 'ACTIVE' ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-slate-50 text-slate-600 border-slate-200'}`}>
+                              <option value="ACTIVE">Active</option>
+                              <option value="DRAFT">Draft</option>
+                            </select>
+                          </td>
+                          <td className="p-3 text-right">
+                            <button type="button" onClick={() => overrideBranchPrice(row.branchId)} className="px-3 py-1.5 rounded-md border border-amber-300 text-amber-700 bg-white hover:bg-amber-50 text-xs font-semibold transition-colors">
+                              Override
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mt-6">
+                <div className="bg-blue-50 border border-blue-100 rounded-lg p-4">
+                  <div className="flex items-center gap-2 font-semibold text-blue-900"><DollarSign className="h-4 w-4" /> Markup %</div>
+                  <p className="text-xs text-blue-800 mt-2">Percentage added to cost. Formula: Cost x (1 + Markup%).</p>
+                </div>
+                <div className="bg-emerald-50 border border-emerald-100 rounded-lg p-4">
+                  <div className="flex items-center gap-2 font-semibold text-emerald-900"><TrendingUp className="h-4 w-4" /> GP %</div>
+                  <p className="text-xs text-emerald-800 mt-2">Profit as a percentage of selling price. Formula: (Price - Cost) / Price x 100.</p>
+                </div>
+                <div className="bg-amber-50 border border-amber-100 rounded-lg p-4">
+                  <div className="flex items-center gap-2 font-semibold text-amber-900"><AlertCircle className="h-4 w-4" /> Price Range Control</div>
+                  <p className="text-xs text-amber-800 mt-2">Min/max prices are returned to sales screens with the current branch price.</p>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* FOOTER ACTIONS */}
@@ -1398,7 +1679,7 @@ const AddProductWizard = ({ onCancel, onSave, initialData, brands: initialBrands
             <button onClick={handleSaveDraft} className="flex items-center gap-2 px-6 py-2.5 border border-slate-200 rounded-lg text-sm font-medium hover:bg-slate-50 transition-colors text-slate-600">
               <FileText className="h-4 w-4" /> Save as Draft
             </button>
-            {currentStep < 5 ? (
+            {currentStep < STEPS.length ? (
               <button onClick={handleNext} disabled={!isStepValid()} className={`flex items-center gap-2 px-6 py-2.5 rounded-lg text-sm font-bold shadow-sm transition-colors ${isStepValid() ? 'bg-slate-900 hover:bg-slate-800 text-white' : 'bg-slate-200 text-slate-400 cursor-not-allowed'}`}>
                 Next Step <ChevronRight className="h-4 w-4" />
               </button>
@@ -1827,6 +2108,7 @@ const ImportProgressModal = ({ fileName, status, message, progress = {}, onClose
 const Products = () => {
   const navigate = useNavigate();
   const { hasAnyRole } = usePermissions();
+  const { activeBranchId } = useBranch();
   const isAdmin = hasAnyRole('ADMIN');
   const [currentView, setCurrentView] = useState('list');
   const [products, setProducts] = useState([]);
@@ -1835,6 +2117,7 @@ const Products = () => {
   const [units, setUnits] = useState([]);
   const [warehouses, setWarehouses] = useState([]);
   const [vendors, setVendors] = useState([]);
+  const [branches, setBranches] = useState([]);
 
   const [editingProduct, setEditingProduct] = useState(null);
   const [viewingProduct, setViewingProduct] = useState(null);
@@ -1885,22 +2168,24 @@ const Products = () => {
   useEffect(() => {
     setCurrentPage(0);
     fetchProducts(0, debouncedSearch);
-  }, [filterDepartment, filterBrand]);
+  }, [filterDepartment, filterBrand, activeBranchId]);
 
   const fetchMasters = async () => {
     try {
-      const [brandRes, deptRes, unitRes, whRes, vendorRes] = await Promise.all([
+      const [brandRes, deptRes, unitRes, whRes, vendorRes, branchRes] = await Promise.all([
         getBrands(),
         getDepartments(),
         getUnits(),
         getWarehouses(),
-        getVendors()
+        getVendors(),
+        getBranches()
       ]);
       setBrands(brandRes);
       setDepartments(deptRes);
       setUnits(unitRes);
       setWarehouses(whRes);
       setVendors(vendorRes);
+      setBranches(Array.isArray(branchRes) ? branchRes : []);
     } catch (err) {
       console.error("Failed to load master data", err);
     }
@@ -2086,7 +2371,27 @@ const Products = () => {
       setLoading(true);
       const fullProductData = await getProductById(productInfo.id);
 
-      const { product, pricing, tax, inventory, primaryImage } = fullProductData;
+      const { product, pricing, tax, inventory, primaryImage, branchPrices } = fullProductData;
+      const mappedBranchPrices = Array.isArray(branchPrices)
+        ? branchPrices
+          .filter(row => row?.branch?.id)
+          .map(row => ({
+            id: row.id || null,
+            branchId: row.branch.id,
+            branchName: row.branch.name || `Branch ${row.branch.id}`,
+            branchCode: row.branch.code || '',
+            cost: row.cost ?? '',
+            markup: row.markup ?? 0,
+            gp: row.gp ?? 0,
+            retailPrice: row.retailPrice ?? '',
+            minPrice: row.minPrice ?? '',
+            maxPrice: row.maxPrice ?? '',
+            wholesalePrice: row.wholesalePrice ?? '',
+            onlinePrice: row.onlinePrice ?? '',
+            status: row.status || 'ACTIVE',
+            overridden: true
+          }))
+        : [];
 
       const mappedData = {
         ...INITIAL_FORM_STATE,
@@ -2161,7 +2466,8 @@ const Products = () => {
             price: p.price ?? 0,
             barcode: p.barcode || ''
           }))
-          : [{ ...INITIAL_FORM_STATE.packings[0] }]
+          : [{ ...INITIAL_FORM_STATE.packings[0] }],
+        branchPrices: mappedBranchPrices
       };
 
       setEditingProduct(mappedData);
@@ -2241,6 +2547,7 @@ const Products = () => {
         units={units}
         warehouses={warehouses}
         vendors={vendors}
+        branches={branches}
       />
     );
   }
