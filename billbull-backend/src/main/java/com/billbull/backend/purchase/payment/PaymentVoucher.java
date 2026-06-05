@@ -75,6 +75,13 @@ public class PaymentVoucher {
     @Column(length = 500)
     private String notes;
 
+    /**
+     * Settlement discount received from vendor on early payment (PDF §12 / Phase 4.4).
+     * When > 0, posting engine adds a third line: Cr Discount Received (7001).
+     */
+    @Column(name = "discount_amount", precision = 15, scale = 2)
+    private BigDecimal discountAmount;
+
     @PrePersist
     public void prePersist() {
         if (this.status == null) {

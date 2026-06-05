@@ -29,6 +29,8 @@ import { Input } from "../../Sales/Reports/ui/input";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, PieChart, Pie, Cell } from "recharts";
 import { getInventoryReportData } from "../../../api/inventoryReportsApi";
 import { getWarehouses } from "../../../api/warehouseApi";
+import { getBrands } from "../../../api/brandsApi";
+import { getDepartments } from "../../../api/departmentsApi";
 import { exportToPDF, exportToExcel } from "../../../utils/exportUtils";
 import { generateReportPrintHtml, printHtml } from "../../../utils/printGenerator";
 import { getCompanyProfile } from "../../../api/companyProfileApi";
@@ -942,19 +944,44 @@ export default function InventoryReports({ onNavigate }: InventoryReportsProps) 
     ops: false,
   });
 
-  // Filters (wire to API later)
-  const [dateFrom, setDateFrom] = useState("");
-  const [dateTo, setDateTo] = useState("");
+  // Filters — default to current month
+  const _today = new Date();
+  const _firstOfMonth = new Date(_today.getFullYear(), _today.getMonth(), 1).toISOString().split("T")[0];
+  const _todayStr = _today.toISOString().split("T")[0];
+  const [dateFrom, setDateFrom] = useState(_firstOfMonth);
+  const [dateTo, setDateTo] = useState(_todayStr);
   const [warehouse, setWarehouse] = useState("All");
+  const [warehouseSearch, setWarehouseSearch] = useState("");
+  const [warehouseOpen, setWarehouseOpen] = useState(false);
   const [department, setDepartment] = useState("All");
+  const [departmentSearch, setDepartmentSearch] = useState("");
+  const [departmentOpen, setDepartmentOpen] = useState(false);
   const [brand, setBrand] = useState("All");
+  const [brandSearch, setBrandSearch] = useState("");
+  const [brandOpen, setBrandOpen] = useState(false);
+  const [stockCondition, setStockCondition] = useState("Positive only");
+  const [stockConditionSearch, setStockConditionSearch] = useState("");
+  const [stockConditionOpen, setStockConditionOpen] = useState(false);
+  const stockConditionOptions = ["All", "Positive only", "Zero stock", "Negative"];
   const [itemSearch, setItemSearch] = useState("");
   const [onlyPositiveStock, setOnlyPositiveStock] = useState(true);
   const [, setDataRevision] = useState(0);
   const [companyProfile, setCompanyProfile] = useState<any>(null);
+  const [departmentOptions, setDepartmentOptions] = useState<{ id: string; name: string }[]>([]);
+  const [brandOptions, setBrandOptions] = useState<{ id: string; name: string }[]>([]);
 
   useEffect(() => {
     getCompanyProfile().then((res) => setCompanyProfile(res.data)).catch(() => {});
+    getDepartments()
+      .then((data: any[]) => setDepartmentOptions(
+        (data || []).filter((d: any) => d.isActive !== false).map((d: any) => ({ id: String(d.id), name: d.name }))
+      ))
+      .catch(() => {});
+    getBrands()
+      .then((data: any[]) => setBrandOptions(
+        (data || []).filter((b: any) => b.active !== false && b.isActive !== false).map((b: any) => ({ id: String(b.id), name: b.name }))
+      ))
+      .catch(() => {});
   }, []);
 
   async function loadReport(signal?: AbortSignal) {
@@ -968,7 +995,7 @@ export default function InventoryReports({ onNavigate }: InventoryReportsProps) 
         department,
         brand,
         searchQuery: itemSearch,
-        stockCondition: onlyPositiveStock ? 'Positive only' : 'All'
+        stockCondition
       }, signal);
       if (!data) return;
       applyLiveReportData(activeReport, data);
@@ -982,7 +1009,7 @@ export default function InventoryReports({ onNavigate }: InventoryReportsProps) 
     const controller = new AbortController();
     loadReport(controller.signal);
     return () => controller.abort();
-  }, [activeReport, dateFrom, dateTo, warehouse, department, brand, itemSearch, onlyPositiveStock]);
+  }, [activeReport, dateFrom, dateTo, warehouse, department, brand, itemSearch, stockCondition]);
 
   React.useEffect(() => {
     let cancelled = false;
@@ -1324,54 +1351,118 @@ export default function InventoryReports({ onNavigate }: InventoryReportsProps) 
                   />
                 </div>
 
-                <div className="space-y-1.5">
+                <div className="space-y-1.5 relative">
                   <label className="text-[11px] text-slate-600 flex items-center gap-1">
                     <Warehouse className="h-3.5 w-3.5" />
                     Warehouse
                   </label>
-                  <select
-                    value={warehouse}
-                    onChange={(e) => setWarehouse(e.target.value)}
-                    className="w-full h-8 text-[11px] rounded-lg border border-slate-200 bg-slate-50 px-2"
-                  >
-                    <option value="All">All</option>
-                    {warehouseOptions.map((option) => (
-                      <option key={option.id} value={option.id}>{option.name}</option>
-                    ))}
-                  </select>
+                  <div className="relative">
+                    <input
+                      type="text"
+                      value={warehouseOpen ? warehouseSearch : (warehouse === "All" ? "" : warehouseOptions.find(o => o.id === warehouse)?.name ?? warehouse)}
+                      placeholder={warehouse === "All" ? "All" : (warehouseOptions.find(o => o.id === warehouse)?.name ?? warehouse)}
+                      onFocus={() => { setWarehouseOpen(true); setWarehouseSearch(""); }}
+                      onChange={(e) => { setWarehouseSearch(e.target.value); setWarehouseOpen(true); }}
+                      onBlur={() => setTimeout(() => setWarehouseOpen(false), 150)}
+                      className="w-full h-8 text-[11px] rounded-lg border border-slate-200 bg-slate-50 px-2 pr-6"
+                    />
+                    <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 h-3 w-3 text-slate-400 pointer-events-none" />
+                    {warehouseOpen && (
+                      <div className="absolute z-50 top-full left-0 right-0 mt-0.5 bg-white border border-slate-200 rounded-lg shadow-lg max-h-48 overflow-y-auto">
+                        {[{ id: "All", name: "All" }, ...warehouseOptions]
+                          .filter(o => !warehouseSearch || o.name.toLowerCase().includes(warehouseSearch.toLowerCase()))
+                          .map(o => (
+                            <button
+                              key={o.id}
+                              type="button"
+                              onMouseDown={() => { setWarehouse(o.id); setWarehouseOpen(false); setWarehouseSearch(""); }}
+                              className={`w-full text-left px-3 py-1.5 text-[11px] hover:bg-[#FFF6D8] ${warehouse === o.id ? "bg-[#FFF6D8] font-semibold text-slate-900" : "text-slate-700"}`}
+                            >
+                              {o.name}
+                            </button>
+                          ))}
+                        {warehouseOptions.filter(o => !warehouseSearch || o.name.toLowerCase().includes(warehouseSearch.toLowerCase())).length === 0 && warehouseSearch && (
+                          <div className="px-3 py-2 text-[11px] text-slate-400">No matches</div>
+                        )}
+                      </div>
+                    )}
+                  </div>
                 </div>
 
-                <div className="space-y-1.5">
+                <div className="space-y-1.5 relative">
                   <label className="text-[11px] text-slate-600 flex items-center gap-1">
                     <Layers className="h-3.5 w-3.5" />
                     Department
                   </label>
-                  <select
-                    value={department}
-                    onChange={(e) => setDepartment(e.target.value)}
-                    className="w-full h-8 text-[11px] rounded-lg border border-slate-200 bg-slate-50 px-2"
-                  >
-                    <option>All</option>
-                    <option>Grocery</option>
-                    <option>FMCG</option>
-                    <option>Electronics</option>
-                  </select>
+                  <div className="relative">
+                    <input
+                      type="text"
+                      value={departmentOpen ? departmentSearch : (department === "All" ? "" : department)}
+                      placeholder={department === "All" ? "All" : department}
+                      onFocus={() => { setDepartmentOpen(true); setDepartmentSearch(""); }}
+                      onChange={(e) => { setDepartmentSearch(e.target.value); setDepartmentOpen(true); }}
+                      onBlur={() => setTimeout(() => setDepartmentOpen(false), 150)}
+                      className="w-full h-8 text-[11px] rounded-lg border border-slate-200 bg-slate-50 px-2 pr-6"
+                    />
+                    <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 h-3 w-3 text-slate-400 pointer-events-none" />
+                    {departmentOpen && (
+                      <div className="absolute z-50 top-full left-0 right-0 mt-0.5 bg-white border border-slate-200 rounded-lg shadow-lg max-h-48 overflow-y-auto">
+                        {[{ id: "0", name: "All" }, ...departmentOptions]
+                          .filter(o => !departmentSearch || o.name.toLowerCase().includes(departmentSearch.toLowerCase()))
+                          .map(o => (
+                            <button
+                              key={o.id}
+                              type="button"
+                              onMouseDown={() => { setDepartment(o.name === "All" ? "All" : o.name); setDepartmentOpen(false); setDepartmentSearch(""); }}
+                              className={`w-full text-left px-3 py-1.5 text-[11px] hover:bg-[#FFF6D8] ${department === (o.name === "All" ? "All" : o.name) ? "bg-[#FFF6D8] font-semibold text-slate-900" : "text-slate-700"}`}
+                            >
+                              {o.name}
+                            </button>
+                          ))}
+                        {departmentOptions.filter(o => !departmentSearch || o.name.toLowerCase().includes(departmentSearch.toLowerCase())).length === 0 && departmentSearch && (
+                          <div className="px-3 py-2 text-[11px] text-slate-400">No matches</div>
+                        )}
+                      </div>
+                    )}
+                  </div>
                 </div>
 
-                <div className="space-y-1.5">
+                <div className="space-y-1.5 relative">
                   <label className="text-[11px] text-slate-600 flex items-center gap-1">
                     <Tags className="h-3.5 w-3.5" />
                     Brand
                   </label>
-                  <select
-                    value={brand}
-                    onChange={(e) => setBrand(e.target.value)}
-                    className="w-full h-8 text-[11px] rounded-lg border border-slate-200 bg-slate-50 px-2"
-                  >
-                    <option>All</option>
-                    <option>Brand A</option>
-                    <option>Brand B</option>
-                  </select>
+                  <div className="relative">
+                    <input
+                      type="text"
+                      value={brandOpen ? brandSearch : (brand === "All" ? "" : brand)}
+                      placeholder={brand === "All" ? "All" : brand}
+                      onFocus={() => { setBrandOpen(true); setBrandSearch(""); }}
+                      onChange={(e) => { setBrandSearch(e.target.value); setBrandOpen(true); }}
+                      onBlur={() => setTimeout(() => setBrandOpen(false), 150)}
+                      className="w-full h-8 text-[11px] rounded-lg border border-slate-200 bg-slate-50 px-2 pr-6"
+                    />
+                    <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 h-3 w-3 text-slate-400 pointer-events-none" />
+                    {brandOpen && (
+                      <div className="absolute z-50 top-full left-0 right-0 mt-0.5 bg-white border border-slate-200 rounded-lg shadow-lg max-h-48 overflow-y-auto">
+                        {[{ id: "0", name: "All" }, ...brandOptions]
+                          .filter(o => !brandSearch || o.name.toLowerCase().includes(brandSearch.toLowerCase()))
+                          .map(o => (
+                            <button
+                              key={o.id}
+                              type="button"
+                              onMouseDown={() => { setBrand(o.name); setBrandOpen(false); setBrandSearch(""); }}
+                              className={`w-full text-left px-3 py-1.5 text-[11px] hover:bg-[#FFF6D8] ${brand === o.name ? "bg-[#FFF6D8] font-semibold text-slate-900" : "text-slate-700"}`}
+                            >
+                              {o.name}
+                            </button>
+                          ))}
+                        {brandOptions.filter(o => !brandSearch || o.name.toLowerCase().includes(brandSearch.toLowerCase())).length === 0 && brandSearch && (
+                          <div className="px-3 py-2 text-[11px] text-slate-400">No matches</div>
+                        )}
+                      </div>
+                    )}
+                  </div>
                 </div>
 
                 <div className="space-y-1.5">
@@ -1387,18 +1478,38 @@ export default function InventoryReports({ onNavigate }: InventoryReportsProps) 
                   />
                 </div>
 
-                <div className="space-y-1.5">
+                <div className="space-y-1.5 relative">
                   <label className="text-[11px] text-slate-600">
                     Stock Condition
                   </label>
-                  <select
-                    value={onlyPositiveStock ? "Positive" : "All"}
-                    onChange={(e) => setOnlyPositiveStock(e.target.value === "Positive")}
-                    className="w-full h-8 text-[11px] rounded-lg border border-slate-200 bg-slate-50 px-2"
-                  >
-                    <option value="Positive">Positive only</option>
-                    <option value="All">All</option>
-                  </select>
+                  <div className="relative">
+                    <input
+                      type="text"
+                      value={stockConditionOpen ? stockConditionSearch : (stockCondition === "Positive only" ? "" : stockCondition)}
+                      placeholder={stockCondition}
+                      onFocus={() => { setStockConditionOpen(true); setStockConditionSearch(""); }}
+                      onChange={(e) => { setStockConditionSearch(e.target.value); setStockConditionOpen(true); }}
+                      onBlur={() => setTimeout(() => setStockConditionOpen(false), 150)}
+                      className="w-full h-8 text-[11px] rounded-lg border border-slate-200 bg-slate-50 px-2 pr-6"
+                    />
+                    <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 h-3 w-3 text-slate-400 pointer-events-none" />
+                    {stockConditionOpen && (
+                      <div className="absolute z-50 top-full left-0 right-0 mt-0.5 bg-white border border-slate-200 rounded-lg shadow-lg overflow-y-auto">
+                        {stockConditionOptions
+                          .filter(o => !stockConditionSearch || o.toLowerCase().includes(stockConditionSearch.toLowerCase()))
+                          .map(o => (
+                            <button
+                              key={o}
+                              type="button"
+                              onMouseDown={() => { setStockCondition(o); setOnlyPositiveStock(o === "Positive only"); setStockConditionOpen(false); setStockConditionSearch(""); }}
+                              className={`w-full text-left px-3 py-1.5 text-[11px] hover:bg-[#FFF6D8] ${stockCondition === o ? "bg-[#FFF6D8] font-semibold text-slate-900" : "text-slate-700"}`}
+                            >
+                              {o}
+                            </button>
+                          ))}
+                      </div>
+                    )}
+                  </div>
                 </div>
 
                 <div className="flex items-end gap-2">
@@ -1412,6 +1523,7 @@ export default function InventoryReports({ onNavigate }: InventoryReportsProps) 
                   </Button>
                   <Button
                     variant="ghost"
+                    onClick={handleExportExcel}
                     className="h-8 text-[11px] text-slate-600 flex items-center gap-1"
                   >
                     <Download className="h-3.5 w-3.5" />

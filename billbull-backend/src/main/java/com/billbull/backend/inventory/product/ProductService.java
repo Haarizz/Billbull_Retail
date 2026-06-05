@@ -23,6 +23,7 @@ import com.billbull.backend.inventory.warehouse.LocatorRepository;
 import com.billbull.backend.inventory.warehouse.WarehouseRepository;
 import com.billbull.backend.inventory.warehouse.ZoneRepository;
 import com.billbull.backend.purchase.stockmovement.StockMovementRepository;
+import com.billbull.backend.security.AuditLogService;
 import com.billbull.backend.security.BranchContextHolder;
 import com.billbull.backend.settings.branch.Branch;
 import com.billbull.backend.settings.branch.BranchRepository;
@@ -56,6 +57,7 @@ public class ProductService {
     private final ProductImageStorageService imageStorage;
     private final StockMovementRepository stockMovementRepo;
     private final BranchRepository branchRepo;
+    private final AuditLogService auditLogService;
 
     public ProductService(
             ProductRepository productRepo,
@@ -76,7 +78,8 @@ public class ProductService {
             BinRepository binRepo,
             ProductImageStorageService imageStorage,
             StockMovementRepository stockMovementRepo,
-            BranchRepository branchRepo) {
+            BranchRepository branchRepo,
+            AuditLogService auditLogService) {
         this.productRepo = productRepo;
         this.pricingRepo = pricingRepo;
         this.branchPricingRepo = branchPricingRepo;
@@ -96,6 +99,26 @@ public class ProductService {
         this.imageStorage = imageStorage;
         this.stockMovementRepo = stockMovementRepo;
         this.branchRepo = branchRepo;
+        this.auditLogService = auditLogService;
+    }
+
+    private void auditProduct(String action, Product product, ProductAggregateRequest req) {
+        if (auditLogService == null || product == null) {
+            return;
+        }
+        try {
+            int branchPriceCount = req != null && req.getBranchPrices() != null ? req.getBranchPrices().size() : 0;
+            auditLogService.logDomainEvent(
+                    "PRODUCT",
+                    product.getId() != null ? String.valueOf(product.getId()) : "-",
+                    action,
+                    "code=" + product.getCode()
+                            + ", name=" + product.getName()
+                            + ", status=" + product.getStatus()
+                            + ", branchPriceRows=" + branchPriceCount);
+        } catch (Exception ignored) {
+            // Audit must never break product save/update/delete.
+        }
     }
 
     // ==================================================
@@ -264,6 +287,7 @@ public class ProductService {
             mediaRepo.save(media);
         }
 
+        auditProduct("CREATE", savedProduct, req);
         return buildResponse(savedProduct);
     }
 
@@ -308,6 +332,7 @@ public class ProductService {
             mediaRepo.save(media);
         }
 
+        auditProduct("UPDATE", savedProduct, req);
         return buildResponse(savedProduct);
     }
 
@@ -884,7 +909,8 @@ public class ProductService {
         Product product = productRepo.findByIdAndIsActiveTrue(productId)
                 .orElseThrow(() -> new RuntimeException("Product not found"));
         product.setActive(false);
-        productRepo.save(product);
+        Product saved = productRepo.save(product);
+        auditProduct("DELETE", saved, null);
     }
 
     // ==================================================

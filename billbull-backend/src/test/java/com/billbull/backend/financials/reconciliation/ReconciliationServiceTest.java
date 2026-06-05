@@ -47,7 +47,7 @@ class ReconciliationServiceTest {
 
     @BeforeEach
     void setUp() {
-        service = new ReconciliationService(sessionRepository, ledgerEntryRepository, accountRepository, branchAccessService);
+        service = new ReconciliationService(sessionRepository, ledgerEntryRepository, accountRepository, branchAccessService, null);
     }
 
     @Test

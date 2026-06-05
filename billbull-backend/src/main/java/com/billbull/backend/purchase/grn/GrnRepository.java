@@ -30,12 +30,24 @@ public interface GrnRepository extends JpaRepository<GrnEntity, Long> {
                         Long referenceId,
                         List<GrnSourceType> sourceTypes);
 
-        @Query("SELECT DISTINCT g FROM GrnEntity g LEFT JOIN FETCH g.items "
-                        + "WHERE (:dateFrom IS NULL OR g.grnDate >= :dateFrom) "
-                        + "AND (:dateTo IS NULL OR g.grnDate <= :dateTo) "
-                        + "ORDER BY g.grnDate DESC")
-        List<GrnEntity> findForReports(@Param("dateFrom") java.time.LocalDate dateFrom,
-                        @Param("dateTo") java.time.LocalDate dateTo);
+        @Query("SELECT DISTINCT g FROM GrnEntity g LEFT JOIN FETCH g.items WHERE g.grnDate >= :dateFrom AND g.grnDate <= :dateTo ORDER BY g.grnDate DESC")
+        List<GrnEntity> findForReportsBounded(@Param("dateFrom") java.time.LocalDate dateFrom, @Param("dateTo") java.time.LocalDate dateTo);
+
+        @Query("SELECT DISTINCT g FROM GrnEntity g LEFT JOIN FETCH g.items WHERE g.grnDate >= :dateFrom ORDER BY g.grnDate DESC")
+        List<GrnEntity> findForReportsFromDate(@Param("dateFrom") java.time.LocalDate dateFrom);
+
+        @Query("SELECT DISTINCT g FROM GrnEntity g LEFT JOIN FETCH g.items WHERE g.grnDate <= :dateTo ORDER BY g.grnDate DESC")
+        List<GrnEntity> findForReportsToDate(@Param("dateTo") java.time.LocalDate dateTo);
+
+        @Query("SELECT DISTINCT g FROM GrnEntity g LEFT JOIN FETCH g.items ORDER BY g.grnDate DESC")
+        List<GrnEntity> findForReportsAll();
+
+        default List<GrnEntity> findForReports(java.time.LocalDate dateFrom, java.time.LocalDate dateTo) {
+                if (dateFrom != null && dateTo != null) return findForReportsBounded(dateFrom, dateTo);
+                if (dateFrom != null) return findForReportsFromDate(dateFrom);
+                if (dateTo != null) return findForReportsToDate(dateTo);
+                return findForReportsAll();
+        }
 
         /* ================= CONVENIENCE METHODS ================= */
 

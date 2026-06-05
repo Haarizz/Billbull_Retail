@@ -26,11 +26,31 @@ public interface SalesInvoiceRepository extends JpaRepository<SalesInvoice, Long
          * in a single query (no per-invoice N+1). Pass null dates for no bound.
          */
         @Query("SELECT DISTINCT i FROM SalesInvoice i LEFT JOIN FETCH i.items "
-                        + "WHERE (:dateFrom IS NULL OR i.invoiceDate >= :dateFrom) "
-                        + "AND (:dateTo IS NULL OR i.invoiceDate <= :dateTo) "
+                        + "WHERE i.invoiceDate >= :dateFrom AND i.invoiceDate <= :dateTo "
                         + "ORDER BY i.invoiceDate DESC")
-        List<SalesInvoice> findForReports(@Param("dateFrom") LocalDate dateFrom,
+        List<SalesInvoice> findForReportsBounded(@Param("dateFrom") LocalDate dateFrom,
                         @Param("dateTo") LocalDate dateTo);
+
+        @Query("SELECT DISTINCT i FROM SalesInvoice i LEFT JOIN FETCH i.items "
+                        + "WHERE i.invoiceDate >= :dateFrom "
+                        + "ORDER BY i.invoiceDate DESC")
+        List<SalesInvoice> findForReportsFromDate(@Param("dateFrom") LocalDate dateFrom);
+
+        @Query("SELECT DISTINCT i FROM SalesInvoice i LEFT JOIN FETCH i.items "
+                        + "WHERE i.invoiceDate <= :dateTo "
+                        + "ORDER BY i.invoiceDate DESC")
+        List<SalesInvoice> findForReportsToDate(@Param("dateTo") LocalDate dateTo);
+
+        @Query("SELECT DISTINCT i FROM SalesInvoice i LEFT JOIN FETCH i.items "
+                        + "ORDER BY i.invoiceDate DESC")
+        List<SalesInvoice> findForReportsAll();
+
+        default List<SalesInvoice> findForReports(LocalDate dateFrom, LocalDate dateTo) {
+                if (dateFrom != null && dateTo != null) return findForReportsBounded(dateFrom, dateTo);
+                if (dateFrom != null) return findForReportsFromDate(dateFrom);
+                if (dateTo != null) return findForReportsToDate(dateTo);
+                return findForReportsAll();
+        }
 
         /** QA-018: batch lookup used by StatementService to populate description/reference. */
         List<SalesInvoice> findByInvoiceNumberIn(List<String> invoiceNumbers);
@@ -152,4 +172,8 @@ public interface SalesInvoiceRepository extends JpaRepository<SalesInvoice, Long
                         + "GROUP BY s "
                         + "HAVING COALESCE(SUM(i.recognizedRevenue), 0) > s.subTotal")
         List<SalesInvoice> findOverRecognizedInvoices();
+
+        /** Global AR sub-ledger total: sum of open balances across all non-cancelled invoices. Used by reconciliation. */
+        @Query("SELECT COALESCE(SUM(s.balance), 0) FROM SalesInvoice s WHERE s.status NOT IN (com.billbull.backend.sales.invoice.SalesInvoiceStatus.CANCELLED, com.billbull.backend.sales.invoice.SalesInvoiceStatus.PAID)")
+        java.math.BigDecimal sumGlobalOutstandingBalance();
 }

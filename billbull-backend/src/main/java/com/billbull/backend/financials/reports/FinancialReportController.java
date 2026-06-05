@@ -18,9 +18,12 @@ import org.springframework.web.bind.annotation.RestController;
 public class FinancialReportController {
 
     private final FinancialReportService reportService;
+    private final SubLedgerReconciliationService reconciliationService;
 
-    public FinancialReportController(FinancialReportService reportService) {
-        this.reportService = reportService;
+    public FinancialReportController(FinancialReportService reportService,
+                                     SubLedgerReconciliationService reconciliationService) {
+        this.reportService         = reportService;
+        this.reconciliationService = reconciliationService;
     }
 
     @GetMapping("/trial-balance")
@@ -89,5 +92,11 @@ public class FinancialReportController {
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to) {
         return reportService.generateLedgerStatement(accountCode, from, to);
+    }
+
+    /** Sub-ledger ↔ GL reconciliation health check (PDF §17 / Phase 7.1). */
+    @GetMapping("/reconciliation")
+    public SubLedgerReconciliationService.ReconciliationReport getReconciliation() {
+        return reconciliationService.reconcileAll();
     }
 }

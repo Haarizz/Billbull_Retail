@@ -120,9 +120,26 @@ public interface DeliveryNoteRepository extends JpaRepository<DeliveryNote, Long
   boolean existsActiveBySalesOrderNo(@Param("soNo") String soNo);
 
   /** Sales-report loader: date-bounded delivery notes (header fields only — reports don't read DN items). */
-  @Query("SELECT dn FROM DeliveryNote dn "
-          + "WHERE (:dateFrom IS NULL OR dn.dnDate >= :dateFrom) "
-          + "AND (:dateTo IS NULL OR dn.dnDate <= :dateTo)")
-  List<DeliveryNote> findForReports(@Param("dateFrom") java.time.LocalDate dateFrom,
-          @Param("dateTo") java.time.LocalDate dateTo);
+  @Query("SELECT dn FROM DeliveryNote dn WHERE dn.dnDate >= :dateFrom AND dn.dnDate <= :dateTo")
+  List<DeliveryNote> findForReportsBounded(@Param("dateFrom") java.time.LocalDate dateFrom, @Param("dateTo") java.time.LocalDate dateTo);
+
+  @Query("SELECT dn FROM DeliveryNote dn WHERE dn.dnDate >= :dateFrom")
+  List<DeliveryNote> findForReportsFromDate(@Param("dateFrom") java.time.LocalDate dateFrom);
+
+  @Query("SELECT dn FROM DeliveryNote dn WHERE dn.dnDate <= :dateTo")
+  List<DeliveryNote> findForReportsToDate(@Param("dateTo") java.time.LocalDate dateTo);
+
+  @Query("SELECT dn FROM DeliveryNote dn")
+  List<DeliveryNote> findForReportsAll();
+
+  default List<DeliveryNote> findForReports(java.time.LocalDate dateFrom, java.time.LocalDate dateTo) {
+      if (dateFrom != null && dateTo != null) return findForReportsBounded(dateFrom, dateTo);
+      if (dateFrom != null) return findForReportsFromDate(dateFrom);
+      if (dateTo != null) return findForReportsToDate(dateTo);
+      return findForReportsAll();
+  }
+
+  /** Used by SalesReturnService to locate the source DN for COGS reversal at original cost. */
+  @Query("SELECT dn FROM DeliveryNote dn WHERE dn.linkedSalesInvoice.invoiceNumber = :invoiceNumber AND dn.status = 'DELIVERED'")
+  List<DeliveryNote> findByLinkedInvoiceNumber(@Param("invoiceNumber") String invoiceNumber);
 }

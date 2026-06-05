@@ -68,6 +68,32 @@ public class RolePermissionInitializer implements ApplicationRunner {
             seedIfAbsent(role, "hr",         true,  true,  true,  false, true);
             seedIfAbsent(role, "dashboard",  true,  false, false, false, false);
         });
+
+        // Financial flow Phase 8.5 permissions (PDF §21A — maker-checker / override controls):
+        //   permissions.journal.create       → ACCOUNTANT can create manual JVs
+        //   permissions.journal.approve      → ACCOUNTANT can approve JVs up to threshold
+        //   permissions.journal.approve-high-value → MANAGER/ADMIN can approve above threshold
+        //   permissions.posting.backdate-into-locked → ADMIN can post into closed period
+        //   permissions.sales.override-credit-limit  → MANAGER/ADMIN can override credit check
+        //   permissions.vendor.advance               → ACCOUNTANT can manage vendor advances
+        //   permissions.customer.advance.refund      → MANAGER/ADMIN can refund customer advances
+        roleRepository.findByName("ACCOUNTANT").ifPresent(role -> {
+            seedIfAbsent(role, "permissions.journal.create",         true, true, true, false, false);
+            seedIfAbsent(role, "permissions.journal.approve",        true, true, true, true,  false);
+            seedIfAbsent(role, "permissions.vendor.advance",         true, true, true, false, false);
+        });
+        roleRepository.findByName("MANAGER").ifPresent(role -> {
+            seedIfAbsent(role, "permissions.journal.approve",              true, true, true, true,  false);
+            seedIfAbsent(role, "permissions.journal.approve-high-value",   true, true, true, true,  false);
+            seedIfAbsent(role, "permissions.sales.override-credit-limit",  true, true, true, true,  false);
+            seedIfAbsent(role, "permissions.customer.advance.refund",      true, true, true, true,  false);
+        });
+        roleRepository.findByName("ADMIN").ifPresent(role -> {
+            seedIfAbsent(role, "permissions.journal.approve-high-value",   true, true, true, true,  false);
+            seedIfAbsent(role, "permissions.posting.backdate-into-locked", true, true, true, true,  false);
+            seedIfAbsent(role, "permissions.sales.override-credit-limit",  true, true, true, true,  false);
+            seedIfAbsent(role, "permissions.customer.advance.refund",      true, true, true, true,  false);
+        });
     }
 
     private void seedIfAbsent(

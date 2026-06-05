@@ -71,6 +71,7 @@ public class ReceiptVoucherService {
         }
     }
 
+    @Transactional(readOnly = true)
     public List<ReceiptVoucher> getAllReceipts() {
         List<ReceiptVoucher> receipts = new ArrayList<>(branchAccessService.filterBranchScopedByBranch(
                 repository.findAll(), ReceiptVoucher::getBranchEntity));
@@ -79,11 +80,16 @@ public class ReceiptVoucherService {
                 ReceiptVoucher::getDate,
                 ReceiptVoucher::getVoucherId,
                 ReceiptVoucher::getId);
+        receipts.forEach(ReceiptVoucher::snapshotBranchFields);
         return receipts;
     }
 
+    @Transactional(readOnly = true)
     public ReceiptVoucher getReceiptById(Long id) {
-        return repository.findById(id).orElseThrow(() -> new RuntimeException("Receipt not found with id " + id));
+        ReceiptVoucher rv = repository.findById(id)
+                .orElseThrow(() -> new RuntimeException("Receipt not found with id " + id));
+        rv.snapshotBranchFields();
+        return rv;
     }
 
     /**
@@ -133,6 +139,7 @@ public class ReceiptVoucherService {
 
         syncLinkedInvoice(saved.getSalesInvoiceId());
         syncOpeningInvoice(saved.getOpeningInvoiceId());
+        saved.snapshotBranchFields();
         return saved;
     }
 
@@ -200,6 +207,7 @@ public class ReceiptVoucherService {
         auditService.logEvent("RECEIPT_VOUCHER", saved.getVoucherId(), "UPDATED",
                 "System", "Status: " + previousStatus + " -> " + saved.getStatus());
 
+        saved.snapshotBranchFields();
         return saved;
     }
 

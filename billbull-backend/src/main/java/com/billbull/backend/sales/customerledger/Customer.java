@@ -63,6 +63,10 @@ public class Customer {
     // =========================
     private String payMode;
     private String payTerms;
+
+    /** FK to PaymentTerms master. Drives due-date calculation and settlement-discount suggestion. */
+    @Column(name = "payment_terms_id")
+    private Long paymentTermsId;
     private Integer creditLimitDays;
     private BigDecimal creditLimitAmount;
     private Integer maxCreditInvoices;
@@ -200,6 +204,9 @@ public class Customer {
 
     public String getPayTerms() { return payTerms; }
     public void setPayTerms(String payTerms) { this.payTerms = payTerms; }
+
+    public Long getPaymentTermsId() { return paymentTermsId; }
+    public void setPaymentTermsId(Long paymentTermsId) { this.paymentTermsId = paymentTermsId; }
 
     public Integer getCreditLimitDays() { return creditLimitDays; }
     public void setCreditLimitDays(Integer creditLimitDays) { this.creditLimitDays = creditLimitDays; }

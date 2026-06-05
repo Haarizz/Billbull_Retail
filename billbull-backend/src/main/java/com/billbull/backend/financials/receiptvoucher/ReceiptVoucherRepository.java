@@ -50,6 +50,9 @@ public interface ReceiptVoucherRepository extends JpaRepository<ReceiptVoucher, 
     /** QA-018: batch lookup used by StatementService to populate description/reference. */
     List<ReceiptVoucher> findByVoucherIdIn(List<String> voucherIds);
 
+    /** All advance receipts for a customer (purpose = ADVANCE_RECEIVED). */
+    List<ReceiptVoucher> findByCustomerCodeAndPurpose(String customerCode, ReceiptPurpose purpose);
+
     /**
      * Highest voucher_id for a given year-prefix (e.g. "RV-2026-"). Used to derive
      * the next sequence safely — counting all rows can collide with existing keys

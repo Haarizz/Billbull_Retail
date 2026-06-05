@@ -91,9 +91,22 @@ public interface SalesOrderRepository extends JpaRepository<SalesOrder, Long> {
   List<SalesOrder> findByOrderDateBetween(java.time.LocalDate from, java.time.LocalDate to);
 
   /** Sales-report loader: date-bounded orders with line items fetched in one query. */
-  @Query("SELECT DISTINCT o FROM SalesOrder o LEFT JOIN FETCH o.items "
-          + "WHERE (:dateFrom IS NULL OR o.orderDate >= :dateFrom) "
-          + "AND (:dateTo IS NULL OR o.orderDate <= :dateTo)")
-  List<SalesOrder> findForReports(@Param("dateFrom") java.time.LocalDate dateFrom,
-          @Param("dateTo") java.time.LocalDate dateTo);
+  @Query("SELECT DISTINCT o FROM SalesOrder o LEFT JOIN FETCH o.items WHERE o.orderDate >= :dateFrom AND o.orderDate <= :dateTo")
+  List<SalesOrder> findForReportsBounded(@Param("dateFrom") java.time.LocalDate dateFrom, @Param("dateTo") java.time.LocalDate dateTo);
+
+  @Query("SELECT DISTINCT o FROM SalesOrder o LEFT JOIN FETCH o.items WHERE o.orderDate >= :dateFrom")
+  List<SalesOrder> findForReportsFromDate(@Param("dateFrom") java.time.LocalDate dateFrom);
+
+  @Query("SELECT DISTINCT o FROM SalesOrder o LEFT JOIN FETCH o.items WHERE o.orderDate <= :dateTo")
+  List<SalesOrder> findForReportsToDate(@Param("dateTo") java.time.LocalDate dateTo);
+
+  @Query("SELECT DISTINCT o FROM SalesOrder o LEFT JOIN FETCH o.items")
+  List<SalesOrder> findForReportsAll();
+
+  default List<SalesOrder> findForReports(java.time.LocalDate dateFrom, java.time.LocalDate dateTo) {
+      if (dateFrom != null && dateTo != null) return findForReportsBounded(dateFrom, dateTo);
+      if (dateFrom != null) return findForReportsFromDate(dateFrom);
+      if (dateTo != null) return findForReportsToDate(dateTo);
+      return findForReportsAll();
+  }
 }

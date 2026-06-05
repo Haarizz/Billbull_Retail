@@ -34,10 +34,11 @@ import { Badge } from "./ui/badge";
 import { Separator } from "./ui/separator";
 import { Input } from "./ui/input";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, PieChart, Pie, Cell, LineChart, Line, Area, AreaChart } from "recharts";
-import { getSalesReportData } from "../../../api/salesReportsApi";
+import { getSalesReportData, getSalesReportSalespersons } from "../../../api/salesReportsApi";
 import { exportToPDF, exportToExcel } from "../../../utils/exportUtils";
 import { generateReportPrintHtml, printHtml } from "../../../utils/printGenerator";
 import { getCompanyProfile } from "../../../api/companyProfileApi";
+import { getBranches } from "../../../api/branchApi";
 import ExportDropdown from "../../../components/common/ExportDropdown";
 
 type ReportGroupId =
@@ -1762,16 +1763,29 @@ export function SalesReports({ onNavigate }: SalesReportsProps) {
     audit: false,
   });
 
-  // Filters
-  const [dateFrom, setDateFrom] = useState("");
-  const [dateTo, setDateTo] = useState("");
+  // Filters — default to current month
+  const _today = new Date();
+  const _firstOfMonth = new Date(_today.getFullYear(), _today.getMonth(), 1).toISOString().split("T")[0];
+  const _todayStr = _today.toISOString().split("T")[0];
+  const [dateFrom, setDateFrom] = useState(_firstOfMonth);
+  const [dateTo, setDateTo] = useState(_todayStr);
   const [branch, setBranch] = useState("All");
   const [channel, setChannel] = useState("All");
   const [cashier, setCashier] = useState("All");
   const [companyProfile, setCompanyProfile] = useState<any>(null);
+  const [branches, setBranches] = useState<{ id: number; name: string }[]>([]);
+  const [salespersons, setSalespersons] = useState<string[]>([]);
+  const [cashierSearch, setCashierSearch] = useState("");
+  const [cashierOpen, setCashierOpen] = useState(false);
 
   useEffect(() => {
     getCompanyProfile().then((res) => setCompanyProfile(res.data)).catch(() => {});
+    getBranches()
+      .then((data: any[]) => setBranches(data.filter((b: any) => b.isActive !== false)))
+      .catch(() => {});
+    getSalesReportSalespersons()
+      .then((data: string[]) => setSalespersons(data))
+      .catch(() => {});
   }, []);
 
   const activeDef = useMemo(
@@ -2149,10 +2163,10 @@ export function SalesReports({ onNavigate }: SalesReportsProps) {
                     onChange={(e) => setBranch(e.target.value)}
                     className="w-full h-8 text-[11px] rounded-lg border border-slate-200 bg-slate-50 px-2"
                   >
-                    <option>All</option>
-                    <option>Main Branch</option>
-                    <option>Downtown Branch</option>
-                    <option>Marina Branch</option>
+                    <option value="All">All</option>
+                    {branches.map((b) => (
+                      <option key={b.id} value={String(b.id)}>{b.name}</option>
+                    ))}
                   </select>
                 </div>
 
@@ -2166,30 +2180,50 @@ export function SalesReports({ onNavigate }: SalesReportsProps) {
                     onChange={(e) => setChannel(e.target.value)}
                     className="w-full h-8 text-[11px] rounded-lg border border-slate-200 bg-slate-50 px-2"
                   >
-                    <option>All</option>
-                    <option>POS</option>
-                    <option>VAN</option>
-                    <option>Back-Office</option>
-                    <option>Online</option>
+                    <option value="All">All</option>
+                    <option value="POS">POS</option>
+                    <option value="VAN">VAN</option>
+                    <option value="Back-Office">Back-Office</option>
+                    <option value="Online">Online</option>
                   </select>
                 </div>
 
-                <div className="space-y-1.5">
+                <div className="space-y-1.5 relative">
                   <label className="text-[11px] text-slate-600 flex items-center gap-1">
                     <Users className="h-3.5 w-3.5" />
                     Cashier / Salesperson
                   </label>
-                  <select
-                    value={cashier}
-                    onChange={(e) => setCashier(e.target.value)}
-                    className="w-full h-8 text-[11px] rounded-lg border border-slate-200 bg-slate-50 px-2"
-                  >
-                    <option>All</option>
-                    <option>Ahmed Hassan</option>
-                    <option>Fatima Al Zaabi</option>
-                    <option>Mohammed Rashid</option>
-                    <option>Sara Abdullah</option>
-                  </select>
+                  <div className="relative">
+                    <input
+                      type="text"
+                      value={cashierOpen ? cashierSearch : (cashier === "All" ? "" : cashier)}
+                      placeholder={cashier === "All" ? "All" : cashier}
+                      onFocus={() => { setCashierOpen(true); setCashierSearch(""); }}
+                      onChange={(e) => { setCashierSearch(e.target.value); setCashierOpen(true); }}
+                      onBlur={() => setTimeout(() => setCashierOpen(false), 150)}
+                      className="w-full h-8 text-[11px] rounded-lg border border-slate-200 bg-slate-50 px-2 pr-6"
+                    />
+                    <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 h-3 w-3 text-slate-400 pointer-events-none" />
+                    {cashierOpen && (
+                      <div className="absolute z-50 top-full left-0 right-0 mt-0.5 bg-white border border-slate-200 rounded-lg shadow-lg max-h-48 overflow-y-auto">
+                        {[{ label: "All", value: "All" }, ...salespersons.map(s => ({ label: s, value: s }))]
+                          .filter(o => !cashierSearch || o.label.toLowerCase().includes(cashierSearch.toLowerCase()))
+                          .map(o => (
+                            <button
+                              key={o.value}
+                              type="button"
+                              onMouseDown={() => { setCashier(o.value); setCashierOpen(false); setCashierSearch(""); }}
+                              className={`w-full text-left px-3 py-1.5 text-[11px] hover:bg-[#FFF6D8] ${cashier === o.value ? "bg-[#FFF6D8] font-semibold text-slate-900" : "text-slate-700"}`}
+                            >
+                              {o.label}
+                            </button>
+                          ))}
+                        {salespersons.filter(s => !cashierSearch || s.toLowerCase().includes(cashierSearch.toLowerCase())).length === 0 && cashierSearch && (
+                          <div className="px-3 py-2 text-[11px] text-slate-400">No matches</div>
+                        )}
+                      </div>
+                    )}
+                  </div>
                 </div>
 
                 <div className="space-y-1.5 col-span-2">
@@ -2214,6 +2248,7 @@ export function SalesReports({ onNavigate }: SalesReportsProps) {
                   <Button
                     variant="ghost"
                     className="h-8 text-[11px] text-slate-600 flex items-center gap-1"
+                    onClick={handleExportExcel}
                   >
                     <Download className="h-3.5 w-3.5" />
                     Export
@@ -2415,6 +2450,10 @@ function SalesSummaryReport() {
   );
 }
 
+function exportData(data: any[], cols: { header: string; key: string }[], title: string) {
+  exportToExcel(data, cols, title.replace(/\s+/g, "_"));
+}
+
 // Daily Sales (Z-Style) Report Component
 function DailySalesReport() {
   const d = mockDailySalesData;
@@ -2502,6 +2541,46 @@ function DailySalesReport() {
 
   const fmt = (n: number) => `AED ${n.toLocaleString("en-US", { minimumFractionDigits: 2 })}`;
 
+  function buildSummaryRows() {
+    const rows: { Section: string; Description: string; Amount: string }[] = [];
+    const add = (section: string, desc: string, n: number) =>
+      rows.push({ Section: section, Description: desc, Amount: fmt(n) });
+    add("Sales", "Net Sales", d.netSales);
+    add("Sales Returns", "Total Returns", totalSalesReturns);
+    d.salesPayments.forEach(p => add("Sales Payments", p.mode, p.amount));
+    d.customerReceipts.forEach(p => add("Customer Receipts", p.customer, p.amount));
+    d.vendorPayments.forEach(p => add("Vendor Payments", p.vendor, p.amount));
+    d.purchasePayments.forEach(p => add("Purchase Payments", p.mode, p.amount));
+    d.expensePayments.forEach(p => add("Expenses", p.category, p.amount));
+    d.soAdvances.forEach(p => add("SO Advances", p.orderNo, p.amount));
+    d.lpoAdvances.forEach(p => add("LPO Advances", p.lpoNo, p.amount));
+    d.salaryAdvances.forEach(p => add("Salary Advances", p.employee, p.amount));
+    d.otherReceipts.forEach(p => add("Other Receipts", p.description, p.amount));
+    d.otherPayments.forEach(p => add("Other Payments", p.description, p.amount));
+    return rows;
+  }
+
+  function handleDailyExport() {
+    const rows = buildSummaryRows();
+    const cols = [
+      { header: "Section", key: "Section", width: 22 },
+      { header: "Description", key: "Description", width: 30 },
+      { header: "Amount", key: "Amount", width: 18 },
+    ];
+    exportToExcel(rows, cols, "Daily_Sales_Report_Z_Style");
+  }
+
+  function handleDailyPrint() {
+    const rows = buildSummaryRows();
+    const cols = [
+      { header: "Section", key: "Section" },
+      { header: "Description", key: "Description" },
+      { header: "Amount", key: "Amount" },
+    ];
+    const html = generateReportPrintHtml({}, "Daily Sales Report (Z-Style)", cols, rows, {}, {});
+    printHtml(html);
+  }
+
   // Aggregate any array of {mode, amount} objects into a payment mode summary table
   function modeBreakdown(items: { mode: string; amount: number }[]) {
     const map: Record<string, number> = {};
@@ -2568,10 +2647,10 @@ function DailySalesReport() {
                 <span className={`w-2.5 h-2.5 rounded-full border-2 ${showOpeningBalance ? "bg-slate-900 border-slate-900" : "border-slate-400"}`} />
                 Include Opening Balance
               </button>
-              <Button variant="ghost" size="sm" className="text-[11px] text-slate-600 flex items-center gap-1">
+              <Button variant="ghost" size="sm" className="text-[11px] text-slate-600 flex items-center gap-1" onClick={handleDailyExport}>
                 <Download className="h-3.5 w-3.5" /> Export
               </Button>
-              <Button variant="ghost" size="sm" className="text-[11px] text-slate-600 flex items-center gap-1">
+              <Button variant="ghost" size="sm" className="text-[11px] text-slate-600 flex items-center gap-1" onClick={handleDailyPrint}>
                 <Printer className="h-3.5 w-3.5" /> Print
               </Button>
             </div>
@@ -3101,7 +3180,7 @@ function POSTransactionReport() {
         <CardHeader className="py-3 px-3">
           <div className="flex items-center justify-between">
             <CardTitle className="text-xs font-semibold text-slate-800">POS Transaction Detail</CardTitle>
-            <Button variant="ghost" size="sm" className="h-7 px-2 text-[10px] flex items-center gap-1"><Download className="h-3 w-3" />Export</Button>
+            <Button variant="ghost" size="sm" className="h-7 px-2 text-[10px] flex items-center gap-1" onClick={() => exportData(mockPOSTransactionData, [{ header: "Bill No", key: "billNo" }, { header: "Date", key: "date" }, { header: "Time", key: "time" }, { header: "Cashier", key: "cashier" }, { header: "Customer", key: "customer" }, { header: "Items", key: "items" }, { header: "Gross Amt", key: "grossAmt" }, { header: "Discount", key: "discount" }, { header: "Net Amt", key: "netAmt" }, { header: "Pay Mode", key: "payMode" }, { header: "Status", key: "status" }], "POS_Transaction_Detail")}><Download className="h-3 w-3" />Export</Button>
           </div>
         </CardHeader>
         <CardContent className="px-3 pb-3">
@@ -3190,7 +3269,7 @@ function POSItemSalesReport() {
         <CardHeader className="py-3 px-3">
           <div className="flex items-center justify-between">
             <CardTitle className="text-xs font-semibold text-slate-800">POS Item Sales Detail</CardTitle>
-            <Button variant="ghost" size="sm" className="h-7 px-2 text-[10px] flex items-center gap-1"><Download className="h-3 w-3" />Export</Button>
+            <Button variant="ghost" size="sm" className="h-7 px-2 text-[10px] flex items-center gap-1" onClick={() => exportData(mockPOSItemSalesData, [{ header: "Code", key: "itemCode" }, { header: "Item Name", key: "itemName" }, { header: "Category", key: "category" }, { header: "Ordered", key: "qtyOrdered" }, { header: "Sold", key: "qtySold" }, { header: "Returns", key: "returns" }, { header: "Gross Amt", key: "grossAmt" }, { header: "Discount", key: "discount" }, { header: "Net Amt", key: "netAmt" }, { header: "Contrib%", key: "contribution" }], "POS_Item_Sales_Detail")}><Download className="h-3 w-3" />Export</Button>
           </div>
         </CardHeader>
         <CardContent className="px-3 pb-3">
@@ -3362,7 +3441,7 @@ function POSVoidReport() {
         <CardHeader className="py-3 px-3">
           <div className="flex items-center justify-between">
             <CardTitle className="text-xs font-semibold text-slate-800">Void &amp; Cancellation Log</CardTitle>
-            <Button variant="ghost" size="sm" className="h-7 px-2 text-[10px] flex items-center gap-1"><Download className="h-3 w-3" />Export</Button>
+            <Button variant="ghost" size="sm" className="h-7 px-2 text-[10px] flex items-center gap-1" onClick={() => exportData(mockVoidData, [{ header: "Bill No", key: "billNo" }, { header: "Date", key: "date" }, { header: "Time", key: "time" }, { header: "Cashier", key: "cashier" }, { header: "Value", key: "value" }, { header: "Reason", key: "reason" }, { header: "Approved By", key: "approvedBy" }, { header: "Status", key: "status" }], "Void_Cancellation_Log")}><Download className="h-3 w-3" />Export</Button>
           </div>
         </CardHeader>
         <CardContent className="px-3 pb-3">
@@ -3498,7 +3577,7 @@ function VANItemSalesReport() {
       <CardHeader className="py-3 px-3">
         <div className="flex items-center justify-between">
           <CardTitle className="text-xs font-semibold text-slate-800">VAN Item Sales Report</CardTitle>
-          <Button variant="ghost" size="sm" className="h-7 px-2 text-[10px] flex items-center gap-1"><Download className="h-3 w-3" />Export</Button>
+          <Button variant="ghost" size="sm" className="h-7 px-2 text-[10px] flex items-center gap-1" onClick={() => exportData(mockVANItemData, [{ header: "Item", key: "item" }, { header: "Route", key: "route" }, { header: "Qty Sold", key: "qtySold" }, { header: "Returned", key: "qtyReturned" }, { header: "Free Issue", key: "freeIssue" }, { header: "Net Qty", key: "netQty" }, { header: "Value", key: "value" }], "VAN_Item_Sales")}><Download className="h-3 w-3" />Export</Button>
         </div>
       </CardHeader>
       <CardContent className="px-3 pb-3">
@@ -3607,7 +3686,7 @@ function VANCollectionReport() {
       <CardHeader className="py-3 px-3">
         <div className="flex items-center justify-between">
           <CardTitle className="text-xs font-semibold text-slate-800">VAN Collection Report</CardTitle>
-          <Button variant="ghost" size="sm" className="h-7 px-2 text-[10px] flex items-center gap-1"><Download className="h-3 w-3" />Export</Button>
+          <Button variant="ghost" size="sm" className="h-7 px-2 text-[10px] flex items-center gap-1" onClick={() => exportData(mockVANCollectionData, [{ header: "Salesperson", key: "salesperson" }, { header: "Route", key: "route" }, { header: "Cash", key: "cashCollected" }, { header: "Card", key: "cardCollected" }, { header: "Credit Sales", key: "creditSales" }, { header: "Total Collected", key: "totalCollected" }, { header: "Pending", key: "pending" }, { header: "Variance", key: "variance" }], "VAN_Collection")}><Download className="h-3 w-3" />Export</Button>
         </div>
       </CardHeader>
       <CardContent className="px-3 pb-3">
@@ -3655,7 +3734,7 @@ function VANStockVarianceReport() {
       <CardHeader className="py-3 px-3">
         <div className="flex items-center justify-between">
           <CardTitle className="text-xs font-semibold text-slate-800">VAN Stock Variance Report</CardTitle>
-          <Button variant="ghost" size="sm" className="h-7 px-2 text-[10px] flex items-center gap-1"><Download className="h-3 w-3" />Export</Button>
+          <Button variant="ghost" size="sm" className="h-7 px-2 text-[10px] flex items-center gap-1" onClick={() => exportData(mockVANStockData, [{ header: "Salesperson", key: "salesperson" }, { header: "Route", key: "route" }, { header: "Issued", key: "issued" }, { header: "Sold", key: "sold" }, { header: "Returned", key: "returned" }, { header: "Expected Balance", key: "expected" }, { header: "Actual Balance", key: "actual" }, { header: "Variance", key: "variance" }], "VAN_Stock_Variance")}><Download className="h-3 w-3" />Export</Button>
         </div>
       </CardHeader>
       <CardContent className="px-3 pb-3">
@@ -3743,7 +3822,7 @@ function SalesInvoiceRegisterReport() {
         <CardHeader className="py-3 px-3">
           <div className="flex items-center justify-between">
             <CardTitle className="text-xs font-semibold text-slate-800">Sales Invoice Register</CardTitle>
-            <Button variant="ghost" size="sm" className="h-7 px-2 text-[10px] flex items-center gap-1"><Download className="h-3 w-3" />Export</Button>
+            <Button variant="ghost" size="sm" className="h-7 px-2 text-[10px] flex items-center gap-1" onClick={() => exportData(mockInvoiceRegisterData, [{ header: "Invoice No", key: "invoiceNo" }, { header: "Date", key: "date" }, { header: "Customer", key: "customer" }, { header: "Salesperson", key: "salesperson" }, { header: "Amount", key: "amount" }, { header: "Tax", key: "tax" }, { header: "Total", key: "total" }, { header: "Outstanding", key: "outstanding" }, { header: "Due Date", key: "dueDate" }, { header: "Status", key: "status" }], "Sales_Invoice_Register")}><Download className="h-3 w-3" />Export</Button>
           </div>
         </CardHeader>
         <CardContent className="px-3 pb-3">
@@ -3826,7 +3905,7 @@ function SalesOrderStatusReport() {
         <CardHeader className="py-3 px-3">
           <div className="flex items-center justify-between">
             <CardTitle className="text-xs font-semibold text-slate-800">Sales Order Status</CardTitle>
-            <Button variant="ghost" size="sm" className="h-7 px-2 text-[10px] flex items-center gap-1"><Download className="h-3 w-3" />Export</Button>
+            <Button variant="ghost" size="sm" className="h-7 px-2 text-[10px] flex items-center gap-1" onClick={() => exportData(mockOrderStatusData, [{ header: "Order No", key: "orderNo" }, { header: "Date", key: "date" }, { header: "Customer", key: "customer" }, { header: "Ordered Qty", key: "orderedQty" }, { header: "Delivered", key: "deliveredQty" }, { header: "Pending", key: "pendingQty" }, { header: "Order Value", key: "orderedValue" }, { header: "Delivered Value", key: "deliveredValue" }, { header: "Status", key: "status" }], "Sales_Order_Status")}><Download className="h-3 w-3" />Export</Button>
           </div>
         </CardHeader>
         <CardContent className="px-3 pb-3">
@@ -3898,7 +3977,7 @@ function DeliveryDispatchReport() {
         <CardHeader className="py-3 px-3">
           <div className="flex items-center justify-between">
             <CardTitle className="text-xs font-semibold text-slate-800">Delivery / Dispatch Log</CardTitle>
-            <Button variant="ghost" size="sm" className="h-7 px-2 text-[10px] flex items-center gap-1"><Download className="h-3 w-3" />Export</Button>
+            <Button variant="ghost" size="sm" className="h-7 px-2 text-[10px] flex items-center gap-1" onClick={() => exportData(mockDeliveryData, [{ header: "DN No", key: "dnNo" }, { header: "Date", key: "date" }, { header: "Customer", key: "customer" }, { header: "Driver", key: "driver" }, { header: "Vehicle", key: "vehicle" }, { header: "Items", key: "items" }, { header: "Weight", key: "weight" }, { header: "Delivered At", key: "deliveredAt" }, { header: "POD", key: "pod" }, { header: "Status", key: "status" }], "Delivery_Dispatch_Log")}><Download className="h-3 w-3" />Export</Button>
           </div>
         </CardHeader>
         <CardContent className="px-3 pb-3">
@@ -3978,7 +4057,7 @@ function CreditNoteReturnsReport() {
         <CardHeader className="py-3 px-3">
           <div className="flex items-center justify-between">
             <CardTitle className="text-xs font-semibold text-slate-800">Credit Note &amp; Returns Register</CardTitle>
-            <Button variant="ghost" size="sm" className="h-7 px-2 text-[10px] flex items-center gap-1"><Download className="h-3 w-3" />Export</Button>
+            <Button variant="ghost" size="sm" className="h-7 px-2 text-[10px] flex items-center gap-1" onClick={() => exportData(mockCreditNoteData, [{ header: "CN No", key: "cnNo" }, { header: "Date", key: "date" }, { header: "Customer", key: "customer" }, { header: "Linked Invoice", key: "linkedInvoice" }, { header: "Reason", key: "reason" }, { header: "Items", key: "items" }, { header: "Return Value", key: "returnValue" }, { header: "Total w/ Tax", key: "total" }, { header: "Status", key: "status" }], "Credit_Note_Returns")}><Download className="h-3 w-3" />Export</Button>
           </div>
         </CardHeader>
         <CardContent className="px-3 pb-3">
@@ -4093,7 +4172,7 @@ function CustomerAgingReport() {
         <CardHeader className="py-3 px-3">
           <div className="flex items-center justify-between">
             <CardTitle className="text-xs font-semibold text-slate-800">Customer Aging Detail</CardTitle>
-            <Button variant="ghost" size="sm" className="h-7 px-2 text-[10px] flex items-center gap-1"><Download className="h-3 w-3" />Export</Button>
+            <Button variant="ghost" size="sm" className="h-7 px-2 text-[10px] flex items-center gap-1" onClick={() => exportData(mockAgingData, [{ header: "Customer", key: "customer" }, { header: "Credit Limit", key: "creditLimit" }, { header: "Current", key: "current" }, { header: "1-30 Days", key: "days30" }, { header: "31-60 Days", key: "days60" }, { header: "61-90 Days", key: "days90" }, { header: "90+ Days", key: "over90" }, { header: "Total", key: "total" }, { header: "Risk Level", key: "riskLevel" }], "Customer_Aging")}><Download className="h-3 w-3" />Export</Button>
           </div>
         </CardHeader>
         <CardContent className="px-3 pb-3">
@@ -4244,7 +4323,7 @@ function CustomerPriceLevelReport() {
       <CardHeader className="py-3 px-3">
         <div className="flex items-center justify-between">
           <CardTitle className="text-xs font-semibold text-slate-800">Customer Price Level Report</CardTitle>
-          <Button variant="ghost" size="sm" className="h-7 px-2 text-[10px] flex items-center gap-1"><Download className="h-3 w-3" />Export</Button>
+          <Button variant="ghost" size="sm" className="h-7 px-2 text-[10px] flex items-center gap-1" onClick={() => exportData(mockPriceLevelData, [{ header: "Customer", key: "customer" }, { header: "Price Level", key: "priceLevel" }, { header: "Discount %", key: "discountPct" }, { header: "Credit Days", key: "creditDays" }, { header: "Min Order", key: "minOrderValue" }, { header: "Special Items", key: "specialItems" }, { header: "Margin Impact", key: "marginImpact" }], "Customer_Price_Level")}><Download className="h-3 w-3" />Export</Button>
         </div>
       </CardHeader>
       <CardContent className="px-3 pb-3">
@@ -4353,7 +4432,7 @@ function ItemWiseSalesReport() {
         <CardHeader className="py-3 px-3">
           <div className="flex items-center justify-between">
             <CardTitle className="text-xs font-semibold text-slate-800">Item-wise Sales Detail</CardTitle>
-            <Button variant="ghost" size="sm" className="h-7 px-2 text-[10px] flex items-center gap-1"><Download className="h-3 w-3" />Export</Button>
+            <Button variant="ghost" size="sm" className="h-7 px-2 text-[10px] flex items-center gap-1" onClick={() => exportData(rows, [{ header: "Item", key: "item" }, { header: "Category", key: "category" }, { header: "Qty Sold", key: "qtySold" }, { header: "Revenue", key: "revenue" }, { header: "COGS", key: "cost" }, { header: "Gross Profit", key: "grossProfit" }, { header: "GP %", key: "gp" }, { header: "Returns", key: "returnQty" }, { header: "Net Revenue", key: "netRevenue" }], "Item_Wise_Sales")}><Download className="h-3 w-3" />Export</Button>
           </div>
         </CardHeader>
         <CardContent className="px-3 pb-3">
@@ -4460,7 +4539,7 @@ function CategoryBrandSalesReport() {
         <CardHeader className="py-3 px-3">
           <div className="flex items-center justify-between">
             <CardTitle className="text-xs font-semibold text-slate-800">Category Sales Detail</CardTitle>
-            <Button variant="ghost" size="sm" className="h-7 px-2 text-[10px] flex items-center gap-1"><Download className="h-3 w-3" />Export</Button>
+            <Button variant="ghost" size="sm" className="h-7 px-2 text-[10px] flex items-center gap-1" onClick={() => exportData(rows, [{ header: "Category", key: "category" }, { header: "Qty Sold", key: "qtySold" }, { header: "Sales Value", key: "salesValue" }, { header: "Contrib %", key: "contribution" }, { header: "Returns", key: "returns" }, { header: "Net Sales", key: "netSales" }, { header: "Avg GP %", key: "avgGP" }], "Category_Brand_Sales")}><Download className="h-3 w-3" />Export</Button>
           </div>
         </CardHeader>
         <CardContent className="px-3 pb-3">
@@ -4639,7 +4718,7 @@ function DiscountAnalysisReport() {
               <CardTitle className="text-xs font-semibold text-slate-800">Discount Analysis by Cashier</CardTitle>
               <span className="text-[10px] text-slate-500">Total discounts: AED {total.toLocaleString()}</span>
             </div>
-            <Button variant="ghost" size="sm" className="h-7 px-2 text-[10px] flex items-center gap-1"><Download className="h-3 w-3" />Export</Button>
+            <Button variant="ghost" size="sm" className="h-7 px-2 text-[10px] flex items-center gap-1" onClick={() => exportData(mockDiscountData, [{ header: "Cashier", key: "cashier" }, { header: "Bills", key: "bills" }, { header: "Discounted Bills", key: "discountedBills" }, { header: "Discount Amount", key: "discountAmount" }, { header: "Discount %", key: "discountPct" }, { header: "Max Bill Discount", key: "maxBillDiscount" }, { header: "Avg Discount", key: "avgDiscount" }], "Discount_Analysis")}><Download className="h-3 w-3" />Export</Button>
           </div>
         </CardHeader>
         <CardContent className="px-3 pb-3">
@@ -4705,7 +4784,7 @@ function PromotionImpactReport() {
         <CardHeader className="py-3 px-3">
           <div className="flex items-center justify-between">
             <CardTitle className="text-xs font-semibold text-slate-800">Promotion Performance Detail</CardTitle>
-            <Button variant="ghost" size="sm" className="h-7 px-2 text-[10px] flex items-center gap-1"><Download className="h-3 w-3" />Export</Button>
+            <Button variant="ghost" size="sm" className="h-7 px-2 text-[10px] flex items-center gap-1" onClick={() => exportData(mockPromotionData, [{ header: "Promotion", key: "promotionName" }, { header: "Type", key: "type" }, { header: "Period", key: "period" }, { header: "Before", key: "salesBefore" }, { header: "During", key: "salesDuring" }, { header: "Uplift %", key: "uplift" }, { header: "Discount Cost", key: "discountCost" }, { header: "Net Margin %", key: "netMargin" }], "Promotion_Impact")}><Download className="h-3 w-3" />Export</Button>
           </div>
         </CardHeader>
         <CardContent className="px-3 pb-3">
@@ -4770,7 +4849,7 @@ function FreeIssueSchemeReport() {
         <CardHeader className="py-3 px-3">
           <div className="flex items-center justify-between">
             <CardTitle className="text-xs font-semibold text-slate-800">Free Issue / Scheme Detail</CardTitle>
-            <Button variant="ghost" size="sm" className="h-7 px-2 text-[10px] flex items-center gap-1"><Download className="h-3 w-3" />Export</Button>
+            <Button variant="ghost" size="sm" className="h-7 px-2 text-[10px] flex items-center gap-1" onClick={() => exportData(mockFreeIssueData, [{ header: "Scheme", key: "scheme" }, { header: "Free Item", key: "item" }, { header: "Trigger Qty", key: "triggerQty" }, { header: "Free Qty", key: "freeQty" }, { header: "Activations", key: "activatedTimes" }, { header: "Free Qty Issued", key: "freeQtyIssued" }, { header: "Cost Impact", key: "freeIssueCost" }, { header: "Total Sales", key: "totalSales" }], "Free_Issue_Scheme")}><Download className="h-3 w-3" />Export</Button>
           </div>
         </CardHeader>
         <CardContent className="px-3 pb-3">
@@ -4876,7 +4955,7 @@ function VATOutputRegisterReport() {
             <CardTitle className="text-xs font-semibold text-slate-800">VAT Output Register</CardTitle>
             <span className="text-[10px] text-slate-500">Total VAT Collected: AED {totalTax.toLocaleString()}</span>
           </div>
-          <Button variant="ghost" size="sm" className="h-7 px-2 text-[10px] flex items-center gap-1"><Download className="h-3 w-3" />Export</Button>
+          <Button variant="ghost" size="sm" className="h-7 px-2 text-[10px] flex items-center gap-1" onClick={() => exportData(mockVATOutputData, [{ header: "Invoice No", key: "invoiceNo" }, { header: "Date", key: "date" }, { header: "Customer", key: "customer" }, { header: "TRN", key: "trn" }, { header: "Taxable Amt", key: "taxableAmt" }, { header: "VAT Rate", key: "vatRate" }, { header: "VAT Amount", key: "vatAmt" }, { header: "Total", key: "totalAmt" }], "VAT_Output_Register")}><Download className="h-3 w-3" />Export</Button>
         </div>
       </CardHeader>
       <CardContent className="px-3 pb-3">
@@ -4932,7 +5011,7 @@ function PriceOverrideReport() {
             <CardTitle className="text-xs font-semibold text-slate-800">Price Override Report</CardTitle>
             <span className="text-[10px] text-slate-500">{mockPriceOverrideData.length} overrides in period</span>
           </div>
-          <Button variant="ghost" size="sm" className="h-7 px-2 text-[10px] flex items-center gap-1"><Download className="h-3 w-3" />Export</Button>
+          <Button variant="ghost" size="sm" className="h-7 px-2 text-[10px] flex items-center gap-1" onClick={() => exportData(mockPriceOverrideData, [{ header: "Date", key: "date" }, { header: "Time", key: "time" }, { header: "Item", key: "item" }, { header: "Original Price", key: "originalPrice" }, { header: "New Price", key: "newPrice" }, { header: "Change %", key: "change" }, { header: "Cashier", key: "cashier" }, { header: "Approved By", key: "approvedBy" }, { header: "Reason", key: "reason" }, { header: "Bill No", key: "billNo" }], "Price_Override")}><Download className="h-3 w-3" />Export</Button>
         </div>
       </CardHeader>
       <CardContent className="px-3 pb-3">
@@ -4983,7 +5062,7 @@ function ManualEntryReport() {
             <CardTitle className="text-xs font-semibold text-slate-800">Manual / Back-Dated Entry Report</CardTitle>
             <span className="text-[10px] text-slate-500">{mockManualEntryData.length} entries in period</span>
           </div>
-          <Button variant="ghost" size="sm" className="h-7 px-2 text-[10px] flex items-center gap-1"><Download className="h-3 w-3" />Export</Button>
+          <Button variant="ghost" size="sm" className="h-7 px-2 text-[10px] flex items-center gap-1" onClick={() => exportData(mockManualEntryData, [{ header: "Entry No", key: "entryNo" }, { header: "Entry Date", key: "entryDate" }, { header: "Post Date", key: "postDate" }, { header: "User", key: "user" }, { header: "Type", key: "type" }, { header: "Impact", key: "impact" }, { header: "Reason", key: "reason" }, { header: "Approved By", key: "approvedBy" }], "Manual_Entry")}><Download className="h-3 w-3" />Export</Button>
         </div>
       </CardHeader>
       <CardContent className="px-3 pb-3">
@@ -5034,7 +5113,7 @@ function SalesEditLogReport() {
             <CardTitle className="text-xs font-semibold text-slate-800">Sales Edit Log</CardTitle>
             <span className="text-[10px] text-slate-500">{mockEditLogData.length} edits in period</span>
           </div>
-          <Button variant="ghost" size="sm" className="h-7 px-2 text-[10px] flex items-center gap-1"><Download className="h-3 w-3" />Export</Button>
+          <Button variant="ghost" size="sm" className="h-7 px-2 text-[10px] flex items-center gap-1" onClick={() => exportData(mockEditLogData, [{ header: "Edit No", key: "editNo" }, { header: "Date", key: "date" }, { header: "Time", key: "time" }, { header: "Invoice No", key: "invoiceNo" }, { header: "User", key: "user" }, { header: "Field Changed", key: "field" }, { header: "Before", key: "before" }, { header: "After", key: "after" }, { header: "Reason", key: "reason" }, { header: "Approved By", key: "approvedBy" }], "Sales_Edit_Log")}><Download className="h-3 w-3" />Export</Button>
         </div>
       </CardHeader>
       <CardContent className="px-3 pb-3">
@@ -5555,7 +5634,15 @@ function CustomerProfitDrilldownReport() {
               <CardTitle className="text-xs font-semibold text-slate-800">Customer → Bill → Item Profit Drilldown</CardTitle>
               <span className="text-[10px] text-slate-500">Click a customer or bill row to expand items</span>
             </div>
-            <Button variant="ghost" size="sm" className="h-7 px-2 text-[10px] flex items-center gap-1">
+            <Button variant="ghost" size="sm" className="h-7 px-2 text-[10px] flex items-center gap-1" onClick={() => {
+              const rows = valuatedData.flatMap(c => c.bills.flatMap(b => b.items.map(i => ({
+                customer: c.customerName, billNo: b.billNo, billDate: b.billDate,
+                itemCode: i.itemCode, itemName: i.itemName, category: i.category,
+                qty: i.qty, unitPrice: i.unitPrice, lineTotal: i.lineTotal,
+                unitCost: i.unitCost, lineCost: i.lineCost, lineGP: i.lineGP, gpPct: i.gpPct,
+              }))));
+              exportData(rows, [{ header: "Customer", key: "customer" }, { header: "Bill No", key: "billNo" }, { header: "Date", key: "billDate" }, { header: "Item Code", key: "itemCode" }, { header: "Item Name", key: "itemName" }, { header: "Category", key: "category" }, { header: "Qty", key: "qty" }, { header: "Unit Price", key: "unitPrice" }, { header: "Line Total", key: "lineTotal" }, { header: "Unit Cost", key: "unitCost" }, { header: "Line Cost", key: "lineCost" }, { header: "Gross Profit", key: "lineGP" }, { header: "GP %", key: "gpPct" }], "Customer_Profit_Drilldown");
+            }}>
               <Download className="h-3 w-3" />Export
             </Button>
           </div>

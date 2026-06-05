@@ -5,6 +5,7 @@ import java.time.LocalDate;
 
 import com.billbull.backend.common.BaseEntity;
 import com.billbull.backend.settings.branch.Branch;
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.FetchType;
@@ -12,6 +13,7 @@ import jakarta.persistence.Index;
 import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
 import jakarta.persistence.Table;
+import jakarta.persistence.Transient;
 
 @Entity
 @Table(name = "sales_receipt_vouchers", indexes = {
@@ -26,9 +28,18 @@ public class ReceiptVoucher extends BaseEntity {
     /** Legacy free-text branch label; kept until callers migrate to {@link #branchEntity}. */
     private String branch;
 
-    @ManyToOne(fetch = FetchType.EAGER)
+    @JsonIgnore
+    @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "branch_id")
     private Branch branchEntity;
+
+    @Transient
+    private Long branchEntityId;
+    @Transient
+    private String branchEntityName;
+    @Transient
+    private String branchEntityCode;
+
     private String memberName; // Employee or Payer
     private String category; // Income Source
     private BigDecimal amount;
@@ -67,6 +78,13 @@ public class ReceiptVoucher extends BaseEntity {
     @Column(name = "customer_code")
     private String customerCode;
 
+    /**
+     * Settlement discount granted to the customer on early payment (PDF §7 / Phase 4.3).
+     * When > 0, posting engine adds a third line: Dr Discount Allowed (6050) / Cr AR (for the discount).
+     */
+    @Column(name = "discount_amount", precision = 15, scale = 2)
+    private BigDecimal discountAmount;
+
     public ReceiptVoucher() {
     }
 
@@ -93,6 +111,24 @@ public class ReceiptVoucher extends BaseEntity {
 
     public Branch getBranchEntity() { return branchEntity; }
     public void setBranchEntity(Branch branchEntity) { this.branchEntity = branchEntity; }
+
+    /** Call while the Hibernate session is still open to snapshot branch scalars for JSON serialization. */
+    public void snapshotBranchFields() {
+        if (branchEntity != null) {
+            this.branchEntityId = branchEntity.getId();
+            this.branchEntityName = branchEntity.getName();
+            this.branchEntityCode = branchEntity.getCode();
+        }
+    }
+
+    public Long getBranchEntityId() { return branchEntityId; }
+    public void setBranchEntityId(Long branchEntityId) { this.branchEntityId = branchEntityId; }
+
+    public String getBranchEntityName() { return branchEntityName; }
+    public void setBranchEntityName(String branchEntityName) { this.branchEntityName = branchEntityName; }
+
+    public String getBranchEntityCode() { return branchEntityCode; }
+    public void setBranchEntityCode(String branchEntityCode) { this.branchEntityCode = branchEntityCode; }
 
     public void setBranch(String branch) {
         this.branch = branch;
@@ -225,4 +261,7 @@ public class ReceiptVoucher extends BaseEntity {
     public void setCustomerCode(String customerCode) {
         this.customerCode = customerCode;
     }
+
+    public BigDecimal getDiscountAmount() { return discountAmount; }
+    public void setDiscountAmount(BigDecimal discountAmount) { this.discountAmount = discountAmount; }
 }

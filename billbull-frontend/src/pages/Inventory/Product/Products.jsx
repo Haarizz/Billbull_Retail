@@ -528,6 +528,25 @@ const AddProductWizard = ({ onCancel, onSave, initialData, brands: initialBrands
           };
         });
       }
+
+      // Sync non-overridden branch rows to master pricing when master prices change
+      if (['cost', 'markup', 'retailPrice', 'minPrice', 'maxPrice', 'wholesalePrice', 'onlinePrice'].includes(field)) {
+        newData.branchPrices = (newData.branchPrices || []).map(row => {
+          if (row.overridden) return row;
+          return {
+            ...row,
+            cost: newData.cost ?? row.cost,
+            markup: newData.markup ?? row.markup,
+            gp: newData.gp ?? row.gp,
+            retailPrice: newData.retailPrice ?? row.retailPrice,
+            minPrice: newData.minPrice ?? row.minPrice,
+            maxPrice: newData.maxPrice ?? row.maxPrice,
+            wholesalePrice: newData.wholesalePrice ?? row.wholesalePrice,
+            onlinePrice: newData.onlinePrice ?? row.onlinePrice,
+          };
+        });
+      }
+
       return newData;
     });
   };
@@ -564,35 +583,47 @@ const AddProductWizard = ({ onCancel, onSave, initialData, brands: initialBrands
     }));
   };
 
-  const overrideBranchPrice = (branchId) => {
+  const toggleBranchOverride = (branchId) => {
     setFormData(prev => ({
       ...prev,
       branchPrices: (prev.branchPrices || []).map(row => {
         if (String(row.branchId) !== String(branchId)) return row;
 
-        const activeId = activeBranchId && activeBranchId !== 'ALL'
-          ? String(activeBranchId)
-          : null;
-        const sourceRow = activeId
-          ? (prev.branchPrices || []).find(item => String(item.branchId) === activeId)
-          : null;
-        const source = sourceRow || {
-          cost: prev.cost,
-          markup: prev.markup,
-          gp: prev.gp,
-          retailPrice: prev.retailPrice,
-          minPrice: prev.minPrice,
-          maxPrice: prev.maxPrice,
-          wholesalePrice: prev.wholesalePrice,
-          onlinePrice: prev.onlinePrice,
-          status: row.status || 'ACTIVE'
-        };
-
-        return {
-          ...row,
-          ...branchPriceSnapshot(source),
-          overridden: true
-        };
+        if (row.overridden) {
+          // Turning override OFF — reset to master pricing
+          return {
+            ...row,
+            ...branchPriceSnapshot({
+              cost: prev.cost,
+              markup: prev.markup,
+              gp: prev.gp,
+              retailPrice: prev.retailPrice,
+              minPrice: prev.minPrice,
+              maxPrice: prev.maxPrice,
+              wholesalePrice: prev.wholesalePrice,
+              onlinePrice: prev.onlinePrice,
+              status: row.status || 'ACTIVE'
+            }),
+            overridden: false
+          };
+        } else {
+          // Turning override ON — seed from master pricing as starting point
+          return {
+            ...row,
+            ...branchPriceSnapshot({
+              cost: prev.cost,
+              markup: prev.markup,
+              gp: prev.gp,
+              retailPrice: prev.retailPrice,
+              minPrice: prev.minPrice,
+              maxPrice: prev.maxPrice,
+              wholesalePrice: prev.wholesalePrice,
+              onlinePrice: prev.onlinePrice,
+              status: row.status || 'ACTIVE'
+            }),
+            overridden: true
+          };
+        }
       })
     }));
   };
@@ -1548,7 +1579,7 @@ const AddProductWizard = ({ onCancel, onSave, initialData, brands: initialBrands
               <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between mb-6">
                 <div>
                   <h3 className="font-semibold text-lg flex items-center gap-2"><Building2 className="h-5 w-5 text-slate-400" /> Branch-wise Cost & Price Status</h3>
-                  <p className="text-sm text-slate-500">Set selling prices per branch. The active branch selector will use that branch's retail/min/max prices in sales screens.</p>
+                  <p className="text-sm text-slate-500">Branches inherit master pricing by default. Click <span className="font-semibold text-slate-600">Override</span> on a branch to set custom prices independently. Click <span className="font-semibold text-amber-700">Overridden</span> again to revert.</p>
                 </div>
                 <span className="text-xs font-semibold text-slate-500 bg-slate-50 border border-slate-200 rounded-full px-3 py-1">
                   {formData.branchPrices?.length || 0} branch{(formData.branchPrices?.length || 0) === 1 ? '' : 'es'}
@@ -1580,58 +1611,67 @@ const AddProductWizard = ({ onCancel, onSave, initialData, brands: initialBrands
                       </tr>
                     </thead>
                     <tbody>
-                      {(formData.branchPrices || []).map(row => (
-                        <tr key={row.branchId} className="border-b last:border-0 hover:bg-slate-50 transition-colors">
+                      {(formData.branchPrices || []).map(row => {
+                        const isOverridden = Boolean(row.overridden);
+                        const inputBase = "w-24 border rounded-md px-2 py-1.5 text-sm outline-none transition-colors";
+                        const inputEnabled = `${inputBase} border-slate-200 focus:ring-2 focus:ring-[#F5C742]/50`;
+                        const inputDisabled = `${inputBase} border-slate-100 bg-slate-50 text-slate-400 cursor-not-allowed`;
+                        const markupInputBase = "w-20 border rounded-md px-2 py-1.5 text-sm outline-none transition-colors";
+                        const markupEnabled = `${markupInputBase} border-slate-200 focus:ring-2 focus:ring-[#F5C742]/50`;
+                        const markupDisabled = `${markupInputBase} border-slate-100 bg-slate-50 text-slate-400 cursor-not-allowed`;
+                        return (
+                        <tr key={row.branchId} className={`border-b last:border-0 transition-colors ${isOverridden ? 'bg-amber-50/40 hover:bg-amber-50/70' : 'hover:bg-slate-50'}`}>
                           <td className="p-3">
                             <div className="font-semibold text-slate-900">{row.branchName}</div>
                             {row.branchCode && <div className="text-[11px] text-slate-400 font-mono">{row.branchCode}</div>}
+                            {!isOverridden && <div className="text-[10px] text-slate-400 mt-0.5 italic">Inheriting master pricing</div>}
                           </td>
                           <td className="p-3">
                             <div className="flex items-center gap-2">
                               <CurrencySymbol />
-                              <input type="number" step="0.01" value={row.cost ?? ''} onChange={(e) => handleBranchPriceChange(row.branchId, 'cost', e.target.value)} className="w-24 border border-slate-200 rounded-md px-2 py-1.5 text-sm outline-none focus:ring-2 focus:ring-[#F5C742]/50" />
+                              <input type="number" step="0.01" value={row.cost ?? ''} disabled={!isOverridden} onChange={(e) => handleBranchPriceChange(row.branchId, 'cost', e.target.value)} className={isOverridden ? inputEnabled : inputDisabled} />
                             </div>
                           </td>
                           <td className="p-3">
                             <div className="flex items-center gap-2">
-                              <input type="number" step="0.01" value={row.markup ?? ''} onChange={(e) => handleBranchPriceChange(row.branchId, 'markup', e.target.value)} className="w-20 border border-slate-200 rounded-md px-2 py-1.5 text-sm outline-none focus:ring-2 focus:ring-[#F5C742]/50" />
+                              <input type="number" step="0.01" value={row.markup ?? ''} disabled={!isOverridden} onChange={(e) => handleBranchPriceChange(row.branchId, 'markup', e.target.value)} className={isOverridden ? markupEnabled : markupDisabled} />
                               <span className="text-slate-400">%</span>
                             </div>
                           </td>
                           <td className="p-3">
                             <div className="flex items-center gap-2">
-                              <input type="number" step="0.01" value={row.gp ?? ''} onChange={(e) => handleBranchPriceChange(row.branchId, 'gp', e.target.value)} className="w-20 border border-slate-200 rounded-md px-2 py-1.5 text-sm outline-none focus:ring-2 focus:ring-[#F5C742]/50" />
+                              <input type="number" step="0.01" value={row.gp ?? ''} disabled={!isOverridden} onChange={(e) => handleBranchPriceChange(row.branchId, 'gp', e.target.value)} className={isOverridden ? markupEnabled : markupDisabled} />
                               <span className="text-slate-400">%</span>
                             </div>
                           </td>
                           <td className="p-3 font-bold text-slate-900">
                             <div className="flex items-center gap-2">
                               <CurrencySymbol />
-                              <input type="number" step="0.01" value={row.retailPrice ?? ''} onChange={(e) => handleBranchPriceChange(row.branchId, 'retailPrice', e.target.value)} className="w-24 border border-slate-200 rounded-md px-2 py-1.5 text-sm font-bold outline-none focus:ring-2 focus:ring-[#F5C742]/50" />
+                              <input type="number" step="0.01" value={row.retailPrice ?? ''} disabled={!isOverridden} onChange={(e) => handleBranchPriceChange(row.branchId, 'retailPrice', e.target.value)} className={`${isOverridden ? inputEnabled : inputDisabled} font-bold`} />
                             </div>
                           </td>
                           <td className="p-3">
                             <div className="flex items-center gap-2">
                               <CurrencySymbol />
-                              <input type="number" step="0.01" value={row.minPrice ?? ''} onChange={(e) => handleBranchPriceChange(row.branchId, 'minPrice', e.target.value)} className="w-24 border border-slate-200 rounded-md px-2 py-1.5 text-sm outline-none focus:ring-2 focus:ring-[#F5C742]/50" />
+                              <input type="number" step="0.01" value={row.minPrice ?? ''} disabled={!isOverridden} onChange={(e) => handleBranchPriceChange(row.branchId, 'minPrice', e.target.value)} className={isOverridden ? inputEnabled : inputDisabled} />
                             </div>
                           </td>
                           <td className="p-3">
                             <div className="flex items-center gap-2">
                               <CurrencySymbol />
-                              <input type="number" step="0.01" value={row.maxPrice ?? ''} onChange={(e) => handleBranchPriceChange(row.branchId, 'maxPrice', e.target.value)} className="w-24 border border-slate-200 rounded-md px-2 py-1.5 text-sm outline-none focus:ring-2 focus:ring-[#F5C742]/50" />
+                              <input type="number" step="0.01" value={row.maxPrice ?? ''} disabled={!isOverridden} onChange={(e) => handleBranchPriceChange(row.branchId, 'maxPrice', e.target.value)} className={isOverridden ? inputEnabled : inputDisabled} />
                             </div>
                           </td>
                           <td className="p-3">
                             <div className="flex items-center gap-2">
                               <CurrencySymbol />
-                              <input type="number" step="0.01" value={row.wholesalePrice ?? ''} onChange={(e) => handleBranchPriceChange(row.branchId, 'wholesalePrice', e.target.value)} className="w-24 border border-slate-200 rounded-md px-2 py-1.5 text-sm outline-none focus:ring-2 focus:ring-[#F5C742]/50" />
+                              <input type="number" step="0.01" value={row.wholesalePrice ?? ''} disabled={!isOverridden} onChange={(e) => handleBranchPriceChange(row.branchId, 'wholesalePrice', e.target.value)} className={isOverridden ? inputEnabled : inputDisabled} />
                             </div>
                           </td>
                           <td className="p-3">
                             <div className="flex items-center gap-2">
                               <CurrencySymbol />
-                              <input type="number" step="0.01" value={row.onlinePrice ?? ''} onChange={(e) => handleBranchPriceChange(row.branchId, 'onlinePrice', e.target.value)} className="w-24 border border-slate-200 rounded-md px-2 py-1.5 text-sm outline-none focus:ring-2 focus:ring-[#F5C742]/50" />
+                              <input type="number" step="0.01" value={row.onlinePrice ?? ''} disabled={!isOverridden} onChange={(e) => handleBranchPriceChange(row.branchId, 'onlinePrice', e.target.value)} className={isOverridden ? inputEnabled : inputDisabled} />
                             </div>
                           </td>
                           <td className="p-3">
@@ -1641,12 +1681,19 @@ const AddProductWizard = ({ onCancel, onSave, initialData, brands: initialBrands
                             </select>
                           </td>
                           <td className="p-3 text-right">
-                            <button type="button" onClick={() => overrideBranchPrice(row.branchId)} className="px-3 py-1.5 rounded-md border border-amber-300 text-amber-700 bg-white hover:bg-amber-50 text-xs font-semibold transition-colors">
-                              Override
-                            </button>
+                            {isOverridden ? (
+                              <button type="button" onClick={() => toggleBranchOverride(row.branchId)} className="px-3 py-1.5 rounded-md border border-amber-400 text-amber-800 bg-amber-100 hover:bg-amber-200 text-xs font-semibold transition-colors" title="Click to revert to master pricing">
+                                Overridden
+                              </button>
+                            ) : (
+                              <button type="button" onClick={() => toggleBranchOverride(row.branchId)} className="px-3 py-1.5 rounded-md border border-slate-200 text-slate-500 bg-white hover:bg-slate-50 hover:border-amber-300 hover:text-amber-700 text-xs font-semibold transition-colors" title="Click to set custom pricing for this branch">
+                                Override
+                              </button>
+                            )}
                           </td>
                         </tr>
-                      ))}
+                        );
+                      })}
                     </tbody>
                   </table>
                 </div>
@@ -1662,8 +1709,8 @@ const AddProductWizard = ({ onCancel, onSave, initialData, brands: initialBrands
                   <p className="text-xs text-emerald-800 mt-2">Profit as a percentage of selling price. Formula: (Price - Cost) / Price x 100.</p>
                 </div>
                 <div className="bg-amber-50 border border-amber-100 rounded-lg p-4">
-                  <div className="flex items-center gap-2 font-semibold text-amber-900"><AlertCircle className="h-4 w-4" /> Price Range Control</div>
-                  <p className="text-xs text-amber-800 mt-2">Min/max prices are returned to sales screens with the current branch price.</p>
+                  <div className="flex items-center gap-2 font-semibold text-amber-900"><AlertCircle className="h-4 w-4" /> Branch Override</div>
+                  <p className="text-xs text-amber-800 mt-2">Overridden branches keep their own prices independently. Reverting an override resets back to master pricing.</p>
                 </div>
               </div>
             </div>

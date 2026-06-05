@@ -36,6 +36,7 @@ import {
 } from 'lucide-react';
 
 import { employeesApi } from '../../api/employeesApi';
+import { getAllCustomers } from '../../api/customerledgerApi';
 import { receiptVoucherApi, sendReceiptVoucherEmail } from '../../api/receiptVoucherApi';
 // QA-040: shared email modal
 import SendDocumentEmailModal from '../../components/SendDocumentEmailModal';
@@ -104,6 +105,92 @@ const CustomSelect = ({ placeholder, options, value, onChange }) => {
     );
 };
 
+// --- HELPER: SEARCHABLE PERSON SELECT (Employee + Customer) ---
+const SearchablePersonSelect = ({ employees, customers, value, onChange, isLoading }) => {
+    const [isOpen, setIsOpen] = useState(false);
+    const [query, setQuery] = useState('');
+    const dropdownRef = useRef(null);
+    const inputRef = useRef(null);
+
+    useEffect(() => {
+        const handleClickOutside = (event) => {
+            if (dropdownRef.current && !dropdownRef.current.contains(event.target)) {
+                setIsOpen(false);
+                setQuery('');
+            }
+        };
+        document.addEventListener('mousedown', handleClickOutside);
+        return () => document.removeEventListener('mousedown', handleClickOutside);
+    }, []);
+
+    const employeeOptions = employees.map(e => ({
+        label: e.name || e.fullName || `${e.firstName || ''} ${e.lastName || ''}`.trim(),
+        type: 'Employee'
+    })).filter(o => o.label);
+
+    const customerOptions = customers.map(c => ({
+        label: c.name || c.customerName || c.fullName || '',
+        type: 'Customer'
+    })).filter(o => o.label);
+
+    const allOptions = [...employeeOptions, ...customerOptions];
+    const filtered = query.trim()
+        ? allOptions.filter(o => o.label.toLowerCase().includes(query.toLowerCase()))
+        : allOptions;
+
+    const handleOpen = () => {
+        setIsOpen(true);
+        setQuery('');
+        setTimeout(() => inputRef.current?.focus(), 0);
+    };
+
+    return (
+        <div className="relative w-full" ref={dropdownRef}>
+            <div
+                onClick={handleOpen}
+                className="w-full px-3 py-2 text-xs border border-slate-200 rounded-md bg-white text-slate-600 flex justify-between items-center cursor-pointer"
+            >
+                <span className={value ? 'text-slate-700' : 'text-slate-400'}>
+                    {isLoading ? 'Loading...' : (value || 'Select employee or customer')}
+                </span>
+                <ChevronDown size={14} className="text-slate-400" />
+            </div>
+
+            {isOpen && (
+                <div className="absolute z-50 mt-1 w-full bg-white border border-slate-200 rounded-md shadow-lg">
+                    <div className="p-2 border-b border-slate-100">
+                        <input
+                            ref={inputRef}
+                            type="text"
+                            value={query}
+                            onChange={(e) => setQuery(e.target.value)}
+                            placeholder="Search name..."
+                            className="w-full px-2 py-1.5 text-xs border border-slate-200 rounded outline-none focus:border-blue-400"
+                            onClick={(e) => e.stopPropagation()}
+                        />
+                    </div>
+                    <div className="max-h-48 overflow-y-auto">
+                        {filtered.length > 0 ? filtered.map((option, idx) => (
+                            <div
+                                key={idx}
+                                onClick={() => { onChange(option.label); setIsOpen(false); setQuery(''); }}
+                                className="px-3 py-2 text-xs cursor-pointer text-slate-600 hover:bg-[#F43F5E] hover:text-white transition-colors flex justify-between items-center"
+                            >
+                                <span>{option.label}</span>
+                                <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded-full ${option.type === 'Employee' ? 'bg-blue-100 text-blue-700' : 'bg-emerald-100 text-emerald-700'}`}>
+                                    {option.type}
+                                </span>
+                            </div>
+                        )) : (
+                            <div className="px-3 py-2 text-xs text-slate-400 italic">No results found</div>
+                        )}
+                    </div>
+                </div>
+            )}
+        </div>
+    );
+};
+
 // --- COMPONENT: RECEIPT VOUCHER ---
 const ReceiptVoucher = () => {
     const location = useLocation();
@@ -122,6 +209,7 @@ const ReceiptVoucher = () => {
 
     // --- DATA STATES ---
     const [employees, setEmployees] = useState([]);
+    const [customers, setCustomers] = useState([]);
     const [isLoadingEmployees, setIsLoadingEmployees] = useState(false);
 
     const RECEIPT_COLUMNS = [
@@ -217,9 +305,9 @@ const ReceiptVoucher = () => {
                 amount: r.amount.toLocaleString(),
                 mode: r.paymentMode,
                 branch: r.branch || '',
-                branchId: r.branchEntity?.id ?? null,
-                branchName: r.branchEntity?.name || '',
-                branchCode: r.branchEntity?.code || '',
+                branchId: r.branchEntityId ?? r.branchEntity?.id ?? null,
+                branchName: r.branchEntityName || r.branchEntity?.name || '',
+                branchCode: r.branchEntityCode || r.branchEntity?.code || '',
                 status: r.status,
                 purpose: r.purpose,
                 notes: r.notes || '',
@@ -434,23 +522,25 @@ const ReceiptVoucher = () => {
 
 
 
-    // --- FETCH EMPLOYEES ON MOUNT (Restored) ---
+    // --- FETCH EMPLOYEES + CUSTOMERS ON MOUNT ---
     useEffect(() => {
-        const loadEmployees = async () => {
+        const loadPersons = async () => {
             setIsLoadingEmployees(true);
             try {
-                const data = await employeesApi.getActiveEmployees();
-                // Store full data for ID lookup
-                setEmployees(data || []);
+                const [empData, custData] = await Promise.all([
+                    employeesApi.getActiveEmployees().catch(() => []),
+                    getAllCustomers().catch(() => [])
+                ]);
+                setEmployees(empData || []);
+                setCustomers(custData || []);
             } catch (error) {
-                console.error("Failed to fetch employees:", error);
-                setEmployees([]);
+                console.error("Failed to fetch employees/customers:", error);
             } finally {
                 setIsLoadingEmployees(false);
             }
         };
 
-        loadEmployees();
+        loadPersons();
     }, []);
 
     // --- ACTION HANDLERS ---
@@ -1195,12 +1285,13 @@ const ReceiptVoucher = () => {
                                 </div>
 
                                 <div>
-                                    <label className="block text-xs font-bold text-slate-600 mb-1">Employee / Member Name <span className="text-red-500">*</span></label>
-                                    <CustomSelect
-                                        placeholder={isLoadingEmployees ? "Loading employees..." : "Select employee"}
-                                        options={employees.map(e => e.name || e.fullName || e.firstName + ' ' + e.lastName)}
+                                    <label className="block text-xs font-bold text-slate-600 mb-1">Employee / Customer Name <span className="text-red-500">*</span></label>
+                                    <SearchablePersonSelect
+                                        employees={employees}
+                                        customers={customers}
                                         value={formData.member}
                                         onChange={(val) => setFormData({ ...formData, member: val })}
+                                        isLoading={isLoadingEmployees}
                                     />
                                 </div>
                                 <div>
