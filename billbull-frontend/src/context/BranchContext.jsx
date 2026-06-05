@@ -38,6 +38,7 @@ const normalizeBranch = (branch) => {
         email: normalizeText(branch.email),
         trnNumber: normalizeText(branch.trnNumber),
         logoUrl: normalizeText(branch.logoUrl),
+        stampUrl: normalizeText(branch.stampUrl),
         bankName: normalizeText(branch.bankName),
         bankAccountNumber: normalizeText(branch.bankAccountNumber),
         bankIban: normalizeText(branch.bankIban),

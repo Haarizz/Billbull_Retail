@@ -1691,6 +1691,7 @@ const SalesOrders = () => {
                   <th className="px-4 py-3">Advance</th>
                   <th className="px-4 py-3">Balance</th>
                   <th className="px-4 py-3 text-right">Status</th>
+                  <th className="px-4 py-3 text-right whitespace-nowrap">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-50">
@@ -1707,16 +1708,12 @@ const SalesOrders = () => {
                     </td>
                     <td className="px-4 py-3 font-medium text-slate-700">{order.soNumber}</td>
                     <td className="px-4 py-3 text-slate-500">{formatDisplayDate(order.orderDate)}</td>
-                    <td className="px-4 py-3 text-slate-600">{order.customerName}</td>
-                    <td className="px-4 py-3 text-slate-600 text-[11px]">
-                      {order.branch?.name ? (
-                        <>
-                          <div className="font-medium">{order.branch.name}</div>
-                          {order.branch.code && <div className="text-slate-400">{order.branch.code}</div>}
-                        </>
-                      ) : (
-                        <span className="text-slate-300">—</span>
-                      )}
+                    <td className="px-4 py-3">
+                      <div className="font-medium text-slate-700">{order.customerName}</div>
+                      {order.customerCode && <div className="text-[10px] text-slate-400">{order.customerCode}</div>}
+                    </td>
+                    <td className="px-4 py-3 text-[11px] text-slate-600">
+                      {order.branch?.code ? order.branch.code : <span className="text-slate-300">—</span>}
                     </td>
                     <td className="px-4 py-3 text-slate-500">{order.linkedQuotation || '-'}</td>
                     <td className="px-4 py-3 text-slate-500">{order.linkedProforma || '-'}</td>
@@ -1725,6 +1722,13 @@ const SalesOrders = () => {
                     <td className="px-4 py-3"><CurrencyAmount value={Number(order.orderTotal) - Number(order.advanceAmount)} currency={orderCurrency} /></td>
                     <td className="px-4 py-3 text-right">
                       {renderStatusBadge(order.status)}
+                    </td>
+                    <td className="px-4 py-3 text-right whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
+                      <div className="flex justify-end gap-2">
+                        <button onClick={() => handleLoadOrder(order)} className="p-1 hover:bg-yellow-100 rounded text-yellow-600 transition-colors" title="Edit / View"><FileText size={14} /></button>
+                        <button onClick={() => { handleLoadOrder(order); setIsEmailModalOpen(true); }} className="p-1 hover:bg-sky-100 rounded text-sky-500 transition-colors" title="Send Email"><Mail size={14} /></button>
+                        <button onClick={() => { handleLoadOrder(order); setTimeout(() => handlePrintClick(), 300); }} className="p-1 hover:bg-slate-200 rounded text-slate-500 transition-colors" title="Load & Print"><Printer size={14} /></button>
+                      </div>
                     </td>
                   </tr>
                 ))}

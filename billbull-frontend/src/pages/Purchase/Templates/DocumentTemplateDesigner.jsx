@@ -175,7 +175,10 @@ function ClassicPreview({ s }) {
     fontWeight: bold ? 600 : 400,
     verticalAlign: "top"
   });
-  return <div style={{ fontFamily: s.fontFamily, fontSize: `${f}px`, background: "#fff", color: "#333", padding: "28px 32px", position: "relative" }}>
+  return <div style={{ fontFamily: s.fontFamily, fontSize: `${f}px`, background: "#fff", color: "#333", padding: "28px 32px", position: "relative", minHeight: 1067, display: "flex", flexDirection: "column" }}>
+
+      {/* ── BODY: grows to fill page ── */}
+      <div style={{ flex: 1 }}>
 
       {
     /* ── HEADER: 3 columns — Bill To | Doc Info | Logo + Company ── */
@@ -340,6 +343,11 @@ function ClassicPreview({ s }) {
         </tbody>
       </table>
 
+      </div>{/* end flex:1 body */}
+
+      {/* ── FOOTER GROUP: pushed to bottom ── */}
+      <div style={{ marginTop: "auto" }}>
+
       {
     /* ── TOTALS ── */
   }
@@ -454,8 +462,10 @@ function ClassicPreview({ s }) {
   }
       {s.showPageNumbers && <p style={{ textAlign: "right", fontSize: `${f - 2}px`, color: "#cbd5e1", marginTop: 8 }}>Page 1 of 1</p>}
 
+      </div>{/* end footer group */}
+
       {
-    /* ── WATERMARK ── */
+    /* ── WATERMARK (absolute, outside flow) ── */
   }
       {s.showWatermark && <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", pointerEvents: "none", opacity: 0.06, transform: "rotate(-35deg)", fontSize: 90, fontWeight: 900, color: s.accentColor, letterSpacing: 8 }}>
           {s.watermarkText}

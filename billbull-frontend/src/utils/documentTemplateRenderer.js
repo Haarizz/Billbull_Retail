@@ -377,24 +377,24 @@ const numberToWords = (num) => {
 };
 
 const CURRENCY_UNITS = {
-    AED: { main: 'Dirhams', sub: 'Fils' },     USD: { main: 'Dollars', sub: 'Cents' },
-    EUR: { main: 'Euros', sub: 'Cents' },       GBP: { main: 'Pounds', sub: 'Pence' },
-    INR: { main: 'Rupees', sub: 'Paise' },      SAR: { main: 'Riyals', sub: 'Halalas' },
-    QAR: { main: 'Riyals', sub: 'Dirhams' },    KWD: { main: 'Dinars', sub: 'Fils' },
-    BHD: { main: 'Dinars', sub: 'Fils' },       OMR: { main: 'Rials', sub: 'Baisa' },
-    JOD: { main: 'Dinars', sub: 'Fils' },       EGP: { main: 'Pounds', sub: 'Piastres' },
-    AUD: { main: 'Dollars', sub: 'Cents' },     CAD: { main: 'Dollars', sub: 'Cents' },
-    SGD: { main: 'Dollars', sub: 'Cents' },     HKD: { main: 'Dollars', sub: 'Cents' },
-    MYR: { main: 'Ringgit', sub: 'Sen' },       PKR: { main: 'Rupees', sub: 'Paisa' },
-    NPR: { main: 'Rupees', sub: 'Paisa' },      LKR: { main: 'Rupees', sub: 'Cents' },
-    BDT: { main: 'Taka', sub: 'Poisha' },       NGN: { main: 'Naira', sub: 'Kobo' },
-    KES: { main: 'Shillings', sub: 'Cents' },   ZAR: { main: 'Rand', sub: 'Cents' },
-    CHF: { main: 'Francs', sub: 'Rappen' },     TRY: { main: 'Lira', sub: 'Kurus' },
-    CNY: { main: 'Yuan', sub: 'Jiao' },         JPY: { main: 'Yen', sub: 'Sen' },
-    PHP: { main: 'Pesos', sub: 'Centavos' },    THB: { main: 'Baht', sub: 'Satang' },
-    MXN: { main: 'Pesos', sub: 'Centavos' },    BRL: { main: 'Reais', sub: 'Centavos' },
-    RUB: { main: 'Rubles', sub: 'Kopeks' },     NOK: { main: 'Kroner', sub: 'Ore' },
-    SEK: { main: 'Kronor', sub: 'Ore' },        DKK: { main: 'Kroner', sub: 'Ore' },
+    AED: { main: 'Dirhams', sub: 'Fils' }, USD: { main: 'Dollars', sub: 'Cents' },
+    EUR: { main: 'Euros', sub: 'Cents' }, GBP: { main: 'Pounds', sub: 'Pence' },
+    INR: { main: 'Rupees', sub: 'Paise' }, SAR: { main: 'Riyals', sub: 'Halalas' },
+    QAR: { main: 'Riyals', sub: 'Dirhams' }, KWD: { main: 'Dinars', sub: 'Fils' },
+    BHD: { main: 'Dinars', sub: 'Fils' }, OMR: { main: 'Rials', sub: 'Baisa' },
+    JOD: { main: 'Dinars', sub: 'Fils' }, EGP: { main: 'Pounds', sub: 'Piastres' },
+    AUD: { main: 'Dollars', sub: 'Cents' }, CAD: { main: 'Dollars', sub: 'Cents' },
+    SGD: { main: 'Dollars', sub: 'Cents' }, HKD: { main: 'Dollars', sub: 'Cents' },
+    MYR: { main: 'Ringgit', sub: 'Sen' }, PKR: { main: 'Rupees', sub: 'Paisa' },
+    NPR: { main: 'Rupees', sub: 'Paisa' }, LKR: { main: 'Rupees', sub: 'Cents' },
+    BDT: { main: 'Taka', sub: 'Poisha' }, NGN: { main: 'Naira', sub: 'Kobo' },
+    KES: { main: 'Shillings', sub: 'Cents' }, ZAR: { main: 'Rand', sub: 'Cents' },
+    CHF: { main: 'Francs', sub: 'Rappen' }, TRY: { main: 'Lira', sub: 'Kurus' },
+    CNY: { main: 'Yuan', sub: 'Jiao' }, JPY: { main: 'Yen', sub: 'Sen' },
+    PHP: { main: 'Pesos', sub: 'Centavos' }, THB: { main: 'Baht', sub: 'Satang' },
+    MXN: { main: 'Pesos', sub: 'Centavos' }, BRL: { main: 'Reais', sub: 'Centavos' },
+    RUB: { main: 'Rubles', sub: 'Kopeks' }, NOK: { main: 'Kroner', sub: 'Ore' },
+    SEK: { main: 'Kronor', sub: 'Ore' }, DKK: { main: 'Kroner', sub: 'Ore' },
 };
 
 const formatAmountInWords = (value, currency) => {
@@ -1076,8 +1076,8 @@ const buildSummarySection = (layout, renderTarget = 'print') => {
 
     return `
         <section class="summary-section">
-            ${totalsTable ? `<div class="summary-totals">${totalsTable}</div>` : ''}
-            ${(hasNotes || hasTerms) ? `<div class="summary-notes">${notesHtml}</div>` : ''}
+            ${totalsTable ? `<div class="footer-group-atomic summary-totals">${totalsTable}</div>` : ''}
+            ${(hasNotes || hasTerms) ? `<div class="footer-group-atomic summary-notes">${notesHtml}</div>` : ''}
         </section>
     `;
 };
@@ -1086,7 +1086,7 @@ const buildSignatureBlock = (layout) => {
     if (!layout.showSignatureBlock) return '';
 
     return `
-        <section class="signature-card">
+        <section class="footer-group-atomic signature-card">
             <div class="card-eyebrow">Authorisation</div>
             <div class="signature-grid">
                 <div class="signature-line">Prepared By</div>
@@ -1140,8 +1140,8 @@ const buildStampBlock = (layout, renderTarget) => {
     const stampHtml = showStamp
         ? `<div class="stamp-container">
             ${stampUrl
-                ? `<img src="${escapeHtml(stampUrl)}" alt="Company Stamp" />`
-                : `<div class="stamp-placeholder"><span>Company<br/>Stamp</span></div>`}
+            ? `<img src="${escapeHtml(stampUrl)}" alt="Company Stamp" />`
+            : `<div class="stamp-placeholder"><span>Company<br/>Stamp</span></div>`}
             <div class="stamp-caption">Official Stamp</div>
         </div>`
         : '';
@@ -1156,7 +1156,7 @@ const buildStampBlock = (layout, renderTarget) => {
 
     if (!stampHtml && !qrHtml) return '';
 
-    return `<div class="stamp-row">${stampHtml}${qrHtml}</div>`;
+    return `<div class="footer-group-atomic stamp-row">${stampHtml}${qrHtml}</div>`;
 };
 
 const buildPrintDateStamp = (layout, renderTarget) =>
@@ -1411,6 +1411,8 @@ const buildCoreStyles = () => `
         width: 100%;
         max-width: 1000px;
         margin: 0 auto;
+        display: flex;
+        flex-direction: column;
         padding: 24px;
         border-radius: 8px;
         background: #ffffff;
@@ -1710,16 +1712,18 @@ const buildCoreStyles = () => `
     .content-stack {
         display: grid;
         gap: 16px;
+        flex: 1;
     }
     .document-shell-designer .content-stack {
         display: block;
     }
-    /* Footer block keeps totals/bank/terms/stamp together; flows after the
-       table and moves to a new page as a unit if it can't fit. */
+    /* Footer block keeps totals/bank/terms/stamp together and sits at the
+       bottom of the page via margin-top:auto inside the flex-column shell. */
     .document-footer-group {
         display: flex;
         flex-direction: column;
         gap: 16px;
+        margin-top: auto;
     }
     .info-card,
     .signature-card {
@@ -1771,7 +1775,7 @@ const buildCoreStyles = () => `
         margin-bottom: 0;
     }
     .document-table thead {
-        display: table-header-group;
+        display: table-row-group;
     }
     .document-table thead th {
         padding: 7px 5px;
@@ -2415,7 +2419,7 @@ const buildPrintStyles = (paperSize = 'A4', orientation = 'Portrait', layout = {
             html,
             body {
                 width: ${page.width}mm;
-                min-height: ${page.height}mm;
+                min-height: unset;
                 background: #ffffff;
             }
             body {
@@ -2423,7 +2427,7 @@ const buildPrintStyles = (paperSize = 'A4', orientation = 'Portrait', layout = {
             }
             .document-shell {
                 width: ${page.width}mm;
-                min-height: ${page.height}mm;
+                min-height: unset;
                 height: auto;
                 margin: 0;
                 padding: ${shellPaddingPrint};
@@ -2431,11 +2435,7 @@ const buildPrintStyles = (paperSize = 'A4', orientation = 'Portrait', layout = {
                 box-shadow: none;
                 -webkit-box-decoration-break: clone;
                 box-decoration-break: clone;
-            }
-            /* overflow:hidden on the shell creates a block formatting context
-               that stops the browser from breaking the table mid-row correctly
-               (summary ends up on page 1 before remaining rows). */
-            .document-shell {
+                display: block !important;
                 overflow: visible !important;
             }
             /* Switch from grid to block so the browser can break the items
@@ -2444,6 +2444,7 @@ const buildPrintStyles = (paperSize = 'A4', orientation = 'Portrait', layout = {
             .content-stack {
                 display: block !important;
                 overflow: visible !important;
+                flex: 1 !important;
             }
             .content-stack > * {
                 margin-bottom: 16px;
@@ -2502,7 +2503,7 @@ const buildPrintStyles = (paperSize = 'A4', orientation = 'Portrait', layout = {
                 line-height: 1.35 !important;
             }
             .document-table thead {
-                display: table-header-group !important;
+                display: table-row-group !important;
             }
             .header-center {
                 padding-top: 48px !important;
@@ -2558,13 +2559,23 @@ const buildPrintStyles = (paperSize = 'A4', orientation = 'Portrait', layout = {
                 text-align: left !important;
                 justify-items: start !important;
             }
-            /* Footer block (totals + bank + terms + signature + stamp/QR) flows
-               right after the items table. Kept together so it never splits
-               across pages — if it can't fit on the page where the table ends,
-               the whole block moves to the next page. */
+            /* Footer area (totals + bank + terms + signature + stamp/QR):
+               The JS spacer (injected before print) pushes it toward the
+               bottom margin of the final page.
+               break-inside:avoid keeps all footer sections together. */
             .document-footer-group {
                 break-inside: avoid !important;
                 page-break-inside: avoid !important;
+            }
+            /* Each atomic footer group (totals, bank/terms/notes, signature,
+               stamp/QR) must never be split across pages. */
+            .footer-group-atomic {
+                break-inside: avoid !important;
+                page-break-inside: avoid !important;
+            }
+            /* Spacer div injected by JS to push footer to the bottom margin */
+            .footer-push-spacer {
+                display: block;
             }
             .header-right {
                 padding-top: 0 !important;
@@ -2881,7 +2892,9 @@ const normalisePurchaseLayout = (template, data, companyProfile, renderTarget, o
             pickSetting(designerSettings, ['showGrandTotalBanner', 'showSummaryBar', 'showTotalReceivedBold'], true),
         showPaymentDetails: paymentDetails.length > 0,
         showSignatureBlock: pickSetting(designerSettings, ['showSignatures', 'showSignatureStrip', 'showReceivedByLine'], false),
-        showCompanyStamp: pickSetting(designerSettings, ['showCompanyStamp', 'showStamp'], false),
+        // Default showCompanyStamp to true when a stamp image is available (branch or template),
+        // so branch stamps render automatically without requiring a saved template toggle.
+        showCompanyStamp: pickSetting(designerSettings, ['showCompanyStamp', 'showStamp'], Boolean(templateStampUrl || company.stampUrl)),
         showQRCode: pickSetting(designerSettings, ['showQRCode', 'showQR'], false),
         qrCodeDataUrl: options.qrCodeDataUrl || null,
         showPageNumbers: pickSetting(designerSettings, ['showPageNumbers'], false),
@@ -3061,7 +3074,7 @@ const normaliseSalesDesignerLayout = (template, data, companyProfile, renderTarg
         showHighlight: summaryValue > 0 && pickSetting(designerSettings, ['showGrandTotalBanner', 'showSummaryBar'], true),
         showPaymentDetails: false,
         showSignatureBlock: pickSetting(designerSettings, ['showSignatures', 'showSignatureStrip'], false),
-        showCompanyStamp: pickSetting(designerSettings, ['showCompanyStamp', 'showStamp'], false),
+        showCompanyStamp: pickSetting(designerSettings, ['showCompanyStamp', 'showStamp'], Boolean(templateStampUrl || company.stampUrl)),
         showQRCode: pickSetting(designerSettings, ['showQRCode', 'showQR'], false),
         qrCodeDataUrl: options.qrCodeDataUrl || null,
         showPageNumbers: pickSetting(designerSettings, ['showPageNumbers'], false),
@@ -3741,8 +3754,8 @@ const renderVendorStatementHtml = (template = {}, data = {}, options = {}, rende
                     <div class="footer-note">${escapeHtml(footerText)}</div>
                     <div class="billbull-footer">
                         ${options.billBullLogo
-                            ? `<img src="${escapeHtml(options.billBullLogo)}" alt="BillBull" />`
-                            : 'Generated by BillBull ERP'}
+            ? `<img src="${escapeHtml(options.billBullLogo)}" alt="BillBull" />`
+            : 'Generated by BillBull ERP'}
                     </div>
                 </main>
             </div>
@@ -4089,8 +4102,8 @@ const renderGrnReceiptHtml = (template, data, options = {}, _renderTarget = 'pri
             ${showStamp ? `
                 <div style="display:flex;flex-direction:column;align-items:center;">
                     ${stampUrl
-                        ? `<img src="${escapeHtml(stampUrl)}" alt="Stamp" style="width:72px;height:72px;object-fit:contain;" />`
-                        : `<div style="width:64px;height:64px;border:2px dashed #a0aab4;border-radius:50%;display:flex;align-items:center;justify-content:center;"><span style="font-size:9px;color:#a0aab4;text-align:center;letter-spacing:0.5px;text-transform:uppercase;">Company<br/>Stamp</span></div>`}
+                ? `<img src="${escapeHtml(stampUrl)}" alt="Stamp" style="width:72px;height:72px;object-fit:contain;" />`
+                : `<div style="width:64px;height:64px;border:2px dashed #a0aab4;border-radius:50%;display:flex;align-items:center;justify-content:center;"><span style="font-size:9px;color:#a0aab4;text-align:center;letter-spacing:0.5px;text-transform:uppercase;">Company<br/>Stamp</span></div>`}
                     <div style="font-size:9px;color:#a0aab4;margin-top:4px;text-transform:uppercase;letter-spacing:0.5px;">Official Stamp</div>
                 </div>` : ''}
         </div>` : '';
@@ -4193,6 +4206,76 @@ const renderGrnReceiptHtml = (template, data, options = {}, _renderTarget = 'pri
 </body>
 </html>`;
 };
+// ─────────────────────────────────────────────────────────────────────────────
+// Footer Placement Script — injected into print HTML to dynamically position
+// the entire footer cluster at the bottom of the final page or push it to a new page.
+// ─────────────────────────────────────────────────────────────────────────────
+const buildFooterPlacementScript = (paperSize = 'A4', orientation = 'Portrait') => {
+    const page = resolvePaperDimensions(paperSize, orientation);
+    // Convert mm → px at 96 dpi CSS reference pixels
+    const pageHeightPx = Math.round(page.height * (96 / 25.4));
+    // Shell padding (12 mm each side at 96 dpi)
+    const shellPaddingPx = Math.round(12 * (96 / 25.4));
+
+    return `<script>
+(function () {
+    'use strict';
+    function run() {
+        try {
+            var spacer   = document.getElementById('footer-push-spacer');
+            var footer   = document.querySelector('.document-footer-group');
+            var shell    = document.querySelector('.document-shell');
+            if (!spacer || !footer || !shell) return;
+
+            // Remove any previously injected height so measurements are fresh
+            spacer.style.height = '0px';
+
+            // @page margins: 26 mm first page top / 12 mm bottom / continuation 26 mm top
+            // Use 12 mm top + 12 mm bottom = 24 mm as a conservative usable-height deduction.
+            var pageMarginsPx = Math.round(24 * (96 / 25.4));
+            var shellPadPx    = ${shellPaddingPx};
+            var rawPageH      = ${pageHeightPx};
+            var usableH       = rawPageH - pageMarginsPx - shellPadPx * 2;
+            if (usableH < 100) usableH = rawPageH * 0.80;
+
+            var shellTop     = shell.getBoundingClientRect().top;
+            var spacerTop    = spacer.getBoundingClientRect().top;
+            var footerH      = footer.getBoundingClientRect().height;
+
+            // How far into the document (in px) does the spacer start?
+            var offsetFromShellTop = spacerTop - shellTop;
+
+            // Which page number is that on (0-indexed)?
+            var pageIndex    = Math.floor(offsetFromShellTop / usableH);
+
+            // How many px have been used on that page so far (above the spacer)?
+            var usedOnPage   = offsetFromShellTop - (pageIndex * usableH);
+
+            // How many px are left on that page after the spacer?
+            var remaining    = usableH - usedOnPage;
+
+            if (remaining >= footerH + 4) {
+                // Footer fits on this page — push it to the very bottom
+                spacer.style.height = (remaining - footerH) + 'px';
+            } else {
+                // Footer doesn't fit — let it flow to the next page naturally,
+                // no spacer needed (break-inside:avoid keeps it whole)
+                spacer.style.height = '0px';
+            }
+        } catch (e) {
+            // silently fall back — footer flows naturally after the table
+        }
+    }
+    // Run after fonts/images settle; also hook beforeprint for the dialog path
+    if (document.readyState === 'complete') {
+        setTimeout(run, 120);
+    } else {
+        window.addEventListener('load', function () { setTimeout(run, 120); });
+    }
+    window.addEventListener('beforeprint', run);
+})();
+<\/script>`;
+};
 
 const buildDocumentHtml = (template, data, options = {}, renderTarget = 'print') => {
     const layout = buildLayout(template, data, options, renderTarget);
@@ -4212,6 +4295,10 @@ const buildDocumentHtml = (template, data, options = {}, renderTarget = 'print')
         layout.currency
     );
 
+    const footerScript = renderTarget === 'print'
+        ? buildFooterPlacementScript(template.paperSize || 'A4', template.orientation || 'Portrait')
+        : '';
+
     return `
         <!DOCTYPE html>
         <html lang="en">
@@ -4229,18 +4316,20 @@ const buildDocumentHtml = (template, data, options = {}, renderTarget = 'print')
                 <main class="content-stack">
                     ${buildPaymentCard(layout)}
                     ${buildItemsTable(layout)}
+                    <div class="footer-push-spacer" id="footer-push-spacer"></div>
                     <div class="document-footer-group">
                         ${buildSummarySection(layout, renderTarget)}
                         ${buildSignatureBlock(layout)}
                         ${buildStampBlock(layout, renderTarget)}
+                        ${buildPrintDateStamp(layout, renderTarget)}
+                        ${buildPageNumbers(layout, renderTarget)}
                     </div>
-                    ${buildPrintDateStamp(layout, renderTarget)}
-                    ${buildPageNumbers(layout, renderTarget)}
                 </main>
                 ${buildFooterBar(layout, renderTarget, options.billBullLogo)}
                 ${buildFooterAddon(layout)}
                 ${buildWatermark(layout)}
             </div>
+            ${footerScript}
         </body>
         </html>
     `;
@@ -4254,16 +4343,16 @@ const defaultPaymentReceiptSettings = () => ({
     accentColor: '#F5C742', fontFamily: 'Inter, sans-serif', fontSize: 9, paperSize: 'A4',
     showLogo: true, showStatusBadge: true,
     showCustomerName: true, showCustomerCode: true, showCustomerAddress: true,
-    showCustomerPhone: false, showCustomerEmail: false, showCustomerTRN: true, showVATNumber: false,
-    showReceiptNumber: true, showReceiptDate: true, showReceiptSession: false,
-    showInvoiceCount: false, showAccountCurrency: false, showBankAccount: true,
+    showCustomerPhone: true, showCustomerEmail: false, showCustomerTRN: false, showVATNumber: true,
+    showReceiptNumber: true, showReceiptDate: true, showReceiptSession: true,
+    showInvoiceCount: true, showAccountCurrency: true, showBankAccount: true,
     showInvoiceStatus: true, showInvoiceDate: true, showInvoiceTotal: true,
-    showOutstanding: true, showReceivedNow: true, showBalanceAfter: true, showLinkedSO: false,
-    showTotalOutstanding: true, showDiscountAllowed: false, showRemainingBalance: true, showTotalReceivedBold: true,
-    showPaymentMethod: true, showChequeRef: true, showDepositedTo: true, showChequeDate: false,
-    showNote: false, showCompanyStamp: false, showQRCode: false,
+    showOutstanding: true, showReceivedNow: true, showBalanceAfter: true, showLinkedSO: true,
+    showTotalOutstanding: true, showDiscountAllowed: true, showRemainingBalance: true, showTotalReceivedBold: true,
+    showPaymentMethod: true, showChequeRef: true, showDepositedTo: true, showChequeDate: true,
+    showNote: true, showCompanyStamp: true, showQRCode: false, stampUrl: '',
     showGeneratedBy: true, showReceivedByLine: true,
-    showCompanyName: true, showCompanyAddress: true, showCompanyPhone: false, showCompanyEmail: false, showTRN: true,
+    showCompanyName: true, showCompanyAddress: true, showCompanyPhone: true, showCompanyEmail: true, showTRN: true,
 });
 
 const renderCustomerPaymentReceiptHtml = (template, data, options = {}) => {
@@ -4275,7 +4364,9 @@ const renderCustomerPaymentReceiptHtml = (template, data, options = {}) => {
     const paper = resolvePaperDimensions(s.paperSize || template?.paperSize || 'A4', 'Portrait');
     const esc = escapeHtml;
     const fmt = (n) => Number(n || 0).toLocaleString('en-AE', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-    const currHtml = renderCurrencySymbolHtml(co);
+    // Use plain currency label (e.g. "AED") to match the designer preview — avoid
+    // the dirham image which breaks inline table cell layout.
+    const currLabel = esc(renderCurrencySymbol(co));
 
     const r = data.receiptData || {};
     const cust = data.customerData || {};
@@ -4283,13 +4374,15 @@ const renderCustomerPaymentReceiptHtml = (template, data, options = {}) => {
     const sum = data.summary || {};
     const pay = data.payment || {};
 
+    // Logo: designer-uploaded URL takes priority, then company profile logo, then initial circle
+    const resolvedLogoUrl = resolveTemplateImageUrl(s.logoUrl) || co.logoUrl || '';
     const logoHtml = s.showLogo
-        ? (co.logoUrl
-            ? `<img src="${esc(co.logoUrl)}" alt="Logo" style="height:60px;width:60px;object-fit:contain;border-radius:50%;border:2px solid ${gold};" />`
-            : `<div style="width:60px;height:60px;border-radius:50%;background:${gold}22;border:3px solid ${gold};display:flex;align-items:center;justify-content:center;font-size:26px;font-weight:900;color:${gold};">${esc((co.companyName||'G').charAt(0))}</div>`)
+        ? (resolvedLogoUrl
+            ? `<img src="${esc(resolvedLogoUrl)}" alt="Logo" style="height:72px;object-fit:contain;" />`
+            : `<div style="width:72px;height:72px;border-radius:50%;background:${gold}22;border:3px solid ${gold};display:flex;align-items:center;justify-content:center;font-size:32px;font-weight:900;color:${gold};">${esc((co.companyName || 'G').charAt(0))}</div>`)
         : '';
 
-    const metaRows = [
+    const metaItems = [
         s.showReceiptNumber && r.receiptNumber ? ['Receipt No.', r.receiptNumber] : null,
         s.showReceiptDate && r.date ? ['Date', r.date] : null,
         s.showReceiptSession && r.session ? ['Receipt Session', r.session] : null,
@@ -4298,109 +4391,180 @@ const renderCustomerPaymentReceiptHtml = (template, data, options = {}) => {
         s.showBankAccount && r.bankAccount ? ['Cash / Bank', r.bankAccount] : null,
     ].filter(Boolean);
 
+    const metaGridHtml = metaItems.length > 0
+        ? `<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px 20px;align-self:flex-end;padding-bottom:2px;">${metaItems.map(([lbl, val]) =>
+            `<div><p style="margin:0;font-size:${f - 1}px;color:#999;font-weight:500;">${esc(lbl)}</p><p style="margin:1px 0 0;font-size:${f}px;font-weight:700;color:#1a1a2e;">${esc(val)}</p></div>`
+        ).join('')
+        }</div>`
+        : '';
+
+    const thStyle = `padding:5px 8px;font-size:${f - 0.5}px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:.3px;border-bottom:1px solid #e2e8f0;background:#f8fafc;white-space:nowrap;`;
+
     const invoiceRows = invoices.map((inv, i) => {
         const statusColor = (inv.status || '').toLowerCase().includes('full') ? '#059669' : '#d97706';
         const statusBg = (inv.status || '').toLowerCase().includes('full') ? '#ecfdf5' : '#fffbeb';
         const statusBorder = (inv.status || '').toLowerCase().includes('full') ? '#6ee7b7' : '#fcd34d';
-        return `<tr style="background:${i % 2 === 0 ? '#fff' : '#fafafa'}">
-            <td style="padding:6px 8px;font-size:${f}px;border-bottom:1px solid ${gold}18;vertical-align:top;">
-                ${s.showInvoiceStatus && inv.status ? `<span style="display:inline-block;margin-bottom:2px;font-size:${f-1.5}px;font-weight:600;color:${statusColor};background:${statusBg};border:1px solid ${statusBorder};border-radius:10px;padding:0 6px;">${esc(inv.status)}</span><br/>` : ''}
-                <span style="font-weight:600;color:#1d4ed8;">${esc(inv.ref || '—')}</span>
-                ${s.showLinkedSO && inv.soRef ? `<div style="color:#94a3b8;font-size:${f-1.5}px;margin-top:1px;">SO: ${esc(inv.soRef)}</div>` : ''}
+        const tdBase = `padding:6px 8px;font-size:${f}px;color:#374151;border-bottom:1px solid ${gold}18;vertical-align:top;`;
+        const tdRight = `${tdBase}text-align:right;`;
+        return `<tr style="background:${i % 2 === 0 ? '#fff' : '#fafafa'};">
+            <td style="${tdBase}">
+                ${s.showInvoiceStatus && inv.status ? `<span style="display:inline-block;margin-bottom:2px;font-size:${f - 1.5}px;font-weight:600;color:${statusColor};background:${statusBg};border:1px solid ${statusBorder};border-radius:10px;padding:0 6px;">${esc(inv.status)}</span><br/>` : ''}
+                <span style="font-weight:600;color:#1d4ed8;font-size:${f}px;">${esc(inv.ref || '—')}</span>
+                ${s.showLinkedSO && inv.soRef ? `<div style="color:#94a3b8;font-size:${f - 1.5}px;margin-top:1px;">SO: ${esc(inv.soRef)}</div>` : ''}
             </td>
-            ${s.showInvoiceDate ? `<td style="padding:6px 8px;font-size:${f}px;color:#64748b;text-align:right;border-bottom:1px solid ${gold}18;">${esc(inv.date||'')}</td>` : ''}
-            ${s.showInvoiceTotal ? `<td style="padding:6px 8px;font-size:${f}px;text-align:right;border-bottom:1px solid ${gold}18;white-space:nowrap;"><span style="color:#94a3b8;">${currHtml}</span> ${fmt(inv.total)}</td>` : ''}
-            ${s.showOutstanding ? `<td style="padding:6px 8px;font-size:${f}px;text-align:right;border-bottom:1px solid ${gold}18;white-space:nowrap;"><span style="color:#94a3b8;">${currHtml}</span> ${fmt(inv.outstanding)}</td>` : ''}
-            ${s.showReceivedNow ? `<td style="padding:6px 8px;font-size:${f}px;text-align:right;border-bottom:1px solid ${gold}18;white-space:nowrap;"><span style="color:${gold};font-weight:600;">${currHtml}</span> <span style="font-weight:700;color:#1a1a2e;">${fmt(inv.received)}</span></td>` : ''}
-            ${s.showBalanceAfter ? `<td style="padding:6px 8px;font-size:${f}px;text-align:right;border-bottom:1px solid ${gold}18;">${Number(inv.balance) > 0 ? `<span style="font-weight:600;">${currHtml} ${fmt(inv.balance)}</span>` : `<span style="color:#94a3b8;">${currHtml} 0.00</span>`}</td>` : ''}
+            ${s.showInvoiceDate ? `<td style="${tdRight}color:#64748b;">${esc(inv.date || '')}</td>` : ''}
+            ${s.showInvoiceTotal ? `<td style="${tdRight}"><div style="color:#94a3b8;font-size:${f - 1}px;">${currLabel}</div><div>${fmt(inv.total)}</div></td>` : ''}
+            ${s.showOutstanding ? `<td style="${tdRight}"><div style="color:#94a3b8;font-size:${f - 1}px;">${currLabel}</div><div>${fmt(inv.outstanding)}</div></td>` : ''}
+            ${s.showReceivedNow ? `<td style="${tdRight}"><div style="color:${gold};font-size:${f - 1}px;font-weight:600;">${currLabel}</div><div style="font-weight:700;color:#1a1a2e;">${fmt(inv.received)}</div></td>` : ''}
+            ${s.showBalanceAfter ? `<td style="${tdRight}">${Number(inv.balance) > 0 ? `<span style="font-weight:600;">${fmt(inv.balance)}</span>` : `<span style="color:#94a3b8;">${currLabel} 0.00</span>`}</td>` : ''}
         </tr>`;
     }).join('');
 
+    // Stamp: use uploaded image if stampUrl is set, otherwise show dashed placeholder
+    const stampHtml = s.showCompanyStamp ? `
+        <div style="display:flex;flex-direction:column;align-items:center;gap:6px;">
+            ${s.stampUrl
+            ? `<img src="${esc(s.stampUrl)}" alt="stamp" style="width:88px;height:88px;object-fit:contain;" />`
+            : `<div style="width:88px;height:88px;border-radius:50%;border:2px dashed ${gold};background:${gold}0d;display:flex;flex-direction:column;align-items:center;justify-content:center;">
+                       <span style="font-size:${f - 1}px;color:#92400e;font-weight:700;text-align:center;line-height:1.4;">Company<br/>Stamp</span>
+                   </div>`
+        }
+            <span style="font-size:${f - 2}px;color:#94a3b8;">Official Stamp</span>
+        </div>` : '';
+
+    // QR placeholder (actual QR is passed in via options.qrCodeDataUrl when enabled)
+    const qrHtml = s.showQRCode ? `
+        <div style="display:flex;flex-direction:column;align-items:center;gap:4px;">
+            ${options.qrCodeDataUrl
+            ? `<img src="${esc(options.qrCodeDataUrl)}" style="width:52px;height:52px;" />`
+            : `<div style="width:52px;height:52px;background:#1a1a2e;border-radius:4px;"></div>`
+        }
+            <span style="font-size:${f - 2}px;color:#94a3b8;">Scan to verify</span>
+        </div>` : '';
+
     const now = new Date();
     const generatedStr = `${now.toLocaleDateString('en-AE')} ${now.toLocaleTimeString('en-AE', { hour: '2-digit', minute: '2-digit' })}`;
+    const generatedUser = co.email || '';
+
+    const fontFamily = s.fontFamily || 'Inter, sans-serif';
+    const needsInterImport = /\bInter\b/i.test(fontFamily);
 
     return `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"/>
-<title>Payment Receipt ${esc(r.receiptNumber||'')}</title>
+<title>Payment Receipt ${esc(r.receiptNumber || '')}</title>
+${needsInterImport ? `<link rel="preconnect" href="https://fonts.googleapis.com"/><link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet"/>` : ''}
 <style>
 @page { size: ${paper.cssSize}; margin: 12mm; }
 * { box-sizing: border-box; margin: 0; padding: 0; }
-body { font-family: ${esc(s.fontFamily||'Inter, sans-serif')}; font-size: ${f}px; color: #1a1a2e; background: #fff; }
+html, body { height: 100%; }
+body { font-family: ${esc(fontFamily)}; font-size: ${f}px; color: #1a1a2e; background: #fff; }
 table { width: 100%; border-collapse: collapse; }
 </style></head>
-<body style="padding:0;">
-<div style="padding:0;">
-  <!-- HEADER -->
-  <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:18px;gap:16px;">
-    <div style="flex:1;">
-      <h1 style="font-size:${f+11}px;font-weight:700;color:#1a1a2e;margin:0 0 4px;letter-spacing:-0.3px;white-space:nowrap;">Customer Payment Receipt</h1>
-      ${s.showStatusBadge && r.status ? `<div style="margin-bottom:12px;"><span style="background:${gold}22;color:#92400e;border:1px solid ${gold}88;font-size:${f-1}px;font-weight:600;padding:2px 10px;border-radius:12px;">${esc(r.status)}</span></div>` : ''}
-      ${s.showCustomerName && cust.name ? `<div>
-        <p style="font-weight:700;font-size:${f-0.5}px;margin-bottom:4px;color:#888;letter-spacing:.5px;text-transform:uppercase;">Customer</p>
-        <p style="font-weight:700;font-size:${f+1}px;margin-bottom:2px;">${esc(cust.name)}</p>
-        ${s.showCustomerCode && cust.code ? `<p style="color:#64748b;font-size:${f-0.5}px;">${esc(cust.code)}</p>` : ''}
-        ${s.showCustomerAddress && cust.address ? `<p style="white-space:pre-line;line-height:1.65;color:#444;">${esc(cust.address)}</p>` : ''}
-        ${s.showCustomerPhone && cust.phone ? `<p style="color:#555;">${esc(cust.phone)}</p>` : ''}
-        ${s.showCustomerEmail && cust.email ? `<p style="color:#555;">${esc(cust.email)}</p>` : ''}
-        ${s.showCustomerTRN && cust.trn ? `<p style="color:#64748b;font-size:${f-0.5}px;">TRN: ${esc(cust.trn)}</p>` : ''}
-      </div>` : ''}
+<body style="padding:0;min-height:100%;">
+<!-- PAGE WRAPPER: flex column so footer group sticks to bottom -->
+<div style="font-family:${esc(fontFamily)};font-size:${f}px;background:#fff;color:#1a1a2e;padding:0 32px 28px 32px;min-height:calc(100vh - 24mm);display:flex;flex-direction:column;">
+
+  <!-- BODY CONTENT (grows to fill available space) -->
+  <div style="flex:1;padding-top:28px;">
+
+    <!-- HEADER: 3 columns — Customer | Meta | Logo + Company -->
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:18px;gap:16px;">
+
+      <!-- COL 1: Title + Status + Customer -->
+      <div style="flex:1;">
+        <h1 style="font-size:${f + 11}px;font-weight:700;color:#1a1a2e;margin:0 0 4px 0;letter-spacing:-0.3px;white-space:nowrap;">Customer Payment Receipt</h1>
+        ${s.showStatusBadge && r.status ? `<div style="margin-bottom:12px;"><span style="background:${gold}22;color:#92400e;border:1px solid ${gold}88;font-size:${f - 1}px;font-weight:600;padding:2px 10px;border-radius:12px;">${esc(r.status)}</span></div>` : ''}
+        ${s.showCustomerName && cust.name ? `<div>
+          <p style="font-weight:700;font-size:${f - 0.5}px;margin-bottom:4px;color:#888;letter-spacing:.5px;text-transform:uppercase;">Customer</p>
+          <p style="font-weight:700;font-size:${f + 1}px;margin-bottom:2px;">${esc(cust.name)}</p>
+          ${s.showCustomerCode && cust.code ? `<p style="color:#64748b;font-size:${f - 0.5}px;margin:1px 0;">${esc(cust.code)}</p>` : ''}
+          ${s.showCustomerAddress && cust.address ? `<p style="white-space:pre-line;line-height:1.65;color:#444;margin:2px 0 0;">${esc(cust.address)}</p>` : ''}
+          ${s.showCustomerPhone && cust.phone ? `<p style="margin-top:2px;color:#555;">${esc(cust.phone)}</p>` : ''}
+          ${s.showCustomerEmail && cust.email ? `<p style="margin-top:1px;color:#555;">${esc(cust.email)}</p>` : ''}
+          ${s.showCustomerTRN && cust.trn ? `<p style="margin-top:1px;color:#64748b;font-size:${f - 0.5}px;">TRN: ${esc(cust.trn)}</p>` : ''}
+          ${s.showVATNumber && cust.crn ? `<p style="margin-top:1px;color:#64748b;font-size:${f - 0.5}px;">CR: ${esc(cust.crn)}</p>` : ''}
+        </div>` : ''}
+      </div>
+
+      <!-- COL 2: Receipt meta grid -->
+      ${metaGridHtml}
+
+      <!-- COL 3: Logo + Company (right-aligned) -->
+      <div style="display:flex;flex-direction:column;align-items:flex-end;gap:5px;">
+        ${logoHtml}
+        ${s.showCompanyName && co.companyName ? `<div style="text-align:right;line-height:1.55;">
+          <p style="font-weight:700;font-size:${f + 1}px;color:#1a1a2e;margin:0;white-space:nowrap;">${esc(co.companyName)}</p>
+          ${s.showCompanyAddress && co.address ? `<p style="margin:0;color:#555;white-space:pre-line;">${esc(co.address)}</p>` : ''}
+          ${s.showCompanyPhone && co.phone ? `<p style="margin:0;">${esc(co.phone)}</p>` : ''}
+          ${s.showCompanyEmail && co.email ? `<p style="margin:0;">${esc(co.email)}</p>` : ''}
+          ${s.showTRN && co.trn ? `<p style="margin:0;color:#666;">TRN · ${esc(co.trn)}</p>` : ''}
+        </div>` : ''}
+      </div>
     </div>
-    ${metaRows.length > 0 ? `<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px 20px;align-self:flex-end;padding-bottom:2px;">${metaRows.map(([lbl,val]) => `<div><p style="margin:0;font-size:${f-1}px;color:#999;font-weight:500;">${esc(lbl)}</p><p style="margin:1px 0 0;font-size:${f}px;font-weight:700;color:#1a1a2e;">${esc(val)}</p></div>`).join('')}</div>` : ''}
-    <div style="display:flex;flex-direction:column;align-items:flex-end;gap:5px;">
-      ${logoHtml}
-      ${s.showCompanyName && co.companyName ? `<div style="text-align:right;line-height:1.55;">
-        <p style="font-weight:700;font-size:${f+1}px;color:#1a1a2e;margin:0;white-space:nowrap;">${esc(co.companyName)}</p>
-        ${s.showCompanyAddress && co.address ? `<p style="margin:0;color:#555;white-space:pre-line;">${esc(co.address)}</p>` : ''}
-        ${s.showCompanyPhone && co.phone ? `<p style="margin:0;">${esc(co.phone)}</p>` : ''}
-        ${s.showCompanyEmail && co.email ? `<p style="margin:0;">${esc(co.email)}</p>` : ''}
-        ${s.showTRN && co.trn ? `<p style="margin:0;color:#666;">TRN · ${esc(co.trn)}</p>` : ''}
-      </div>` : ''}
-    </div>
-  </div>
-  <!-- INVOICE TABLE -->
-  ${invoices.length > 0 ? `
-  <div style="font-size:${f-0.5}px;font-weight:700;color:#64748b;letter-spacing:1px;text-transform:uppercase;margin-bottom:8px;">Invoices included in this receipt</div>
-  <table style="margin-bottom:12px;">
-    <thead><tr>
-      <th style="padding:6px 8px;font-size:${f-0.5}px;color:#374151;border-bottom:1px solid #e2e8f0;background:#f8fafc;text-align:left;">Invoice ref.</th>
-      ${s.showInvoiceDate ? `<th style="padding:6px 8px;font-size:${f-0.5}px;color:#374151;border-bottom:1px solid #e2e8f0;background:#f8fafc;text-align:right;">Invoice date</th>` : ''}
-      ${s.showInvoiceTotal ? `<th style="padding:6px 8px;font-size:${f-0.5}px;color:#374151;border-bottom:1px solid #e2e8f0;background:#f8fafc;text-align:right;">Invoice total</th>` : ''}
-      ${s.showOutstanding ? `<th style="padding:6px 8px;font-size:${f-0.5}px;color:#374151;border-bottom:1px solid #e2e8f0;background:#f8fafc;text-align:right;">Outstanding</th>` : ''}
-      ${s.showReceivedNow ? `<th style="padding:6px 8px;font-size:${f-0.5}px;color:#92400e;border-bottom:1px solid #e2e8f0;background:#f8fafc;text-align:right;">Received now</th>` : ''}
-      ${s.showBalanceAfter ? `<th style="padding:6px 8px;font-size:${f-0.5}px;color:#374151;border-bottom:1px solid #e2e8f0;background:#f8fafc;text-align:right;">Balance after</th>` : ''}
-    </tr></thead>
-    <tbody>${invoiceRows}</tbody>
-  </table>` : ''}
-  <!-- SUMMARY -->
-  <div style="display:flex;justify-content:flex-end;margin-bottom:16px;">
-    <table style="min-width:300px;border-collapse:collapse;font-size:${f}px;">
-      <tbody>
-        ${s.showTotalOutstanding ? `<tr><td style="padding:3px 16px 3px 0;color:#64748b;text-align:right;">Total outstanding</td><td style="padding:3px 0 3px 12px;text-align:right;font-weight:600;">${currHtml} ${fmt(sum.totalOutstanding)}</td></tr>` : ''}
-        ${s.showDiscountAllowed ? `<tr><td style="padding:3px 16px 3px 0;color:#64748b;text-align:right;">Discount allowed</td><td style="padding:3px 0 3px 12px;text-align:right;color:#e11d48;">${currHtml} —${fmt(sum.discount||0)}</td></tr>` : ''}
-        ${s.showRemainingBalance ? `<tr><td style="padding:3px 16px 3px 0;color:#64748b;text-align:right;">Remaining balance</td><td style="padding:3px 0 3px 12px;text-align:right;font-weight:600;">${currHtml} ${fmt(sum.remaining)}</td></tr>` : ''}
-        ${s.showTotalReceivedBold ? `<tr style="background:${gold}18;"><td style="padding:6px 16px 6px 0;font-weight:700;text-align:right;font-size:${f+1}px;">Total received now</td><td style="padding:6px 0 6px 12px;text-align:right;font-weight:800;font-size:${f+2}px;color:#1a1a2e;">${currHtml} ${fmt(sum.totalReceived)}</td></tr>` : ''}
-      </tbody>
+
+    <!-- INVOICE TABLE LABEL -->
+    <div style="font-size:${f - 0.5}px;font-weight:700;color:#64748b;letter-spacing:1px;text-transform:uppercase;margin-bottom:8px;">Invoices included in this receipt</div>
+
+    <!-- INVOICE TABLE -->
+    <table style="margin-bottom:12px;">
+      <thead>
+        <tr>
+          <th style="${thStyle}text-align:left;">Invoice ref.</th>
+          ${s.showInvoiceDate ? `<th style="${thStyle}text-align:right;">Invoice date</th>` : ''}
+          ${s.showInvoiceTotal ? `<th style="${thStyle}text-align:right;">Invoice total</th>` : ''}
+          ${s.showOutstanding ? `<th style="${thStyle}text-align:right;">Outstanding</th>` : ''}
+          ${s.showReceivedNow ? `<th style="${thStyle}text-align:right;color:#92400e;">Received now</th>` : ''}
+          ${s.showBalanceAfter ? `<th style="${thStyle}text-align:right;">Balance after</th>` : ''}
+        </tr>
+      </thead>
+      <tbody>${invoiceRows}</tbody>
     </table>
-  </div>
-  <!-- PAYMENT DETAILS -->
-  ${s.showPaymentMethod && pay.method ? `
-  <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px 32px;margin-bottom:14px;font-size:${f}px;border-top:1px solid ${gold}30;padding-top:10px;">
-    <div style="display:flex;gap:10px;"><span style="color:#94a3b8;min-width:90px;">Payment method</span><span style="font-weight:600;">${esc(pay.method)}</span></div>
-    ${s.showChequeRef && pay.chequeRef ? `<div style="display:flex;gap:10px;"><span style="color:#94a3b8;min-width:90px;">Cheque no. / ref.</span><span style="font-weight:600;">${esc(pay.chequeRef)}</span></div>` : ''}
-    ${s.showDepositedTo && pay.depositedTo ? `<div style="display:flex;gap:10px;"><span style="color:#94a3b8;min-width:90px;">Deposited to</span><span style="font-weight:600;">${esc(pay.depositedTo)}</span></div>` : ''}
-    ${s.showChequeDate && pay.chequeDate ? `<div style="display:flex;gap:10px;"><span style="color:#94a3b8;min-width:90px;">Cheque date</span><span style="font-weight:600;">${esc(pay.chequeDate)}</span></div>` : ''}
-  </div>` : ''}
-  <!-- NOTE -->
-  ${s.showNote && data.note ? `<div style="background:${gold}14;border:1px solid ${gold}66;border-radius:4px;padding:7px 12px;font-size:${f}px;color:#374151;margin-bottom:16px;">${esc(data.note)}</div>` : ''}
-  <!-- STAMP / QR -->
-  ${(s.showCompanyStamp || s.showQRCode) ? `<div style="display:flex;align-items:flex-end;gap:20px;margin-bottom:14px;">
-    ${s.showCompanyStamp ? `<div style="display:flex;flex-direction:column;align-items:center;gap:6px;"><div style="width:88px;height:88px;border-radius:50%;border:2px dashed ${gold};background:${gold}0d;display:flex;align-items:center;justify-content:center;"><span style="font-size:${f-1}px;color:#92400e;font-weight:700;text-align:center;line-height:1.4;">Company<br>Stamp</span></div><span style="font-size:${f-2}px;color:#94a3b8;">Official Stamp</span></div>` : ''}
-  </div>` : ''}
-  <!-- FOOTER -->
-  ${(s.showGeneratedBy || s.showReceivedByLine) ? `<div style="border-top:2px solid ${gold};margin-top:8px;padding-top:7px;display:flex;justify-content:space-between;align-items:center;font-size:${f-0.5}px;color:#64748b;">
-    ${s.showGeneratedBy ? `<div>BillBull ERP · Generated: ${esc(generatedStr)}</div>` : '<div></div>'}
-    ${s.showReceivedByLine ? `<div style="display:flex;align-items:center;gap:6px;">Received by: <span style="border-bottom:1px solid #94a3b8;display:inline-block;min-width:90px;">&nbsp;</span></div>` : ''}
-  </div>` : ''}
-</div>
+
+  </div><!-- end flex:1 body content -->
+
+  <!-- FOOTER GROUP: pushed to bottom via margin-top:auto -->
+  <div style="margin-top:auto;">
+
+    <!-- SUMMARY (right-aligned) -->
+    <div style="display:flex;justify-content:flex-end;margin-bottom:16px;">
+      <table style="min-width:300px;border-collapse:collapse;font-size:${f}px;">
+        <tbody>
+          ${s.showTotalOutstanding ? `<tr><td style="padding:3px 16px 3px 0;color:#64748b;text-align:right;">Total outstanding</td><td style="padding:3px 0 3px 12px;text-align:right;font-weight:600;">${currLabel} ${fmt(sum.totalOutstanding)}</td></tr>` : ''}
+          ${s.showDiscountAllowed ? `<tr><td style="padding:3px 16px 3px 0;color:#64748b;text-align:right;">Discount allowed</td><td style="padding:3px 0 3px 12px;text-align:right;color:#e11d48;">${currLabel} —${fmt(sum.discount || 0)}</td></tr>` : ''}
+          ${s.showRemainingBalance ? `<tr><td style="padding:3px 16px 3px 0;color:#64748b;text-align:right;">Remaining balance</td><td style="padding:3px 0 3px 12px;text-align:right;font-weight:600;">${currLabel} ${fmt(sum.remaining)}</td></tr>` : ''}
+          ${s.showTotalReceivedBold ? `<tr style="background:${gold}18;"><td style="padding:6px 16px 6px 0;font-weight:700;text-align:right;font-size:${f + 1}px;">Total received now</td><td style="padding:6px 0 6px 12px;text-align:right;font-weight:800;font-size:${f + 2}px;color:#1a1a2e;">${currLabel} ${fmt(sum.totalReceived)}</td></tr>` : ''}
+        </tbody>
+      </table>
+    </div>
+
+    <!-- PAYMENT DETAILS -->
+    ${s.showPaymentMethod && pay.method ? `
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px 32px;margin-bottom:14px;font-size:${f}px;border-top:1px solid ${gold}30;padding-top:10px;">
+      <div style="display:flex;gap:10px;"><span style="color:#94a3b8;min-width:90px;">Payment method</span><span style="font-weight:600;">${esc(pay.method)}</span></div>
+      ${s.showChequeRef && pay.chequeRef ? `<div style="display:flex;gap:10px;"><span style="color:#94a3b8;min-width:90px;">Cheque no. / ref.</span><span style="font-weight:600;">${esc(pay.chequeRef)}</span></div>` : '<div></div>'}
+      ${s.showDepositedTo && pay.depositedTo ? `<div style="display:flex;gap:10px;"><span style="color:#94a3b8;min-width:90px;">Deposited to</span><span style="font-weight:600;">${esc(pay.depositedTo)}</span></div>` : ''}
+      ${s.showChequeDate && pay.chequeDate ? `<div style="display:flex;gap:10px;"><span style="color:#94a3b8;min-width:90px;">Cheque date</span><span style="font-weight:600;">${esc(pay.chequeDate)}</span></div>` : ''}
+    </div>` : ''}
+
+    <!-- NOTE -->
+    ${s.showNote && data.note ? `<div style="background:${gold}14;border:1px solid ${gold}66;border-radius:4px;padding:7px 12px;font-size:${f}px;color:#374151;margin-bottom:16px;">${esc(data.note)}</div>` : ''}
+
+    <!-- STAMP + QR -->
+    ${(s.showCompanyStamp || s.showQRCode) ? `
+    <div style="display:flex;align-items:flex-end;gap:20px;margin-bottom:14px;">
+      ${stampHtml}
+      ${qrHtml}
+    </div>` : ''}
+
+    <!-- FOOTER STRIP -->
+    ${(s.showGeneratedBy || s.showReceivedByLine) ? `
+    <div style="border-top:2px solid ${gold};padding-top:7px;display:flex;justify-content:space-between;align-items:center;font-size:${f - 0.5}px;color:#64748b;">
+      <div>${s.showGeneratedBy ? `BillBull ERP · Generated: ${esc(generatedStr)}${generatedUser ? ` · User: ${esc(generatedUser)}` : ''}` : ''}</div>
+      ${s.showReceivedByLine ? `<div style="display:flex;align-items:center;gap:6px;">Received by: <span style="border-bottom:1px solid #94a3b8;display:inline-block;min-width:90px;">&nbsp;</span></div>` : ''}
+    </div>` : ''}
+
+  </div><!-- end footer group -->
+
+</div><!-- end page wrapper -->
 </body></html>`;
 };
 

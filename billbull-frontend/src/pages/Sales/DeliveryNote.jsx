@@ -2202,16 +2202,12 @@ const DeliveryNote = () => {
                                                     </div>
                                                 </td>
                                                 <td className="px-4 py-3 text-slate-500">{formatDisplayDate(dn.date)}</td>
-                                                <td className="px-4 py-3 text-slate-600 font-medium">{dn.customerCode} - {dn.customerName}</td>
-                                                <td className="px-4 py-3 text-slate-600 text-[11px]">
-                                                    {dn.branchName ? (
-                                                        <>
-                                                            <div className="font-medium">{dn.branchName}</div>
-                                                            {dn.branchCode && <div className="text-slate-400">{dn.branchCode}</div>}
-                                                        </>
-                                                    ) : (
-                                                        <span className="text-slate-300">—</span>
-                                                    )}
+                                                <td className="px-4 py-3">
+                                                    <div className="font-medium text-slate-700">{dn.customerName}</div>
+                                                    {dn.customerCode && <div className="text-[10px] text-slate-400">{dn.customerCode}</div>}
+                                                </td>
+                                                <td className="px-4 py-3 text-[11px] text-slate-600">
+                                                    {dn.branchCode ? dn.branchCode : <span className="text-slate-300">—</span>}
                                                 </td>
                                                 <td className="px-4 py-3 text-slate-500">{dn.soNo}</td>
                                                 <td className="px-4 py-3 text-slate-500">{dn.piNo}</td>

@@ -2954,16 +2954,12 @@ const Quotations = () => {
                                                     {qtn.qtnNo}
                                                 </td>
                                                 <td className="px-4 py-3 text-slate-600">{formatDisplayDate(qtn.date)}</td>
-                                                <td className="px-4 py-3 text-slate-700 font-medium">{qtn.customer}</td>
-                                                <td className="px-4 py-3 text-slate-600 text-[11px]">
-                                                    {qtn.branchName ? (
-                                                        <>
-                                                            <div className="font-medium">{qtn.branchName}</div>
-                                                            {qtn.branchCode && <div className="text-slate-400">{qtn.branchCode}</div>}
-                                                        </>
-                                                    ) : (
-                                                        <span className="text-slate-300">—</span>
-                                                    )}
+                                                <td className="px-4 py-3">
+                                                    <div className="font-medium text-slate-700">{qtn.customer}</div>
+                                                    {qtn.customerCode && <div className="text-[10px] text-slate-400">{qtn.customerCode}</div>}
+                                                </td>
+                                                <td className="px-4 py-3 text-[11px] text-slate-600">
+                                                    {qtn.branchCode ? qtn.branchCode : <span className="text-slate-300">—</span>}
                                                 </td>
                                                 <td className="px-4 py-3 text-right font-bold text-slate-800">
                                                     <CurrencyAmount value={qtn.total || 0} {...getDisplayCurrencyProps(qtn.currency)} />

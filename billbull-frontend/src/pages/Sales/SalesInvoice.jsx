@@ -1872,6 +1872,23 @@ const SalesInvoice = () => {
             return;
         }
 
+        // Zero-price policy check
+        const zeroPricePolicy = salesSettings?.zeroPricePolicy ?? 'BLOCK';
+        if (zeroPricePolicy !== 'ALLOW') {
+            const zeroPriceItems = items.filter(i => (i.code || i.name) && Number(i.qty) > 0 && !(Number(i.price) > 0));
+            if (zeroPriceItems.length > 0) {
+                const names = zeroPriceItems.map(i => i.name || i.code).join(', ');
+                if (zeroPricePolicy === 'BLOCK') {
+                    alert(`Zero-price items are not allowed.\n\nThe following item(s) have a unit price of zero:\n${names}\n\nPlease set a price before saving.`);
+                    return;
+                }
+                if (zeroPricePolicy === 'WARN') {
+                    const proceed = window.confirm(`Some items have a zero price:\n${names}\n\nDo you want to continue saving?`);
+                    if (!proceed) return;
+                }
+            }
+        }
+
         // Build payload for backend
         // Resolve invoice-level warehouse ID for fallback on items that have no warehouseId
         const invoiceLevelWarehouseId =
@@ -2851,7 +2868,7 @@ const SalesInvoice = () => {
     };
 
     const renderTypeBadge = (inv) => {
-        if (inv?.fastSale) return <span className="bg-red-50 text-red-600 px-2 py-0.5 rounded text-[10px] font-bold ml-2 border border-red-200 shadow-sm flex items-center gap-1"><ShoppingCart size={10} /> Fast Sale</span>;
+        if (inv?.fastSale) return <span className="bg-red-50 text-red-600 px-2 py-0.5 rounded text-[10px] font-bold border border-red-200 shadow-sm flex items-center gap-1 w-fit"><ShoppingCart size={10} /> Fast Sale</span>;
         return null;
     };
 
@@ -2862,8 +2879,8 @@ const SalesInvoice = () => {
         >
             <div className="flex justify-between items-start mb-2">
                 <div>
-                    <h4 className="font-bold text-slate-800 text-sm flex items-center">
-                        {inv.invoiceNumber}
+                    <h4 className="font-bold text-slate-800 text-sm flex flex-col items-start gap-1">
+                        <span>{inv.invoiceNumber}</span>
                         {renderTypeBadge(inv)}
                     </h4>
                     <div className="text-xs text-slate-500">{formatDisplayDate(inv.invoiceDate)}</div>
@@ -3216,37 +3233,28 @@ const SalesInvoice = () => {
                                                     })}
                                                 </td>
                                                 <td className="px-4 py-3 font-medium text-slate-700 whitespace-nowrap">
-                                                    <div className="flex items-center gap-2 whitespace-nowrap">
-                                                        {inv.invoiceNumber}
+                                                    <div className="flex flex-col items-start gap-1 whitespace-nowrap">
+                                                        <span>{inv.invoiceNumber}</span>
                                                         {renderTypeBadge(inv)}
                                                     </div>
                                                 </td>
                                                 <td className="px-4 py-3 text-slate-500 whitespace-nowrap">{formatDisplayDate(inv.invoiceDate)}</td>
-                                                <td className="px-4 py-3 whitespace-nowrap">
-                                                    <div className="inline-flex items-center gap-1.5 whitespace-nowrap">
-                                                        <span className="font-medium text-slate-700">{inv.customerName}</span>
-                                                        {inv.customerCode && <span className="text-[10px] text-slate-400">{inv.customerCode}</span>}
-                                                    </div>
+                                                <td className="px-4 py-3">
+                                                    <div className="font-medium text-slate-700">{inv.customerName}</div>
+                                                    {inv.customerCode && <div className="text-[10px] text-slate-400">{inv.customerCode}</div>}
                                                 </td>
-                                                <td className="px-4 py-3 text-slate-600 text-[11px] whitespace-nowrap">
-                                                    {inv.branchName ? (
-                                                        <div className="inline-flex items-center gap-1.5 whitespace-nowrap">
-                                                            <span className="font-medium">{inv.branchName}</span>
-                                                            {inv.branchCode && <span className="text-slate-400">{inv.branchCode}</span>}
-                                                        </div>
-                                                    ) : (
-                                                        <span className="text-slate-300">—</span>
-                                                    )}
+                                                <td className="px-4 py-3 text-[11px] text-slate-600">
+                                                    {inv.branchCode ? inv.branchCode : <span className="text-slate-300">—</span>}
                                                 </td>
-                                                <td className="px-4 py-3 whitespace-nowrap">
+                                                <td className="px-4 py-3">
                                                     {(() => {
                                                         const src = resolveSourceType(inv);
                                                         return (
-                                                            <div className="inline-flex items-center gap-2 whitespace-nowrap">
+                                                            <div>
                                                                 <span className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold border w-fit ${src.color}`}>
                                                                     {src.label}
                                                                 </span>
-                                                                {src.ref && <span className="text-[10px] text-slate-400">{src.ref}</span>}
+                                                                {src.ref && <div className="text-[10px] text-slate-400 mt-0.5">{src.ref}</div>}
                                                             </div>
                                                         );
                                                     })()}
