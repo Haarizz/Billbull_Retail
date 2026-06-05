@@ -48,4 +48,8 @@ public interface PurchaseInvoiceRepository
         @org.springframework.data.jpa.repository.Query("SELECT new com.billbull.backend.financials.statement.StatementEntryDTO(s.invoiceDate, s.invoiceNumber, 'INVOICE', CAST(0 AS big_decimal), s.grandTotal, CAST(s.status AS string)) FROM PurchaseInvoice s WHERE s.vendorName = :vendorName AND s.invoiceDate BETWEEN :startDate AND :endDate AND s.status <> 'CANCELLED'")
         List<com.billbull.backend.financials.statement.StatementEntryDTO> findStatementEntries(String vendorName,
                         java.time.LocalDate startDate, java.time.LocalDate endDate);
+
+        /** Global AP sub-ledger total: sum of grandTotal for all non-cancelled, unpaid invoices. */
+        @org.springframework.data.jpa.repository.Query("SELECT COALESCE(SUM(i.grandTotal), 0) FROM PurchaseInvoice i WHERE i.status NOT IN ('CANCELLED', 'PAID')")
+        java.math.BigDecimal sumGlobalOutstandingAP();
 }

@@ -507,8 +507,10 @@ public class GrnService {
 
         grnRepo.save(grn);
 
-        // 🔵 TRIGGER ACCOUNTING POSTING
-        // Dr. Inventory, Cr. GRN Clearing (Accrual)
+        // GL posting runs in the same @Transactional boundary as the StockMovement writes above.
+        // WAC (getWeightedAverageCost) is derived live from StockMovement.unitCost rows, so the
+        // updated cost is immediately visible to COGS lookups after this transaction commits.
+        // Dr. Inventory (1120), Cr. GRN Clearing (2103)
         postingEngineService.createJournalFromGRN(grn);
     }
 

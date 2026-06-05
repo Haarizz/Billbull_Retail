@@ -30,9 +30,12 @@ import jakarta.persistence.Table;
 
 @Entity
 @Table(name = "purchase_invoices", indexes = {
-    @Index(name = "idx_purchase_invoice_branch", columnList = "branch_id"),
-    // Speeds the per-vendor invoiced-total aggregate used by the vendor list.
-    @Index(name = "idx_purchase_invoice_vendor_name", columnList = "vendor_name")
+    @Index(name = "idx_purchase_invoice_branch",      columnList = "branch_id"),
+    @Index(name = "idx_purchase_invoice_vendor_name", columnList = "vendor_name"),
+    @Index(name = "idx_purchase_invoice_status",      columnList = "status"),
+    @Index(name = "idx_purchase_invoice_date",        columnList = "invoice_date"),
+    @Index(name = "idx_purchase_invoice_vendor_due",  columnList = "vendor_name, due_date"),
+    @Index(name = "idx_purchase_invoice_number",      columnList = "invoice_number")
 })
 public class PurchaseInvoice extends BaseEntity {
 

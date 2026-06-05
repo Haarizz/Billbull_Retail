@@ -4,6 +4,7 @@ import java.math.BigDecimal;
 import java.time.LocalDate;
 
 import com.billbull.backend.settings.branch.Branch;
+import com.billbull.backend.settings.outlet.Outlet;
 import com.fasterxml.jackson.annotation.JsonIgnore;
 
 import jakarta.persistence.Column;
@@ -19,7 +20,11 @@ import jakarta.persistence.Table;
 
 @Entity
 @Table(name = "journal_lines", indexes = {
-    @Index(name = "idx_journal_line_branch", columnList = "branch_id")
+    @Index(name = "idx_journal_line_branch",       columnList = "branch_id"),
+    @Index(name = "idx_journal_line_outlet",       columnList = "outlet_id"),
+    @Index(name = "idx_journal_line_account_code", columnList = "account_code"),
+    @Index(name = "idx_journal_line_entry_id",     columnList = "journal_entry_id"),
+    @Index(name = "idx_journal_line_branch_acct",  columnList = "branch_id, account_code")
 })
 public class JournalLine {
 
@@ -40,6 +45,14 @@ public class JournalLine {
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "branch_id")
     private Branch branch;
+
+    /**
+     * Per-line outlet dimension (PDF §4). Mandatory on revenue/COGS accounts once
+     * Phase 2 outlet data is fully populated. Enforced warn-only until then.
+     */
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "outlet_id")
+    private Outlet outlet;
 
     @Column(nullable = false)
     private String account; // Display name (kept for backward compatibility)
@@ -78,6 +91,21 @@ public class JournalLine {
     @Column(name = "cf_bucket")
     private String cfBucket; // e.g., "OPERATING_INFLOW", "INVESTING_OUTFLOW"
 
+    // ── Currency / FX columns (Phase 2.2, AED-only MVP) ────────────────────────
+    // Populated with "AED" / 1.0 by the posting engine; full multi-currency FX
+    // lookup is deferred until Phase 2.2 is fully scoped (see plan §E decision 2).
+    @Column(length = 3)
+    private String currency; // ISO 4217
+
+    @Column(precision = 18, scale = 8)
+    private BigDecimal fxRate; // units of base per 1 unit of currency
+
+    @Column(precision = 15, scale = 2)
+    private BigDecimal baseDebit; // debit converted to base currency (AED)
+
+    @Column(precision = 15, scale = 2)
+    private BigDecimal baseCredit; // credit converted to base currency (AED)
+
     public JournalLine() {
     }
 
@@ -104,6 +132,14 @@ public class JournalLine {
 
     public void setBranch(Branch branch) {
         this.branch = branch;
+    }
+
+    public Outlet getOutlet() {
+        return outlet;
+    }
+
+    public void setOutlet(Outlet outlet) {
+        this.outlet = outlet;
     }
 
     public String getAccount() {
@@ -217,4 +253,16 @@ public class JournalLine {
     public void setCfBucket(String cfBucket) {
         this.cfBucket = cfBucket;
     }
+
+    public String getCurrency() { return currency; }
+    public void setCurrency(String currency) { this.currency = currency; }
+
+    public BigDecimal getFxRate() { return fxRate; }
+    public void setFxRate(BigDecimal fxRate) { this.fxRate = fxRate; }
+
+    public BigDecimal getBaseDebit() { return baseDebit; }
+    public void setBaseDebit(BigDecimal baseDebit) { this.baseDebit = baseDebit; }
+
+    public BigDecimal getBaseCredit() { return baseCredit; }
+    public void setBaseCredit(BigDecimal baseCredit) { this.baseCredit = baseCredit; }
 }

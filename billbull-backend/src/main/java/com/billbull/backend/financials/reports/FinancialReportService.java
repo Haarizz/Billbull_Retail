@@ -378,9 +378,23 @@ public class FinancialReportService {
         dto.setTotalInvesting(totalInvesting);
         dto.setFinancingActivities(financingItems);
         dto.setTotalFinancing(totalFinancing);
-        dto.setNetCashFlow(totalOperating.add(totalInvesting).add(totalFinancing));
+        BigDecimal netCashFlow = totalOperating.add(totalInvesting).add(totalFinancing);
+        dto.setNetCashFlow(netCashFlow);
         dto.setStartDate(startDate.toString());
         dto.setEndDate(endDate.toString());
+
+        // Cash flow tie-back (PDF §15 / Phase 7.3):
+        // Closing cash on the statement should equal Cash (1101) + Bank (1102) on the Balance Sheet.
+        BigDecimal bsCash = safe(ledgerEntryRepository.netBalanceByAccountCode("1101"))
+                .add(safe(ledgerEntryRepository.netBalanceByAccountCode("1102")));
+        // Opening cash = BS cash balance as of startDate minus net change (approximation using ledger net up to startDate)
+        // For simplicity, closingCashFromCashFlow = openingCash + netCashFlow where openingCash is derived from prior-period ledger
+        BigDecimal openingCash = BigDecimal.ZERO; // Phase 7 MVP: opening = 0; full prior-period calc is Phase 9 scope
+        BigDecimal closingCF  = openingCash.add(netCashFlow);
+        dto.setClosingCashFromBalanceSheet(bsCash);
+        dto.setClosingCashFromCashFlow(closingCF);
+        boolean pass = bsCash.subtract(closingCF).abs().compareTo(new java.math.BigDecimal("1.00")) <= 0;
+        dto.setTieOut(pass ? "PASS" : "FAIL");
 
         return dto;
     }

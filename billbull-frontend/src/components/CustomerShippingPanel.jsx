@@ -28,6 +28,7 @@ const CustomerShippingPanel = ({
     showAddCustomer = false,
     onAddCustomer,
     onCustomerUpdated,
+    creditAlert = null,
 }) => {
     const [isDeliveryTypeOpen, setIsDeliveryTypeOpen] = useState(false);
     const [selectedAddressIdx, setSelectedAddressIdx] = useState(null);
@@ -223,6 +224,9 @@ const CustomerShippingPanel = ({
                         </div>
                     </div>
                 )}
+
+                {/* Credit limit alert — injected by parent (WARNING = yellow, BLOCK = red) */}
+                {creditAlert}
             </div>
 
             {/* Divider */}

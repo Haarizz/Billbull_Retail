@@ -14,6 +14,9 @@ public class SalaryPaymentService {
     @Autowired
     private SalaryPaymentRepository repository;
 
+    @Autowired
+    private com.billbull.backend.financials.generalledger.postingengine.PostingEngineService postingEngineService;
+
     // --- Fetch Lists ---
 
     public List<SalaryPayment> getPayrollList(int month, int year) {
@@ -98,7 +101,40 @@ public class SalaryPaymentService {
         record.setPaymentMethod(req.getPaymentMethod());
         record.setPaymentDate(req.getDate());
 
-        return repository.save(record);
+        SalaryPayment saved = repository.save(record);
+
+        // GL: Dr Salary Expense / Cr Salary Payable / Cr Deductions (PDF §13 / Phase 6.1)
+        postPayrollJournal(saved);
+
+        // GL: Dr Salary Payable / Cr Bank — WPS single payment (Phase 6.3)
+        BigDecimal net = saved.getNetPayable() != null ? saved.getNetPayable() : BigDecimal.ZERO;
+        if (net.compareTo(BigDecimal.ZERO) > 0) {
+            postingEngineService.createJournalFromWpsDisbursement(
+                    "SINGLE-" + saved.getId(),
+                    saved.getEmployeeName() + "-" + saved.getSalaryYear() + "/" + String.format("%02d", saved.getSalaryMonth()),
+                    net,
+                    saved.getPaymentDate() != null ? saved.getPaymentDate() : java.time.LocalDate.now());
+        }
+
+        return saved;
+    }
+
+    private void postPayrollJournal(SalaryPayment p) {
+        BigDecimal base   = p.getBaseSalary()  != null ? p.getBaseSalary()  : BigDecimal.ZERO;
+        BigDecimal allow  = p.getAllowances()   != null ? p.getAllowances()   : BigDecimal.ZERO;
+        BigDecimal ded    = p.getDeductions()   != null ? p.getDeductions()   : BigDecimal.ZERO;
+        BigDecimal net    = p.getNetPayable()   != null ? p.getNetPayable()   : BigDecimal.ZERO;
+        BigDecimal gross  = base.add(allow);
+        postingEngineService.createJournalFromPayrollRun(
+                p.getEmployeeId(),
+                p.getEmployeeName() != null ? p.getEmployeeName() : p.getEmployeeId(),
+                gross, net,
+                BigDecimal.ZERO, // advance deduction tracked separately via SalaryAdvanceService
+                ded,
+                p.getSalaryYear(),
+                p.getSalaryMonth(),
+                p.getDepartment(), // cost center = department
+                p.getPaymentDate() != null ? p.getPaymentDate() : java.time.LocalDate.now());
     }
 
     @Transactional
@@ -116,12 +152,30 @@ public class SalaryPaymentService {
             return;
         }
 
+        java.time.LocalDate payDate = req.getDate() != null ? req.getDate() : java.time.LocalDate.now();
+        BigDecimal totalNet = BigDecimal.ZERO;
+
         for (SalaryPayment p : toPay) {
             p.setStatus("Paid");
             p.setPaymentMethod(req.getPaymentMethod());
-            p.setPaymentDate(req.getDate());
+            p.setPaymentDate(payDate);
+            BigDecimal net = p.getNetPayable() != null ? p.getNetPayable() : BigDecimal.ZERO;
+            totalNet = totalNet.add(net);
         }
 
         repository.saveAll(toPay);
+
+        // GL: individual salary JVs per employee (PDF §13 / Phase 6.1)
+        for (SalaryPayment p : toPay) {
+            postPayrollJournal(p);
+        }
+
+        // GL: single WPS entry for the batch total (Phase 6.3)
+        if (totalNet.compareTo(BigDecimal.ZERO) > 0 && !toPay.isEmpty()) {
+            SalaryPayment first = toPay.get(0);
+            String runId = "BULK-" + first.getSalaryYear() + "-" + String.format("%02d", first.getSalaryMonth());
+            String periodLabel = first.getSalaryYear() + "/" + String.format("%02d", first.getSalaryMonth());
+            postingEngineService.createJournalFromWpsDisbursement(runId, periodLabel, totalNet, payDate);
+        }
     }
 }

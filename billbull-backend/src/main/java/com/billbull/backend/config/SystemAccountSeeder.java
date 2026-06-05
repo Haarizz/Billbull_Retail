@@ -43,7 +43,9 @@ public class SystemAccountSeeder implements ApplicationRunner {
         List<GroupSeed> subGroups = List.of(
             new GroupSeed("SYS-GRP-1100", "1100", "Current Assets",       "Assets",      "Asset",     "Dr", "BS", "1000", 2),
             new GroupSeed("SYS-GRP-2100", "2100", "Current Liabilities",  "Liabilities", "Liability", "Cr", "BS", "2000", 2),
+            new GroupSeed("SYS-GRP-3100", "3100", "Equity",               "Equity",      "Equity",    "Cr", "BS", "3000", 2),
             new GroupSeed("SYS-GRP-4100", "4100", "Sales",                "Income",      "Income",    "Cr", "PL", "4000", 2),
+            new GroupSeed("SYS-GRP-4200", "4200", "Other Income",         "Income",      "Income",    "Cr", "PL", "4000", 2),
             new GroupSeed("SYS-GRP-5100", "5100", "Cost of Goods Sold",   "Expenses",    "Expense",   "Dr", "PL", "5000", 2),
             new GroupSeed("SYS-GRP-5400", "5400", "Operating Expenses",   "Expenses",    "Expense",   "Dr", "PL", "5000", 2)
         );
@@ -54,66 +56,89 @@ public class SystemAccountSeeder implements ApplicationRunner {
         // ── Level 4: Leaf accounts ────────────────────────────────────────────
         //   parentCode now points to the L2 sub-group (not the L1 root)
         List<AccountSeed> seeds = List.of(
-            new AccountSeed("SYS-1101", "1101", "Cash on Hand",       "Assets",      "Asset",     "Dr", "BS", true,  "1100"),
-            new AccountSeed("SYS-1102", "1102", "Bank Account",        "Assets",      "Asset",     "Dr", "BS", true,  "1100"),
-            new AccountSeed("SYS-1103", "1103", "Petty Cash",          "Assets",      "Asset",     "Dr", "BS", true,  "1100"),
-            new AccountSeed("SYS-1104", "1104", "Merchant Clearing",   "Assets",      "Asset",     "Dr", "BS", false, "1100"),
-            new AccountSeed("SYS-1110", "1110", "Accounts Receivable", "Assets",      "Asset",     "Dr", "BS", false, "1100"),
-            new AccountSeed("SYS-1120", "1120", "Inventory",           "Assets",      "Asset",     "Dr", "BS", false, "1100"),
-            new AccountSeed("SYS-1130", "1130", "VAT Input Tax",       "Assets",      "Asset",     "Dr", "BS", false, "1100"),
-            new AccountSeed("SYS-2101", "2101", "Accounts Payable",    "Liabilities", "Liability", "Cr", "BS", false, "2100"),
-            new AccountSeed("SYS-2102", "2102", "VAT Output Tax",      "Liabilities", "Liability", "Cr", "BS", false, "2100"),
-            new AccountSeed("SYS-2103", "2103", "GRN Clearing",        "Liabilities", "Liability", "Cr", "BS", false, "2100"),
-            new AccountSeed("SYS-2104", "2104", "Customer Advance",    "Liabilities", "Liability", "Cr", "BS", false, "2100"),
-            new AccountSeed("SYS-2107", "2107", "Deferred Revenue",    "Liabilities", "Liability", "Cr", "BS", false, "2100"),
-            new AccountSeed("SYS-4101", "4101", "Sales Revenue",       "Income",      "Income",    "Cr", "PL", false, "4100"),
-            new AccountSeed("SYS-4102", "4102", "Sales Returns",       "Income",      "Income",    "Dr", "PL", false, "4100"),
-            new AccountSeed("SYS-4103", "4103", "Delivery Income",     "Income",      "Income",    "Cr", "PL", false, "4100"),
-            new AccountSeed("SYS-5101", "5101", "Cost of Goods Sold",  "Expenses",    "Expense",   "Dr", "PL", false, "5100"),
-            new AccountSeed("SYS-5403", "5403", "General Expense",     "Expenses",    "Expense",   "Dr", "PL", false, "5400"),
-            new AccountSeed("SYS-5999", "5999", "Rounding Adjustment", "Expenses",    "Expense",   "Dr", "PL", false, "5400")
+            new AccountSeed("SYS-1101", "1101", "Cash on Hand",       "Assets",      "Asset",     "Dr", "BS", true,  "1100", "CASH_AND_BANK"),
+            new AccountSeed("SYS-1102", "1102", "Bank Account",        "Assets",      "Asset",     "Dr", "BS", true,  "1100", "CASH_AND_BANK"),
+            new AccountSeed("SYS-1103", "1103", "Petty Cash",          "Assets",      "Asset",     "Dr", "BS", true,  "1100", "CASH_AND_BANK"),
+            new AccountSeed("SYS-1104", "1104", "Merchant Clearing",   "Assets",      "Asset",     "Dr", "BS", false, "1100", "CURRENT_ASSETS"),
+            new AccountSeed("SYS-1105", "1105", "Vendor Advances Paid","Assets",      "Asset",     "Dr", "BS", false, "1100", "CURRENT_ASSETS"),
+            new AccountSeed("SYS-1106", "1106", "Salary Advances",     "Assets",      "Asset",     "Dr", "BS", false, "1100", "CURRENT_ASSETS"),
+            new AccountSeed("SYS-1107", "1107", "Cheques Under Collection","Assets",  "Asset",     "Dr", "BS", false, "1100", "CURRENT_ASSETS"),
+            new AccountSeed("SYS-1110", "1110", "Accounts Receivable", "Assets",      "Asset",     "Dr", "BS", false, "1100", "ACCOUNTS_RECEIVABLE"),
+            new AccountSeed("SYS-1120", "1120", "Inventory",           "Assets",      "Asset",     "Dr", "BS", false, "1100", "INVENTORY"),
+            new AccountSeed("SYS-1130", "1130", "VAT Input Tax",       "Assets",      "Asset",     "Dr", "BS", false, "1100", "TAX_ASSETS"),
+            new AccountSeed("SYS-2101", "2101", "Accounts Payable",    "Liabilities", "Liability", "Cr", "BS", false, "2100", "ACCOUNTS_PAYABLE"),
+            new AccountSeed("SYS-2102", "2102", "VAT Output Tax",      "Liabilities", "Liability", "Cr", "BS", false, "2100", "TAX_LIABILITIES"),
+            new AccountSeed("SYS-2103", "2103", "GRN Clearing",        "Liabilities", "Liability", "Cr", "BS", false, "2100", "CURRENT_LIABILITIES"),
+            new AccountSeed("SYS-2104", "2104", "Customer Advance",    "Liabilities", "Liability", "Cr", "BS", false, "2100", "CURRENT_LIABILITIES"),
+            new AccountSeed("SYS-2107", "2107", "Deferred Revenue",    "Liabilities", "Liability", "Cr", "BS", false, "2100", "CURRENT_LIABILITIES"),
+            new AccountSeed("SYS-2200", "2200", "Salary Payable",      "Liabilities", "Liability", "Cr", "BS", false, "2100", "CURRENT_LIABILITIES"),
+            new AccountSeed("SYS-2201", "2201", "Other Deductions Payable","Liabilities","Liability","Cr","BS",false, "2100", "CURRENT_LIABILITIES"),
+            new AccountSeed("SYS-3100", "3100", "Retained Earnings",   "Equity",      "Equity",    "Cr", "BS", false, "3100", "EQUITY"),
+            new AccountSeed("SYS-4101", "4101", "Sales Revenue",       "Income",      "Income",    "Cr", "PL", false, "4100", "REVENUE"),
+            new AccountSeed("SYS-4102", "4102", "Sales Returns",       "Income",      "Income",    "Dr", "PL", false, "4100", "REVENUE"),
+            new AccountSeed("SYS-4103", "4103", "Delivery Income",     "Income",      "Income",    "Cr", "PL", false, "4100", "REVENUE"),
+            new AccountSeed("SYS-5101", "5101", "Cost of Goods Sold",  "Expenses",    "Expense",   "Dr", "PL", false, "5100", "COGS"),
+            new AccountSeed("SYS-5103", "5103", "Purchase Price Variance","Expenses", "Expense",   "Dr", "PL", false, "5100", "COGS"),
+            new AccountSeed("SYS-5104", "5104", "Inventory Write-off", "Expenses",    "Expense",   "Dr", "PL", false, "5100", "COGS"),
+            new AccountSeed("SYS-6010", "6010", "Salary Expense",      "Expenses",    "Expense",   "Dr", "PL", false, "5400", "OPERATING_EXPENSES"),
+            new AccountSeed("SYS-6050", "6050", "Discount Allowed",    "Expenses",    "Expense",   "Dr", "PL", false, "5400", "OPERATING_EXPENSES"),
+            new AccountSeed("SYS-7001", "7001", "Discount Received",   "Income",      "Income",    "Cr", "PL", false, "4200", "OTHER_INCOME"),
+            new AccountSeed("SYS-7002", "7002", "Interest Income",     "Income",      "Income",    "Cr", "PL", false, "4200", "OTHER_INCOME"),
+            new AccountSeed("SYS-7501", "7501", "Bank Charges",        "Expenses",    "Expense",   "Dr", "PL", false, "5400", "OPERATING_EXPENSES"),
+            new AccountSeed("SYS-5403", "5403", "General Expense",     "Expenses",    "Expense",   "Dr", "PL", false, "5400", "OPERATING_EXPENSES"),
+            new AccountSeed("SYS-5999", "5999", "Rounding Adjustment", "Expenses",    "Expense",   "Dr", "PL", false, "5400", "OPERATING_EXPENSES")
         );
 
         int seeded = 0;
         int patched = 0;
         for (AccountSeed s : seeds) {
-            Account existing = accountRepository.findByCode(s.code);
+            Account existing = accountRepository.findByCode(s.code());
             if (existing == null) {
                 Account a = new Account();
-                a.setId(s.id);
-                a.setCode(s.code);
-                a.setName(s.name);
-                a.setAccountGroup(s.accountGroup);
-                a.setAccountType(s.accountType);
-                a.setNormalBalance(s.normalBalance);
-                a.setStatement(s.statement);
-                a.setCashFlag(s.cashFlag);
-                a.setParentCode(s.parentCode);
+                a.setId(s.id());
+                a.setCode(s.code());
+                a.setName(s.name());
+                a.setAccountGroup(s.accountGroup());
+                a.setAccountType(s.accountType());
+                a.setNormalBalance(s.normalBalance());
+                a.setStatement(s.statement());
+                a.setCashFlag(s.cashFlag());
+                a.setParentCode(s.parentCode());
                 a.setStatus("active");
                 a.setIsGroup(false);
                 a.setLevel(4);
                 a.setAllowManualJV(true);
                 a.setControlAccount(false);
                 a.setCostCenterRequired(false);
+                a.setReportGroup(s.reportGroup());
+                a.setCashFlowSection(deriveCashFlowSection(s.accountType(), s.reportGroup()));
                 accountRepository.save(a);
                 seeded++;
             } else {
                 boolean needsPatch = false;
-                if (s.cashFlag && !Boolean.TRUE.equals(existing.getCashFlag())) {
+                if (s.cashFlag() && !Boolean.TRUE.equals(existing.getCashFlag())) {
                     existing.setCashFlag(true);
                     needsPatch = true;
                 }
                 if (existing.getAccountGroup() == null || existing.getAccountGroup().isEmpty()) {
-                    existing.setAccountGroup(s.accountGroup);
+                    existing.setAccountGroup(s.accountGroup());
                     needsPatch = true;
                 }
                 if (existing.getAccountType() == null || existing.getAccountType().isEmpty()) {
-                    existing.setAccountType(s.accountType);
+                    existing.setAccountType(s.accountType());
                     needsPatch = true;
                 }
                 // Always ensure parentCode points to the L2 sub-group
-                if (!s.parentCode.equals(existing.getParentCode())) {
-                    existing.setParentCode(s.parentCode);
+                if (!s.parentCode().equals(existing.getParentCode())) {
+                    existing.setParentCode(s.parentCode());
+                    needsPatch = true;
+                }
+                if (existing.getReportGroup() == null || existing.getReportGroup().isEmpty()) {
+                    existing.setReportGroup(s.reportGroup());
+                    needsPatch = true;
+                }
+                if (existing.getCashFlowSection() == null || existing.getCashFlowSection().isEmpty()) {
+                    existing.setCashFlowSection(deriveCashFlowSection(s.accountType(), s.reportGroup()));
                     needsPatch = true;
                 }
                 if (needsPatch) {
@@ -150,6 +175,15 @@ public class SystemAccountSeeder implements ApplicationRunner {
         accountRepository.save(a);
     }
 
+    /** Derives IAS 7 cash flow section from account type and report group. */
+    private static String deriveCashFlowSection(String accountType, String reportGroup) {
+        if ("Equity".equalsIgnoreCase(accountType)) return "FINANCING";
+        if ("EQUITY".equals(reportGroup)) return "FINANCING";
+        if ("Asset".equalsIgnoreCase(accountType) || "Liability".equalsIgnoreCase(accountType)) return "OPERATING";
+        if ("Income".equalsIgnoreCase(accountType) || "Expense".equalsIgnoreCase(accountType)) return "OPERATING";
+        return "NONE";
+    }
+
     private record GroupSeed(
         String id, String code, String name,
         String accountGroup, String accountType,
@@ -161,6 +195,6 @@ public class SystemAccountSeeder implements ApplicationRunner {
         String id, String code, String name,
         String accountGroup, String accountType,
         String normalBalance, String statement,
-        boolean cashFlag, String parentCode
+        boolean cashFlag, String parentCode, String reportGroup
     ) {}
 }

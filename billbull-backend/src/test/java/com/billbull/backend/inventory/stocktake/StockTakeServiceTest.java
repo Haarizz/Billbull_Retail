@@ -82,7 +82,8 @@ class StockTakeServiceTest {
                 binStockService,
                 expectedUnitRepo,
                 unitScanRepo,
-                batchMasterRepo);
+                batchMasterRepo,
+                null); // postingEngineService — null for unit tests (no GL posting in test scope)
     }
 
     @Test

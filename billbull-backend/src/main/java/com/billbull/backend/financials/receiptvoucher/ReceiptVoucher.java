@@ -67,6 +67,13 @@ public class ReceiptVoucher extends BaseEntity {
     @Column(name = "customer_code")
     private String customerCode;
 
+    /**
+     * Settlement discount granted to the customer on early payment (PDF §7 / Phase 4.3).
+     * When > 0, posting engine adds a third line: Dr Discount Allowed (6050) / Cr AR (for the discount).
+     */
+    @Column(name = "discount_amount", precision = 15, scale = 2)
+    private BigDecimal discountAmount;
+
     public ReceiptVoucher() {
     }
 
@@ -225,4 +232,7 @@ public class ReceiptVoucher extends BaseEntity {
     public void setCustomerCode(String customerCode) {
         this.customerCode = customerCode;
     }
+
+    public BigDecimal getDiscountAmount() { return discountAmount; }
+    public void setDiscountAmount(BigDecimal discountAmount) { this.discountAmount = discountAmount; }
 }

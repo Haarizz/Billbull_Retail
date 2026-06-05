@@ -21,6 +21,15 @@ public class CashFlowDTO {
     private String startDate;
     private String endDate;
 
+    /** Sum of Cash (1101) + Bank (1102) GL balances as of endDate — from BalanceSheet. */
+    private BigDecimal closingCashFromBalanceSheet;
+
+    /** Net cash flow from this statement (opening + net change). Should equal closingCashFromBalanceSheet. */
+    private BigDecimal closingCashFromCashFlow;
+
+    /** PASS if |closingCashFromBalanceSheet - closingCashFromCashFlow| ≤ 1.00; FAIL otherwise. */
+    private String tieOut;
+
     public CashFlowDTO() {
     }
 
@@ -95,4 +104,13 @@ public class CashFlowDTO {
     public void setEndDate(String endDate) {
         this.endDate = endDate;
     }
+
+    public BigDecimal getClosingCashFromBalanceSheet() { return closingCashFromBalanceSheet; }
+    public void setClosingCashFromBalanceSheet(BigDecimal v) { this.closingCashFromBalanceSheet = v; }
+
+    public BigDecimal getClosingCashFromCashFlow() { return closingCashFromCashFlow; }
+    public void setClosingCashFromCashFlow(BigDecimal v) { this.closingCashFromCashFlow = v; }
+
+    public String getTieOut() { return tieOut; }
+    public void setTieOut(String tieOut) { this.tieOut = tieOut; }
 }

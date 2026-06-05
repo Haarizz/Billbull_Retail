@@ -75,6 +75,16 @@ public class PostingEngineService {
         public static final String ACC_COGS                = "5101";
         public static final String ACC_EXPENSE_GENERAL     = "5403";
         public static final String ACC_ROUNDING            = "5999";
+        public static final String ACC_VENDOR_ADVANCES     = "1105";  // Vendor Advances Paid
+        public static final String ACC_SALARY_ADVANCES     = "1106";  // Employee salary advances (current asset)
+        public static final String ACC_CUC                 = "1107";  // Cheques Under Collection
+        public static final String ACC_DISCOUNT_ALLOWED    = "6050";  // Settlement discount granted to customer
+        public static final String ACC_DISCOUNT_RECEIVED   = "7001";  // Settlement discount received from vendor
+        public static final String ACC_SALARY_EXPENSE      = "6010";  // Salary / wage expense
+        public static final String ACC_SALARY_PAYABLE      = "2200";  // Salary payable (net to employee)
+        public static final String ACC_OTHER_DEDUCTIONS    = "2201";  // Other deductions payable
+        public static final String ACC_BANK_CHARGES        = "7501";  // Bank service charges (expense)
+        public static final String ACC_INTEREST_INCOME     = "7002";  // Bank interest income
 
         /** Max |Σdebit − Σcredit| absorbed into the rounding account instead of rejected. */
         private static final BigDecimal ROUNDING_TOLERANCE = new BigDecimal("0.01");
@@ -92,6 +102,9 @@ public class PostingEngineService {
         private final AccountingPeriodService accountingPeriodService;
         private final DimensionMatrixService  dimensionMatrixService;
         private final VoucherSequenceService  voucherSequenceService;
+        private final com.billbull.backend.sales.customerledger.CustomerCreditService customerCreditService;
+        private final com.billbull.backend.purchase.grn.GrnRepository grnRepository;
+        private final com.billbull.backend.financials.generalledger.GlAccountBalanceRepository glBalanceRepository;
 
         public PostingEngineService(
                         JournalEntryRepository  journalEntryRepository,
@@ -99,13 +112,19 @@ public class PostingEngineService {
                         AccountRepository       accountRepository,
                         AccountingPeriodService accountingPeriodService,
                         DimensionMatrixService  dimensionMatrixService,
-                        VoucherSequenceService  voucherSequenceService) {
+                        VoucherSequenceService  voucherSequenceService,
+                        com.billbull.backend.sales.customerledger.CustomerCreditService customerCreditService,
+                        com.billbull.backend.purchase.grn.GrnRepository grnRepository,
+                        com.billbull.backend.financials.generalledger.GlAccountBalanceRepository glBalanceRepository) {
                 this.journalEntryRepository  = journalEntryRepository;
                 this.journalEntryService     = journalEntryService;
                 this.accountRepository       = accountRepository;
                 this.accountingPeriodService = accountingPeriodService;
                 this.dimensionMatrixService  = dimensionMatrixService;
                 this.voucherSequenceService  = voucherSequenceService;
+                this.customerCreditService   = customerCreditService;
+                this.grnRepository           = grnRepository;
+                this.glBalanceRepository     = glBalanceRepository;
         }
 
         // Transaction-type prefixes for voucher numbering (PDF §1).
@@ -120,6 +139,11 @@ public class PostingEngineService {
         private static final String TX_CREDIT_NOTE      = "CN";
         private static final String TX_CARD_SETTLEMENT  = "CARD";
         private static final String TX_MANUAL_JOURNAL   = "JV";
+        private static final String TX_ADVANCE_APP      = "ADVA";  // customer advance application
+        private static final String TX_ADVANCE_REFUND   = "ADVR";  // customer advance refund
+        private static final String TX_VENDOR_ADVANCE   = "VADV";  // vendor advance pay/apply/refund
+        private static final String TX_PAYROLL          = "PAY";   // salary journal / WPS
+        private static final String TX_SALARY_ADVANCE   = "SADV";  // employee salary advance
 
         // =========================================================
         // PURCHASE INVOICE
@@ -154,17 +178,45 @@ public class PostingEngineService {
                                 && invoice.getGrnId() != null;
 
                 if (isAgainstGrn) {
-                        BigDecimal grnClearingAmt = grandTotal.subtract(landedCost);
-                        if (grnClearingAmt.compareTo(BigDecimal.ZERO) < 0) {
-                                grnClearingAmt = BigDecimal.ZERO;
+                        // GRN value = what was accrued at receipt time (GRN grandTotal).
+                        // PI net = what the vendor charges (grandTotal - taxTotal).
+                        // Variance = PI net - GRN value → posted to Purchase Price Variance (5103).
+                        BigDecimal grnValue = BigDecimal.ZERO;
+                        com.billbull.backend.purchase.grn.GrnEntity grn =
+                                        grnRepository.findById(invoice.getGrnId()).orElse(null);
+                        if (grn != null && grn.getGrandTotal() != null) {
+                                grnValue = grn.getGrandTotal();
                         }
+                        BigDecimal piNet   = grandTotal.subtract(taxTotal);
+                        BigDecimal ppv     = piNet.subtract(grnValue);
+
+                        BigDecimal grnClearingAmt = grnValue; // clear exactly what was accrued
+                        if (grnClearingAmt.compareTo(BigDecimal.ZERO) < 0) grnClearingAmt = BigDecimal.ZERO;
+
                         addLine(entry, "GRN Clearing", ACC_GRN_CLEARING,
                                         "Clear GRN Liability - " + ref,
                                         grnClearingAmt, BigDecimal.ZERO);
+
+                        // PPV: positive → invoice higher than GRN (extra cost); negative → invoice lower (gain)
+                        if (ppv.abs().compareTo(new BigDecimal("0.005")) > 0) {
+                                if (ppv.signum() > 0) {
+                                        addLine(entry, "Purchase Price Variance", "5103",
+                                                        "PPV - " + ref, ppv, BigDecimal.ZERO);
+                                } else {
+                                        addLine(entry, "Purchase Price Variance", "5103",
+                                                        "PPV gain - " + ref, BigDecimal.ZERO, ppv.abs());
+                                }
+                        }
+
                         if (landedCost.compareTo(BigDecimal.ZERO) > 0) {
                                 addLine(entry, "Inventory", ACC_INVENTORY,
                                                 "Capitalize landed cost - " + ref,
                                                 landedCost, BigDecimal.ZERO);
+                        }
+
+                        if (taxTotal.compareTo(BigDecimal.ZERO) > 0) {
+                                addLine(entry, "VAT Input", ACC_VAT_INPUT, "VAT - " + ref,
+                                                taxTotal, BigDecimal.ZERO);
                         }
                 } else {
                         BigDecimal inventoryAmt = grandTotal.subtract(taxTotal);
@@ -202,6 +254,14 @@ public class PostingEngineService {
         public JournalEntry createJournalFromInvoicePosting(SalesInvoice invoice) {
                 String ref = invoice.getInvoiceNumber();
                 if (isDuplicate(ref)) return null;
+
+                // Credit-limit guard (PDF §6 / Phase 3.4): reject before posting if this
+                // invoice would push the customer's open AR over their configured limit.
+                customerCreditService.assertWithinLimit(
+                                invoice.getCustomerCode(),
+                                invoice.getInvoiceTotal() != null
+                                        ? java.math.BigDecimal.valueOf(invoice.getInvoiceTotal())
+                                        : java.math.BigDecimal.ZERO);
 
                 JournalEntry entry = createBaseEntry(invoice.getInvoiceDate(), ref,
                                 "Sales Invoice " + ref, TX_SALES_INVOICE);
@@ -420,12 +480,22 @@ public class PostingEngineService {
         // =========================================================
 
         /**
-         * Inter-branch stock transfer send:
+         * Inter-branch stock transfer send (PDF §16 / Phase 5.3).
+         *
+         * CHOSEN MODEL: single Inventory (1120) account with cost-center dimension.
          *   Dr Inventory (1120) [Transit cost center]
          *   Cr Inventory (1120) [Source branch cost center]
          *
-         * Total inventory stays unchanged at entity level, but the branch
-         * dimension moves the value into an in-transit bucket until receipt.
+         * This preserves total inventory value at the entity level. The dimensional
+         * model (branch/cost-center) is the PDF-endorsed approach for sub-ledger
+         * analysis. The alternative — Inter-Branch Receivable (1150) / Payable (2150)
+         * accounts — is only needed if statutory consolidation requires elimination
+         * entries, which is not required for BillBull's current scope.
+         *
+         * To switch to the strict dual-account model, replace the cost-center lines
+         * with Dr Inter-Branch Receivable (1150) / Cr Inventory on send and
+         * Dr Inventory / Cr Inter-Branch Payable (2150) on receive, and add an
+         * inter-branch reconciliation report.
          */
         @Transactional
         public JournalEntry createJournalFromStockTransferSent(StockTransfer transfer) {
@@ -600,10 +670,24 @@ public class PostingEngineService {
                                 voucher.getPaymentMode() != null ? voucher.getPaymentMode().name() : null);
                 JournalEntry entry = createBaseEntry(voucher.getPaymentDate(), ref,
                                 "Payment to " + vendorName, TX_PAYMENT_VOUCHER);
+
+                BigDecimal paid     = voucher.getAmount() != null ? voucher.getAmount() : BigDecimal.ZERO;
+                BigDecimal discount = voucher.getDiscountAmount() != null
+                                && voucher.getDiscountAmount().compareTo(BigDecimal.ZERO) > 0
+                                        ? voucher.getDiscountAmount() : BigDecimal.ZERO;
+                BigDecimal totalAP  = paid.add(discount); // full AP amount cleared
+
                 addLine(entry, "Accounts Payable", ACC_ACCOUNTS_PAYABLE,
-                                "Payment - " + ref, voucher.getAmount(), BigDecimal.ZERO);
+                                "Payment - " + ref, totalAP, BigDecimal.ZERO);
                 addLine(entry, settlementAccount.name, settlementAccount.code,
-                                settlementAccount.name + " payment", BigDecimal.ZERO, voucher.getAmount());
+                                settlementAccount.name + " payment", BigDecimal.ZERO, paid);
+
+                // Settlement discount received from vendor (PDF §12 / Phase 4.4)
+                if (discount.compareTo(BigDecimal.ZERO) > 0) {
+                        addLine(entry, "Discount Received", ACC_DISCOUNT_RECEIVED,
+                                        "Early payment discount - " + ref, BigDecimal.ZERO, discount);
+                }
+
                 return post(entry);
         }
 
@@ -623,8 +707,21 @@ public class PostingEngineService {
                 AccountSelection settlementAccount = resolveIncomingPaymentAccount(receipt.getPaymentMode());
                 JournalEntry entry = createBaseEntry(receipt.getDate(), ref,
                                 "Receipt from " + receipt.getMemberName(), TX_RECEIPT_VOUCHER);
+
+                BigDecimal received = receipt.getAmount() != null ? receipt.getAmount() : BigDecimal.ZERO;
+                BigDecimal discount = receipt.getDiscountAmount() != null
+                                && receipt.getDiscountAmount().compareTo(BigDecimal.ZERO) > 0
+                                        ? receipt.getDiscountAmount() : BigDecimal.ZERO;
+                BigDecimal totalAR  = received.add(discount); // full invoice amount cleared
+
                 addLine(entry, settlementAccount.name, settlementAccount.code,
-                                "Receipt - " + ref, receipt.getAmount(), BigDecimal.ZERO);
+                                "Receipt - " + ref, received, BigDecimal.ZERO);
+
+                // Settlement discount (PDF §7 / Phase 4.3): Dr Discount Allowed / Cr AR for discount portion
+                if (discount.compareTo(BigDecimal.ZERO) > 0) {
+                        addLine(entry, "Discount Allowed", ACC_DISCOUNT_ALLOWED,
+                                        "Early payment discount - " + ref, discount, BigDecimal.ZERO);
+                }
 
                 // Use Customer Advance account for advances, otherwise use AR
                 String creditAccount = ACC_ACCOUNTS_RECEIVABLE;
@@ -632,10 +729,11 @@ public class PostingEngineService {
                 if (receipt.getPurpose() == com.billbull.backend.financials.receiptvoucher.ReceiptPurpose.ADVANCE_RECEIVED) {
                         creditAccount = ACC_CUSTOMER_ADVANCE;
                         creditName    = "Customer Advance";
+                        totalAR       = received; // advances have no discount
                 }
 
                 addLine(entry, creditName, creditAccount,
-                                "Customer payment - " + receipt.getPurpose(), BigDecimal.ZERO, receipt.getAmount());
+                                "Customer payment - " + receipt.getPurpose(), BigDecimal.ZERO, totalAR);
                 return post(entry);
         }
 
@@ -738,20 +836,312 @@ public class PostingEngineService {
         // =========================================================
 
         /**
-         * PDC transitions are informational events — no GL posting occurs
-         * until the cheque actually clears or bounces.
+         * PDC GL posting (PDF §11 / Phase 4.5).
          *
-         * RECEIVED   → no posting (not yet a financial event)
-         * PRESENTED  → no posting (in-flight)
-         * CLEARED    → same as bank receipt: Dr Bank / Cr AR
-         * BOUNCED    → reverse any posting if CLEARED entry was made
+         * RECEIVED   → Dr CUC (1107) / Cr Accounts Receivable (1110)   Ref: PDC-RECV-{id}
+         * DEPOSITED  → no posting (in-flight; still in CUC)
+         * CLEARED    → Dr Bank (1102) / Cr CUC (1107)                  Ref: PDC-CLEAR-{id}
+         * BOUNCED    → Reverse CLEARED (if exists), then reverse RECEIVED:
+         *              Dr AR (1110) / Cr CUC (1107)                     Ref: PDC-BOUNCE-{id}
          */
         @Transactional
         public void createJournalFromPdcTransition(PdcEntry pdc, PdcStatus oldStatus, PdcStatus newStatus) {
-                log.info("[PostingEngine] PDC {} transitioned {} → {}. No automated journal posted at this stage.",
-                                pdc.getId(), oldStatus, newStatus);
-                // CLEARED and BOUNCED handling to be implemented per business rules.
-                // Do NOT post empty journals — that creates unbalanced phantom entries in GL.
+                if (newStatus == PdcStatus.RECEIVED) {
+                        String ref = "PDC-RECV-" + pdc.getId();
+                        if (!isDuplicate(ref)) {
+                                JournalEntry entry = createBaseEntry(pdc.getReceivedDate(), ref,
+                                                "PDC received - cheque " + pdc.getChequeNumber(), TX_RECEIPT_VOUCHER);
+                                addLine(entry, "Cheques Under Collection", ACC_CUC, "PDC received",
+                                                pdc.getAmount(), BigDecimal.ZERO);
+                                addLine(entry, "Accounts Receivable", ACC_ACCOUNTS_RECEIVABLE, "CUC from " + pdc.getCustomerName(),
+                                                BigDecimal.ZERO, pdc.getAmount());
+                                post(entry);
+                        }
+                } else if (newStatus == PdcStatus.CLEARED) {
+                        String ref = "PDC-CLEAR-" + pdc.getId();
+                        if (!isDuplicate(ref)) {
+                                JournalEntry entry = createBaseEntry(pdc.getChequeDate(), ref,
+                                                "PDC cleared - cheque " + pdc.getChequeNumber(), TX_RECEIPT_VOUCHER);
+                                addLine(entry, "Bank",                    ACC_BANK, "PDC cleared to bank",
+                                                pdc.getAmount(), BigDecimal.ZERO);
+                                addLine(entry, "Cheques Under Collection", ACC_CUC,  "CUC cleared",
+                                                BigDecimal.ZERO, pdc.getAmount());
+                                post(entry);
+                        }
+                } else if (newStatus == PdcStatus.BOUNCED) {
+                        // Reverse CLEARED if it was posted
+                        String clearRef   = "PDC-CLEAR-"  + pdc.getId();
+                        String bounceRef  = "PDC-BOUNCE-" + pdc.getId();
+                        if (journalEntryRepository.existsByReference(clearRef) && !isDuplicate(bounceRef + "-CLEAR")) {
+                                JournalEntry rev = createBaseEntry(LocalDate.now(), bounceRef + "-CLEAR",
+                                                "Reverse cleared PDC - " + pdc.getChequeNumber(), TX_RECEIPT_VOUCHER);
+                                addLine(rev, "Cheques Under Collection", ACC_CUC,  "Reverse CUC",
+                                                pdc.getAmount(), BigDecimal.ZERO);
+                                addLine(rev, "Bank",                    ACC_BANK, "Reverse bank",
+                                                BigDecimal.ZERO, pdc.getAmount());
+                                post(rev);
+                        }
+                        // Reverse RECEIVED: re-open AR
+                        if (!isDuplicate(bounceRef)) {
+                                JournalEntry bounce = createBaseEntry(LocalDate.now(), bounceRef,
+                                                "Bounced PDC - " + pdc.getChequeNumber(), TX_RECEIPT_VOUCHER);
+                                addLine(bounce, "Accounts Receivable",   ACC_ACCOUNTS_RECEIVABLE, "AR re-opened",
+                                                pdc.getAmount(), BigDecimal.ZERO);
+                                addLine(bounce, "Cheques Under Collection", ACC_CUC, "CUC reversed",
+                                                BigDecimal.ZERO, pdc.getAmount());
+                                post(bounce);
+                        }
+                } else {
+                        log.info("[PostingEngine] PDC {} transitioned {} → {} — no GL action required.",
+                                        pdc.getId(), oldStatus, newStatus);
+                }
+        }
+
+        // =========================================================
+        // CUSTOMER ADVANCE APPLICATION & REFUND
+        // =========================================================
+
+        /**
+         * Applies a customer advance against a sales invoice (PDF §5).
+         *
+         * Dr Customer Advance (2104) [amount]
+         * Cr Accounts Receivable (1110) [amount]
+         */
+        @Transactional
+        public JournalEntry createJournalFromAdvanceApplication(
+                        Long advanceReceiptId, String invoiceNumber,
+                        BigDecimal amount, java.time.LocalDate appliedDate) {
+                String ref = "APPLY-ADV-" + advanceReceiptId + "-INV-" + invoiceNumber;
+                if (isDuplicate(ref)) return null;
+
+                JournalEntry entry = createBaseEntry(
+                                appliedDate != null ? appliedDate : LocalDate.now(),
+                                ref, "Advance application: " + invoiceNumber, TX_ADVANCE_APP);
+                addLine(entry, "Customer Advance",    ACC_CUSTOMER_ADVANCE,    "Advance applied", amount, BigDecimal.ZERO);
+                addLine(entry, "Accounts Receivable", ACC_ACCOUNTS_RECEIVABLE, "Invoice settled",  BigDecimal.ZERO, amount);
+                return post(entry);
+        }
+
+        /**
+         * Refunds an unused customer advance back to bank/cash (PDF §5).
+         *
+         * Dr Customer Advance (2104) [refundAmount]
+         * Cr Bank/Cash              [refundAmount]
+         */
+        @Transactional
+        public JournalEntry createJournalFromAdvanceRefund(
+                        Long advanceReceiptId, BigDecimal refundAmount, String paymentMode) {
+                String ref = "REFUND-ADV-" + advanceReceiptId;
+                if (isDuplicate(ref)) return null;
+
+                AccountSelection settlement = resolveIncomingPaymentAccount(paymentMode);
+                JournalEntry entry = createBaseEntry(LocalDate.now(), ref,
+                                "Advance refund for receipt " + advanceReceiptId, TX_ADVANCE_REFUND);
+                addLine(entry, "Customer Advance", ACC_CUSTOMER_ADVANCE, "Advance refunded", refundAmount, BigDecimal.ZERO);
+                addLine(entry, settlement.name, settlement.code, "Refund paid out", BigDecimal.ZERO, refundAmount);
+                return post(entry);
+        }
+
+        // =========================================================
+        // PAYROLL — Salary JV, Salary Advance, WPS (PDF §13 / Phase 6)
+        // =========================================================
+
+        /**
+         * End-of-month payroll run journal (PDF §13 / Phase 6.1).
+         *
+         * Dr Salary Expense (6010)           [grossSalary]
+         * Cr Salary Payable (2200)           [netPayable]
+         * Cr Salary Advances (1106)          [advanceDeducted]   (if > 0)
+         * Cr Other Deductions Payable (2201) [otherDeductions]   (if > 0)
+         *
+         * Idempotency key: "PAYROLL-{employeeId}-{year}-{month}"
+         * Department cost center on expense line enables departmental P&L.
+         */
+        @Transactional
+        public JournalEntry createJournalFromPayrollRun(
+                        String employeeId, String employeeName,
+                        BigDecimal grossSalary, BigDecimal netPayable,
+                        BigDecimal advanceDeducted, BigDecimal otherDeductions,
+                        int year, int month, String costCenter, LocalDate paymentDate) {
+
+                String ref = "PAYROLL-" + employeeId + "-" + year + "-" + String.format("%02d", month);
+                if (isDuplicate(ref)) return null;
+
+                BigDecimal gross = grossSalary  != null ? grossSalary  : BigDecimal.ZERO;
+                BigDecimal net   = netPayable   != null ? netPayable   : BigDecimal.ZERO;
+                BigDecimal adv   = advanceDeducted != null ? advanceDeducted : BigDecimal.ZERO;
+                BigDecimal ded   = otherDeductions != null ? otherDeductions : BigDecimal.ZERO;
+
+                JournalEntry entry = createBaseEntry(paymentDate != null ? paymentDate : LocalDate.now(),
+                                ref, "Salary - " + employeeName + " " + year + "/" + String.format("%02d", month),
+                                TX_PAYROLL);
+
+                addLine(entry, "Salary Expense",           ACC_SALARY_EXPENSE,  "Gross salary - " + employeeName,
+                                gross, BigDecimal.ZERO, costCenter);
+                addLine(entry, "Salary Payable",           ACC_SALARY_PAYABLE,  "Net payable - " + employeeName,
+                                BigDecimal.ZERO, net);
+                if (adv.compareTo(BigDecimal.ZERO) > 0) {
+                        addLine(entry, "Salary Advances", ACC_SALARY_ADVANCES, "Advance recovery - " + employeeName,
+                                        BigDecimal.ZERO, adv);
+                }
+                if (ded.compareTo(BigDecimal.ZERO) > 0) {
+                        addLine(entry, "Other Deductions Payable", ACC_OTHER_DEDUCTIONS, "Deductions - " + employeeName,
+                                        BigDecimal.ZERO, ded);
+                }
+
+                return post(entry);
+        }
+
+        /**
+         * Salary advance disbursement to employee (PDF §13 / Phase 6.2).
+         *
+         * Dr Salary Advances (1106) / Cr Cash / Bank
+         */
+        @Transactional
+        public JournalEntry createJournalFromSalaryAdvance(
+                        Long advanceId, String employeeId, String employeeName,
+                        BigDecimal amount, String paymentMode, LocalDate advanceDate) {
+                String ref = "SADV-" + advanceId;
+                if (isDuplicate(ref)) return null;
+
+                AccountSelection settlement = resolveOutgoingPaymentAccount(paymentMode);
+                JournalEntry entry = createBaseEntry(advanceDate != null ? advanceDate : LocalDate.now(), ref,
+                                "Salary advance - " + employeeName, TX_SALARY_ADVANCE);
+                addLine(entry, "Salary Advances", ACC_SALARY_ADVANCES, "Advance to " + employeeName,
+                                amount, BigDecimal.ZERO);
+                addLine(entry, settlement.name, settlement.code, "Payment for advance",
+                                BigDecimal.ZERO, amount);
+                return post(entry);
+        }
+
+        /**
+         * WPS disbursement confirmation — net salary paid to bank (PDF §13 / Phase 6.3).
+         *
+         * Dr Salary Payable (2200) / Cr Bank (1102)
+         */
+        @Transactional
+        public JournalEntry createJournalFromWpsDisbursement(
+                        String wpsRunId, String periodLabel,
+                        BigDecimal totalNet, LocalDate disbursementDate) {
+                String ref = "WPS-" + wpsRunId + "-" + disbursementDate;
+                if (isDuplicate(ref)) return null;
+
+                JournalEntry entry = createBaseEntry(disbursementDate != null ? disbursementDate : LocalDate.now(),
+                                ref, "WPS disbursement - " + periodLabel, TX_PAYROLL);
+                addLine(entry, "Salary Payable", ACC_SALARY_PAYABLE, "Clear salary payable - " + periodLabel,
+                                totalNet, BigDecimal.ZERO);
+                addLine(entry, "Bank", ACC_BANK, "WPS bank transfer", BigDecimal.ZERO, totalNet);
+                return post(entry);
+        }
+
+        // =========================================================
+        // BANK RECONCILIATION HELPERS (PDF §17 / Phase 7.2)
+        // =========================================================
+
+        /** Dr Bank Charges (7501) / Cr Bank (1102) — for unmatched statement fee lines. */
+        @Transactional
+        public JournalEntry createJournalFromBankCharge(
+                        String ref, BigDecimal amount, String description, LocalDate date) {
+                if (isDuplicate(ref)) return null;
+                JournalEntry entry = createBaseEntry(date != null ? date : LocalDate.now(), ref,
+                                description != null ? description : "Bank charge", TX_MANUAL_JOURNAL);
+                addLine(entry, "Bank Charges", ACC_BANK_CHARGES, description, amount, BigDecimal.ZERO);
+                addLine(entry, "Bank",         ACC_BANK,         description, BigDecimal.ZERO, amount);
+                return post(entry);
+        }
+
+        /** Dr Bank (1102) / Cr Interest Income (7002) — for unmatched statement interest lines. */
+        @Transactional
+        public JournalEntry createJournalFromBankInterest(
+                        String ref, BigDecimal amount, String description, LocalDate date) {
+                if (isDuplicate(ref)) return null;
+                JournalEntry entry = createBaseEntry(date != null ? date : LocalDate.now(), ref,
+                                description != null ? description : "Bank interest", TX_MANUAL_JOURNAL);
+                addLine(entry, "Bank",            ACC_BANK,            description, amount, BigDecimal.ZERO);
+                addLine(entry, "Interest Income", ACC_INTEREST_INCOME, description, BigDecimal.ZERO, amount);
+                return post(entry);
+        }
+
+        // =========================================================
+        // INVENTORY WRITE-OFF (PDF §16 / Phase 5.4)
+        // =========================================================
+
+        /**
+         * Posts an inventory write-off journal at the specific batch cost (PDF §16).
+         *
+         * Dr Inventory Write-off (5104) [cost]
+         * Cr Inventory (1120)          [cost]
+         *
+         * @param stockTakeId  stock-take session or item id (for reference uniqueness)
+         * @param lineId       stock-take item or batch id
+         * @param description  item code / batch number for narration
+         * @param cost         total cost of the expired/written-off units
+         * @param postingDate  date of the write-off
+         */
+        @Transactional
+        public JournalEntry createJournalFromInventoryWriteoff(
+                        String stockTakeId, Long lineId, String description,
+                        BigDecimal cost, LocalDate postingDate) {
+                if (cost == null || cost.compareTo(BigDecimal.ZERO) <= 0) return null;
+                String ref = "WRITEOFF-" + stockTakeId + "-" + lineId;
+                if (isDuplicate(ref)) return null;
+
+                JournalEntry entry = createBaseEntry(postingDate != null ? postingDate : LocalDate.now(), ref,
+                                "Inventory write-off: " + description, TX_MANUAL_JOURNAL);
+                addLine(entry, "Inventory Write-off", "5104", "Write-off: " + description, cost, BigDecimal.ZERO);
+                addLine(entry, "Inventory",           ACC_INVENTORY, "Inventory reduction: " + description, BigDecimal.ZERO, cost);
+                return post(entry);
+        }
+
+        // =========================================================
+        // VENDOR ADVANCE (PDF §10 / Phase 4.1)
+        // =========================================================
+
+        /**
+         * Pay a vendor advance.
+         * Dr Vendor Advances Paid (1105) / Cr Bank (1102)
+         */
+        @Transactional
+        public JournalEntry createJournalFromVendorAdvancePay(com.billbull.backend.purchase.advance.VendorAdvance advance) {
+                String ref = "VADV-" + advance.getId();
+                if (isDuplicate(ref)) return null;
+                JournalEntry entry = createBaseEntry(advance.getPaidDate(), ref,
+                                "Vendor advance - " + advance.getVendorName(), TX_VENDOR_ADVANCE);
+                addLine(entry, "Vendor Advances Paid", ACC_VENDOR_ADVANCES, "Advance paid", advance.getAmount(), BigDecimal.ZERO);
+                addLine(entry, "Bank",                 ACC_BANK,            "Bank payment", BigDecimal.ZERO, advance.getAmount());
+                return post(entry);
+        }
+
+        /**
+         * Apply a vendor advance against a purchase invoice.
+         * Dr Accounts Payable (2101) / Cr Vendor Advances Paid (1105)
+         */
+        @Transactional
+        public JournalEntry createJournalFromVendorAdvanceApply(
+                        com.billbull.backend.purchase.advance.VendorAdvance advance,
+                        String piNumber, BigDecimal amount) {
+                String ref = "APPLY-VADV-" + advance.getId() + "-PI-" + piNumber;
+                if (isDuplicate(ref)) return null;
+                JournalEntry entry = createBaseEntry(LocalDate.now(), ref,
+                                "Advance applied to " + piNumber, TX_VENDOR_ADVANCE);
+                addLine(entry, "Accounts Payable",     ACC_ACCOUNTS_PAYABLE, "Apply advance", amount, BigDecimal.ZERO);
+                addLine(entry, "Vendor Advances Paid", ACC_VENDOR_ADVANCES,  "Advance consumed", BigDecimal.ZERO, amount);
+                return post(entry);
+        }
+
+        /**
+         * Refund an unused vendor advance.
+         * Dr Bank (1102) / Cr Vendor Advances Paid (1105)
+         */
+        @Transactional
+        public JournalEntry createJournalFromVendorAdvanceRefund(com.billbull.backend.purchase.advance.VendorAdvance advance) {
+                String ref = "REFUND-VADV-" + advance.getId();
+                if (isDuplicate(ref)) return null;
+                JournalEntry entry = createBaseEntry(LocalDate.now(), ref,
+                                "Vendor advance refund - " + advance.getVendorName(), TX_VENDOR_ADVANCE);
+                addLine(entry, "Bank",                 ACC_BANK,            "Advance refunded", advance.getAmount(), BigDecimal.ZERO);
+                addLine(entry, "Vendor Advances Paid", ACC_VENDOR_ADVANCES, "Advance cleared",  BigDecimal.ZERO, advance.getAmount());
+                return post(entry);
         }
 
         // =========================================================
@@ -828,9 +1218,17 @@ public class PostingEngineService {
                 line.setAccount(accountName);
                 line.setAccountCode(accountCode);
                 line.setDescription(description);
-                line.setDebit(debit   != null ? debit   : BigDecimal.ZERO);
-                line.setCredit(credit != null ? credit  : BigDecimal.ZERO);
+                BigDecimal dr = debit  != null ? debit  : BigDecimal.ZERO;
+                BigDecimal cr = credit != null ? credit : BigDecimal.ZERO;
+                line.setDebit(dr);
+                line.setCredit(cr);
                 line.setCostCenter(costCenter);
+                // AED-only MVP: populate currency/FX columns so the schema is non-null.
+                // Replace with CurrencyService.getRate() lookup when multi-currency is scoped.
+                line.setCurrency("AED");
+                line.setFxRate(BigDecimal.ONE);
+                line.setBaseDebit(dr);
+                line.setBaseCredit(cr);
                 entry.addLine(line);
         }
 
@@ -949,7 +1347,44 @@ public class PostingEngineService {
         private JournalEntry persist(JournalEntry entry) {
                 JournalEntry saved = journalEntryRepository.save(entry);
                 journalEntryService.postEntry(saved.getId(), "System");
+                // Atomically upsert the pre-aggregated GL balance rows (PDF §20 / Phase 8.1).
+                // Keeps gl_account_balances in sync with every posting without a full ledger scan.
+                upsertGlBalances(saved);
                 return saved;
+        }
+
+        /**
+         * Upserts one {@link GlAccountBalance} row per (accountCode, periodId, branchId) triple
+         * for each line in the just-posted entry. Runs inside the same transaction as persist().
+         */
+        private void upsertGlBalances(JournalEntry entry) {
+                Long branchId   = entry.getBranch() != null ? entry.getBranch().getId() : null;
+                Long periodId   = accountingPeriodService.findCoveringPeriod(entry.getDate()) != null
+                                ? accountingPeriodService.findCoveringPeriod(entry.getDate()).getId() : null;
+
+                for (JournalLine line : entry.getLines()) {
+                        String code = line.getAccountCode();
+                        if (code == null || code.isBlank()) continue;
+
+                        BigDecimal dr = nvl(line.getDebit());
+                        BigDecimal cr = nvl(line.getCredit());
+
+                        com.billbull.backend.financials.generalledger.GlAccountBalance bal =
+                                glBalanceRepository.findByAccountCodeAndFiscalPeriodIdAndBranchId(code, periodId, branchId)
+                                        .orElseGet(() -> {
+                                                com.billbull.backend.financials.generalledger.GlAccountBalance b
+                                                        = new com.billbull.backend.financials.generalledger.GlAccountBalance();
+                                                b.setAccountCode(code);
+                                                b.setFiscalPeriodId(periodId);
+                                                b.setBranchId(branchId);
+                                                return b;
+                                        });
+
+                        bal.setDebitTotal(nvl(bal.getDebitTotal()).add(dr));
+                        bal.setCreditTotal(nvl(bal.getCreditTotal()).add(cr));
+                        bal.setClosingBalance(bal.getDebitTotal().subtract(bal.getCreditTotal()));
+                        glBalanceRepository.save(bal);
+                }
         }
 
         private void notifyPosted(JournalEntry entry) {

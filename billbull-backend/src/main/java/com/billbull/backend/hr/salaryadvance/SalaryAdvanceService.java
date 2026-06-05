@@ -21,6 +21,9 @@ public class SalaryAdvanceService {
     @Autowired
     private RepaymentScheduleRepository scheduleRepo;
 
+    @Autowired
+    private com.billbull.backend.financials.generalledger.postingengine.PostingEngineService postingEngineService;
+
     // --- CREATE ---
     public SalaryAdvanceRequest createRequest(SalaryAdvanceRequest request, MultipartFile file) {
         request.setStatus(AdvanceStatus.PENDING_APPROVAL);
@@ -59,6 +62,15 @@ public class SalaryAdvanceService {
         req.setStatus(AdvanceStatus.ACTIVE);
         req.setApprovedAmount(req.getRequestedAmount()); // Auto-approve requested amount for simplicity
         requestRepo.save(req);
+
+        // 2a. GL posting: Dr Salary Advances (1106) / Cr Bank/Cash (PDF §13 / Phase 6.2)
+        postingEngineService.createJournalFromSalaryAdvance(
+                req.getId(),
+                req.getEmployeeId(),
+                req.getEmployeeName() != null ? req.getEmployeeName() : req.getEmployeeId(),
+                req.getApprovedAmount(),
+                "Bank", // default disbursement mode; Cash also valid
+                LocalDate.now());
 
         // 3. Create Schedule
         RepaymentSchedule schedule = new RepaymentSchedule();

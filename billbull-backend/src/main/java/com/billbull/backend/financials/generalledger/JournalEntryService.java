@@ -7,6 +7,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
 
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -19,6 +20,10 @@ import com.billbull.backend.util.DocumentOrderingUtil;
 
 @Service
 public class JournalEntryService {
+
+    /** AED threshold above which manual JVs require a second approver (0 = disabled). */
+    @Value("${financials.jv.approval-threshold-aed:10000}")
+    private BigDecimal approvalThresholdAed;
 
     private final JournalEntryRepository journalEntryRepository;
     private final JournalVoucherRepository journalVoucherRepository;
@@ -74,8 +79,19 @@ public class JournalEntryService {
         String entryNumber = generateEntryNumber();
         journalVoucher.setEntryNumber(entryNumber);
 
+        // Maker-checker: if total debit exceeds the configured threshold and no
+        // explicit status was provided, route to PENDING_APPROVAL instead of Draft (PDF §21A / Phase 8.5).
         if (journalVoucher.getStatus() == null || journalVoucher.getStatus().isEmpty()) {
-            journalVoucher.setStatus("Draft");
+            if (approvalThresholdAed != null && approvalThresholdAed.compareTo(BigDecimal.ZERO) > 0
+                    && journalVoucher.getLines() != null) {
+                BigDecimal totalDebit = journalVoucher.getLines().stream()
+                        .map(l -> l.getDebit() != null ? l.getDebit() : BigDecimal.ZERO)
+                        .reduce(BigDecimal.ZERO, BigDecimal::add);
+                journalVoucher.setStatus(totalDebit.compareTo(approvalThresholdAed) > 0
+                        ? "PENDING_APPROVAL" : "Draft");
+            } else {
+                journalVoucher.setStatus("Draft");
+            }
         }
 
         if (journalVoucher.getLines() != null) {
@@ -135,13 +151,19 @@ public class JournalEntryService {
             throw new RuntimeException("Journal Entry is already posted.");
         }
 
-        // Only allow posting from Approved or Draft (auto-generated system JVs bypass
-        // approval)
+        // Posting rules (PDF §21A / Phase 8.5):
+        //   System-generated JVs (PostingEngineService) post from Draft directly — they bypass approval.
+        //   Manual JVs below threshold: post from Draft or Approved.
+        //   Manual JVs above threshold: must be Approved first (PENDING_APPROVAL blocks posting).
         boolean isSystemGenerated = "System".equalsIgnoreCase(entry.getPreparedBy());
-        if (!isSystemGenerated && !"Approved".equalsIgnoreCase(entry.getStatus())
-                && !"Draft".equalsIgnoreCase(entry.getStatus())) {
-            throw new RuntimeException(
-                    "Journal Entry must be Approved before posting. Current status: " + entry.getStatus());
+        if (!isSystemGenerated) {
+            boolean canPost = "Approved".equalsIgnoreCase(entry.getStatus())
+                    || "Draft".equalsIgnoreCase(entry.getStatus());
+            if (!canPost) {
+                throw new RuntimeException(
+                        "Journal Entry must be Approved before posting. Current status: "
+                                + entry.getStatus() + ". Have an authorized user approve it first.");
+            }
         }
 
         // Period close guard
@@ -210,8 +232,10 @@ public class JournalEntryService {
     @Transactional
     public JournalVoucher approveJournalVoucher(Long id, String approvedBy) {
         JournalVoucher jv = (JournalVoucher) getEntryById(id);
-        if (!"Submitted".equalsIgnoreCase(jv.getStatus())) {
-            throw new RuntimeException("Only Submitted journal vouchers can be approved.");
+        boolean approvable = "Submitted".equalsIgnoreCase(jv.getStatus())
+                || "PENDING_APPROVAL".equalsIgnoreCase(jv.getStatus());
+        if (!approvable) {
+            throw new RuntimeException("Only Submitted or PENDING_APPROVAL journal vouchers can be approved. Current: " + jv.getStatus());
         }
         jv.setStatus("Approved");
         jv.setApprovedBy(approvedBy != null ? approvedBy : "System");

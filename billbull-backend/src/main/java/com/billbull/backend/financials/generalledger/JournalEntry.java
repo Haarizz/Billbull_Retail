@@ -7,12 +7,38 @@ import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
 
+/**
+ * Core GL journal entry.
+ *
+ * PARTITIONING (Phase 8.3 — deferred, apply when row count exceeds ~5M):
+ *   PostgreSQL declarative range partitioning by `date` (one partition per fiscal year).
+ *   Hibernate does not manage partitions — apply via a raw SQL migration script outside
+ *   ddl-auto=update. Create the initial partitions and a yearly auto-create job before
+ *   enabling. See docs/gl_partitioning.md for the SQL template.
+ *
+ * PERIOD-LOCK TRIGGER (Phase 8.4 — deferred until all posting goes through PostingEngineService):
+ *   A PostgreSQL trigger `trg_journal_entry_period_check BEFORE INSERT` can guard against
+ *   direct SQL or ETL bypassing the application-layer PERIOD_LOCKED check in PostingEngineService.
+ *   Apply only after confirming zero direct-SQL writes in production. Template:
+ *     CREATE OR REPLACE FUNCTION fn_check_period_open() RETURNS trigger AS $$
+ *     BEGIN
+ *       IF EXISTS (SELECT 1 FROM accounting_periods WHERE status='Closed'
+ *                  AND NEW.date BETWEEN start_date AND end_date) THEN
+ *         RAISE EXCEPTION 'PERIOD_LOCKED: % is in a closed period', NEW.date;
+ *       END IF;
+ *       RETURN NEW;
+ *     END; $$ LANGUAGE plpgsql;
+ */
 @Entity
 @Inheritance(strategy = InheritanceType.SINGLE_TABLE)
 @DiscriminatorColumn(name = "entry_type", discriminatorType = DiscriminatorType.STRING)
 @DiscriminatorValue("SYSTEM")
 @Table(name = "journal_entries", indexes = {
-    @Index(name = "idx_journal_entry_branch", columnList = "branch_id")
+    @Index(name = "idx_journal_entry_branch",       columnList = "branch_id"),
+    @Index(name = "idx_journal_entry_date",         columnList = "date"),
+    @Index(name = "idx_journal_entry_reference",    columnList = "reference"),
+    @Index(name = "idx_journal_entry_status",       columnList = "status"),
+    @Index(name = "idx_journal_entry_branch_date",  columnList = "branch_id, date")
 })
 public class JournalEntry {
 

@@ -125,4 +125,8 @@ public interface DeliveryNoteRepository extends JpaRepository<DeliveryNote, Long
           + "AND (:dateTo IS NULL OR dn.dnDate <= :dateTo)")
   List<DeliveryNote> findForReports(@Param("dateFrom") java.time.LocalDate dateFrom,
           @Param("dateTo") java.time.LocalDate dateTo);
+
+  /** Used by SalesReturnService to locate the source DN for COGS reversal at original cost. */
+  @Query("SELECT dn FROM DeliveryNote dn WHERE dn.linkedSalesInvoice.invoiceNumber = :invoiceNumber AND dn.status = 'DELIVERED'")
+  List<DeliveryNote> findByLinkedInvoiceNumber(@Param("invoiceNumber") String invoiceNumber);
 }

@@ -73,6 +73,7 @@ public class DeliveryNoteService {
     private final BatchSelectionService batchSelectionService;
     private final SalesSettingsService salesSettingsService;
     private final SalesDocumentNumberingService numberingService;
+    private final DeliveryNoteBatchConsumptionRepository consumptionRepo;
 
     public DeliveryNoteService(
             DeliveryNoteRepository repo,
@@ -92,7 +93,8 @@ public class DeliveryNoteService {
             ProductPackingRepository packingRepo,
             BatchSelectionService batchSelectionService,
             SalesSettingsService salesSettingsService,
-            SalesDocumentNumberingService numberingService) {
+            SalesDocumentNumberingService numberingService,
+            DeliveryNoteBatchConsumptionRepository consumptionRepo) {
         this.repo = repo;
         this.warehouseStockService = warehouseStockService;
         this.productRepo = productRepo;
@@ -111,6 +113,7 @@ public class DeliveryNoteService {
         this.batchSelectionService = batchSelectionService;
         this.salesSettingsService = salesSettingsService;
         this.numberingService = numberingService;
+        this.consumptionRepo = consumptionRepo;
     }
 
     @Transactional
@@ -487,6 +490,9 @@ public class DeliveryNoteService {
             recognizeRevenueForDeliveredDn(dn, invoice);
         }
 
+        // Persist per-item cost snapshot for later COGS reversal on returns (Phase 3.3).
+        persistConsumptions(dn);
+
         return toResponse(repo.save(dn));
     }
 
@@ -775,6 +781,35 @@ public class DeliveryNoteService {
      *
      * Idempotent: returns immediately if financialPosted is already true.
      */
+    /**
+     * Persists a cost-snapshot row for every DN line at delivery time so that
+     * SalesReturnService can later reverse COGS at the original cost (not current WAC).
+     * Idempotent: skips lines whose consumptions are already recorded.
+     */
+    private void persistConsumptions(DeliveryNote dn) {
+        if (dn == null || dn.getItems() == null) return;
+        for (DeliveryNoteItem item : dn.getItems()) {
+            if (item.getCost() == null || item.getCost() <= 0) continue;
+            Long dnItemId = item.getId();
+            if (dnItemId != null && !consumptionRepo.findByDeliveryNoteItemId(dnItemId).isEmpty()) continue;
+
+            int qty = item.getCurrentQty() != null ? item.getCurrentQty() : 0;
+            if (qty <= 0) continue;
+
+            BigDecimal unitCost  = BigDecimal.valueOf(item.getCost());
+            BigDecimal totalCost = unitCost.multiply(BigDecimal.valueOf(qty));
+
+            DeliveryNoteBatchConsumption c = new DeliveryNoteBatchConsumption();
+            c.setDeliveryNoteId(dn.getId());
+            c.setDeliveryNoteItemId(dnItemId);
+            c.setItemCode(item.getItemCode());
+            c.setQuantity(qty);
+            c.setUnitCost(unitCost);
+            c.setTotalCost(totalCost);
+            consumptionRepo.save(c);
+        }
+    }
+
     private void recognizeRevenueForDeliveredDn(DeliveryNote dn, SalesInvoice invoice) {
         if (dn.isFinancialPosted()) return;
 
