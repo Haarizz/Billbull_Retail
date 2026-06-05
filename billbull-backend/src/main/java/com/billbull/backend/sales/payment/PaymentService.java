@@ -53,6 +53,9 @@ public class PaymentService {
     @Autowired
     private BranchAccessService branchAccessService;
 
+    @Autowired
+    private com.billbull.backend.notification.NotificationEventPublisher notifPublisher;
+
     public List<Payment> getAllPayments() {
         List<Payment> payments = new ArrayList<>(
                 branchAccessService.filterBranchScopedByBranch(paymentRepository.findAll(), Payment::getBranch));
@@ -179,6 +182,7 @@ public class PaymentService {
             payment.setCreatedDate(LocalDate.now());
         }
 
+        boolean isNew = (payment.getId() == null);
         Payment savedPayment = paymentRepository.save(payment);
 
         if (savedPayment.getPaymentType() == PaymentType.RECEIVED) {
@@ -187,6 +191,15 @@ public class PaymentService {
                     && !Objects.equals(savedPayment.getReceiptVoucherRecordId(), receiptVoucher.getId())) {
                 savedPayment.setReceiptVoucherRecordId(receiptVoucher.getId());
                 savedPayment = paymentRepository.save(savedPayment);
+            }
+            
+            if (isNew) {
+                notifPublisher.paymentReceived(
+                        savedPayment.getPaymentNumber(),
+                        savedPayment.getCustomerName() != null ? savedPayment.getCustomerName() : "Customer",
+                        String.format("AED %,.2f", savedPayment.getAmount() != null ? savedPayment.getAmount() : 0.0),
+                        savedPayment.getPaymentMode() != null ? savedPayment.getPaymentMode() : "CASH"
+                );
             }
         }
 

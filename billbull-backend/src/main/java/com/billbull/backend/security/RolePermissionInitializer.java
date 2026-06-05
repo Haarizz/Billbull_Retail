@@ -34,7 +34,7 @@ public class RolePermissionInitializer implements ApplicationRunner {
         roleRepository.findByName("ADMIN").ifPresent(role -> {
             String[] allModules = {"sales", "inventory", "purchases", "finance",
                                    "hr", "customer", "dashboard", "userManagement",
-                                   "batch_manual_select"};
+                                   "batch_manual_select", "notification"};
             for (String module : allModules) {
                 seedOrUpdate(role, module, true, true, true, true, true);
             }
@@ -42,31 +42,35 @@ public class RolePermissionInitializer implements ApplicationRunner {
 
         // SALES: sales operations, customer, read-only inventory, dashboard
         roleRepository.findByName("SALES").ifPresent(role -> {
-            seedIfAbsent(role, "sales",      true,  true,  true,  false, true);
-            seedIfAbsent(role, "customer",   true,  true,  true,  false, false);
-            seedIfAbsent(role, "inventory",  true,  false, false, false, false);
-            seedIfAbsent(role, "dashboard",  true,  false, false, false, false);
+            seedIfAbsent(role, "sales",        true,  true,  true,  false, true);
+            seedIfAbsent(role, "customer",     true,  true,  true,  false, false);
+            seedIfAbsent(role, "inventory",    true,  false, false, false, false);
+            seedIfAbsent(role, "dashboard",    true,  false, false, false, false);
+            seedIfAbsent(role, "notification", true,  true,  false, false, false);
         });
 
         // INVENTORY_MANAGER: full inventory + purchases, dashboard
         roleRepository.findByName("INVENTORY_MANAGER").ifPresent(role -> {
-            seedIfAbsent(role, "inventory",  true,  true,  true,  false, true);
-            seedIfAbsent(role, "purchases",  true,  true,  true,  false, true);
-            seedIfAbsent(role, "dashboard",  true,  false, false, false, false);
+            seedIfAbsent(role, "inventory",    true,  true,  true,  false, true);
+            seedIfAbsent(role, "purchases",    true,  true,  true,  false, true);
+            seedIfAbsent(role, "dashboard",    true,  false, false, false, false);
+            seedIfAbsent(role, "notification", true,  true,  false, false, false);
         });
 
         // ACCOUNTANT: full finance, read/export purchases+sales, dashboard
         roleRepository.findByName("ACCOUNTANT").ifPresent(role -> {
-            seedIfAbsent(role, "finance",    true,  true,  true,  true,  true);
-            seedIfAbsent(role, "purchases",  true,  false, false, false, true);
-            seedIfAbsent(role, "sales",      true,  false, false, false, true);
-            seedIfAbsent(role, "dashboard",  true,  false, false, false, false);
+            seedIfAbsent(role, "finance",      true,  true,  true,  true,  true);
+            seedIfAbsent(role, "purchases",    true,  false, false, false, true);
+            seedIfAbsent(role, "sales",        true,  false, false, false, true);
+            seedIfAbsent(role, "dashboard",    true,  false, false, false, false);
+            seedIfAbsent(role, "notification", true,  true,  false, false, false);
         });
 
         // HR: employee management, dashboard
         roleRepository.findByName("HR").ifPresent(role -> {
-            seedIfAbsent(role, "hr",         true,  true,  true,  false, true);
-            seedIfAbsent(role, "dashboard",  true,  false, false, false, false);
+            seedIfAbsent(role, "hr",           true,  true,  true,  false, true);
+            seedIfAbsent(role, "dashboard",    true,  false, false, false, false);
+            seedIfAbsent(role, "notification", true,  true,  false, false, false);
         });
 
         // Financial flow Phase 8.5 permissions (PDF §21A — maker-checker / override controls):

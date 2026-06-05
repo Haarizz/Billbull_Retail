@@ -61,6 +61,7 @@ public class LpoService {
     private final ProductBarcodeRepository productBarcodeRepository;
     private final BranchAccessService branchAccessService;
     private final PaymentVoucherRepository paymentVoucherRepository;
+    private final com.billbull.backend.notification.NotificationEventPublisher notifPublisher;
 
     public LpoService(
             LpoRepository repository,
@@ -77,7 +78,8 @@ public class LpoService {
             ProductMediaRepository productMediaRepository,
             ProductBarcodeRepository productBarcodeRepository,
             BranchAccessService branchAccessService,
-            PaymentVoucherRepository paymentVoucherRepository) {
+            PaymentVoucherRepository paymentVoucherRepository,
+            com.billbull.backend.notification.NotificationEventPublisher notifPublisher) {
         this.repository = repository;
         this.productRepository = productRepository;
         this.warehouseRepository = warehouseRepository;
@@ -93,6 +95,7 @@ public class LpoService {
         this.productBarcodeRepository = productBarcodeRepository;
         this.branchAccessService = branchAccessService;
         this.paymentVoucherRepository = paymentVoucherRepository;
+        this.notifPublisher = notifPublisher;
     }
 
     /* ================= CREATE ================= */
@@ -240,6 +243,14 @@ public class LpoService {
 
         lpo.setStatus(LpoStatus.PENDING_APPROVAL);
         approvalWorkflowService.initializeApproval(lpo);
+
+        // Notify
+        notifPublisher.lpoRequiresApproval(
+                lpo.getLpoNumber(),
+                lpo.getVendorName(),
+                String.format("AED %,.2f", lpo.getGrandTotal() != null ? lpo.getGrandTotal() : 0.0),
+                lpo.getCreatedBy() != null ? lpo.getCreatedBy() : "System"
+        );
     }
 
     @Transactional

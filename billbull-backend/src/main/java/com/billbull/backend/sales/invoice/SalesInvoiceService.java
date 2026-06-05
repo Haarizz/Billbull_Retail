@@ -85,6 +85,7 @@ public class SalesInvoiceService {
     private final BinRepository binRepo;
     private final BatchSelectionService batchSelectionService;
     private final PaymentService paymentService;
+    private final com.billbull.backend.notification.NotificationEventPublisher notifPublisher;
 
     public SalesInvoiceService(SalesInvoiceRepository invoiceRepo,
             PostingEngineService postingEngineService,
@@ -108,7 +109,8 @@ public class SalesInvoiceService {
             StockMovementRepository stockMovementRepo,
             BinRepository binRepo,
             BatchSelectionService batchSelectionService,
-            PaymentService paymentService) {
+            PaymentService paymentService,
+            com.billbull.backend.notification.NotificationEventPublisher notifPublisher) {
         this.invoiceRepo = invoiceRepo;
         this.postingEngineService = postingEngineService;
         this.deliveryNoteService = deliveryNoteService;
@@ -132,6 +134,7 @@ public class SalesInvoiceService {
         this.binRepo = binRepo;
         this.batchSelectionService = batchSelectionService;
         this.paymentService = paymentService;
+        this.notifPublisher = notifPublisher;
     }
 
     // ----------------------------
@@ -363,6 +366,14 @@ public class SalesInvoiceService {
                         linkedQtnNo,
                         com.billbull.backend.sales.quotation.QuotationStatus.INVOICED);
             }
+
+            // Publish Notification
+            notifPublisher.newSalesInvoice(
+                    saved.getInvoiceNumber(),
+                    saved.getCustomerName(),
+                    String.format("AED %,.2f", saved.getInvoiceTotal() != null ? saved.getInvoiceTotal() : 0.0),
+                    saved.getSalesperson() != null ? saved.getSalesperson() : "System"
+            );
         }
 
         if (isNewlyFinalized && paid > 0) {
