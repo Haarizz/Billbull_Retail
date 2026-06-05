@@ -10,6 +10,7 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.time.LocalDate;
+import java.util.List;
 
 @RestController
 @RequestMapping("/api/sales/reports")
@@ -19,6 +20,12 @@ public class SalesReportController {
 
     public SalesReportController(SalesReportDataService reportDataService) {
         this.reportDataService = reportDataService;
+    }
+
+    @GetMapping("/salespersons")
+    @PreAuthorize("isAuthenticated()")
+    public ResponseEntity<List<String>> getSalespersons() {
+        return ResponseEntity.ok(reportDataService.getDistinctSalespersons());
     }
 
     @GetMapping("/data/{reportId}")

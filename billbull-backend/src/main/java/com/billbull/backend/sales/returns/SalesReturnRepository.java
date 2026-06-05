@@ -33,9 +33,22 @@ public interface SalesReturnRepository extends JpaRepository<SalesReturn, Long> 
     Double getTotalApprovedReturns();
 
     /** Sales-report loader: date-bounded returns with line items fetched in one query. */
-    @Query("SELECT DISTINCT r FROM SalesReturn r LEFT JOIN FETCH r.items "
-            + "WHERE (:dateFrom IS NULL OR r.returnDate >= :dateFrom) "
-            + "AND (:dateTo IS NULL OR r.returnDate <= :dateTo)")
-    List<SalesReturn> findForReports(@Param("dateFrom") LocalDate dateFrom,
-            @Param("dateTo") LocalDate dateTo);
+    @Query("SELECT DISTINCT r FROM SalesReturn r LEFT JOIN FETCH r.items WHERE r.returnDate >= :dateFrom AND r.returnDate <= :dateTo")
+    List<SalesReturn> findForReportsBounded(@Param("dateFrom") LocalDate dateFrom, @Param("dateTo") LocalDate dateTo);
+
+    @Query("SELECT DISTINCT r FROM SalesReturn r LEFT JOIN FETCH r.items WHERE r.returnDate >= :dateFrom")
+    List<SalesReturn> findForReportsFromDate(@Param("dateFrom") LocalDate dateFrom);
+
+    @Query("SELECT DISTINCT r FROM SalesReturn r LEFT JOIN FETCH r.items WHERE r.returnDate <= :dateTo")
+    List<SalesReturn> findForReportsToDate(@Param("dateTo") LocalDate dateTo);
+
+    @Query("SELECT DISTINCT r FROM SalesReturn r LEFT JOIN FETCH r.items")
+    List<SalesReturn> findForReportsAll();
+
+    default List<SalesReturn> findForReports(LocalDate dateFrom, LocalDate dateTo) {
+        if (dateFrom != null && dateTo != null) return findForReportsBounded(dateFrom, dateTo);
+        if (dateFrom != null) return findForReportsFromDate(dateFrom);
+        if (dateTo != null) return findForReportsToDate(dateTo);
+        return findForReportsAll();
+    }
 }

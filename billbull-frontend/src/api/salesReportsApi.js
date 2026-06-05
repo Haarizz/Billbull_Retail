@@ -1,5 +1,10 @@
 import api from './axiosConfig';
 
+export const getSalesReportSalespersons = async () => {
+    const res = await api.get('/api/sales/reports/salespersons');
+    return res.data;
+};
+
 export const getSalesReportData = async (reportId, filters = {}, abortSignal) => {
     try {
         const params = {};

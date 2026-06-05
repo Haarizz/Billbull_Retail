@@ -49,10 +49,22 @@ public interface LpoRepository extends JpaRepository<Lpo, Long> {
     List<Object[]> countByStatusScoped(@Param("allBranches") boolean allBranches,
             @Param("branchIds") Collection<Long> branchIds);
 
-    @Query("SELECT DISTINCT l FROM Lpo l LEFT JOIN FETCH l.items "
-            + "WHERE (:dateFrom IS NULL OR l.lpoDate >= :dateFrom) "
-            + "AND (:dateTo IS NULL OR l.lpoDate <= :dateTo) "
-            + "ORDER BY l.lpoDate DESC")
-    List<Lpo> findForReports(@Param("dateFrom") java.time.LocalDate dateFrom,
-            @Param("dateTo") java.time.LocalDate dateTo);
+    @Query("SELECT DISTINCT l FROM Lpo l LEFT JOIN FETCH l.items WHERE l.lpoDate >= :dateFrom AND l.lpoDate <= :dateTo ORDER BY l.lpoDate DESC")
+    List<Lpo> findForReportsBounded(@Param("dateFrom") java.time.LocalDate dateFrom, @Param("dateTo") java.time.LocalDate dateTo);
+
+    @Query("SELECT DISTINCT l FROM Lpo l LEFT JOIN FETCH l.items WHERE l.lpoDate >= :dateFrom ORDER BY l.lpoDate DESC")
+    List<Lpo> findForReportsFromDate(@Param("dateFrom") java.time.LocalDate dateFrom);
+
+    @Query("SELECT DISTINCT l FROM Lpo l LEFT JOIN FETCH l.items WHERE l.lpoDate <= :dateTo ORDER BY l.lpoDate DESC")
+    List<Lpo> findForReportsToDate(@Param("dateTo") java.time.LocalDate dateTo);
+
+    @Query("SELECT DISTINCT l FROM Lpo l LEFT JOIN FETCH l.items ORDER BY l.lpoDate DESC")
+    List<Lpo> findForReportsAll();
+
+    default List<Lpo> findForReports(java.time.LocalDate dateFrom, java.time.LocalDate dateTo) {
+        if (dateFrom != null && dateTo != null) return findForReportsBounded(dateFrom, dateTo);
+        if (dateFrom != null) return findForReportsFromDate(dateFrom);
+        if (dateTo != null) return findForReportsToDate(dateTo);
+        return findForReportsAll();
+    }
 }

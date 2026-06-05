@@ -61,6 +61,16 @@ public class SalesReportDataService {
     }
 
     @Transactional(readOnly = true)
+    public List<String> getDistinctSalespersons() {
+        return invoiceRepository.findAll().stream()
+                .map(SalesInvoice::getSalesperson)
+                .filter(s -> s != null && !s.isBlank())
+                .distinct()
+                .sorted()
+                .collect(Collectors.toList());
+    }
+
+    @Transactional(readOnly = true)
     public SalesReportDataResponse getReport(
             String reportId,
             LocalDate dateFrom,
@@ -153,7 +163,7 @@ public class SalesReportDataService {
         data.invoices = invoiceRepository.findForReports(dateFrom, dateTo).stream()
                 .filter(invoice -> matchesBranch(invoice, branchId))
                 .filter(invoice -> matchesChannel(invoice, salesChannel))
-                .filter(invoice -> matchesSalesperson(invoice.getSalesperson(), salesperson))
+                .filter(invoice -> matchesSalesperson(effectiveSalesperson(invoice), salesperson))
                 .filter(invoice -> matchesInvoiceSearch(invoice, search))
                 .collect(Collectors.toList());
 
@@ -298,7 +308,7 @@ public class SalesReportDataService {
                 .map(invoice -> row(
                         "billNo", invoice.getInvoiceNumber(),
                         "date", invoice.getInvoiceDate(),
-                        "cashier", fallback(invoice.getSalesperson(), "Unassigned"),
+                        "cashier", fallback(effectiveSalesperson(invoice), "Unassigned"),
                         "customer", fallback(invoice.getCustomerName(), "Walk-in"),
                         "paymentMode", fallback(invoice.getPaymentMode(), "Unspecified"),
                         "items", items(invoice).size(),
@@ -412,7 +422,7 @@ public class SalesReportDataService {
                 "Cashier-wise POS bills, sales, discounts, voids, returns and variance.");
         Map<String, List<SalesInvoice>> byCashier = data.invoices.stream()
                 .filter(this::isPosInvoice)
-                .collect(Collectors.groupingBy(invoice -> fallback(invoice.getSalesperson(), "Unassigned"), LinkedHashMap::new, Collectors.toList()));
+                .collect(Collectors.groupingBy(invoice -> fallback(effectiveSalesperson(invoice), "Unassigned"), LinkedHashMap::new, Collectors.toList()));
         List<Map<String, Object>> rows = byCashier.entrySet().stream()
                 .map(entry -> {
                     List<SalesInvoice> invoices = entry.getValue();
@@ -463,7 +473,7 @@ public class SalesReportDataService {
                 .map(invoice -> row(
                         "billNo", invoice.getInvoiceNumber(),
                         "date", invoice.getInvoiceDate(),
-                        "cashier", fallback(invoice.getSalesperson(), "Unassigned"),
+                        "cashier", fallback(effectiveSalesperson(invoice), "Unassigned"),
                         "customer", fallback(invoice.getCustomerName(), "Walk-in"),
                         "reason", fallback(invoice.getInternalNotes(), "Cancelled POS bill"),
                         "value", invoiceTotal(invoice),
@@ -654,7 +664,7 @@ public class SalesReportDataService {
                         "invoiceNo", invoice.getInvoiceNumber(),
                         "date", invoice.getInvoiceDate(),
                         "customer", invoice.getCustomerName(),
-                        "salesperson", invoice.getSalesperson(),
+                        "salesperson", effectiveSalesperson(invoice),
                         "channel", channelName(invoice),
                         "amount", invoice.getSubTotal(),
                         "tax", invoice.getTaxTotal(),
@@ -1098,7 +1108,7 @@ public class SalesReportDataService {
                         "invoiceNo", invoice.getInvoiceNumber(),
                         "date", invoice.getInvoiceDate(),
                         "customer", invoice.getCustomerName(),
-                        "salesperson", invoice.getSalesperson(),
+                        "salesperson", effectiveSalesperson(invoice),
                         "channel", channelName(invoice),
                         "grossSales", invoice.getSubTotal(),
                         "discount", invoiceDiscount(invoice),
@@ -1213,7 +1223,7 @@ public class SalesReportDataService {
                             "invoiceNo", invoice.getInvoiceNumber(),
                             "date", invoice.getInvoiceDate(),
                             "customer", invoice.getCustomerName(),
-                            "salesperson", invoice.getSalesperson(),
+                            "salesperson", effectiveSalesperson(invoice),
                             "grossSales", invoice.getSubTotal(),
                             "discount", discount,
                             "discountPercent", percent,
@@ -1342,7 +1352,7 @@ public class SalesReportDataService {
                         "entryNo", invoice.getInvoiceNumber(),
                         "entryDate", invoice.getInvoiceDate(),
                         "postDate", invoice.getDueDate(),
-                        "user", invoice.getSalesperson(),
+                        "user", effectiveSalesperson(invoice),
                         "type", "Sales Invoice",
                         "impact", invoiceTotal(invoice),
                         "reason", "Document date later than due/post date",
@@ -1371,7 +1381,7 @@ public class SalesReportDataService {
                         "editNo", invoice.getInvoiceNumber(),
                         "dateTime", invoice.getInvoiceDate(),
                         "invoiceNo", invoice.getInvoiceNumber(),
-                        "user", invoice.getSalesperson(),
+                        "user", effectiveSalesperson(invoice),
                         "fieldChanged", invoice.getStatus() == SalesInvoiceStatus.CANCELLED ? "Status" : invoiceDiscount(invoice) > 0 ? "Discount" : "Outstanding",
                         "before", "",
                         "after", status(invoice.getStatus()),
@@ -1492,7 +1502,7 @@ public class SalesReportDataService {
         Map<String, List<SalesInvoice>> bySalesperson = data.invoices.stream()
                 .filter(this::isRecognizedInvoice)
                 .filter(invoice -> !isPosInvoice(invoice))
-                .collect(Collectors.groupingBy(invoice -> fallback(invoice.getSalesperson(), "Unassigned"), LinkedHashMap::new, Collectors.toList()));
+                .collect(Collectors.groupingBy(invoice -> fallback(effectiveSalesperson(invoice), "Unassigned"), LinkedHashMap::new, Collectors.toList()));
         return bySalesperson.entrySet().stream()
                 .map(entry -> {
                     List<SalesInvoice> invoices = entry.getValue();
@@ -1514,7 +1524,7 @@ public class SalesReportDataService {
     private List<SalesInvoice> invoicesBySalesperson(SalesDataset data, String salesperson) {
         return data.invoices.stream()
                 .filter(invoice -> !isPosInvoice(invoice))
-                .filter(invoice -> Objects.equals(fallback(invoice.getSalesperson(), "Unassigned"), salesperson))
+                .filter(invoice -> Objects.equals(fallback(effectiveSalesperson(invoice), "Unassigned"), salesperson))
                 .collect(Collectors.toList());
     }
 
@@ -1531,11 +1541,11 @@ public class SalesReportDataService {
         for (SalesInvoice invoice : data.invoices) {
             if (!isRecognizedInvoice(invoice) || !invoiceFilter.test(invoice)) continue;
             for (SalesInvoiceItem item : items(invoice)) {
-                String key = includeRoute ? itemName(item, data) + "::" + fallback(invoice.getSalesperson(), "All Routes") : itemName(item, data);
+                String key = includeRoute ? itemName(item, data) + "::" + fallback(effectiveSalesperson(invoice), "All Routes") : itemName(item, data);
                 SalesAgg agg = itemAgg.computeIfAbsent(key, ignored -> new SalesAgg());
                 agg.item = itemName(item, data);
                 agg.category = productInfo(data, item.getItemCode()).category;
-                agg.route = fallback(invoice.getSalesperson(), "All Routes");
+                agg.route = fallback(effectiveSalesperson(invoice), "All Routes");
                 agg.qty += ni(item.getQuantity());
                 agg.freeIssue += ni(item.getFoc());
                 agg.sales += n(item.getNetAmount() != null ? item.getNetAmount() : item.getGrossAmount());
@@ -1596,7 +1606,7 @@ public class SalesReportDataService {
                         "date", invoice.getInvoiceDate(),
                         "customer", fallback(invoice.getCustomerName(), "Walk-in"),
                         "invoiceNo", invoice.getInvoiceNumber(),
-                        "salesperson", invoice.getSalesperson(),
+                        "salesperson", effectiveSalesperson(invoice),
                         "item", itemName(item, data),
                         "qty", ni(item.getQuantity()),
                         "freeIssue", ni(item.getFoc()),
@@ -1670,13 +1680,17 @@ public class SalesReportDataService {
         return normalize(channelName(invoice)).equals(normalize(salesChannel));
     }
 
+    private String effectiveSalesperson(SalesInvoice invoice) {
+        return invoice.getSalesperson();
+    }
+
     private boolean matchesSalesperson(String actual, String salesperson) {
         return isAll(salesperson) || normalize(actual).equals(normalize(salesperson));
     }
 
     private boolean matchesInvoiceSearch(SalesInvoice invoice, String search) {
         if (isAll(search)) return true;
-        if (matchesSearch(search, invoice.getInvoiceNumber(), invoice.getCustomerName(), invoice.getCustomerCode(), invoice.getSalesperson())) {
+        if (matchesSearch(search, invoice.getInvoiceNumber(), invoice.getCustomerName(), invoice.getCustomerCode(), effectiveSalesperson(invoice))) {
             return true;
         }
         return items(invoice).stream().anyMatch(item -> matchesSearch(search, item.getItemCode(), item.getSku(), item.getItemName(), item.getDescription()));
